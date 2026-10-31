@@ -3,7 +3,7 @@
    Order: base, then one part of the page at a time as it appears, Japanese, and last the narrow screens, which override what comes before them. */
 
 /* ---------- Base ---------- */
-:root { --window-width: 1440px; --window-height: 900px; --marks-room: 64px }
+:root { --window-width: 1440px; --window-height: 900px; --marks-room: 64px; --safe-bottom: env(safe-area-inset-bottom, 0px) }
 * { box-sizing: border-box }
 html, body { margin: 0; padding: 0; background: var(--bg) }
 body { color: var(--fg); font: 400 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: clip }
@@ -49,7 +49,8 @@ h1 { font-weight: 510; font-size: clamp(38px, 5vw, 64px); line-height: 1.04; let
 
 /* ---------- Scroll story ---------- */
 .story { height: 900vh; position: relative }
-.pin { position: sticky; top: var(--bar); height: calc(100vh - var(--bar)); display: flex; flex-direction: column; justify-content: center; gap: clamp(20px, 3.5vh, 36px); padding-block: clamp(24px, 5.5vh, 56px) }
+/* `dvh` follows a phone browser's bars as they come and go, so the story stays centered in what can be seen. */
+.pin { position: sticky; top: var(--bar); height: calc(100vh - var(--bar)); height: calc(100dvh - var(--bar)); display: flex; flex-direction: column; justify-content: center; gap: clamp(20px, 3.5vh, 36px); padding-block: clamp(24px, 5.5vh, 56px) }
 /* The script gives this box the height of the tallest caption. */
 .caps { position: relative }
 .cap { position: absolute; inset: 0; opacity: 0; transition: opacity .5s ease; pointer-events: none }
@@ -75,7 +76,7 @@ h1 { font-weight: 510; font-size: clamp(38px, 5vw, 64px); line-height: 1.04; let
 .end .pill { padding: 8px 18px; font-size: 14px }
 
 /* ---------- Footer ---------- */
-.foot { border-top: 1px solid var(--hair); margin-top: 72px; padding-block: 28px 40px; color: var(--mid); font-size: 13px }
+.foot { border-top: 1px solid var(--hair); margin-top: 72px; padding-block: 28px calc(40px + var(--safe-bottom)); color: var(--mid); font-size: 13px }
 .foot .max { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px }
 .foot .sp { flex: 1 }
 .foot a { color: var(--mid); white-space: nowrap }
@@ -104,12 +105,12 @@ h1 { font-weight: 510; font-size: clamp(38px, 5vw, 64px); line-height: 1.04; let
   .dots { flex-direction: row; top: -12px; right: 0; transform: none; gap: 6px }
   .dots li { width: 18px; height: 2px }
   .dots li::after { transform: scaleX(var(--fill, 0)); transform-origin: left }
-  /* The last screen fills the space between the bar and the 63px footer so nothing of the story shows, its parts a fixed step apart and whatever room is left split above and below. */
-  .end-screen { min-height: calc(100svh - var(--bar) - 63px); display: flex; flex-direction: column; justify-content: center; gap: 40px }
+  /* The last screen fills the space between the bar and the footer, 63px above the safe area, so nothing of the story shows, its parts a fixed step apart and whatever room is left split above and below. */
+  .end-screen { min-height: calc(100svh - var(--bar) - 63px - var(--safe-bottom)); display: flex; flex-direction: column; justify-content: center; gap: 40px }
   .quiet { padding-block: 0; text-align: left }
   .quiet h2, .quiet p { margin-inline: 0; text-wrap: pretty }
   .end { padding-block: 0 }
-  .foot { margin-top: 0; padding-block: 20px 22px }
+  .foot { margin-top: 0; padding-block: 20px calc(22px + var(--safe-bottom)) }
 }
 
 @media (prefers-reduced-motion: reduce) { .stage-w, .cap, .w > * { transition: none } }
