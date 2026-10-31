@@ -69,7 +69,7 @@ struct SupervisionHistorySourceHeading: View {
             Image(systemName: "mappin.and.ellipse")
                 .font(.supervision(.caption))
                 .foregroundStyle(heading.isClosed ? SupervisionTokens.closedMark.color : SupervisionTokens.muted.color)
-                .frame(width: WeirLayout.Supervision.agentBadgeWidth)
+                .frame(width: WeirLayout.Supervision.agentBadgeSize)
                 .accessibilityHidden(true)
         }
     }

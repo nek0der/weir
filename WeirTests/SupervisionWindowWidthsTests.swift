@@ -14,12 +14,13 @@ struct SupervisionWindowWidthsTests {
     @Test func windowMinWidth_addsMarginsRailsSidebarAndSession() {
         let width = SupervisionWindowWidths.windowMinWidth(
             surfaceGap: 6,
+            surfaceSpacing: 5,
             railWidth: 40,
             sidebarMinWidth: 220,
             sessionMinWidth: 400
         )
-        // 6 + (40 + 6) + 220 + 6 + 400 + (6 + 40) + 6.
-        #expect(width == 730)
+        // 6 + (40 + 6) + 220 + 5 + 400 + 6.
+        #expect(width == 683)
     }
 
     /// At the minimum, with the sidebar at its narrowest, the session's
@@ -27,11 +28,23 @@ struct SupervisionWindowWidthsTests {
     /// fits (374pt in English, 342pt in Japanese) stay whole.
     @Test func windowMinWidth_leavesTheReviewItsMinimum() {
         let layout = WeirLayout.Supervision.self
-        let body = layout.windowMinWidth - 2 * layout.surfaceGap - 2 * (layout.railWidth + layout.surfaceGap)
-        let session = body - layout.sidebarWidthRange.lowerBound - layout.surfaceGap
-        #expect(layout.windowMinWidth == 730)
+        let body = layout.windowMinWidth - 2 * layout.surfaceGap - (layout.railWidth + layout.surfaceGap)
+        let session = body - layout.sidebarWidthRange.lowerBound - layout.surfaceSpacing
+        #expect(layout.windowMinWidth == 683)
         #expect(session == WeirLayout.reviewMinWidth)
         #expect(session >= 374)
+    }
+
+    /// What hangs from the title bar and the rail starts where the surfaces
+    /// do, and the gap between two surfaces reads as the window's margin once
+    /// each surface's border is counted.
+    @Test func panelsAndGaps_lineUpWithTheSurfaces() {
+        let layout = WeirLayout.Supervision.self
+        #expect(WeirLayout.titleBarControlHeight + 2 * layout.titleBarDropdownGap == layout.titleBarHeight)
+        #expect(layout.paletteDropdownGap == layout.titleBarDropdownGap)
+        #expect(WeirLayout.floatingPanelWindowMargin == layout.surfaceGap)
+        #expect((layout.railWidth + layout.railButtonSize) / 2 + layout.railPanelGap == layout.railWidth + layout.surfaceGap)
+        #expect(layout.surfaceSpacing + 2 * layout.surfaceBorderWidth == layout.surfaceGap + layout.surfaceBorderWidth)
     }
 
     // MARK: Sidebar
@@ -97,9 +110,9 @@ struct SupervisionWindowWidthsTests {
 
     // MARK: Title bar
 
-    /// Back and forward as the bar draws them: two 28pt squares 2pt apart
+    /// Back and forward as the bar draws them: two 32pt squares 2pt apart
     /// (`TitleBarHistoryTests` measures the real pair).
-    static let historyWidth: CGFloat = 58
+    static let historyWidth: CGFloat = 66
 
     /// The bar's rule without back and forward (`history` 0), where the
     /// field alone stands on the center, unless a test passes the pair.
@@ -139,9 +152,19 @@ struct SupervisionWindowWidthsTests {
         #expect(bar == .init(field: 150, leading: 192, trailing: 168))
     }
 
-    /// Short of room on the trailing side, Needs Attention is offered less
-    /// than its ideal, which takes its short form.
-    @Test func titleBar_crowdedTrailingSide_offersNeedsAttentionLess() {
+    /// At the window's real minimum, the two trailing buttons (32 + 6 + 32)
+    /// stay whole and the field keeps its floor, with back and forward beside it.
+    @Test func titleBar_atTheWindowsMinimum_keepsTheTrailingButtonsWhole() {
+        let width = WeirLayout.Supervision.windowMinWidth
+        let bar = Self.titleBar(width: width, leading: 142, history: Self.historyWidth, trailing: 70)
+        #expect(bar.trailing == 70)
+        #expect(bar.field >= 150)
+        #expect(bar.leading > 0)
+    }
+
+    /// Short of room on the trailing side, the trailing group is offered less
+    /// than its ideal.
+    @Test func titleBar_crowdedTrailingSide_offersItLess() {
         let bar = Self.titleBar(width: 600, leading: 142, trailing: 250)
         #expect(bar.field == 150)
         #expect(bar.trailing == 207)
@@ -155,13 +178,13 @@ struct SupervisionWindowWidthsTests {
         #expect(bar == .init(field: 150, leading: 266, trailing: 168))
     }
 
-    /// Back and forward stand with the field, so at the window's minimum
-    /// the field gives way to them and the sides keep their ideals: the
-    /// group (58 + 6 + 186) is centered, and 365 − 125 − 6 − 92 leaves the
+    /// Back and forward stand with the field, so in a narrow window the
+    /// field gives way to them and the sides keep their ideals: the
+    /// group (66 + 6 + 178) is centered, and 365 − 125 − 6 − 92 leaves the
     /// place controls their 142.
-    @Test func titleBar_withHistory_atTheWindowsMinimum_theFieldGivesWayToTheButtons() {
+    @Test func titleBar_withHistory_narrowWindow_theFieldGivesWayToTheButtons() {
         let bar = Self.titleBar(width: 730, leading: 142, history: Self.historyWidth, trailing: 168)
-        #expect(bar == .init(field: 186, leading: 142, trailing: 168))
+        #expect(bar == .init(field: 178, leading: 142, trailing: 168))
     }
 
     /// With room, the buttons take nothing from the field: it keeps its
@@ -172,10 +195,10 @@ struct SupervisionWindowWidthsTests {
     }
 
     /// At the field's floor the buttons keep their width and the names are
-    /// cut to what is left: half the bar less half the group (58 + 6 + 150).
+    /// cut to what is left: half the bar less half the group (66 + 6 + 150).
     @Test func titleBar_withHistory_longPlace_cutsTheNamesPastTheFieldsFloor() {
         let bar = Self.titleBar(width: 730, leading: 400, history: Self.historyWidth, trailing: 168)
-        #expect(bar == .init(field: 150, leading: 160, trailing: 168))
+        #expect(bar == .init(field: 150, leading: 156, trailing: 168))
     }
 
     @Test func titleBar_tooNarrowForAnything_offersNoNegativeWidths() {
@@ -212,19 +235,18 @@ struct SupervisionWindowWidthsTests {
         #expect(SupervisionWindowWidths.placeControlWidths(ideals: [160, 84], spacing: 6, width: 0) == [0, 0])
     }
 
-    /// At the window's minimum width (730pt) with the traffic lights shown
-    /// and back and forward beside the field, the leading side is offered
-    /// 160pt
+    /// At a 730pt window with the traffic lights shown and back and forward
+    /// beside the field, the leading side is offered 156pt
     /// (`titleBar_withHistory_longPlace_cutsTheNamesPastTheFieldsFloor`),
     /// and the measured detached case needs 202.5: both names are
-    /// cut, to an even 77pt each. On record as the trade-off, not a bug: the
+    /// cut, to an even 75pt each. On record as the trade-off, not a bug: the
     /// row has no room for both, the field is at its floor, and the
     /// buttons stand with the field. Without them the branch
     /// kept its whole name (192pt offered: 94.5 and 91.5).
-    @Test func placeControls_atTheWindowsMinimumWidth_cutBothNamesOfTheDetachedCase() {
+    @Test func placeControls_inA730ptWindow_cutBothNamesOfTheDetachedCase() {
         let bar = Self.titleBar(width: 730, leading: 202.5, history: Self.historyWidth, trailing: 168)
-        #expect(bar.leading == 160)
-        #expect(SupervisionWindowWidths.placeControlWidths(ideals: [105, 91.5], spacing: 6, width: bar.leading) == [77, 77])
+        #expect(bar.leading == 156)
+        #expect(SupervisionWindowWidths.placeControlWidths(ideals: [105, 91.5], spacing: 6, width: bar.leading) == [75, 75])
         let withoutHistory = Self.titleBar(width: 730, leading: 202.5, trailing: 168)
         #expect(SupervisionWindowWidths.placeControlWidths(ideals: [105, 91.5], spacing: 6, width: withoutHistory.leading) == [94.5, 91.5])
     }

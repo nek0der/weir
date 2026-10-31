@@ -4,18 +4,17 @@
 import Foundation
 import WeirDomain
 
-/// The title bar's attention count. It never disappears:
-/// at zero it reads "Needs Attention 0", faint and unfilled, so the place
-/// the count lives does not move.
+/// The attention count across every project: on the title bar's tray, where it
+/// goes at zero, and in the menu bar's label.
 struct NeedsAttentionPillModel: Equatable {
     enum Style: Equatable {
         /// Something blocks on the person (an approval, a question, a wait
-        /// at the agent's prompt, a stop): the amber chip.
+        /// at the agent's prompt, a stop): amber.
         case blocking
-        /// Only finished turns nobody has read: the blue chip, so amber
+        /// Only finished turns nobody has read: blue, so amber
         /// keeps meaning "stopped until you act".
         case unreadOnly
-        /// Nothing: faint, with no fill.
+        /// Nothing.
         case empty
     }
 
@@ -33,12 +32,12 @@ struct NeedsAttentionPillModel: Equatable {
         Self.label(count)
     }
 
-    /// "Needs Attention · 3", wherever the count is named: the pill, the
+    /// "Needs Attention · 3", wherever the count is named: the tray, the
     /// project menu's rows, and the banner after the Mac wakes.
     static func label(_ count: Int) -> LocalizedStringResource {
         LocalizedStringResource(
             "Needs Attention · \(count)",
-            comment: "The attention count: the title bar pill, the project menu, and the notification after the Mac wakes"
+            comment: "The attention count: the title bar tray, the project menu, and the notification after the Mac wakes"
         )
     }
 
@@ -50,17 +49,20 @@ struct NeedsAttentionPillModel: Equatable {
         case let (list?, next?):
             LocalizedStringResource(
                 "Needs Attention list (\(list); Next Action: \(next))",
-                comment: "Title bar pill tooltip; the shortcut that opens the list, the shortcut for the next item"
+                comment: "Title bar tray, VoiceOver hint; the shortcut that opens the list, the shortcut for the next item"
             )
         case let (list?, nil):
-            LocalizedStringResource("Needs Attention list (\(list))", comment: "Title bar pill tooltip; the shortcut that opens the list")
+            LocalizedStringResource(
+                "Needs Attention list (\(list))",
+                comment: "Title bar tray, VoiceOver hint; the shortcut that opens the list"
+            )
         case let (nil, next?):
             LocalizedStringResource(
                 "Needs Attention list (Next Action: \(next))",
-                comment: "Title bar pill tooltip; the shortcut for the next item"
+                comment: "Title bar tray, VoiceOver hint; the shortcut for the next item"
             )
         case (nil, nil):
-            LocalizedStringResource("Needs Attention list", comment: "Title bar pill tooltip with no shortcuts bound")
+            LocalizedStringResource("Needs Attention list", comment: "Title bar tray, VoiceOver hint with no shortcuts bound")
         }
         let parts = [head.resolved(in: locale)] + AttentionSummaryText.breakdown(counts, locale: locale)
         return AgentStatusText.joined(parts, locale: locale)

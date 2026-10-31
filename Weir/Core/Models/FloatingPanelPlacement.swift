@@ -85,6 +85,21 @@ enum FloatingPanelPlacement {
     /// branch, the result is kept within `margin` of the window's top and
     /// bottom, so an anchor that has scrolled or been laid out off screen
     /// cannot take the panel with it.
+    /// A panel opened from a rail button: past the rail by `gap`, its top on the
+    /// column's, as the notification history's is, and held inside the
+    /// container when the window is short.
+    static func besideRail( // swiftlint:disable:this function_parameter_count
+        button: CGRect,
+        columnTop: CGFloat,
+        panelSize: CGSize,
+        container: CGSize,
+        gap: CGFloat,
+        margin: CGFloat
+    ) -> CGPoint {
+        let lowest = max(margin, container.height - panelSize.height - margin)
+        return CGPoint(x: button.maxX + gap, y: min(max(columnTop, margin), lowest))
+    }
+
     static func origin(
         anchor: CGRect,
         panelSize: CGSize,

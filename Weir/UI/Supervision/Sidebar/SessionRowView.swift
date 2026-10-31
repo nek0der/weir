@@ -1,5 +1,5 @@
 // SessionRowView.swift
-// Weir — one session row in the two-line form, and the scratch row.
+// Weir — one session row in the two-line form.
 
 import SwiftUI
 
@@ -358,108 +358,9 @@ private struct RepositoryMark: View {
     }
 }
 
-/// The sidebar's foot bar, which holds the scratch row, on the line the
-/// decision bar's and the changes panel's rules are on. The row keeps the
-/// list's inset, so it lines up with the session rows above it.
-struct SidebarFootBar<Content: View>: View {
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        SupervisionFootBar(
-            leadingInset: WeirLayout.Supervision.sidebarListInset,
-            trailingInset: WeirLayout.Supervision.sidebarListInset,
-            content: content
-        )
-    }
-}
-
-/// The scratch row: one line at the bottom for the tabs outside any
-/// project. No heading and no pin; its glyph and badges say what a
-/// worktree's row says of the same tabs. With no second line, its fact is in
-/// its tooltip, after the folder a new tab starts in.
-struct ScratchRowView: View {
-    let row: SessionSidebarModel.Row
-    /// Where a new scratch tab starts, as Settings says.
-    let startFolder: URL
-    let now: Date
-    var isKeyboardSelected = false
-    let actions: SessionRowActions
-    /// Opens the approval card beside the row; `nil` when the row offers
-    /// no Answer….
-    var onAnswer: (() -> Void)?
-    let onActivate: () -> Void
-    /// A dragged tab or pane would land here: the name takes the accent.
-    @Environment(\.isDropTarget) private var isDropTarget
-    @Environment(\.weirAccent) private var accent
-    @Environment(\.locale) private var locale
-    @State private var isHovering = false
-
-    private typealias Layout = WeirLayout.Supervision
-
-    var body: some View {
-        Button(action: onActivate) {
-            HStack(spacing: Layout.sessionRowColumnSpacing) {
-                SessionStateGlyph(glyph: row.fact.glyph)
-                    .frame(width: Layout.stateGlyphSize, height: Layout.stateGlyphSize)
-                Text("Scratch")
-                    // The session rows' one weight.
-                    .font(.supervision(.label, weight: .medium))
-                    .foregroundStyle(isDropTarget ? accent : SupervisionTokens.text.color)
-                Spacer(minLength: WeirLayout.Supervision.spaceXS)
-                AgentBadgeStrip(kinds: row.agentKinds)
-            }
-            // The workspace rows' face, only shorter, so the open scratch
-            // row is filled and inset as an open workspace row is.
-            .modifier(SessionRowFace(
-                height: Layout.scratchRowHeight,
-                isActive: row.isActive,
-                isHovering: isHovering,
-                isKeyboardSelected: isKeyboardSelected
-            ))
-        }
-        .buttonStyle(.plain)
-        // Out of ⇥'s stops, as every other line of the sidebar is: its
-        // keyboard is ⌥⌘0 and the arrows.
-        .focusable(false)
-        // Over the badges rather than beside them, so the row does not
-        // move; beside the row's button, so pressing it does not open the row.
-        .overlay(alignment: .trailing) {
-            if isHovering, let onAnswer {
-                Button(action: onAnswer) {
-                    Text("Answer…")
-                }
-                .buttonStyle(.supervisionSecondary(size: .compact))
-                // It shows only on a hovered row, whose fill is opaque.
-                .environment(\.supervisionSurfaceOpacity, 1)
-                .padding(.trailing, Layout.spaceXS)
-            }
-        }
-        // After the overlay, so the pointer on Answer… still counts as on
-        // the row.
-        .onHover { isHovering = $0 }
-        .contextMenu { SessionRowActionsMenu(actions: actions) }
-        .help(Text(verbatim: SessionRowFactText.scratchTooltip(for: row, startFolder: startFolder, now: now, locale: locale)))
-        .accessibilityLabel(Text(verbatim: SessionRowFactText.spokenLabel(
-            for: row,
-            projectName: nil,
-            now: now,
-            locale: locale
-        )))
-        .accessibilityHint(Text(verbatim: SessionRowFactText.scratchHint(startFolder: startFolder, locale: locale)))
-        .accessibilityAddTraits(row.isActive ? .isSelected : [])
-        .accessibilityActions {
-            if let onAnswer {
-                Button("Answer…", action: onAnswer)
-            }
-        }
-    }
-}
-
 /// A sidebar row's face: its words inset in its fill, the fill that says
 /// it is open or hovered, and the ring the arrow keys put on it, in the
-/// row's corners. The workspace rows and the scratch row both draw theirs
-/// through this, so the one never drifts from the other; only the height
-/// differs, the scratch row's fitting the sidebar's foot bar.
+/// row's corners.
 struct SessionRowFace: ViewModifier {
     let height: CGFloat
     let isActive: Bool

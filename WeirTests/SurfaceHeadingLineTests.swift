@@ -97,7 +97,7 @@ struct SurfaceHeadingLineTests {
     // MARK: - The rails
 
     /// A rail's first button is centered on the heading line beside it, and
-    /// its last on the foot bar's line, as the scratch row is.
+    /// its last on the foot bars' line.
     @Test func railEnds_sitOnTheHeadingLineAndTheFootBarLine() async throws {
         let book = NamedFrameRecorder(space: Self.space)
         let view = HStack(spacing: 0) {
@@ -117,38 +117,59 @@ struct SurfaceHeadingLineTests {
                 }
                 .recordFrame(in: book, as: "heading")
                 Spacer(minLength: 0)
-                SidebarFootBar {
-                    ScratchRowView(
-                        row: .test(.test(container: .loose)),
-                        startFolder: URL(fileURLWithPath: "/tmp"),
-                        now: .now,
-                        actions: SessionRowActions()
-                    ) {}
-                        .recordFrame(in: book, as: "scratch")
-                }
             }
             .frame(width: Layout.sidebarDefaultWidth)
         }
         let width = Layout.railWidth + Layout.sidebarDefaultWidth
-        // The scratch row's keyboard ring reads the accent from the store.
         let frames = try await withTempDir { directory in
             try #require(await Self.layOut(
                 view.environment(SettingsStore(directory: directory)),
                 width: width,
                 height: 500,
                 book: book,
-                count: 4
+                count: 3
             ))
         }
         let first = try #require(frames["first"])
         let last = try #require(frames["last"])
         let heading = try #require(frames["heading"])
-        let scratch = try #require(frames["scratch"])
 
         #expect(heading.height == Layout.surfaceHeadingLineHeight)
         #expect(first.midY == heading.midY)
-        #expect(last.midY == scratch.midY)
         #expect(last.midY == 500 - Layout.footBarHeight / 2)
+    }
+
+    // MARK: - The hover chip
+
+    /// The chip stands clear of its control: to the right on the rail, under
+    /// it in the title bar, with its right edge on the control's.
+    @Test(arguments: [HoverChipPlacement.beside, .below, .belowLeading])
+    func hoverChip_doesNotCoverItsControl(placement: HoverChipPlacement) async throws {
+        let book = NamedFrameRecorder(space: Self.space)
+        let view = Color.clear
+            .frame(width: Layout.railButtonSize, height: Layout.railButtonSize)
+            .recordFrame(in: book, as: "control")
+            .overlay(alignment: placement.alignment) {
+                HoverChipFace(name: "Scratch", shortcut: "⌥⌘S")
+                    .recordFrame(in: book, as: "chip")
+            }
+        let frames = try #require(await Self.layOut(view, width: 400, height: 400, book: book, count: 2))
+        let control = try #require(frames["control"])
+        // Recorded where it is laid out; the move is drawn after that.
+        let move = placement.offset(clearing: control.size)
+        let chip = try #require(frames["chip"]).offsetBy(dx: move.width, dy: move.height)
+        #expect(!chip.intersects(control))
+        switch placement {
+        case .beside:
+            #expect(chip.minX > control.maxX)
+            #expect(chip.midY == control.midY)
+        case .below:
+            #expect(chip.minY > control.maxY)
+            #expect(chip.maxX == control.maxX)
+        case .belowLeading:
+            #expect(chip.minY > control.maxY)
+            #expect(chip.minX == control.minX)
+        }
     }
 
     // MARK: - The review's top edge

@@ -134,9 +134,9 @@ enum ChangesPanelActions {
         }
         var input = panelInput(answer: answer, window: window, stores: stores)
         // Where each conversation runs, and what names it there; the
-        // rail reads the same only for its tooltip's breakdown (`railFacts`).
+        // toggle reads the same only for its hint's breakdown (`railFacts`).
         input.liveTab = liveTab(in: window.selection.activeContainerID, stores: stores)
-        // Only the panel's list is grouped; the rail and the review read
+        // Only the panel's list is grouped; the toggle and the review read
         // the conversations, never the sections.
         input.grouping = window.selection.changesPanelGrouping
         input.identities = stores.conversationIdentities.identities(in: window.selection.activeContainerID)
@@ -155,7 +155,7 @@ enum ChangesPanelActions {
         return ChangesPanelModel.make(input)
     }
 
-    /// What the panel reads, which the rail's badge and tooltip read too:
+    /// What the panel reads, which the toggle's badge and hint read too:
     /// the agents, the filter, and each one's line. No tab: that is the
     /// panel's own to add (`content`).
     private static func panelInput(
@@ -193,11 +193,11 @@ enum ChangesPanelActions {
     /// What the rail's button says: the session's turns waiting to be
     /// read, every agent's together, for its badge; and the conversations
     /// with turns to read, named and counted as the panel names and counts
-    /// them, for its tooltip's breakdown (`ChangesPanelModel.rail`). Named
+    /// them, for its hint's breakdown (`ChangesPanelModel.rail`). Named
     /// from the same tabs as the panel (`liveTab`), with the tab's rename
-    /// and the provider's live titles, so the rail, the panel, and the
+    /// and the provider's live titles, so the toggle, the panel, and the
     /// menus give a conversation one name and one number among its
-    /// namesakes. Read on every draw of the rail, so it reads the agents
+    /// namesakes. Read on every draw of the toggle, so it reads the agents
     /// once and never the panel's rows; the app's panes are read only when
     /// the breakdown has two or more conversations to name, and then once.
     static func railFacts(window: ProjectWindowState, stores: ChangesPanelStores) -> (unviewed: Int, agents: [ConversationChoice]) {

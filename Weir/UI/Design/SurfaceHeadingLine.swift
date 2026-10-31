@@ -1,11 +1,11 @@
 // SurfaceHeadingLine.swift
-// Weir — a surface's first line: its heading and a glyph button, centered on the line the rails share.
+// Weir — a surface's first line: its heading and a glyph button, centered on the line the rail share.
 
 import SwiftUI
 
 /// The first line of a surface whose heading has a glyph button at its end
 /// (the sidebar's "Projects" and ＋), on the surfaces' heading line:
-/// `surfaceHeadingLineHeight` tall, so its center sits where the rails'
+/// `surfaceHeadingLineHeight` tall, so its center sits where the rail's
 /// first icons are centered; the heading stands a surface heading's inset
 /// in from the leading edge, and the button's glyph as far in from the
 /// other edge

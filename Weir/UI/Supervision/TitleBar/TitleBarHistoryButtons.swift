@@ -46,6 +46,7 @@ struct TitleBarHistoryButtons: View {
         }
         .buttonStyle(.supervisionIcon)
         .disabled(!isEnabled)
-        .iconButtonHelp(name, shortcut: settings.settings.keyboard.shortcut(for: action)?.displayString)
+        .hoverChip(name, shortcut: settings.settings.keyboard.shortcut(for: action)?.displayString, placement: .belowLeading)
+        .accessibilityLabel(Text(name))
     }
 }

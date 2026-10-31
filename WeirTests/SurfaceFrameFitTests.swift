@@ -20,6 +20,15 @@ struct SurfaceFrameFitTests {
         #expect(fit.radii == RectangleCornerRadii(topLeading: 9, bottomLeading: 9, bottomTrailing: 9, topTrailing: 9))
     }
 
+    @Test func reachingAcross_movesOnlyTheSeamEdges() {
+        let base = fit(CGRect(x: 0, y: 66, width: 400, height: 534))
+        let reached = base.reachingAcross(top: true, leading: false, by: 2.5)
+        #expect(reached.insets == EdgeInsets(top: -2.5, leading: 1, bottom: 1, trailing: 0))
+        #expect(reached.radii == base.radii)
+        #expect(base.reachingAcross(top: false, leading: false, by: 2.5) == base)
+        #expect(base.reachingAcross(top: false, leading: true, by: 2.5).insets == EdgeInsets(top: 0, leading: -2.5, bottom: 1, trailing: 0))
+    }
+
     @Test func aBottomLeftPane_meetsOnlyTheLeftAndBottomEdges() {
         // Under the header and the strip, left of a split at 400.
         let fit = fit(CGRect(x: 0, y: 66, width: 400, height: 534))

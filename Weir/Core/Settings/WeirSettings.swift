@@ -194,7 +194,7 @@ struct ConfirmationSettings: Codable, Equatable {
 
 // MARK: - Appearance
 
-/// Whether the window's surfaces (the rails, the panels, the window
+/// Whether the window's surfaces (the rail, the panels, the window
 /// backdrop) render with Liquid Glass. Currently a two-state knob; the enum
 /// shape lets a future `medium` / `auto` value land without rewriting
 /// the wire format (the boolean trap the schema-anti-pattern study
@@ -234,7 +234,7 @@ struct AppearanceSettings: Codable, Equatable {
     /// content against the wallpaper.
     var backgroundOpacity: Double = 0.92
 
-    /// Whether the window's surfaces (the rails, the panels, the window
+    /// Whether the window's surfaces (the rail, the panels, the window
     /// backdrop — not the terminal pane) use Liquid Glass. macOS Accessibility's
     /// "Reduce Transparency" always wins: when the system flag is on,
     /// AppKit renders vibrancy opaque and strips Liquid Glass no matter

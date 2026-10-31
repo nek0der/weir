@@ -207,8 +207,8 @@ enum PlanUsageText {
     static func railBadge(_ level: PlanUsageLevel) -> RailBadge? {
         switch level {
         case .normal: nil
-        case .nearLimit: .usage(isAtLimit: false)
-        case .atLimit: .usage(isAtLimit: true)
+        case .nearLimit: .waiting
+        case .atLimit: .stopped
         }
     }
 
@@ -225,13 +225,4 @@ enum PlanUsageText {
         }
     }
 
-    /// "Plan Usage · At a limit"; the name alone while nothing is close.
-    static func railHelp(_ level: PlanUsageLevel, locale: Locale) -> String {
-        let name = LocalizedStringResource(
-            "Plan Usage",
-            comment: "The rail button and panel that show how much of each agent's plan limits is used"
-        ).resolved(in: locale)
-        guard let label = levelLabel(level, locale: locale) else { return name }
-        return "\(name) · \(label)"
-    }
 }

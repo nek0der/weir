@@ -40,7 +40,7 @@ extension ProjectWindowState {
             sidebarWidth: selection.sidebarHidden ? nil : sidebarDrawnWidth,
             isSidebarKept: isSidebarKeptOverPanel,
             panelWidth: changesPanelDrawnWidth,
-            surfaceGap: WeirLayout.Supervision.surfaceGap,
+            surfaceGap: WeirLayout.Supervision.surfaceSpacing,
             paneFraction: pane?.fraction,
             cellWidth: pane.flatMap { cellWidth($0.id) } ?? changesPanelCellWidth,
             // The terminal's padding on both sides, and half a divider on

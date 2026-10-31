@@ -53,9 +53,11 @@ struct ApprovalCardHost: View {
                 let origin = geometry.frame(in: .global).origin
                 let openedFrom = window.approvalCard.state.openedFrom?.offsetBy(dx: -origin.x, dy: -origin.y)
                 let rowAnchor = window.approvalCard.rowAnchor(for: approval)?.offsetBy(dx: -origin.x, dy: -origin.y)
+                let columnTop = window.historyAnchor.map { $0.columnTop - origin.y }
                 let cardHeight = measuredCardHeights[approval.id] ?? fallbackCardHeight
                 let placed = placement(
                     openedFrom: openedFrom,
+                    columnTop: columnTop,
                     rowAnchor: rowAnchor,
                     panelSize: CGSize(width: width, height: cardHeight),
                     placementHeight: placementHeights[approval.id] ?? cardHeight,
@@ -110,19 +112,31 @@ struct ApprovalCardHost: View {
         }
     }
 
-    /// Where the card goes. Opened from the title bar's Needs Attention
-    /// pill, it hangs below the pill as the list does, pointing up at it;
-    /// otherwise it stands beside its row in this window's sidebar. A
+    /// Where the card goes. Opened from the rail, it stands beside the rail as
+    /// the rail's panels do; from the title bar's Needs Attention, it hangs
+    /// below it as the list does, pointing up at it; otherwise it stands beside its row in this window's sidebar. A
     /// request may arrive one layout pass before its row reports a frame:
     /// it then starts beside the window's sidebar edge (the window's left
     /// edge with the sidebar hidden) rather than flashing over the sidebar.
-    private func placement(
+    private func placement( // swiftlint:disable:this function_parameter_count
         openedFrom: CGRect?,
+        columnTop: CGFloat?,
         rowAnchor: CGRect?,
         panelSize: CGSize,
         placementHeight: CGFloat,
         container: CGSize
     ) -> (origin: CGPoint, arrow: FloatingPanelPlacement.Arrow?) {
+        if let openedFrom, window.approvalCard.state.isOpenedFromRail {
+            let origin = FloatingPanelPlacement.besideRail(
+                button: openedFrom,
+                columnTop: columnTop ?? openedFrom.minY,
+                panelSize: panelSize,
+                container: container,
+                gap: WeirLayout.Supervision.railPanelGap,
+                margin: cardMargin
+            )
+            return (origin, nil)
+        }
         if let openedFrom {
             return FloatingPanelPlacement.layout(
                 anchor: openedFrom,

@@ -9,23 +9,23 @@ import CoreGraphics
 /// numbers it checks.
 enum SupervisionWindowWidths {
     /// The narrowest window whose every surface keeps its own minimum: the
-    /// window's margin on both sides, both rails with the gap each keeps
-    /// from the body, the sidebar at its narrowest, the gap after it, and
+    /// window's margin on both sides, the rail with the gap it keeps from
+    /// the body, the sidebar at its narrowest, the gap after it, and
     /// the session at `sessionMinWidth`. The session's floor is the
     /// review's (`WeirLayout.reviewMinWidth`): the review takes the
     /// session's whole surface, and its band is the widest thing that must
-    /// stay whole there. The rails count even when hidden, so hiding them
+    /// stay whole there. The rail counts even when hidden, so hiding it
     /// gives the session room rather than lowering the floor the window
     /// was sized against.
     static func windowMinWidth(
         surfaceGap: CGFloat,
+        surfaceSpacing: CGFloat,
         railWidth: CGFloat,
         sidebarMinWidth: CGFloat,
         sessionMinWidth: CGFloat
     ) -> CGFloat {
         let margins = 2 * surfaceGap
-        let rails = 2 * (railWidth + surfaceGap)
-        return margins + rails + sidebarMinWidth + surfaceGap + sessionMinWidth
+        return margins + railWidth + surfaceGap + sidebarMinWidth + surfaceSpacing + sessionMinWidth
     }
 
     /// The width the sidebar is drawn at: the saved width held to its
@@ -33,7 +33,7 @@ enum SupervisionWindowWidths {
     /// `sessionMinWidth` beside it, never below the range's floor. Only
     /// the drawing gives way; the saved width stays, so widening the
     /// window brings the sidebar back to it. `bodyWidth` is the body
-    /// between the rails (`ProjectWindowState.changesPanelSharedWidth`):
+    /// beside the rail (`ProjectWindowState.changesPanelSharedWidth`):
     /// what the sidebar, the session, and the changes panel beside them
     /// share, 0 until it has been measured, when the saved width is drawn
     /// as it is. It holds the panel's width while the panel stands beside
@@ -61,8 +61,7 @@ enum SupervisionWindowWidths {
         /// What the place controls on the leading side are offered: their
         /// ideal width, or less, which cuts their names.
         var leading: CGFloat
-        /// What Needs Attention is offered: its ideal width, or less, which
-        /// takes its short form.
+        /// What Needs Attention and the changes button are offered.
         var trailing: CGFloat
     }
 
@@ -85,8 +84,7 @@ enum SupervisionWindowWidths {
     /// width, and the place controls keep the room they had beside the
     /// field. The field is as wide as `fieldRange` allows while both sides
     /// keep their ideal widths, and gives way first, down to the range's
-    /// floor; the buttons never do. Past that the sides give way: the
-    /// leading names are cut and Needs Attention takes its short form.
+    /// floor; the buttons never do. Past that the leading names are cut.
     /// Each side's room is half the bar less half the group, the gap beside
     /// the group, and the bar's inset on that side. `historyWidth` 0 is a
     /// bar without the buttons, whose field stands on the center itself.

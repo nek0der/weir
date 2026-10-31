@@ -90,7 +90,7 @@ struct OpenTabsModelTests {
             activeTabID: nil,
             reviewTab: .none
         ).items[0]
-        #expect(OpenTabsModel.detail(of: item, locale: Locale(identifier: "ja")) == "シェル · 3 ペイン")
+        #expect(OpenTabsModel.detail(of: item, locale: Locale(identifier: "ja")) == "Shell · 3 ペイン")
     }
 
     /// VoiceOver hears what the strip's tab says, then the panes the line

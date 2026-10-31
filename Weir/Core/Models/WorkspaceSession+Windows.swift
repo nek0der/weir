@@ -69,7 +69,7 @@ extension WorkspaceSession {
             selection.isChoosingProject = false
             enterProject(projectID, in: window, intent: intent)
         } else if selection.activeContainerID != .loose {
-            // On the scratch row with no tab, so nothing of the scratch tabs
+            // On the scratch tabs with no tab, so nothing of the scratch tabs
             // is drawn here until the person chooses them.
             selection.activeContainerID = .loose
             selection.activeTabID = nil
@@ -151,7 +151,7 @@ extension WorkspaceSession {
     }
 
     /// Every window a save writes (`savedWindowIDs`), as it is saved. A
-    /// window that shows nothing is written on the scratch row, on the tab
+    /// window that shows nothing is written on the scratch tabs, on the tab
     /// choosing that row would open (`tabOpened(choosing:)`), or on the
     /// empty row when there is no scratch tab: what it comes back to
     /// (`restore(from:)`).

@@ -7,7 +7,7 @@
 
 > A native macOS window for supervising Claude Code and Codex: run them in real terminals, see which one needs you, and review what each turn changed.
 
-<p align="center"><img src=".github/assets/hero.png" alt="A Weir window. On the left, a sidebar of every project's worktrees, the current project's rows showing each agent's state: unread, waiting, running, stopped on an API error, and a pull request that is open. In the middle, Claude Code in a terminal tab beside a Codex tab and two shell tabs, its turn just finished, with a decision bar under it that sums up two unviewed turns and their last test run, and offers Mark as Viewed and Review Unviewed. On the right, the Changes panel lists the worktree's unviewed turns from Claude Code and Codex, with the viewed ones folded away and a switch between one timeline and a section per conversation. Each card shows its unviewed turn number in a blue pill and a short colored bar before its agent badge that matches the bar on that conversation's terminal tab, then the files and lines it changed, its test runs, its tokens, how long it took, and the start of the agent's reply; the last card shows buttons to mark the turns up to it viewed and to restore the code to before it. The title bar shows Needs Attention with a count of 6." width="900" /></p>
+<p align="center"><img src=".github/assets/hero.png" alt="A Weir window. On the left, a sidebar of every project's worktrees, the current project's rows showing each agent's state: unread, waiting, running, stopped on an API error, and a pull request that is open. In the middle, Claude Code in a terminal tab beside a Codex tab and two shell tabs, its turn just finished, with a decision bar under it that sums up two unviewed turns and their last test run, and offers Mark as Viewed and Review Unviewed. On the right, the Changes panel lists the worktree's unviewed turns from Claude Code and Codex, with the viewed ones folded away and a switch between one timeline and a section per conversation. Each card shows its unviewed turn number in a blue pill and a short colored bar before its agent badge that matches the bar on that conversation's terminal tab, then the files and lines it changed, its test runs, its tokens, how long it took, and the start of the agent's reply; the last card shows buttons to mark the turns up to it viewed and to restore the code to before it. The title bar shows Needs Attention with a count of 6, and the Changes button beside it." width="900" /></p>
 
 ## Why Weir
 
@@ -43,8 +43,8 @@ The [user guide](docs/user-guide.md#the-workflow) has each step in full.
 
 Each window shows one project at a time. From left to right in the screenshot:
 
-- **Title bar.** Project and worktree menus, the command palette, and **Needs Attention**.
-- **Left rail.** Show or hide the **Worktrees** sidebar, and open **All Projects**, **Notification History**, **Plan Usage**, and **Settings**.
+- **Title bar.** Project and worktree menus, the command palette, **Needs Attention**, and **Changes**.
+- **Left rail.** Show or hide the **Worktrees** sidebar, and open **Scratch**, **All Projects**, **Notification History**, **Plan Usage**, and **Settings**.
 - **Sidebar.** Every project's worktrees, one row each, with what each agent is doing.
 - **Session area.** The worktree's commits and changes, its tabs, and the terminal.
 - **Decision bar.** Under each agent pane: what the unviewed turns did, and what to do about them.

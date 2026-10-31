@@ -79,7 +79,9 @@ struct SessionHeaderView: View {
             },
             fixedWidth: HeaderChipOverflow.fixedWidth(
                 nameWidth: Self.textWidth(model.name, font: Self.nameFont),
-                glyphWidth: layout.stateGlyphSize,
+                // The glyph's slot and its gap to the name, less the spacing the
+                // sum counts between them.
+                glyphWidth: layout.openTabsButtonSize + layout.spaceXS - layout.sessionHeaderSpacing,
                 horizontalPadding: layout.sessionHeaderHorizontalInset,
                 spacing: layout.sessionHeaderSpacing,
                 slack: Self.measuringSlack
@@ -94,15 +96,20 @@ struct SessionHeaderView: View {
         // card over the same spot.
         let tooltip = Text(verbatim: AgentStatusText.joined([model.name] + hidden, locale: locale))
         return HStack(spacing: layout.sessionHeaderSpacing) {
-            SessionStateGlyph(glyph: model.glyph)
-                .frame(width: layout.stateGlyphSize, height: layout.stateGlyphSize)
-                .help(tooltip)
-            Text(verbatim: model.name)
-                .font(Font(Self.nameFont))
-                .lineLimit(1)
-                .supervisionTruncation(model.nameTruncation)
-                .help(tooltip)
-                .accessibilityAddTraits(.isHeader)
+            HStack(spacing: layout.spaceXS) {
+                // On the center of Open Tabs under it: the column the two
+                // controls share, whose left edge alone reads as a slip.
+                SessionStateGlyph(glyph: model.glyph)
+                    .frame(width: layout.stateGlyphSize, height: layout.stateGlyphSize)
+                    .frame(width: layout.openTabsButtonSize)
+                    .help(tooltip)
+                Text(verbatim: model.name)
+                    .font(Font(Self.nameFont))
+                    .lineLimit(1)
+                    .supervisionTruncation(model.nameTruncation)
+                    .help(tooltip)
+                    .accessibilityAddTraits(.isHeader)
+            }
             if !shown.isEmpty {
                 HStack(spacing: layout.sessionHeaderChipSpacing) {
                     ForEach(chips.indices.filter(shown.contains), id: \.self) { index in
@@ -186,7 +193,7 @@ private struct PullRequestChip: View {
 
     /// What the mark adds to the chip's width, for the header's overflow
     /// (`HeaderChipOverflow`).
-    static let markWidth = WeirLayout.Supervision.agentBadgeHeight + WeirLayout.Supervision.spaceSnug
+    static let markWidth = WeirLayout.Supervision.agentBadgeSize + WeirLayout.Supervision.spaceSnug
 
     var body: some View {
         HStack(spacing: WeirLayout.Supervision.spaceSnug) {

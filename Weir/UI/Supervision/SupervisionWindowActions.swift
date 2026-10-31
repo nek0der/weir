@@ -158,6 +158,13 @@ enum SupervisionWindowActions {
     /// Answer… on a row of a project another window shows: that window
     /// comes forward and opens its own card on the request, as the
     /// person goes on there. Any other row's opens this window's card.
+    /// Goes to the scratch tabs, closing every layer over the window: one left
+    /// open would hide the move, and the key would seem to do nothing.
+    static func showScratch(in window: ProjectWindowState, session: WorkspaceSession) {
+        window.closeLayers(Set(WindowLayer.allCases), session: session)
+        session.setActiveContainer(.loose, in: window.id, intent: .person)
+    }
+
     static func answer( // swiftlint:disable:this function_parameter_count
         _ request: ApprovalPresentation,
         inProject projectID: UUID?,

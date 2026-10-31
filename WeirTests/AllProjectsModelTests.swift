@@ -74,6 +74,14 @@ struct AllProjectsModelTests {
 
     // MARK: - Sections and counts
 
+    @Test func cards_areDealtAcrossTheColumnsInOrder() {
+        let cards = Array(0..<7)
+        #expect(AllProjectsSelection.cards(of: cards, inColumn: 0, of: 3) == [0, 3, 6])
+        #expect(AllProjectsSelection.cards(of: cards, inColumn: 1, of: 3) == [1, 4])
+        #expect(AllProjectsSelection.cards(of: cards, inColumn: 2, of: 3) == [2, 5])
+        #expect(AllProjectsSelection.cards(of: [1], inColumn: 2, of: 3).isEmpty)
+    }
+
     @Test func aCardsBadges_nameItsAgents() {
         let english = Locale(identifier: "en")
         #expect(AllProjectsModel.badgesSpokenName([.claude], locale: english) == "Claude")

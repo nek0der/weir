@@ -32,6 +32,9 @@ enum WindowCommand: Equatable {
     case toggleKeyboardShortcuts
     /// Open or close the all projects sheet.
     case toggleAllProjects
+    /// Go to the scratch tabs, which the left rail reaches by the pointer only
+    /// while it shows.
+    case showScratch
     /// Open or close the changes panel.
     case toggleChangesPanel
     /// ⌥⌘R: the review tab on the focused pane's unviewed turns, or closed.

@@ -6,7 +6,7 @@ import SwiftUI
 /// The body of a window that shows nothing
 /// (`WindowSelection.isChoosingProject`): "Open a Project", the projects no
 /// window shows in the sidebar's order, and Open Folder…. Choosing a project shows
-/// it in this window; the sidebar's scratch row shows the scratch tabs
+/// it in this window; the left rail's Scratch shows the scratch tabs
 /// instead. Nothing here is a terminal, so no pane is drawn or reported
 /// until the person chooses.
 struct EmptyWindowView: View {

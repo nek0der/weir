@@ -290,7 +290,7 @@ private struct OpenTabsRow: View {
             Image(systemName: ReviewPresentation.symbol)
                 .font(.supervision(.row, weight: .medium))
                 .foregroundStyle(SupervisionTokens.muted.color)
-                .frame(width: Layout.agentBadgeWidth, height: Layout.agentBadgeLargeHeight)
+                .frame(width: Layout.agentBadgeSize, height: Layout.agentBadgeSize)
                 .accessibilityHidden(true)
         }
     }

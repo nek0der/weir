@@ -13,8 +13,8 @@ import SwiftUI
 struct SessionPRMark: View {
     let style: PRMarkPresentation
     /// The badge's height beside it, so the two share a box and a center
-    /// line (`SessionAgentBadge.Size.height`).
-    var size = WeirLayout.Supervision.agentBadgeHeight
+    /// line (`agentBadgeSize`).
+    var size = WeirLayout.Supervision.agentBadgeSize
 
     /// How much of the box the drawing takes. The badge beside it fills its
     /// box with color but sets its letters well inside it, so a drawing the
@@ -86,7 +86,7 @@ private struct ChecksFailedBadge: View {
                     path.move(to: CGPoint(x: size - inset, y: inset))
                     path.addLine(to: CGPoint(x: inset, y: size - inset))
                 }
-                .stroke(SupervisionTokens.onStopped.color, style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
+                .stroke(SupervisionTokens.onStopped.color, style: StrokeStyle(lineWidth: 1, lineCap: .round))
             }
             .frame(width: size, height: size)
             .background(

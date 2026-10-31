@@ -375,6 +375,47 @@ struct SplitTree: Codable, Equatable {
         }
     }
 
+    /// The panes across the divider above `leafID` and before it on its
+    /// leading side. Read from the shape alone, so a pane along that divider
+    /// counts whether or not the two overlap.
+    func panesBefore(_ leafID: UUID) -> (above: [UUID], leading: [UUID]) {
+        guard let root else { return ([], []) }
+        return (
+            Self.panes(before: leafID, in: root, along: .vertical) ?? [],
+            Self.panes(before: leafID, in: root, along: .horizontal) ?? []
+        )
+    }
+
+    /// `nil` when `leafID` is not under `node`. The nearest split along `axis`
+    /// with the leaf on its second side has the divider in question.
+    private static func panes(before leafID: UUID, in node: PaneNode, along axis: SplitDirection) -> [UUID]? {
+        switch node {
+        case let .leaf(id):
+            return id == leafID ? [] : nil
+        case let .split(data):
+            if let found = panes(before: leafID, in: data.first, along: axis) {
+                return found
+            }
+            guard let found = panes(before: leafID, in: data.second, along: axis) else { return nil }
+            return found.isEmpty && data.direction == axis ? endLeafIDs(in: data.first, along: axis) : found
+        }
+    }
+
+    /// The leaves on `node`'s far end along `axis`: a split along it keeps only
+    /// its second side.
+    private static func endLeafIDs(in node: PaneNode, along axis: SplitDirection) -> [UUID] {
+        switch node {
+        case let .leaf(id):
+            [id]
+        case let .split(data):
+            if data.direction == axis {
+                endLeafIDs(in: data.second, along: axis)
+            } else {
+                endLeafIDs(in: data.first, along: axis) + endLeafIDs(in: data.second, along: axis)
+            }
+        }
+    }
+
     /// `true` when `leafID` is present somewhere in the tree.
     func contains(leafID: UUID) -> Bool {
         guard let root else { return false }

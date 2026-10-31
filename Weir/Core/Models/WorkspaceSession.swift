@@ -330,7 +330,7 @@ final class WorkspaceSession {
     /// `container` selected. Its last tab is then the one that window or
     /// view shows, and a tab that opens behind leaves it so: coming back to
     /// the row shows what was there, not the tab opened meanwhile. A
-    /// window that shows nothing holds no row: it stands on the scratch row
+    /// window that shows nothing holds no row: it stands on the scratch tabs
     /// without showing it (`WindowSelection.isChoosingProject`), as the
     /// scratch tabs' drawer leaves it out (`scratchDrawingWindowID`).
     func holdsSelection(of container: ContainerID) -> Bool {
@@ -863,7 +863,7 @@ final class WorkspaceSession {
     /// still in it, else its first; `nil` for a row with no tab. What a
     /// selection of the row lands on (`setActiveContainer(_:at:intent:)`),
     /// and what a window that shows nothing is saved on
-    /// (`windowRecords`), since choosing the scratch row there opens it.
+    /// (`windowRecords`), since choosing the scratch tabs there opens it.
     func tabOpened(choosing container: ContainerID) -> UUID? {
         let candidates = tabs(in: container)
         if let last = lastActiveTabID(for: container), candidates.contains(where: { $0.id == last }) {

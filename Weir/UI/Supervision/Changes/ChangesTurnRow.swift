@@ -360,11 +360,13 @@ struct TurnCardLabel: View {
             // stands, and the card stays as tall.
             Text(verbatim: ReceiptText.turn(number))
                 .font(Font(Layout.turnNumberFont))
-                .foregroundStyle(isUnviewed ? SupervisionTokens.onUnreadCount.color : SupervisionTokens.muted.color)
+                // The soft blue: each
+                // card carries one, and a solid fill out-shouted the card's title.
+                .foregroundStyle(isUnviewed ? SupervisionTokens.unreadText.color : SupervisionTokens.muted.color)
                 .background {
                     if isUnviewed {
                         RoundedRectangle(cornerRadius: Layout.turnUnviewedPillCornerRadius, style: .continuous)
-                            .fill(SupervisionTokens.unreadCount.color)
+                            .fill(SupervisionTokens.unreadFill.color)
                             .padding(.horizontal, -Layout.turnUnviewedPillPadding.width)
                             .padding(.vertical, -Layout.turnUnviewedPillPadding.height)
                             .accessibilityHidden(true)

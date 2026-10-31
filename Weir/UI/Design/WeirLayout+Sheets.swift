@@ -105,8 +105,9 @@ extension WeirLayout.Supervision {
     /// Wider than the field it hangs under, so a row's name, detail,
     /// and keys share one line.
     static let paletteDropdownWidth: CGFloat = 560
-    /// Between the field's lower edge and the dropdown hung under it.
-    static let paletteDropdownGap = spaceSnug
+    /// Between the field's lower edge and the dropdown hung under it, as for
+    /// the title bar's other dropdowns.
+    static let paletteDropdownGap = titleBarDropdownGap
     static let paletteDropdownMaxHeight: CGFloat = 440
     static let paletteDropdownPadding = popoverInset
     static let paletteRowInsets = popoverRowInsets

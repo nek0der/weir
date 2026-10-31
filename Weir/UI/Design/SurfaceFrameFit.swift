@@ -69,6 +69,20 @@ struct SurfaceFrameFit: Equatable, Sendable {
         )
     }
 
+    /// The same fit reaching `distance` past the view's top or leading edge,
+    /// over the seam to the pane there, so two frames meeting at a seam draw
+    /// one line rather than two with the divider between.
+    func reachingAcross(top: Bool, leading: Bool, by distance: CGFloat) -> Self {
+        var fit = self
+        if top {
+            fit.insets.top = -distance
+        }
+        if leading {
+            fit.insets.leading = -distance
+        }
+        return fit
+    }
+
     /// The same fit stepped `inset` further in on every edge: from the
     /// surface's border where the view meets the surface, from the view's
     /// own edge (a split's seam) elsewhere, so a mark drawn there stands as

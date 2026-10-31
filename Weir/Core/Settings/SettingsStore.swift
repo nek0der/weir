@@ -266,7 +266,7 @@ final class SettingsStore {
             // hero in whichever appearance the contributor's Mac
             // happens to be in, so the README image would flip between
             // light and dark depending on who regenerated it.
-            loaded.appearance.colorScheme = .light
+            loaded.appearance.colorScheme = DemoFixture.colorScheme
             // The default family at 12 points: the hero's 1440-point window
             // fits the sidebar, a 100-column terminal, and the changes
             // panel side by side only at that size, and a contributor's

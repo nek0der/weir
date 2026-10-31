@@ -15,7 +15,7 @@ extension ProjectWindowState {
             saved: selection.sidebarWidth,
             range: WeirLayout.Supervision.sidebarWidthRange,
             bodyWidth: changesPanelSharedWidth,
-            surfaceGap: WeirLayout.Supervision.surfaceGap,
+            surfaceGap: WeirLayout.Supervision.surfaceSpacing,
             sessionMinWidth: WeirLayout.reviewMinWidth
         )
     }
@@ -26,7 +26,7 @@ extension ProjectWindowState {
         SupervisionWindowWidths.sidebarDrawnMaxWidth(
             range: WeirLayout.Supervision.sidebarWidthRange,
             bodyWidth: changesPanelSharedWidth,
-            surfaceGap: WeirLayout.Supervision.surfaceGap,
+            surfaceGap: WeirLayout.Supervision.surfaceSpacing,
             sessionMinWidth: WeirLayout.reviewMinWidth
         )
     }

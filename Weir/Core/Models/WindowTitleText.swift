@@ -97,7 +97,7 @@ enum CheckoutName {
 enum WindowTitleText {
     /// "{project} — {branch}" for a project or one of its worktrees; a
     /// project with no branch shows its name alone. A window on the
-    /// scratch tabs shows `shownProjectID`'s name: the scratch row sits in
+    /// scratch tabs shows `shownProjectID`'s name: the scratch tabs sits in
     /// that project's sidebar, so the window still stands for it.
     /// Only a window that shows nothing is "Weir".
     static func projectAndBranch(

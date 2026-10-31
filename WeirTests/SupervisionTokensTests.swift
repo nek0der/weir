@@ -199,6 +199,15 @@ struct SupervisionTokensTests {
     ]
 
     @Test(arguments: [false, true])
+    func aWaitingCount_reachesFourAndAHalfToOne(isDark: Bool) {
+        let ratio = ContrastRatio.between(
+            SupervisionTokens.onWaiting.value(isDark: isDark),
+            SupervisionTokens.waitingCount.value(isDark: isDark)
+        )
+        #expect(ratio >= ContrastRatio.text)
+    }
+
+    @Test(arguments: [false, true])
     func text_reachesFourAndAHalfToOne(isDark: Bool) {
         for pair in Self.textPairs {
             let ratio = pair.ratio(isDark: isDark)
@@ -297,18 +306,6 @@ struct SupervisionTokensTests {
         }
         // Their contrast is the tables' "Approval tag", "Stopped tag", and
         // "Unread tag" rows.
-    }
-
-    /// The title bar's attention count is the same soft chip: amber while
-    /// something blocks, blue on unread only, both with the state's ring;
-    /// at zero neither fill nor ring, in the muted tone.
-    @Test func theAttentionCount_isASoftChipOfItsFamily() {
-        let blocking = NeedsAttentionCountStyle.of(.blocking)
-        #expect(blocking == NeedsAttentionCountStyle(fill: Tokens.waitingFill, label: Tokens.waitingText, edge: Tokens.waiting))
-        let unreadOnly = NeedsAttentionCountStyle.of(.unreadOnly)
-        #expect(unreadOnly == NeedsAttentionCountStyle(fill: Tokens.unreadFill, label: Tokens.unreadText, edge: Tokens.unread))
-        #expect(NeedsAttentionCountStyle.of(.empty) == NeedsAttentionCountStyle(fill: nil, label: Tokens.muted, edge: nil))
-        // Their contrast is the tables' "attention count" rows.
     }
 
     /// The needs-input disc is the lightest amber a white "?" reads on at

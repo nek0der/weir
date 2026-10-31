@@ -74,7 +74,7 @@ enum AgentBadgeMenuImage {
     static func shellImage(in appearance: Appearance) -> NSImage {
         image(Key(kind: nil, size: .regular, appearance: appearance)) {
             ShellPromptBadge()
-                .frame(height: WeirLayout.Supervision.agentBadgeLargeHeight)
+                .frame(height: WeirLayout.Supervision.agentBadgeSize)
         }
     }
 

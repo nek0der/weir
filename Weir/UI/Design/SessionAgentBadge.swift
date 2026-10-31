@@ -22,20 +22,13 @@ struct SessionAgentBadge: View {
         /// header).
         case regular
 
-        var height: CGFloat {
-            switch self {
-            case .row: WeirLayout.Supervision.agentBadgeHeight
-            case .regular: WeirLayout.Supervision.agentBadgeLargeHeight
-            }
-        }
-
         /// SF Mono, where a lowercase l has a tail and a capital I has
         /// bars: in SF Pro the two are the same stroke, and "Cl" read as
-        /// "CI". Two monospaced letters at these sizes fit the badge's 18pt.
+        /// "CI". Two monospaced letters at these sizes fit the badge's 15pt.
         var fontSize: WeirFont.Supervision.Size {
             switch self {
-            case .row: .badge
-            case .regular: .micro
+            case .row: .glyph
+            case .regular: .badge
             }
         }
     }
@@ -58,7 +51,7 @@ struct SessionAgentBadge: View {
             Text(verbatim: text)
                 .font(.supervision(size.fontSize, weight: .bold, design: .monospaced))
                 .foregroundStyle(SupervisionTokens.badgeForeground.color)
-                .frame(width: WeirLayout.Supervision.agentBadgeWidth, height: size.height)
+                .frame(width: WeirLayout.Supervision.agentBadgeSize, height: WeirLayout.Supervision.agentBadgeSize)
                 .background {
                     let shape = RoundedRectangle(cornerRadius: WeirLayout.Supervision.agentBadgeCornerRadius, style: .continuous)
                     shape
@@ -106,7 +99,7 @@ struct AgentOverflowBadge: View {
         Text(verbatim: "+\(count)")
             .font(.supervision(size.fontSize, weight: .bold, design: .monospaced))
             .foregroundStyle(SupervisionTokens.muted.color)
-            .frame(width: Layout.agentBadgeWidth, height: size.height)
+            .frame(width: Layout.agentBadgeSize, height: Layout.agentBadgeSize)
             .overlay(shape.strokeBorder(SupervisionTokens.line.color, lineWidth: Layout.agentBadgeEdgeWidth))
             .fixedSize()
             .accessibilityHidden(true)
@@ -153,7 +146,7 @@ struct ShellPromptBadge: View {
         Image(systemName: "apple.terminal")
             .font(.supervision(.caption))
             .foregroundStyle(isFaint ? SupervisionTokens.closedMark.color : SupervisionTokens.muted.color)
-            .frame(width: WeirLayout.Supervision.agentBadgeWidth)
+            .frame(width: WeirLayout.Supervision.agentBadgeSize)
             .accessibilityHidden(true)
     }
 }

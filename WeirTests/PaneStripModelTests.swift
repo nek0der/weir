@@ -96,7 +96,7 @@ struct PaneStripModelTests {
 
     @Test func aTabsTooltip_namesItsTitle_whoRunsInIt_andTmux() {
         let shell = PaneStripModel(items: [Self.input()], activeTabID: nil, reviewTab: .none).items[0]
-        #expect(shell.tooltip(locale: Locale(identifier: "ja")) == "zsh\nシェル")
+        #expect(shell.tooltip(locale: Locale(identifier: "ja")) == "zsh\nShell")
 
         let agent = PaneStripModel(
             items: [PaneStripModel.ItemInput(

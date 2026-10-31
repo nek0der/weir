@@ -57,7 +57,7 @@ final class WindowSelection {
 
     /// Whether the window shows nothing yet: opened by New Window, or
     /// left with no project to go to as the one it showed was removed. It
-    /// stands on the scratch row with no tab, draws no scratch tab, and
+    /// stands on the scratch tabs with no tab, draws no scratch tab, and
     /// offers the projects to open instead, until the person chooses a
     /// project (`WorkspaceSession.showProject(_:in:intent:reason:)`) or the
     /// scratch tabs (`WorkspaceSession.claimScratch(for:)`). Only while the app

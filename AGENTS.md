@@ -241,14 +241,16 @@ Short index of load-bearing files. Skim these before touching their domain.
   before guessing. Web-first beats trial-and-error rebuilds.
 - **Demo mode**: set `WEIR_DEMO=1` in the launching shell to swap the
   on-disk session for `DemoFixture` (a made-up invoicing product: 3
-  projects, 16 worktree rows (one ready to clean up, five other worktrees,
+  projects, 18 worktree rows (one ready to clean up, five other worktrees,
   one project folded) with staged agents, turns, Git facts, and pane
   output, in one 1440×900 window with the Changes panel open).
   Persistence is short-circuited while the variable is set, so the
   user's real `state.json` is not touched. Demo mode also skips the
   approval service, so a demo run does not replace the running app's
   service and agents use their native prompts. It starts no updater
-  either. `make screenshot` regenerates the hero screenshot at
+  either. `WEIR_DEMO_APPEARANCE=dark` shows it in the dark look, and
+  `WEIR_DEMO_LAYER=needs-attention` or `all-projects` opens that layer. `WEIR_DEMO_TIME=09:15` sets
+  the time of day it shows, 14:30 by default. `make screenshot` regenerates the hero screenshot at
   `.github/assets/hero.png`. It needs a one-time Screen Recording grant
   for the calling terminal and a 2x display with room for the window,
   and it depends on demo mode being reproducible. When you change the

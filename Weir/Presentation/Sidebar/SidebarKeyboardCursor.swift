@@ -45,10 +45,23 @@ enum SidebarKeyboardCursor {
 
     /// What the lines are as the keys see them.
     struct Lines {
-        /// Every line in the order drawn, the scratch row last.
+        /// Every line in the order drawn.
         let ids: [SidebarItemID]
         let isCollapsed: (UUID) -> Bool
         let isFoldOpen: (UUID, SidebarSection) -> Bool
+    }
+
+    /// The line the keys land on: the open row, else its project's header,
+    /// else the list's first. `nil` on an empty list, which has none to hold them.
+    static func initialLine(active: ContainerID, in ids: [SidebarItemID]) -> SidebarItemID? {
+        let row = SidebarItemID.row(active)
+        if ids.contains(row) {
+            return row
+        }
+        if let header = active.projectID.map(SidebarItemID.header), ids.contains(header) {
+            return header
+        }
+        return ids.first
     }
 
     static func action(for key: Key, isOption: Bool, at current: SidebarItemID?, in lines: Lines) -> Action {
@@ -100,7 +113,7 @@ enum SidebarKeyboardCursor {
         case let .fold(id, section)?:
             return lines.isFoldOpen(id, section) ? .setFoldOpen(id, section, false) : .move(to: .header(id))
         case let .row(row)?:
-            // Up to the project's header; the scratch row has none.
+            // Up to the project's header; the scratch tabs has none.
             return row.projectID.map { .move(to: .header($0)) } ?? .none
         case nil:
             return .none

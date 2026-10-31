@@ -29,7 +29,7 @@ struct SidebarProjectDropPiece: View {
 /// beside it.
 struct SessionRowDropTarget: ViewModifier {
     let container: ContainerID
-    /// `nil` for the scratch row, which belongs to no project.
+    /// `nil` for the scratch tabs, which belongs to no project.
     let project: Project?
     /// What a tab or pane dropped on the row does.
     let rowDrop: SidebarRowDrop

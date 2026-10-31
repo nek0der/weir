@@ -1,5 +1,5 @@
 // SessionSidebarView.swift
-// Weir — the supervision window's sidebar: every project under its header, its rows, and the scratch row.
+// Weir — the supervision window's sidebar: every project under its header, and its rows.
 
 import AppKit
 import SwiftUI
@@ -7,7 +7,7 @@ import WeirDomain
 
 /// The sidebar: the heading, then every project under its own header
 /// in the window's order, each open header with its rows in the two-line
-/// form, and the scratch row at the bottom. Each row opens its session; its
+/// form. Each row opens its session; its
 /// right-click menu holds the worktree operations (`SessionRowActions`). A
 /// header opens or folds, and its menu moves the project
 /// (`SidebarProjectActions`).
@@ -112,8 +112,8 @@ struct SessionSidebarView: View {
                 .accessibilityLabel(Text(ProjectListText.openFolderLabel))
             }
             // With no project there is nothing to list: the empty state
-            // takes the list's place and the room down to the scratch row,
-            // centered in it, with the way to add a project. Drawn in place
+            // takes the list's place, centered in it, with the way to add a
+            // project. Drawn in place
             // of the scroll view rather than inside its lazy stack, where
             // its height had to come from `containerRelativeFrame` and a
             // window with no project showed a blank instead.
@@ -125,26 +125,6 @@ struct SessionSidebarView: View {
                 .onAppear { window.sidebarVisibleLines = [] }
             } else {
                 projectList(model, others: others, carriedOver: carriedOver)
-            }
-            // The sidebar's foot bar, its rule from edge to edge of the
-            // surface under the list it closes.
-            SidebarFootBar {
-                // Its tooltip and VoiceOver label state the time, as the
-                // list's rows do.
-                TimelineView(.periodic(from: .now, by: Self.rowClockInterval)) { context in
-                    ScratchRowView(
-                        row: model.scratchRow,
-                        startFolder: scratchStartFolder,
-                        now: rowClock(at: context.date),
-                        isKeyboardSelected: isFocused && keyboardLine == .row(.loose),
-                        actions: scratchActions,
-                        onAnswer: answerAction(model.scratchRow, others: others)
-                    ) {
-                        session.setActiveContainer(.loose, in: window.id, intent: .person)
-                    }
-                }
-                .modifier(ApprovalRowAnchor(requests: answerRequests(of: model.scratchRow)))
-                .modifier(SessionRowDropTarget(container: .loose, project: nil, rowDrop: rowDrop))
             }
         }
         // What the sidebar drew is what a hold keeps, and what ⌃⌘1…9 counts.
@@ -162,7 +142,7 @@ struct SessionSidebarView: View {
         // drawn folded for a drag): the keys go to its project's header,
         // else nowhere.
         .onChange(of: model.items.map(\.id)) { _, lines in
-            guard let line = keyboardLine, line != .row(.loose), !lines.contains(line) else { return }
+            guard let line = keyboardLine, !lines.contains(line) else { return }
             keyboardLine = line.projectID.map(SidebarItemID.header).flatMap { lines.contains($0) ? $0 : nil }
         }
         // The pointer over the sidebar holds the rows' sections.
@@ -199,8 +179,11 @@ struct SessionSidebarView: View {
         .onChange(of: window.sidebarFocusRequest, initial: true) { _, request in
             guard request != nil else { return }
             window.sidebarFocusRequest = nil
+            // An empty list has no line to hold the keys: they stay with the
+            // terminal.
+            guard let line = initialKeyboardLine(in: model) else { return }
             isKeyboardActive = true
-            keyboardLine = initialKeyboardLine(in: model)
+            keyboardLine = line
             // Once the sidebar is focusable and the terminal has let go.
             KeyboardHandoff.afterResponderSettles { isFocused = true }
         }
@@ -336,7 +319,7 @@ struct SessionSidebarView: View {
             // Renamed where the project is shown, as the menu's Rename is:
             // a double-click here would bring that window forward on its
             // first click and edit the name behind it on its second.
-            // The scratch row is named by its own word and takes no name.
+            // The scratch tabs is named by its own word and takes no name.
             onRename: project == nil || isInOtherWindow(project, others: others)
                 ? nil
                 : { session.renameRow(row.id, to: $0, runtimes: attention.allRuntimes) },
@@ -366,12 +349,6 @@ struct SessionSidebarView: View {
         max(date, resetSync?.resetPassedAt ?? date)
     }
 
-    /// Where a new scratch tab starts, or the home folder when Settings
-    /// follows the active tab and there is none to follow.
-    private var scratchStartFolder: URL {
-        session.scratchStartDirectory(in: window.id) ?? FileManager.default.homeDirectoryForCurrentUser
-    }
-
     /// What a tab or pane dragged across this window's sidebar does.
     private var rowDrop: SidebarRowDrop {
         SidebarRowDrop(session: session, dragState: dragState, window: window.id, locale: locale)
@@ -395,8 +372,7 @@ struct SessionSidebarView: View {
         session.projects.map(\.id)
     }
 
-    /// Every project's header and rows, scrolling between the heading and
-    /// the foot bar.
+    /// Every project's header and rows, scrolling under the heading.
     private func projectList(_ model: SidebarListModel, others: [UUID: WindowID], carriedOver: CarriedOverProject?) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -436,10 +412,9 @@ struct SessionSidebarView: View {
             .task(id: projectDrag.dragID) {
                 await followProjectDrag()
             }
-            // The line the arrow keys reach stays in sight; the scratch
-            // row is always in sight, in the foot bar.
+            // The line the arrow keys reach stays in sight.
             .onChange(of: keyboardLine) { _, line in
-                if let line, line != .row(.loose) {
+                if let line {
                     // The line first, which a lazy stack can find before it
                     // is drawn; its anchor exists only once it is.
                     proxy.scrollTo(line)
@@ -491,7 +466,7 @@ struct SessionSidebarView: View {
     /// The window selected `row`: a row out of sight is brought into view,
     /// centered, without motion. The person's choice has opened its
     /// header already (`WorkspaceSession.window(for:askedOf:intent:)`); a
-    /// repair opens none. The scratch row is always in sight.
+    /// repair opens none. The scratch tabs have no row here.
     private func reveal(_ row: ContainerID, proxy: ScrollViewProxy) {
         guard row != .loose, !window.selection.isChoosingProject else { return }
         // Once the list has laid the opened header's rows out.
@@ -552,31 +527,11 @@ struct SessionSidebarView: View {
         }
     }
 
-    /// The scratch row has no worktree to hide or delete: it closes its
-    /// tabs and shows the folder a new one starts in, as Settings' scratch
-    /// folder resolves it (the previous tab's folder by default), and home
-    /// when that names none. Home alone would name another folder than the
-    /// scratch tabs' as soon as one had moved.
-    private var scratchActions: SessionRowActions {
-        SessionRowActions(
-            revealInFinder: {
-                let folder = scratchStartFolder
-                NSWorkspace.shared.activateFileViewerSelecting([folder])
-            },
-            closeAllTabs: session.tabs(in: .loose).isEmpty ? nil : {
-                TabActions.closeAllTabs(session, registry: registry, in: .loose, agentProjection: agentProjection, from: window.id)
-            }
-        )
-    }
-
     /// Where ⌥⌘0 puts the keys: the open row, or its project's header while
-    /// that is folded; the scratch row when the window is on it.
-    private func initialKeyboardLine(in model: SidebarListModel) -> SidebarItemID {
-        let row = SidebarItemID.row(window.selection.activeContainerID)
-        guard row != .row(.loose), !model.items.contains(where: { $0.id == row }),
-              let projectID = window.selection.activeContainerID.projectID
-        else { return row }
-        return .header(projectID)
+    /// that is folded; the list's first line when the window is on the
+    /// scratch tabs, which have no line here.
+    private func initialKeyboardLine(in model: SidebarListModel) -> SidebarItemID? {
+        SidebarKeyboardCursor.initialLine(active: window.selection.activeContainerID, in: model.items.map(\.id))
     }
 
     /// ↑ ↓ ← → and Return while the sidebar has the keyboard
@@ -596,7 +551,7 @@ struct SessionSidebarView: View {
             isOption: press.modifiers.contains(.option),
             at: keyboardLine,
             in: SidebarKeyboardCursor.Lines(
-                ids: model.items.map(\.id) + [.row(.loose)],
+                ids: model.items.map(\.id),
                 isCollapsed: { headers[$0] ?? true },
                 isFoldOpen: { arrangement.isOpen($1, of: $0) }
             )

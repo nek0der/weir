@@ -6,6 +6,11 @@
 # takes the most recent Weir.app under Xcode DerivedData (we don't rebuild
 # here so the script stays fast and decoupled from the toolchain).
 #
+# WEIR_DEMO_APPEARANCE=dark captures the dark look; WEIR_DEMO_LAYER=needs-attention
+# or all-projects captures that layer open; WEIR_DEMO_TIME=09:15 sets the time of
+# day it shows, 14:30 by default; WEIR_SCREENSHOT_OUT writes the image
+# somewhere other than the hero's path.
+#
 # Usage:
 #   make screenshot
 # or, with a Release build already made:
@@ -24,10 +29,9 @@
 
 set -euo pipefail
 
-OUT_DIR=".github/assets"
-OUT_PATH="${OUT_DIR}/hero.png"
+OUT_PATH="${WEIR_SCREENSHOT_OUT:-.github/assets/hero.png}"
 
-mkdir -p "${OUT_DIR}"
+mkdir -p "$(dirname "${OUT_PATH}")"
 
 # Find the most recently built app under DerivedData. Prefer Release because
 # Debug builds are ad-hoc signed and show extra Gatekeeper noise on first
@@ -219,8 +223,14 @@ for pid in $(descendants "${APP_PID}"); do
   ps -p "${pid}" >/dev/null 2>&1 || continue
   [ "$(ps -o comm= -p "${pid}")" = "/usr/bin/login" ] && continue
   # `lsof` fails on a directory it cannot read; that has to reach the error
-  # below rather than stop the script through errexit.
-  cwd="$(lsof -a -d cwd -Fn -p "${pid}" 2>/dev/null | sed -n 's/^n//p')" || cwd=""
+  # below rather than stop the script through errexit. A shell still starting
+  # has none to read yet, which more panes make likelier, so it gets a moment.
+  cwd=""
+  for _ in {1..10}; do
+    cwd="$(lsof -a -d cwd -Fn -p "${pid}" 2>/dev/null | sed -n 's/^n//p')" || cwd=""
+    [ -n "${cwd}" ] && break
+    sleep 0.5
+  done
   if [ -z "${cwd}" ] || { [ "${cwd}" != "${CAPTURE_HOME}" ] && [[ "${cwd}" != "${CAPTURE_HOME}/"* ]]; }; then
     echo "" >&2
     echo "error: a demo shell runs outside the screenshot's isolated home." >&2

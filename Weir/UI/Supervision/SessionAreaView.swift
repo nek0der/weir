@@ -23,6 +23,8 @@ struct SessionAreaView: View {
         VStack(spacing: 0) {
             SessionHeaderView()
             PaneStripView(container: window.selection.activeContainerID)
+                // Its controls' chips stand over the terminal below it.
+                .zIndex(1)
             SessionTerminalView(ghosttyApp: app)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // A new session between its worktree and its agent: its

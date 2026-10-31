@@ -56,7 +56,7 @@ struct StatusBandModelTests {
         var input = StatusBandModel.Input(projectName: "alpha", checkoutName: "main", paneName: "alpha", folder: "~/alpha")
         input.isUnnamedShell = true
         #expect(StatusBandModel(input, locale: Self.english).path == "alpha › main › Shell")
-        #expect(StatusBandModel(input, locale: Self.japanese).path == "alpha › main › シェル")
+        #expect(StatusBandModel(input, locale: Self.japanese).path == "alpha › main › Shell")
         // The folder still shows on the right.
         #expect(StatusBandModel(input, locale: Self.english).details.map(\.text).contains("~/alpha"))
     }

@@ -22,7 +22,7 @@ enum SidebarItemID: Hashable, Sendable {
         }
     }
 
-    /// The project the line belongs to; `nil` for the scratch row.
+    /// The project the line belongs to; `nil` for the scratch tabs.
     var projectID: UUID? {
         switch self {
         case let .header(id), let .fold(id, _): id

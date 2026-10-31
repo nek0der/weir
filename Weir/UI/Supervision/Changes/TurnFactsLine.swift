@@ -81,6 +81,7 @@ struct TurnFactsLine: View {
         HStack(alignment: .firstTextBaseline, spacing: Layout.spaceHairline) {
             if let files = facts.files {
                 glyph("doc")
+                    .padding(.leading, -Layout.turnLineGlyphOutset)
                 Text(verbatim: files.formatted(.number.locale(locale)))
                     .font(.supervision(.caption).monospacedDigit())
                     .foregroundStyle(SupervisionTokens.muted.color)

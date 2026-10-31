@@ -53,6 +53,21 @@ struct SidebarListModelTests {
         )
     }
 
+    /// The scratch tabs' row, as the left rail's button builds it.
+    private static func scratchRow(_ fixture: Fixture, queue: AttentionQueue = AttentionQueue()) -> SessionSidebarModel.Row {
+        SessionSidebarModel.scratchRow(
+            window: fixture.primary.id,
+            sources: SessionSidebarModel.Sources(
+                session: fixture.session,
+                index: SidebarRowIndex(session: fixture.session, queue: queue),
+                runtimes: [],
+                approvals: ApprovalLedger(),
+                locale: english
+            ),
+            usageLimits: UsageLimits(queue: queue)
+        )
+    }
+
     /// An item of `kind` in a pane of `project`, as the attention list holds
     /// one.
     private static func item(_ kind: AttentionItemKind, in project: Project, _ queue: inout AttentionQueue) {
@@ -73,7 +88,7 @@ struct SidebarListModelTests {
     @Test func noProject_saysThereIsNone_andAProjectListsIt() {
         let fixture = Fixture()
 
-        #expect(SidebarListModel(groups: [], scratchRow: .test(.test(container: .loose))).emptyState == .noProjects)
+        #expect(SidebarListModel(groups: []).emptyState == .noProjects)
         #expect(Self.model(fixture).emptyState == nil)
     }
 
@@ -147,11 +162,19 @@ struct SidebarListModelTests {
     /// a project's list.
     @Test func theScratchRow_isActiveOnlyWhileTheWindowIsOnIt() {
         let fixture = Fixture()
-        #expect(!Self.model(fixture).isScratchActive)
+        #expect(!Self.scratchRow(fixture).isActive)
         fixture.session.setActiveContainer(.loose, in: fixture.primary.id, intent: .person)
-        let model = Self.model(fixture)
-        #expect(model.isScratchActive)
-        #expect(!model.items.contains { $0.id == .row(.loose) })
+        #expect(Self.scratchRow(fixture).isActive)
+        #expect(!Self.model(fixture).items.contains { $0.id == .row(.loose) })
+    }
+
+    /// The command shows the scratch tabs at once, with nothing left over them.
+    @Test func showScratch_closesTheLayers_andGoesToTheScratchTabs() {
+        let fixture = Fixture()
+        fixture.primary.isAllProjectsPresented = true
+        SupervisionWindowActions.showScratch(in: fixture.primary, session: fixture.session)
+        #expect(!fixture.primary.isAllProjectsPresented)
+        #expect(Self.scratchRow(fixture).isActive)
     }
 
     /// With only shells in it, the row wears a shell's mark and no badge, as
@@ -159,12 +182,11 @@ struct SidebarListModelTests {
     @Test func theScratchRow_ofShells_wearsTheShellMarkAlone() {
         let fixture = Fixture()
         _ = fixture.session.openTab(container: .loose, in: fixture.primary.id, intent: .person, selects: false)
-        let row = Self.model(fixture).scratchRow
+        let row = Self.scratchRow(fixture)
         #expect(row.fact.glyph == .shell)
         #expect(row.agentKinds.isEmpty)
         #expect(!row.isMainFolder)
         let home = FileManager.default.homeDirectoryForCurrentUser
-        #expect(SessionRowFactText.scratchTooltip(for: row, startFolder: home, now: .now, locale: Self.english) == "~")
         #expect(SessionRowFactText.scratchHint(startFolder: home, locale: Self.english) == "Its tabs start in the home folder")
     }
 
@@ -182,13 +204,11 @@ struct SidebarListModelTests {
             subject: .runtime(id: run, provider: .claude, paneID: pane, tabID: tab.id, projectID: nil),
             arrivedAt: Date()
         )
-        let row = Self.model(fixture, queue: queue).scratchRow
+        let row = Self.scratchRow(fixture, queue: queue)
         #expect(row.fact.glyph == .needsResponse)
         #expect(row.agentKinds == [.claude])
         #expect(!row.isActive)
         let folder = URL(fileURLWithPath: "/tmp/weir-scratch")
-        #expect(SessionRowFactText.scratchTooltip(for: row, startFolder: folder, now: .now, locale: Self.english)
-            == "/tmp/weir-scratch · Needs response\nOpen the pane to answer in the terminal")
         #expect(SessionRowFactText.scratchHint(startFolder: folder, locale: Self.japanese) == "タブはweir-scratchで開始します")
     }
 
@@ -198,7 +218,7 @@ struct SidebarListModelTests {
         let fixture = Fixture()
         fixture.session.setActiveContainer(.loose, in: fixture.primary.id, intent: .person)
         fixture.session.primarySelection.isChoosingProject = true
-        #expect(!Self.model(fixture).scratchRow.isActive)
+        #expect(!Self.scratchRow(fixture).isActive)
     }
 
     // MARK: - Another window's project

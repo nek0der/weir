@@ -21,6 +21,7 @@ struct TurnReplyLine: View {
             Image(systemName: "arrow.turn.down.right")
                 .font(.supervision(.glyph))
                 .foregroundStyle(SupervisionTokens.closedMark.color)
+                .padding(.leading, -WeirLayout.Supervision.turnLineGlyphOutset)
             Text(verbatim: reply)
                 .font(.supervision(size))
                 .foregroundStyle(SupervisionTokens.muted.color)
@@ -43,6 +44,7 @@ struct TurnDeniedLine: View {
         HStack(alignment: .firstTextBaseline, spacing: WeirLayout.Supervision.spaceXS) {
             Image(systemName: "nosign")
                 .font(.supervision(.glyph))
+                .padding(.leading, -WeirLayout.Supervision.turnLineGlyphOutset)
             Text(verbatim: action)
                 .font(.supervision(.caption))
                 .lineLimit(1)

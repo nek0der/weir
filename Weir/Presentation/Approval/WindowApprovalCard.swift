@@ -25,6 +25,9 @@ struct ApprovalCardState: Equatable {
     /// title bar's Needs Attention list), in global coordinates. The card
     /// stands beside it instead: the row may be off screen.
     var openedFrom: CGRect?
+    /// That control is a rail button: the card opens as the rail's other
+    /// panels do, beside the rail with no arrow.
+    var isOpenedFromRail = false
     /// Whether keyboard focus is in the card. Only then does the card act
     /// as the surface the person works in: it takes Escape, holds back ⌘⏎
     /// in its window, and keeps the window's small panels from opening.
@@ -66,11 +69,13 @@ final class WindowApprovalCard {
         _ approval: ApprovalPresentation,
         from approvals: ApprovalPresentationStore,
         shouldFocusCard: Bool = true,
-        openedFrom: CGRect? = nil
+        openedFrom: CGRect? = nil,
+        isOpenedFromRail: Bool = false
     ) {
         guard approvals.approvalForCard(approval.id) != nil else { return }
         update { card in
             card.openedFrom = openedFrom
+            card.isOpenedFromRail = isOpenedFromRail
             if card.presentedID == approval.id {
                 if shouldFocusCard {
                     card.cardFocusRequestID = approval.id

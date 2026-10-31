@@ -1,5 +1,5 @@
 // SessionSidebarModel.swift
-// Weir — one project's rows in the supervision sidebar, and the scratch row's state.
+// Weir — one project's rows in the supervision sidebar, and the scratch tabs' state.
 
 import Foundation
 import WeirDomain
@@ -227,7 +227,7 @@ struct SessionSidebarModel: Equatable {
                 agentKinds: kinds,
                 lastActivity: input.lastActivity,
                 isActive: isActive,
-                // The scratch row has no worktree either, and no project.
+                // The scratch tabs has no worktree either, and no project.
                 isMainFolder: input.container.projectID != nil && input.container.worktreeID == nil,
                 isMissing: input.isMissing,
                 section: input.section,

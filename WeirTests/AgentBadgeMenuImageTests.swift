@@ -15,8 +15,8 @@ struct AgentBadgeMenuImageTests {
             let image = AgentBadgeMenuImage.image(for: entry.kind, size: .regular, in: appearance)
             // Drawn there and then, not on a later pass, at the field's
             // size, so the menu's badge and the chosen one match.
-            #expect(image.size.width == WeirLayout.Supervision.agentBadgeWidth, "\(entry.kind)")
-            #expect(image.size.height == WeirLayout.Supervision.agentBadgeLargeHeight, "\(entry.kind)")
+            #expect(image.size.width == WeirLayout.Supervision.agentBadgeSize, "\(entry.kind)")
+            #expect(image.size.height == WeirLayout.Supervision.agentBadgeSize, "\(entry.kind)")
             // The next item, or the next opening, reads the same image.
             #expect(AgentBadgeMenuImage.image(for: entry.kind, size: .regular, in: appearance) === image, "\(entry.kind)")
         }
@@ -27,7 +27,7 @@ struct AgentBadgeMenuImageTests {
     @Test func aConversationsBadge_isTheRowsSize_drawnForEachAppearance() {
         let light = AgentBadgeMenuImage.image(for: .claude, size: .row, in: .init(colorScheme: .light, scale: 2))
         let dark = AgentBadgeMenuImage.image(for: .claude, size: .row, in: .init(colorScheme: .dark, scale: 2))
-        #expect(light.size.height == WeirLayout.Supervision.agentBadgeHeight)
+        #expect(light.size.height == WeirLayout.Supervision.agentBadgeSize)
         #expect(AgentBadgeMenuImage.image(for: .claude, size: .row, in: .init(colorScheme: .light, scale: 2)) === light)
         #expect(light !== dark)
     }
@@ -39,8 +39,8 @@ struct AgentBadgeMenuImageTests {
         let appearance = AgentBadgeMenuImage.Appearance(colorScheme: colorScheme, scale: 2)
         let image = AgentBadgeMenuImage.shellImage(in: appearance)
         #expect(!image.isTemplate)
-        #expect(image.size.width == WeirLayout.Supervision.agentBadgeWidth)
-        #expect(image.size.height == WeirLayout.Supervision.agentBadgeLargeHeight)
+        #expect(image.size.width == WeirLayout.Supervision.agentBadgeSize)
+        #expect(image.size.height == WeirLayout.Supervision.agentBadgeSize)
         #expect(AgentBadgeMenuImage.shellImage(in: appearance) === image)
     }
 
