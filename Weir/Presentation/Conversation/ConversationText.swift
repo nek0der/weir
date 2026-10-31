@@ -291,6 +291,6 @@ enum ConversationText {
     static func clock(_ date: Date, locale: Locale, timeZone: TimeZone) -> String {
         var style = Date.FormatStyle(date: .omitted, time: .shortened).locale(locale)
         style.timeZone = timeZone
-        return date.formatted(style)
+        return date.addingTimeInterval(DemoFixture.clockShift).formatted(style)
     }
 }

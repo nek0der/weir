@@ -83,6 +83,11 @@ struct SupervisionCommands: Commands {
                 }
                 .weirShortcut(.allProjects, in: state.settingsStore)
                 .disabled(window == nil)
+                Button("Scratch", systemImage: WeirShortcutAction.showScratch.iconName) {
+                    window?.commands.send(.showScratch)
+                }
+                .weirShortcut(.showScratch, in: state.settingsStore)
+                .disabled(window == nil)
                 Button(window?.areRailsHidden == true ? "Show Icon Bars" : "Hide Icon Bars") {
                     window?.areRailsHidden.toggle()
                 }

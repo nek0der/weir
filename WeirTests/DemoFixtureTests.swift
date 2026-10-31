@@ -15,6 +15,36 @@ import Testing
 @Suite("DemoFixture")
 @MainActor
 struct DemoFixtureTests {
+    @Test func openLayers_haveTheNamesTheCaptureScriptPasses() {
+        #expect(DemoFixture.OpenLayer(rawValue: "needs-attention") == .needsAttention)
+        #expect(DemoFixture.OpenLayer(rawValue: "all-projects") == .allProjects)
+        #expect(DemoFixture.OpenLayer(rawValue: "needsAttention") == nil)
+    }
+
+    @Test func clockShift_movesNowToTheNamedTime_orToTheDefault() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 1, hour: 1, minute: 22)))
+        func shown(_ name: String?) -> DateComponents {
+            calendar.dateComponents(
+                [.hour, .minute],
+                from: now.addingTimeInterval(DemoFixture.clockShift(named: name, now: now, calendar: calendar))
+            )
+        }
+        #expect(shown("09:15").hour == 9)
+        #expect(shown("09:15").minute == 15)
+        #expect(shown(nil).hour == 14)
+        #expect(shown(nil).minute == 30)
+        #expect(shown("25:00").hour == 14, "not a time of day")
+    }
+
+    @Test func appearance_isDarkOnlyWhenNamedSo() {
+        #expect(DemoFixture.colorScheme(named: "dark") == .dark)
+        #expect(DemoFixture.colorScheme(named: "light") != .dark)
+        #expect(DemoFixture.colorScheme(named: nil) != .dark)
+        #expect(DemoFixture.colorScheme(named: "Dark") != .dark)
+    }
+
     @Test("snapshot encodes at the current schema version")
     func snapshot_versionMatchesCurrent() {
         #expect(DemoFixture.snapshot.version == SessionSnapshot.currentVersion)
@@ -28,10 +58,15 @@ struct DemoFixtureTests {
             "feat/overdue-reminders", "fix/tax-rounding", "feat/proration", "fix/webhook-timeout", "docs/invoices-api",
             "fix/csv-export", "agent-3f2a91", "agent-7c0d44", "agent-a19e5b", "agent-e62b07", "duesmith-bisect"
         ])
-        #expect(snap.projects[1].worktrees.map(\.label) == ["fix/page-breaks", "feat/batch-render"])
-        // Each project's main folder is a row too: ten working rows, one
+        #expect(snap.projects[1].worktrees.map(\.label) == [
+            "fix/page-breaks",
+            "feat/batch-render",
+            "feat/embed-fonts",
+            "fix/margin-overflow"
+        ])
+        // Each project's main folder is a row too: twelve working rows, one
         // ready to clean up, and five other worktrees.
-        #expect(snap.projects.reduce(0) { $0 + 1 + $1.worktrees.count } == 16)
+        #expect(snap.projects.reduce(0) { $0 + 1 + $1.worktrees.count } == 18)
         // Weir made the working ones; Git only reported the agents' and
         // the detached one.
         #expect(duesmith.worktrees.map(\.admission) == Array(repeating: .created, count: 6) + Array(repeating: .discovered, count: 5))
@@ -66,7 +101,7 @@ struct DemoFixtureTests {
         #expect(tabs.map(\.id) == [DemoFixture.Slot.reminders, .remindersCodex, .dev, .git].map(\.tabID))
         // The pane strip shows the conversations' titles and the shells'
         // last ones, none of them a name the person gave.
-        #expect(tabs.map(\.displayTitle) == ["Send overdue invoice reminders", "Migrate the reminder schedules", "dev", "git"])
+        #expect(tabs.map(\.displayTitle) == ["Send overdue reminders", "Migrate the schedules", "dev", "git"])
         #expect(tabs.allSatisfy { $0.titleOverride == nil })
         let agent = try #require(tabs.first)
         #expect(agent.splitTree.allLeafIDs() == [DemoFixture.Slot.reminders.paneID])
@@ -109,7 +144,7 @@ struct DemoFixtureTests {
                 }
             }
         }
-        #expect(agentWorktrees == 8)
+        #expect(agentWorktrees == 10)
         let folded = [DemoFixture.csvExportWorktreeID] + DemoFixture.agentWorktreeIDs + [DemoFixture.bisectWorktreeID]
         #expect(emptyRows == folded.map { .worktree(projectID: DemoFixture.duesmithProjectID, worktreeID: $0) })
         #expect(session.tabs(in: .loose).count == 1)
@@ -128,7 +163,7 @@ struct DemoFixtureTests {
             }
         }
         let reminders = DemoFixture.transcript(for: .reminders)
-        #expect(reminders.contains("&& clear && printf '\\033]2;%s\\007' 'Send overdue invoice reminders' && "))
+        #expect(reminders.contains("&& clear && printf '\\033]2;%s\\007' 'Send overdue reminders' && "))
         // Every agent's scene that holds the screen titles the terminal by
         // the conversation that names its tab, so the two cannot drift.
         for tab in DemoFixture.snapshot.tabs {
@@ -266,7 +301,7 @@ struct DemoFixtureTests {
         #expect(turns.allSatisfy { $0.paneID == DemoFixture.Slot.reminders.paneID.uuidString })
         #expect(turns.filter(\.changes.mayHaveChangedFiles).map(\.displayNumber) == [1, 2, 4, 5])
         #expect(turns[3].lastCheck?.exitCode == 1)
-        #expect(turns[4].lastCheck == CheckSummary(command: "pnpm test src/reminders", isFiltered: true, exitCode: 0, earlierFailures: 2))
+        #expect(turns[4].lastCheck == CheckSummary(command: "pnpm test src/reminders", isFiltered: true, exitCode: 0, earlierFailures: 1))
     }
 
     /// The other staged conversations: the review's two answers, and the

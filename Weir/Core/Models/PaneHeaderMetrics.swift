@@ -16,9 +16,15 @@ enum PaneHeaderMetrics {
     /// exactly this much, since the header sits above it rather than over it.
     static let height: CGFloat = 32
 
-    /// Leading and trailing inset of the header's content, smaller than the
-    /// tab row's inset, as a pane may be narrow and its marks sit closer.
-    static let horizontalPadding: CGFloat = 6
+    /// Leading inset of the header's content: the decision bar's, so the two
+    /// lines around a terminal start on one column.
+    static let leadingPadding: CGFloat = 12
+
+    /// Trailing inset of the header's content, smaller, as the menu at its end
+    /// has its own air in its slot. What keeps the header's narrowest form at
+    /// 60pt, the pane minimum's floor (`TerminalSettings.minPaneSizeRange`),
+    /// which a point more would round up to 80.
+    static let trailingPadding: CGFloat = 3
 
     /// Gap between the header's items, and the least the spacer before its
     /// trailing items may shrink to.
@@ -26,9 +32,9 @@ enum PaneHeaderMetrics {
 
     /// Slots for the kind's mark, the "⋯" menu, and the agent state mark. The
     /// kind's mark is an agent's badge or a shell's prompt, as wide as
-    /// `agentBadgeWidth`; the state mark's slot is the tab row's trailing
+    /// `agentBadgeSize`; the state mark's slot is the tab row's trailing
     /// slot, which `AgentStateMark` draws itself into. Tests pin both.
-    static let kindMarkSlot: CGFloat = 18
+    static let kindMarkSlot: CGFloat = 15
     static let menuSlot: CGFloat = 18
     static let markSlot: CGFloat = 16
 
@@ -44,7 +50,7 @@ enum PaneHeaderMetrics {
     /// which it keeps at every width. The spacer between them sits between
     /// two gaps of its own because `HStack` spacing applies around a
     /// `Spacer` like any other child.
-    static let minimumWidth: CGFloat = horizontalPadding * 2
+    static let minimumWidth: CGFloat = leadingPadding + trailingPadding
         + kindMarkSlot
         + itemSpacing // kind's mark to spacer
         + itemSpacing // spacer's minimum length

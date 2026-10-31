@@ -91,7 +91,7 @@ extension WeirFont.Supervision {
         case heading = 15
         /// A sheet's and a popover's title.
         case title = 16
-        /// A dialog's title, the rails' symbols, a drop target's.
+        /// A dialog's title, a drop target's symbol.
         case display = 18
         /// A pane's drop target.
         case symbolLarge = 22

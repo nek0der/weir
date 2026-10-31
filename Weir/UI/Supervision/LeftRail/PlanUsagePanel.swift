@@ -6,6 +6,8 @@ import SwiftUI
 /// The rail's usage icon: a mark while a window nears or reaches its limit,
 /// and the usage panel beside the rail on a click.
 struct RailPlanUsageButton: View {
+    /// Whether this is the one button the rail lights (`RailHighlight`).
+    let isLit: Bool
     @Environment(PlanUsageStore.self) private var store
     @Environment(ProjectWindowState.self) private var window
     @Environment(WorkspaceSession.self) private var session
@@ -21,9 +23,9 @@ struct RailPlanUsageButton: View {
                 name: "Plan Usage",
                 shortcut: nil,
                 isSelected: window.planUsage.isPresented,
+                isLit: isLit,
                 badge: PlanUsageText.railBadge(level),
-                help: PlanUsageText.railHelp(level, locale: locale),
-                badgeLabel: PlanUsageText.levelLabel(level, locale: locale)
+                value: PlanUsageText.levelLabel(level, locale: locale)
             ) {
                 window.togglePlanUsage(session: session)
             }
@@ -61,7 +63,7 @@ struct PlanUsageOverlay: View {
                             columnBottom: anchor.columnBottom - overlayOrigin.y
                         ),
                         container: overlayGeo.size,
-                        metrics: .init(width: Layout.railPanelWidth, inset: Layout.spaceM, gap: Layout.spaceSnug)
+                        metrics: .init(width: Layout.railPanelWidth, inset: Layout.spaceM, gap: Layout.railPanelGap)
                     )
                     // As tall as what it shows, which a window of any
                     // ordinary height has room for; a window too short for

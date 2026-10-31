@@ -16,15 +16,18 @@ extension DemoFixture {
             .project(duesmithProjectID): facts("main", commits: 0, unpushed: 0, uncommitted: 0),
             remindersContainer: facts("feat/overdue-reminders", commits: 2, unpushed: 2, uncommitted: 5),
             .worktree(projectID: duesmithProjectID, worktreeID: taxRoundingWorktreeID):
-                facts("fix/tax-rounding", commits: 0, unpushed: 0, uncommitted: 2),
+                facts("fix/tax-rounding", commits: 0, unpushed: 0, uncommitted: 1),
             .worktree(projectID: duesmithProjectID, worktreeID: prorationWorktreeID):
-                facts("feat/proration", commits: 1, unpushed: 1, uncommitted: 3),
+                facts("feat/proration", commits: 1, unpushed: 1, uncommitted: 1),
             .worktree(projectID: duesmithProjectID, worktreeID: webhookWorktreeID):
                 facts("fix/webhook-timeout", commits: 0, unpushed: 0, uncommitted: 2),
             docsContainer: facts("docs/invoices-api", commits: 1, unpushed: 0, uncommitted: 0),
             // Merged, and nothing left uncommitted: ready to clean up.
             csvExportContainer: facts("fix/csv-export", commits: 0, unpushed: 0, uncommitted: 0),
-            batchRenderContainer: facts("feat/batch-render", commits: 3, unpushed: 0, uncommitted: 0)
+            batchRenderContainer: facts("feat/batch-render", commits: 3, unpushed: 0, uncommitted: 0),
+            pageBreaksContainer: facts("fix/page-breaks", commits: 0, unpushed: 0, uncommitted: 1),
+            embedFontsContainer: facts("feat/embed-fonts", commits: 1, unpushed: 1, uncommitted: 1),
+            marginOverflowContainer: facts("fix/margin-overflow", commits: 0, unpushed: 0, uncommitted: 1)
         ]
     }
 

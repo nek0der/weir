@@ -95,25 +95,6 @@ struct SupervisionFootBarTests {
 
     // MARK: - Each row inside its bar
 
-    /// The sidebar's foot: the scratch row's fill, as tall as its token and
-    /// clear of the rule.
-    @Test func scratchRow_fitsInsideTheFootBar() {
-        for isActive in [false, true] {
-            for size in Self.typeSizes {
-                let row = ScratchRowView(
-                    row: .test(.test(container: .loose), activeContainer: isActive ? .loose : nil),
-                    startFolder: URL(fileURLWithPath: "/tmp"),
-                    now: .now,
-                    isKeyboardSelected: isActive,
-                    actions: SessionRowActions()
-                ) {}
-                let height = Self.height(of: row, typeSize: size)
-                #expect(height == Layout.scratchRowHeight)
-                #expect(height <= Self.roomInsideRules)
-            }
-        }
-    }
-
     /// The review's band's own row: comments to insert with their
     /// destination, "Mark as Viewed" primary with its key, and the row while
     /// the files are read.
@@ -217,31 +198,19 @@ struct SupervisionFootBarTests {
         #expect(Self.height(of: CommitAndPRFootBar(action: nil, perform: { _ in }), typeSize: .large) == 0)
     }
 
-    // MARK: - The three columns in the window
+    // MARK: - The columns in the window
 
-    /// The sidebar's, the decision bar's, and the changes panel's foot bars,
-    /// laid out as the window's body lays out its surfaces, end on the
-    /// body's bottom, share one rule line, and center their rows on one
-    /// line. Laid over the terminal, the panel's bar stands one bar higher.
+    /// The decision bar's and the changes panel's foot bars, laid out as the
+    /// window's body lays out its surfaces, end on the body's bottom, share
+    /// one rule line, and center their rows on one line. Laid over the
+    /// terminal, the panel's bar stands one bar higher.
     @Test(arguments: [false, true])
-    func theThreeColumnsFootBars_shareOneLine(isPanelOver: Bool) async throws {
+    func theColumnsFootBars_shareOneLine(isPanelOver: Bool) async throws {
         try await withTempDir { directory in
             let settings = SettingsStore(directory: directory)
             let book = NamedFrameRecorder(space: Self.bodySpace)
             let model = try #require(Self.decisionBarModels().first)
             let view = HStack(spacing: Layout.surfaceGap) {
-                Self.column(width: Layout.sidebarDefaultWidth) {
-                    SidebarFootBar {
-                        ScratchRowView(
-                            row: .test(.test(container: .loose)),
-                            startFolder: URL(fileURLWithPath: "/tmp"),
-                            now: .now,
-                            actions: SessionRowActions()
-                        ) {}
-                            .recordFrame(in: book, as: "sidebar.row")
-                    }
-                    .recordFrame(in: book, as: "sidebar")
-                }
                 Self.column(width: nil) {
                     DecisionBarFootBar(model: model, paneID: Self.pane, receiptHelp: nil, canStartNew: true, onShowNext: {})
                         .recordFrame(in: book, as: "session")
@@ -261,22 +230,18 @@ struct SupervisionFootBarTests {
 
             let (window, host) = hostedInWindow(view, width: 1200, height: 600)
             defer { window.close() }
-            let frames = await settledValue(in: host) { book.frames.count == 4 ? book.frames : nil }
-            let sidebar = try #require(frames?["sidebar"])
+            let frames = await settledValue(in: host) { book.frames.count == 2 ? book.frames : nil }
             let session = try #require(frames?["session"])
             let panel = try #require(frames?["panel"])
-            let scratch = try #require(frames?["sidebar.row"])
 
-            for bar in [sidebar, session, panel] {
+            for bar in [session, panel] {
                 #expect(bar.height == Layout.footBarHeight)
             }
-            #expect(sidebar.maxY == 600)
-            #expect(session.minY == sidebar.minY)
-            #expect(scratch.midY == sidebar.midY)
+            #expect(session.maxY == 600)
             if isPanelOver {
-                #expect(panel.minY == sidebar.minY - Layout.footBarHeight)
+                #expect(panel.minY == session.minY - Layout.footBarHeight)
             } else {
-                #expect(panel.minY == sidebar.minY)
+                #expect(panel.minY == session.minY)
                 #expect(panel.midY == session.midY)
             }
         }

@@ -452,6 +452,6 @@ struct MultiAgentTabTests {
     }
 
     @Test func theHeadersKindSlot_isABadgesWidth() {
-        #expect(PaneHeaderMetrics.kindMarkSlot == WeirLayout.Supervision.agentBadgeWidth)
+        #expect(PaneHeaderMetrics.kindMarkSlot == WeirLayout.Supervision.agentBadgeSize)
     }
 }

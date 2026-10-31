@@ -38,9 +38,12 @@ struct PaneConversationFrame: View {
         let identity = identity
         ZStack {
             if let identity {
-                UnevenRoundedRectangle(cornerRadii: fit.radii, style: .continuous)
-                    .strokeBorder(ConversationIdentityBar.color(identity), lineWidth: Layout.conversationHoverOutlineWidth)
-                    .padding(fit.insets)
+                PaneFrameStroke(
+                    paneID: paneID,
+                    fit: fit,
+                    color: ConversationIdentityBar.color(identity),
+                    lineWidth: Layout.conversationHoverOutlineWidth
+                )
             }
         }
         // The pane's whole face, frame or not, so its place is known before

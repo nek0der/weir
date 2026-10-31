@@ -77,7 +77,7 @@ struct WindowRoutingTests {
             (.newWorktree, .newWorktree), (.openFolder, .openFolder), (.closeWindow, .closeWindow),
             (.newWindow, .newWindow), (.toggleSidebar, .toggleSidebar),
             (.notificationHistory, .toggleNotificationHistory), (.review, .review),
-            (.reviewLatestTurn, .reviewLatestTurn), (.toggleChangesPanel, .toggleChangesPanel),
+            (.reviewLatestTurn, .reviewLatestTurn), (.toggleChangesPanel, .toggleChangesPanel), (.showScratch, .showScratch),
             (.allProjects, .toggleAllProjects), (.keyboardShortcuts, .toggleKeyboardShortcuts),
             (.showNeedsAttention, .showNeedsAttention), (.showOpenTabs, .showOpenTabs),
             (.focusSidebar, .focusSidebar)

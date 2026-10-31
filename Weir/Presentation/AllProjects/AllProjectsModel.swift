@@ -186,6 +186,12 @@ struct AllProjectsModel: Equatable {
 /// place, so a card that moves to another section as its state changes
 /// stays selected.
 struct AllProjectsSelection: Equatable {
+    /// The cards a section's `column` holds: dealt across in order, so a step
+    /// of the column count stays in its column.
+    static func cards<Card>(of cards: [Card], inColumn column: Int, of columns: Int) -> [Card] {
+        stride(from: column, to: cards.count, by: columns).map { cards[$0] }
+    }
+
     /// One step of the keys: a card at a time sideways, a row of the
     /// grid's columns up and down.
     enum Step: Equatable {

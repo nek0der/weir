@@ -251,7 +251,7 @@ struct NotificationHistoryListTests {
         #expect(agent.heading.words(locale: en).title == "Claude")
         #expect(agent.heading.spokenLabel(locale: en) == "Claude")
         let shell = try #require(list([entry(.commandFinished, minutesAgo: 1, pane: UUID())], place: noPlace).sources.first)
-        #expect(shell.heading.words(locale: ja).title == "シェル")
+        #expect(shell.heading.words(locale: ja).title == "Shell")
         let unknown = try #require(list([entry(minutesAgo: 1, pane: UUID(), agent: nil)], place: noPlace).sources.first)
         #expect(unknown.heading.badge == .none)
         #expect(unknown.heading.words(locale: ja).title == "不明な場所")

@@ -25,12 +25,13 @@ right:
 ### Title bar
 
 The project and worktree menus, back and forward, the command palette field
-(⇧⌘P), and **Needs Attention** with its count.
+(⇧⌘P), **Needs Attention** with its count, and **Changes** with its count of
+unviewed turns.
 
 ### Left rail
 
-**Worktrees** (shows or hides the sidebar), **All Projects**, and
-**Notification History**; below them,
+**Worktrees** (shows or hides the sidebar), **Scratch** (⌥⌘S, the tabs outside
+any project), **All Projects**, and **Notification History**; below them,
 updates (when one is available), **Plan Usage**, keyboard shortcuts, and
 **Settings**.
 
@@ -115,8 +116,8 @@ is used up. A click outside the panel or Escape closes it.
 - A header's **+** opens **New Worktree** for that project (⌘N for the
   window's). The **+** beside the sidebar's **Projects** heading opens a
   folder as a project (⌘O).
-- The **Scratch** row at the bottom holds terminals that belong to no
-  project.
+- **Scratch**, on the left rail under the sidebar's button, holds terminals
+  that belong to no project.
 
 ### Session area
 
@@ -336,6 +337,7 @@ encoding.
 | ⌘1…⌘9 | Go to tab N |
 | ⌥⌘↑ / ⌥⌘↓ | Move the project up / down (while the sidebar has focus; the panes otherwise) |
 | ⌥⌘O | All Projects |
+| ⌥⌘S | Scratch |
 | ⇧⌘N | Notification History |
 | ⇧⌘P / ⌘P | Command Palette / Quick Open |
 | ⌘, | Settings |

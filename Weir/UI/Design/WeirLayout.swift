@@ -96,7 +96,7 @@ enum WeirLayout {
     static let reviewMinWidth: CGFloat = 400
 
     /// Height of a title bar control (the palette field, its buttons).
-    static let titleBarControlHeight: CGFloat = 28
+    static let titleBarControlHeight: CGFloat = 32
 
     /// Corner radius of the transient hover highlight.
     static let titleBarHoverCorner: CGFloat = 7
@@ -135,7 +135,8 @@ enum WeirLayout {
     /// values live in `PaneHeaderMetrics`; these names keep the views
     /// reading from one place with the rest of the layout.
     static let paneHeaderHeight = PaneHeaderMetrics.height
-    static let paneHeaderHorizontalPadding = PaneHeaderMetrics.horizontalPadding
+    static let paneHeaderLeadingPadding = PaneHeaderMetrics.leadingPadding
+    static let paneHeaderTrailingPadding = PaneHeaderMetrics.trailingPadding
     static let paneHeaderItemSpacing = PaneHeaderMetrics.itemSpacing
     static let paneHeaderMenuSlot = PaneHeaderMetrics.menuSlot
     static let paneHeaderWarningSlot = PaneHeaderMetrics.warningSlot
@@ -171,7 +172,9 @@ enum WeirLayout {
     /// command palette's corner radius, and keep this far from the window's
     /// edges.
     static let floatingPanelCornerRadius: CGFloat = 16
-    static let floatingPanelWindowMargin = Supervision.spaceS
+    /// The surfaces' own margin, so a panel held at the window's side lines
+    /// up with them.
+    static let floatingPanelWindowMargin = Supervision.surfaceGap
     /// The inset of a floating panel's content: the rename field's and the
     /// color picker's. The prompt cache panel keeps its own, a little wider
     /// for its sentences and full-width buttons.
@@ -351,18 +354,20 @@ enum WeirLayout {
         static let draggedItemOpacity: Double = 0.4
 
         static let titleBarHeight: CGFloat = 48
-        /// The tool window bars on both edges; icons are 32pt with 18pt art.
+        /// The tool window bar on the leading edge; icons are 32pt with 16pt art.
         static let railWidth: CGFloat = 40
-        static let railButtonSize: CGFloat = 32
-        static let railSymbolSize = WeirFont.Supervision.Size.display
+        /// As tall as the title bar's other controls, which it stands beside.
+        static let railButtonSize = WeirLayout.titleBarControlHeight
+        static let railSymbolSize = WeirFont.Supervision.Size.title
         static let sidebarDefaultWidth = SessionLayoutDefaults.supervisionSidebarWidth
         static let sidebarWidthRange: ClosedRange<CGFloat> = 220...400
-        /// The narrowest main window: both margins, both rails
-        /// with their gaps, the sidebar at its narrowest, and the session
-        /// at the review's minimum, so every surface keeps its own floor.
-        /// 730pt with today's numbers.
+        /// The narrowest main window: both margins, the rail with its gap,
+        /// the sidebar at its narrowest, and the session at the review's
+        /// minimum, so every surface keeps its own floor. 683pt with today's
+        /// numbers.
         static let windowMinWidth = SupervisionWindowWidths.windowMinWidth(
             surfaceGap: surfaceGap,
+            surfaceSpacing: surfaceSpacing,
             railWidth: railWidth,
             sidebarMinWidth: sidebarWidthRange.lowerBound,
             sessionMinWidth: WeirLayout.reviewMinWidth
@@ -374,7 +379,7 @@ enum WeirLayout {
         /// session header, the changes panel's "Changes"), its heading and
         /// buttons centered in it. One height for the three, so their
         /// center lines run across the window on one line, 18pt under the
-        /// body's top, where the rails' first icons are centered too
+        /// body's top, where the rail's first icon is centered too
         /// (`railTopInset`).
         static let surfaceHeadingLineHeight: CGFloat = 36
         /// Where a surface's heading line starts and ends: in line with the
@@ -422,18 +427,16 @@ enum WeirLayout {
         /// Turns"): a small neutral tag.
         static let reviewFileMarkCornerRadius: CGFloat = 4
         static let reviewFileMarkHorizontalPadding = spaceSnug
-        /// The row at the foot of each of the window's three columns: the
-        /// scratch row in the sidebar, the decision bar or the review's band
-        /// in the session, and the changes panel's primary action. One
-        /// height, with the rule drawn inside it (`SupervisionFootBar`), so
-        /// the three rules sit on one line across the window and the
-        /// buttons in them on one center line.
+        /// The row at the foot of a column of the window: the decision bar or
+        /// the review's band in the session, and the changes panel's primary
+        /// action. One height, with the rule drawn inside it
+        /// (`SupervisionFootBar`), so the rules sit on one line across the
+        /// window and the buttons in them on one center line.
         static let footBarHeight: CGFloat = 32
         /// The rule along a foot bar's top, inside its height.
         static let footBarRuleWidth: CGFloat = 1
         /// The center column's foot bar insets (the decision bar and what
-        /// stands in its place), and the default. The sidebar's foot bar
-        /// keeps its list's 8/8 (`SidebarFootBar`), and the changes panel's
+        /// stands in its place), and the default. The changes panel's keeps
         /// its section's 16/16 (`CommitAndPRFootBar`). A step less at the
         /// trailing end, where a button's own padding stands inside its
         /// edge, so the review's band keeps a fit at the review's least
@@ -451,6 +454,10 @@ enum WeirLayout {
         static let surfaceGap = spaceSnug
         /// The `line` edge each surface draws inside its corners.
         static let surfaceBorderWidth: CGFloat = 1
+        /// Between two surfaces, which each bring a border to the gap where
+        /// the window's margin has one: a border less than the margin, so
+        /// fill to fill the two read as the same gap.
+        static let surfaceSpacing = surfaceGap - surfaceBorderWidth
         /// The amber or red frame inside a pane whose agent waits on the
         /// person or stopped (`PaneAttentionFrame`). 2pt read heavier
         /// than the state it marks; at 1.5pt (3px on a Retina display) it
@@ -473,10 +480,10 @@ enum WeirLayout {
 
         // MARK: Session header
 
-        /// Either side of the header's line (a surface heading's), and
+        /// Either side of the header's line (the pane strip's), and
         /// between its glyph, its name, and its chips; the chips sit closer
         /// to one another.
-        static let sessionHeaderHorizontalInset = surfaceHeadingInset
+        static let sessionHeaderHorizontalInset = paneStripInset
         static let sessionHeaderSpacing = spaceS
         static let sessionHeaderChipSpacing = spaceSnug
 
@@ -485,6 +492,9 @@ enum WeirLayout {
         /// Between the strip's tabs, and from its edges.
         static let paneStripSpacing = spaceHairline
         static let paneStripInset = spaceM
+        /// How far a card line's leading symbol moves out, past the empty
+        /// margin of its own drawing, so its ink stands on the title's left edge.
+        static let turnLineGlyphOutset: CGFloat = 1
         /// The rule under the strip, which the selected tab opens onto the
         /// terminal below it.
         static let paneStripRuleWidth: CGFloat = 1
@@ -510,6 +520,9 @@ enum WeirLayout {
         /// under the edge, narrow enough to leave the cut tab's title.
         static let paneStripEdgeFadeWidth: CGFloat = 24
         static let paneStripAddButtonWidth: CGFloat = 28
+        /// How far the "+" square stands past the strip's inset, its glyph
+        /// being narrower than the square by twice this.
+        static let paneStripAddGlyphOutset: CGFloat = 6
         /// A tab's marks: the dot for output since it was last shown, and
         /// the boxed words (tmux, exit 1).
         static let tabUnreadDotSize: CGFloat = 7
@@ -589,10 +602,6 @@ enum WeirLayout {
         /// The dot beside the project's name for another project's items.
         static let otherProjectsDotSize: CGFloat = 7
         static let worktreeSymbolSize = WeirFont.Supervision.Size.icon
-        /// The Needs Attention control: a bordered button whose count sits
-        /// in a badge at least this wide and tall.
-        static let attentionButtonCornerRadius: CGFloat = 7
-        static let attentionCountMinSize: CGFloat = 20
         static let needsAttentionListWidth: CGFloat = 380
         /// The list's heading: its line, as tall as its Next Action button,
         /// with this above and below it.
@@ -647,17 +656,11 @@ enum WeirLayout {
         /// The column the time and the agent badge share, so every row cuts
         /// its name and its fact at the same place.
         static let sessionRowTrailingColumnWidth: CGFloat = 32
-        /// The scratch row's fill, centered in the sidebar's foot bar with
-        /// 3pt above and below it.
-        static let scratchRowHeight: CGFloat = 26
         /// A row the arrow keys are on.
         static let keyboardRingWidth: CGFloat = 2
-        /// An agent's badge: two letters on its color, or the shell's
-        /// outline. 16pt tall on a row, 18pt on its own (the scratch row and
-        /// a card).
-        static let agentBadgeWidth: CGFloat = 18
-        static let agentBadgeHeight: CGFloat = 16
-        static let agentBadgeLargeHeight: CGFloat = 18
+        /// An agent's badge, square: two letters on its color, or the shell's
+        /// outline.
+        static let agentBadgeSize: CGFloat = 15
         /// Between the badges of two kinds of agent: enough that a tab's
         /// state mark, which hangs off a badge's corner, clears the next.
         static let agentBadgeSpacing: CGFloat = 5
@@ -691,14 +694,14 @@ enum WeirLayout {
         /// A failing check's ✕ and a running check's dot on a pull
         /// request's mark: their disc, the ring of the surface around it,
         /// and how far a corner badge hangs out.
-        static let checksBadgeSize: CGFloat = 9
-        static let checksBadgeRingWidth: CGFloat = 1.5
-        static let checksBadgeOffset: CGFloat = 3
+        static let checksBadgeSize: CGFloat = 7
+        static let checksBadgeRingWidth: CGFloat = 1
+        static let checksBadgeOffset: CGFloat = 2
         /// Passing checks' green check: a box a little larger than the
         /// discs, since a line with no disc reads smaller, and a line
         /// thin enough that it stays lighter than either disc.
-        static let checksPassedSize: CGFloat = 10
-        static let checksPassedLineWidth: CGFloat = 1.6
+        static let checksPassedSize: CGFloat = 8
+        static let checksPassedLineWidth: CGFloat = 1.3
 
         // MARK: Chips
 
@@ -712,8 +715,9 @@ enum WeirLayout {
         /// The project ▾ and the worktree ▾, one width: they open side by
         /// side from one title bar, and the worktree's paths need the room.
         static let titleBarDropdownWidth: CGFloat = 440
-        /// Below its control, the dropdown nearly touches it.
-        static let titleBarDropdownGap = spaceHairline
+        /// Below its control, the dropdown's top lines up with the surfaces'
+        /// under the title bar.
+        static let titleBarDropdownGap = (titleBarHeight - WeirLayout.titleBarControlHeight) / 2
         /// The pane strip's "+" menu keeps its own air below the tab strip.
         static let addTabMenuGap = spaceSnug
         static let addTabMenuItemCornerRadius = smallControlCornerRadius
@@ -788,6 +792,12 @@ enum WeirLayout {
         /// A panel that opens beside the rail from its bottom group: the
         /// update popover and the plan usage panel, one width for both.
         static let railPanelWidth: CGFloat = 340
+        /// The chip naming an icon control under the pointer.
+        static let floatingChipCornerRadius: CGFloat = 10
+        /// From a rail button to the panel it opens: past the rest of the
+        /// rail and its gap, so the panel's edge lines up with the surface
+        /// beside the rail under it.
+        static let railPanelGap = (railWidth - railButtonSize) / 2 + surfaceGap
         /// A limit window's bar: thick enough to read its share at a glance,
         /// thin enough to stay under the number beside it.
         static let usageBarHeight: CGFloat = 6
@@ -851,7 +861,7 @@ enum WeirLayout {
         static func turnFirstColumnWidth(hasConversation: Bool, digits: Int) -> CGFloat {
             let numberColumn = turnNumberWidth(digits: max(digits, 1)) + turnUnviewedPillPadding.width
             guard hasConversation else { return numberColumn }
-            let lead = conversationIdentityBarWidth + conversationIdentityBarSpacing + agentBadgeWidth
+            let lead = conversationIdentityBarWidth + conversationIdentityBarSpacing + agentBadgeSize
             return max(numberColumn, lead - turnUnviewedPillPadding.width)
         }
 

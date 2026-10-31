@@ -64,8 +64,7 @@ enum SidebarFoldDefault {
 }
 
 /// The sidebar's list: each project's header, in the window's order,
-/// with its rows under it while it is open, then the scratch row, drawn
-/// apart in the foot bar. `items` lays every line out flat for the keys and
+/// with its rows under it while it is open. `items` lays every line out flat for the keys and
 /// lookups; the view draws `groups`, a section per project.
 struct SidebarListModel: Equatable {
     /// One line of the list, in the order the sidebar draws them.
@@ -96,11 +95,8 @@ struct SidebarListModel: Equatable {
 
     let groups: [Group]
     let items: [Item]
-    /// The scratch row's state, read as a worktree's row is: its tabs run
-    /// agents that wait and stop as any others do.
-    let scratchRow: SessionSidebarModel.Row
 
-    init(groups: [Group], scratchRow: SessionSidebarModel.Row) {
+    init(groups: [Group]) {
         self.groups = groups
         items = groups.flatMap { group in
             [Item.header(group.header)] + (group.rows?.items ?? []).map { item in
@@ -110,11 +106,6 @@ struct SidebarListModel: Equatable {
                 }
             }
         }
-        self.scratchRow = scratchRow
-    }
-
-    var isScratchActive: Bool {
-        scratchRow.isActive
     }
 
     /// The rows built for `projectID`, in the order they are listed; none
@@ -129,8 +120,7 @@ struct SidebarListModel: Equatable {
     }
 
     /// What the list says in place of its headers: with no project there
-    /// is none to list, which the sidebar says rather than leave a blank
-    /// over the scratch row.
+    /// is none to list, which the sidebar says rather than leave a blank.
     var emptyState: EmptyState? {
         groups.isEmpty ? .noProjects : nil
     }

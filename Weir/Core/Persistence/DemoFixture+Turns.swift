@@ -142,7 +142,7 @@ extension DemoFixture {
                 seconds: 120,
                 prompt: "How does the mailer handle bounced emails?",
                 reply: "The mail provider reports a bounce through a webhook, and the mailer then marks the contact unreachable and "
-                    + "sends it no more reminders.",
+                    + "stops sending it reminders.",
                 changes: nil,
                 usage: TurnUsage(inputTokens: 900, cacheWriteTokens: 6000, cacheReadTokens: 90000, outputTokens: 1200)
             ),
@@ -151,7 +151,7 @@ extension DemoFixture {
                 endedSecondsAgo: 478,
                 seconds: 662,
                 prompt: "Show the reminder settings on the billing page",
-                reply: "The settings save, but a paid invoice still gets a reminder, so two tests fail. I'll fix that in the next turn.",
+                reply: "The settings save, but a paid invoice still gets a reminder, so two tests fail.",
                 changes: Changes(files: 2, added: 47, removed: 9),
                 check: check(1),
                 earlierChecks: [1],
@@ -162,13 +162,13 @@ extension DemoFixture {
                 endedSecondsAgo: remindersFinishedSecondsAgo,
                 seconds: 330,
                 prompt: remindersLastPrompt,
-                reply: "Reminders now go only to invoices that are still open past their due date. Paid, voided, and disputed invoices "
-                    + "are skipped, and a payment that arrives after the job starts cancels the reminder before it is sent. INV-1042 "
-                    + "($1,240.00, 14 days overdue) gets one; INV-1043, paid this morning, does not. The two tests that failed last "
-                    + "turn pass, and three new ones cover partial payments.",
+                reply: "Reminders now go only to open, past-due invoices. Paid, voided, and disputed ones are skipped, and a "
+                    + "payment that arrives after the job starts cancels the reminder before it is sent. INV-1042 ($1,240.00, "
+                    + "14 days overdue) gets one; INV-1043, paid yesterday, does not. The two failing tests now pass, and three "
+                    + "new ones cover partial payments.",
                 changes: Changes(files: 2, added: 89, removed: 4),
                 check: check(0),
-                earlierChecks: [1, 1],
+                earlierChecks: [1],
                 usage: TurnUsage(inputTokens: 3000, cacheWriteTokens: 75000, cacheReadTokens: 2_100_000, outputTokens: 6200)
             )
         ]
@@ -185,19 +185,18 @@ extension DemoFixture {
                 endedSecondsAgo: remindersCodexFinishedSecondsAgo,
                 seconds: 95,
                 prompt: remindersCodexLastPrompt,
-                reply: "The migration creates reminder_schedules with the invoice, the send date, and a unique key on both, so a "
-                    + "schedule is written once per invoice. Run pnpm migrate to apply it.",
+                reply: "Adds reminder_schedules with one row per invoice and send date. Run pnpm migrate to apply it.",
                 changes: Changes(files: 1, added: 24, removed: 0),
                 usage: TurnUsage(inputTokens: 1649, cacheWriteTokens: 0, cacheReadTokens: 94464, outputTokens: 807)
             )
         ]
     }
 
-    /// What the selected worktree's turns changed altogether, as the
-    /// panel's one comparison counts it (`WorktreeChanges.Git.inert`):
-    /// every staged turn's files, none shared, their lines added up.
+    /// What the panel's one comparison counts (`WorktreeChanges.Git.inert`),
+    /// which it heads "Unviewed range": the three unviewed turns' files, none
+    /// shared, their lines added up.
     static var worktreeCounts: ChangeSummary {
-        .changed(files: 11, added: 369, removed: 21)
+        .changed(files: 5, added: 160, removed: 13)
     }
 
     private static var prReviewTurns: [StagedTurn] {
@@ -215,7 +214,7 @@ extension DemoFixture {
                 endedSecondsAgo: prReviewFinishedSecondsAgo,
                 seconds: 250,
                 prompt: prReviewLastPrompt,
-                reply: "Three problems, most serious first: Major: reopening an invoice applies its credit note twice. applyCredits "
+                reply: "Three problems. Major: reopening an invoice applies its credit note twice. applyCredits "
                     + "runs again on reopen and does not check whether the credit was already applied. · Minor: formatMoney ignores "
                     + "the account's currency setting. · Nit: two tests in invoices.test.ts share a name.",
                 changes: nil

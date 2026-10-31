@@ -27,7 +27,8 @@ import Foundation
 // two as one parameter and keeps the later assignment, so zsh reads
 // `PROMPT`, where `%%` is a percent sign, and bash reads `PS1`, where `\$`
 // is a dollar sign; each form would show its escape literally in the other.
-// Lines are at most 70 columns, which the hero's 104-column terminal holds.
+// The selected agent's prose and input box run nearly to the edge of the hero's
+// 111-column terminal, as an agent's own wrapping does; no line passes 108.
 
 extension DemoFixture {
     /// How a line is drawn, as the SGR parameter of its color.
@@ -93,7 +94,7 @@ extension DemoFixture {
 
     /// The command each pane runs as it opens. A shell with nothing to
     /// show opens at its prompt in its folder.
-    static func transcript(for slot: Slot) -> String {
+    static func transcript(for slot: Slot) -> String { // swiftlint:disable:this cyclomatic_complexity
         if let prompt = emptyShellPrompts[slot] {
             return scene([], prompt: prompt, end: .prompt)
         }
@@ -110,6 +111,8 @@ extension DemoFixture {
         case .docs: scene(docsScreen, prompt: "duesmith-docs-invoices-api", end: .holdsScreen, title: title)
         case .pageBreaks: scene(pageBreaksScreen, prompt: "pdf-worker-fix-page-breaks", end: .holdsScreen, title: title)
         case .batchRender: scene(batchRenderScreen, prompt: "pdf-worker-feat-batch-render", end: .holdsScreen, title: title)
+        case .embedFonts: scene(embedFontsScreen, prompt: "pdf-worker-feat-embed-fonts", end: .holdsScreen, title: title)
+        case .marginOverflow: scene(marginOverflowScreen, prompt: "pdf-worker-fix-margin-overflow", end: .holdsScreen, title: title)
         case .pdfMain, .dotfiles, .scratch: scene([], prompt: "", end: .prompt)
         }
     }
@@ -134,8 +137,7 @@ extension DemoFixture {
             Line(),
             Line(.dim, "⏺ Bash(pnpm test src/reminders)"),
             Line(.dim, "  ⎿  ✗ 2 failed, 11 passed (src/reminders)"),
-            Line(.dim, "⏺ The settings save, but a paid invoice still gets a reminder,"),
-            Line(.dim, "  so two tests fail. I'll fix that in the next turn."),
+            Line(.dim, "⏺ The settings save, but a paid invoice still gets a reminder, so two tests fail."),
             Line(.dim, "✻ Worked for 11m 2s"),
             Line(),
             Line(.plain, "> \(remindersLastPrompt)"),
@@ -150,14 +152,15 @@ extension DemoFixture {
             Line(.dim, "  ⎿  Wrote 58 lines"),
             Line(),
             Line(.accent, "⏺ Bash(pnpm test src/reminders)"),
+            Line(.failure, "  ⎿  ✗ 1 failed, 15 passed (src/reminders)"),
+            Line(),
+            Line(.accent, "⏺ Bash(pnpm test src/reminders)"),
             Line(.success, "  ⎿  ✓ 16 passed (src/reminders)"),
             Line(),
-            Line(.plain, "⏺ Reminders now go only to invoices that are still open past their"),
-            Line(.plain, "  due date. Paid, voided, and disputed invoices are skipped, and a"),
-            Line(.plain, "  payment that arrives after the job starts cancels the reminder"),
-            Line(.plain, "  before it is sent. INV-1042 ($1,240.00, 14 days overdue) gets one;"),
-            Line(.plain, "  INV-1043, paid this morning, does not. The two tests that failed"),
-            Line(.plain, "  last turn pass, and three new ones cover partial payments."),
+            Line(.plain, "⏺ Reminders now go only to open, past-due invoices. Paid, voided, and disputed ones are skipped, and a"),
+            Line(.plain, "  payment that arrives after the job starts cancels the reminder before it is sent. INV-1042 ($1,240.00,"),
+            Line(.plain, "  14 days overdue) gets one; INV-1043, paid yesterday, does not. The two failing tests now pass, and three"),
+            Line(.plain, "  new ones cover partial payments."),
             Line(),
             Line(.dim, "✻ Worked for 5m 30s"),
             Line()
@@ -172,9 +175,8 @@ extension DemoFixture {
             Line(),
             Line(.accent, "• Added apps/api/migrations/20261020_reminder_schedules.sql (+24)"),
             Line(),
-            Line(.plain, "• The migration creates reminder_schedules with the invoice, the"),
-            Line(.plain, "  send date, and a unique key on both, so a schedule is written"),
-            Line(.plain, "  once per invoice. Run pnpm migrate to apply it."),
+            Line(.plain, "• Adds reminder_schedules with one row per invoice and send date."),
+            Line(.plain, "  Run pnpm migrate to apply it."),
             Line(),
             Line(.plain, "› ")
         ]
@@ -184,9 +186,9 @@ extension DemoFixture {
     /// terminal font has, so its edges line up.
     private static var claudeInput: [Line] {
         [
-            Line(.plain, "╭" + String(repeating: "─", count: 66) + "╮"),
-            Line(.plain, "│ >" + String(repeating: " ", count: 64) + "│"),
-            Line(.plain, "╰" + String(repeating: "─", count: 66) + "╯"),
+            Line(.plain, "╭" + String(repeating: "─", count: 106) + "╮"),
+            Line(.plain, "│ >" + String(repeating: " ", count: 104) + "│"),
+            Line(.plain, "╰" + String(repeating: "─", count: 106) + "╯"),
             Line(.dim, "  ? for shortcuts")
         ]
     }
@@ -213,7 +215,7 @@ extension DemoFixture {
     private static var gitLog: [Line] {
         [
             Line(.plain, "$ git log --oneline -4"),
-            Line(.plain, "4c1d9e2 feat(jobs): find overdue invoices every morning"),
+            Line(.plain, "4c1d9e2 feat(jobs): find overdue invoices every hour"),
             Line(.plain, "9a07f3b feat(reminders): sketch the reminder schedule model"),
             Line(.plain, "e52b8aa fix(invoices): keep the memo when an invoice is duplicated"),
             Line(.plain, "71d3c40 chore(deps): bump the test runner")
@@ -271,7 +273,7 @@ extension DemoFixture {
             Line(.accent, "⏺ Bash(pnpm test src/billing)"),
             Line(.dim, "  ⎿  Running…"),
             Line(),
-            Line(.accent, "✻ Running tests… (1m 12s · esc to interrupt)")
+            Line(.accent, "✻ Running tests… (4m 20s · esc to interrupt)")
         ]
     }
 
@@ -286,7 +288,7 @@ extension DemoFixture {
             Line(),
             Line(.accent, "⏺ Update(apps/api/src/webhooks/deliver.test.ts)"),
             Line(.dim, "  ⎿  Updated with 3 additions"),
-            Line(.failure, "  ⎿  API Error: Request timed out."),
+            Line(.failure, "  ⎿  API timed out."),
             Line()
         ]
     }
@@ -313,6 +315,26 @@ extension DemoFixture {
             Line(.accent, "• Edited crates/layout/src/paginate.rs (+24 -9)"),
             Line()
         ] + codexCommandPrompt("cargo test -p layout")
+    }
+
+    private static var embedFontsScreen: [Line] {
+        [
+            Line(.plain, "> Embed the fonts so invoices print the same everywhere"),
+            Line(),
+            Line(.accent, "⏺ Update(crates/render/src/fonts.rs)"),
+            Line(.dim, "  ⎿  Updated with 41 additions and 6 removals"),
+            Line(),
+            Line(.accent, "⏺ Bash(cargo build -p render)")
+        ]
+    }
+
+    private static var marginOverflowScreen: [Line] {
+        [
+            Line(.plain, "› Keep long addresses inside the page margins"),
+            Line(),
+            Line(.accent, "• Read crates/layout/src/margin.rs"),
+            Line(.accent, "• Editing crates/layout/src/margin.rs")
+        ]
     }
 
     private static var batchRenderScreen: [Line] {

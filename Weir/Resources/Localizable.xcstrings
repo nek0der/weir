@@ -465,7 +465,7 @@
       }
     },
     "Open Tabs": {
-      "comment": "The pane strip's leading button, its tooltip and VoiceOver name, and the heading of the list of the session's tabs it opens",
+      "comment": "The pane strip's leading button, its hover chip and VoiceOver name, and the heading of the list of the session's tabs it opens",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -3290,7 +3290,7 @@
       }
     },
     "Needs Attention · %lld": {
-      "comment": "The attention count: the title bar pill, the project menu, and the notification after the Mac wakes",
+      "comment": "The attention count: the title bar tray, the project menu, and the notification after the Mac wakes",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -13659,7 +13659,7 @@
       }
     },
     "Needs Attention list (%@; Next Action: %@)": {
-      "comment": "Title bar pill tooltip; the shortcut that opens the list, the shortcut for the next item",
+      "comment": "Title bar tray, VoiceOver hint; the shortcut that opens the list, the shortcut for the next item",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -13676,7 +13676,7 @@
       }
     },
     "Needs Attention list (%@)": {
-      "comment": "Title bar pill tooltip; the shortcut that opens the list",
+      "comment": "Title bar tray, VoiceOver hint; the shortcut that opens the list",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -13693,7 +13693,7 @@
       }
     },
     "Needs Attention list (Next Action: %@)": {
-      "comment": "Title bar pill tooltip; the shortcut for the next item",
+      "comment": "Title bar tray, VoiceOver hint; the shortcut for the next item",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -13710,7 +13710,7 @@
       }
     },
     "Needs Attention list": {
-      "comment": "Title bar pill tooltip with no shortcuts bound",
+      "comment": "Title bar tray, VoiceOver hint with no shortcuts bound",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -13965,7 +13965,7 @@
       }
     },
     "%@ (%@)": {
-      "comment": "Tooltip of a rail icon: its name, then the key that does the same",
+      "comment": "VoiceOver hint of an icon control, and a tooltip: its name, then the key that does the same",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -14135,7 +14135,7 @@
       }
     },
     "Scratch": {
-      "comment": "Sidebar row for the tabs outside any project",
+      "comment": "The tabs outside any project: the left rail, the View menu, shortcuts, and wherever a place is named",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -14163,7 +14163,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "シェル"
+            "value": "Shell"
           }
         }
       }
@@ -14397,7 +14397,7 @@
       }
     },
     "Add Tab to %@": {
-      "comment": "The pane strip’s + tooltip and its menu heading; argument: the branch or folder the tab opens in",
+      "comment": "The pane strip’s + hover chip and its menu heading; argument: the branch or folder the tab opens in",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -14919,7 +14919,7 @@
       }
     },
     "Changes": {
-      "comment": "The changes panel: its rail button, its head, and its name in VoiceOver",
+      "comment": "The changes panel: its title bar button and hover chip, its head, and its name in VoiceOver",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -16945,7 +16945,7 @@
       }
     },
     "Needs Attention": {
-      "comment": "Title bar Needs Attention button, beside its count; also a settings search keyword for the unread-turn review setting",
+      "comment": "Title bar tray's hover chip, the list's and All Projects' heading; also a settings search keyword for the unread-turn notification",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -21843,7 +21843,7 @@
       }
     },
     "Its tabs start in %@": {
-      "comment": "Sidebar, VoiceOver: the scratch row and the folder its new tabs start in",
+      "comment": "Left rail, VoiceOver: the Scratch button and the folder its new tabs start in",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -21860,7 +21860,7 @@
       }
     },
     "Its tabs start in the home folder": {
-      "comment": "Sidebar, VoiceOver: the scratch row, whose new tabs start in the home folder",
+      "comment": "Left rail, VoiceOver: the Scratch button, whose new tabs start in the home folder",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -23076,7 +23076,7 @@
       }
     },
     "Moved the tab to %@": {
-      "comment": "Sidebar, VoiceOver: a dragged tab was dropped on the scratch row, named here",
+      "comment": "VoiceOver: a dragged tab was dropped on the scratch tabs, named here",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -23110,7 +23110,7 @@
       }
     },
     "Moved the pane to %@": {
-      "comment": "Sidebar, VoiceOver: a dragged pane was dropped on the scratch row, named here",
+      "comment": "VoiceOver: a dragged pane was dropped on the scratch tabs, named here",
       "localizations": {
         "en": {
           "stringUnit": {

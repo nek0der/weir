@@ -97,10 +97,7 @@ extension SidebarListModel {
             )
             return Group(header: header, rows: rows)
         }
-        self.init(
-            groups: groups,
-            scratchRow: SessionSidebarModel.scratchRow(window: window, sources: rowSources, usageLimits: usageLimits)
-        )
+        self.init(groups: groups)
     }
 
     /// The approvals and questions waiting among a project's `items`, in

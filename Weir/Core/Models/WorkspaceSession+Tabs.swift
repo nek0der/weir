@@ -181,10 +181,10 @@ extension WorkspaceSession {
     }
 
     /// The launch's one rule for tabs: a session with no tab at
-    /// all opens one in the primary's row, the scratch row on a first
+    /// all opens one in the primary's row, the scratch tabs on a first
     /// launch, so the window has a terminal to draw. Put there for the
     /// window, not chosen by the person. A session with any tab opens none,
-    /// even with no scratch tab: the primary saved on the scratch row comes
+    /// even with no scratch tab: the primary saved on the scratch tabs comes
     /// back on the empty row (`restore(from:)`). Returns the tab opened.
     @discardableResult
     func openLaunchTabIfNone() -> Tab? {
@@ -357,7 +357,7 @@ extension WorkspaceSession {
         // left with no tab selected, the row would list a tab its window
         // does not draw.
         for holder in selectionTargets(where: { $0 == target && $1 == nil }) {
-            // Choosing a project, a window stands on the scratch row without
+            // Choosing a project, a window stands on the scratch tabs without
             // showing it (`holdsSelection`).
             if case let .window(selection) = holder, selection.isChoosingProject {
                 continue

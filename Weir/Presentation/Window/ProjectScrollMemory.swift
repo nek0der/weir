@@ -65,7 +65,7 @@ struct ProjectScrollMemory: Equatable {
     /// now shows of the project, so the list shows it. So does a list whose
     /// remembered row is gone (a session closed, a turn deleted), or one
     /// with nothing remembered: a project shown for the first time. A
-    /// selected row the list does not have (the scratch row) leaves the
+    /// selected row the list does not have (the scratch tabs) leaves the
     /// remembered place. `nil` when there is nothing to go to: the list is
     /// left where it is.
     static func target<ID: Hashable>(remembered place: Place<ID>?, selected: ID?, in rows: [ID]) -> Target<ID>? {

@@ -8,7 +8,7 @@
 // whole truth for that process.
 //
 // The scene is duesmith, an invoicing web app nobody makes, an afternoon with
-// nine agents across its TypeScript monorepo, the Rust worker that
+// eleven agents across its TypeScript monorepo, the Rust worker that
 // renders its invoice PDFs, and a dotfiles folder. The sidebar lists all
 // three under their headers: duesmith's working worktrees, one ready to clean
 // up, and the agents' own worktrees Git reports; pdf-worker folded, with its
@@ -30,6 +30,42 @@ enum DemoFixture {
         }
         return !value.isEmpty
     }()
+
+    /// The appearance demo mode renders in, pinned so a capture does not follow
+    /// the contributor's Mac. Set `WEIR_DEMO_APPEARANCE=dark` for the dark one.
+    static let colorScheme = colorScheme(named: ProcessInfo.processInfo.environment["WEIR_DEMO_APPEARANCE"])
+
+    /// Anything but `dark` is light, so the README's capture stays what it is
+    /// unless a run asks otherwise.
+    static func colorScheme(named name: String?) -> ColorSchemePreference {
+        name == "dark" ? .dark : .light
+    }
+
+    /// What demo mode adds to a time of day it shows, so a capture reads the
+    /// same whenever it is taken: `WEIR_DEMO_TIME` (`HH:mm`) or the default stands
+    /// for the moment the app started. Only the clock as drawn moves, so "1m"
+    /// and the turns' order stay what the fixture says. No shift outside demo mode.
+    static let clockShift = isDemoActive ? clockShift(named: ProcessInfo.processInfo.environment["WEIR_DEMO_TIME"], now: Date()) : 0
+
+    /// How far `now` is from the named time on its own day; a name that is not a
+    /// time of day stands for the default, an afternoon's.
+    static func clockShift(named name: String?, now: Date, calendar: Calendar = .current) -> TimeInterval {
+        let parts = (name ?? "").split(separator: ":").compactMap { Int($0) }
+        let isTime = parts.count == 2 && (0..<24).contains(parts[0]) && (0..<60).contains(parts[1])
+        let (hour, minute) = isTime ? (parts[0], parts[1]) : (14, 30)
+        guard let target = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: now) else { return 0 }
+        return target.timeIntervalSince(now)
+    }
+
+    /// What a capture shows open over the window, named by `WEIR_DEMO_LAYER`.
+    enum OpenLayer: String, CaseIterable {
+        case needsAttention = "needs-attention"
+        case allProjects = "all-projects"
+    }
+
+    /// The layer demo mode opens; `nil` for the plain window, and for a name it
+    /// does not know, so a mistyped one shows as the plain capture.
+    static let openLayer = isDemoActive ? ProcessInfo.processInfo.environment["WEIR_DEMO_LAYER"].flatMap(OpenLayer.init(rawValue:)) : nil
 
     // MARK: - Stable IDs
 
@@ -60,6 +96,8 @@ enum DemoFixture {
     /// pdf-worker's.
     static let pageBreaksWorktreeID = fixtureID(0xC0, 6)
     static let batchRenderWorktreeID = fixtureID(0xC0, 7)
+    static let embedFontsWorktreeID = fixtureID(0xC0, 0x40)
+    static let marginOverflowWorktreeID = fixtureID(0xC0, 0x41)
     /// duesmith's worktree whose pull request was merged, with nothing open
     /// or uncommitted in it: ready to clean up.
     static let csvExportWorktreeID = fixtureID(0xC0, 8)
@@ -90,6 +128,10 @@ enum DemoFixture {
         /// conversations' turns in one list. Last, so the earlier
         /// slots keep their ids.
         case remindersCodex
+        /// pdf-worker's two running agents, for All Projects' Running section.
+        /// Its project stands folded in the window, so they change no row there.
+        case embedFonts
+        case marginOverflow
 
         var tabID: UUID {
             DemoFixture.fixtureID(0xD0, rawValue)
@@ -146,6 +188,14 @@ enum DemoFixture {
 
     static var pageBreaksContainer: ContainerID {
         .worktree(projectID: pdfWorkerProjectID, worktreeID: pageBreaksWorktreeID)
+    }
+
+    static var embedFontsContainer: ContainerID {
+        .worktree(projectID: pdfWorkerProjectID, worktreeID: embedFontsWorktreeID)
+    }
+
+    static var marginOverflowContainer: ContainerID {
+        .worktree(projectID: pdfWorkerProjectID, worktreeID: marginOverflowWorktreeID)
     }
 
     static var batchRenderContainer: ContainerID {
@@ -255,7 +305,9 @@ enum DemoFixture {
                 rootURL: pdfWorkerRoot,
                 worktrees: [
                     worktree(pageBreaksWorktreeID, "fix/page-breaks", "pdf-worker-fix-page-breaks"),
-                    worktree(batchRenderWorktreeID, "feat/batch-render", "pdf-worker-feat-batch-render")
+                    worktree(batchRenderWorktreeID, "feat/batch-render", "pdf-worker-feat-batch-render"),
+                    worktree(embedFontsWorktreeID, "feat/embed-fonts", "pdf-worker-feat-embed-fonts"),
+                    worktree(marginOverflowWorktreeID, "fix/margin-overflow", "pdf-worker-fix-margin-overflow")
                 ],
                 paletteIndex: 5, // moss
                 mainBranchName: "main"
@@ -405,7 +457,7 @@ enum DemoFixture {
             in: duesmith(webhookWorktreeID),
             badge: badge(
                 .error,
-                detail: "API Error: Request timed out.",
+                detail: "API timed out.",
                 secondsAgo: webhookStoppedSecondsAgo,
                 prompt: webhookLastPrompt,
                 root: folder("duesmith-fix-webhook-timeout")
@@ -466,10 +518,40 @@ enum DemoFixture {
             )
         )
 
+        let embedFonts = agentTab(
+            .embedFonts,
+            .claude,
+            in: embedFontsContainer,
+            badge: badge(
+                .running,
+                detail: "Bash: cargo build -p render",
+                secondsAgo: 45,
+                prompt: "Embed the fonts so invoices print the same everywhere",
+                runningFor: 190,
+                root: folder("pdf-worker-feat-embed-fonts")
+            )
+        )
+
+        let marginOverflow = agentTab(
+            .marginOverflow,
+            .codex,
+            in: marginOverflowContainer,
+            badge: badge(
+                .running,
+                detail: "Editing crates/layout/src/margin.rs",
+                secondsAgo: 20,
+                prompt: "Keep long addresses inside the page margins",
+                runningFor: 75,
+                root: folder("pdf-worker-fix-margin-overflow")
+            )
+        )
+
         return [
             shellTab(.pdfMain, in: .project(pdfWorkerProjectID)),
             pageBreaks,
-            batchRender
+            batchRender,
+            embedFonts,
+            marginOverflow
         ]
     }
 
@@ -583,14 +665,16 @@ enum DemoFixture {
     static func conversationTitle(of slot: Slot) -> String? {
         switch slot {
         case .prReview: "Review PR #318"
-        case .reminders: "Send overdue invoice reminders"
-        case .remindersCodex: "Migrate the reminder schedules"
+        case .reminders: "Send overdue reminders"
+        case .remindersCodex: "Migrate the schedules"
         case .taxRounding: "Fix tax rounding on line items"
         case .proration: "Add proration to plan changes"
         case .webhook: "Retry webhooks on timeout"
         case .docs: "Document the invoices API"
         case .pageBreaks: "Fix page breaks in long invoices"
         case .batchRender: "Render invoices in batches"
+        case .embedFonts: "Embed the invoice fonts"
+        case .marginOverflow: "Keep addresses inside the margins"
         case .dev, .git, .pdfMain, .dotfiles, .scratch: nil
         }
     }

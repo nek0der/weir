@@ -170,6 +170,8 @@ make screenshot   # Release build → launch in demo mode → capture → quit.
                   # Output lands at .github/assets/hero.png.
 ```
 
+Set `WEIR_DEMO_APPEARANCE=dark` to capture the dark look, `WEIR_DEMO_LAYER=needs-attention` or `all-projects` to capture that layer open, `WEIR_DEMO_TIME=09:15` to set the time of day it shows (14:30 by default), and `WEIR_SCREENSHOT_OUT` to write the image somewhere other than the hero's path.
+
 The script sets `WEIR_DEMO=1`, so the app loads `DemoFixture` instead of the user's real `state.json`. Demo mode writes none of the user's files: persistence and restores are off, the agent projection runs no pass, and the updater does not start. The fixture, not Git or a real agent, supplies the agents' turns and viewed lines (`DemoFixture+Turns.swift`), the session header's Git facts (`DemoFixture+Git.swift`), and what each pane prints (`DemoFixture+Transcripts.swift`). The terminal font is pinned to the default family at 12 points. Together these make the capture show the same supervision scene on every machine.
 
 **Display**: the hero is a 1440×900-point window captured at 2x (2880×1800 pixels). The demo opens it at (16, 16) on the main display. That display has to be a 2x (Retina) display with at least 1456×956 points, menu bar included. A 13.6-inch MacBook Air at its default resolution has room; a 1440×900 display does not. The script refuses a capture of any other size.

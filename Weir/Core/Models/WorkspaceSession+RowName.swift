@@ -9,7 +9,7 @@ extension WorkspaceSession {
     /// everywhere the row is named: the name the person gave the row, then
     /// a name the person gave one of its tabs, then its branch, then the
     /// row's first conversation, then its folder. `nil` for the
-    /// scratch row, which is named by its own word, and for a row the
+    /// scratch tabs, which are named by its own word, and for a row the
     /// session no longer has.
     ///
     /// A tab's name still names the row because a row was once renamed by
@@ -35,7 +35,7 @@ extension WorkspaceSession {
     /// leading "<project's folder name>-", or the project's folder. Every
     /// place that offers the row as a choice reads it here, so they all
     /// show the same checkout by the same rule. It is `nil` for any other
-    /// row, the scratch row included.
+    /// row, the scratch tabs included.
     ///
     /// The project's folder row shows its folder only when the folder is
     /// not the project's name: the header right above it says that name,
@@ -63,13 +63,13 @@ extension WorkspaceSession {
 
     /// The last path component of `container`'s folder, which all projects'
     /// filter finds a card by whatever the card is named; `nil` for the
-    /// scratch row and for a row the session no longer has.
+    /// scratch tabs and for a row the session no longer has.
     func rowFolderName(of container: ContainerID) -> String? {
         folderAndGivenName(of: container)?.folder
     }
 
     /// Returns the last path component of the row's folder and the name the
-    /// person gave the row itself. It is `nil` for the scratch row and for a
+    /// person gave the row itself. It is `nil` for the scratch tabs and for a
     /// row the session no longer has.
     private func folderAndGivenName(of container: ContainerID) -> (folder: String, given: String?)? {
         switch container {
@@ -93,7 +93,7 @@ extension WorkspaceSession {
     /// one. When it has none, the row showed a tab's name (an earlier build
     /// kept a row's name there), and that name is the one the person
     /// cleared: left on the tab, it would name the row again at once. The
-    /// scratch row has no name to give.
+    /// scratch tabs has no name to give.
     func renameRow(_ container: ContainerID, to name: String, runtimes: [AgentRuntimePresentation]) {
         let given: String? = name.isEmpty ? nil : name
         switch container {

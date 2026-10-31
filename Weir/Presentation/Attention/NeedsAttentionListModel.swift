@@ -348,7 +348,7 @@ extension NeedsAttentionListModel {
                 locale: locale
             )
             // Placed by its project: the title is the row's name already.
-            // The scratch row's name is its place. A row the person labeled
+            // The scratch tabs's name is its place. A row the person labeled
             // is placed by its branch too, as its sidebar row shows it.
             let place = tab.container.projectID.flatMap { session.project($0)?.name }.map {
                 AgentStatusText.place(project: $0, checkout: session.rowCheckout(of: tab.container)?.shown)

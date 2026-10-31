@@ -484,7 +484,7 @@ extension WorkspaceSession {
         // of their tabs: that window, made next, would be dropped as a
         // second window of its project, and lose its own record for the
         // primary's (`restoreWindows`). With no other tab, it opens on the
-        // scratch row.
+        // scratch tabs.
         let laterProjects = Set(records.dropFirst().compactMap(\.projectID).filter { project($0) != nil })
         if let id = savedTabID, let tab = tabs.first(where: { $0.id == id }) {
             primarySelection.activeTabID = id
@@ -500,12 +500,12 @@ extension WorkspaceSession {
             }
         } else if primary != nil, containerExists(savedContainer) {
             // Saved on a row that is still there with its tab gone or never
-            // there (the scratch row, or a project with no tab yet): back on
+            // there (the scratch tabs, or a project with no tab yet): back on
             // it, on the tab choosing it opens, or on the empty row, rather
             // than on another project's tab as if the row were gone. That
             // project's own window, made next, would then be dropped as a
             // second window of it. A window that showed nothing is saved on
-            // the scratch row (`windowRecords`).
+            // the scratch tabs (`windowRecords`).
             primarySelection.activeContainerID = savedContainer
             primarySelection.activeTabID = tabOpened(choosing: savedContainer)
         } else if let first = tabs.first(where: { tab in

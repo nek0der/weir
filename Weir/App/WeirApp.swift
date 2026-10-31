@@ -185,7 +185,7 @@ final class AppState {
     let reviewLaterTurns = ReviewLaterTurns()
     /// The identity colors of each session container's active conversations.
     /// Here, one for the app, rather than on a window: the changes panel,
-    /// the right rail, and the review read it through `changesPanelStores`,
+    /// its title bar button, and the review read it through `changesPanelStores`,
     /// the pane strip and Open Tabs through the environment, and two windows
     /// on the same session must show a conversation in the same color. Made
     /// on first use, as it reads the restores through the app state.

@@ -482,6 +482,8 @@ enum TabActions {
             scope.perform(.toggleChangesPanel)
         case .allProjects:
             scope.perform(.toggleAllProjects)
+        case .showScratch:
+            scope.perform(.showScratch)
         default:
             log.fault("dispatchViewAction missing handler for \(action.rawValue, privacy: .public) — add a case or fix action.category")
             assertionFailure("dispatchViewAction missing handler for \(action) — add a case or fix action.category")

@@ -44,7 +44,10 @@ struct ProjectWindowMinimumSizeTests {
 
     @Test func newWindow_hasTheMinimumBeforeItIsShown() throws {
         let window = try #require(Self.makeController().window)
-        #expect(window.contentMinSize == NSSize(width: 730, height: WeirLayout.mainWindowMinHeight + Self.titleBarHeight))
+        #expect(window.contentMinSize == NSSize(
+            width: WeirLayout.Supervision.windowMinWidth,
+            height: WeirLayout.mainWindowMinHeight + Self.titleBarHeight
+        ))
     }
 
     /// The hosting view owns no minimum of its own, so once shown it must
@@ -58,8 +61,8 @@ struct ProjectWindowMinimumSizeTests {
         defer { window.close() }
         Self.show(window)
         #expect(window.contentMinSize == before)
-        #expect(window.contentMinSize.width == 730)
-        #expect(window.minSize.width >= 730)
+        #expect(window.contentMinSize.width == WeirLayout.Supervision.windowMinWidth)
+        #expect(window.minSize.width >= WeirLayout.Supervision.windowMinWidth)
     }
 
     /// Content wider than the floor (a sidebar at its saved width) does
@@ -68,7 +71,10 @@ struct ProjectWindowMinimumSizeTests {
         let window = try #require(Self.makeController(Color.clear.frame(width: 1200, height: 900)).window)
         defer { window.close() }
         Self.show(window)
-        #expect(window.contentMinSize == NSSize(width: 730, height: WeirLayout.mainWindowMinHeight + Self.titleBarHeight))
+        #expect(window.contentMinSize == NSSize(
+            width: WeirLayout.Supervision.windowMinWidth,
+            height: WeirLayout.mainWindowMinHeight + Self.titleBarHeight
+        ))
     }
 
     private static func restored(width: CGFloat, contentHeight: CGFloat) throws -> CGRect {
@@ -87,7 +93,7 @@ struct ProjectWindowMinimumSizeTests {
     /// floor, or a snapshot written by hand) opens at the minimum.
     @Test func restoredNarrowFrame_isWidenedToTheMinimum() throws {
         let content = try Self.restored(width: 396, contentHeight: 300)
-        #expect(content.width >= 730)
+        #expect(content.width >= WeirLayout.Supervision.windowMinWidth)
         #expect(content.height >= WeirLayout.mainWindowMinHeight + Self.titleBarHeight)
     }
 

@@ -13,10 +13,10 @@ struct SidebarKeyboardCursorTests {
     private static let row = ContainerID.project(open)
 
     /// `open`'s header with a row and its folded "other" line, then
-    /// `folded`'s header, then the scratch row.
+    /// `folded`'s header.
     private static func lines(isOtherOpen: Bool = false) -> Cursor.Lines {
         Cursor.Lines(
-            ids: [.header(open), .row(row), .fold(open, .other), .header(folded), .row(.loose)],
+            ids: [.header(open), .row(row), .fold(open, .other), .header(folded)],
             isCollapsed: { $0 == folded },
             isFoldOpen: { _, _ in isOtherOpen }
         )
@@ -27,9 +27,18 @@ struct SidebarKeyboardCursorTests {
         #expect(Cursor.action(for: .down, isOption: false, at: .header(Self.open), in: lines) == .move(to: .row(Self.row)))
         #expect(Cursor.action(for: .down, isOption: false, at: .fold(Self.open, .other), in: lines) == .move(to: .header(Self.folded)))
         #expect(Cursor.action(for: .up, isOption: false, at: .header(Self.folded), in: lines) == .move(to: .fold(Self.open, .other)))
-        #expect(Cursor.action(for: .down, isOption: false, at: .row(.loose), in: lines) == .move(to: .row(.loose)))
+        #expect(Cursor.action(for: .down, isOption: false, at: .header(Self.folded), in: lines) == .move(to: .header(Self.folded)))
         #expect(Cursor.action(for: .up, isOption: false, at: .header(Self.open), in: lines) == .move(to: .header(Self.open)))
         #expect(Cursor.action(for: .down, isOption: false, at: nil, in: lines) == .move(to: .header(Self.open)))
+    }
+
+    @Test func initialLine_isTheOpenRow_elseItsHeader_elseTheFirst_andNoneOnAnEmptyList() {
+        let ids = Self.lines().ids
+        #expect(Cursor.initialLine(active: Self.row, in: ids) == .row(Self.row))
+        #expect(Cursor.initialLine(active: .project(Self.folded), in: ids) == .header(Self.folded))
+        #expect(Cursor.initialLine(active: .loose, in: ids) == .header(Self.open))
+        #expect(Cursor.initialLine(active: .project(UUID()), in: ids) == .header(Self.open), "a project the list does not hold")
+        #expect(Cursor.initialLine(active: .loose, in: []) == nil)
     }
 
     @Test func rightAndLeft_openAndFoldAHeader() {

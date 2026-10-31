@@ -34,13 +34,17 @@ struct SupervisionWindowView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SupervisionTitleBar()
+            SupervisionTitleBar(state: state)
+                // Its buttons' chips stand over the surfaces under it.
+                .zIndex(1)
             HStack(spacing: WeirLayout.Supervision.surfaceGap) {
                 // Hidden from the View menu; its keys keep working.
                 if !window.areRailsHidden {
                     LeftRailView()
+                        // Its buttons' chips stand over the surfaces beside it.
+                        .zIndex(1)
                 }
-                HStack(spacing: WeirLayout.Supervision.surfaceGap) {
+                HStack(spacing: WeirLayout.Supervision.surfaceSpacing) {
                     if isSidebarShown {
                         sidebar
                             // One piece as it slides: what is placed in it
@@ -105,26 +109,23 @@ struct SupervisionWindowView: View {
                             ))
                     }
                 }
-                // Clipped here, between the rails: the sidebar and the panel
-                // slide in from the surfaces' edges, never under the rails,
-                // the window's margin, or the title bar.
+                // Clipped here: the sidebar and the panel slide in from the
+                // surfaces' edges, never under the rail, the window's margin,
+                // or the title bar.
                 .clipped()
-                if !window.areRailsHidden {
-                    RightRailView(state: state)
-                }
             }
             // The window's own margin, which the gaps between the surfaces
-            // repeat: the rails stand in from its edges as far as the
+            // repeat: the rail stands in from its edge as far as the
             // surfaces stand apart.
             .padding(.horizontal, WeirLayout.Supervision.surfaceGap)
-            // However the changes panel is opened or closed (its rail
+            // However the changes panel is opened or closed (its title bar
             // button, its ×, the menu, ⌥⌘I), it slides the same way.
             .animation(
                 ChangesPanelMotion.animation(isFloating: window.changesPanelLayout == .overlay, reduceMotion: reduceMotion),
                 value: selection.isChangesPanelPresented
             )
             .animation(reduceMotion ? nil : WeirMotion.sidebarToggle, value: panelLayout)
-            // The history hangs from the rail's button; with the rails
+            // The history hangs from the rail's button; with the rail
             // hidden, ⇧⌘N still opens it, beside the body's leading edge
             // where the rail would be.
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
@@ -134,22 +135,22 @@ struct SupervisionWindowView: View {
             .onChange(of: window.areRailsHidden) { _, areHidden in
                 anchorHistoryWithoutRails()
                 // The usage panel hangs from its rail button alone, which
-                // hiding the rails takes away.
+                // hiding the rail takes away.
                 if areHidden {
                     window.planUsage.isPresented = false
                 }
             }
-            // Across the whole window, under the rails as well.
+            // Across the whole window, under the rail as well.
             StatusBandView()
         }
-        // The title bar, the rails, and the band stand on the ground below,
+        // The title bar, the rail, and the band stand on the ground below,
         // which follows the background opacity as the surfaces do, so a box
         // drawn on them (the Needs Attention button, the palette's field, an
         // open rail button) takes the same opacity. Inside the ground's
         // modifier rather than over it, so the title bar menus and other
         // layers over the window keep their own grounds.
         .modifier(SupervisionGroundOpacity())
-        // One ground under the title bar, the rails, the gaps, and the band
+        // One ground under the title bar, the rail, the gaps, and the band
         // alike, so the glass has no seam between them; the surfaces stand
         // on it.
         .background(SupervisionWindowGround(isFullScreen: selection.isFullScreen).ignoresSafeArea())
@@ -188,6 +189,13 @@ struct SupervisionWindowView: View {
         // The window's own actions, asked of it by the menus, the
         // palette, and its rails.
         .onWindowCommand(of: window, takeCommand)
+        // A capture of a layer (`WEIR_DEMO_LAYER`), opened by the command a person
+        // would use, once the buttons it hangs from have reported their frames.
+        .task {
+            guard let layer = DemoFixture.openLayer else { return }
+            try? await Task.sleep(for: .seconds(2))
+            window.commands.send(layer == .needsAttention ? .showNeedsAttention : .toggleAllProjects)
+        }
         // Here, not on the session's body, so it opens whatever the window
         // shows, a window that shows no project included.
         .hostsNewWorktreeSheet(state: state)
@@ -203,6 +211,8 @@ struct SupervisionWindowView: View {
             }
         case .toggleChangesPanel:
             ChangesPanelActions.toggle(window, session: session)
+        case .showScratch:
+            SupervisionWindowActions.showScratch(in: window, session: session)
         case .showNeedsAttention:
             SupervisionWindowActions.showNeedsAttention(in: window)
         case .showOpenTabs:
@@ -229,13 +239,14 @@ struct SupervisionWindowView: View {
         return true
     }
 
-    /// With the rails hidden the history hangs from the first surface's
+    /// With the rail hidden the history hangs from the first surface's
     /// leading edge: the body's, inside the window's margin.
     private func anchorHistoryWithoutRails() {
         guard window.areRailsHidden, bodyFrame.width > 0 else { return }
         window.historyAnchor = RailPanelAnchor(
             frame: CGRect(
-                x: bodyFrame.minX + WeirLayout.Supervision.surfaceGap,
+                // Placed so the panel's gap past it lands on the surface's edge.
+                x: bodyFrame.minX + WeirLayout.Supervision.surfaceGap - WeirLayout.Supervision.railPanelGap - 1,
                 y: bodyFrame.minY,
                 width: 1,
                 height: WeirLayout.Supervision.railButtonSize
@@ -311,7 +322,7 @@ struct SupervisionWindowView: View {
                     accessibilityLabel: Text("Changes Width"),
                     isOnLeadingEdge: true
                 )
-                .offset(x: isOver ? 0 : -WeirLayout.Supervision.surfaceGap)
+                .offset(x: isOver ? 0 : -WeirLayout.Supervision.surfaceSpacing)
             }
     }
 
@@ -339,7 +350,7 @@ struct SupervisionWindowView: View {
                     hitWidth: WeirLayout.columnResizeHandleWidth,
                     accessibilityLabel: Text("Sidebar Width")
                 )
-                .offset(x: WeirLayout.Supervision.surfaceGap)
+                .offset(x: WeirLayout.Supervision.surfaceSpacing)
             }
     }
 }
@@ -470,7 +481,7 @@ enum ChangesPanelMotion {
 }
 
 /// The window's ground: the well the surfaces stand on, showing in
-/// the gaps between them and under the title bar, the rails, and the band.
+/// the gaps between them and under the title bar, the rail, and the band.
 /// With transparency it tints the behind-window glass at the background
 /// opacity, as the surfaces lay `window` over the same glass at the same
 /// opacity: mixed alike, the two keep their tokens' step between them, so
@@ -529,7 +540,7 @@ private struct SupervisionSurface: ViewModifier {
     }
 }
 
-/// The window's ground under the title bar, the rails, and the band, as
+/// The window's ground under the title bar, the rail, and the band, as
 /// opaque as `SupervisionWindowGround` tints it: the background opacity
 /// while transparency is on, 1 while it is off or reduced.
 private struct SupervisionGroundOpacity: ViewModifier {
@@ -546,7 +557,7 @@ private struct SupervisionGroundOpacity: ViewModifier {
 
 extension EnvironmentValues {
     /// How opaque the ground a view stands on is filled: a surface's
-    /// (`SupervisionSurface`), the title bar's, the rails', and the band's
+    /// (`SupervisionSurface`), the title bar's, the rail's, and the band's
     /// (`SupervisionGroundOpacity`), or 1 under a view that fills its own
     /// ground opaquely (the decision bar, a floating panel) and says so. A
     /// box or a bordered button filled on it takes the same opacity

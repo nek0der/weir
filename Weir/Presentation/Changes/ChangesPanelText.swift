@@ -795,7 +795,7 @@ enum ChangesPanelText {
         }
     }
 
-    /// The rail button's tooltip: "Changes (⌥⌘I) · 3 unviewed", then
+    /// The title bar button's VoiceOver hint: "Changes (⌥⌘I) · 3 unviewed", then
     /// each conversation with turns to read on a line of its own ("Claude
     /// #1 · 1 unviewed"), so the total reads as the panel's count and the
     /// rest rather than a count the panel contradicts. No lines while one

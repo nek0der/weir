@@ -129,9 +129,7 @@ struct PlanUsageTextTests {
     @Test("the rail marks a near limit and a reached one differently")
     func railBadge_differsByLevel() {
         #expect(PlanUsageText.railBadge(.normal) == nil)
-        #expect(PlanUsageText.railBadge(.nearLimit) == .usage(isAtLimit: false))
-        #expect(PlanUsageText.railBadge(.atLimit) == .usage(isAtLimit: true))
-        #expect(PlanUsageText.railHelp(.normal, locale: english) == "Plan Usage")
-        #expect(PlanUsageText.railHelp(.atLimit, locale: english) == "Plan Usage · At a limit")
+        #expect(PlanUsageText.railBadge(.nearLimit) == .waiting)
+        #expect(PlanUsageText.railBadge(.atLimit) == .stopped)
     }
 }

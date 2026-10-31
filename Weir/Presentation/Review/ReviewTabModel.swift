@@ -150,7 +150,7 @@ struct ReviewTabState: Equatable, Sendable {
     /// agent's pane is on now, the rule its strip shows it by (`belongs`).
     /// A scratch tab moved to a project's row takes its review to that
     /// project, which a window switching away can no longer show; a
-    /// project's tab moved to the scratch row leaves its review with no
+    /// project's tab moved to the scratch tabs leaves its review with no
     /// project, which every window can. The owner the tab was opened with
     /// (`isOfNoProject`) decides only once the pane is gone.
     @MainActor

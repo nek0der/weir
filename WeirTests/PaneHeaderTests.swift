@@ -635,6 +635,18 @@ struct PaneHeaderTests {
         #expect(PaneHeaderMetrics.markSlot == WeirLayout.stateMarkSlot)
     }
 
+    /// A lone pane's tab already marks its agent, so the header drops the mark
+    /// while it shows the name; a split pane's tab cannot say which pane is
+    /// whose, and the narrow forms have nothing else to show.
+    @Test func kindMark_isLeftToTheTab_onlyForALonePaneThatShowsItsName() {
+        #expect(!PaneHeaderForm.all.showsKindMark(isSplit: false))
+        #expect(!PaneHeaderForm.withName.showsKindMark(isSplit: false))
+        #expect(PaneHeaderForm.withMark.showsKindMark(isSplit: false))
+        #expect(PaneHeaderForm.kindAndMenu.showsKindMark(isSplit: false))
+        #expect(PaneHeaderForm.all.showsKindMark(isSplit: true))
+        #expect(PaneHeaderForm.kindAndMenu.showsKindMark(isSplit: true))
+    }
+
     // MARK: - Rename
 
     /// In place at or above the threshold, and while the header is not

@@ -18,6 +18,74 @@ struct SplitTreeTests {
         #expect(tree.focusedLeafID == leaf)
     }
 
+    @Test("a pane has another before it only across a divider above or on its leading side")
+    func panesBefore_followTheShape() {
+        let a = UUID()
+        let b = UUID()
+        let c = UUID()
+        // a | (b / c)
+        let tree = SplitTree(root: .split(PaneSplit(
+            direction: .horizontal,
+            ratio: 0.3,
+            first: .leaf(id: a),
+            second: .split(PaneSplit(direction: .vertical, ratio: 0.5, first: .leaf(id: b), second: .leaf(id: c)))
+        )))
+        #expect(tree.panesBefore(a).above.isEmpty)
+        #expect(tree.panesBefore(a).leading.isEmpty)
+        #expect(tree.panesBefore(b).above.isEmpty)
+        #expect(tree.panesBefore(b).leading == [a])
+        #expect(tree.panesBefore(c).above == [b])
+        #expect(tree.panesBefore(c).leading == [a])
+    }
+
+    @Test("the panes before one are the near side of the nearest divider, however deep")
+    func panesBefore_acrossNestedSplits() {
+        let (a, b, c) = (UUID(), UUID(), UUID())
+        func split(_ direction: SplitDirection, _ first: PaneNode, _ second: PaneNode) -> PaneNode {
+            .split(PaneSplit(direction: direction, ratio: 0.5, first: first, second: second))
+        }
+        func tree(_ root: PaneNode) -> SplitTree {
+            SplitTree(root: root)
+        }
+        // a | (b | c): the nearest divider, not the farther one.
+        let row = tree(split(.horizontal, .leaf(id: a), split(.horizontal, .leaf(id: b), .leaf(id: c))))
+        #expect(row.panesBefore(c).leading == [b])
+        #expect(row.panesBefore(b).leading == [a])
+        // (a | b) | c: the end of the side before it.
+        #expect(tree(split(.horizontal, split(.horizontal, .leaf(id: a), .leaf(id: b)), .leaf(id: c))).panesBefore(c).leading == [b])
+        // (a / b) | c: every pane along the divider.
+        #expect(tree(split(.horizontal, split(.vertical, .leaf(id: a), .leaf(id: b)), .leaf(id: c))).panesBefore(c).leading == [a, b])
+        // (a | b) / c
+        #expect(tree(split(.vertical, split(.horizontal, .leaf(id: a), .leaf(id: b)), .leaf(id: c))).panesBefore(c).above == [a, b])
+        // a / (b / c)
+        #expect(tree(split(.vertical, .leaf(id: a), split(.vertical, .leaf(id: b), .leaf(id: c)))).panesBefore(c).above == [b])
+        // Not in the tree.
+        #expect(row.panesBefore(UUID()).leading.isEmpty)
+        #expect(row.panesBefore(UUID()).above.isEmpty)
+    }
+
+    @Test("a frame reaches over a divider only onto panes that are all framed, and never when zoomed")
+    func frameSeam_reachesOnlyOntoFramedPanes() {
+        let (a, b, c) = (UUID(), UUID(), UUID())
+        // (a / b) | c
+        let tree = SplitTree(root: .split(PaneSplit(
+            direction: .horizontal,
+            ratio: 0.5,
+            first: .split(PaneSplit(direction: .vertical, ratio: 0.5, first: .leaf(id: a), second: .leaf(id: b))),
+            second: .leaf(id: c)
+        )))
+        func reach(_ pane: UUID, zoomed: UUID? = nil, framed: Set<UUID>) -> (top: Bool, leading: Bool) {
+            PaneFrameSeam.reach(of: pane, in: tree, zoomedLeafID: zoomed, isFramed: framed.contains)
+        }
+        #expect(reach(c, framed: [a, b]).leading)
+        #expect(!reach(c, framed: [a]).leading, "one of the two is not framed")
+        #expect(!reach(c, framed: [a, b]).top, "nothing above it")
+        #expect(reach(b, framed: [a]).top)
+        #expect(!reach(b, framed: [a]).leading)
+        #expect(!reach(c, zoomed: c, framed: [a, b]).leading)
+        #expect(reach(c, zoomed: a, framed: [a, b]).leading, "another pane's zoom is not this one's")
+    }
+
     @Test("the bottom edge holds both sides of a side-by-side split and the lower half of a stacked one")
     func bottomEdgeLeafIDs_followTheShape() {
         let a = UUID()

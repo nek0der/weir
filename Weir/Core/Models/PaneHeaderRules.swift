@@ -147,6 +147,14 @@ enum PaneHeaderForm: CaseIterable, Equatable {
         self == .all || self == .withTokens || self == .withSettings || self == .withName || self == .withMark
     }
 
+    /// Whether the header draws the kind's mark. A pane alone in its tab
+    /// leaves it to the tab just above, which marks the same agent, while it
+    /// has its name to show; without the name the mark is all that says whose
+    /// pane this is.
+    func showsKindMark(isSplit: Bool) -> Bool {
+        isSplit || !showsName
+    }
+
     /// Whether the kind's mark has its conversation's color before it. It goes
     /// before the narrow forms do, and while renaming so the field keeps its
     /// width: the split floor and the rename threshold count the badge alone.

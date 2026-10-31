@@ -32,13 +32,13 @@ final class WindowRegistry {
     /// to another project, by project, until a window shows that project
     /// again (`takeParkedReview`). Not observed: nothing draws them.
     @ObservationIgnored private(set) var parkedReviews: [UUID: ParkedReview] = [:]
-    /// The review tabs that wait for the scratch row, each with a comment
+    /// The review tabs that wait for the scratch tabs, each with a comment
     /// being written in it, as a project's wait for the project
     /// (`parkedReviews`): where a review waits whose agent's pane is on the
-    /// scratch row as its window lets it go, whatever project the window
+    /// scratch tabs as its window lets it go, whatever project the window
     /// showed, or whose pane is gone, a scratch pane's, or a project's left
     /// by a window that showed none (`parkReview`, `waitingPlace`). A
-    /// window takes the first, behind, as it arrives at the scratch row
+    /// window takes the first, behind, as it arrives at the scratch tabs
     /// (`takeParkedReview(arrivingAt:in:)`), or stands there with no
     /// review as one is kept, or as a review opens on a scratch tab
     /// (`takeParkedReviewBeforeOpening`).
@@ -515,7 +515,7 @@ final class WindowRegistry {
     /// ones included (`isHidden`, never what is on screen), the window
     /// ends: its project keeps what it showed (`WorkspaceSession.removeWindow`)
     /// and its review (`parkedReviews`), a scratch pane's waiting for the
-    /// scratch row instead (`parkedScratchReview`), and the primary's role
+    /// scratch tabs instead (`parkedScratchReview`), and the primary's role
     /// goes to a window left. The last window shown is hidden instead, so
     /// the Dock brings it back where it was and in full screen; a window
     /// hidden before it ends then, so at most one window is ever hidden.
@@ -581,7 +581,7 @@ final class WindowRegistry {
     /// project: its tab, where it waits (`waitingPlace`). A
     /// window switching in place keeps its tab for the project (`kept`);
     /// one closing keeps it only with a comment being written in it, and
-    /// closes it otherwise. The scratch row keeps a tab only with a
+    /// closes it otherwise. The scratch tabs keeps a tab only with a
     /// comment: nothing else of it would be missed there. `projectID`, the
     /// project the window shows or leaves, is where a project's review
     /// waits once its agent's pane is gone. The discards are not the
@@ -622,17 +622,17 @@ final class WindowRegistry {
     private enum WaitingPlace: Equatable {
         /// For the project, as its sessions wait (`parkedReviews`).
         case project(UUID)
-        /// For the scratch row (`parkedScratchReview`).
+        /// For the scratch tabs (`parkedScratchReview`).
         case scratchRow
     }
 
     /// Where `review` waits: by the row its agent's pane is on now, the
     /// rule its tab is shown in a strip by (`ReviewTabState.belongs`), a
-    /// project's row for that project, the scratch row for the scratch
+    /// project's row for that project, the scratch tabs for the scratch
     /// row. With the pane gone, the owner it was opened with decides
     /// (`ReviewTabState.isOfNoProject`): a scratch pane's waits for the
-    /// scratch row, a project's for `owner`, the project the window showed
-    /// or left, or for the scratch row when the window showed none. `nil`
+    /// scratch tabs, a project's for `owner`, the project the window showed
+    /// or left, or for the scratch tabs when the window showed none. `nil`
     /// for a project the session no longer has: it keeps nothing.
     private func waitingPlace(of review: ReviewTabState, owner: UUID?, in session: WorkspaceSession) -> WaitingPlace? {
         let row = review.agentPaneID.flatMap { session.tab(containing: $0)?.container }
@@ -644,7 +644,7 @@ final class WindowRegistry {
     /// Keeps `tab` at `place`, beside the tabs kept there already
     /// (`ParkedReview.tabs(_:joining:)`), so no comment is dropped for it.
     /// A window already standing where the tab belongs, the agent's row or
-    /// the scratch row, takes it at once, as it would arriving there, but
+    /// the scratch tabs, takes it at once, as it would arriving there, but
     /// only one holding no review at all and opening none: a review the
     /// person left there, even behind, is theirs, and is never swapped for
     /// another, and one they asked for is not refused for this tab's
@@ -697,12 +697,12 @@ final class WindowRegistry {
 
     /// Moves each tab kept to where it waits now (`waitingPlace`), with the
     /// place it was kept at as its owner: its agent's tab may have been
-    /// dragged to another row since, the scratch row or another project's,
+    /// dragged to another row since, the scratch tabs or another project's,
     /// and a window takes a tab only where its strip can show it, or
     /// the tab's comment would refuse every other review there. A tab whose
     /// pane is gone stays where it was kept, the last row it was known on,
     /// while that project is there. A project the session no longer has
-    /// keeps nothing, and the scratch row takes only a tab with a comment
+    /// keeps nothing, and the scratch tabs takes only a tab with a comment
     /// being written in it, as `parkReview` leaves it there; any other tab
     /// that has to move is let go of. A moved tab joins behind those kept
     /// where it goes, the places sorted out in an order of their own, so
@@ -735,7 +735,7 @@ final class WindowRegistry {
         }
     }
 
-    /// Whether `window`, arriving at the scratch row, takes a tab waiting
+    /// Whether `window`, arriving at the scratch tabs, takes a tab waiting
     /// there: not let go of, and holding no review of its own but a
     /// scratch pane's behind with nothing being written in it, which the
     /// move would have closed had the window been on a project's row. A
@@ -751,7 +751,7 @@ final class WindowRegistry {
     }
 
     /// `window` arrives at a row (`ReviewTabActions.rowChanged`) and takes,
-    /// behind, a tab waiting for it there: at the scratch row the
+    /// behind, a tab waiting for it there: at the scratch tabs the
     /// first tab waiting there, when it can (`takesParkedScratchReview`);
     /// at a project's row, holding no review and opening none, the first
     /// tab its project keeps whose agent is on that row, as a window
@@ -862,7 +862,7 @@ final class WindowRegistry {
     /// as the projects change, which they do as a tab is chosen too: the
     /// tabs kept then go where their agents' panes are now, for projects
     /// still there too (`rehomeParkedReviews`), and one with nothing written
-    /// in it that would wait for the scratch row is let go of. Otherwise
+    /// in it that would wait for the scratch tabs is let go of. Otherwise
     /// only a project the session no longer has lets go of anything.
     func forgetProjectsGone(in session: WorkspaceSession) {
         let removed = knownProjects.filter { session.project($0.id) == nil }
@@ -875,7 +875,7 @@ final class WindowRegistry {
         // Every tab kept waits where its agent's pane is now, the scratch
         // row only with a comment. With the pane gone, a tab stays where it
         // was kept; once that project is removed too, a scratch pane's
-        // waits for the scratch row its owner is, and a project's goes with
+        // waits for the scratch tabs its owner is, and a project's goes with
         // the project.
         rehomeParkedReviews(leaving: nil, in: session)
         // A removed project's positions go with its view.

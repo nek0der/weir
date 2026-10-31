@@ -23,6 +23,19 @@ struct FloatingPanelOriginTests {
         )
     }
 
+    @Test func besideRail_standsPastTheRail_onTheColumnsTop_andInsideAShortWindow() {
+        let button = CGRect(x: 10, y: 80, width: 32, height: 32)
+        let size = CGSize(width: 400, height: 200)
+        let origin = FloatingPanelPlacement.besideRail(
+            button: button, columnTop: 77, panelSize: size, container: CGSize(width: 1000, height: 700), gap: 10, margin: 8
+        )
+        #expect(origin == CGPoint(x: 52, y: 77))
+        let short = FloatingPanelPlacement.besideRail(
+            button: button, columnTop: 77, panelSize: size, container: CGSize(width: 1000, height: 250), gap: 10, margin: 8
+        )
+        #expect(short.y == 42)
+    }
+
     @Test func leading_hangsBelowTheAnchorAtItsLeadingEdge() {
         let origin = Self.origin(anchor: CGRect(x: 100, y: 200, width: 60, height: 24))
         #expect(origin == CGPoint(x: 100, y: 228))

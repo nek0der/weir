@@ -133,7 +133,7 @@ struct DemoSceneTests {
             "Claude · Unread · 4 files changed",
             "Waiting for approval: tsc",
             "Bash: pnpm test src/billing",
-            "Stopped: API Error: Request timed out.",
+            "Stopped: API timed out.",
             "PR #324 · Open"
         ])
         #expect(rows.map(\.fact.glyph) == [.unread, .unread, .needsApproval, .running, .stopped, .idle])
@@ -144,7 +144,7 @@ struct DemoSceneTests {
             .unread(.changed(files: 4, added: 136, removed: 13)),
             .prompt(PromptWait(detail: "Bash: tsc")),
             .running("Bash: pnpm test src/billing"),
-            .stopped(.error("API Error: Request timed out.")),
+            .stopped(.error("API timed out.")),
             .pullRequest(number: 324, state: .open, isDraft: false)
         ])
         #expect(rows.map(\.isActive) == [false, true, false, false, false, false])
@@ -194,9 +194,15 @@ struct DemoSceneTests {
     @Test func theOtherProjectsRows_readAsTheSceneSays() throws {
         let scene = Self.scene()
         let pdf = try scene.rows(DemoFixture.pdfWorkerProjectID)
-        #expect(pdf.map(\.name) == ["main", "fix/page-breaks", "feat/batch-render"])
-        #expect(pdf.map(\.fact.glyph) == [.shell, .needsApproval, .idle])
-        #expect(pdf.map(\.factText) == ["Idle", "Waiting for approval: cargo test -p layout", "PR #57 · Merged"])
+        #expect(pdf.map(\.name) == ["main", "fix/page-breaks", "feat/batch-render", "feat/embed-fonts", "fix/margin-overflow"])
+        #expect(pdf.map(\.fact.glyph) == [.shell, .needsApproval, .idle, .running, .running])
+        #expect(pdf.map(\.factText) == [
+            "Idle",
+            "Waiting for approval: cargo test -p layout",
+            "PR #57 · Merged",
+            "Bash: cargo build -p render",
+            "Editing crates/layout/src/margin.rs"
+        ])
         #expect(pdf.allSatisfy { $0.checkout == nil })
         let dotfiles = try scene.rows(DemoFixture.dotfilesProjectID)
         #expect(dotfiles.map(\.name) == ["main"])

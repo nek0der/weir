@@ -141,7 +141,8 @@ struct PaneHeaderView: View {
                 row(label: label, mark: mark, identity: identity, hiddenPanes: hiddenPanes, form: form)
             }
         }
-        .padding(.horizontal, WeirLayout.paneHeaderHorizontalPadding)
+        .padding(.leading, WeirLayout.paneHeaderLeadingPadding)
+        .padding(.trailing, WeirLayout.paneHeaderTrailingPadding)
         // `minWidth: 0` holds the header to the pane's width when the pane
         // is narrower than the row's smallest layout. Without it the frame
         // grows to the row's width, the pane centers that wider header, and
@@ -276,7 +277,9 @@ struct PaneHeaderView: View {
         form: PaneHeaderForm
     ) -> some View {
         HStack(spacing: WeirLayout.paneHeaderItemSpacing) {
-            kindMark(label: label, identity: identity, form: form)
+            if form.showsKindMark(isSplit: isSplit) {
+                kindMark(label: label, identity: identity, form: form)
+            }
             if form.showsName {
                 InlineRenameField(
                     name: label.name,

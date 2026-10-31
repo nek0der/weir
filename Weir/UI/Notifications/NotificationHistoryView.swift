@@ -41,7 +41,7 @@ struct NotificationHistoryOverlay: View {
                                 ? NotificationHistoryView.emptyHeight
                                 : NotificationHistoryView.populatedHeight,
                             inset: 12,
-                            gap: 6
+                            gap: WeirLayout.Supervision.railPanelGap
                         )
                     )
 

@@ -7,7 +7,7 @@ import Foundation
 /// order the sidebar shows them, in the sections it shows them in
 /// (`SidebarPresentedSections`), so the third row in sight is the one ⌃⌘3
 /// opens, held or not. The rows folded away are not counted; ⌘[ ⌘] go on to
-/// the scratch row after the last, which ⌃⌘n does not count.
+/// the scratch tabs after the last, which ⌃⌘n does not count.
 @MainActor
 enum SessionRowNavigation {
     /// The rows ⌘[ ⌘] walk: the working rows, then scratch.

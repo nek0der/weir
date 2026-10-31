@@ -31,6 +31,9 @@ struct PaneMinimumSizeTests {
     /// start cutting the menu off.
     @Test func minPaneSizeRange_startsAtTheHeadersNarrowestWidth() {
         #expect(CGFloat(TerminalSettings.minPaneSizeRange.lowerBound) >= PaneHeaderMetrics.minimumWidth)
+        // A wider header rounds the floor up a whole step, and raises what
+        // people have saved.
+        #expect(TerminalSettings.minPaneSizeRange.lowerBound == 60)
     }
 
     @Test func terminalSettings_countsTheHeaderEverySplitPaneCarries() {

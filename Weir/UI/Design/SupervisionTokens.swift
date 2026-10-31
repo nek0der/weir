@@ -462,7 +462,7 @@ enum SupervisionTokens {
 
     static let page = ThemedColor(light: 0xE8EAEE, dark: 0x111215)
     /// The window's ground: the gaps between the surfaces, the title bar,
-    /// the rails, and the status band. A step darker than `window` in both
+    /// the rail, and the status band. A step darker than `window` in both
     /// appearances, so each surface stands apart from it.
     static let well = ThemedColor(light: 0xE3E6EB, dark: 0x0D0E10)
     static let window = ThemedColor(light: 0xFFFFFF, dark: 0x1B1C20)
@@ -515,10 +515,11 @@ enum SupervisionTokens {
     /// in dark, where the fill alone stands only about 1.15:1 off it. No
     /// text sits on it, so it can be stronger than the fill.
     static let popoverSelectionEdge = ThemedOverlay(lightOpacity: 0.10, darkOpacity: 0.10)
-    /// The 1pt edge of a hovered bordered button on the material, a clear
-    /// step up from the menu's resting edge (`PopoverInk.line`, a quarter of
-    /// its label). No text sits on it.
-    static let popoverButtonHoverEdge = ThemedOverlay(lightOpacity: 0.55, darkOpacity: 0.55)
+    /// The 1pt edge of a hovered bordered button on the material, a step up
+    /// from the menu's resting edge (`PopoverInk.line`, a quarter of its
+    /// label). Not as far as 3:1: that read as a black outline that no other
+    /// button has, for a state the pointer already says. No text sits on it.
+    static let popoverButtonHoverEdge = ThemedOverlay(lightOpacity: 0.35, darkOpacity: 0.30)
     /// The edge around a group of rows on the material and the rules inside
     /// it (`PopoverGround.groupRule`). A selected row in a group has only
     /// its fill, so this is the one frame there. No text sits on it.
@@ -556,7 +557,7 @@ enum SupervisionTokens {
     /// lighter in dark, so it reads at 4.5:1 on the window, a hovered fill,
     /// and a selected one, where the ring's blue reaches only an icon's 3:1.
     static let unreadText = ThemedColor(light: 0x1F5FC9, dark: 0x6E9FF3)
-    /// A count filled in that blue (the rails' unread and unviewed counts):
+    /// A count filled in that blue (the rail's unread and unviewed counts):
     /// the deeper blue in both appearances, since the dark one would not
     /// hold its white figures at 4.5:1.
     static let unreadCount = ThemedColor(light: 0x2C6EE0, dark: 0x2C6EE0)
@@ -594,8 +595,8 @@ enum SupervisionTokens {
     /// amber itself reads as text.
     static let waitingText = ThemedColor(light: 0x965300, dark: 0xF0A040)
     /// The soft amber ground of a wait's chips and of warnings: the
-    /// attention count and the decision bar's tag draw `waitingText` on it with a 1pt edge in
-    /// `waiting` (`NeedsAttentionCountStyle`, `DecisionBarTagStyle`).
+    /// decision bar's tag draws `waitingText` on it with a 1pt edge in
+    /// `waiting` (`DecisionBarTagStyle`).
     /// Nothing with words on it is filled in `waiting` itself: the strong
     /// amber under dark letters reads as a dark block.
     static let waitingFill = ThemedColor(light: 0xFDF0DF, dark: 0x3A2B18)
@@ -608,7 +609,7 @@ enum SupervisionTokens {
     static let stateFillButtonPressed = ThemedColor(light: 0xE2E6ED, dark: 0x4A4D55)
     static let stateFillButtonEdge = ThemedColor(light: 0xCCD1DA, dark: 0x4A4D55)
     /// The needs-input glyph's disc ("?"), wherever it is drawn: the
-    /// sidebar, the tabs, Needs Attention, the history, the cards. The
+    /// sidebar, the tabs, Needs Attention, the history, and the cards. The
     /// lightest amber on which a white mark still reaches 3:1 for
     /// marks (3.01:1; a step lighter in red or green falls under it), the
     /// same in both appearances: lighter than `waiting` in light, a little
@@ -618,6 +619,9 @@ enum SupervisionTokens {
     static let waitingGlyph = ThemedColor(light: 0xDA7E11, dark: 0xDA7E11)
     /// The "?" on that disc: white in both appearances.
     static let onWaiting = ThemedColor(light: 0xFFFFFF, dark: 0xFFFFFF)
+    /// A count's capsule in the waiting color: digits are text, held to 4.5:1
+    /// under `onWaiting`, which `waitingGlyph` as a mark is not.
+    static let waitingCount = ThemedColor(light: 0xB45F06, dark: 0xB45F06)
     /// The disc's edge, for where its fill stands under 3:1 off a surface:
     /// in light, on a selected row (2.41:1), it takes its own color
     /// darkened just far enough for 3:1 on every light surface, as the

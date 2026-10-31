@@ -110,6 +110,7 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
     case reviewLatestTurn = "reviewTurn"
     case toggleChangesPanel
     case allProjects
+    case showScratch
 
     // Navigation (worktree + tab cycling)
     case nextSession = "nextSection"
@@ -197,7 +198,7 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .newTab, .newWorktree, .newWorktreeNow, .renameTab, .reopenClosedTab,
              .closeSurface, .closeTab, .openFolder, .closeWindow, .newWindow: .file
         case .toggleSidebar, .notificationHistory, .review, .reviewLatestTurn,
-             .toggleChangesPanel, .allProjects: .view
+             .toggleChangesPanel, .allProjects, .showScratch: .view
         case .nextSession, .previousSession, .nextTab, .previousTab,
              .nextAttention, .previousAttention, .showNeedsAttention, .showOpenTabs, .focusSidebar,
              .moveProjectUp, .moveProjectDown, .goBack, .goForward: .navigation
@@ -235,7 +236,7 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .newTab, .newWorktree, .newWorktreeNow, .renameTab, .reopenClosedTab,
              .closeSurface, .closeTab, .openFolder, .closeWindow, .newWindow,
              .toggleSidebar,
-             .notificationHistory, .review, .reviewLatestTurn, .toggleChangesPanel, .allProjects,
+             .notificationHistory, .review, .reviewLatestTurn, .toggleChangesPanel, .allProjects, .showScratch,
              .nextSession, .previousSession, .nextTab, .previousTab,
              .nextAttention, .previousAttention, .showNeedsAttention, .showOpenTabs, .focusSidebar,
              .moveProjectUp, .moveProjectDown, .goBack, .goForward,
@@ -273,6 +274,7 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .reviewLatestTurn: "Review Latest Turn"
         case .toggleChangesPanel: "Toggle Changes"
         case .allProjects: "All Projects"
+        case .showScratch: "Scratch"
         case .nextSession: "Next Worktree"
         case .previousSession: "Previous Worktree"
         case .nextTab: "Next Tab"
@@ -331,6 +333,7 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .reviewLatestTurn: ReviewPresentation.symbol
         case .toggleChangesPanel: "sidebar.right"
         case .allProjects: "square.grid.2x2"
+        case .showScratch: "apple.terminal"
         case .nextSession: "chevron.left.chevron.right"
         case .previousSession: "chevron.left.chevron.right"
         case .nextTab: "arrow.left.arrow.right"
@@ -433,6 +436,7 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         // ⌥⌘I is the inspector's key across macOS.
         case .toggleChangesPanel: .init(key: "i", modifiers: [.command, .option])
         case .allProjects: .init(key: "o", modifiers: [.command, .option])
+        case .showScratch: .init(key: "s", modifiers: [.command, .option])
         case .nextSession: .init(key: "]", modifiers: [.command])
         case .previousSession: .init(key: "[", modifiers: [.command])
         case .nextTab: .init(key: "]", modifiers: [.command, .shift])

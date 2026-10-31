@@ -6,10 +6,12 @@ import SwiftUI
 /// The title bar: on the left, where this window is (project ▾ and
 /// worktree ▾); in the middle, back and forward and the command palette
 /// field, as a browser sets them before its address field; on the right,
-/// only what must stay in sight (Needs Attention n). Nothing here appears
-/// and disappears with the work, so the bar's layout never moves. The
+/// only what must stay in sight (Needs Attention n, unviewed turns). Back,
+/// forward, and the field stand on the bar's center, so a count coming and
+/// going moves only the trailing group's leading edge. The
 /// dropdowns hang from it through `TitleBarMenuHost`.
 struct SupervisionTitleBar: View {
+    let state: AppState
     @Environment(ProjectWindowState.self) private var window
 
     var body: some View {
@@ -30,7 +32,10 @@ struct SupervisionTitleBar: View {
             }
             TitleBarHistoryButtons()
             ToolbarPaletteField()
-            NeedsAttentionPill()
+            HStack(spacing: WeirLayout.Supervision.titleBarSpacing) {
+                NeedsAttentionPill()
+                ChangesPanelToggle(state: state)
+            }
         }
         .frame(height: WeirLayout.Supervision.titleBarHeight)
         .frame(maxWidth: .infinity)
@@ -97,7 +102,7 @@ struct SupervisionTitleBarLayout: Layout {
     func placeSubviews(in bounds: CGRect, proposal _: ProposedViewSize, subviews: Subviews, cache _: inout ()) {
         // The bar always builds exactly these four parts, in this order
         // (`SupervisionTitleBar.body`); anything else is a mistake there.
-        assert(subviews.count == 4, "The title bar lays out its place controls, back and forward, the field, and Needs Attention")
+        assert(subviews.count == 4, "The title bar lays out its place controls, back and forward, the field, and its trailing buttons")
         guard subviews.count == 4 else { return }
         let leading = subviews[0]
         let history = subviews[1]

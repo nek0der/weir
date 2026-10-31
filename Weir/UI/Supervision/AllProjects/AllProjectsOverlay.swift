@@ -266,24 +266,27 @@ private struct AllProjectsPanel: View {
                 ForEach(model.groups, id: \.section) { group in
                     VStack(alignment: .leading, spacing: Layout.allProjectsSpacing) {
                         sectionHeading(group)
-                        LazyVGrid(
-                            columns: Array(
-                                repeating: GridItem(.flexible(), spacing: Layout.allProjectsSpacing, alignment: .top),
-                                count: columns
-                            ),
-                            alignment: .leading,
-                            spacing: Layout.allProjectsSpacing
-                        ) {
-                            ForEach(group.cards) { card in
-                                AllProjectsCardView(
-                                    card: card,
-                                    isSelected: card.id == selection.selectedID,
-                                    isActionFocused: card.id == selection.selectedID && selection.control == .cardAction,
-                                    actionPress: actionPress,
-                                    state: state,
-                                    tails: tails
-                                )
-                                .id(card.id)
+                        // A column of its own for each, not a grid: a grid's rows
+                        // stand as tall as their tallest card, and a card with
+                        // little to say left a hole under it. Dealt across in
+                        // order, so ↑ ↓ and ← → (`AllProjectsSelection`), which
+                        // step by the column count, still move where they look.
+                        HStack(alignment: .top, spacing: Layout.allProjectsSpacing) {
+                            ForEach(0..<max(columns, 1), id: \.self) { column in
+                                VStack(spacing: Layout.allProjectsSpacing) {
+                                    ForEach(AllProjectsSelection.cards(of: group.cards, inColumn: column, of: max(columns, 1))) { card in
+                                        AllProjectsCardView(
+                                            card: card,
+                                            isSelected: card.id == selection.selectedID,
+                                            isActionFocused: card.id == selection.selectedID && selection.control == .cardAction,
+                                            actionPress: actionPress,
+                                            state: state,
+                                            tails: tails
+                                        )
+                                        .id(card.id)
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .top)
                             }
                         }
                     }
@@ -410,7 +413,7 @@ private struct AllProjectsCardView: View {
                 // Combined into the card's label, it says the request's
                 // state and its checks, which the chip does not.
                 if card.pullRequest != nil, let mark = PRMarkPresentation.supervisionStyle(for: prStatusStore.info(for: card.id)) {
-                    SessionPRMark(style: mark, size: WeirLayout.Supervision.agentBadgeLargeHeight)
+                    SessionPRMark(style: mark, size: WeirLayout.Supervision.agentBadgeSize)
                 }
                 // The card's marks of its agents, as on the session's row;
                 // the card's label is made of what it shows, so the badges

@@ -4,8 +4,7 @@
 import SwiftUI
 
 /// The row at the foot of a column of the supervision window: the
-/// sidebar's scratch row, the decision bar and the review's band under the
-/// session, and the changes panel's primary action. Each column ends with
+/// decision bar and the review's band under the session, and the changes panel's primary action. Each column ends with
 /// one, flush with its surface's bottom, so the rules along their tops sit
 /// on one line across the window and the buttons in them share one center
 /// line.
@@ -15,7 +14,7 @@ import SwiftUI
 /// width, or content that grew the row, moved one column's line off the
 /// others'. A column draws one only while it has a row to hold: a shell pane
 /// has no decision bar, and the changes panel with no move has no foot bar
-/// (`CommitAndPRFootBar`); the sidebar always holds its scratch row.
+/// (`CommitAndPRFootBar`).
 struct SupervisionFootBar<Content: View>: View {
     /// The row's ground: the soft fill of what the decision bar is on, or
     /// clear where the row stands on its surface's own fill.

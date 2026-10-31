@@ -8,7 +8,7 @@ import SwiftUI
 /// `CommitAndPRModel`'s; this lays it out and asks before cleaning up.
 /// Its words and its other buttons stand above; its one primary move
 /// (`CommitAndPRModel.footAction`) is in the panel's foot bar, on the line
-/// the sidebar's scratch row and the decision bar stand on. With no move
+/// the decision bar stands on. With no move
 /// there is no bar (`CommitAndPRFootBar`).
 struct CommitAndPRSection: View {
     let state: AppState

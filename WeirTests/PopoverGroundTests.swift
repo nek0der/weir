@@ -69,15 +69,16 @@ struct PopoverGroundTests {
     }
 
     /// With no face at rest, a hovered button shows by its edge on the
-    /// material, which stands clearly off it; the opaque ground's fill reads
-    /// without one.
+    /// material, a step past the resting edge's and short of a black outline;
+    /// the opaque ground's fill reads without one.
     @Test(arguments: [false, true])
     func aHoveredButtonsEdge_standsOffThePopoverMaterial(isDark: Bool) throws {
         #expect(PopoverGround.opaque.buttonHoverEdge == nil)
         let material = Tokens.popoverMaterial.value(isDark: isDark)
         let edge = try #require(PopoverGround.material.buttonHoverEdge).value(over: material, isDark: isDark)
         let ratio = ContrastRatio.between(edge, material)
-        #expect(ratio >= ContrastRatio.icon, "edge in \(isDark ? "dark" : "light"): \(ratio)")
+        #expect(ratio >= 1.5, "edge in \(isDark ? "dark" : "light"): \(ratio)")
+        #expect(ratio < ContrastRatio.icon, "edge in \(isDark ? "dark" : "light"): \(ratio)")
     }
 
     /// On the material, the selected row stands off it further than the

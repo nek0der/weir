@@ -59,7 +59,7 @@ struct SessionRowActions {
 }
 
 /// The menu items for `actions`, for a `.contextMenu`. A divider stands
-/// only between two groups that both have an entry: the scratch row and a
+/// only between two groups that both have an entry: Scratch's button and a
 /// fold line start their menus partway down the order, and a menu that
 /// opens on a divider reads as one with something missing.
 struct SessionRowActionsMenu: View {
@@ -136,7 +136,7 @@ struct SessionRowActionsMenu: View {
             .tint(Color.primary)
         }
         if let openChangesPanel = actions.openChangesPanel {
-            // The right rail's symbol, so the entry and the button it
+            // The title bar button's symbol, so the entry and the button it
             // stands in for read as one.
             Button(action: openChangesPanel) {
                 Label("Open Changes Panel", systemImage: "plus.forwardslash.minus")

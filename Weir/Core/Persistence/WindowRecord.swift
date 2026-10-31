@@ -52,7 +52,7 @@ struct WindowRecord: Codable, Equatable, Sendable {
     /// Stands in for a primary's record that did not read (`unread`): the
     /// defaults, holding the primary's place, and put back as no record
     /// at all (`WorkspaceSession.restore(from:)`), not as one saved on the
-    /// scratch row, which the defaults' `.loose` would otherwise read as.
+    /// scratch tabs, which the defaults' `.loose` would otherwise read as.
     /// Never saved: a later save writes the window as it is then.
     var isUnread = false
 

@@ -512,17 +512,20 @@ private struct OpenTabsButton: View {
             Image(systemName: "chevron.down")
                 .font(.supervision(.glyph, weight: .semibold))
                 .foregroundStyle(isLit ? SupervisionTokens.text.color : SupervisionTokens.muted.color)
-                .paneStripControlFace(fill: isLit ? SupervisionTokens.selection.color : SupervisionTokens.hover.color)
+                .paneStripControlFace(fill: isLit ? SupervisionTokens.selection.color : SupervisionTokens.hover.color, alignment: .leading)
         }
-        .iconButtonHelp("Open Tabs", shortcut: shortcut)
+        .hoverChip("Open Tabs", shortcut: shortcut, placement: .belowLeading)
+        .accessibilityLabel(Text("Open Tabs"))
     }
 }
 
 private extension View {
     /// The rounded square of the strip's two controls, centered over the
     /// strip's rule as the tabs' content is. It stays clear of the rule, so
-    /// a control never reads as a tab growing out of it.
-    func paneStripControlFace(fill: Color) -> some View {
+    /// a control never reads as a tab growing out of it. It stands against
+    /// the strip's inset, so its edge is on the column the session's title
+    /// and the pane's header start on.
+    func paneStripControlFace(fill: Color, alignment: Alignment) -> some View {
         let layout = WeirLayout.Supervision.self
         return frame(width: layout.openTabsButtonSize, height: layout.openTabsButtonSize)
             .background(
@@ -530,7 +533,7 @@ private extension View {
                     .fill(fill)
             )
             .padding(.bottom, layout.paneStripRuleWidth)
-            .frame(width: layout.paneStripAddButtonWidth, height: layout.paneStripHeight)
+            .frame(width: layout.paneStripAddButtonWidth, height: layout.paneStripHeight, alignment: alignment)
             .contentShape(Rectangle())
     }
 }
@@ -545,14 +548,17 @@ private struct AddTabButton: View {
     @Environment(\.locale) private var locale
 
     var body: some View {
-        let help = Text("Add Tab to \(AddTabMenu.placeName(of: container, in: session, locale: locale))")
+        let name: LocalizedStringResource = "Add Tab to \(AddTabMenu.placeName(of: container, in: session, locale: locale))"
         TitleBarMenuButton(menu: .addTab(container)) { isLit in
             Image(systemName: "plus")
                 .font(.supervision(.label, weight: .medium))
                 .foregroundStyle(isLit ? SupervisionTokens.text.color : SupervisionTokens.muted.color)
-                .paneStripControlFace(fill: isLit ? SupervisionTokens.selection.color : .clear)
+                .paneStripControlFace(fill: isLit ? SupervisionTokens.selection.color : .clear, alignment: .trailing)
         }
-        .help(help)
-        .accessibilityLabel(help)
+        .hoverChip(name, shortcut: nil, placement: .below)
+        // Bare at rest, so its glyph rather than its square is what stands on
+        // the strip's inset.
+        .offset(x: WeirLayout.Supervision.paneStripAddGlyphOutset)
+        .accessibilityLabel(Text(name))
     }
 }
