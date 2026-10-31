@@ -1,4 +1,4 @@
-.PHONY: build build-release release-check run dev test test-measure rust-test review-core fmt rust-fmt lint rust-lint rust-header dmg xcodegen ghostty screenshot clean help FORCE
+.PHONY: build build-release release-check run dev test test-measure rust-test review-core fmt rust-fmt lint rust-lint rust-header dmg xcodegen ghostty site-images screenshot clean help FORCE
 
 SCHEME  := Weir
 PROJECT := Weir.xcodeproj
@@ -57,6 +57,7 @@ help:
 	@echo "  make xcodegen    Regenerate Weir.xcodeproj from project.yml"
 	@echo "  make ghostty     Build vendored libghostty"
 	@echo "  make screenshot  Regenerate .github/assets/hero.png (demo mode)"
+	@echo "  make site-images Regenerate the site's captures (demo mode)"
 	@echo "  make clean       Remove DerivedData for this project"
 
 # Regenerate the Xcode project when it is missing, when project.yml changed,
@@ -177,6 +178,10 @@ ghostty:
 # captures another worktree's newer build from DerivedData.
 screenshot: build-release
 	WEIR_SCREENSHOT_APP='$(RELEASE_APP_PATH)' ./scripts/screenshot.sh
+
+# The site's captures, in both of its looks (`site/README.md`).
+site-images: build-release
+	./scripts/site-images.sh '$(RELEASE_APP_PATH)'
 
 clean:
 	rm -rf $(HOME)/Library/Developer/Xcode/DerivedData/Weir-*

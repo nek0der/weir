@@ -1,0 +1,46 @@
+---
+// NotFound.astro
+// Weir — the page for an address that does not exist, in each language. Ours rather than Starlight's, so it speaks the reader's language and leaves their saved one alone.
+import { homeOf, STRINGS, type Lang } from "../site";
+import "../styles/tokens.css";
+import "../styles/nav.css";
+import PageHead from "./PageHead.astro";
+import SiteNav from "./SiteNav.astro";
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = STRINGS[lang];
+const home = homeOf(lang);
+---
+
+<!doctype html>
+<html lang={lang}>
+  <head>
+    <PageHead />
+    <title>404 | Weir</title>
+    <meta name="robots" content="noindex" />
+  </head>
+  <body>
+    <SiteNav lang={lang} page="/" homeHref={home} productHref={`${home}#story`} />
+    <main>
+      <h1>404</h1>
+      <p set:html={t.notFoundTitle} />
+      <a href={home}>{t.notFoundLink} →</a>
+    </main>
+    <style is:global>
+      html, body { margin: 0; background: var(--bg) }
+      body { color: var(--fg); font: 400 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: clip }
+      .nav { border-bottom: 1px solid var(--hair); padding-inline: max(16px, 4vw) }
+      main { box-sizing: border-box; min-height: calc(100svh - var(--bar) - 1px); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 16px 96px; text-align: center; word-break: keep-all; overflow-wrap: anywhere; animation: rise .8s cubic-bezier(.2, 0, 0, 1) both }
+      main h1 { margin: 0; font-weight: 510; font-size: clamp(64px, 9vw, 112px); line-height: 1; letter-spacing: -.03em }
+      main p { margin: 16px 0 24px; color: var(--mid) }
+      main a { font-size: 13px; color: var(--mid); text-decoration: none }
+      main a:hover { color: var(--fg) }
+      @keyframes rise { from { opacity: 0; transform: translateY(10px) } }
+      @media (prefers-reduced-motion: reduce) { main { animation: none } }
+    </style>
+  </body>
+</html>

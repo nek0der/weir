@@ -24,6 +24,66 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # A pull request that changes only `site/` skips the app's jobs. It skips them
+  # by `if` rather than by a path filter, because a required check of a workflow
+  # that a filter skipped stays pending and blocks the merge, while a skipped job
+  # counts as passed. Anything this job cannot read counts as the app's: a job
+  # that ran for nothing costs time, and one skipped by mistake lets a change in.
+  scope:
+    name: Scope
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      app: ${{ steps.files.outputs.app }}
+      site: ${{ steps.files.outputs.site }}
+    steps:
+      - name: Read the changed files
+        id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          files=""
+          if [ -n "${PR}" ]; then
+            # The API names both ends of a rename, so moving a file out of the app
+            # counts as the app's change. `gh pr diff --name-only` gives only the new path.
+            files="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --jq '.[] | .filename, (.previous_filename // empty)')" || files=""
+          fi
+          if [ -n "${files}" ] && ! grep -qv '^site/' <<<"${files}"; then
+            echo "app=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "app=true" >> "${GITHUB_OUTPUT}"
+          fi
+          if [ -z "${files}" ] || grep -q '^site/' <<<"${files}"; then
+            echo "site=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "site=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+  site:
+    name: Site
+    needs: scope
+    if: needs.scope.outputs.site != 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: site/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: site/.node-version
+      - name: Build
+        working-directory: site
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
   # Actions has no fail-fast across the jobs of a run, and `needs` would put the
   # shortest jobs in front of the longest. So a pull request's run watches itself
   # and stops at its first failure, which frees the macOS runners for other runs.
@@ -51,12 +111,13 @@ jobs:
           while true; do
             # A failed read says nothing about the jobs, so the loop waits for the next one.
             if states=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" \
-              --jq '.jobs[] | select(.name != "Stop the run on a failure") | .conclusion // "running"'); then
+              --jq '.jobs[] | select(.name != "Stop the run on a failure" and .name != "Scope") | .conclusion // "running"'); then
               if grep -qE '^(failure|timed_out)$' <<<"$states"; then
                 gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
                 exit
               fi
               # An empty list means the other jobs are not listed yet, not that they finished.
+              # Scope is left out because the rest only appear once it ends, and its failure is safe.
               [ -z "$states" ] || grep -q '^running$' <<<"$states" || exit 0
             fi
             sleep 30
@@ -102,6 +163,7 @@ jobs:
 
   rust:
     name: Rust (${{ matrix.os }})
+    needs: scope
     runs-on: ${{ matrix.os }}
     # This lets every OS finish on `main`. On a pull request, `stop-on-failure`
     # stops the run at the first failure anyway.
@@ -110,34 +172,34 @@ jobs:
       matrix:
         os: [macos-26, ubuntu-24.04, windows-2025]
 
-    # The release pull request skips the steps here, not the job: a skipped
-    # matrix job reports under its unexpanded name, and the required checks
-    # for each OS would then wait forever.
+    # The release pull request and a site-only pull request skip the steps here,
+    # not the job: a skipped matrix job reports under its unexpanded name, and
+    # the required checks for each OS would then wait forever.
     env:
-      IS_RELEASE_PR: ${{ github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release-please--') }}
+      SKIPS_STEPS: ${{ needs.scope.outputs.app == 'false' || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release-please--')) }}
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        if: env.IS_RELEASE_PR != 'true'
+        if: env.SKIPS_STEPS != 'true'
       - name: Install pinned Rust toolchain
-        if: env.IS_RELEASE_PR != 'true'
+        if: env.SKIPS_STEPS != 'true'
         run: rustup toolchain install --no-self-update
       - name: Check formatting
-        if: env.IS_RELEASE_PR != 'true'
+        if: env.SKIPS_STEPS != 'true'
         run: cargo fmt --all --check
       # The bridge build script rewrites the committed header; any diff means
       # the header in git no longer matches the exported Rust items. The
       # Windows runner compares cleanly because .gitattributes pins LF endings.
       - name: Check generated header
-        if: env.IS_RELEASE_PR != 'true'
+        if: env.SKIPS_STEPS != 'true'
         run: |
           cargo build --locked --package weir-rust-bridge
           git diff --exit-code -- rust/weir-rust-bridge/include/weir_rust_bridge.h
       - name: Run Clippy
-        if: env.IS_RELEASE_PR != 'true'
+        if: env.SKIPS_STEPS != 'true'
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Run tests
-        if: env.IS_RELEASE_PR != 'true'
+        if: env.SKIPS_STEPS != 'true'
         run: cargo test --locked --workspace --all-targets
 
   # The two build jobs do not wait for SwiftFormat and SwiftLint: those take
@@ -149,7 +211,8 @@ jobs:
   # this one.
   build:
     name: Build (macOS 26)
-    if: github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--')
+    needs: scope
+    if: needs.scope.outputs.app != 'false' && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--'))
     runs-on: macos-26
 
     steps:
@@ -410,7 +473,8 @@ jobs:
   # release.yml.
   release-archive:
     name: Release archive (macOS 26)
-    if: github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--')
+    needs: scope
+    if: needs.scope.outputs.app != 'false' && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--'))
     runs-on: macos-26
 
     steps:
@@ -482,7 +546,8 @@ jobs:
 
   format:
     name: SwiftFormat
-    if: github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--')
+    needs: scope
+    if: needs.scope.outputs.app != 'false' && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--'))
     runs-on: macos-26
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -530,7 +595,8 @@ jobs:
 
   lint:
     name: SwiftLint
-    if: github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--')
+    needs: scope
+    if: needs.scope.outputs.app != 'false' && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--'))
     runs-on: macos-26
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0

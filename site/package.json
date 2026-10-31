@@ -1,0 +1,23 @@
+{
+  "name": "weir-site",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=26.13.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "devDependencies": {
+    "wrangler": "4.156.0"
+  },
+  "dependencies": {
+    "@astrojs/sitemap": "3.7.4",
+    "@astrojs/starlight": "0.42.6",
+    "astro": "7.3.8",
+    "sharp": "0.35.5"
+  }
+}

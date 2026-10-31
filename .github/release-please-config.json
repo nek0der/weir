@@ -24,6 +24,7 @@
   "packages": {
     ".": {
       "package-name": "weir",
+      "exclude-paths": ["site"],
       "extra-files": [
         {
           "type": "generic",

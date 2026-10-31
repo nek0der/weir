@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.astro/
+# The root ignores macOS's `Icon?` files, which on a case-insensitive disk also matches this folder.
+!src/icons/
