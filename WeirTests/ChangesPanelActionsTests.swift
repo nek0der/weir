@@ -118,7 +118,7 @@ struct ChangesPanelActionsTests {
         #expect(ChangesPanelActions.turnsKey(window: fixture.window, stores: fixture.changes).isEmpty)
     }
 
-    @Test func markViewedOnARow_movesTheLineAndClearsTheRailsCount() async throws {
+    @Test func markViewedOnARow_movesTheLineAndClearsTheTogglesCount() async throws {
         let fixture = ActionStoresFixture()
         let first = try fixture.turn("t1", number: 1, startedAt: "2026-10-12T00:00:00Z")
         let second = try fixture.turn("t2", number: 2, startedAt: "2026-10-12T00:01:00Z")
@@ -327,9 +327,9 @@ struct ChangesPanelActionsTests {
         #expect(live(TurnSummaryFixture.conversation("older"))?.providerTitle == "Older work")
     }
 
-    /// The rail's tooltip names a conversation as the panel does, with the
+    /// The toggle's hint names a conversation as the panel does, with the
     /// title the provider gave it live, not only what its turns recorded.
-    @Test func railFacts_nameAConversationWithALiveTitle_asThePanelDoes() async throws {
+    @Test func toggleFacts_nameAConversationWithALiveTitle_asThePanelDoes() async throws {
         let fixture = ActionStoresFixture()
         try fixture.record([
             fixture.turn("t1", number: 1, conversation: "a", startedAt: "2026-10-12T00:00:00Z"),
@@ -347,7 +347,7 @@ struct ChangesPanelActionsTests {
             Issue.record("the panel lists no turns")
             return
         }
-        let rail = ChangesPanelActions.railFacts(window: fixture.window, stores: fixture.changes)
+        let facts = ChangesPanelActions.toggleFacts(window: fixture.window, stores: fixture.changes)
         let english = Locale(identifier: "en")
         let names = { (choices: [ConversationChoice]) in
             Dictionary(uniqueKeysWithValues: choices.map { ($0.conversation, ConversationText.name($0, locale: english)) })
@@ -355,8 +355,8 @@ struct ChangesPanelActionsTests {
 
         let key = TurnSummaryFixture.conversation("a")
         #expect(names(list.conversations)[key] == "Payments")
-        #expect(names(rail.agents)[key] == "Payments", "the live title, not the first prompt")
-        #expect(names(rail.agents) == names(list.conversations), "every conversation named alike")
+        #expect(names(facts.agents)[key] == "Payments", "the live title, not the first prompt")
+        #expect(names(facts.agents) == names(list.conversations), "every conversation named alike")
     }
 
     /// A tab's place among the session's tabs, from 1, as the pane strip
@@ -499,7 +499,7 @@ struct ChangesPanelActionsTests {
 
     // MARK: - Identity colors
 
-    /// The panel's rows, the rail's breakdown, the review's conversations,
+    /// The panel's rows, the toggle's breakdown, the review's conversations,
     /// and the strip's tabs read one cached map: each conversation has one
     /// color on every surface, and reading it again with nothing changed
     /// works nothing out again. A changed fact (a run ending) does.
@@ -525,7 +525,7 @@ struct ChangesPanelActionsTests {
             Issue.record("the panel lists no turns")
             return
         }
-        let rail = ChangesPanelActions.railFacts(window: fixture.window, stores: fixture.changes)
+        let facts = ChangesPanelActions.toggleFacts(window: fixture.window, stores: fixture.changes)
         let review = ChangesPanelActions.reviewConversations(root: fixture.root, container: container, stores: fixture.changes)
         let strip = PaneStripModel(
             container: container,
@@ -545,7 +545,7 @@ struct ChangesPanelActionsTests {
         let expected: [ConversationKey: Int?] = [aKey: 0, bKey: 1]
 
         #expect(colors(list.conversations) == expected)
-        #expect(colors(rail.agents) == expected)
+        #expect(colors(facts.agents) == expected)
         #expect(colors(review.named) == expected)
         #expect(strip.items.map { $0.agents.first?.identities } == [[0], [1]])
         #expect(store.derivationCount == 1, "every surface read the one cached map")

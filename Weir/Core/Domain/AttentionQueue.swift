@@ -140,7 +140,7 @@ package struct AttentionCounts: Equatable, Sendable {
         approvals + questions + prompts + signIns + stops + unread
     }
 
-    /// Whether anything is blocked on the person. The title bar pill is
+    /// Whether anything is blocked on the person. The title bar count is
     /// filled amber for these and only outlined blue for unread turns.
     package var hasBlockingItems: Bool {
         approvals + questions + prompts + signIns + stops > 0

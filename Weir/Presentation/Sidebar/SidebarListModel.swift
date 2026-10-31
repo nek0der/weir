@@ -31,7 +31,7 @@ struct SidebarProjectHeader: Identifiable, Equatable {
 
     /// The marks a folded header shows, one of each kind, in this order:
     /// a wait on the person, a stop, then a turn running. Unread turns get
-    /// none: they ask for nothing, and the count of the attention pill
+    /// none: they ask for nothing, and the count of the attention button
     /// already says they are there.
     static func marks(counts: AttentionCounts, running: Int) -> [SessionRowFact.Glyph] {
         let wait: SessionRowFact.Glyph? = if counts.approvals > 0 {

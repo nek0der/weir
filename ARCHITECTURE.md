@@ -19,7 +19,7 @@ Weir/
     Domain/      plain values and pure rules (Foundation only)
   Presentation/  @MainActor @Observable stores that shape state for display
   UI/            SwiftUI views, NSViewRepresentable bridges, design system
-    Supervision/ the supervision window: title bar, rails, sidebar, session area, panels
+    Supervision/ the supervision window: title bar, rail, sidebar, session area, panels
   FFI/           libghostty C ABI wrapper (GhosttyFFI)
   Resources/     Info.plist, xcstrings, claude-shim / codex-shim (sharing agent-shim/runtime-common.sh),
                  ghostty/ (shell integration, themes), terminfo
@@ -183,7 +183,7 @@ parts top to bottom and left to right. View paths are under
 
 | Part | View | Display state |
 |---|---|---|
-| Title bar: project ▾, worktree ▾, back and forward, palette field, Needs Attention n | `TitleBar/SupervisionTitleBar.swift`, `TitleBarHistoryButtons`, `NeedsAttentionPill`, `NeedsAttentionListView`, `TitleBarMenuHost` | `ProjectMenuModel`, `WorktreeDropdownEntry`, `TitleBarHistoryModel`, `NeedsAttentionPillModel`, `NeedsAttentionListModel` |
+| Title bar: project ▾, worktree ▾, back and forward, palette field, the Needs Attention tray | `TitleBar/SupervisionTitleBar.swift`, `TitleBarHistoryButtons`, `NeedsAttentionButton`, `NeedsAttentionListView`, `TitleBarMenuHost` | `ProjectMenuModel`, `WorktreeDropdownEntry`, `TitleBarHistoryModel`, `NeedsAttentionCountModel`, `NeedsAttentionListModel` |
 | Left rail: worktrees, scratch, all projects, history; update, plan usage, shortcuts, Settings | `LeftRail/LeftRailView.swift`, `LeftRail/RailScratchButton.swift` | `ProjectWindowState` |
 | Plan usage panel: each agent's limit windows, a floating panel beside the rail like the notification history (`WindowLayer.planUsage`) | `LeftRail/PlanUsagePanel.swift` | `PlanUsageStore` and `PlanUsageText` (Claude Code's from the status line relay's record, `PlanUsageRecordDirectory`; Codex's from its app server, `CodexUsageReader`) |
 | Sidebar: every project under its header (folded or open, in the window's order), each open one's working rows and the folds for the missing worktrees, the worktrees ready to clean up, and the other worktrees | `Sidebar/SessionSidebarView.swift`, `SidebarProjectSection`, `SidebarProjectReorderLayer`, `SidebarProjectHeaderView`, `SidebarProjectActions`, `SessionRowView`, `SidebarSectionFoldRow`, `SidebarRowDrop` | `SidebarListModel`, `SidebarProjectHeader`, `SidebarProjectDrag`, `SidebarPinnedLine`, `SessionSidebarModel`, `SidebarPresentedSections`, `SidebarKeyboardCursor`, `SidebarKeyRoute`, `SidebarArrangement`, `ProjectOrder`, `SidebarSectionRule`, `SidebarSectionHold`, `RowName` |
@@ -290,7 +290,7 @@ puts terminals to sleep, so one window never puts to sleep a terminal that
 another window shows.
 
 A command asked of one window by the menus, the palette, the keyboard
-shortcuts, or the window's own rails is a `WindowCommand`
+shortcuts, or the window's own rail is a `WindowCommand`
 (`Core/Actions/WindowCommand.swift`), delivered through
 `WindowRegistry.perform(_:in:)` to that window's `ProjectWindowState.commands`
 (`WindowCommandChannel`). The view that carries a command out takes it
@@ -438,7 +438,7 @@ conversation again as its surface mounts (`AgentResumeCommandBuilder`).
 |---|---|
 | `Weir/App/WeirApp.swift` | Scene tree, command menu, and `AppState` — the process-wide singleton holding the session, the window registry, the stores, and the agent projection adapter |
 | `Weir/App/ProjectWindowPresenter.swift` + `ProjectWindowController.swift` | The app-owned main windows: made, shown, hidden, and closed through the registry |
-| `Weir/UI/Supervision/SupervisionWindowView.swift` | The supervision window's root: title bar, rails, sidebar, session area, changes panel, status band |
+| `Weir/UI/Supervision/SupervisionWindowView.swift` | The supervision window's root: title bar, rail, sidebar, session area, changes panel, status band |
 | `Weir/Core/Models/WorkspaceSession.swift` | Projects, worktrees, tabs, and every window's selection, shared by all windows; the source of truth |
 | `Weir/Core/Models/WindowSelection.swift` | What one window has selected and how it is laid out (saved as `WindowRecord`) |
 | `Weir/Presentation/Window/WindowRegistry.swift` + `ProjectWindowState.swift` | The windows, which one commands act on, and each window's unsaved display state |

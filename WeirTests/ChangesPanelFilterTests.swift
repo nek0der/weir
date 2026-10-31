@@ -1,12 +1,12 @@
 // ChangesPanelFilterTests.swift
-// Weir — the panel's filter and the rail read apart from the rows: where each conversation runs, and the rail's count and breakdown.
+// Weir — the panel's filter and the facts read apart from the rows: where each conversation runs, and the facts's count and breakdown.
 
 import Foundation
 import Testing
 @testable import Weir
 @testable import WeirDomain
 
-@Suite("Changes panel filter and rail")
+@Suite("Changes panel filter and facts")
 struct ChangesPanelFilterTests {
     private typealias Panel = ChangesPanelFixture
 
@@ -44,23 +44,23 @@ struct ChangesPanelFilterTests {
         input.liveTab = { $0 == viewed[0].conversation ? ConversationChoice.LiveTab(title: "claude", isInSession: true) : nil }
 
         let list = try Panel.list(ChangesPanelModel.make(input))
-        let rail = ChangesPanelModel.rail(input)
+        let facts = ChangesPanelModel.toggleFacts(input)
 
         #expect(list.conversations.map(\.conversation) == agents.map(\.conversation), "every conversation, viewed ones too")
         #expect(list.conversations.map(\.section) == [.unviewed, .unviewed, .running])
         #expect(
-            rail.agents.map(\.conversation) == [first[0].conversation, other[0].conversation],
+            facts.agents.map(\.conversation) == [first[0].conversation, other[0].conversation],
             "the conversations with turns to read, not the viewed one a pane runs"
         )
-        #expect(rail.agents.map(\.ordinal) == [1, 2], "named among every conversation of the kind")
-        #expect(rail.unviewed == 3)
-        #expect(rail.agents.map(\.unviewedCount).reduce(0, +) == rail.unviewed, "the breakdown adds up to the badge")
+        #expect(facts.agents.map(\.ordinal) == [1, 2], "named among every conversation of the kind")
+        #expect(facts.unviewed == 3)
+        #expect(facts.agents.map(\.unviewedCount).reduce(0, +) == facts.unviewed, "the breakdown adds up to the badge")
         #expect(ChangesPanelModel.unviewedTotal(input) == 3)
 
         let alone = Panel.input([Panel.agent(first)])
-        #expect(ChangesPanelModel.rail(alone).unviewed == 2, "one agent: a count with no breakdown")
-        #expect(ChangesPanelModel.rail(alone).agents.isEmpty)
-        let read = ChangesPanelModel.rail(Panel.input([Panel.agent(viewed)], lines: [Panel.line(through: viewed[0]).line]))
+        #expect(ChangesPanelModel.toggleFacts(alone).unviewed == 2, "one agent: a count with no breakdown")
+        #expect(ChangesPanelModel.toggleFacts(alone).agents.isEmpty)
+        let read = ChangesPanelModel.toggleFacts(Panel.input([Panel.agent(viewed)], lines: [Panel.line(through: viewed[0]).line]))
         #expect(read.unviewed == 0)
         #expect(read.agents.isEmpty, "nothing to break down")
     }

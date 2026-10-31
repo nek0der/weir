@@ -18,7 +18,7 @@ struct RailPlanUsageButton: View {
         // change announces.
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let level = store.level(at: context.date)
-            RailButton(
+            IconControlButton(
                 systemImage: "timer",
                 name: "Plan Usage",
                 shortcut: nil,

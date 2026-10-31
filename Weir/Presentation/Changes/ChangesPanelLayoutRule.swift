@@ -35,7 +35,7 @@ enum ChangesPanelLayoutRule {
 
     struct Input: Equatable, Sendable {
         /// What the sidebar, the terminal area, and the panel share: the
-        /// window's body less its rails, the same width whatever the
+        /// window's body less its rail, the same width whatever the
         /// layout. Measured that way, a layout just written is
         /// read against the width it was chosen for, and choosing again
         /// gives the same answer. It holds the gaps between the surfaces;

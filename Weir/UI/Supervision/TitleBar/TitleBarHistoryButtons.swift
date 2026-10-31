@@ -44,7 +44,7 @@ struct TitleBarHistoryButtons: View {
                     height: WeirLayout.Supervision.titleBarHistoryButtonSize
                 )
         }
-        .buttonStyle(.supervisionIcon)
+        .buttonStyle(.supervisionIcon(cornerRadius: WeirLayout.Supervision.iconControlCornerRadius))
         .disabled(!isEnabled)
         .hoverChip(name, shortcut: settings.settings.keyboard.shortcut(for: action)?.displayString, placement: .belowLeading)
         .accessibilityLabel(Text(name))

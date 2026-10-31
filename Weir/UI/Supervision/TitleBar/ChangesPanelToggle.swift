@@ -14,19 +14,19 @@ struct ChangesPanelToggle: View {
 
     var body: some View {
         // Read once, for the badge and the hint both.
-        let facts = ChangesPanelActions.railFacts(window: window, stores: state.changesPanelStores)
+        let facts = ChangesPanelActions.toggleFacts(window: window, stores: state.changesPanelStores)
         let unviewed = facts.unviewed
         let shortcut = settings.settings.keyboard.shortcut(for: .toggleChangesPanel)?.displayString
         // A diff, which is what the panel reads, rather than the menu's
         // sidebar symbol, which says only where it goes.
-        RailButton(
+        IconControlButton(
             placement: .below,
             systemImage: "plus.forwardslash.minus",
             name: "Changes",
             shortcut: shortcut,
             isSelected: window.selection.isChangesPanelPresented,
             badge: .counting(unviewed),
-            help: ChangesPanelText.railHelp(shortcut: shortcut, unviewed: unviewed, agents: facts.agents, locale: locale),
+            hint: ChangesPanelText.toggleHint(shortcut: shortcut, unviewed: unviewed, agents: facts.agents, locale: locale),
             value: unviewed > 0 ? ConversationText.unviewedTurns(unviewed, locale: locale) : nil
         ) {
             ChangesPanelActions.toggle(window, session: state.session)

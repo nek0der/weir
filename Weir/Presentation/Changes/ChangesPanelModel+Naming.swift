@@ -144,12 +144,12 @@ extension ChangesPanelModel {
         choices(input.agents, among: input.agents, input: input, unviewed: unviewedCounts(input))
     }
 
-    /// What the rail's button says: the session's turns waiting to be
-    /// read, every agent's together, for its badge, and for its tooltip's
+    /// What the title bar toggle says: the session's turns waiting to be
+    /// read, every agent's together, for its badge, and for its hint's
     /// breakdown the conversations with some to read, named as the panel
     /// names them, while there are two or more to tell apart. Each agent's
     /// turns are counted once, for both.
-    static func rail(_ input: Input) -> (unviewed: Int, agents: [ConversationChoice]) {
+    static func toggleFacts(_ input: Input) -> (unviewed: Int, agents: [ConversationChoice]) {
         let counts = unviewedCounts(input)
         let unviewed = counts.values.reduce(0, +)
         let waiting = input.agents.filter { counts[$0.conversation, default: 0] > 0 }

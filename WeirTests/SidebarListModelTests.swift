@@ -68,6 +68,22 @@ struct SidebarListModelTests {
         )
     }
 
+    /// The Scratch button's model, as the left rail's button builds it.
+    private static func scratchModel(_ fixture: Fixture, now: Date = Date(timeIntervalSince1970: 0)) -> RailScratchModel {
+        RailScratchModel(
+            window: fixture.primary.id,
+            session: fixture.session,
+            queue: AttentionQueue(),
+            runtimes: [],
+            approvals: ApprovalLedger(),
+            isCardUp: { _ in false },
+            isHighlighted: false,
+            shortcut: nil,
+            now: now,
+            locale: english
+        )
+    }
+
     /// An item of `kind` in a pane of `project`, as the attention list holds
     /// one.
     private static func item(_ kind: AttentionItemKind, in project: Project, _ queue: inout AttentionQueue) {
@@ -156,6 +172,20 @@ struct SidebarListModelTests {
         #expect(SidebarFoldDefault.isOpen(isCurrent: false, isInOtherWindow: false, workingCount: 2))
         #expect(!SidebarFoldDefault.isOpen(isCurrent: false, isInOtherWindow: false, workingCount: 1))
         #expect(!SidebarFoldDefault.isOpen(isCurrent: false, isInOtherWindow: true, workingCount: 5))
+    }
+
+    /// The button is drawn again only for what it shows, so a read with
+    /// nothing changed has to compare equal.
+    @Test func theScratchModel_isEqualUntilWhatItShowsChanges() {
+        let fixture = Fixture()
+        let before = Self.scratchModel(fixture)
+        #expect(Self.scratchModel(fixture) == before)
+        #expect(!before.isOnScratch)
+        #expect(before.answerKey == nil)
+        fixture.session.setActiveContainer(.loose, in: fixture.primary.id, intent: .person)
+        let after = Self.scratchModel(fixture)
+        #expect(after != before)
+        #expect(after.isOnScratch)
     }
 
     /// The scratch row is the window's while it is on it, and never part of

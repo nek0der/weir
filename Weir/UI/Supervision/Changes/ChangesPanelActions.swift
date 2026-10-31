@@ -9,7 +9,7 @@ import WeirDomain
 /// and its line make.
 @MainActor
 enum ChangesPanelActions {
-    /// The rail's button, the menu, the panel's ×, and ⌥⌘I through the
+    /// The title bar toggle, the menu, the panel's ×, and ⌥⌘I through the
     /// palette's dispatch. The window's layout animates the change.
     /// Written only while the window has its selection.
     static func toggle(_ window: ProjectWindowState, session: WorkspaceSession) {
@@ -70,7 +70,7 @@ enum ChangesPanelActions {
     /// (`ChangesPanelModel.totalsComparison`). It moves with the viewed
     /// lines, so the panel counts it again when a mark moves one.
     static func totalsComparison(window: ProjectWindowState, stores: ChangesPanelStores) -> WorktreeChanges.Comparison? {
-        ChangesPanelModel.totalsComparison(railInput(window: window, stores: stores))
+        ChangesPanelModel.totalsComparison(toggleInput(window: window, stores: stores))
     }
 
     /// Every agent's turns recorded under `root`, as one timeline
@@ -134,7 +134,7 @@ enum ChangesPanelActions {
         }
         var input = panelInput(answer: answer, window: window, stores: stores)
         // Where each conversation runs, and what names it there; the
-        // toggle reads the same only for its hint's breakdown (`railFacts`).
+        // toggle reads the same only for its hint's breakdown (`toggleFacts`).
         input.liveTab = liveTab(in: window.selection.activeContainerID, stores: stores)
         // Only the panel's list is grouped; the toggle and the review read
         // the conversations, never the sections.
@@ -190,18 +190,18 @@ enum ChangesPanelActions {
         root(window: window, stores: stores).flatMap { stores.restoreRecord($0) }
     }
 
-    /// What the rail's button says: the session's turns waiting to be
+    /// What the title bar toggle says: the session's turns waiting to be
     /// read, every agent's together, for its badge; and the conversations
     /// with turns to read, named and counted as the panel names and counts
-    /// them, for its hint's breakdown (`ChangesPanelModel.rail`). Named
+    /// them, for its hint's breakdown (`ChangesPanelModel.toggleFacts`). Named
     /// from the same tabs as the panel (`liveTab`), with the tab's rename
     /// and the provider's live titles, so the toggle, the panel, and the
     /// menus give a conversation one name and one number among its
     /// namesakes. Read on every draw of the toggle, so it reads the agents
     /// once and never the panel's rows; the app's panes are read only when
     /// the breakdown has two or more conversations to name, and then once.
-    static func railFacts(window: ProjectWindowState, stores: ChangesPanelStores) -> (unviewed: Int, agents: [ConversationChoice]) {
-        var input = railInput(window: window, stores: stores)
+    static func toggleFacts(window: ProjectWindowState, stores: ChangesPanelStores) -> (unviewed: Int, agents: [ConversationChoice]) {
+        var input = toggleInput(window: window, stores: stores)
         let container = window.selection.activeContainerID
         input.identities = stores.conversationIdentities.identities(in: container)
         var found: ((ConversationKey) -> ConversationChoice.LiveTab?)?
@@ -210,16 +210,16 @@ enum ChangesPanelActions {
             found = tabs
             return tabs(conversation)
         }
-        return ChangesPanelModel.rail(input)
+        return ChangesPanelModel.toggleFacts(input)
     }
 
     /// The session's turns waiting to be read, every agent's together, as
-    /// the rail's badge counts them.
+    /// the toggle's badge counts them.
     static func unviewedCount(window: ProjectWindowState, stores: ChangesPanelStores) -> Int {
-        ChangesPanelModel.unviewedTotal(railInput(window: window, stores: stores))
+        ChangesPanelModel.unviewedTotal(toggleInput(window: window, stores: stores))
     }
 
-    private static func railInput(window: ProjectWindowState, stores: ChangesPanelStores) -> ChangesPanelModel.Input {
+    private static func toggleInput(window: ProjectWindowState, stores: ChangesPanelStores) -> ChangesPanelModel.Input {
         panelInput(
             answer: folder(window: window, stores: stores).flatMap { stores.repositoryRoots.answer(for: $0) },
             window: window,

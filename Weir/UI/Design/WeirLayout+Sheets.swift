@@ -100,7 +100,7 @@ extension WeirLayout.Supervision {
     /// (`SupervisionWindowWidths.titleBar`). At the floor the placeholder
     /// is cut and the field's key still shows.
     static let paletteFieldWidthRange: ClosedRange<CGFloat> = 150...340
-    static let paletteFieldCornerRadius: CGFloat = 7
+    static let paletteFieldCornerRadius = iconControlCornerRadius
     static let paletteFieldSymbolSize = WeirFont.Supervision.Size.label
     /// Wider than the field it hangs under, so a row's name, detail,
     /// and keys share one line.

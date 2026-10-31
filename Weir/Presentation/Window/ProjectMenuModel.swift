@@ -17,7 +17,7 @@ struct ProjectMenuModel: Equatable {
         let isCurrent: Bool
         /// Another window shows the project, hidden or not.
         let isInOtherWindow: Bool
-        let attention: NeedsAttentionPillModel
+        let attention: NeedsAttentionCountModel
         /// Agents running or compacting in the project.
         let running: Int
 
@@ -58,7 +58,7 @@ struct ProjectMenuModel: Equatable {
                     paletteIndex: project.paletteIndex,
                     isCurrent: project.id == currentProjectID,
                     isInOtherWindow: project.id != currentProjectID && facts.isShown(project.id),
-                    attention: NeedsAttentionPillModel(facts.attention(project.id)),
+                    attention: NeedsAttentionCountModel(facts.attention(project.id)),
                     running: facts.running(project.id)
                 )
             }

@@ -1,12 +1,12 @@
-// NeedsAttentionPillModel.swift
-// Weir — what the title bar's "Needs Attention n" says, and how loudly.
+// NeedsAttentionCountModel.swift
+// Weir — what the attention count says, and how loudly.
 
 import Foundation
 import WeirDomain
 
 /// The attention count across every project: on the title bar's tray, where it
 /// goes at zero, and in the menu bar's label.
-struct NeedsAttentionPillModel: Equatable {
+struct NeedsAttentionCountModel: Equatable {
     enum Style: Equatable {
         /// Something blocks on the person (an approval, a question, a wait
         /// at the agent's prompt, a stop): amber.
@@ -44,7 +44,7 @@ struct NeedsAttentionPillModel: Equatable {
     /// "Needs Attention list (⌃⌘J; Next Action: ⌘J) · 1 Approval · 2 Unread".
     /// A shortcut the person has unbound is left out rather than shown
     /// empty; the breakdown lists only the kinds that have items.
-    func tooltip(listShortcut: String?, nextShortcut: String?, locale: Locale) -> String {
+    func hint(listShortcut: String?, nextShortcut: String?, locale: Locale) -> String {
         let head = switch (listShortcut, nextShortcut) {
         case let (list?, next?):
             LocalizedStringResource(

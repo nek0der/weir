@@ -54,7 +54,7 @@ enum SupervisionWindowActions {
         }
     }
 
-    /// ⌃⌘J: the Needs Attention list, hung from its pill in the title bar.
+    /// ⌃⌘J: the Needs Attention list, hung from its button in the title bar.
     static func showNeedsAttention(in window: ProjectWindowState) {
         window.toggleTitleBarMenu(.needsAttention, anchor: window.needsAttentionAnchor, isOpenedFromKeyboard: true)
     }

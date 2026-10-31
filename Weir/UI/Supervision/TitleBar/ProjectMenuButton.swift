@@ -21,7 +21,7 @@ struct ProjectMenuButton: View {
     }
 
     var body: some View {
-        let others = NeedsAttentionPillModel(attentionQueue.queue.counts(inProjectsOtherThan: currentProject?.id))
+        let others = NeedsAttentionCountModel(attentionQueue.queue.counts(inProjectsOtherThan: currentProject?.id))
         TitleBarMenuButton(menu: .project) { isHighlighted in
             TitleBarMenuLabel(title: title, isHighlighted: isHighlighted, textStyle: .title) {
                 if let project = currentProject {
@@ -117,7 +117,7 @@ struct ProjectAvatar: View {
 /// something blocked on the person, blue when only unread turns. The
 /// button's VoiceOver value says the same in words.
 private struct OtherProjectsMark: View {
-    let style: NeedsAttentionPillModel.Style
+    let style: NeedsAttentionCountModel.Style
 
     var body: some View {
         switch style {

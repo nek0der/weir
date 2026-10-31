@@ -98,9 +98,6 @@ enum WeirLayout {
     /// Height of a title bar control (the palette field, its buttons).
     static let titleBarControlHeight: CGFloat = 32
 
-    /// Corner radius of the transient hover highlight.
-    static let titleBarHoverCorner: CGFloat = 7
-
     // MARK: - Agent marks
 
     /// The square an agent state mark (`AgentStateMark`, `.headerStatus`) or
@@ -774,21 +771,23 @@ enum WeirLayout {
 
         // MARK: Rails
 
-        static let railButtonCornerRadius: CGFloat = 8
-        /// The rails run the body's height, as the surfaces beside them do.
-        /// Their first icon is centered on the surfaces' heading line, and
-        /// their last on the foot bars', so each end of a rail lines up
+        /// The corners of a 32pt control (`titleBarControlHeight`), on the
+        /// title bar and the left rail alike, so a row of them reads as one set.
+        static let iconControlCornerRadius: CGFloat = 8
+        /// The rail runs the body's height, as the surfaces beside it do.
+        /// Its first icon is centered on the surfaces' heading line, and
+        /// its last on the foot bars', so each end of the rail lines up
         /// with what stands across the window from it.
         static let railTopInset = (surfaceHeadingLineHeight - railButtonSize) / 2
         static let railBottomInset = (footBarHeight - railButtonSize) / 2
-        /// Between a rail's icons, and the least room between its top group
+        /// Between the rail's icons, and the least room between its top group
         /// and its bottom one.
         static let railButtonSpacing = spaceXS
         static let railGroupMinimumGap = spaceL
-        /// A count on a rail icon, ringed in the window's ground so it
+        /// A count on an icon control, ringed in the window's ground so it
         /// stands off the icon under it.
-        static let railBadgeSize: CGFloat = 15
-        static let railBadgeRingWidth: CGFloat = 2
+        static let iconBadgeSize: CGFloat = 15
+        static let iconBadgeRingWidth: CGFloat = 2
         /// A panel that opens beside the rail from its bottom group: the
         /// update popover and the plan usage panel, one width for both.
         static let railPanelWidth: CGFloat = 340
@@ -841,9 +840,9 @@ enum WeirLayout {
         /// heading but the first, so a section ends before the next begins.
         /// Its cards stay at the list's full width, as on the timeline.
         static let changesSectionGap = spaceXS
-        /// A section heading's unviewed count: the rail badge's pill, which
+        /// A section heading's unviewed count: the icon badge's pill, which
         /// is the app's mark of a count waiting to be read.
-        static let changesSectionCountSize = railBadgeSize
+        static let changesSectionCountSize = iconBadgeSize
         static let turnCardCornerRadius: CGFloat = 9
         /// A row's first column: "T7", and under it the conversation's
         /// identity bar and badge where the row carries its conversation.

@@ -22,7 +22,7 @@ struct ChangesPanelStores {
     let attentionQueue: AttentionQueueStore
     let toasts: ToastCenter
     /// The identity colors of each session container's conversations,
-    /// which the panel, the rail, and the review read here and the pane
+    /// which the panel, the toggle, and the review read here and the pane
     /// strip through the environment, the same store.
     let conversationIdentities: ConversationIdentityStore
     /// Whether Weir is in front, where someone may read the panel.

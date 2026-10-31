@@ -162,7 +162,7 @@ struct ChangesSectionHeading: View {
     }
 }
 
-/// A section's unviewed count, in the pill the rail's count stands in.
+/// A section's unviewed count, in the pill the toggle's count stands in.
 /// Silent: the heading's value says the count in words.
 private struct ChangesSectionCount: View {
     let count: Int

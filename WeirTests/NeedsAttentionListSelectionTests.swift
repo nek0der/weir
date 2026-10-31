@@ -188,7 +188,7 @@ struct NeedsAttentionListSelectionTests {
         #expect(selection.rowID == rows[2].id)
     }
 
-    /// The title bar's list opens as the menu bar's does when its pill is
+    /// The title bar's list opens as the menu bar's does when its button is
     /// pressed, so nothing looks chosen beside the row the pointer is on;
     /// ⌃⌘J opens it on the first row, for Return to open at once.
     @Test @MainActor func theTitleBarsList_opensOnNothingFromItsPill_andOnTheFirstRowFromItsKey() throws {

@@ -169,11 +169,11 @@ struct FloatingPanelLayoutTests {
     }
 
     @Test func aCardOpenedFromTheTitleBarPill_hangsBelowIt_pointingUp() {
-        // The Needs Attention pill near the window's top-right corner.
-        let pill = CGRect(x: 690, y: 12, width: 100, height: 24)
+        // The Needs Attention button near the window's top-right corner.
+        let button = CGRect(x: 690, y: 12, width: 100, height: 24)
         let card = CGSize(width: 400, height: 180)
         let placed = FloatingPanelPlacement.layout(
-            anchor: pill,
+            anchor: button,
             panelSize: card,
             container: container,
             margin: 8,
@@ -183,7 +183,7 @@ struct FloatingPanelLayoutTests {
                 arrowInset: WeirLayout.floatingPanelArrowInset
             )
         )
-        #expect(placed.origin.y >= pill.maxY, "below the pill, not over it")
+        #expect(placed.origin.y >= button.maxY, "below the button, not over it")
         #expect(placed.origin.x + card.width <= container.width - 8)
         #expect(placed.arrow?.edge == .top)
     }
