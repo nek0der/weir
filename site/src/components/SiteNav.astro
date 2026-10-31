@@ -1,0 +1,148 @@
+---
+// SiteNav.astro
+// Weir — the top bar of every page: its markup and behavior. Its words are in `src/site.ts`, and its look in `src/styles/nav.css`.
+import LogoIcon from "../icons/logo.svg";
+import DocsIcon from "../icons/docs.svg";
+import GitHubIcon from "../icons/github.svg";
+import GlobeIcon from "../icons/globe.svg";
+import ChevronIcon from "../icons/chevron.svg";
+import SunIcon from "../icons/sun.svg";
+import MoonIcon from "../icons/moon.svg";
+import { docsOf, DOWNLOAD_URL, LANGS, prefixOf, REPO_URL, STRINGS, type Lang } from "../site";
+
+interface Props {
+  class?: string;
+  homeHref: string;
+  productHref: string;
+  lang: Lang;
+  /** This page's address within a language. A 404 has none of its own, so its language menu goes home. */
+  page?: string;
+  /** Marks the documents' link as the page the reader is on. */
+  isDocs?: boolean;
+}
+
+const { class: className, homeHref, productHref, lang, page: givenPage, isDocs = false } = Astro.props;
+
+const t = STRINGS[lang];
+const page = givenPage ?? Astro.url.pathname.slice(prefixOf(lang).length);
+const docsHref = docsOf(lang);
+// `/` follows the saved language, so the link to English says so itself for a reader whose browser cannot save it.
+function languageHref(code: Lang) {
+  return prefixOf(code) + page + (code === "en" && page === "/" ? "?lang=en" : "");
+}
+---
+
+<script is:inline>
+  // The menus below need a script, so a reader without one is not offered them.
+  document.documentElement.classList.add("js");
+</script>
+<nav class:list={["nav", className]} data-to-dark={t.toDark} data-to-light={t.toLight}>
+  <div class="nav-row">
+    <a class="logo" href={homeHref}>
+      <LogoIcon aria-hidden="true" />
+      Weir
+    </a>
+    <a class="hide" href={productHref}>{t.product}</a>
+    <a class:list={["hide", { "is-current": isDocs }]} href={docsHref}>{t.docs}</a>
+    <span class="sp"></span>
+    <slot name="search" />
+    <a class="icon-btn docs-icon" href={docsHref} aria-label={t.docs}>
+      <DocsIcon aria-hidden="true" />
+    </a>
+    <a class="icon-btn github-icon" href={REPO_URL} target="_blank" rel="noopener" aria-label="GitHub">
+      <GitHubIcon aria-hidden="true" />
+    </a>
+    <div class="lang">
+      <button type="button" class="lang-btn" aria-expanded="false" aria-controls="siteLangMenu" aria-label={t.language}>
+        <GlobeIcon aria-hidden="true" />
+        <span class="lang-name">{LANGS.find((l) => l.code === lang)?.name}</span>
+        <ChevronIcon class="chev" aria-hidden="true" />
+      </button>
+      <ul class="lang-menu" id="siteLangMenu" hidden>
+        {LANGS.map((l) => (
+          <li><a href={languageHref(l.code)} lang={l.code} aria-current={l.code === lang ? "true" : undefined}>{l.name}</a></li>
+        ))}
+      </ul>
+    </div>
+    <!-- Every language's label is here, one showing, so the button is the same width on every page. -->
+    <a class="pill" href={DOWNLOAD_URL} target="_blank" rel="noopener">{LANGS.map((l) => <span class={l.code === lang ? undefined : "is-reserved"}>{STRINGS[l.code].download}</span>)}</a>
+    <button type="button" class="icon-btn theme-btn">
+      <SunIcon class="theme-sun" aria-hidden="true" />
+      <MoonIcon class="theme-moon" aria-hidden="true" />
+    </button>
+  </div>
+</nav>
+
+<script>
+  import { LANG_STORAGE_KEY, THEME_STORAGE_KEY } from "../site";
+
+  const nav = document.querySelector<HTMLElement>(".nav");
+  const root = document.documentElement;
+  const themeBtn = nav?.querySelector<HTMLButtonElement>(".theme-btn");
+  const langBtn = nav?.querySelector<HTMLButtonElement>(".lang-btn");
+  const langMenu = nav?.querySelector<HTMLElement>(".lang-menu");
+
+  function labelThemeButton() {
+    const label = root.dataset.theme === "light" ? nav?.dataset.toDark : nav?.dataset.toLight;
+    if (label) themeBtn?.setAttribute("aria-label", label);
+  }
+  labelThemeButton();
+  themeBtn?.addEventListener("click", () => {
+    const next = root.dataset.theme === "light" ? "dark" : "light";
+    root.dataset.theme = next;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // Without storage the choice lasts for this page, which is still what was asked for.
+    }
+    labelThemeButton();
+    document.dispatchEvent(new CustomEvent("weir:theme-set"));
+  });
+
+  // A page the back button restores comes back as it was left, so it catches up with a look chosen since and its menu closes.
+  addEventListener("pageshow", (e) => {
+    if (!e.persisted) return;
+    setMenuOpen(false);
+    let saved = null;
+    try {
+      saved = localStorage.getItem(THEME_STORAGE_KEY);
+    } catch {
+      return;
+    }
+    if ((saved === "light" || saved === "dark") && saved !== root.dataset.theme) {
+      root.dataset.theme = saved;
+      labelThemeButton();
+      document.dispatchEvent(new CustomEvent("weir:theme-set"));
+    }
+  });
+
+  function setMenuOpen(isOpen: boolean) {
+    if (!langBtn || !langMenu) return;
+    langMenu.hidden = !isOpen;
+    langBtn.setAttribute("aria-expanded", String(isOpen));
+  }
+  langBtn?.addEventListener("click", () => setMenuOpen(langMenu?.hidden ?? false));
+  document.addEventListener("pointerdown", (e) => {
+    if (e.target instanceof Node && !nav?.querySelector(".lang")?.contains(e.target)) setMenuOpen(false);
+  });
+  nav?.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || langMenu?.hidden) return;
+    setMenuOpen(false);
+    langBtn?.focus();
+  });
+  // Tabbing past the last language closes the menu, so it never stays open behind the focus.
+  nav?.querySelector(".lang")?.addEventListener("focusout", (e) => {
+    const next = (e as FocusEvent).relatedTarget;
+    if (next instanceof Node && !nav?.querySelector(".lang")?.contains(next)) setMenuOpen(false);
+  });
+  // `/` follows this choice, so going to English from `/ja/` does not come straight back.
+  langMenu?.addEventListener("click", (e) => {
+    const link = e.target instanceof Element ? e.target.closest("a") : null;
+    if (!link) return;
+    try {
+      localStorage.setItem(LANG_STORAGE_KEY, link.lang);
+    } catch {
+      // Without storage the link still goes to the page asked for.
+    }
+  });
+</script>

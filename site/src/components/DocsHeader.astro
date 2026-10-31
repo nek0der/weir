@@ -1,0 +1,23 @@
+---
+// DocsHeader.astro
+// Weir — the documents' top bar: the site's bar, with search added. Replaces Starlight's bar and its own theme and language menus.
+import Search from "virtual:starlight/components/Search";
+import { homeOf, LANG_STORAGE_KEY, type Lang } from "../site";
+import SiteNav from "./SiteNav.astro";
+
+const lang: Lang = Astro.locals.starlightRoute.lang === "ja" ? "ja" : "en";
+const home = homeOf(lang);
+---
+
+<script is:inline define:vars={{ lang, LANG_STORAGE_KEY }}>
+  // The landing page opens in the language the reader last chose, and reading a document in one is choosing it.
+  try {
+    localStorage.setItem(LANG_STORAGE_KEY, lang);
+  } catch (e) {}
+</script>
+
+<div class="docs-nav">
+  <SiteNav lang={lang} homeHref={home} productHref={`${home}#story`} isDocs>
+    <Search slot="search" />
+  </SiteNav>
+</div>

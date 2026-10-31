@@ -1,0 +1,67 @@
+/* docs.css
+   Weir — the documents in the site's colors and type (`tokens.css`), with their top bar's place on the page. */
+:root {
+  /* The bar and the sidebar share the landing page's side margin, which holds its 1280px content in the middle of a wide window. */
+  --gut: max(16px, 4vw, (100vw - 1280px) / 2);
+  --bar-bg: #08090a;
+  --sl-nav-height: calc(var(--bar) + 1px);
+  --sl-nav-pad-x: var(--gut);
+  --sl-sidebar-width: calc(248px + var(--gut));
+  --sl-font: var(--sans);
+  --sl-font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --sl-color-bg: var(--bg);
+  --sl-color-bg-nav: var(--bar-bg);
+  --sl-color-bg-sidebar: var(--bg);
+  --sl-color-hairline: var(--hair);
+  --sl-color-hairline-shade: var(--hair);
+  --sl-color-white: var(--fg);
+  --sl-color-gray-2: var(--mid);
+  --sl-color-gray-3: var(--mid);
+  --sl-color-accent-low: #223150;
+  --sl-color-accent: var(--blue);
+  --sl-color-accent-high: #c7d9fb;
+}
+
+:root[data-theme="light"] {
+  --bar-bg: var(--bg);
+  --sl-color-accent-low: #e4ecfb;
+    --sl-color-accent-high: #16458f;
+}
+
+/* The side columns line up with the bar on their outer edge only. The margin grows with the window, so on both edges it would leave them no width. */
+.sidebar-content { padding-inline-start: var(--gut); }
+.right-sidebar-panel { padding-inline-end: var(--gut); }
+.right-sidebar-panel .sl-container { width: auto; }
+
+/* The current page in the quiet tone the bar's menu uses, not an accent block. */
+.sidebar-content a[aria-current="page"], .sidebar-content a[aria-current="page"]:hover { background: var(--hover); color: var(--fg); }
+
+/* The top bar in Starlight's header, which sets its height and side margins. */
+.docs-nav, .docs-nav .nav { height: 100%; }
+.docs-nav .nav-row { max-width: none; height: 100%; }
+.docs-nav .nav .docs-icon { display: none; }
+
+.docs-nav button[data-open-modal] { height: 28px; font-size: 13px; color: var(--mid); flex: none; }
+.docs-nav button[data-open-modal] svg { font-size: 16px !important; }
+@media (min-width: 50rem) {
+  .docs-nav button[data-open-modal] { width: 180px; border: 1px solid var(--hair); border-radius: 7px; background: none; padding-inline: 9px 5px; }
+  .docs-nav button[data-open-modal]:hover { border-color: var(--mid); color: var(--fg); }
+}
+
+/* The phone's menu button, as one more of the bar's icons. */
+@media (max-width: 49.99rem) {
+  :root { --sl-menu-button-size: 28px; }
+  .sl-menu-button, [data-theme="light"] .sl-menu-button { padding: 6px; background: none; box-shadow: none; color: var(--mid); }
+  .sl-menu-button:has(~ :popover-open), [data-theme="light"] .sl-menu-button:has(~ :popover-open) { background: none; color: var(--fg); }
+}
+
+/* On a phone the download gives way to search and the menu, and the page it is read on is not the Mac it would go to.
+   Every icon sits in a 28px cell a fixed step apart, the menu button included: Starlight spaces that one by the nav gap. */
+@media (max-width: 480px) {
+  :root { --sl-nav-gap: 8px; }
+  .docs-nav .nav-row { gap: 8px; }
+  .docs-nav .nav .pill { display: none; }
+  .docs-nav .nav .github-icon { display: inline-flex; }
+  .docs-nav .lang-btn { width: 28px; height: 28px; padding: 0; justify-content: center; }
+  .docs-nav button[data-open-modal] { width: 28px; padding: 0; justify-content: center; }
+}

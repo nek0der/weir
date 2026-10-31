@@ -1,0 +1,24 @@
+/* tokens.css
+   Weir — the site's colors, one set for each look, and the top bar's height. Set by `data-theme`, which the landing page and Starlight share. */
+:root {
+  color-scheme: dark;
+  --bar: 52px;
+  --bg: #0d0e10; --fg: #f7f8f8; --mid: #a4a7ae; --dim: #7d8087; --hair: rgba(255,255,255,.08);
+  --nav: rgba(8,9,10,.78); --pill: #e6e6e6; --pill-ink: #08090a; --pill-hover: #fff;
+  --hover: rgba(255,255,255,.07); --dimmer: rgba(0,0,0,.62); --mark-rest: rgba(255,255,255,.14);
+  --edge-top: rgba(255,255,255,.24); --edge-mid: rgba(255,255,255,.1); --edge-foot: rgba(255,255,255,.02);
+  --frame-shadow: 0 30px 90px rgba(0,0,0,.7), 0 0 140px rgba(120,150,255,.09);
+  --win: #101113; --raise: #1d1e23; --blue: #6a9bf4;
+  --sans: -apple-system, "SF Pro Display", Inter, "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f7f8; --fg: #16171a; --mid: #5d6068; --dim: #6c6f76; --blue: #1f5fc9; --hair: rgba(0,0,0,.09);
+  --nav: rgba(246,247,248,.82); --pill: #16171a; --pill-ink: #fff; --pill-hover: #000;
+  --hover: rgba(0,0,0,.06); --dimmer: rgba(246,247,248,.72); --mark-rest: rgba(0,0,0,.14);
+  --edge-top: rgba(0,0,0,.2); --edge-mid: rgba(0,0,0,.12); --edge-foot: rgba(0,0,0,.05);
+  --frame-shadow: 0 24px 70px rgba(30,40,60,.18), 0 2px 8px rgba(30,40,60,.08);
+  --win: #eef0f3; --raise: #f0f1f4;
+}
+/* The same type on every page, so the top bar does not change its letters between them. */
+:root:lang(ja) { --sans: -apple-system, "SF Pro Display", Inter, "IBM Plex Sans JP", "Hiragino Sans", sans-serif }

@@ -1,0 +1,19 @@
+---
+// PageHead.astro
+// Weir — what every page outside Starlight has in its head: the icons, the fonts, and the look chosen before the first paint.
+import { THEME_STORAGE_KEY } from "../site";
+---
+
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<link rel="icon" href="/favicon.png" type="image/png" />
+<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+<script is:inline define:vars={{ THEME_STORAGE_KEY }}>
+  /* Before the first paint, so a light reader never sees the dark page flash. The key is Starlight's, so the documents share the choice. */
+  var savedTheme = null;
+  try { savedTheme = localStorage.getItem(THEME_STORAGE_KEY); } catch (e) {}
+  document.documentElement.dataset.theme = savedTheme === 'light' || savedTheme === 'dark' ? savedTheme : matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=IBM+Plex+Sans+JP:wght@400;500&display=swap" />

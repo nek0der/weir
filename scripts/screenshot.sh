@@ -226,7 +226,7 @@ for pid in $(descendants "${APP_PID}"); do
   # below rather than stop the script through errexit. A shell still starting
   # has none to read yet, which more panes make likelier, so it gets a moment.
   cwd=""
-  for _ in {1..10}; do
+  for _ in {1..40}; do
     cwd="$(lsof -a -d cwd -Fn -p "${pid}" 2>/dev/null | sed -n 's/^n//p')" || cwd=""
     [ -n "${cwd}" ] && break
     sleep 0.5

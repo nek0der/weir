@@ -1,0 +1,60 @@
+/* nav.css
+   Weir — the top bar of the landing page and the documents (`src/components/SiteNav.astro`), and the filled button they share. */
+
+/* Every language's label shares one cell with the others hidden, so a button keeps its width from one language's page to the next. */
+.pill { display: inline-grid; justify-items: center; align-items: center; background: var(--pill); color: var(--pill-ink); border-radius: 99px; padding: 5px 13px; font: 500 13px var(--sans); border: 0; cursor: pointer }
+.pill > span { grid-area: 1 / 1 }
+.is-reserved { visibility: hidden }
+
+.nav { font-feature-settings: normal }
+.nav-row { max-width: 1280px; margin-inline: auto; height: var(--bar); display: flex; align-items: center; gap: 24px; font-size: 13px; color: var(--mid) }
+.nav a { color: inherit; text-decoration: none; white-space: nowrap; flex: none; line-height: 20px }
+.nav a:hover, .nav a.is-current { color: var(--fg) }
+.nav a.pill { color: var(--pill-ink) }
+.nav a.pill:hover { color: var(--pill-ink); background: var(--pill-hover) }
+.nav .logo { display: flex; align-items: center; gap: 9px; color: var(--fg); font-weight: 500; font-size: 15px }
+.nav .logo svg { width: 18px; height: 18px }
+.nav .sp { flex: 1 }
+
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; background: none; color: var(--mid); cursor: pointer; flex: none }
+.icon-btn:hover { color: var(--fg) }
+.icon-btn svg { width: 16px; height: 16px }
+.nav .docs-icon { display: none }
+html:not(.js) .lang, html:not(.js) .theme-btn { display: none }
+.theme-moon, [data-theme="light"] .theme-sun { display: none }
+[data-theme="light"] .theme-moon { display: block }
+/* Past the content's width there is room at the window's own corner; narrower, it ends the row. */
+@media (min-width: 1400px) { .theme-btn { position: absolute; right: 16px; top: 12px } }
+
+/* Our own menu, so it looks the same in every browser; any number of languages fits, each listed in its own name. */
+.lang { position: relative }
+.lang-btn { display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 4px 0; color: var(--mid); font: inherit; line-height: 20px; white-space: nowrap; cursor: pointer }
+.lang-btn:hover, .lang-btn[aria-expanded="true"] { color: var(--fg) }
+.lang-btn svg { width: 14px; height: 14px; flex: none }
+.lang-btn .chev { width: 9px; height: 9px; transition: transform .15s ease }
+.lang-btn[aria-expanded="true"] .chev { transform: rotate(180deg) }
+.lang-name { display: inline-block; min-width: 3.5em; text-align: left }
+/* The button ends 12px above the bar's edge, so the menu opens 8px clear of the bar rather than across its line. */
+.lang-menu { position: absolute; left: 50%; transform: translateX(-50%); top: calc(100% + 20px); min-width: 160px; max-height: min(320px, 60vh); overflow-y: auto; margin: 0; padding: 4px; list-style: none; background: var(--raise); border-radius: 9px; box-shadow: 0 0 0 1px var(--hair), 0 12px 40px rgba(0,0,0,.55); z-index: 30 }
+.lang-menu li { margin: 0 }
+.nav .lang-menu a { display: flex; justify-content: space-between; gap: 16px; padding: 6px 9px; border-radius: 6px; color: var(--mid) }
+.nav .lang-menu a:hover { background: var(--hover); color: var(--fg) }
+.nav .lang-menu a[aria-current] { color: var(--fg) }
+.nav .lang-menu a[aria-current]::after { content: "✓"; color: var(--mid); font-size: 12px }
+
+/* The text links give way to an icon, so the documents stay one tap away. */
+@media (max-width: 720px) {
+  .nav .hide { display: none }
+  .nav .docs-icon { display: inline-flex }
+}
+
+/* The row stays on one line: the language shows by its globe alone, and its menu names them all.
+   The download ends the row so the logo and the one filled button hold the two edges, with three like icons between. */
+@media (max-width: 480px) {
+  .nav-row { gap: 16px }
+  .lang-name, .lang-btn .chev, .nav .github-icon { display: none }
+  .lang-btn svg { width: 16px; height: 16px }
+  .nav .pill { order: 1; padding: 5px 11px; font-size: 12px }
+}
+@media (max-width: 360px) { .nav-row { gap: 10px } }
+@media (prefers-reduced-motion: reduce) { .lang-btn .chev { transition: none } }

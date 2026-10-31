@@ -38,6 +38,7 @@ make lint          # Rust and Swift lint plus the repo checks (mirrors CI)
 make release-check # Unsigned Release archive, checked for what `exportArchive` needs
 make dmg           # Release DMG artifact
 make screenshot    # Regenerate .github/assets/hero.png (builds Release first)
+make site-images   # Regenerate the site's captures in both looks (builds Release first)
 make xcodegen      # Regenerate Weir.xcodeproj from project.yml
 make ghostty       # Build vendored libghostty
 make clean         # Remove DerivedData for this project
@@ -80,6 +81,7 @@ vendor/ghostty/  submodule of our fork github.com/nek0der/ghostty (branch `weir`
                  Upstream ghostty-org is tracked via the `upstream` remote for rebases.
                  Run `git -C vendor/ghostty describe` for the current pin.
 scripts/       Rust/Ghostty build bridges, packaging, and validation scripts
+site/          The landing page and documents (`site/README.md`); published with a release
 Cargo.toml     Rust workspace source of truth; toolchain is pinned separately
 project.yml    xcodegen source of truth for the .xcodeproj
 ```
@@ -170,6 +172,9 @@ Short index of load-bearing files. Skim these before touching their domain.
   `make xcodegen` instead.
 - `Weir/Resources/Info.plist` Sparkle public key (`SUPublicEDKey`). Changing
   it breaks update signature verification for every shipped build.
+- The repository's GitHub Pages settings. Do not give them a custom domain. They
+  serve the update feed that shipped apps read at
+  `nek0der.github.io/weir/appcast.xml`, and the site lives on Cloudflare Pages.
 - The forced-override config keys passed to `libghostty`
   (`background-opacity=0`, `shell-integration-features=no-cursor`, …). They
   protect the UI compositor; removing one will silently break the rendering
@@ -197,7 +202,8 @@ Short index of load-bearing files. Skim these before touching their domain.
   in commits.
 - PRs must follow `.github/pull_request_template.md`. Use
   `gh pr create --body-file` so the template is honored.
-- CI runs the build, test, lint, review-core, and release-archive jobs, the
+- CI runs the build, test, lint, review-core, release-archive, and site jobs (a
+  pull request that changes only `site/` skips the app's), the
   guardrails (secrets, forbidden terms, notices), PR title check, CodeQL,
   release-please, and dependabot auto-merge. See `.github/workflows/` for the
   exact matrix.
@@ -237,6 +243,9 @@ Short index of load-bearing files. Skim these before touching their domain.
   (search the `com.nekoder.weir` / `fs.guard` log for a fault after a run).
   Change files in Weir's data folder through `SecureFileWrite`, not
   `FileManager`.
+- **Site**: `make build`, `make test`, and `make lint` do not cover `site/`, so
+  run `pnpm build` there after a change to it. Its words need both `en` and `ja`
+  in `site/src/site.ts`, not in `Localizable.xcstrings`. `site/README.md` has the rest.
 - **When stuck**, search GitHub issues/PRs, OSS projects, and WWDC sessions
   before guessing. Web-first beats trial-and-error rebuilds.
 - **Demo mode**: set `WEIR_DEMO=1` in the launching shell to swap the
