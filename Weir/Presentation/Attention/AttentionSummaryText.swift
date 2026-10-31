@@ -1,5 +1,5 @@
 // AttentionSummaryText.swift
-// Weir — the attention count in words: the banner after a wake, and the pill's breakdown.
+// Weir — the attention count in words: the banner after a wake, and the title bar button's breakdown.
 
 import Foundation
 import WeirDomain
@@ -10,12 +10,12 @@ enum AttentionSummaryText {
     /// `nil` when nothing needs attention, which posts nothing.
     static func make(_ counts: AttentionCounts, locale: Locale) -> (title: String, body: String)? {
         guard counts.total > 0 else { return nil }
-        let title = NeedsAttentionPillModel.label(counts.total).resolved(in: locale)
+        let title = NeedsAttentionCountModel.label(counts.total).resolved(in: locale)
         return (title, AgentStatusText.joined(breakdown(counts, locale: locale), locale: locale))
     }
 
     /// The count by kind, leaving out the kinds with none: "1 Approval",
-    /// "2 Unread". The banner after a wake and the title bar pill's tooltip
+    /// "2 Unread". The banner after a wake and the title bar button's VoiceOver hint
     /// read the same words.
     static func breakdown(_ counts: AttentionCounts, locale: Locale) -> [String] {
         var parts: [String] = []

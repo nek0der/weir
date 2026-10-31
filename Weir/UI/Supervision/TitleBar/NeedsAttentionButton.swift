@@ -1,4 +1,4 @@
-// NeedsAttentionPill.swift
+// NeedsAttentionButton.swift
 // Weir — the title bar's tray and its count, which opens the Needs Attention list.
 
 import SwiftUI
@@ -6,17 +6,17 @@ import SwiftUI
 /// The attention count across every project, always in sight, on a tray: amber
 /// while something blocks on the person, blue for unread turns only, and none at
 /// zero. It opens the Needs Attention list; ⌘J moves to the next item without it.
-struct NeedsAttentionPill: View {
+struct NeedsAttentionButton: View {
     @Environment(AttentionQueueStore.self) private var attentionQueue
     @Environment(SettingsStore.self) private var settings
     @Environment(ProjectWindowState.self) private var window
     @Environment(\.locale) private var locale
 
     var body: some View {
-        let model = NeedsAttentionPillModel(attentionQueue.queue.counts())
+        let model = NeedsAttentionCountModel(attentionQueue.queue.counts())
         TitleBarMenuButton(menu: .needsAttention) { isHighlighted in
             // Lit while its list is open, as Changes is while its panel is.
-            RailIconFace(
+            IconControlFace(
                 systemImage: "tray",
                 isLit: window.titleBarMenu?.menu == .needsAttention,
                 isHovering: isHighlighted,
@@ -31,7 +31,7 @@ struct NeedsAttentionPill: View {
             placement: .below
         )
         .accessibilityLabel(Text(model.label))
-        .accessibilityHint(Text(verbatim: model.tooltip(
+        .accessibilityHint(Text(verbatim: model.hint(
             listShortcut: settings.settings.keyboard.shortcut(for: .showNeedsAttention)?.displayString,
             nextShortcut: settings.settings.keyboard.shortcut(for: .nextAttention)?.displayString,
             locale: locale

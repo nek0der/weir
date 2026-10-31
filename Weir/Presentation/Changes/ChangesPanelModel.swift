@@ -33,7 +33,7 @@ enum ChangesPanelModel {
         /// (`liveTabs`); `nil` when no pane of the app runs it. What tells
         /// the filter's "Claude #2" apart as the one in the "claude" tab,
         /// and what names a conversation live (`ConversationTitleRule`).
-        /// Left at none where only the counts are read (the rail's badge,
+        /// Left at none where only the counts are read (the toggle's badge,
         /// the totals), as finding it reads every pane of the app.
         var liveTab: (ConversationKey) -> ConversationChoice.LiveTab? = { _ in nil }
         /// The conversation the panel's filter narrows the timeline to;
@@ -396,7 +396,7 @@ enum ChangesPanelModel {
         ))
     }
 
-    /// Every agent's unviewed turns together, counted as the rail's badge
+    /// Every agent's unviewed turns together, counted as the toggle's badge
     /// counts them.
     static func unviewedTotal(_ input: Input) -> Int {
         unviewedCounts(input).values.reduce(0, +)
@@ -412,7 +412,7 @@ enum ChangesPanelModel {
         return counts
     }
 
-    /// The turns that need reading and are not viewed: what the rail's
+    /// The turns that need reading and are not viewed: what the toggle's
     /// badge adds up across a session's agents, and the filter shows per
     /// conversation. The same turns "Review Unviewed" opens
     /// (`ReviewScopeCatalog`). A turn a restore took back has nothing left

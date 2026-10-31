@@ -519,7 +519,7 @@ extension WindowProjectSwitchTests {
         approvals.receive([request])
         window.approvalCard.updateRowAnchor(CGRect(x: 0, y: 40, width: 200, height: 20), for: request, in: approvals)
         window.approvalCard.present(request, from: approvals)
-        // The other window's card stood beside the Needs Attention pill.
+        // The other window's card stood beside the Needs Attention button.
         other.approvalCard.present(request, from: approvals, openedFrom: CGRect(x: 0, y: 0, width: 40, height: 20))
         window.titleBarMenu = TitleBarMenuRequest(menu: .project, anchor: .zero)
         window.isAllProjectsPresented = true
@@ -615,7 +615,7 @@ extension WindowProjectSwitchTests {
         #expect(other.newSession == kept)
     }
 
-    @Test func aCardOpenedFromTheNeedsAttentionPill_staysThroughTheSwitch() {
+    @Test func aCardOpenedFromTheNeedsAttentionButton_staysThroughTheSwitch() {
         let fixture = Fixture()
         let approvals = ApprovalPresentationStore()
         fixture.tidiesAsTheAppDoes()

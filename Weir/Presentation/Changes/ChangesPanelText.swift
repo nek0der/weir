@@ -800,7 +800,7 @@ enum ChangesPanelText {
     /// #1 · 1 unviewed"), so the total reads as the panel's count and the
     /// rest rather than a count the panel contradicts. No lines while one
     /// conversation has them all, whose count is the total.
-    static func railHelp(shortcut: String?, unviewed: Int, agents: [ConversationChoice], locale: Locale) -> String {
+    static func toggleHint(shortcut: String?, unviewed: Int, agents: [ConversationChoice], locale: Locale) -> String {
         let name = ShortcutHelpText.make(name: "Changes", shortcut: shortcut, locale: locale)
         guard unviewed > 0 else { return name }
         let head = AgentStatusText.joined([name, ConversationText.unviewed(unviewed, locale: locale)], locale: locale)

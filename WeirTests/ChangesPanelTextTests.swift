@@ -1,6 +1,6 @@
 // ChangesPanelTextTests.swift
 // Weir — how conversations are named and counted in words: the filter, the rows' badges, the review tab's scope menu, and the
-// rail's tooltip.
+// title bar toggle's hint.
 
 import Foundation
 import Testing
@@ -99,7 +99,7 @@ struct ChangesPanelTextTests {
         #expect(ConversationText.sectionValue(Self.second, isCollapsed: false, locale: Self.japanese) == "展開済み、未確認のターン 2、終了")
     }
 
-    @Test func theTooltip_countsAsTheRailDoes_andVoiceOverReadsTheTurns() {
+    @Test func theTooltip_countsAsTheToggleDoes_andVoiceOverReadsTheTurns() {
         #expect(ConversationText.help(Self.first, locale: Self.english) == "Claude #1 · 1 unviewed · Running in the “claude” tab")
         #expect(ConversationText.help(Self.second, locale: Self.japanese) == "Claude #2 · 未確認 2 · 終了")
         #expect(ConversationText.value(Self.first, locale: Self.english) == "1 unviewed turn, Running in the “claude” tab")
@@ -336,23 +336,23 @@ struct ChangesPanelTextTests {
         #expect(ToastKind.markedViewedInConversations(through: 4, conversation: "Claude #4", others: 1).offersUndo)
     }
 
-    @Test func theRailsTooltip_breaksItsTotalDownByConversation() {
+    @Test func theTogglesHint_breaksItsTotalDownByConversation() {
         let agents = [Self.first, Self.second, Self.codex]
 
         #expect(
-            ChangesPanelText.railHelp(shortcut: "⌥⌘I", unviewed: 3, agents: agents, locale: Self.english)
+            ChangesPanelText.toggleHint(shortcut: "⌥⌘I", unviewed: 3, agents: agents, locale: Self.english)
                 == "Changes (⌥⌘I) · 3 unviewed\nClaude #1 · 1 unviewed\nClaude #2 · 2 unviewed\nCodex · 0 unviewed"
         )
         #expect(
-            ChangesPanelText.railHelp(shortcut: nil, unviewed: 3, agents: agents, locale: Self.japanese)
+            ChangesPanelText.toggleHint(shortcut: nil, unviewed: 3, agents: agents, locale: Self.japanese)
                 == "変更 · 未確認 3\nClaude #1 · 未確認 1\nClaude #2 · 未確認 2\nCodex · 未確認 0",
             "an agent with none keeps its line"
         )
         #expect(
-            ChangesPanelText.railHelp(shortcut: "⌥⌘I", unviewed: 1, agents: [], locale: Self.english) == "Changes (⌥⌘I) · 1 unviewed",
+            ChangesPanelText.toggleHint(shortcut: "⌥⌘I", unviewed: 1, agents: [], locale: Self.english) == "Changes (⌥⌘I) · 1 unviewed",
             "one agent's count is the total"
         )
-        #expect(ChangesPanelText.railHelp(shortcut: "⌥⌘I", unviewed: 0, agents: agents, locale: Self.english) == "Changes (⌥⌘I)")
+        #expect(ChangesPanelText.toggleHint(shortcut: "⌥⌘I", unviewed: 0, agents: agents, locale: Self.english) == "Changes (⌥⌘I)")
     }
 
     @Test func groupingLabels_areLocalized() {

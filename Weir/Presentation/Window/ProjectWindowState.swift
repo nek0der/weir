@@ -85,7 +85,7 @@ final class ProjectWindowState: Identifiable {
     /// last. Excluded from observation so window resizes don't redraw
     /// every view that reads this window.
     @ObservationIgnored var paletteFieldFrame: CGRect = .zero
-    /// The Needs Attention pill's frame, which the list hangs from when ⌃⌘J
+    /// The Needs Attention button's frame, which the list hangs from when ⌃⌘J
     /// opens it rather than a click. Not observed: it moves with every
     /// resize, and only the next key press reads it.
     @ObservationIgnored var needsAttentionAnchor: CGRect = .zero

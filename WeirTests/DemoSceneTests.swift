@@ -67,7 +67,7 @@ struct DemoSceneTests {
         let counts = Self.scene().queue.counts()
         #expect(counts == AttentionCounts(approvals: 2, questions: 0, prompts: 0, stops: 1, unread: 3))
         #expect(counts.total == 6)
-        #expect(NeedsAttentionPillModel(counts).style == .blocking)
+        #expect(NeedsAttentionCountModel(counts).style == .blocking)
         #expect(AttentionSummaryText.breakdown(counts, locale: Self.english) == ["2 Approvals", "1 Stopped", "3 Unread"])
     }
 

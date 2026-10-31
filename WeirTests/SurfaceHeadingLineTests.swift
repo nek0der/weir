@@ -102,11 +102,11 @@ struct SurfaceHeadingLineTests {
         let book = NamedFrameRecorder(space: Self.space)
         let view = HStack(spacing: 0) {
             RailColumn {
-                RailButton(systemImage: "list.bullet.rectangle", name: "Worktrees", shortcut: nil) {}
+                IconControlButton(systemImage: "list.bullet.rectangle", name: "Worktrees", shortcut: nil) {}
                     .recordFrame(in: book, as: "first")
-                RailButton(systemImage: "bell", name: "Notification History", shortcut: nil) {}
+                IconControlButton(systemImage: "bell", name: "Notification History", shortcut: nil) {}
             } bottom: {
-                RailButton(systemImage: "keyboard", name: "Keyboard Shortcuts", shortcut: nil) {}
+                IconControlButton(systemImage: "keyboard", name: "Keyboard Shortcuts", shortcut: nil) {}
                     .recordFrame(in: book, as: "last")
             }
             VStack(spacing: 0) {

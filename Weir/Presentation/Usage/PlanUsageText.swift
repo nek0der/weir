@@ -204,7 +204,7 @@ enum PlanUsageText {
 
     // MARK: Rail
 
-    static func railBadge(_ level: PlanUsageLevel) -> RailBadge? {
+    static func railBadge(_ level: PlanUsageLevel) -> IconBadge? {
         switch level {
         case .normal: nil
         case .nearLimit: .waiting

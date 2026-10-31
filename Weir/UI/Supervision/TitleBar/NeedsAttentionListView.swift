@@ -3,7 +3,7 @@
 
 import SwiftUI
 
-/// The list the title bar's pill opens. Pressed open, no row is
+/// The list the title bar's button opens. Pressed open, no row is
 /// selected; ⌃⌘J opens it on the first. ↑↓ move; the pointer selects the
 /// row it is over; Return opens the item's pane; Tab moves onto the row's
 /// Answer…, when it has one, and back; and Escape closes the list
@@ -13,9 +13,9 @@ import SwiftUI
 /// Action in the heading closes it and does what ⌘J does.
 struct NeedsAttentionListView: View {
     /// The most the rows may take before they scroll: what fits below the
-    /// pill inside the window.
+    /// button inside the window.
     let maxListHeight: CGFloat
-    /// Where the keyboard starts: on no row when the pill was pressed, on
+    /// Where the keyboard starts: on no row when the button was pressed, on
     /// the first when ⌃⌘J opened the list (`TitleBarMenuRequest`).
     let opening: NeedsAttentionListSelection.Opening
     /// Closes the list, then runs the action.
@@ -182,8 +182,8 @@ struct NeedsAttentionListView: View {
             // Answering moves neither the window nor the pane: the card
             // opens where it is and takes the keyboard, over the list.
             guard let presentation = approvals.ledger.entries[key]?.presentation else { return }
-            let pill = window.needsAttentionAnchor
-            window.approvalCard.present(presentation, from: approvals, openedFrom: pill == .zero ? nil : pill)
+            let anchor = window.needsAttentionAnchor
+            window.approvalCard.present(presentation, from: approvals, openedFrom: anchor == .zero ? nil : anchor)
         }
     }
 }

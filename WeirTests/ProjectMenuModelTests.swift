@@ -120,7 +120,7 @@ struct ProjectMenuModelTests {
                 paletteIndex: nil,
                 isCurrent: isCurrent,
                 isInOtherWindow: isInOtherWindow,
-                attention: NeedsAttentionPillModel(AttentionCounts()),
+                attention: NeedsAttentionCountModel(AttentionCounts()),
                 running: 0
             )
         }

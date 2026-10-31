@@ -1,5 +1,5 @@
 // MenuBarLabelModelTests.swift
-// Weir — the menu bar extra's icon: which lamp the pill's tone lights, how it is drawn, its count, and what VoiceOver says.
+// Weir — the menu bar extra's icon: which lamp the count's tone lights, how it is drawn, its count, and what VoiceOver says.
 
 import AppKit
 import Foundation
@@ -12,7 +12,7 @@ struct MenuBarLabelModelTests {
     private static let english = Locale(identifier: "en")
     private static let japanese = Locale(identifier: "ja")
 
-    /// One rule with the title bar pill: anything that blocks lights
+    /// One rule with the title bar count: anything that blocks lights
     /// the amber disc, a stop alone or a stop with unread turns included;
     /// unread turns alone are the ring with its dot; nothing is the empty
     /// ring.
@@ -31,7 +31,7 @@ struct MenuBarLabelModelTests {
     func theLamp_followsThePillsTone(_ counts: AttentionCounts, _ lamp: MenuBarLabelModel.Lamp) {
         let model = MenuBarLabelModel(counts)
         #expect(model.lamp == lamp)
-        #expect(model.style == NeedsAttentionPillModel(counts).style)
+        #expect(model.style == NeedsAttentionCountModel(counts).style)
     }
 
     /// The icon no longer shows the number, so the count stays in the model

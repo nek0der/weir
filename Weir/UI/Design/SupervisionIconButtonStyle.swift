@@ -15,9 +15,12 @@ struct SupervisionIconButtonStyle: ButtonStyle {
     /// stand in a row of their own where that room reads as gaps between
     /// them (a turn card's moves).
     var horizontalPadding = WeirLayout.Supervision.iconButtonHorizontalPadding
+    /// The fill's corners: a small control's, unless the button stands among
+    /// the title bar's 32pt controls.
+    var cornerRadius = WeirLayout.Supervision.smallControlCornerRadius
 
     func makeBody(configuration: Configuration) -> some View {
-        Face(configuration: configuration, horizontalPadding: horizontalPadding)
+        Face(configuration: configuration, horizontalPadding: horizontalPadding, cornerRadius: cornerRadius)
     }
 
     /// A view of its own, so it can hold the hover and read whether the
@@ -25,11 +28,12 @@ struct SupervisionIconButtonStyle: ButtonStyle {
     private struct Face: View {
         let configuration: Configuration
         let horizontalPadding: CGFloat
+        let cornerRadius: CGFloat
         @Environment(\.isEnabled) private var isEnabled
         @State private var isHovering = false
 
         var body: some View {
-            let shape = RoundedRectangle(cornerRadius: WeirLayout.Supervision.smallControlCornerRadius, style: .continuous)
+            let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             let isLit = isHovering && isEnabled
             configuration.label
                 .foregroundStyle(isLit ? SupervisionTokens.text.color : SupervisionTokens.muted.color)
@@ -54,6 +58,11 @@ struct SupervisionIconButtonStyle: ButtonStyle {
 extension ButtonStyle where Self == SupervisionIconButtonStyle {
     static var supervisionIcon: SupervisionIconButtonStyle {
         SupervisionIconButtonStyle()
+    }
+
+    /// `supervisionIcon` with `cornerRadius` on its fill.
+    static func supervisionIcon(cornerRadius: CGFloat) -> SupervisionIconButtonStyle {
+        SupervisionIconButtonStyle(cornerRadius: cornerRadius)
     }
 
     /// `supervisionIcon` with `horizontalPadding` either side of the glyph.

@@ -41,11 +41,11 @@ struct OverlayOwnershipTests {
         let request = ApprovalPresentation.test(deadlineMilliseconds: 0)
         store.receive([request])
         let card = WindowApprovalCard()
-        let pill = CGRect(x: 900, y: 10, width: 80, height: 24)
+        let button = CGRect(x: 900, y: 10, width: 80, height: 24)
         card.updateRowAnchor(CGRect(x: 0, y: 40, width: 200, height: 20), for: request, in: store)
 
-        card.present(request, from: store, openedFrom: pill)
-        #expect(card.state.openedFrom == pill)
+        card.present(request, from: store, openedFrom: button)
+        #expect(card.state.openedFrom == button)
         // Opened from its row in the sidebar, it stands beside the row again.
         card.present(request, from: store)
         #expect(card.state.openedFrom == nil)

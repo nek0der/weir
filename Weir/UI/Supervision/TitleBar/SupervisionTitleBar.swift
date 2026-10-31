@@ -6,7 +6,7 @@ import SwiftUI
 /// The title bar: on the left, where this window is (project ▾ and
 /// worktree ▾); in the middle, back and forward and the command palette
 /// field, as a browser sets them before its address field; on the right,
-/// only what must stay in sight (Needs Attention n, unviewed turns). Back,
+/// only what must stay in sight (the Needs Attention count, unviewed turns). Back,
 /// forward, and the field stand on the bar's center, so a count coming and
 /// going moves only the trailing group's leading edge. The
 /// dropdowns hang from it through `TitleBarMenuHost`.
@@ -33,7 +33,7 @@ struct SupervisionTitleBar: View {
             TitleBarHistoryButtons()
             ToolbarPaletteField()
             HStack(spacing: WeirLayout.Supervision.titleBarSpacing) {
-                NeedsAttentionPill()
+                NeedsAttentionButton()
                 ChangesPanelToggle(state: state)
             }
         }
@@ -213,7 +213,7 @@ struct TitleBarMenuLabel<Leading: View, Trailing: View>: View {
         // As see-through as the title bar's ground (`SurfaceGround`), so
         // the control whose menu is open is not an opaque box.
         .background(SurfaceGround {
-            RoundedRectangle(cornerRadius: WeirLayout.titleBarHoverCorner, style: .continuous)
+            RoundedRectangle(cornerRadius: WeirLayout.Supervision.iconControlCornerRadius, style: .continuous)
                 .fill(isHighlighted ? SupervisionTokens.hover.color : .clear)
         })
         .contentShape(Rectangle())
