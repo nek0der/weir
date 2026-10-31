@@ -3,15 +3,15 @@
     <channel>
         <title>Weir</title>
         <item>
-            <title>0.1.14</title>
-            <pubDate>Sat, 31 Oct 2026 11:33:57 +0000</pubDate>
+            <title>0.1.15</title>
+            <pubDate>Sat, 31 Oct 2026 19:18:52 +0000</pubDate>
             <link>https://github.com/nek0der/weir</link>
-            <sparkle:version>0.1.14</sparkle:version>
-            <sparkle:shortVersionString>0.1.14</sparkle:shortVersionString>
+            <sparkle:version>0.1.15</sparkle:version>
+            <sparkle:shortVersionString>0.1.15</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <sparkle:releaseNotesLink>https://nek0der.github.io/weir/Weir-0.1.14.md</sparkle:releaseNotesLink>
-            <enclosure url="https://github.com/nek0der/weir/releases/download/v0.1.14/Weir-0.1.14.dmg" length="20999105" type="application/octet-stream" sparkle:edSignature="zMpugQCODTUdTuKwh/iLzjLC0rJV+wTnbYlIoMtdaJEU1PN31vDCgQ5Bn7v8baeWOp6P/El3la4DQ/Ppsl77DQ=="/>
+            <sparkle:releaseNotesLink>https://nek0der.github.io/weir/Weir-0.1.15.md</sparkle:releaseNotesLink>
+            <enclosure url="https://github.com/nek0der/weir/releases/download/v0.1.15/Weir-0.1.15.dmg" length="21126853" type="application/octet-stream" sparkle:edSignature="RjAVxuJwMcH6L9KXVwbbhVhuJZzrUxRyaeMkVBjghN/wCaEykDPT8CMlZ9KH0kYOK2lPTI2h8HHjjMFXXeavAg=="/>
         </item>
     </channel>
 </rss>
