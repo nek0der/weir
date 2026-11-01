@@ -40,6 +40,12 @@ old_ifs="$IFS"
 IFS=":"
 for entry in $PATH; do
   [ "$entry" = "$self_dir" ] && continue
+  # A folder is spelled many ways (a link to it, a trailing slash, a relative
+  # or empty entry), and another Weir's shim would look for us in turn, so we
+  # go by what an entry holds: a shim folder's mark, or this very file under
+  # another name.
+  [ -e "${entry:-.}/weir-hook" ] && continue
+  [ "${entry:-.}/codex" -ef "$self" ] && continue
   if [ -z "$filtered_path" ]; then
     filtered_path="$entry"
   else
@@ -66,7 +72,8 @@ fi
 # chooses the CLI by folder, and the sheet's came from a pane of this project's
 # folder or the login shell. What it found closes the case where no PATH
 # here has the agent at all; one gone since is passed over.
-if [ -z "$real_codex" ] && [ -n "$found_codex" ] && [ -f "$found_codex" ] && [ -x "$found_codex" ]; then
+if [ -z "$real_codex" ] && [ -n "$found_codex" ] && [ -f "$found_codex" ] && [ -x "$found_codex" ] &&
+  [ ! "$found_codex" -ef "$self" ] && [ ! -e "${found_codex%/*}/weir-hook" ]; then
   real_codex="$found_codex"
   found_off_path=1
 fi

@@ -256,7 +256,8 @@ weir_expand_location() {
   esac
 }
 
-# The first executable file other than `$2` (the shim itself) at one of
+# The first executable file other than `$2` (the shim itself, under whatever
+# name) and outside a Weir shim folder, at one of
 # the known locations in `$1`, one a line: the agent catalog's list for
 # this agent (`AgentCatalog.knownLocationsEnvironment`), which the new
 # workspace sheet searched before it offered the agent. A folder named
@@ -268,7 +269,8 @@ weir_find_known_agent() {
   while IFS= read -r lfka_location; do
     [ -n "$lfka_location" ] || continue
     while IFS= read -r lfka_candidate; do
-      if [ -f "$lfka_candidate" ] && [ -x "$lfka_candidate" ] && [ "$lfka_candidate" != "$2" ]; then
+      if [ -f "$lfka_candidate" ] && [ -x "$lfka_candidate" ] && [ ! "$lfka_candidate" -ef "$2" ] &&
+        [ ! -e "${lfka_candidate%/*}/weir-hook" ]; then
         weir_known_agent="$lfka_candidate"
         return 0
       fi
