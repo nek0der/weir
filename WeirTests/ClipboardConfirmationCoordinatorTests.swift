@@ -1,7 +1,7 @@
 // ClipboardConfirmationCoordinatorTests.swift
 // Weir — which clipboard answers reach libghostty, and with which request state.
 
-import Foundation
+import AppKit
 import GhosttyKit
 import Testing
 @testable import Weir
@@ -15,7 +15,7 @@ private final class FakeClipboardTarget: ClipboardRequestTarget {
     private nonisolated(unsafe) let storage = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
     var isAlive = true
     let clipboardRequests = ClipboardRequestTracker()
-    let surfaceView: SurfaceView? = nil
+    let hostView: NSView? = nil
 
     var surface: ghostty_surface_t? {
         isAlive ? storage : nil

@@ -56,7 +56,7 @@ enum ReviewInsertion {
     @MainActor
     struct Target {
         let session: WorkspaceSession
-        let registry: any SurfaceViewProviding
+        let registry: any PaneSurfaceProviding
         /// The pane review was opened over, which is the one it writes to.
         ///
         /// Read through a closure rather than captured: the surface can be

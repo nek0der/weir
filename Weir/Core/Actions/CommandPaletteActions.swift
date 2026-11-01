@@ -54,7 +54,7 @@ enum CommandPaletteActions {
         settings: SettingsStore,
         frecencyStore: FrecencyStore,
         attention: AttentionState,
-        registry: (any SurfaceViewProviding)? = nil,
+        registry: (any PaneSurfaceProviding)? = nil,
         initialQuery: String = ">",
         // The window it opens in, as far as its rows' enabled states need it.
         supervision: SupervisionPaletteFacts
@@ -107,7 +107,7 @@ enum CommandPaletteActions {
         _ action: CommandPaletteAction,
         session: WorkspaceSession,
         attention: AttentionState,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         commands: any WindowCommandPerforming,
         frecencyStore: FrecencyStore,
         toastCenter: ToastCenter,
@@ -153,9 +153,9 @@ enum CommandPaletteActions {
         // intercepted the keyboard.
         if let tab = session.activeTab(in: window),
            let leafID = tab.splitTree.effectiveFocusedLeafID,
-           let view = registry.view(for: leafID)
+           let view = registry.paneSurface(for: leafID)
         {
-            view.window?.makeFirstResponder(view)
+            view.takeKeyboardFocus()
         }
     }
 
@@ -164,7 +164,7 @@ enum CommandPaletteActions {
         _ action: CommandPaletteAction,
         session: WorkspaceSession,
         attention: AttentionState,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         commands: any WindowCommandPerforming,
         window: WindowID,
         toastCenter: ToastCenter,

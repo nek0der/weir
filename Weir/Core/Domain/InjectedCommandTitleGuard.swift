@@ -14,20 +14,22 @@
 /// prompt cache panel's `/compact`) must not let the resume's title
 /// through. They are let go when a command has finished (`clear()`), the
 /// one boundary after which such a title would be the person's own.
-struct InjectedCommandTitleGuard {
+package struct InjectedCommandTitleGuard {
     private var pendingTitles: Set<String> = []
 
-    mutating func arm(_ title: String) {
-        pendingTitles.insert(GhosttyActionRouter.sanitizeInjectedCommandTitle(title))
+    package init() {}
+
+    package mutating func arm(_ title: String) {
+        pendingTitles.insert(TerminalTitle.sanitizedInjectedCommand(title))
     }
 
     /// Whether `title` is a held command's, read with the same sanitization
     /// every incoming title gets.
-    func matches(_ title: String) -> Bool {
-        !pendingTitles.isEmpty && pendingTitles.contains(GhosttyActionRouter.sanitizeTitle(title))
+    package func matches(_ title: String) -> Bool {
+        !pendingTitles.isEmpty && pendingTitles.contains(TerminalTitle.sanitized(title))
     }
 
-    mutating func clear() {
+    package mutating func clear() {
         pendingTitles.removeAll()
     }
 }

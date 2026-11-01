@@ -39,7 +39,7 @@ enum CommandPaletteCatalog {
     private struct ShortcutDependencies {
         let settings: SettingsStore
         let attention: AttentionState
-        let registry: (any SurfaceViewProviding)?
+        let registry: (any PaneSurfaceProviding)?
         let supervision: SupervisionPaletteFacts
         /// The window the palette opened in, whose tab the actions act on.
         let window: WindowID
@@ -55,7 +55,7 @@ enum CommandPaletteCatalog {
         session: WorkspaceSession,
         settings: SettingsStore,
         attention: AttentionState,
-        registry: (any SurfaceViewProviding)? = nil,
+        registry: (any PaneSurfaceProviding)? = nil,
         // The window it opens in, as far as its rows' enabled states need it.
         supervision: SupervisionPaletteFacts,
         window: WindowID,

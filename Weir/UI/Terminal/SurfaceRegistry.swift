@@ -9,24 +9,19 @@ import AppKit
 import Foundation
 import GhosttyKit
 
-/// Read-side abstraction used by the Domain / event layer (the C-callback
-/// coordinator, dock-badge sync). Keeping these consumers behind a
-/// protocol means they don't reach into AppKit specifics and the
-/// concrete `SurfaceView` type stays in the UI layer.
+/// The registry as the UI and App layers read it, where the concrete view is
+/// in scope. Core goes through `PaneSurfaceProviding` instead.
 @MainActor
-protocol SurfaceViewProviding: ScrollbackWriting {
+protocol SurfaceViewProviding: PaneSurfaceProviding {
     func view(for id: UUID) -> SurfaceView?
     func id(for view: SurfaceView) -> UUID?
     func register(_ view: SurfaceView, for id: UUID)
-    func unregister(_ id: UUID)
-    /// Drop any registry entries whose ids aren't in the given set —
-    /// used by TabActions when a pane close mutates the tree so
-    /// orphaned SurfaceViews don't pile up.
-    func reconcile(activeIDs: Set<UUID>)
-    /// The pane's text destination, or `nil` when it has none. Separate from
-    /// `view(for:)` so review's delivery path can be answered without a
-    /// `SurfaceView` — the concrete registry returns the view itself.
-    func deliverer(for id: UUID) -> (any ReviewTextDelivering)?
+}
+
+extension SurfaceViewProviding {
+    func paneSurface(for id: UUID) -> (any PaneSurface)? {
+        view(for: id)
+    }
 }
 
 @MainActor
@@ -89,7 +84,7 @@ final class SurfaceRegistry: SurfaceViewProviding {
 
     /// Snapshot of every live `SurfaceView` for callers that must
     /// iterate the surface set without holding the dictionary's
-    /// internal storage. Used by `GhosttyConfigBridge.reloadConfig` to
+    /// internal storage. Used by `GhosttyApp.replaceConfig` to
     /// drive a per-surface `ghostty_surface_update_config` pass —
     /// libghostty's app-level `update_config` only delivers messages
     /// asynchronously, so panes whose renderer thread is parked (e.g.

@@ -593,7 +593,7 @@ final class AppState {
         }
         let placement = clipboardConfirmation.pending.map { request in
             let kept = clipboardRequestPlacement.flatMap { $0.requestID == request.id ? $0.window : nil }
-            let paneID = request.view.flatMap { registry.id(for: $0) }
+            let paneID = (request.view as? SurfaceView).flatMap { registry.id(for: $0) }
             let window = windows.placeNotice(keeping: kept) { windows.requestWindow(forPane: paneID, in: session) }
             return ClipboardRequestPlacement(requestID: request.id, window: window)
         }

@@ -84,8 +84,8 @@ Domain holds no ports. A seam (a dependency that a test or the app swaps in)
 sits at the edge of the Infrastructure it stands for: `GitRunning` (`Core/Git`),
 `ReviewRepositoryReading`, `ReviewDraftStoring`, and `ReviewTextDelivering`
 (`Core/Review`), `ViewedLineRefWriting` (`Core/Git`), `ProjectionPassing`
-(`Core/Rust`), `SurfaceViewProviding` with `ScrollbackWriting` (the terminal
-behind a pane, `Core/SurfaceRegistry.swift` and
+(`Core/Rust`), `PaneSurfaceProviding` with `ScrollbackWriting` (the terminal
+behind a pane, `Core/PaneSurface.swift` and
 `Core/Persistence/ScrollbackFiles.swift`), and `WindowCommandPerforming`
 (`Core/Actions/WindowCommand.swift`, answered by `WindowRegistry`). Some
 seams are a struct of closures instead (`WorktreeChanges.Git` with `.live`
@@ -124,19 +124,11 @@ A static module has no resources, so its strings live in the app's catalog.
 - `core_names_presentation_type` catches Core code that names the
   per-window display types or the models that word what the window shows.
 - `core_names_ui_type` catches Core code that names the UI's sizes, tokens,
-  and glyphs.
+  and glyphs, or the terminal view and the code around it.
 
 Design and review, not a checker, keep the type dependencies beyond that.
 
-One dependency predates these rules, and review rather than a rule keeps it
-from growing. Core names UI's `SurfaceView` in `GhosttyActionRouter`,
-`GhosttyEventCoordinator`, `SurfaceRegistry`, `GhosttyApp`,
-`SecureInputManager`, `ClipboardConfirmationCoordinator`,
-`GhosttyConfigBridge`, and `WeirNotificationDelegate`. Each file leaves this
-list once its code no longer names `SurfaceView`, which takes a port that exposes
-no UI type, the way the scrollback capture does (`ScrollbackWriting`,
-`App/SurfaceRegistry+Scrollback.swift`). `SurfaceViewProviding` does not count,
-because it hands out `SurfaceView` itself.
+Core never names UI's `SurfaceView`. It reaches a pane's terminal through `PaneSurface` and `PaneSurfaceProviding`, and the code that needs the view itself (`GhosttyApp`, `GhosttyActionRouter`, `SurfaceRegistry`, `SecureInputManager`) lives in `UI/Terminal/`. `App/GhosttyEventCoordinator.swift` applies those events to the session.
 
 One edge goes up rather than down: UI views read `AppState`, the composition
 root, for the app's stores. The actions of the changes panel, the review tab,
@@ -178,8 +170,9 @@ ending it, and so that only Weir restores them.
 The root is `UI/Supervision/SupervisionWindowView.swift`. The table lists its
 parts top to bottom and left to right. View paths are under
 `Weir/UI/Supervision/` unless they start with `UI/`. The display state is in
-`Weir/Presentation/`, except `WorkspaceSession`, `SurfaceRegistry`,
-`ReviewSession`, and `WorktreeTimeline`, which are in Core:
+`Weir/Presentation/`, except `WorkspaceSession`, `ReviewSession`, and
+`WorktreeTimeline`, which are in Core, and `SurfaceRegistry`, which is in
+`UI/Terminal/`:
 
 | Part | View | Display state |
 |---|---|---|
@@ -457,14 +450,14 @@ conversation again as its surface mounts (`AgentResumeCommandBuilder`).
 | `Weir/Core/Persistence/TurnReadStore.swift` + `ViewedLineStore.swift` | Which turns are read, and how far each conversation has been viewed |
 | `Weir/Core/Settings/WeirSettings.swift` | The settings model and its section structs, all `Codable` |
 | `Weir/Core/Settings/GhosttyConfigBridge.swift` | Generates the libghostty config string and the forced-override keys |
-| `Weir/Core/GhosttyApp.swift` | Wraps `ghostty_app_t`, runtime callbacks, lifecycle |
+| `Weir/UI/Terminal/GhosttyApp.swift` | Wraps `ghostty_app_t`, runtime callbacks, lifecycle |
 | `Weir/Core/Rust/WeirRustBridge.swift` | The typed Swift entry point for the versioned Rust C ABI |
 | `Weir/Core/Agent/AgentIntegrationServiceRegistrar.swift` | Registering, verifying, and replacing the bundled LaunchAgent on launch, plus the Debug-only `WEIR_AGENT_SERVICE_CONTROL` commands |
 | `AgentIntegrationService/Service/main.swift` | Role-separated XPC listeners and authenticated principal creation |
 | `AgentIntegrationService/Service/RustApprovalHost.swift` | Ownership-safe Swift wrapper around the Rust approval service and session C ABI |
 | `AgentIntegrationService/Shared/AgentIntegrationConfiguration.swift` | Debug/Release identifiers and Team ID-bound peer requirements |
 | `scripts/build-rust-bridge.sh` | Builds the architecture-specific Rust static library into Xcode DerivedData |
-| `Weir/Core/SurfaceRegistry.swift` | The `[UUID: SurfaceView]` map that owns the lifetime of every pane's surface (the quick terminal's surface lives outside it) |
+| `Weir/UI/Terminal/SurfaceRegistry.swift` | The `[UUID: SurfaceView]` map that owns the lifetime of every pane's surface (the quick terminal's surface lives outside it) |
 | `Weir/UI/QuickTerminal/QuickTerminalController.swift` | The quick terminal panel: show / hide choreography, activation hand-back, and the lifetime of its one surface outside the registry |
 | `Weir/Core/QuickTerminal/QuickTerminalHotKeyCenter.swift` | Keeps the quick terminal's global hotkey registered to match the setting, the keyboard layout, and the Settings recorders |
 | `Weir/UI/SurfaceView.swift` | The `NSView` subclass that owns the libghostty surface and its Metal layer |

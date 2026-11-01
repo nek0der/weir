@@ -29,8 +29,8 @@ final class GhosttyEventCoordinator {
     /// Offered a surface's close and exit events before the registry
     /// lookup that would otherwise drop them, for a surface that lives
     /// outside the pane registry (the quick terminal's). Returns true when
-    /// it took the event. A closure rather than the owner itself so Core
-    /// does not depend on the UI type that owns that surface.
+    /// it took the event. A closure rather than the owner itself so this
+    /// type stays apart from the quick terminal's controller.
     private let claimsSurfaceExit: @MainActor (SurfaceView) -> Bool
     /// The window a request aimed at the app rather than a pane acts in
     /// (a GOTO_TAB with no surface): the one commands act on. A closure

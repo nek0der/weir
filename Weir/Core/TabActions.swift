@@ -100,7 +100,7 @@ enum TabActions {
     /// confirmation allows it, which may be after this returns.
     static func closeTab(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         tabID: UUID,
         source: CloseConfirmer.Source = .keyboard,
         confirm: Bool = true,
@@ -138,7 +138,7 @@ enum TabActions {
     /// is, for a caller that asked about the whole container.
     static func closeAllowedTab(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         tabID: UUID,
         askedLeafIDs: Set<UUID>?,
         agentProjection: AgentProjectionAdapter?
@@ -262,7 +262,7 @@ enum TabActions {
 
     static func closeActiveTab(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         source: CloseConfirmer.Source = .keyboard,
         attention: AttentionState? = nil,
         agentProjection: AgentProjectionAdapter? = nil,
@@ -285,7 +285,7 @@ enum TabActions {
     /// again.
     static func closeAllTabs(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         in container: ContainerID,
         agentProjection: AgentProjectionAdapter? = nil,
         from window: WindowID? = nil
@@ -306,7 +306,7 @@ enum TabActions {
     private static func closeTabs(
         _ askedLeafIDs: [UUID: Set<UUID>],
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         in container: ContainerID,
         agentProjection: AgentProjectionAdapter?
     ) {
@@ -390,7 +390,7 @@ enum TabActions {
         _ action: WeirShortcutAction,
         session: WorkspaceSession,
         attention: AttentionState,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         commands: any WindowCommandPerforming,
         trackers: SessionTrackers,
         toastCenter: ToastCenter,
@@ -423,7 +423,7 @@ enum TabActions {
     private static func dispatchFileAction(
         _ action: WeirShortcutAction,
         in scope: ShortcutScope,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         attention: AttentionState,
         trackers: SessionTrackers
     ) {
@@ -554,7 +554,7 @@ enum TabActions {
     private static func dispatchSplitAction(
         _ action: WeirShortcutAction,
         in scope: ShortcutScope,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         toastCenter: ToastCenter,
         minPaneSize: PaneMinimumSize
     ) {
@@ -593,7 +593,7 @@ enum TabActions {
     private static func dispatchSearchAction(
         _ action: WeirShortcutAction,
         in scope: ShortcutScope,
-        registry: any SurfaceViewProviding
+        registry: any PaneSurfaceProviding
     ) {
         let (session, window) = (scope.session, scope.window)
         switch action {
@@ -609,11 +609,11 @@ enum TabActions {
     private static func dispatchGhosttyAction(
         _ action: String,
         in scope: ShortcutScope,
-        registry: any SurfaceViewProviding
+        registry: any PaneSurfaceProviding
     ) {
         guard let tab = scope.session.activeTab(in: scope.window),
               let leafID = tab.splitTree.effectiveFocusedLeafID,
-              let view = registry.view(for: leafID),
+              let view = registry.paneSurface(for: leafID),
               let surface = view.surface
         else { return }
         GhosttyFFI.performBindingAction(action, on: surface)
