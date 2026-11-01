@@ -111,15 +111,18 @@ struct ApprovalCardModelTests {
         #expect(ApprovalCardModel.clockText(for: remaining) == text)
     }
 
-    @Test("after the reason, the time left is one phrase with its mark, so a line breaks only before it")
-    func timeLeftAfterReason_isGluedToItsMarkAndItsWord() {
-        let noBreakSpace = "\u{00A0}"
-        let en = Locale(identifier: "en")
-        let ja = Locale(identifier: "ja")
-        #expect(ApprovalCardModel.timeLeftText(for: .seconds(522), locale: en) == "8:42 left")
-        #expect(ApprovalCardModel.timeLeftText(for: .seconds(522), locale: ja) == "残り 8:42")
-        #expect(ApprovalCardModel.timeLeftAfterReason(for: .seconds(522), locale: en) == "·\(noBreakSpace)8:42\(noBreakSpace)left")
-        #expect(ApprovalCardModel.timeLeftAfterReason(for: .seconds(522), locale: ja) == "·\(noBreakSpace)残り\(noBreakSpace)8:42")
+    @Test func aHeldRequestsClock_isMinutesAndSeconds_roundedUp() {
+        #expect(ApprovalCardModel.clockText(for: .seconds(522)) == "8:42")
+        #expect(ApprovalCardModel.clockText(for: .milliseconds(521_500)) == "8:42")
+    }
+
+    @Test func showDetails_isOfferedOnlyWhenTheInputHoldsMoreThanTheCardShows() {
+        let inputAdds = ApprovalControllerConnection.inputAddsToSummary
+        #expect(!inputAdds(["command": "ls", "description": "List"], "ls"))
+        #expect(inputAdds(["command": "ls", "timeout": 5], "ls"))
+        #expect(inputAdds(["file_path": "/a", "content": "b"], "/a"))
+        #expect(inputAdds(["command": ["ls", "-l"]], "ls -l"))
+        #expect(inputAdds(["command": "ls"], "a description"))
     }
 
     @Test func theCardsHeading_placesTheRequest_asTheNeedsAttentionListDoes() throws {

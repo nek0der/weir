@@ -359,11 +359,6 @@ struct DecisionBarModel: Equatable {
         shortInstruction = Self.shortInstruction(words.instruction, for: content.body, locale: locale)
     }
 
-    /// "8:42 left", rounded up as the approval card counts.
-    static func timeLeft(_ deadline: ServiceDeadline, now: SuspendingClock.Instant, locale: Locale) -> String {
-        ApprovalCardModel.timeLeftText(for: deadline.remaining(at: now), locale: locale)
-    }
-
     private struct Words {
         var tag: String?
         var tone: Tone

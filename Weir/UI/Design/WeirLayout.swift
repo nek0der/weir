@@ -410,6 +410,9 @@ enum WeirLayout {
         /// A file's header in the review tab's stacked diff, and the bar
         /// over it that sizes up the range, so the two read alike.
         static let reviewFileHeaderHeight: CGFloat = 30
+        /// The review's bars that hold a segmented control: the control's
+        /// height and 6pt above and below it.
+        static let reviewControlBarHeight = segmentedHeight + spaceSnug * 2
         /// The review tab's top edge: its first line, the scope menu
         /// and what stands beside it with 8pt above and below; the inset at
         /// its sides; and the gaps along it.

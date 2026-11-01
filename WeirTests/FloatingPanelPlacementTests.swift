@@ -23,6 +23,23 @@ struct FloatingPanelOriginTests {
         )
     }
 
+    @Test func leftOf_standsBesideTheAnchor_onItsTop_insideAShortWindow_orNotAtAllWithoutRoom() {
+        let anchor = CGRect(x: 500, y: 40, width: 300, height: 400)
+        let size = CGSize(width: 400, height: 200)
+        let origin = { (height: CGFloat, anchor: CGRect) in
+            FloatingPanelPlacement.leftOf(
+                anchor: anchor,
+                panelSize: size,
+                container: CGSize(width: 900, height: height),
+                gap: 8,
+                margin: 8
+            )
+        }
+        #expect(origin(800, anchor) == CGPoint(x: 92, y: 40))
+        #expect(origin(150, anchor) == CGPoint(x: 92, y: 8))
+        #expect(origin(800, anchor.offsetBy(dx: -90, dy: 0)) == nil)
+    }
+
     @Test func besideRail_standsPastTheRail_onTheColumnsTop_andInsideAShortWindow() {
         let button = CGRect(x: 10, y: 80, width: 32, height: 32)
         let size = CGSize(width: 400, height: 200)

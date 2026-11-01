@@ -105,12 +105,7 @@ struct ApprovalCardModel: Equatable {
         return String(format: "%d:%02d", total / 60, total % 60)
     }
 
-    /// "8:42 left", as the card and the decision bar say it.
-    static func timeLeftText(for remaining: Duration, locale: Locale) -> String {
-        LocalizedStringResource("\(clockText(for: remaining)) left").resolved(in: locale)
-    }
-
-    /// "8 minutes, 42 seconds left", as VoiceOver reads `timeLeftText`:
+    /// "8 minutes, 42 seconds left", as VoiceOver reads `clockText`:
     /// VoiceOver reads "8:42" as a time of day. Under a minute only the
     /// seconds, so nothing left still says "0 seconds".
     static func spokenTimeLeftText(for remaining: Duration, locale: Locale) -> String {
@@ -120,18 +115,6 @@ struct ApprovalCardModel: Equatable {
             .units(allowed: units, width: .wide, zeroValueUnits: .hide).locale(locale)
         )
         return LocalizedStringResource("\(words) left").resolved(in: locale)
-    }
-
-    /// The time left as it follows the reason on the card, "· 8:42 left",
-    /// to be set after the reason with an ordinary space. The phrase is
-    /// glued inside, so a line breaks only before it: a reason that wraps
-    /// stays one sentence, and the clock, with its mark and its word, lands
-    /// after the sentence's last line or whole on the line below, never
-    /// between its lines and never cut from its mark.
-    static func timeLeftAfterReason(for remaining: Duration, locale: Locale) -> String {
-        let noBreakSpace = "\u{00A0}"
-        return "·" + noBreakSpace + timeLeftText(for: remaining, locale: locale)
-            .replacingOccurrences(of: " ", with: noBreakSpace)
     }
 }
 

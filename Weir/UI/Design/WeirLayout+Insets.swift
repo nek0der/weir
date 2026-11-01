@@ -57,6 +57,10 @@ extension WeirLayout.Supervision {
     /// 1pt past the badges, which we accept over a shared style for one row.
     static let sessionRowAnswerInsets = EdgeInsets(top: 3.5, leading: 0, bottom: 0, trailing: sessionRowHorizontalInset - 1)
 
+    /// Answer… under a Needs Attention row's time, its face on the time's
+    /// right edge and its line's baseline: its 1pt edge is the list's own.
+    static let needsAttentionActionInsets = EdgeInsets(top: 0, leading: 0, bottom: spaceSnug, trailing: spaceS - 1)
+
     // MARK: Pane strip
 
     /// "exit 1" in its red box.

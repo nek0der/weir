@@ -68,7 +68,6 @@ struct DecisionBarModelTests {
             #expect(model.shortInstruction == model.instruction)
             #expect(model.heldUntil == deadline)
         }
-        #expect(DecisionBarModel.timeLeft(deadline, now: deadline.receivedAt, locale: Self.english) == "8:42 left")
 
         let edit = ApprovalFact.test(provider: .codex)
         let editModel = Self.model(

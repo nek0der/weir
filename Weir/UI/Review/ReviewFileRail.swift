@@ -234,7 +234,7 @@ struct ReviewFileRail: View {
             }
         }
         .padding(.horizontal, WeirLayout.Supervision.spaceS)
-        .frame(height: 28)
+        .frame(height: WeirLayout.Supervision.reviewControlBarHeight)
     }
 
     /// Hides what has been read. Only offered once something has been marked:
