@@ -14884,6 +14884,23 @@
         }
       }
     },
+    "Time left to answer on the card": {
+      "comment": "Approval card and decision bar: tooltip of the countdown",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Time left to answer on the card"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "カードで回答できる残り時間"
+          }
+        }
+      }
+    },
     "Answer on the approval card": {
       "comment": "Decision bar: Weir still holds the request, so the card answers it",
       "localizations": {

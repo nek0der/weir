@@ -34,7 +34,7 @@ struct ApprovalCardHost: View {
     /// clamp pull it down, in one unanimated jump. It moves only when the card
     /// grows past anything it has shown.
     @State private var placementHeights: [String: CGFloat] = [:]
-    private let cardWidth: CGFloat = 400
+    static let cardWidth: CGFloat = 400
     private let fallbackCardHeight: CGFloat = 180
     /// Between the card and the window's edges.
     private let cardMargin: CGFloat = 8
@@ -49,7 +49,7 @@ struct ApprovalCardHost: View {
             if let approval = window.approvalCard.presentedApproval(in: approvals),
                let model = ApprovalCardModel(approval: approval, in: approvals)
             {
-                let width = min(cardWidth, max(296, geometry.size.width - 24))
+                let width = min(Self.cardWidth, max(296, geometry.size.width - 24))
                 let origin = geometry.frame(in: .global).origin
                 let openedFrom = window.approvalCard.state.openedFrom?.offsetBy(dx: -origin.x, dy: -origin.y)
                 let rowAnchor = window.approvalCard.rowAnchor(for: approval)?.offsetBy(dx: -origin.x, dy: -origin.y)
@@ -68,10 +68,12 @@ struct ApprovalCardHost: View {
                     card: window.approvalCard,
                     model: model,
                     place: place(of: approval),
-                    // Without its row there is nothing to point at: once the
-                    // request leaves the pending list, its row is gone and
-                    // the last anchor marks another one.
-                    arrow: openedFrom != nil || (rowAnchor != nil && approvals.hasRow(for: approval)) ? placed.arrow : nil,
+                    // Only beside a row, which the arrow tells from its
+                    // neighbors; a control's panels have no arrow. Without its
+                    // row there is nothing to point at: once the request leaves
+                    // the pending list, its row is gone and the last anchor
+                    // marks another one.
+                    arrow: openedFrom == nil && rowAnchor != nil && approvals.hasRow(for: approval) ? placed.arrow : nil,
                     onClose: { [window] in window.approvalCard.dismiss() },
                     onAnswerInTerminal: { answerInTerminal(approval) },
                     movesToPane: openPaneAction(for: approval) != nil,
@@ -94,6 +96,7 @@ struct ApprovalCardHost: View {
                         placementHeights[measurement.approvalID] = measurement.height
                     }
                 }
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { window.approvalCard.frame = $0 }
                 .position(x: placed.origin.x + width / 2, y: placed.origin.y + cardHeight / 2)
                 // A floating panel like the dropdowns: it fades and does not
                 // scale, so it never looks to come from anywhere but its row.
@@ -135,6 +138,15 @@ struct ApprovalCardHost: View {
                 gap: WeirLayout.Supervision.railPanelGap,
                 margin: cardMargin
             )
+            return (origin, nil)
+        }
+        if let openedFrom, window.approvalCard.state.standsLeftOfOpener, let origin = FloatingPanelPlacement.leftOf(
+            anchor: openedFrom,
+            panelSize: panelSize,
+            container: container,
+            gap: WeirLayout.Supervision.railPanelGap,
+            margin: cardMargin
+        ) {
             return (origin, nil)
         }
         if let openedFrom {
@@ -321,10 +333,11 @@ private struct ApprovalCard: View {
                                 focus: $focusedAction
                             )
                             .disabled(!acceptsDecision)
-                            timeLeft
                         } else {
                             requestSummary
-                            details
+                            if approval.inputAddsToSummary {
+                                details
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -398,7 +411,7 @@ private struct ApprovalCard: View {
         .accessibilityLabel(Text(approval.isQuestion ? "Question from agent" : "Approval request"))
     }
 
-    /// The agent's name, then where the request is, then ×.
+    /// The agent's name, then where the request is, then the time left and ×.
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: WeirLayout.Supervision.spaceS) {
             Text(verbatim: SessionRowFactText.agentName(.agent(approval.provider), locale: locale))
@@ -418,6 +431,7 @@ private struct ApprovalCard: View {
                     )))
             }
             Spacer(minLength: 0)
+            timeLeft
             Button(action: onClose) {
                 // The system caption is the window's micro step on macOS.
                 DismissGlyph(size: .micro, weight: .semibold)
@@ -438,55 +452,21 @@ private struct ApprovalCard: View {
         ApprovalCardModel.kindLabel(isQuestion: approval.isQuestion, action: ApprovalRequestText(approval).action)
     }
 
-    /// "8:42 left" while Weir holds the request. The service clock stops
-    /// while the Mac sleeps, as ours does, so ticking once a second needs no
+    /// The clock while Weir holds the request. The service clock stops while
+    /// the Mac sleeps, as ours does, so ticking once a second needs no
     /// correction on wake.
     @ViewBuilder private var timeLeft: some View {
         if model.showsTimeLeft, let deadline = approvals.serviceDeadlines[approval.id] {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
-                let remaining = deadline.remaining(at: .now)
-                Text(verbatim: ApprovalCardModel.timeLeftText(for: remaining, locale: locale))
-                    .font(.supervision(.body).monospacedDigit())
-                    .foregroundStyle(SupervisionTokens.muted.color)
-                    .accessibilityLabel(Text(verbatim: ApprovalCardModel.spokenTimeLeftText(for: remaining, locale: locale)))
+                ApprovalTimeLeft(remaining: deadline.remaining(at: .now), size: .row)
             }
             // Read after the request itself (the command, the reason).
             .accessibilitySortPriority(-1)
         }
     }
 
-    /// The reason with the time left after it, "{reason} · 8:42 left", as
-    /// one run of text, so the clock follows the sentence's last line or
-    /// drops whole to the line below. Beside the reason as a view of its
-    /// own, it sat on the reason's first line once the reason wrapped, and
-    /// a wrapped reason read as two sentences with the clock between them.
-    private func reasonWithTimeLeft(_ reason: String, deadline: ServiceDeadline) -> some View {
-        TimelineView(.periodic(from: .now, by: 1)) { _ in
-            let remaining = deadline.remaining(at: .now)
-            Text(reasonLine(reason, remaining: remaining))
-                .foregroundStyle(SupervisionTokens.muted.color)
-                .fixedSize(horizontal: false, vertical: true)
-                // The reason, then the time left, as the eye takes them.
-                .accessibilityLabel(Text(verbatim: AgentStatusText.spokenList(
-                    [reason, ApprovalCardModel.spokenTimeLeftText(for: remaining, locale: locale)],
-                    locale: locale
-                )))
-        }
-    }
-
-    /// The reason and, after a space, the time left in digits of one
-    /// width, so the clock ticks without the sentence shifting.
-    private func reasonLine(_ reason: String, remaining: Duration) -> AttributedString {
-        var line = AttributedString(reason + " ")
-        var clock = AttributedString(ApprovalCardModel.timeLeftAfterReason(for: remaining, locale: locale))
-        clock.font = .supervision(.body).monospacedDigit()
-        line += clock
-        return line
-    }
-
-    /// The command first, in its box, then the agent's reason for it with
-    /// the time left after it, as the person weighs them and as VoiceOver
-    /// reads them.
+    /// The command first, in its box, then the agent's reason for it, as the
+    /// person weighs them and as VoiceOver reads them.
     @ViewBuilder private var requestSummary: some View {
         if let summary = approval.summary, !summary.isEmpty {
             // The whole command, as the person is asked to allow it. Long
@@ -505,15 +485,9 @@ private struct ApprovalCard: View {
             .background(ApprovalCommandWell())
         }
         if let visibleRequestDescription {
-            if model.showsTimeLeft, let deadline = approvals.serviceDeadlines[approval.id] {
-                reasonWithTimeLeft(visibleRequestDescription, deadline: deadline)
-            } else {
-                Text(verbatim: visibleRequestDescription)
-                    .foregroundStyle(SupervisionTokens.muted.color)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        } else {
-            timeLeft
+            Text(verbatim: visibleRequestDescription)
+                .foregroundStyle(SupervisionTokens.muted.color)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -829,5 +803,28 @@ enum ApprovalAnswerComposition {
         else { return }
         editor.unmarkText()
         editor.inputContext?.discardMarkedText()
+    }
+}
+
+/// How long Weir still holds a request: the clock's mark and "8:42", so it
+/// never reads as a time of day. On the card and on the decision bar.
+struct ApprovalTimeLeft: View {
+    let remaining: Duration
+    let size: WeirFont.Supervision.Size
+    @Environment(\.locale) private var locale
+
+    var body: some View {
+        HStack(spacing: WeirLayout.Supervision.spaceXS) {
+            Image(systemName: "clock")
+                .font(.supervision(size))
+                .accessibilityHidden(true)
+            Text(verbatim: ApprovalCardModel.clockText(for: remaining))
+                .font(.supervision(size).monospacedDigit())
+        }
+        .foregroundStyle(SupervisionTokens.muted.color)
+        .fixedSize()
+        .help(Text("Time left to answer on the card", comment: "Approval card and decision bar: tooltip of the countdown"))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: ApprovalCardModel.spokenTimeLeftText(for: remaining, locale: locale)))
     }
 }

@@ -100,6 +100,21 @@ enum FloatingPanelPlacement {
         return CGPoint(x: button.maxX + gap, y: min(max(columnTop, margin), lowest))
     }
 
+    /// Where a panel stands left of `anchor`, on its top and inside a short
+    /// window; `nil` where the window has no room for it there.
+    static func leftOf(
+        anchor: CGRect,
+        panelSize: CGSize,
+        container: CGSize,
+        gap: CGFloat,
+        margin: CGFloat
+    ) -> CGPoint? {
+        let x = anchor.minX - gap - panelSize.width
+        guard x >= margin else { return nil }
+        let lowest = max(margin, container.height - panelSize.height - margin)
+        return CGPoint(x: x, y: min(max(anchor.minY, margin), lowest))
+    }
+
     static func origin(
         anchor: CGRect,
         panelSize: CGSize,

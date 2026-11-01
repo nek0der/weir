@@ -4,10 +4,10 @@
 import SwiftUI
 
 /// This is a row: the session's name, the agent's badge, and how long the item has waited, and under
-/// them where the item is and its fact. Its button (Answer…)
-/// stands beside the row rather than in it, so the row's fill marks only
-/// what opening the row goes to; VoiceOver reaches the button there, as
-/// its own element. The menu bar lays the button with what else it acts on
+/// them where the item is and its fact. Its button (Answer…) stands under
+/// the time, in the column every row's time keeps, laid over the row so
+/// pressing it does not also open the row; VoiceOver reaches it there, as its
+/// own element. The menu bar lays the button with what else it acts on
 /// in place under the row, outside the fill for the same reason, and passes
 /// no `onAction`.
 struct NeedsAttentionRowView: View {
@@ -38,21 +38,28 @@ struct NeedsAttentionRowView: View {
     )
 
     var body: some View {
-        HStack(spacing: WeirLayout.Supervision.spaceSnug) {
-            rowFace
-            if let onAction, let action = row.action {
-                Button(Self.title(action), action: onAction)
-                    .buttonStyle(.supervisionSecondary(size: .compact))
-                    // The keyboard's place on the button, shown like a
-                    // focused control, since the list holds the focus.
-                    .supervisionFocusRing(
-                        isFocused: isActionSelected,
-                        cornerRadius: WeirLayout.Supervision.buttonCornerRadius
-                    )
-                    // The control Return presses, said as the ring shows it.
-                    .accessibilityAddTraits(isActionSelected ? .isSelected : [])
+        rowFace
+            .overlay(alignment: .bottomTrailing) {
+                if let onAction, let action = row.action {
+                    Button(Self.title(action), action: onAction)
+                        .buttonStyle(.supervisionSecondary(size: .rowLine))
+                        // The keyboard's place on the button, shown like a
+                        // focused control, since the list holds the focus.
+                        .supervisionFocusRing(
+                            isFocused: isActionSelected,
+                            cornerRadius: WeirLayout.Supervision.buttonCornerRadius
+                        )
+                        // The control Return presses, said as the ring shows it.
+                        .accessibilityAddTraits(isActionSelected ? .isSelected : [])
+                        .padding(WeirLayout.Supervision.needsAttentionActionInsets)
+                }
             }
-        }
+            // After the overlay, so the pointer on the button still counts as
+            // on the row, which stays lit.
+            .onHover { isHovering in
+                self.isHovering = isHovering
+                onHover?(isHovering)
+            }
     }
 
     private var rowFace: some View {
@@ -80,13 +87,26 @@ struct NeedsAttentionRowView: View {
                         .foregroundStyle(ink.muted)
                         .fixedSize()
                 }
-                Text(detail)
-                    .font(.supervision(.meta))
-                    .lineLimit(1)
-                    // The place leads; a command or a file at the end stays
-                    // with it ("alpha · Write: /Users/…/notes.txt").
-                    .supervisionTruncation(row.factTruncation)
-                    .accessibilityLabel(row.spokenDetail.isEmpty ? Text(detail) : Text(verbatim: row.spokenDetail))
+                HStack(spacing: WeirLayout.Supervision.spaceSnug) {
+                    Text(detail)
+                        .font(.supervision(.meta))
+                        .lineLimit(1)
+                        // The place leads; a command or a file at the end stays
+                        // with it ("alpha · Write: /Users/…/notes.txt").
+                        .supervisionTruncation(row.factTruncation)
+                        .accessibilityLabel(row.spokenDetail.isEmpty ? Text(detail) : Text(verbatim: row.spokenDetail))
+                    if onAction != nil, let action = row.action {
+                        Spacer(minLength: 0)
+                        // As wide as the button laid over it, so the fact is
+                        // cut where the button begins.
+                        Text(Self.title(action))
+                            .font(.supervision(.caption, weight: .medium))
+                            .fixedSize()
+                            .padding(.horizontal, WeirLayout.Supervision.spaceSnug)
+                            .hidden()
+                            .accessibilityHidden(true)
+                    }
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -100,10 +120,6 @@ struct NeedsAttentionRowView: View {
         )
         .contentShape(Rectangle())
         .onClick { onOpen(.click(holdsCommand: $0)) }
-        .onHover { isHovering in
-            self.isHovering = isHovering
-            onHover?(isHovering)
-        }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])

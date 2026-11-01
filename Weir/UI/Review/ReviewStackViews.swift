@@ -304,7 +304,7 @@ struct ReviewStackBar: View {
             ReviewTabLayoutSwitch(layout: $layout, isDisabled: isComposerOpen)
         }
         .padding(.horizontal, Layout.reviewTabTopInset)
-        .frame(height: Layout.reviewFileHeaderHeight)
+        .frame(height: Layout.reviewControlBarHeight)
         .frame(maxWidth: .infinity)
     }
 }

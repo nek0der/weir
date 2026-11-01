@@ -14,7 +14,8 @@ struct ApprovalCardState: Equatable {
     /// It never closes by itself when the pointer or the keyboard leaves:
     /// only on Escape, its close button, once its request is settled, when
     /// another request's card replaces it, when the window switches project
-    /// while the card stands beside a row (`forgetRows`), or with its window.
+    /// while the card stands beside a row (`forgetRows`), with the Needs
+    /// Attention list it stands beside, or with its window.
     /// What it holds back from the rest of the window follows `isFocused`.
     var presentedID: String?
     /// A row click requests one hand-off of keyboard focus into the card.
@@ -28,6 +29,9 @@ struct ApprovalCardState: Equatable {
     /// That control is a rail button: the card opens as the rail's other
     /// panels do, beside the rail with no arrow.
     var isOpenedFromRail = false
+    /// That control is the Needs Attention list: the card stands to its left,
+    /// so the list stays in sight for what to answer next.
+    var standsLeftOfOpener = false
     /// Whether keyboard focus is in the card. Only then does the card act
     /// as the surface the person works in: it takes Escape, holds back ⌘⏎
     /// in its window, and keeps the window's small panels from opening.
@@ -53,6 +57,9 @@ final class WindowApprovalCard {
     /// scrolls, and the views that read only whether a card is up or
     /// focused must not be drawn again for each one.
     private var rowAnchors: [String: CGRect] = [:]
+    /// Where the card is, in the window. Read when a press lands, so nothing
+    /// is drawn again as it moves.
+    @ObservationIgnored var frame = CGRect.zero
 
     private func update(_ change: (inout ApprovalCardState) -> Void) {
         var card = state
@@ -70,12 +77,14 @@ final class WindowApprovalCard {
         from approvals: ApprovalPresentationStore,
         shouldFocusCard: Bool = true,
         openedFrom: CGRect? = nil,
-        isOpenedFromRail: Bool = false
+        isOpenedFromRail: Bool = false,
+        standsLeftOfOpener: Bool = false
     ) {
         guard approvals.approvalForCard(approval.id) != nil else { return }
         update { card in
             card.openedFrom = openedFrom
             card.isOpenedFromRail = isOpenedFromRail
+            card.standsLeftOfOpener = standsLeftOfOpener
             if card.presentedID == approval.id {
                 if shouldFocusCard {
                     card.cardFocusRequestID = approval.id

@@ -29,6 +29,10 @@ struct ApprovalPresentation: Identifiable, Equatable, Sendable {
     /// is: a command to set in a command's face, or prose. Defaulted like
     /// `command`, reading as prose.
     var hasInputCommand = false
+    /// The input holds something the card does not already show, so its
+    /// Show Details has something to show. Defaulted like `command`, reading
+    /// as a request with more to see.
+    var inputAddsToSummary = true
     /// The agent run that asked (`WEIR_AGENT_RUN_ID`, read by its hook
     /// helper), for placement only; `runID` is the helper's own session.
     /// `nil` outside a Weir run (`binding(of:)`). Defaulted like `command`.
