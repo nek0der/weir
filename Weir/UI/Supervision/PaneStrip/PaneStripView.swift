@@ -2,6 +2,7 @@
 // Weir — the pane strip: the session's tabs, the review's tab while one is open, and "+".
 
 import SwiftUI
+import WeirDomain
 
 /// The 30pt strip under the session header. Each tab is as wide as
 /// what it holds, its title cut past a maximum. Short of room, the tabs
@@ -404,6 +405,9 @@ private struct PaneStripTabCell: View {
             sourceTabID: sourceTabID
         )
         .paneStripScrollTarget(.terminal(item.id))
+        .heldKeyCap(chord: .command, placement: .leading) {
+            HeldKeyCapRule.number(at: session.tabs(in: container).firstIndex { $0.id == item.id })
+        }
     }
 }
 
@@ -515,6 +519,7 @@ private struct OpenTabsButton: View {
                 .paneStripControlFace(fill: isLit ? SupervisionTokens.selection.color : SupervisionTokens.hover.color, alignment: .leading)
         }
         .hoverChip("Open Tabs", shortcut: shortcut, placement: .belowLeading)
+        .heldKeyCap(.showOpenTabs, placement: .center)
         .accessibilityLabel(Text("Open Tabs"))
     }
 }
@@ -556,6 +561,7 @@ private struct AddTabButton: View {
                 .paneStripControlFace(fill: isLit ? SupervisionTokens.selection.color : .clear, alignment: .trailing)
         }
         .hoverChip(name, shortcut: nil, placement: .below)
+        .heldKeyCap(.newTab, placement: .center)
         // Bare at rest, so its glyph rather than its square is what stands on
         // the strip's inset.
         .offset(x: WeirLayout.Supervision.paneStripAddGlyphOutset)

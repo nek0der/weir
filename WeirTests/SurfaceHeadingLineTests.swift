@@ -150,7 +150,7 @@ struct SurfaceHeadingLineTests {
             .frame(width: Layout.railButtonSize, height: Layout.railButtonSize)
             .recordFrame(in: book, as: "control")
             .overlay(alignment: placement.alignment) {
-                HoverChipFace(name: "Scratch", shortcut: "⌥⌘S")
+                HoverChipFace(name: "Scratch", shortcut: "⇧⌘S")
                     .recordFrame(in: book, as: "chip")
             }
         let frames = try #require(await Self.layOut(view, width: 400, height: 400, book: book, count: 2))

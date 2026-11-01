@@ -88,6 +88,11 @@ struct SupervisionCommands: Commands {
                 }
                 .weirShortcut(.showScratch, in: state.settingsStore)
                 .disabled(window == nil)
+                Button("Plan Usage", systemImage: WeirShortcutAction.planUsage.iconName) {
+                    window?.commands.send(.togglePlanUsage)
+                }
+                .weirShortcut(.planUsage, in: state.settingsStore)
+                .disabled(window == nil || window?.areRailsHidden == true)
                 Button(window?.areRailsHidden == true ? "Show Icon Bars" : "Hide Icon Bars") {
                     window?.areRailsHidden.toggle()
                 }
@@ -109,6 +114,16 @@ struct SupervisionCommands: Commands {
                 }
                 .weirShortcut(.showOpenTabs, in: state.settingsStore)
                 .disabled(window == nil || window?.selection.isChoosingProject == true)
+                Button("Show Project Menu", systemImage: WeirShortcutAction.showProjectMenu.iconName) {
+                    window?.commands.send(.showProjectMenu)
+                }
+                .weirShortcut(.showProjectMenu, in: state.settingsStore)
+                .disabled(window == nil)
+                Button("Show Worktree Menu", systemImage: WeirShortcutAction.showWorktreeMenu.iconName) {
+                    window?.commands.send(.showWorktreeMenu)
+                }
+                .weirShortcut(.showWorktreeMenu, in: state.settingsStore)
+                .disabled(!hasWorktreeMenu(window))
                 Button("Focus Sidebar", systemImage: WeirShortcutAction.focusSidebar.iconName) {
                     guard let window else { return }
                     SupervisionWindowActions.focusSidebar(in: state.session, window: window)
@@ -130,5 +145,10 @@ struct SupervisionCommands: Commands {
                 .disabled(window.map { !state.session.canNavigateForward(in: $0.id) } ?? true)
             }
         }
+    }
+
+    /// Whether `window`'s title bar shows the worktree ▾ its item opens.
+    private func hasWorktreeMenu(_ window: ProjectWindowState?) -> Bool {
+        window?.selection.shownProjectID.flatMap { state.session.project($0) }.map(CheckoutName.hasWorktreeMenu) ?? false
     }
 }

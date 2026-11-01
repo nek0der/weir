@@ -156,6 +156,14 @@ enum SettingsSearchCatalog {
                 keywords: ["Global shortcut"],
                 order: 99
             ),
+            makeEntry(
+                "keyboard.held-key-hints",
+                .keyboard,
+                "Keyboard",
+                "Show keys while holding ⌘",
+                keywords: ["Shortcut hints"],
+                order: 98
+            ),
             makeEntry("keyboard.restore-defaults", .keyboard, "Reset", "Restore Defaults", keywords: ["Reset shortcuts"], order: 100),
 
             makeEntry(
@@ -381,6 +389,10 @@ enum SettingsSearchCatalog {
 
     static var keyboardQuickTerminalHotKey: SettingsSearchEntry {
         requiredEntry("keyboard.quick-terminal-hotkey")
+    }
+
+    static var keyboardHeldKeyHints: SettingsSearchEntry {
+        requiredEntry("keyboard.held-key-hints")
     }
 
     static var keyboardRestoreDefaults: SettingsSearchEntry {

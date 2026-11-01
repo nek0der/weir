@@ -22,10 +22,7 @@ struct WorktreeMenuButton: View {
     }
 
     var body: some View {
-        // A folder that is not a repository has no branch or worktrees,
-        // so the control would offer nothing. A detached main checkout
-        // is a repository all the same.
-        if let project, CheckoutName.isRepository(project) || !project.worktrees.isEmpty {
+        if let project, CheckoutName.hasWorktreeMenu(project) {
             // On a scratch tab no checkout of the project is selected, so
             // the button names none rather than the main one.
             let isOnProject = window.selection.activeContainerID.projectID == project.id
@@ -44,6 +41,7 @@ struct WorktreeMenuButton: View {
                         .accessibilityHidden(true)
                 }
             }
+            .heldKeyCap(.showWorktreeMenu)
             // What pressing it does; VoiceOver keeps the name of what it
             // lists, which the dropdown's heading repeats.
             .help(Text("Switch Worktree"))

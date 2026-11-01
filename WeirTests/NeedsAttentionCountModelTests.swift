@@ -33,17 +33,17 @@ struct NeedsAttentionCountModelTests {
     @Test func theHint_namesTheKeys_andTheKindsThatHaveItems() {
         let model = NeedsAttentionCountModel(AttentionCounts(approvals: 1, prompts: 1, stops: 1, unread: 2))
 
-        #expect(model.hint(listShortcut: "⌃⌘J", nextShortcut: "⌘J", locale: Self.english)
-            == "Needs Attention list (⌃⌘J; Next Action: ⌘J) · 1 Approval · 1 Response · 1 Stopped · 2 Unread")
-        #expect(model.hint(listShortcut: "⌃⌘J", nextShortcut: "⌘J", locale: Self.japanese)
-            == "要対応の一覧（⌃⌘J。次の対応は ⌘J） · 承認 1 · 応答 1 · 停止 1 · 未読 2")
+        #expect(model.hint(listShortcut: "⌥⌘J", nextShortcut: "⌘J", locale: Self.english)
+            == "Needs Attention list (⌥⌘J; Next Action: ⌘J) · 1 Approval · 1 Response · 1 Stopped · 2 Unread")
+        #expect(model.hint(listShortcut: "⌥⌘J", nextShortcut: "⌘J", locale: Self.japanese)
+            == "要対応の一覧（⌥⌘J。次の対応は ⌘J） · 承認 1 · 応答 1 · 停止 1 · 未読 2")
     }
 
     @Test func anUnboundKey_isLeftOutOfTheHint() {
         let model = NeedsAttentionCountModel(AttentionCounts())
 
         #expect(model.hint(listShortcut: nil, nextShortcut: "⌘J", locale: Self.english) == "Needs Attention list (Next Action: ⌘J)")
-        #expect(model.hint(listShortcut: "⌃⌘J", nextShortcut: nil, locale: Self.english) == "Needs Attention list (⌃⌘J)")
+        #expect(model.hint(listShortcut: "⌥⌘J", nextShortcut: nil, locale: Self.english) == "Needs Attention list (⌥⌘J)")
         #expect(model.hint(listShortcut: nil, nextShortcut: nil, locale: Self.english) == "Needs Attention list")
     }
 }

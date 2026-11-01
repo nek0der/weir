@@ -30,7 +30,7 @@ unviewed turns.
 
 ### Left rail
 
-**Worktrees** (shows or hides the sidebar), **Scratch** (⌥⌘S, the tabs outside
+**Worktrees** (shows or hides the sidebar), **Scratch** (⇧⌘S, the tabs outside
 any project), **All Projects**, and **Notification History**; below them,
 updates (when one is available), **Plan Usage**, keyboard shortcuts, and
 **Settings**.
@@ -261,7 +261,7 @@ encoding.
    doing. Nothing moves or takes focus on its own.
 3. **It needs you.** An approval, a question, a stop, or a finished turn
    joins **Needs Attention**. Press ⌘J to go to the next item (⇧⌘J for the
-   previous one), or ⌃⌘J to open the list. A request from a pane you are
+   previous one), or ⌥⌘J to open the list. A request from a pane you are
    looking at goes to the agent's own prompt. A request from a pane out of
    sight waits on the window's approval card, where you can answer it without
    switching panes. While another app is in front, every request waits, and
@@ -274,7 +274,7 @@ encoding.
    on lines, then insert the comments into the agent's input as one message.
    You press Return to send it. Comments survive a restart, and a comment
    whose code has moved since you wrote it is held back rather than sent. You
-   can also discard a hunk, and undo the discard. ⌥⌘J reviews the focused
+   can also discard a hunk, and undo the discard. ⌥⌘L reviews the focused
    agent's latest turn.
 5. **You decide.** **Mark as Viewed** moves the viewed line past the turns
    you read, and they leave **Needs Attention**. **Restore Code to Before This
@@ -303,7 +303,7 @@ encoding.
 - **Quick Terminal.** A system-wide hotkey drops a terminal over any app from
   a screen edge or the center. It is off until you set a hotkey in
   **Settings → Quick Terminal**.
-- **All Projects and notifications.** **All Projects** (⌥⌘O) shows every
+- **All Projects and notifications.** **All Projects** (⇧⌘O) shows every
   project's worktrees with something open as cards, grouped by state (needs
   you, running, idle), with each terminal's last lines: the one view sorted
   by state, since the sidebar keeps your order. **Notification History**
@@ -320,10 +320,10 @@ encoding.
 | Shortcut | Action |
 |---|---|
 | ⌘J / ⇧⌘J | Next / previous item that needs you |
-| ⌃⌘J | Show Needs Attention |
+| ⌥⌘J | Show Needs Attention |
 | ⌘⏎ | Decision bar's main action (Mark as Viewed, Resume, Notify When It Resets) |
 | ⌥⌘R | Review |
-| ⌥⌘J | Review Latest Turn |
+| ⌥⌘L | Review Latest Turn |
 | ⌥⌘I | Changes panel |
 | ⌘N | New Worktree |
 | ⌘T | New Tab |
@@ -333,11 +333,14 @@ encoding.
 | ⌘] / ⌘[ | Next / previous worktree |
 | ⇧⌘] / ⇧⌘[ | Next / previous tab |
 | ⇧⌘A | Show Open Tabs |
+| ⌥⌘P / ⌥⌘B | Show the project / worktree menu |
+| ⌥⌘[ / ⌥⌘] | Go back / forward |
 | ⌃⌘1…⌃⌘9 | Go to worktree N |
 | ⌘1…⌘9 | Go to tab N |
 | ⌥⌘↑ / ⌥⌘↓ | Move the project up / down (while the sidebar has focus; the panes otherwise) |
-| ⌥⌘O | All Projects |
-| ⌥⌘S | Scratch |
+| ⇧⌘O | All Projects |
+| ⇧⌘S | Scratch |
+| ⇧⌘U | Plan Usage |
 | ⇧⌘N | Notification History |
 | ⇧⌘P / ⌘P | Command Palette / Quick Open |
 | ⌘, | Settings |

@@ -18,7 +18,7 @@ enum ReviewTabRequest: Equatable, Sendable {
     case worktreeUnviewedTurns
     /// One turn: its row in the changes panel, or "Show Partial Changes".
     case turn(TurnID)
-    /// "Review Latest Turn" (⌥⌘J).
+    /// "Review Latest Turn" (⌥⌘L).
     case latestTurn
     /// "Show Current Diff".
     case uncommitted
@@ -882,7 +882,7 @@ enum ReviewTabModel {
         return tab
     }
 
-    /// One turn, opened from its row or by ⌥⌘J. Its record decides before
+    /// One turn, opened from its row or by ⌥⌘L. Its record decides before
     /// its trees do: a turn whose changes could not be taken is not read as
     /// a diff even with both trees there (a snapshot that left out a large
     /// file reads as that file added or removed), and one that lost a

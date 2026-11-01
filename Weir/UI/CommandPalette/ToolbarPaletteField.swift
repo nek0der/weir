@@ -35,7 +35,9 @@ struct ToolbarPaletteField: View {
         if let state = paletteState {
             ActivePill(state: state)
         } else {
+            // Its other key, ⇧⌘P, is on the field already.
             InactivePill(onTap: openPalette)
+                .heldKeyCap(.quickOpen)
         }
     }
 

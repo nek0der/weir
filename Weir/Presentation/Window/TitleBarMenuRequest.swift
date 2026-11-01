@@ -24,13 +24,13 @@ struct TitleBarMenuRequest: FloatingPanelRequest, Equatable {
     let menu: Menu
     /// The control that opened it, in global coordinates.
     let anchor: CGRect
-    /// Opened by its command (⌃⌘J or ⇧⌘A, or its menu item, which shows
+    /// Opened by its command (⌥⌘J or ⇧⌘A, or its menu item, which shows
     /// that key) rather than by a press on its control.
     var isOpenedFromKeyboard = false
 
     /// Where the Needs Attention list's keyboard starts. Opened by a
     /// press, on no row, as the menu bar's list and every menu open, so
-    /// nothing looks chosen before the person has chosen. Opened by ⌃⌘J,
+    /// nothing looks chosen before the person has chosen. Opened by ⌥⌘J,
     /// on the first row: the keys opened it to pick a row with ↑↓ and
     /// Return, and Return then opens the row the list shows first.
     var needsAttentionOpening: NeedsAttentionListSelection.Opening {

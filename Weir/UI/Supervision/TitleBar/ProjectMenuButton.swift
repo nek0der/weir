@@ -31,6 +31,7 @@ struct ProjectMenuButton: View {
                 OtherProjectsMark(style: others.style)
             }
         }
+        .heldKeyCap(.showProjectMenu)
         .help(Text(verbatim: ProjectMenuModel.controlHelp(otherProjectsCount: others.count, locale: locale)))
         .accessibilityLabel(Text(verbatim: title))
         .accessibilityHint(Text(

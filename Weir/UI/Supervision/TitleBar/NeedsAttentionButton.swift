@@ -24,6 +24,8 @@ struct NeedsAttentionButton: View {
                 standsOnCorner: true
             )
         }
+        // ⌘J and ⇧⌘J walk the list this opens.
+        .heldKeyCap(.showNeedsAttention, .nextAttention, .previousAttention)
         // The name alone: the badge on the tray says the count.
         .hoverChip(
             "Needs Attention",

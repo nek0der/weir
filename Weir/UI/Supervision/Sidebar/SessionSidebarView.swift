@@ -328,6 +328,10 @@ struct SessionSidebarView: View {
                 set: { renamingRow = $0 ? row.id : nil }
             )
         )
+        .heldKeyCap(chord: [.command, .control], placement: .leading) {
+            let rows = SessionRowNavigation.workingRows(in: window, session: session, sections: window.presentedSections)
+            return HeldKeyCapRule.number(at: rows.firstIndex(of: row.id))
+        }
         .modifier(ApprovalRowAnchor(requests: answerRequests(of: row)))
         // Every project's rows take a tab; the window stays on its own
         // project (`SidebarRowDrop`).

@@ -8,6 +8,13 @@ import Foundation
 /// three cannot fall back differently.
 @MainActor
 enum CheckoutName {
+    /// Whether the title bar offers `project`'s worktree ▾. A folder that is
+    /// not a repository has no branch or worktrees, so the control would
+    /// offer nothing. A detached main checkout is a repository all the same.
+    nonisolated static func hasWorktreeMenu(_ project: Project) -> Bool {
+        isRepository(project) || !project.worktrees.isEmpty
+    }
+
     /// The branch checked out in the project's main folder; `nil` for a
     /// folder that is not a repository, or before its first sync.
     nonisolated static func of(_ project: Project) -> String? {

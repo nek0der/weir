@@ -166,6 +166,13 @@ struct SupervisionWindowView: View {
         }
         .background { KeyboardPaneFollower(session: session, window: window) }
         .background {
+            HeldKeyHintMonitor(hints: window.heldKeyHints) { nsWindow in
+                HeldKeyHintsRoom.hasRoom(state: state, window: window, nsWindow: nsWindow)
+            }
+        }
+        .background { HeldKeyHintsSettingFollower(settings: state.settingsStore, hints: window.heldKeyHints) }
+        .environment(\.heldKeyHints, window.heldKeyHints)
+        .background {
             if !isSidebarShown {
                 HiddenSidebarSectionsFollower(state: state, window: window)
             }
@@ -217,6 +224,8 @@ struct SupervisionWindowView: View {
             SupervisionWindowActions.showNeedsAttention(in: window)
         case .showOpenTabs:
             SupervisionWindowActions.showOpenTabs(in: window)
+        case .showProjectMenu, .showWorktreeMenu, .togglePlanUsage:
+            openControlsLayer(command)
         case .newWindow:
             SupervisionWindowActions.newWindow(from: window, session: session, registry: state.windowRegistry)
         case .closeWindow:
@@ -237,6 +246,21 @@ struct SupervisionWindowView: View {
             return false
         }
         return true
+    }
+
+    /// Opens a title bar dropdown or the rail's plan usage panel from its key.
+    private func openControlsLayer(_ command: WindowCommand) {
+        switch command {
+        case .showProjectMenu:
+            SupervisionWindowActions.showTitleBarMenu(.project, anchor: window.projectMenuAnchor, in: window)
+        case .showWorktreeMenu:
+            SupervisionWindowActions.showTitleBarMenu(.worktree, anchor: window.worktreeMenuAnchor, in: window)
+        // It hangs from its rail button alone.
+        case .togglePlanUsage where !window.areRailsHidden:
+            window.togglePlanUsage(session: session)
+        default:
+            break
+        }
     }
 
     /// With the rail hidden the history hangs from the first surface's
@@ -351,6 +375,37 @@ struct SupervisionWindowView: View {
                     accessibilityLabel: Text("Sidebar Width")
                 )
                 .offset(x: WeirLayout.Supervision.surfaceSpacing)
+            }
+    }
+}
+
+/// Whether the window has room for the held keys: not over a surface laid on
+/// it, whose own keys are the ones that count then, and not with the
+/// person's setting off.
+private enum HeldKeyHintsRoom {
+    @MainActor
+    static func hasRoom(state: AppState, window: ProjectWindowState, nsWindow: NSWindow) -> Bool {
+        state.settingsStore.settings.keyboard.showsHeldKeyHints
+            && !window.isWindowOverlayPresented
+            && window.titleBarMenu == nil
+            && state.session.commandPaletteState?.windowID != window.id
+            && nsWindow.attachedSheet == nil
+    }
+}
+
+/// Takes the held keys down when the setting goes off while they are up, which
+/// no modifier key announces. A view of its own, so the settings it reads
+/// redraw this and not the window.
+private struct HeldKeyHintsSettingFollower: View {
+    let settings: SettingsStore
+    let hints: HeldKeyHints
+
+    var body: some View {
+        Color.clear
+            .onChange(of: settings.settings.keyboard.showsHeldKeyHints) { _, isOn in
+                if !isOn {
+                    hints.turnedOff()
+                }
             }
     }
 }

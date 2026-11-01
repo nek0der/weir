@@ -30,6 +30,10 @@ enum CommandPaletteCatalog {
         let canGoForward: Bool
         /// The window shows a session, whose strip Open Tabs hangs from.
         let hasPaneStrip: Bool
+        /// The rail shows the button Plan Usage hangs from.
+        let hasRails: Bool
+        /// The title bar shows the worktree ▾.
+        let hasWorktreeMenu: Bool
     }
 
     private struct ShortcutDependencies {
@@ -137,7 +141,9 @@ enum CommandPaletteCatalog {
             canReview: hasActiveTab,
             canGoBack: session.canNavigateBack(in: window),
             canGoForward: session.canNavigateForward(in: window),
-            hasPaneStrip: !supervision.isChoosingProject
+            hasPaneStrip: !supervision.isChoosingProject,
+            hasRails: !supervision.areRailsHidden,
+            hasWorktreeMenu: supervision.hasWorktreeMenu
         )
 
         for action in WeirShortcutAction.allCases {
@@ -404,6 +410,8 @@ enum CommandPaletteCatalog {
         case .goBack: context.canGoBack
         case .goForward: context.canGoForward
         case .showOpenTabs: context.hasPaneStrip
+        case .planUsage: context.hasRails
+        case .showWorktreeMenu: context.hasWorktreeMenu
         default: true
         }
     }

@@ -35,6 +35,11 @@ struct SupervisionPaletteFacts: Equatable {
     /// Whether the window offers the projects to open instead of a
     /// session, so it has no pane strip for Open Tabs to hang from.
     var isChoosingProject = false
+    /// Whether the rail is hidden, and with it the button the plan usage
+    /// panel hangs from.
+    var areRailsHidden = false
+    /// Whether the title bar shows the worktree ▾ (`CheckoutName.hasWorktreeMenu`).
+    var hasWorktreeMenu = false
 
     /// Whether ⇧⌘[ ⇧⌘] have a tab to step to among `tabCount` terminal
     /// tabs: another one, or the window's review tab (`facts`). The menu

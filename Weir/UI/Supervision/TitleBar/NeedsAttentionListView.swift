@@ -4,7 +4,7 @@
 import SwiftUI
 
 /// The list the title bar's button opens. Pressed open, no row is
-/// selected; ⌃⌘J opens it on the first. ↑↓ move; the pointer selects the
+/// selected; ⌥⌘J opens it on the first. ↑↓ move; the pointer selects the
 /// row it is over; Return opens the item's pane; Tab moves onto the row's
 /// Answer…, when it has one, and back; and Escape closes the list
 /// (`TitleBarMenuHost`). Opening a row's
@@ -16,7 +16,7 @@ struct NeedsAttentionListView: View {
     /// button inside the window.
     let maxListHeight: CGFloat
     /// Where the keyboard starts: on no row when the button was pressed, on
-    /// the first when ⌃⌘J opened the list (`TitleBarMenuRequest`).
+    /// the first when ⌥⌘J opened the list (`TitleBarMenuRequest`).
     let opening: NeedsAttentionListSelection.Opening
     /// Closes the list, then runs the action.
     let choose: (@escaping () -> Void) -> Void

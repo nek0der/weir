@@ -31,6 +31,7 @@ struct ChangesPanelToggle: View {
         ) {
             ChangesPanelActions.toggle(window, session: state.session)
         }
+        .heldKeyCap(.toggleChangesPanel)
         // The count needs the worktree's top level, closed panel or not.
         .task(id: ChangesPanelActions.folder(window: window, stores: state.changesPanelStores)) {
             await ChangesPanelActions.resolveRoot(window: window, stores: state.changesPanelStores)

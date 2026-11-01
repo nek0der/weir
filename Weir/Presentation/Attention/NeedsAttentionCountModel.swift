@@ -41,7 +41,7 @@ struct NeedsAttentionCountModel: Equatable {
         )
     }
 
-    /// "Needs Attention list (⌃⌘J; Next Action: ⌘J) · 1 Approval · 2 Unread".
+    /// "Needs Attention list (⌥⌘J; Next Action: ⌘J) · 1 Approval · 2 Unread".
     /// A shortcut the person has unbound is left out rather than shown
     /// empty; the breakdown lists only the kinds that have items.
     func hint(listShortcut: String?, nextShortcut: String?, locale: Locale) -> String {

@@ -37,7 +37,7 @@ struct SessionAreaView: View {
         }
         // The commands for this window's body: the review's open and close.
         // The review is this window's tab: ⌥⌘R opens it on the
-        // unviewed turns or closes it, ⌥⌘J opens the latest turn.
+        // unviewed turns or closes it, ⌥⌘L opens the latest turn.
         .onWindowCommand(of: window, takeCommand)
         // Any other way to another terminal tab (a new tab, a session's row,
         // a notification) puts the review behind it, as picking it does.
