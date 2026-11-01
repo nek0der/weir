@@ -31,18 +31,19 @@ struct NotificationHistoryOverlay: View {
             {
                 GeometryReader { overlayGeo in
                     let overlayOrigin = overlayGeo.frame(in: .global).origin
-                    let panel = NotificationHistoryPlacement.frame(
-                        anchor: anchor.frame.offsetBy(dx: -overlayOrigin.x, dy: -overlayOrigin.y),
-                        columnTop: anchor.columnTop - overlayOrigin.y,
-                        container: overlayGeo.size,
-                        metrics: .init(
+                    let panel = FloatingPanelPlacement.besideRail(
+                        anchor: RailPanelAnchor(
+                            frame: anchor.frame.offsetBy(dx: -overlayOrigin.x, dy: -overlayOrigin.y),
+                            columnTop: anchor.columnTop - overlayOrigin.y,
+                            columnBottom: anchor.columnBottom - overlayOrigin.y
+                        ),
+                        panelSize: CGSize(
                             width: NotificationHistoryView.width,
-                            preferredHeight: state.historyStore.entries.isEmpty
+                            height: state.historyStore.entries.isEmpty
                                 ? NotificationHistoryView.emptyHeight
-                                : NotificationHistoryView.populatedHeight,
-                            inset: 12,
-                            gap: WeirLayout.Supervision.railPanelGap
-                        )
+                                : NotificationHistoryView.populatedHeight
+                        ),
+                        containerWidth: overlayGeo.size.width
                     )
 
                     Color.clear
@@ -158,8 +159,8 @@ struct NotificationHistoryView: View {
     var body: some View {
         content
             .frame(width: Self.width, height: height)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .floatingPanelSurface(cornerRadius: 16)
+            .clipShape(RoundedRectangle(cornerRadius: WeirLayout.floatingPanelCornerRadius, style: .continuous))
+            .floatingPanelSurface(cornerRadius: WeirLayout.floatingPanelCornerRadius)
             // The confirmation takes the panel's place with the panel's own
             // fade, Reduce Motion or not.
             .animation(WeirMotion.floatingPanel, value: isConfirmingClear)

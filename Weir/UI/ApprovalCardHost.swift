@@ -36,9 +36,6 @@ struct ApprovalCardHost: View {
     @State private var placementHeights: [String: CGFloat] = [:]
     static let cardWidth: CGFloat = 400
     private let fallbackCardHeight: CGFloat = 180
-    /// Between the card and the window's edges, so a card held at the
-    /// window's side lines up with the surfaces as the other panels do.
-    private let cardMargin = WeirLayout.floatingPanelWindowMargin
 
     /// The selection of the window this card is in.
     private var selection: WindowSelection {
@@ -50,12 +47,13 @@ struct ApprovalCardHost: View {
             if let approval = window.approvalCard.presentedApproval(in: approvals),
                let model = ApprovalCardModel(approval: approval, in: approvals)
             {
-                let width = min(Self.cardWidth, max(296, geometry.size.width - 24))
+                let width = FloatingPanelPlacement.fittedWidth(preferred: Self.cardWidth, minimum: 296, containerWidth: geometry.size.width)
                 let origin = geometry.frame(in: .global).origin
                 let openedFrom = window.approvalCard.state.openedFrom?.offsetBy(dx: -origin.x, dy: -origin.y)
                 let rowAnchor = window.approvalCard.rowAnchor(for: approval)?.offsetBy(dx: -origin.x, dy: -origin.y)
-                let columnTop = window.historyAnchor.map { $0.columnTop - origin.y } ?? cardMargin
-                let columnBottom = window.historyAnchor.map { $0.columnBottom - origin.y } ?? geometry.size.height - cardMargin
+                let columnTop = window.historyAnchor.map { $0.columnTop - origin.y } ?? WeirLayout.floatingPanelWindowMargin
+                let columnBottom = window.historyAnchor.map { $0.columnBottom - origin.y }
+                    ?? geometry.size.height - WeirLayout.floatingPanelWindowMargin
                 let cardHeight = measuredCardHeights[approval.id] ?? fallbackCardHeight
                 let placed = placement(
                     openedFrom: openedFrom,
@@ -77,7 +75,7 @@ struct ApprovalCardHost: View {
                     onOpenPane: openPaneAction(for: approval),
                     // The columns' height: a taller card would cover the
                     // status bar under them.
-                    maxHeight: FloatingPanelPlacement.maximumHeight(container: columnBottom - columnTop, margin: 0)
+                    maxHeight: FloatingPanelPlacement.maximumHeight(columnTop: columnTop, columnBottom: columnBottom)
                 )
                 .id(approval.id)
                 .frame(width: width)
@@ -131,20 +129,15 @@ struct ApprovalCardHost: View {
     ) -> CGPoint {
         if let openedFrom, window.approvalCard.state.isOpenedFromRail {
             return FloatingPanelPlacement.besideRail(
-                button: openedFrom,
-                columnTop: columnTop,
+                anchor: RailPanelAnchor(frame: openedFrom, columnTop: columnTop, columnBottom: columnBottom),
                 panelSize: panelSize,
-                container: container,
-                gap: WeirLayout.Supervision.railPanelGap,
-                margin: cardMargin
-            )
+                containerWidth: container.width
+            ).origin
         }
         if let openedFrom, window.approvalCard.state.standsLeftOfOpener, let origin = FloatingPanelPlacement.leftOf(
             anchor: openedFrom,
             panelSize: panelSize,
-            container: container,
-            gap: WeirLayout.Supervision.railPanelGap,
-            margin: cardMargin
+            container: container
         ) {
             return origin
         }
@@ -153,7 +146,6 @@ struct ApprovalCardHost: View {
                 anchor: openedFrom,
                 panelSize: panelSize,
                 container: container,
-                margin: cardMargin,
                 gap: WeirLayout.Supervision.titleBarDropdownGap,
                 alignment: .centered
             )
@@ -163,8 +155,7 @@ struct ApprovalCardHost: View {
             panelSize: panelSize,
             placementHeight: placementHeight,
             surface: .init(minX: window.sessionSurfaceMinX, top: columnTop, bottom: columnBottom),
-            containerWidth: container.width,
-            margin: cardMargin
+            containerWidth: container.width
         )
     }
 
@@ -216,7 +207,7 @@ private struct ApprovalCard: View {
     let movesToPane: Bool
     /// Nil when no pane runs the request's session.
     let onOpenPane: (() -> Void)?
-    /// The tallest the card may be, the window less its margins. A long
+    /// The tallest the card may be, the columns' height. A long
     /// reason or question scrolls in the card's body, between the heading
     /// and the actions, which stay on screen.
     let maxHeight: CGFloat

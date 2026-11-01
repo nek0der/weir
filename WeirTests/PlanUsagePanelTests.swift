@@ -9,7 +9,6 @@ import Testing
 @Suite("Plan usage placement")
 struct PlanUsagePlacementTests {
     private static let window = CGSize(width: 1200, height: 800)
-    private static let metrics = PlanUsagePlacement.Metrics(width: 340, inset: 12, gap: 6)
 
     /// The button is in the rail's bottom group, so the panel's bottom is
     /// level with the columns' bottom (the sidebar's foot) rather than with
@@ -21,19 +20,19 @@ struct PlanUsagePlacementTests {
             columnTop: 44,
             columnBottom: 760
         )
-        let place = PlanUsagePlacement.place(anchor: button, container: Self.window, metrics: Self.metrics)
-        #expect(place == .init(leading: 42, bottom: 760, maximumHeight: 716))
+        let place = FloatingPanelPlacement.besideRailBottom(anchor: button, panelWidth: 340, container: Self.window)
+        #expect(place == .init(leading: 46, bottom: 760, maximumHeight: 716))
     }
 
     @Test("stays inside the window near its edges")
     func nearTheWindowsEdges_itStaysInside() {
         let low = RailPanelAnchor(frame: CGRect(x: 1000, y: 780, width: 32, height: 32), columnTop: 0, columnBottom: 800)
-        let place = PlanUsagePlacement.place(anchor: low, container: Self.window, metrics: Self.metrics)
-        // Pulled in from the trailing edge, above the bottom inset, and
-        // never above the top inset.
-        #expect(place.leading == 848)
-        #expect(place.bottom == 788)
-        #expect(place.maximumHeight == 776)
+        let place = FloatingPanelPlacement.besideRailBottom(anchor: low, panelWidth: 340, container: Self.window)
+        // Pulled in from the trailing edge, above the bottom margin, and
+        // never above the top margin.
+        #expect(place.leading == 854)
+        #expect(place.bottom == 794)
+        #expect(place.maximumHeight == 788)
     }
 }
 

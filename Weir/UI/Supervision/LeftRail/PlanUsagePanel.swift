@@ -58,14 +58,14 @@ struct PlanUsageOverlay: View {
             {
                 GeometryReader { overlayGeo in
                     let overlayOrigin = overlayGeo.frame(in: .global).origin
-                    let place = PlanUsagePlacement.place(
+                    let place = FloatingPanelPlacement.besideRailBottom(
                         anchor: RailPanelAnchor(
                             frame: anchor.frame.offsetBy(dx: -overlayOrigin.x, dy: -overlayOrigin.y),
                             columnTop: anchor.columnTop - overlayOrigin.y,
                             columnBottom: anchor.columnBottom - overlayOrigin.y
                         ),
-                        container: overlayGeo.size,
-                        metrics: .init(width: Layout.railPanelWidth, inset: Layout.spaceM, gap: Layout.railPanelGap)
+                        panelWidth: Layout.railPanelWidth,
+                        container: overlayGeo.size
                     )
                     // As tall as what it shows, which a window of any
                     // ordinary height has room for; a window too short for
