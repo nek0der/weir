@@ -211,9 +211,7 @@ struct NeedsAttentionListView: View {
             let hasRoom = FloatingPanelPlacement.leftOf(
                 anchor: listFrame,
                 panelSize: CGSize(width: ApprovalCardHost.cardWidth, height: 0),
-                container: CGSize(width: listFrame.maxX, height: .greatestFiniteMagnitude),
-                gap: WeirLayout.Supervision.railPanelGap,
-                margin: WeirLayout.floatingPanelWindowMargin
+                container: CGSize(width: listFrame.maxX, height: .greatestFiniteMagnitude)
             ) != nil
             if hasRoom {
                 window.approvalCard.present(presentation, from: approvals, openedFrom: listFrame, standsLeftOfOpener: true)

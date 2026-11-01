@@ -220,68 +220,17 @@ struct PRHoverCardHost: View {
     @Environment(PRHoverPresentation.self) private var presentation
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// Gap between the sidebar row's right edge and the card's left
-    /// edge, so the card reads as attached to the row without
-    /// touching it.
-    private let anchorGap: CGFloat = 12
-    /// Corner radius of the card's floating surface.
-    private let cornerRadius: CGFloat = 10
-    /// Fixed card width, shared with `PRHoverCardContent` so the
-    /// centering math below and the content's own frame cannot drift
-    /// apart. Long titles wrap to two lines rather than widening it.
-    private var cardWidth: CGFloat {
-        PRHoverCardContent.width
-    }
-
-    /// Rough card height used only to keep the card inside the window
-    /// near the top and bottom edges. An exact measurement would need
-    /// a second layout pass; being a little conservative here costs
-    /// nothing because the clamp only engages near the edges.
-    private let approximateHeight: CGFloat = 150
-
-    /// Keep the card's center far enough from the window edges that a
-    /// row near the bottom of a long sidebar doesn't push it offscreen.
-    private func clampedCenterY(_ proposed: CGFloat, in size: CGSize) -> CGFloat {
-        let margin = approximateHeight / 2 + 8
-        guard size.height > margin * 2 else { return proposed }
-        return min(max(proposed, margin), size.height - margin)
-    }
-
-    /// Where the card starts: after its anchor, or before it when that
-    /// would take it past the window's trailing edge (a chip near the
-    /// window's right, where a sidebar row never is), and never past the
-    /// leading edge.
-    private func leadingX(of anchor: CGRect, in width: CGFloat) -> CGFloat {
-        let after = anchor.maxX + anchorGap
-        guard after + cardWidth > width - anchorGap else { return after }
-        return max(anchorGap, anchor.minX - anchorGap - cardWidth)
-    }
-
     var body: some View {
         GeometryReader { overlayGeo in
             if let snap = presentation.visible {
                 let overlayOrigin = overlayGeo.frame(in: .global).origin
-                let localX = leadingX(of: snap.anchorRect.offsetBy(dx: -overlayOrigin.x, dy: 0), in: overlayGeo.size.width)
-                let localY = snap.anchorRect.midY - overlayOrigin.y
-                PRHoverCardContent(info: snap.info)
-                    .floatingPanelSurface(cornerRadius: cornerRadius)
-                    .pointerStyle(.default)
-                    .fixedSize(horizontal: false, vertical: true)
-                    // `.onHover` MUST sit before `.position`. `.position`
-                    // expands its subject to fill the parent (the whole
-                    // window here), so a hover listener attached after it
-                    // fires for every pointer move in the window — which
-                    // pinned `cardIsHovering` true and stopped the
-                    // card from ever dismissing. Same ordering keeps
-                    // click-through intact: only the card's own rect
-                    // swallows clicks.
-                    .onHover { presentation.cardHoverChanged($0) }
-                    .position(
-                        x: localX + cardWidth / 2,
-                        y: clampedCenterY(localY, in: overlayGeo.size)
-                    )
-                    .modalTransition(.floatingPanel, reduceMotion: reduceMotion)
-                    .id(snap.rowID)
+                PRHoverPlacedCard(
+                    info: snap.info,
+                    anchor: snap.anchorRect.offsetBy(dx: -overlayOrigin.x, dy: -overlayOrigin.y),
+                    container: overlayGeo.size
+                )
+                .modalTransition(.floatingPanel, reduceMotion: reduceMotion)
+                .id(snap.rowID)
             }
         }
         // GeometryReader draws no content in its empty regions, so
@@ -302,6 +251,65 @@ struct PRHoverCardHost: View {
             value: presentation.visible?.rowID
         )
         .ignoresSafeArea()
+    }
+}
+
+/// One row's card, placed by its own measured height. The host gives each row
+/// its own identity, so the height lives and dies with that row's card: another
+/// row's card, of another height, starts over rather than being placed by this
+/// one's.
+private struct PRHoverPlacedCard: View {
+    let info: PRInfo
+    /// The row's frame, in the overlay's coordinates.
+    let anchor: CGRect
+    let container: CGSize
+
+    @Environment(PRHoverPresentation.self) private var presentation
+
+    /// Gap between the sidebar row's right edge and the card's left
+    /// edge, so the card reads as attached to the row without
+    /// touching it.
+    private let anchorGap: CGFloat = 12
+    /// Corner radius of the card's floating surface.
+    private let cornerRadius: CGFloat = 10
+    /// Fixed card width, shared with `PRHoverCardContent` so the
+    /// centering math below and the content's own frame cannot drift
+    /// apart. Long titles wrap to two lines rather than widening it.
+    private var cardWidth: CGFloat {
+        PRHoverCardContent.width
+    }
+
+    /// The card's measured height. Zero until its first layout, while the
+    /// card stays hidden, so a card near the window's edge never shows out of
+    /// place for a frame and then jumps inside.
+    @State private var cardHeight: CGFloat = 0
+
+    var body: some View {
+        let placed = FloatingPanelPlacement.flanking(
+            anchor: anchor,
+            panelSize: CGSize(width: cardWidth, height: cardHeight),
+            container: container,
+            gap: anchorGap
+        )
+        PRHoverCardContent(info: info)
+            .floatingPanelSurface(cornerRadius: cornerRadius)
+            .pointerStyle(.default)
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }
+            .opacity(cardHeight > 0 ? 1 : 0)
+            // `.onHover` MUST sit before `.position`. `.position`
+            // expands its subject to fill the parent (the whole
+            // window here), so a hover listener attached after it
+            // fires for every pointer move in the window — which
+            // pinned `cardIsHovering` true and stopped the
+            // card from ever dismissing. Same ordering keeps
+            // click-through intact: only the card's own rect
+            // swallows clicks.
+            .onHover { presentation.cardHoverChanged($0) }
+            .position(
+                x: placed.x + cardWidth / 2,
+                y: placed.y + cardHeight / 2
+            )
     }
 }
 

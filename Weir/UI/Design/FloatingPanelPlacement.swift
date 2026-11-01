@@ -7,13 +7,20 @@
 // `.popover`, so they share one surface and can overlap whatever lies below
 // the row or header that opened them. Each hangs from an anchor rect; these
 // rules decide the panel's corner and its arrow from that rect alone, so the
-// panels agree and the geometry is tested once. Pure and free of
-// `WeirLayout`: the sizes come in as arguments.
+// panels agree and the geometry is tested once. Pure: what differs between
+// panels comes in as arguments, and what must not differ is held here, so no
+// panel can stand on an edge of its own.
 
 import CoreGraphics
 import Foundation
 
 enum FloatingPanelPlacement {
+    /// Between a panel and the window's edges.
+    private static let margin = WeirLayout.floatingPanelWindowMargin
+    /// From a rail button, or from the Needs Attention list, to the panel
+    /// beside it.
+    private static let railGap = WeirLayout.Supervision.railPanelGap
+
     /// How the panel lines up with its anchor horizontally.
     enum Alignment: Equatable {
         /// The panel's leading edge follows the anchor's, as a field that
@@ -58,14 +65,12 @@ enum FloatingPanelPlacement {
         anchor: CGRect,
         panelSize: CGSize,
         container: CGSize,
-        margin: CGFloat,
         style: Style
     ) -> (origin: CGPoint, arrow: Arrow?) {
         let placed = Self.origin(
             anchor: anchor,
             panelSize: panelSize,
             container: container,
-            margin: margin,
             gap: style.gap,
             alignment: style.alignment
         )
@@ -75,49 +80,75 @@ enum FloatingPanelPlacement {
         return (placed, pointing)
     }
 
-    /// Where the panel's top-leading corner goes, in the same coordinates as
-    /// `anchor` and `container`. Horizontally it follows `alignment`, pulled
-    /// inside the window by `margin`. It hangs `gap` below the anchor, or
-    /// sits that far above it when below would run past the window's bottom;
-    /// when neither fits, it is pinned inside the bottom. Whatever the
-    /// branch, the result is kept within `margin` of the window's top and
-    /// bottom, so an anchor that has scrolled or been laid out off screen
-    /// cannot take the panel with it.
-    /// A panel opened from a rail button: past the rail by `gap`, its top on the
-    /// column's, as the notification history's is, and held inside the
-    /// container when the window is short.
-    static func besideRail( // swiftlint:disable:this function_parameter_count
-        button: CGRect,
-        columnTop: CGFloat,
-        panelSize: CGSize,
-        container: CGSize,
-        gap: CGFloat,
-        margin: CGFloat
-    ) -> CGPoint {
-        let lowest = max(margin, container.height - panelSize.height - margin)
-        return CGPoint(x: button.maxX + gap, y: min(max(columnTop, margin), lowest))
+    /// A panel opened from a rail button in the rail's top group (the
+    /// notification history, the approval card): past the rail, its top on
+    /// the columns'. Columns too short for it shorten it, which its content
+    /// scrolls to fit, so it never covers the title bar or the status bar.
+    /// `anchor` is in the container's coordinates.
+    static func besideRail(anchor: RailPanelAnchor, panelSize: CGSize, containerWidth: CGFloat) -> CGRect {
+        let x = clampX(preferredX: anchor.frame.maxX + railGap, panelWidth: panelSize.width, containerWidth: containerWidth)
+        let height = min(panelSize.height, max(0, anchor.columnBottom - anchor.columnTop))
+        return CGRect(x: x, y: anchor.columnTop, width: panelSize.width, height: height)
+    }
+
+    /// Where a panel from the rail's bottom group goes (the plan usage
+    /// panel). It grows upward from `bottom` by as much as `maximumHeight`.
+    struct RailBottomPlace: Equatable {
+        let leading: CGFloat
+        let bottom: CGFloat
+        let maximumHeight: CGFloat
+    }
+
+    /// A panel opened from a rail button in the rail's bottom group: past
+    /// the rail, its bottom on the columns', growing as far up as their top.
+    /// `anchor` is in the container's coordinates.
+    static func besideRailBottom(anchor: RailPanelAnchor, panelWidth: CGFloat, container: CGSize) -> RailBottomPlace {
+        let bottom = min(anchor.columnBottom, container.height - margin)
+        let top = max(margin, anchor.columnTop)
+        return RailBottomPlace(
+            leading: clampX(preferredX: anchor.frame.maxX + railGap, panelWidth: panelWidth, containerWidth: container.width),
+            bottom: bottom,
+            maximumHeight: max(0, bottom - top)
+        )
     }
 
     /// Where a panel stands left of `anchor`, on its top and inside a short
     /// window; `nil` where the window has no room for it there.
-    static func leftOf(
-        anchor: CGRect,
-        panelSize: CGSize,
-        container: CGSize,
-        gap: CGFloat,
-        margin: CGFloat
-    ) -> CGPoint? {
-        let x = anchor.minX - gap - panelSize.width
+    static func leftOf(anchor: CGRect, panelSize: CGSize, container: CGSize) -> CGPoint? {
+        let x = anchor.minX - railGap - panelSize.width
         guard x >= margin else { return nil }
         let lowest = max(margin, container.height - panelSize.height - margin)
         return CGPoint(x: x, y: min(max(anchor.minY, margin), lowest))
     }
 
+    /// A panel level with `anchor`, `gap` after it, or before it when after
+    /// would take it past the window's trailing margin: the PR hover card.
+    static func flanking(anchor: CGRect, panelSize: CGSize, container: CGSize, gap: CGFloat) -> CGPoint {
+        let after = anchor.maxX + gap
+        let x = after + panelSize.width <= container.width - margin
+            ? after
+            : clampX(preferredX: anchor.minX - gap - panelSize.width, panelWidth: panelSize.width, containerWidth: container.width)
+        let lowest = max(margin, container.height - panelSize.height - margin)
+        return CGPoint(x: x, y: min(max(anchor.midY - panelSize.height / 2, margin), lowest))
+    }
+
+    /// The width of a panel that narrows with its window: `preferred` while
+    /// the window has room for it and both margins, and never below `minimum`.
+    static func fittedWidth(preferred: CGFloat, minimum: CGFloat, containerWidth: CGFloat) -> CGFloat {
+        min(preferred, max(minimum, containerWidth - margin * 2))
+    }
+
+    /// Where the panel's top-leading corner goes, in the same coordinates as
+    /// `anchor` and `container`. Horizontally it follows `alignment`, pulled
+    /// inside the window. It hangs `gap` below the anchor, or sits that far
+    /// above it when below would run past the window's bottom; when neither
+    /// fits, it is pinned inside the bottom. Whatever the branch, the result
+    /// is kept inside the window's top and bottom margins, so an anchor that
+    /// has scrolled or been laid out off screen cannot take the panel with it.
     static func origin(
         anchor: CGRect,
         panelSize: CGSize,
         container: CGSize,
-        margin: CGFloat,
         gap: CGFloat,
         alignment: Alignment = .leading
     ) -> CGPoint {
@@ -125,7 +156,7 @@ enum FloatingPanelPlacement {
         case .leading: anchor.minX
         case .centered: anchor.midX - panelSize.width / 2
         }
-        let x = clampX(preferredX: preferredX, panelWidth: panelSize.width, containerWidth: container.width, margin: margin)
+        let x = clampX(preferredX: preferredX, panelWidth: panelSize.width, containerWidth: container.width)
 
         let below = anchor.maxY + gap
         let above = anchor.minY - gap - panelSize.height
@@ -141,12 +172,12 @@ enum FloatingPanelPlacement {
     }
 
     /// Returns a panel's left edge as near `preferredX` as the window
-    /// allows, kept `margin` from either side of a container `containerWidth` wide. In a
+    /// allows, inside the margin on either side of a container `containerWidth` wide. In a
     /// container too narrow for the panel and both margins it starts at the
     /// left margin, where its rows begin. Every panel placed across the
     /// window clamps through here (`origin`, `beside`, and the command
     /// palette's dropdown), so none of them can hold a different edge.
-    static func clampX(preferredX: CGFloat, panelWidth: CGFloat, containerWidth: CGFloat, margin: CGFloat) -> CGFloat {
+    static func clampX(preferredX: CGFloat, panelWidth: CGFloat, containerWidth: CGFloat) -> CGFloat {
         let maximumX = containerWidth - panelWidth - margin
         return maximumX >= margin ? min(max(preferredX, margin), maximumX) : margin
     }
@@ -183,13 +214,12 @@ enum FloatingPanelPlacement {
     /// so a short window still shows some of what is asked.
     static let minimumScrollingHeight: CGFloat = 80
 
-    /// The tallest a panel may be: the window less `margin` above and below.
-    /// A panel with more to say scrolls its body (`scrollingBodyHeight`), so
-    /// its heading and its actions stay on screen. The floor reaches into
-    /// the margins only below `minimumScrollingHeight + 2 * margin`,
-    /// which no window reaches: the window's own minimum height is far above.
-    static func maximumHeight(container: CGFloat, margin: CGFloat) -> CGFloat {
-        max(minimumScrollingHeight, container - margin * 2)
+    /// The tallest a panel may be: the columns' height. A panel with more to
+    /// say scrolls its body (`scrollingBodyHeight`), so its heading and its
+    /// actions stay on screen. The floor is above the columns' height only in
+    /// columns shorter than the window's own minimum height allows.
+    static func maximumHeight(columnTop: CGFloat, columnBottom: CGFloat) -> CGFloat {
+        max(minimumScrollingHeight, columnBottom - columnTop)
     }
 
     /// What a panel capped at `cap` leaves its scrolling body, when the rest
@@ -206,11 +236,11 @@ enum FloatingPanelPlacement {
     }
 
     /// Returns the tallest a panel hung `gap` below `anchor` may be and
-    /// still end `margin` above the window's bottom (`containerMaxY`, in the
+    /// still end inside the window's bottom margin (`containerMaxY`, in the
     /// anchor's coordinates). A title bar dropdown needs this, as it has no
     /// room above its control to flip to. The result is never below
     /// `minimumScrollingHeight`.
-    static func roomBelow(anchor: CGRect, containerMaxY: CGFloat, gap: CGFloat, margin: CGFloat) -> CGFloat {
+    static func roomBelow(anchor: CGRect, containerMaxY: CGFloat, gap: CGFloat) -> CGFloat {
         max(minimumScrollingHeight, containerMaxY - anchor.maxY - gap - margin)
     }
 
@@ -227,22 +257,16 @@ enum FloatingPanelPlacement {
     /// between the columns' top and bottom, centered on the anchor where
     /// there is room. Placed by `placementHeight` rather than the panel's own
     /// height, so a panel that shrinks keeps its top edge where it was. A
-    /// window too narrow for it pulls it left, `margin` from the window's
-    /// side, and columns too short for it center it on them.
-    static func beside( // swiftlint:disable:this function_parameter_count
+    /// window too narrow for it pulls it left, inside the window's margin,
+    /// and columns too short for it center it on them.
+    static func beside(
         anchor: CGRect,
         panelSize: CGSize,
         placementHeight: CGFloat,
         surface: Surface,
-        containerWidth: CGFloat,
-        margin: CGFloat
+        containerWidth: CGFloat
     ) -> CGPoint {
-        let x = clampX(
-            preferredX: surface.minX,
-            panelWidth: panelSize.width,
-            containerWidth: containerWidth,
-            margin: margin
-        )
+        let x = clampX(preferredX: surface.minX, panelWidth: panelSize.width, containerWidth: containerWidth)
         let y: CGFloat = if surface.bottom - surface.top >= placementHeight {
             min(max(anchor.midY - placementHeight / 2, surface.top), surface.bottom - placementHeight)
         } else {
@@ -250,10 +274,4 @@ enum FloatingPanelPlacement {
         }
         return CGPoint(x: x, y: y)
     }
-}
-
-/// An open floating panel, as its presentation publishes it: an identity
-/// minted per opening, and the frame it hangs from in global coordinates.
-protocol FloatingPanelRequest: Identifiable where ID == UUID {
-    var anchor: CGRect { get }
 }

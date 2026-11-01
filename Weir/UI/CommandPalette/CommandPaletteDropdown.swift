@@ -25,8 +25,8 @@ struct CommandPaletteDropdown: View {
                 .padding(.horizontal, WeirLayout.Supervision.paletteDropdownPadding)
         }
         .padding(.vertical, WeirLayout.Supervision.paletteDropdownPadding)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .floatingPanelSurface(cornerRadius: 16)
+        .clipShape(RoundedRectangle(cornerRadius: WeirLayout.floatingPanelCornerRadius, style: .continuous))
+        .floatingPanelSurface(cornerRadius: WeirLayout.floatingPanelCornerRadius)
         .pointerStyle(.default)
     }
 

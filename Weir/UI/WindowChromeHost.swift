@@ -138,10 +138,16 @@ struct WindowChromeHost: ViewModifier {
                         let dropX = PaletteDropdownPlacement.originX(
                             fieldMidX: fieldFrame.midX - overlayOrigin.x,
                             width: WeirLayout.Supervision.paletteDropdownWidth,
-                            containerWidth: overlayGeo.size.width,
-                            margin: WeirLayout.floatingPanelWindowMargin
+                            containerWidth: overlayGeo.size.width
                         )
                         let dropY = fieldFrame.maxY - overlayOrigin.y + WeirLayout.Supervision.paletteDropdownGap
+                        // Its results scroll within what the window has below
+                        // the field, so a short window keeps its foot in sight.
+                        let dropRoom = FloatingPanelPlacement.roomBelow(
+                            anchor: fieldFrame,
+                            containerMaxY: overlayGeo.frame(in: .global).maxY,
+                            gap: WeirLayout.Supervision.paletteDropdownGap
+                        )
 
                         Color.clear
                             .contentShape(Rectangle())
@@ -158,7 +164,7 @@ struct WindowChromeHost: ViewModifier {
                             }
                         )
                         .frame(width: WeirLayout.Supervision.paletteDropdownWidth)
-                        .frame(maxHeight: WeirLayout.Supervision.paletteDropdownMaxHeight)
+                        .frame(maxHeight: min(WeirLayout.Supervision.paletteDropdownMaxHeight, dropRoom))
                         .fixedSize(horizontal: false, vertical: true)
                         .offset(x: dropX, y: dropY)
                     }
@@ -369,18 +375,13 @@ private struct AttachedSheetObserver: NSViewRepresentable {
 /// Where the palette's dropdown starts across the window.
 enum PaletteDropdownPlacement {
     /// Returns the left edge for a dropdown `width` wide, centered on the field's
-    /// middle, moved in as a floating panel is to keep `margin` from either
+    /// middle, moved in as a floating panel is to stay inside the margin on either
     /// side of a container `containerWidth` wide
     /// (`FloatingPanelPlacement.clampX`). Only the clamp is shared: the
     /// dropdown hangs from the field and closes on a click outside it
     /// through its own overlay, not through a floating panel's placement
     /// and event monitor.
-    static func originX(fieldMidX: CGFloat, width: CGFloat, containerWidth: CGFloat, margin: CGFloat) -> CGFloat {
-        FloatingPanelPlacement.clampX(
-            preferredX: fieldMidX - width / 2,
-            panelWidth: width,
-            containerWidth: containerWidth,
-            margin: margin
-        )
+    static func originX(fieldMidX: CGFloat, width: CGFloat, containerWidth: CGFloat) -> CGFloat {
+        FloatingPanelPlacement.clampX(preferredX: fieldMidX - width / 2, panelWidth: width, containerWidth: containerWidth)
     }
 }

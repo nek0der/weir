@@ -17,7 +17,6 @@ struct FloatingPanelOriginTests {
             anchor: anchor,
             panelSize: CGSize(width: 240, height: 70),
             container: container,
-            margin: 8,
             gap: 4,
             alignment: alignment
         )
@@ -30,27 +29,12 @@ struct FloatingPanelOriginTests {
             FloatingPanelPlacement.leftOf(
                 anchor: anchor,
                 panelSize: size,
-                container: CGSize(width: 900, height: height),
-                gap: 8,
-                margin: 8
+                container: CGSize(width: 900, height: height)
             )
         }
-        #expect(origin(800, anchor) == CGPoint(x: 92, y: 40))
-        #expect(origin(150, anchor) == CGPoint(x: 92, y: 8))
+        #expect(origin(800, anchor) == CGPoint(x: 90, y: 40))
+        #expect(origin(150, anchor) == CGPoint(x: 90, y: 6))
         #expect(origin(800, anchor.offsetBy(dx: -90, dy: 0)) == nil)
-    }
-
-    @Test func besideRail_standsPastTheRail_onTheColumnsTop_andInsideAShortWindow() {
-        let button = CGRect(x: 10, y: 80, width: 32, height: 32)
-        let size = CGSize(width: 400, height: 200)
-        let origin = FloatingPanelPlacement.besideRail(
-            button: button, columnTop: 77, panelSize: size, container: CGSize(width: 1000, height: 700), gap: 10, margin: 8
-        )
-        #expect(origin == CGPoint(x: 52, y: 77))
-        let short = FloatingPanelPlacement.besideRail(
-            button: button, columnTop: 77, panelSize: size, container: CGSize(width: 1000, height: 250), gap: 10, margin: 8
-        )
-        #expect(short.y == 42)
     }
 
     @Test func leading_hangsBelowTheAnchorAtItsLeadingEdge() {
@@ -64,20 +48,20 @@ struct FloatingPanelOriginTests {
     }
 
     @Test func staysInsideTheWindowHorizontally() {
-        let maximumX: CGFloat = 800 - 240 - 8
+        let maximumX: CGFloat = 800 - 240 - 6
         #expect(Self.origin(anchor: CGRect(x: 700, y: 200, width: 60, height: 24)).x == maximumX)
-        #expect(Self.origin(anchor: CGRect(x: 2, y: 200, width: 60, height: 24)).x == CGFloat(8))
+        #expect(Self.origin(anchor: CGRect(x: 2, y: 200, width: 60, height: 24)).x == CGFloat(6))
         // A dot near the sidebar's edge: centering would put the panel past
         // the window's leading edge, so it is pulled in.
         let nearTheEdge = Self.origin(anchor: CGRect(x: 20, y: 200, width: 10, height: 10), alignment: .centered)
-        #expect(nearTheEdge.x == CGFloat(8))
+        #expect(nearTheEdge.x == CGFloat(6))
     }
 
     @Test func centered_staysInsideTheWindowAtTheTrailingEdge() {
         // The prompt cache panel's path: a clock in the last pane's header,
         // near the window's right edge.
         let origin = Self.origin(anchor: CGRect(x: 780, y: 200, width: 16, height: 16), alignment: .centered)
-        let trailingmost: CGFloat = 800 - 240 - 8
+        let trailingmost: CGFloat = 800 - 240 - 6
         #expect(origin.x == trailingmost)
     }
 
@@ -92,19 +76,19 @@ struct FloatingPanelOriginTests {
             anchor: CGRect(x: 100, y: 40, width: 60, height: 24),
             container: CGSize(width: 800, height: 120)
         )
-        let pinned: CGFloat = 120 - 70 - 8
+        let pinned: CGFloat = 120 - 70 - 6
         #expect(origin.y == pinned)
     }
 
     @Test func staysInsideTheWindowForAnAnchorAboveIt() {
         let origin = Self.origin(anchor: CGRect(x: 100, y: -400, width: 60, height: 16))
-        #expect(origin.y == 8)
+        #expect(origin.y == 6)
     }
 
     @Test func staysInsideTheWindowForAnAnchorBelowIt() {
         // Below the window, the "above" branch would leave it off the bottom.
         let origin = Self.origin(anchor: CGRect(x: 100, y: 1400, width: 60, height: 16))
-        let lowest: CGFloat = 600 - 70 - 8
+        let lowest: CGFloat = 600 - 70 - 6
         #expect(abs(origin.y - lowest) < 0.001)
     }
 }
@@ -180,7 +164,6 @@ struct FloatingPanelLayoutTests {
             anchor: anchor,
             panelSize: panel,
             container: container,
-            margin: WeirLayout.floatingPanelWindowMargin,
             style: style
         )
     }
@@ -193,7 +176,6 @@ struct FloatingPanelLayoutTests {
             anchor: button,
             panelSize: card,
             container: container,
-            margin: 8,
             style: .init(
                 alignment: .centered,
                 gap: WeirLayout.floatingPanelArrowAnchorGap,
@@ -201,7 +183,7 @@ struct FloatingPanelLayoutTests {
             )
         )
         #expect(placed.origin.y >= button.maxY, "below the button, not over it")
-        #expect(placed.origin.x + card.width <= container.width - 8)
+        #expect(placed.origin.x + card.width <= container.width - WeirLayout.floatingPanelWindowMargin)
         #expect(placed.arrow?.edge == .top)
     }
 
@@ -253,8 +235,7 @@ struct FloatingPanelBesideTests {
             panelSize: panel,
             placementHeight: placementHeight ?? panel.height,
             surface: surface,
-            containerWidth: containerWidth,
-            margin: 6
+            containerWidth: containerWidth
         )
     }
 
@@ -300,10 +281,10 @@ struct FloatingPanelBesideTests {
 /// How tall a panel beside its anchor may be: a long reason or question
 /// scrolls inside the card rather than pushing its actions off the window.
 struct FloatingPanelHeightTests {
-    @Test func aPanelIsAtMostTheWindowLessItsMargins() {
-        #expect(FloatingPanelPlacement.maximumHeight(container: 600, margin: 8) == 584)
-        // A window too short for any panel still gets one with some room.
-        #expect(FloatingPanelPlacement.maximumHeight(container: 40, margin: 8) == FloatingPanelPlacement.minimumScrollingHeight)
+    @Test func aPanelIsAtMostTheColumnsHeight() {
+        #expect(FloatingPanelPlacement.maximumHeight(columnTop: 50, columnBottom: 650) == 600)
+        // Columns too short for any panel still give one some room.
+        #expect(FloatingPanelPlacement.maximumHeight(columnTop: 0, columnBottom: 40) == FloatingPanelPlacement.minimumScrollingHeight)
     }
 
     @Test func theScrollingBodyGetsWhatTheHeadingAndActionsLeave() {
@@ -330,36 +311,104 @@ struct FloatingPanelHeightTests {
     /// the panel can run past that margin.
     @Test func aDropdownBelowItsControl_endsAboveTheWindowsBottomMargin() {
         let anchor = CGRect(x: 100, y: 10, width: 120, height: 28)
-        let room = FloatingPanelPlacement.roomBelow(anchor: anchor, containerMaxY: 500, gap: 4, margin: 8)
-        #expect(room == 450)
+        let room = FloatingPanelPlacement.roomBelow(anchor: anchor, containerMaxY: 500, gap: 4)
+        #expect(room == 452)
         let origin = FloatingPanelPlacement.origin(
             anchor: anchor,
             panelSize: CGSize(width: 300, height: room),
             container: CGSize(width: 800, height: 500),
-            margin: 8,
             gap: 4
         )
         #expect(origin.y == anchor.maxY + 4)
-        let windowBottomLessMargin: CGFloat = 500 - 8
+        let windowBottomLessMargin: CGFloat = 500 - 6
         #expect(origin.y + room == windowBottomLessMargin)
         // A window too short for any list still gets a few lines.
-        #expect(FloatingPanelPlacement.roomBelow(anchor: anchor, containerMaxY: 60, gap: 4, margin: 8)
+        #expect(FloatingPanelPlacement.roomBelow(anchor: anchor, containerMaxY: 60, gap: 4)
             == FloatingPanelPlacement.minimumScrollingHeight)
     }
 
     @Test func aCappedPanelStandsWithinTheColumns() {
         let surface = FloatingPanelPlacement.Surface(minX: 300, top: 50, bottom: 570)
-        let height = FloatingPanelPlacement.maximumHeight(container: surface.bottom - surface.top, margin: 0)
+        let height = FloatingPanelPlacement.maximumHeight(columnTop: surface.top, columnBottom: surface.bottom)
         let origin = FloatingPanelPlacement.beside(
             anchor: CGRect(x: 0, y: 560, width: 240, height: 30),
             panelSize: CGSize(width: 400, height: height),
             placementHeight: height,
             surface: surface,
-            containerWidth: 800,
-            margin: 6
+            containerWidth: 800
         )
         #expect(origin.y == surface.top)
         #expect(origin.y + height == surface.bottom)
+    }
+}
+
+/// A panel from the rail's top group: the notification history, the approval card.
+struct FloatingPanelBesideRailTests {
+    private static let panel = CGSize(width: 400, height: 520)
+
+    private static func frame(buttonX: CGFloat = 4, columnBottom: CGFloat = 760, containerWidth: CGFloat = 1200) -> CGRect {
+        FloatingPanelPlacement.besideRail(
+            anchor: RailPanelAnchor(
+                frame: CGRect(x: buttonX, y: 132, width: 32, height: 32),
+                columnTop: 44,
+                columnBottom: columnBottom
+            ),
+            panelSize: panel,
+            containerWidth: containerWidth
+        )
+    }
+
+    /// Beside the button, and level with the top of the columns beside
+    /// the rail rather than with the button, which sits lower.
+    @Test func itOpensBeside_levelWithTheColumnsTop() {
+        #expect(Self.frame() == CGRect(x: 46, y: 44, width: 400, height: 520))
+    }
+
+    /// It stays on the columns' top, so it does not cover the title bar, and
+    /// ends on their bottom, so it does not cover the status bar.
+    @Test func shortColumns_shortenThePanel() {
+        #expect(Self.frame(columnBottom: 374) == CGRect(x: 46, y: 44, width: 400, height: 330))
+    }
+
+    @Test func aRailNearTheTrailingEdge_pullsThePanelIn_andANarrowWindowPinsItToTheMargin() {
+        #expect(Self.frame(buttonX: 1000).maxX == 1194)
+        #expect(Self.frame(buttonX: 1000, containerWidth: 300).minX == 6)
+    }
+}
+
+/// A panel level with its anchor, on the side that has room: the PR hover card.
+struct FloatingPanelFlankingTests {
+    private static let window = CGSize(width: 1000, height: 700)
+    private static let panel = CGSize(width: 300, height: 150)
+
+    private static func flanking(_ anchor: CGRect, container: CGSize = window) -> CGPoint {
+        FloatingPanelPlacement.flanking(anchor: anchor, panelSize: panel, container: container, gap: 12)
+    }
+
+    @Test func standsAfterTheAnchor_levelWithItsMiddle() {
+        #expect(Self.flanking(CGRect(x: 10, y: 300, width: 280, height: 40)) == CGPoint(x: 302, y: 245))
+    }
+
+    @Test func withNoRoomAfter_itStandsBefore() {
+        #expect(Self.flanking(CGRect(x: 800, y: 300, width: 100, height: 40)).x == 488)
+    }
+
+    @Test func withNoRoomEitherSide_itStaysInsideTheMargin() {
+        let narrow = CGSize(width: 500, height: 700)
+        #expect(Self.flanking(CGRect(x: 100, y: 300, width: 300, height: 40), container: narrow).x == 6)
+    }
+
+    @Test func nearTheTopAndBottom_itsMeasuredHeightStaysInsideTheWindow() {
+        #expect(Self.flanking(CGRect(x: 10, y: 0, width: 280, height: 20)).y == 6)
+        #expect(Self.flanking(CGRect(x: 10, y: 680, width: 280, height: 20)).y == 544)
+    }
+}
+
+struct FloatingPanelFittedWidthTests {
+    @Test func keepsItsWidthWhileTheWindowHasRoom_thenNarrows_downToItsMinimum() {
+        #expect(FloatingPanelPlacement.fittedWidth(preferred: 400, minimum: 296, containerWidth: 1000) == 400)
+        #expect(FloatingPanelPlacement.fittedWidth(preferred: 400, minimum: 296, containerWidth: 350) == 338)
+        #expect(FloatingPanelPlacement.fittedWidth(preferred: 400, minimum: 296, containerWidth: 200) == 296)
     }
 }
 
@@ -367,15 +416,15 @@ struct FloatingPanelHeightTests {
 /// palette's dropdown share.
 struct FloatingPanelClampXTests {
     @Test func clampX_keepsAFittingPanelWhereItWasPreferred() {
-        #expect(FloatingPanelPlacement.clampX(preferredX: 100, panelWidth: 240, containerWidth: 800, margin: 8) == 100)
+        #expect(FloatingPanelPlacement.clampX(preferredX: 100, panelWidth: 240, containerWidth: 800) == 100)
     }
 
     @Test func clampX_pullsAPanelInsideEitherMargin() {
-        #expect(FloatingPanelPlacement.clampX(preferredX: -20, panelWidth: 240, containerWidth: 800, margin: 8) == 8)
-        #expect(FloatingPanelPlacement.clampX(preferredX: 700, panelWidth: 240, containerWidth: 800, margin: 8) == 552)
+        #expect(FloatingPanelPlacement.clampX(preferredX: -20, panelWidth: 240, containerWidth: 800) == 6)
+        #expect(FloatingPanelPlacement.clampX(preferredX: 700, panelWidth: 240, containerWidth: 800) == 554)
     }
 
     @Test func clampX_startsATooWidePanelAtTheLeftMargin() {
-        #expect(FloatingPanelPlacement.clampX(preferredX: 100, panelWidth: 560, containerWidth: 500, margin: 8) == 8)
+        #expect(FloatingPanelPlacement.clampX(preferredX: 100, panelWidth: 560, containerWidth: 500) == 6)
     }
 }

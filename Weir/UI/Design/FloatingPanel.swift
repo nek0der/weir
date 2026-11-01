@@ -131,7 +131,6 @@ struct FloatingPanel<Content: View>: View {
             anchor: local,
             panelSize: size,
             container: container.size,
-            margin: WeirLayout.floatingPanelWindowMargin,
             style: style
         )
         content

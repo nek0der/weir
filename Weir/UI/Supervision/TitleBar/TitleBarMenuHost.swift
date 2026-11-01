@@ -203,7 +203,7 @@ struct TitleBarMenuHost: View {
             WorktreeDropdown(dismiss: close, maxHeight: room(below: request, in: geometry))
         case .needsAttention:
             NeedsAttentionListView(
-                maxListHeight: listHeight(below: request.anchor, in: geometry),
+                maxListHeight: listHeight(below: request, in: geometry),
                 opening: request.needsAttentionOpening
             ) { action in
                 close()
@@ -254,11 +254,8 @@ struct TitleBarMenuHost: View {
 
     /// The list scrolls within what fits between its control and the
     /// window's bottom, so the last item is never below the window.
-    private func listHeight(below anchor: CGRect, in geometry: GeometryProxy) -> CGFloat {
-        let window = geometry.frame(in: .global)
-        let available = window.maxY - anchor.maxY - Self.gap(of: .needsAttention)
-            - WeirLayout.floatingPanelWindowMargin - Self.listHeadingHeight
-        return max(available, 120)
+    private func listHeight(below request: TitleBarMenuRequest, in geometry: GeometryProxy) -> CGFloat {
+        FloatingPanelPlacement.scrollingBodyHeight(cap: room(below: request, in: geometry), chrome: Self.listHeadingHeight)
     }
 
     /// Returns the tallest the dropdown may be under its control: what a dropdown
@@ -268,8 +265,7 @@ struct TitleBarMenuHost: View {
         FloatingPanelPlacement.roomBelow(
             anchor: request.anchor,
             containerMaxY: geometry.frame(in: .global).maxY,
-            gap: Self.gap(of: request.menu),
-            margin: WeirLayout.floatingPanelWindowMargin
+            gap: Self.gap(of: request.menu)
         )
     }
 }
