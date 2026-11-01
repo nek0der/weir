@@ -45,7 +45,7 @@ the values Weir sets. The exceptions are `WEIR_INITIAL_PROMPT_FILE` and
 
 | Variable | Meaning |
 |---|---|
-| `PATH` | Original `PATH` with this directory prepended |
+| `PATH` | Original `PATH` with this directory prepended. Looking for the real `codex`, the shim passes over any entry holding a `weir-hook` (a shim folder, however it is spelled, this Weir's or another's) or a link to the shim itself |
 | `WEIR_PANE_ID` | UUID of the launching split-tree leaf; not current ownership inside tmux |
 | `WEIR_AGENT_RUN_ID` | Minted by the shim: UUID of this Codex invocation; lifecycle-state filename key |
 | `WEIR_AGENT_TMUX_HOST_MODE` | Set by the shim: `weirHosted` for automatic hosting, `manual` inside the user's own tmux |

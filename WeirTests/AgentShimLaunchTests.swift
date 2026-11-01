@@ -18,7 +18,8 @@ struct AgentShimLaunchTests {
         home: URL,
         scratch: URL,
         path: String = "/usr/bin:/bin",
-        environment: [String: String] = [:]
+        environment: [String: String] = [:],
+        directory: URL? = nil
     ) throws -> Int32? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -28,6 +29,7 @@ struct AgentShimLaunchTests {
             .merging(environment) { _, new in new }
         process.standardOutput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
+        process.currentDirectoryURL = directory
         try process.run()
         return process.waitUntilExit(within: 10) ? process.terminationStatus : nil
     }
@@ -85,6 +87,81 @@ struct AgentShimLaunchTests {
 
                 #expect(try Self.startShim(entry.kind, home: home, scratch: root, path: path) == 0, "\(entry.kind)")
                 #expect(Self.recorded(record) == [onPath.path, path], "\(entry.kind)")
+            }
+        }
+    }
+
+    /// However the `PATH` names a shim, the shim passes over it and starts the
+    /// agent behind it. Each of these had a shim run itself forever: its own
+    /// folder respelled, another install's shim looking for this one in turn,
+    /// two links to one shim, and an empty entry while the pane is in the
+    /// shim's folder. We stop at the first that does not exit rather than wait
+    /// out the rest.
+    @Test
+    func onDisk_aPathThatNamesAShimAnotherWay_stillStartsTheAgent() throws {
+        for entry in AgentCatalogFixture.homeEntries {
+            try withTempDir { root in
+                let home = root.appendingPathComponent("home")
+                let command = entry.kind.launchCommand
+                let tools = root.appendingPathComponent("tools")
+                let agent = tools.appendingPathComponent(command)
+                let record = root.appendingPathComponent("launched")
+                try Self.makeRecordingAgent(agent, record: record)
+
+                let shim = try AgentCatalogFixture.shim(for: entry.kind)
+                let folder = shim.deletingLastPathComponent()
+                let manager = FileManager.default
+                let folderLink = root.appendingPathComponent("folder-link")
+                try manager.createSymbolicLink(at: folderLink, withDestinationURL: folder)
+                let otherInstall = root.appendingPathComponent("other-install")
+                try manager.copyItem(at: folder, to: otherInstall)
+                let fileLinks = ["file-links", "more-file-links"].map { root.appendingPathComponent($0) }
+                for links in fileLinks {
+                    try manager.createDirectory(at: links, withIntermediateDirectories: true)
+                    try manager.createSymbolicLink(at: links.appendingPathComponent(command), withDestinationURL: shim)
+                }
+                let cases: [(path: String, directory: URL?)] = [
+                    ("\(folderLink.path):\(tools.path):/usr/bin:/bin", nil),
+                    ("\(folder.path)/:\(tools.path):/usr/bin:/bin", nil),
+                    ("\(folder.path)/.:\(tools.path):/usr/bin:/bin", nil),
+                    ("\(folder.path):\(otherInstall.path):\(tools.path):/usr/bin:/bin", nil),
+                    ("\(fileLinks[0].path):\(fileLinks[1].path):\(tools.path):/usr/bin:/bin", nil),
+                    ("/usr/bin::\(tools.path):/bin", folder)
+                ]
+
+                for (path, directory) in cases {
+                    let status = try Self.startShim(entry.kind, home: home, scratch: root, path: path, directory: directory)
+                    try #require(status == 0, "\(entry.kind) \(path)")
+                    #expect(Self.recorded(record) == [agent.path, path], "\(entry.kind) \(path)")
+                    try manager.removeItem(at: record)
+                }
+            }
+        }
+    }
+
+    /// With no agent anywhere, a shim that the `PATH`, the sheet, or a known
+    /// location leads back to is no agent: the shim says so and exits.
+    @Test
+    func onDisk_whenOnlyAShimCanBeFound_theShimExitsNotFound() throws {
+        for entry in AgentCatalogFixture.homeEntries {
+            try withTempDir { root in
+                let home = root.appendingPathComponent("home")
+                let shim = try AgentCatalogFixture.shim(for: entry.kind)
+                let folderLink = root.appendingPathComponent("folder-link")
+                try FileManager.default.createSymbolicLink(at: folderLink, withDestinationURL: shim.deletingLastPathComponent())
+                let linked = folderLink.appendingPathComponent(entry.kind.launchCommand).path
+                let name = entry.kind.rawValue.uppercased()
+
+                let onPath = try Self.startShim(entry.kind, home: home, scratch: root, path: "\(folderLink.path):/usr/bin:/bin")
+                try #require(onPath == 127, "\(entry.kind) on the PATH")
+                let fromSheet = try Self.startShim(
+                    entry.kind, home: home, scratch: root, environment: ["WEIR_FOUND_\(name)": linked]
+                )
+                try #require(fromSheet == 127, "\(entry.kind) from the sheet")
+                let atKnown = try Self.startShim(
+                    entry.kind, home: home, scratch: root, environment: ["WEIR_\(name)_KNOWN_LOCATIONS": linked]
+                )
+                try #require(atKnown == 127, "\(entry.kind) at a known location")
             }
         }
     }
