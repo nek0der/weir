@@ -122,11 +122,7 @@ struct PaneContainerView: View {
                     isInteractive: isFocusedPane,
                     inactiveOpacity: settingsStore.settings.appearance.unfocusedPaneOpacity,
                     onClose: {
-                        SearchActions.endSearch(
-                            session,
-                            registry: registry,
-                            paneID: paneID
-                        )
+                        KeyboardHandoff.closePaneSearch(paneID: paneID, session: session, registry: registry)
                     }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)

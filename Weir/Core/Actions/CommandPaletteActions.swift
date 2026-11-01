@@ -78,9 +78,9 @@ enum CommandPaletteActions {
         session.commandPaletteState = state
     }
 
-    /// Dismiss the palette overlay. Routine — used by Esc, the
-    /// outside-tap dismissal in `ToolbarPaletteField`, and the
-    /// `executeCommandPaletteAction` finaliser below.
+    /// Dismiss the palette overlay and leave the keyboard to the caller. Esc
+    /// and a click outside it go through `KeyboardHandoff.closePalette`,
+    /// which also gives the keyboard back to the pane.
     static func closeCommandPalette(_ session: WorkspaceSession) {
         session.commandPaletteState = nil
     }

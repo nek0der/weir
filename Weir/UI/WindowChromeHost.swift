@@ -147,7 +147,9 @@ struct WindowChromeHost: ViewModifier {
                             .contentShape(Rectangle())
                             .pointerStyle(.default)
                             .onTapGesture {
-                                CommandPaletteActions.closeCommandPalette(state.session)
+                                // This layer takes the click, so nothing under
+                                // it was clicked to take the keyboard.
+                                KeyboardHandoff.closePalette(session: state.session, registry: state.registry)
                             }
                         CommandPaletteDropdown(
                             state: paletteState,
