@@ -483,13 +483,6 @@ final class ApprovalPresentationStore {
         return entry.presentation
     }
 
-    /// Whether the request still has a row to point at. Rows list pending
-    /// requests only; once one leaves, the rows below move up, and its last
-    /// anchor marks another request's row.
-    func hasRow(for approval: ApprovalPresentation) -> Bool {
-        pending.contains { $0.id == approval.id }
-    }
-
     /// Whether the store still knows `id`: pending, or kept by the ledger.
     /// Row anchors, measured heights, and drafts live as long as this does.
     func isKnown(_ id: String) -> Bool {

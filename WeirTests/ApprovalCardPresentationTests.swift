@@ -309,22 +309,6 @@ struct ApprovalCardPresentationTests {
         #expect(!card.isCardOpen)
     }
 
-    @Test func aRequestThatLeftThePendingList_hasNoRowToPointAt() {
-        let presented = Self.presentedStore()
-        let (store, request, epoch) = (presented.store, presented.request, presented.epoch)
-        let card = presented.card
-        #expect(store.hasRow(for: request))
-
-        store.apply(
-            ApprovalControllerConnection.Projection.test(pending: [], terminals: [request.id: .expired]),
-            epoch: epoch,
-            now: Self.now
-        )
-
-        #expect(card.isCardOpen)
-        #expect(!store.hasRow(for: request))
-    }
-
     @Test func anEndedRequestAStaleProjectionStillLists_getsNoCard() {
         let store = ApprovalPresentationStore()
         let card = TestApprovalCard(store)

@@ -185,7 +185,6 @@ struct FloatingPanelShape: Shape {
         let radius = min(cornerRadius, rect.width / 2, rect.height / 2)
         let topArrowX = arrow.edge == .top ? rect.minX + arrow.offset : nil
         let bottomArrowX = arrow.edge == .bottom ? rect.minX + arrow.offset : nil
-        let leadingArrowY = arrow.edge == .leading ? rect.minY + arrow.offset : nil
         var path = Path()
         path.move(to: CGPoint(x: rect.minX + radius, y: rect.minY))
         if let x = topArrowX {
@@ -213,11 +212,6 @@ struct FloatingPanelShape: Shape {
             tangent2End: CGPoint(x: rect.minX, y: rect.minY),
             radius: radius
         )
-        if let y = leadingArrowY {
-            path.addLine(to: CGPoint(x: rect.minX, y: y + arrowHeight))
-            path.addLine(to: CGPoint(x: rect.minX - arrowHeight, y: y))
-            path.addLine(to: CGPoint(x: rect.minX, y: y - arrowHeight))
-        }
         path.addArc(
             tangent1End: CGPoint(x: rect.minX, y: rect.minY),
             tangent2End: CGPoint(x: rect.maxX, y: rect.minY),
