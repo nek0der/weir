@@ -20,7 +20,8 @@ use weir_agent_model::{
     AgentEvent, ApprovalDecision, ApprovalRequest, CommandRun, DeniedAction, EventId, HookContext,
     InstallRecipe, ListDirectory, MAX_HOOK_INPUT_BYTES, NormalizeError, ProviderAdapter,
     ProviderDescriptor, ProviderOutput, QuestionTurn, RawHookInput, SessionSettings,
-    StatusLineAdapter, TurnReading, TurnUsage, WorktreeIntent, parse_object,
+    StatusLineAdapter, TurnReading, TurnUsage, WorktreeIntent, finished_hook_output, parse_object,
+    rerouted_hook_output,
 };
 
 /// The Claude Code provider.
@@ -108,6 +109,27 @@ impl ProviderAdapter for ClaudeAdapter {
         input: RawHookInput<'_>,
     ) -> Result<Option<WorktreeIntent>, NormalizeError> {
         WorktreeIntent::from_hook_payload(input.bytes, "Bash")
+    }
+
+    fn worktree_finished(
+        &self,
+        input: RawHookInput<'_>,
+    ) -> Result<Option<WorktreeIntent>, NormalizeError> {
+        WorktreeIntent::from_finished_hook_payload(input.bytes, "Bash")
+    }
+
+    /// Without a decision, so Claude Code goes on to its own checks with the new
+    /// command. `allow` here would skip the person's prompt.
+    fn worktree_reroute_output(
+        &self,
+        input: RawHookInput<'_>,
+        command: &str,
+    ) -> Option<ProviderOutput> {
+        rerouted_hook_output(input.bytes, command, None)
+    }
+
+    fn worktree_created_output(&self, message: &str) -> Option<ProviderOutput> {
+        Some(finished_hook_output(message))
     }
 
     fn denied_action(&self, input: RawHookInput<'_>) -> Option<DeniedAction> {

@@ -664,7 +664,7 @@ turns. Writers coordinate on each record's `.flock` sidecar: the Rust runtime
 takes it with `File::try_lock` and the app with `AgentFileLock`. Both are
 `flock(2)` on the same sidecar inode, so they exclude each other.
 
-Where an intercepted `git worktree add` lands is read from
+Where a routed `git worktree add` lands is read from
 `worktree-routing.json`. The one save path (`SessionStore.writeSnapshot`)
 writes it beside `state.json`, so the hook's view of the projects is updated
 from a single place. The two files are separate atomic writes. A routing

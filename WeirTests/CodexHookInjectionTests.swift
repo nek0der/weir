@@ -70,14 +70,16 @@ struct CodexHookInjectionTests {
         #expect(args.count(where: { $0 == "-c" }) == args.count / 2)
     }
 
-    @Test("gives PreToolUse a second, matched group when the worktree hook exists")
+    @Test("gives PreToolUse and PostToolUse a second, matched group when the worktree hook exists")
     func arguments_worktreeHook_addsMatchedGroup() throws {
         let args = CodexHookInjection.arguments(
             lifecycleCommand: lifecycle, worktreeCommand: worktree
         )
-        let preToolUse = try #require(args.first { $0.hasPrefix("hooks.PreToolUse=") })
-        #expect(preToolUse.contains(CodexHookInjection.worktreeMatcher))
-        #expect(preToolUse.contains(worktree))
+        for event in ["PreToolUse", "PostToolUse"] {
+            let flag = try #require(args.first { $0.hasPrefix("hooks.\(event)=") })
+            #expect(flag.contains(CodexHookInjection.worktreeMatcher))
+            #expect(flag.contains(worktree))
+        }
     }
 
     @Test("omits the second group when there is no worktree hook")

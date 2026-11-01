@@ -87,4 +87,4 @@ pub use turn::{
     TurnRecord, TurnRecordError, TurnSummary, TurnUsage, turn_record_file_name,
 };
 pub use usage::{PlanResetCredits, PlanUsage, PlanUsageAnswer, PlanUsageWindow, UsageLimit};
-pub use worktree::WorktreeIntent;
+pub use worktree::{WorktreeIntent, finished_hook_output, rerouted_hook_output};

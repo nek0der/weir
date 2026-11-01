@@ -365,9 +365,9 @@ adds `hook_event_name` from the argument each plugin hook passes.
 `agy` answers no approvals through the service. It has no `PermissionRequest`,
 and its `PreToolUse` runs before its policy, so its adapter declares no
 approval capability and its own prompt asks. Its hook always exits 0 with valid
-JSON, since `agy` fails the tool on any other result, and a worktree intercept
-replies with a `deny` and a reason instead of exit status 2
-(`ProviderAdapter::worktree_block_output`).
+JSON, since `agy` fails the tool on any other result. A `git worktree add` aimed
+at another folder gets a `deny` whose reason gives the command to run instead
+(`ProviderAdapter::worktree_reroute_output`).
 
 Codex begins some turns itself, with no `UserPromptSubmit`: those its `/goal`
 starts and continues. Every hook inside a Codex turn names it (`turn_id` on

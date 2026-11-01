@@ -28,11 +28,13 @@ them out again.
   in-process. The agent projection reads back the records it writes.
   Without the helper, the wrapper prints why on stderr, logs it, and exits
   1, and nothing else records the run.
-- `weir-pretool-worktree-hook` — the second `PreToolUse` hook, after
-  `weir-hook`, matched to the Bash tool. It has the same wrapper shape
-  (`hook codex worktree` in the helper). It intercepts a `git worktree add`
-  and re-runs it under the active Project's placement rules, like the
-  `claude-shim` file of the same name.
+- `weir-pretool-worktree-hook` — the second `PreToolUse` and `PostToolUse`
+  hook, after `weir-hook`, matched to the Bash tool. It has the same wrapper
+  shape (`hook codex worktree` in the helper). It points a `git worktree add`
+  at the folder the active Project's placement rules say and runs the bootstrap
+  afterward, like the `claude-shim` file of the same name. Codex takes the new
+  command only with `permissionDecision: allow`, which as of 0.166 skips neither
+  its approval prompt nor its sandbox.
 
 ## Environment contract
 
@@ -104,9 +106,8 @@ instruction stays off tmux's command line, which tmux limits to about
 
 `weir-hook` exits `0` on any failure the helper runs into, because a
 broken hook must never stop the user from running Codex. The one exception
-is a missing helper, which exits `1` (see [Files](#files) above). Apart from
-that, only a successful intercept by `weir-pretool-worktree-hook` exits
-non-zero. Set `WEIR_HOOK_LOG=<path>` to capture the helper's diagnostics.
+is a missing helper, which exits `1` (see [Files](#files) above). Set
+`WEIR_HOOK_LOG=<path>` to capture the helper's diagnostics.
 
 The `codex` shim exits `127` with a diagnostic when it cannot find a
 real `codex` to hand over to, since there is nothing left to fall back

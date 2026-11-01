@@ -386,9 +386,22 @@ fn model_name(id: &str) -> String {
 pub(crate) fn worktree_intent(
     input: RawHookInput<'_>,
 ) -> Result<Option<WorktreeIntent>, NormalizeError> {
+    event_worktree_intent(input, "PreToolUse")
+}
+
+pub(crate) fn finished_worktree_intent(
+    input: RawHookInput<'_>,
+) -> Result<Option<WorktreeIntent>, NormalizeError> {
+    event_worktree_intent(input, "PostToolUse")
+}
+
+fn event_worktree_intent(
+    input: RawHookInput<'_>,
+    event: &str,
+) -> Result<Option<WorktreeIntent>, NormalizeError> {
     let object = parse_object(input.bytes, MAX_HOOK_INPUT_BYTES)?;
     let call = object.get("toolCall");
-    if event_name(&object) != Some("PreToolUse") {
+    if event_name(&object) != Some(event) {
         return Ok(None);
     }
     if call

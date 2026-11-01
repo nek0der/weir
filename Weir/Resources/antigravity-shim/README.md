@@ -88,9 +88,12 @@ generation or a canceled question stays at work until the next prompt.
 other result as the tool failing and its model retries the call, contrary to
 its documentation, so a broken Weir must never reach it. A missing helper
 makes `weir-hook` exit `1` as the other shims do, and the dispatch script turns
-that into the default reply. For the same reason, a worktree intercept replies
-with a `deny` and a reason rather than exit status 2
-(`ProviderAdapter::worktree_block_output`).
+that into the default reply.
+
+`agy` has no way we know of to change a tool's input, so a `git worktree add`
+aimed at another folder gets a `deny` whose reason gives the command to run
+instead (`ProviderAdapter::worktree_reroute_output`). Nothing is created until
+the model runs that command, which meets `agy`'s own policy like any other.
 
 The `agy` shim exits `127` with a diagnostic when it cannot find a real `agy`
 to hand over to.

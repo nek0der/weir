@@ -68,9 +68,25 @@ impl ProviderAdapter for AntigravityAdapter {
         normalize::worktree_intent(input)
     }
 
-    fn worktree_block_output(&self, message: &str) -> Option<ProviderOutput> {
+    fn worktree_finished(
+        &self,
+        input: RawHookInput<'_>,
+    ) -> Result<Option<WorktreeIntent>, NormalizeError> {
+        normalize::finished_worktree_intent(input)
+    }
+
+    /// `agy` has no way we know of to change a tool's input, so its model is
+    /// told to run the command itself, which then meets `agy`'s own policy.
+    /// The model wrote the folder, so nothing more needs saying afterward.
+    fn worktree_reroute_output(
+        &self,
+        _input: RawHookInput<'_>,
+        command: &str,
+    ) -> Option<ProviderOutput> {
         Some(ProviderOutput {
-            stdout: Some(normalize::deny_output(message)),
+            stdout: Some(normalize::deny_output(&format!(
+                "This project keeps its worktrees in another folder. Nothing was created. Run this command instead: {command}"
+            ))),
         })
     }
 

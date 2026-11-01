@@ -12,6 +12,40 @@ use std::time::Duration;
 use weir_agent_core::SnapshotTaken;
 use weir_agent_model::{DiffStat, GitContext, SkippedFile, SnapshotStatus};
 
+/// Clears what `command` would inherit from the agent that points Git away from
+/// its own folder. The hook inherits the agent's environment. The variables git
+/// itself clears before running in another repository (`git rev-parse
+/// --local-env-vars`) would point it away from `cwd`; a namespace would move our
+/// refs under `refs/namespaces/`; and a pathspec mode would stop the literal
+/// exclusions of a snapshot from matching, failing every snapshot of a repository
+/// with a large file.
+pub(crate) fn clear_repository_variables(command: &mut Command) {
+    for variable in [
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_IMPLICIT_WORK_TREE",
+        "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE",
+        "GIT_NO_REPLACE_OBJECTS",
+        "GIT_REPLACE_REF_BASE",
+        "GIT_PREFIX",
+        "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_LITERAL_PATHSPECS",
+        "GIT_GLOB_PATHSPECS",
+        "GIT_NOGLOB_PATHSPECS",
+        "GIT_ICASE_PATHSPECS",
+    ] {
+        command.env_remove(variable);
+    }
+}
+
 /// Untracked files larger than this are left out of a snapshot and listed on
 /// the turn record instead: hashing them would slow every prompt, and a
 /// build product or a dump is rarely what a turn is reviewed for.
@@ -191,36 +225,7 @@ impl GitSnapshots {
         index: Option<&Path>,
     ) -> std::process::Command {
         let mut command = std::process::Command::new("git");
-        // The hook inherits the agent's environment. The variables git
-        // itself clears before running in another repository (`git
-        // rev-parse --local-env-vars`) would point it away from `cwd`; a
-        // namespace would move our refs under `refs/namespaces/`; and a
-        // pathspec mode would stop the literal exclusions below from
-        // matching, failing every snapshot of a repository with a large file.
-        for variable in [
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-            "GIT_CONFIG",
-            "GIT_CONFIG_PARAMETERS",
-            "GIT_CONFIG_COUNT",
-            "GIT_OBJECT_DIRECTORY",
-            "GIT_DIR",
-            "GIT_WORK_TREE",
-            "GIT_IMPLICIT_WORK_TREE",
-            "GIT_GRAFT_FILE",
-            "GIT_INDEX_FILE",
-            "GIT_NO_REPLACE_OBJECTS",
-            "GIT_REPLACE_REF_BASE",
-            "GIT_PREFIX",
-            "GIT_SHALLOW_FILE",
-            "GIT_COMMON_DIR",
-            "GIT_NAMESPACE",
-            "GIT_LITERAL_PATHSPECS",
-            "GIT_GLOB_PATHSPECS",
-            "GIT_NOGLOB_PATHSPECS",
-            "GIT_ICASE_PATHSPECS",
-        ] {
-            command.env_remove(variable);
-        }
+        clear_repository_variables(&mut command);
         command
             .env("GIT_OPTIONAL_LOCKS", "0")
             .arg("-C")

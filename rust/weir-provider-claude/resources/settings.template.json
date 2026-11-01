@@ -21,7 +21,11 @@
       { "hooks": [{ "type": "command", "command": "@@HOOK@@" }] }
     ],
     "PostToolUse": [
-      { "matcher": "AskUserQuestion|Bash", "hooks": [{ "type": "command", "command": "@@HOOK@@" }] }
+      { "matcher": "AskUserQuestion|Bash", "hooks": [{ "type": "command", "command": "@@HOOK@@" }] },
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "@@WORKTREE_PRETOOL_HOOK@@" }]
+      }
     ],
     "PostToolUseFailure": [
       { "matcher": "AskUserQuestion|Bash", "hooks": [{ "type": "command", "command": "@@HOOK@@" }] }

@@ -1445,6 +1445,40 @@ fn a_nested_project_keeps_its_own_checks() {
     );
 }
 
+/// macOS reports `/private/tmp/x` for a folder Weir recorded as `/tmp/x`.
+#[cfg(unix)]
+#[test]
+fn a_project_recorded_through_a_link_keeps_its_own_checks() {
+    let scratch = Scratch::new("turn-check-link");
+    let real = scratch.root.join("real");
+    fs::create_dir_all(&real).expect("real");
+    let link = scratch.root.join("link");
+    std::os::unix::fs::symlink(&real, &link).expect("link");
+    routing_with(
+        &scratch,
+        &format!(
+            r#"{{"schemaVersion":1,"projects":[{{"root":"{}","checks":["just check"]}}]}}"#,
+            link.display()
+        ),
+    );
+    scratch.call(RUN, Some(&new_call()), SESSION_START);
+    scratch.call(RUN, Some(&new_call()), PROMPT);
+    scratch.call(
+        RUN,
+        Some(&new_call()),
+        &bash(
+            "PostToolUse",
+            "cargo test",
+            &format!(r#","cwd":"{}""#, real.display()),
+        ),
+    );
+    assert_eq!(
+        scratch.turns().remove(0).last_check,
+        None,
+        "the project's own list applies"
+    );
+}
+
 #[test]
 fn a_turn_keeps_its_checks_in_order_and_counts_them() {
     let scratch = Scratch::new("turn-checks");

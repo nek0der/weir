@@ -94,7 +94,11 @@ pub trait ProviderAdapter: Send + Sync {
     fn session_settings(&self, input: RawHookInput<'_>, ctx: &HookContext) -> SessionSettings;
     fn worktree_intent(&self, input: RawHookInput<'_>)
         -> Result<Option<WorktreeIntent>, NormalizeError>;
-    fn worktree_block_output(&self, message: &str) -> Option<ProviderOutput>;
+    fn worktree_finished(&self, input: RawHookInput<'_>)
+        -> Result<Option<WorktreeIntent>, NormalizeError>;
+    fn worktree_reroute_output(&self, input: RawHookInput<'_>, command: &str)
+        -> Option<ProviderOutput>;
+    fn worktree_created_output(&self, message: &str) -> Option<ProviderOutput>;
     fn session_started_if_unseen(&self, input: RawHookInput<'_>, record: Option<&RunRecord>)
         -> Option<AgentEvent>;
 }
@@ -146,11 +150,16 @@ pub trait ProviderAdapter: Send + Sync {
   another, and the pane header shows them. A call that is not the session's
   own, a subagent's or an agent the provider runs for itself, says nothing.
 - `worktree_intent` reports a `git worktree add` the agent is about to run, so
-  the runtime can intercept it before the tool runs; it is separate from the
+  the runtime can route it before the tool runs; it is separate from the
   neutral events because it is a request to act, not an observation.
-- `worktree_block_output` says how the provider cancels a tool call whose
-  worktree the runtime created, when exit status 2 does not. `None` keeps exit
-  status 2 and stderr. Antigravity answers with a `deny` and a reason.
+- `worktree_reroute_output` is how the provider gets the routed command run.
+  `PreToolUse` comes before the provider's permission checks, so the runtime
+  creates nothing there and those checks decide on the routed command. Claude
+  Code and Codex take a new tool input; Antigravity answers with a `deny` whose
+  reason gives the command. `None` lets the agent's command run as written.
+- `worktree_finished` reports the command after it ran. The runtime runs the
+  bootstrap once Git lists the worktree at the project's folder, and
+  `worktree_created_output` tells the model the folder when it did not write it.
 - `session_started_if_unseen` supplies a session start the provider did not
   send, for a call that shows the run is in a session its record does not name.
   The runtime applies it before the call's events. `agy --conversation` sends
