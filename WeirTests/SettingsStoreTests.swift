@@ -177,6 +177,67 @@ struct SettingsStoreTests {
         }
     }
 
+    /// A file that stops decoding while the app runs may be a save still in
+    /// progress: it stays, the settings stay, and nothing writes over it
+    /// until a change makes it readable again.
+    @Test func aReloadOfAFileThatDoesNotDecode_keepsTheFileAndTheSettings() throws {
+        try withTempDir { dir in
+            let store = SettingsStore(directory: dir)
+            store.settings.terminal.minPaneSize = 120
+            store.flushSynchronously()
+            let file = store.settingsFileURL
+            var fixed = store.settings
+            fixed.terminal.minPaneSize = 140
+            let garbled = Data(#"{ "garbled": true, "#.utf8)
+            try garbled.write(to: file)
+
+            store.reloadFromDisk()
+
+            #expect(store.settings.terminal.minPaneSize == 120)
+            #expect(store.savingSuspension == .doesNotDecode)
+            #expect(try Data(contentsOf: file) == garbled)
+            let entries = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            #expect(!entries.contains { $0.contains(".bak-") })
+            store.settings.terminal.minPaneSize = 130
+            store.flushSynchronously()
+            #expect(try Data(contentsOf: file) == garbled)
+
+            try WeirSettings.makeFileEncoder().encode(fixed).write(to: file)
+            store.reloadFromDisk()
+
+            #expect(store.settings.terminal.minPaneSize == 140)
+            #expect(store.savingSuspension == nil)
+            store.settings.terminal.minPaneSize = 160
+            store.flushSynchronously()
+            let saved = try PersistenceCoders.makeDecoder().decode(WeirSettings.self, from: Data(contentsOf: file))
+            #expect(saved.terminal.minPaneSize == 160)
+        }
+    }
+
+    /// A read that caught a save half done, of a file that has since come
+    /// back: the next report finds other bytes than the ones judged, and
+    /// takes saving back up.
+    @Test func aFileBackFromAHalfDoneRead_takesSavingBackUp() throws {
+        try withTempDir { dir in
+            let store = SettingsStore(directory: dir)
+            store.settings.terminal.minPaneSize = 120
+            store.flushSynchronously()
+            let file = store.settingsFileURL
+            var edited = store.settings
+            edited.terminal.minPaneSize = 140
+            try WeirSettings.makeFileEncoder().encode(edited).write(to: file)
+
+            store.reload(from: .success(Data(#"{ "terminal": "#.utf8)))
+            #expect(store.savingSuspension == .doesNotDecode)
+            #expect(store.settings.terminal.minPaneSize == 120)
+
+            store.reloadFromDisk()
+
+            #expect(store.savingSuspension == nil)
+            #expect(store.settings.terminal.minPaneSize == 140)
+        }
+    }
+
     /// An edit made by hand after our save is taken in, and so is a hand
     /// edit that puts the file back to what we last saved: an edit like any
     /// other, not our own save's echo.

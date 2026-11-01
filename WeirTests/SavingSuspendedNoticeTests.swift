@@ -70,6 +70,14 @@ struct SavingSuspendedNoticeTests {
             .contains("this version uses its defaults and leaves the file as it is"))
     }
 
+    /// A file that stopped decoding while the app ran says fixing it is enough.
+    @Test func aFileThatStoppedDecoding_saysFixingItIsEnough() {
+        #expect(SavingSuspendedText.settingsNotSaved(.doesNotDecode, locale: Self.japanese)
+            .contains("ファイルを修正すると保存を再開します"))
+        #expect(SavingSuspendedText.settingsNotSaved(.doesNotDecode, locale: Self.english)
+            .contains("Correct the file and saving starts again"))
+    }
+
     /// The launch alert tells the settings alone.
     @Test func theLaunchAlert_tellsTheSettings() throws {
         let alert = try #require(SavingSuspendedNotice.atLaunch(

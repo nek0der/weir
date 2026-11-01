@@ -241,7 +241,8 @@ final class SettingsStore {
         self.appLanguage = language
         self.appLanguageAtLaunch = language
         self.appLocale = Self.locale(for: language, sources: languageSources)
-        let result = Self.load(at: Self.settingsFileURL(in: directory), writes: writesFiles)
+        let fileURL = Self.settingsFileURL(in: directory)
+        let result = Self.load(Result { try Data(contentsOf: fileURL) }, at: fileURL, writes: writesFiles)
         var loaded = result.settings
         self.isSavingSuspended = result.suspendsSaving
         self.savingSuspension = writesFiles ? result.suspension : nil
@@ -307,7 +308,8 @@ final class SettingsStore {
         /// that could not be read and could not be moved aside, an older
         /// one read as it was because its move to the current schema could
         /// not be made safely, or one a newer build wrote. Saving stops
-        /// for the launch.
+        /// for the launch, or until a reload takes in a file that no longer
+        /// needs it to.
         var suspendsSaving = false
         /// Why, when `suspendsSaving`.
         var suspension: SettingsSavingSuspension?
@@ -315,6 +317,10 @@ final class SettingsStore {
         /// (`decodeAsWritten`), rather than the defaults that replace a
         /// file that does not decode.
         var isDecoded = false
+        /// The file was read and does not decode. What happens to it is the
+        /// caller's: a launch sets it aside (`load`), and a reload leaves it
+        /// where it is (`reloadFromDisk`).
+        var isUndecodable = false
         /// This is what the load wrote over the file, when it moved it to the
         /// current schema and the write landed: the file now holds these
         /// bytes, not the ones read (`lastSyncedBytes`).
@@ -325,20 +331,29 @@ final class SettingsStore {
     /// older and kept consistent with this build's keys on every load
     /// (`WeirSettings.normalizeKeyboard`). With `writes` false (demo
     /// mode) nothing is written: the move happens in memory only.
-    private static func load(at url: URL, writes: Bool) -> LoadResult {
-        var result = loadAsStored(at: url, writes: writes)
+    private static func load(
+        _ read: Result<Data, any Error>,
+        at url: URL,
+        writes: Bool,
+        setsAsideUndecodable: Bool = true
+    ) -> LoadResult {
+        var result = loadAsStored(read, at: url, writes: writes)
+        if result.isUndecodable, setsAsideUndecodable {
+            log.error("settings.json does not decode; setting it aside and using defaults")
+            result = setAside(url, reason: "decode-failed", writes: writes)
+        }
         result.settings.normalizeKeyboard()
         return result
     }
 
-    private static func loadAsStored(at url: URL, writes: Bool) -> LoadResult {
+    private static func loadAsStored(_ read: Result<Data, any Error>, at url: URL, writes: Bool) -> LoadResult {
         // Only a file that is not there is a first launch. A check that the
         // file exists would also answer no for a folder that cannot be
         // searched, and the defaults would then be saved over the file once
         // the folder opens up again.
         let data: Data
         do {
-            data = try Data(contentsOf: url)
+            data = try read.get()
         } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             log.info("settings.json absent at \(url.path, privacy: .private); using defaults")
             return LoadResult(settings: .default)
@@ -353,7 +368,7 @@ final class SettingsStore {
             // The file is read as it was and not written; the next launch
             // tries again.
             log.error("settings.json migration failed: \(String(describing: error), privacy: .private)")
-            return readWithoutMigrating(data, at: url, writes: writes)
+            return readWithoutMigrating(data)
         }
         switch outcome {
         case let .migrated(from, migrated):
@@ -362,7 +377,7 @@ final class SettingsStore {
             if writes {
                 MigrationBackup.finishIfWritten(url, current: data, version: WeirSettings.currentSchemaVersion)
             }
-            return decodeAsWritten(data, at: url, writes: writes)
+            return decodeAsWritten(data)
         case let .newer(found):
             // Kept and read, not set aside: a rollback must not cost the
             // person their settings. Not written back either: a save
@@ -372,7 +387,7 @@ final class SettingsStore {
             log.notice("settings.json schema v\(found, privacy: .public) is newer; reading it without saving")
             return readNewer(data)
         case .unsupported, .unreadableVersion:
-            return decodeAsWritten(data, at: url, writes: writes)
+            return decodeAsWritten(data)
         }
     }
 
@@ -394,7 +409,7 @@ final class SettingsStore {
             encoded = try WeirSettings.makeFileEncoder().encode(settings)
         } catch {
             log.error("migrated settings do not decode or encode: \(String(describing: error), privacy: .private)")
-            return readWithoutMigrating(original, at: url, writes: writes)
+            return readWithoutMigrating(original)
         }
         // Demo mode moves the settings in memory only: the file belongs to
         // the build the person runs, which may be an older one.
@@ -410,7 +425,7 @@ final class SettingsStore {
             )
         } catch {
             log.error("settings.json backup failed: \(String(describing: error), privacy: .private)")
-            return readWithoutMigrating(original, at: url, writes: writes)
+            return readWithoutMigrating(original)
         }
         do {
             try SecureFileWrite.writeAtomic(encoded, to: url)
@@ -437,10 +452,9 @@ final class SettingsStore {
     /// build's schema over the only copy of the old one, and the copy kept
     /// on the next launch would no longer be what the person had. A file
     /// that does not decode either is not read as it stands: it goes the
-    /// way of any file that does not decode (`decodeAsWritten`), and
-    /// saving stops only if it could not be moved aside.
-    private static func readWithoutMigrating(_ data: Data, at url: URL, writes: Bool) -> LoadResult {
-        var result = decodeAsWritten(data, at: url, writes: writes)
+    /// way of any file that does not decode (`LoadResult.isUndecodable`).
+    private static func readWithoutMigrating(_ data: Data) -> LoadResult {
+        var result = decodeAsWritten(data)
         guard result.isDecoded else { return result }
         result.suspendsSaving = true
         result.suspension = .notMoved
@@ -486,18 +500,18 @@ final class SettingsStore {
     }
 
     /// The file decoded as it stands, or the defaults when it does not
-    /// decode.
-    private static func decodeAsWritten(_ data: Data, at url: URL, writes: Bool) -> LoadResult {
+    /// decode (`LoadResult.isUndecodable`).
+    private static func decodeAsWritten(_ data: Data) -> LoadResult {
         do {
             return try LoadResult(settings: PersistenceCoders.makeDecoder().decode(WeirSettings.self, from: data), isDecoded: true)
         } catch {
-            log.error("settings.json decode failed: \(String(describing: error), privacy: .private). Using defaults.")
+            log.error("settings.json decode failed: \(String(describing: error), privacy: .private)")
             // settings.json is the one file we document as user-editable
             // (the prettyPrinted carve-out in saveNow). A stray comma in
             // a hand edit must not destroy the rest of the file on the
             // next mutation — didSet → scheduleSave would otherwise
             // atomic-replace the bad bytes with defaults.
-            return setAside(url, reason: "decode-failed", writes: writes)
+            return LoadResult(settings: .default, isUndecodable: true)
         }
     }
 
@@ -585,15 +599,41 @@ final class SettingsStore {
     /// Used by the file watcher when an external edit lands
     /// — does NOT schedule a save back (would cause a feedback loop).
     func reloadFromDisk() {
+        let url = settingsFileURL
+        reload(from: Result { try Data(contentsOf: url) })
+    }
+
+    /// `reloadFromDisk` once the file is read. One read decides everything,
+    /// as a second could return other bytes: recording those of one read
+    /// while judging those of another left saving stopped once the file came
+    /// back to the bytes recorded, with nothing to report a change. Internal
+    /// so a test can hand it bytes the file no longer holds.
+    func reload(from read: Result<Data, any Error>) {
         // Our own save coming back through the watcher, or a file unchanged
         // since we last read it: nothing we do not already have, and the
         // settings may have moved on since. A read that fails is not one
         // and goes the usual way.
-        let bytes = try? Data(contentsOf: settingsFileURL)
+        let bytes = try? read.get()
         if let lastSyncedBytes, bytes == lastSyncedBytes {
             return
         }
-        let result = Self.load(at: settingsFileURL, writes: writesFiles)
+        let result = Self.load(read, at: settingsFileURL, writes: writesFiles, setsAsideUndecodable: false)
+        // A file that does not decode may be a save still in progress, or a
+        // hand edit with a slip in it. Moving it would send the rest of that
+        // save to the moved file, and defaults would replace settings that
+        // are working. So it stays, the settings stay, and saving stops so
+        // that nothing writes over it; the change that fixes it reads as any
+        // other and takes saving back up.
+        if result.isUndecodable {
+            log.error("settings.json does not decode; keeping the settings in use and not saving")
+            lastSyncedBytes = bytes
+            isSavingSuspended = true
+            let suspension: SettingsSavingSuspension? = writesFiles ? .doesNotDecode : nil
+            if savingSuspension != suspension {
+                savingSuspension = suspension
+            }
+            return
+        }
         // A move to the current schema writes the file again, and the
         // watcher reports that write as well: those bytes are what the file
         // holds now, and a change made before it reports must not be
@@ -637,7 +677,7 @@ struct AppLanguageSources {
     }
 }
 
-/// Why `settings.json` is not being saved for this launch.
+/// Why `settings.json` is not being saved.
 enum SettingsSavingSuspension: Equatable {
     /// It could not be read and could not be moved aside.
     case unreadable
@@ -649,4 +689,7 @@ enum SettingsSavingSuspension: Equatable {
     /// A newer build wrote it in a form this build cannot decode. It is
     /// left for that build, and this launch runs on the defaults.
     case newerVersionUnreadable
+    /// It stopped decoding while the app ran. It stays where it is, the
+    /// settings stay as they were, and fixing the file takes saving back up.
+    case doesNotDecode
 }

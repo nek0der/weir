@@ -88,6 +88,12 @@ enum SavingSuspendedText {
                 "Your settings aren’t being saved: settings.json was written by a newer version of Weir in a form this version can’t read, so this version uses its defaults and leaves the file as it is. Open that version to change your settings.",
                 comment: "Settings, General, and a launch alert: saving settings is suspended, as a newer version wrote an unreadable file"
             ).resolved(in: locale)
+        case .doesNotDecode:
+            LocalizedStringResource(
+                // swiftlint:disable:next line_length
+                "Your settings aren’t being saved: settings.json can’t be read as it stands, so Weir keeps using the settings it had. Correct the file and saving starts again.",
+                comment: "Settings, General: saving settings is suspended, as the file stopped being readable while Weir ran"
+            ).resolved(in: locale)
         }
     }
 
