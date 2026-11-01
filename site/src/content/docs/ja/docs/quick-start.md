@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-1 つのタスクを最初から最後まで進めます。[インストール済みの Weir](/ja/docs/install/)、Git リポジトリ、サインイン済みの Claude Code か Codex が必要です。
+1 つのタスクを最初から最後まで進めます。[インストール済みの Weir](/ja/docs/install/)、Git リポジトリ、サインイン済みの Claude Code、Codex、Antigravity のいずれかが必要です。
 
 ## 1. プロジェクトを開く
 

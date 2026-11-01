@@ -171,6 +171,8 @@ struct PlanUsagePanel: View {
                     now: context.date,
                     locale: locale
                 ))
+                Divider()
+                PlanUsageSectionView(section: PlanUsageText.antigravitySection(store.antigravity, now: context.date, locale: locale))
             }
             .padding(Layout.spaceL)
             .frame(width: Layout.railPanelWidth, alignment: .leading)

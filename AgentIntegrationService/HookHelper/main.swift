@@ -83,6 +83,9 @@ func runLifecycleHook(provider: String, kind: RustProviderBridge.HookKind) -> Ne
         if let message = outcome.message, outcome.exitCode != 0 {
             FileHandle.standardError.write(Data((message + "\n").utf8))
         }
+        if let stdout = outcome.stdout {
+            FileHandle.standardOutput.write(Data(stdout.utf8))
+        }
         if provider == "codex", kind == .lifecycle, outcome.outcome == "applied" {
             CodexTurnFailureWatch.start(
                 after: input,

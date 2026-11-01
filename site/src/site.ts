@@ -51,7 +51,7 @@ export const STRINGS = {
     quietTitle: "It is not an editor.<br>It is not an agent.",
     quietBody: "Claude Code and Codex keep their own terminal UI, and you still type in their prompts.",
     specs: [
-      ["Agents", "Claude Code, Codex"],
+      ["Agents", "Claude Code, Codex, Antigravity"],
       ["Terminal", "libghostty"],
       ["Requires", "macOS 26 or later, Apple Silicon"],
       ["License", "MIT"],
@@ -87,7 +87,7 @@ export const STRINGS = {
     quietTitle: "エディタでも、<wbr>エージェントでも<wbr>ありません。",
     quietBody: "Claude Code と Codex は<wbr>いつもの<wbr>ターミナル&nbsp;UI&nbsp;のまま。<br>指示も<wbr>これまでどおり<wbr>エージェントの<wbr>プロンプトに<wbr>入力します。",
     specs: [
-      ["対応エージェント", "Claude Code, Codex"],
+      ["対応エージェント", "Claude Code, Codex, Antigravity"],
       ["ターミナル", "libghostty"],
       ["動作環境", "macOS 26 以降、Apple Silicon"],
       ["ライセンス", "MIT"],

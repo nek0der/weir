@@ -43,6 +43,8 @@ final class PaneProgramStatusStore {
         /// What a blocked program waits on; `nil` for any other state.
         var kind: ProgramStatusReport.Kind?
         var observedAt: Date
+        /// When the program began reporting this state and kind.
+        var stateSince: Date
     }
 
     private(set) var statuses: [UUID: Status] = [:]
@@ -76,7 +78,18 @@ final class PaneProgramStatusStore {
             return
         }
         let kind = report.state == .blocked ? report.kind : nil
-        statuses[pane] = Status(app: report.app, state: report.state, kind: kind, observedAt: now())
+        let observedAt = now()
+        statuses[pane] = Status(
+            app: report.app,
+            state: report.state,
+            kind: kind,
+            observedAt: observedAt,
+            stateSince: previous.flatMap { previous in
+                previous.app == report.app && previous.state == report.state && previous.kind == kind
+                    ? previous.stateSince
+                    : nil
+            } ?? observedAt
+        )
         panesAgentLeft.remove(pane)
         if agentApps.contains(report.app),
            previous?.app != report.app || previous?.state != report.state || previous?.kind != kind
@@ -122,7 +135,8 @@ final class PaneProgramStatusStore {
                 app: status.app,
                 state: status.state.rawValue,
                 kind: status.kind?.rawValue,
-                observedAt: AgentDateParsing.formatISO8601(status.observedAt)
+                observedAt: AgentDateParsing.formatISO8601(status.observedAt),
+                stateSince: AgentDateParsing.formatISO8601(status.stateSince)
             )
         }
         return result

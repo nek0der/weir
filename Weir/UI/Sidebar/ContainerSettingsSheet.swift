@@ -136,8 +136,10 @@ struct ContainerSettingsSheet: View {
             RoutedAgentsSection(
                 claudeEnabled: project?.routeClaudeWorktrees ?? true,
                 codexEnabled: project?.routeCodexWorktrees ?? true,
+                antigravityEnabled: project?.routeAntigravityWorktrees ?? true,
                 onClaudeChange: applyRouteClaudeToggle,
-                onCodexChange: applyRouteCodexToggle
+                onCodexChange: applyRouteCodexToggle,
+                onAntigravityChange: applyRouteAntigravityToggle
             )
             bootstrapSection
             filesSection
@@ -254,6 +256,7 @@ struct ContainerSettingsSheet: View {
     private struct RoutedAgentsSection: View {
         let claudeEnabled: Bool
         let codexEnabled: Bool
+        let antigravityEnabled: Bool
         // The setters land via SwiftUI `Binding`, which expects an
         // `@isolated(any) @Sendable` closure. Annotating these properties
         // with `@MainActor` (or `@MainActor @Sendable`) currently trips a
@@ -262,6 +265,7 @@ struct ContainerSettingsSheet: View {
         // which is what makes handing them to `Binding` race-free.
         let onClaudeChange: (Bool) -> Void
         let onCodexChange: (Bool) -> Void
+        let onAntigravityChange: (Bool) -> Void
 
         private static func label(for kind: AgentKind) -> LocalizedStringResource {
             let name = AgentProviderRegistry.displayName(for: kind)
@@ -282,6 +286,10 @@ struct ContainerSettingsSheet: View {
                 SettingsToggle(
                     Text(Self.label(for: .codex)),
                     isOn: Binding(get: { codexEnabled }, set: { onCodexChange($0) })
+                )
+                SettingsToggle(
+                    Text(Self.label(for: .antigravity)),
+                    isOn: Binding(get: { antigravityEnabled }, set: { onAntigravityChange($0) })
                 )
             } header: {
                 Text(ProjectSettingsText.agentWorktrees)
@@ -484,6 +492,10 @@ struct ContainerSettingsSheet: View {
 
     private func applyRouteCodexToggle(_ enabled: Bool) {
         session.setProjectRouteCodexWorktrees(projectID, to: enabled)
+    }
+
+    private func applyRouteAntigravityToggle(_ enabled: Bool) {
+        session.setProjectRouteAntigravityWorktrees(projectID, to: enabled)
     }
 
     private func commitName() {

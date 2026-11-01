@@ -1,0 +1,38 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "00000000-0000-4000-8000-000000000003",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "Use the ask_question tool to ask me to pick red or blue, then reply with my pick.",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "waiting_for_input",
+      "detail": "Please pick a color:"
+    }
+  ],
+  [
+    {
+      "type": "tool_finished",
+      "tool": "ask_question"
+    }
+  ],
+  [],
+  [],
+  [],
+  [
+    {
+      "type": "turn_finished"
+    }
+  ]
+]

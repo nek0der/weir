@@ -277,6 +277,7 @@ extension AgentKind {
         let resume = switch self {
         case .claude: ClaudeAgent.strictResumeArguments(sessionId: sessionId)
         case .codex: CodexAgent.strictResumeArguments(sessionId: sessionId)
+        case .antigravity: AntigravityAgent.strictResumeArguments(sessionId: sessionId)
         }
         guard let cwd, !cwd.isEmpty else { return resume }
         return "cd \(ShellQuote.single(cwd)) && \(resume)"

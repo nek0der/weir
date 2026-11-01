@@ -42,7 +42,8 @@ struct PaneProgramStatusStoreTests {
             Self.pane.uuidString: AgentProjectionProgramStatus(
                 app: "claude-code",
                 state: "blocked",
-                observedAt: AgentDateParsing.formatISO8601(Self.at)
+                observedAt: AgentDateParsing.formatISO8601(Self.at),
+                stateSince: AgentDateParsing.formatISO8601(Self.at)
             )
         ])
         #expect(scene.changes == 1)
@@ -73,6 +74,26 @@ struct PaneProgramStatusStoreTests {
         scene.report(.working, kind: .question)
         #expect(scene.store.statuses[Self.pane]?.kind == nil)
         #expect(scene.store.projectionInput[Self.pane.uuidString]?.kind == nil)
+    }
+
+    /// An `auth` that repeats has stood since its first report, or one sent
+    /// every second would never become a wait.
+    @Test func aRepeatedReport_keepsWhenTheStateBegan() {
+        var clock = Self.at
+        let store = PaneProgramStatusStore(now: { clock })
+        let auth = ProgramStatusReport(app: "antigravity", recordID: "", state: .blocked, kind: .auth)
+        store.receive(auth, in: Self.pane)
+        clock = Self.at.addingTimeInterval(3)
+        store.receive(auth, in: Self.pane)
+        #expect(store.statuses[Self.pane]?.observedAt == clock)
+        #expect(store.statuses[Self.pane]?.stateSince == Self.at)
+
+        clock = Self.at.addingTimeInterval(4)
+        store.receive(
+            ProgramStatusReport(app: "antigravity", recordID: "", state: .blocked, kind: .permission),
+            in: Self.pane
+        )
+        #expect(store.statuses[Self.pane]?.stateSince == clock, "another kind is another wait")
     }
 
     @Test func aReportAboutPartOfTheWork_isNotKept() {

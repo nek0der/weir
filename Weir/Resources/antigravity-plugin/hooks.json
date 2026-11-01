@@ -1,0 +1,67 @@
+{
+  "weir": {
+    "enabled": true,
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "/bin/sh ./scripts/weir-dispatch SessionStart",
+        "timeout": 30
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "/bin/sh ./scripts/weir-dispatch PreInvocation",
+        "timeout": 600
+      }
+    ],
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "/bin/sh ./scripts/weir-dispatch PostInvocation",
+        "timeout": 30
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "/bin/sh ./scripts/weir-dispatch Stop",
+        "timeout": 600
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh ./scripts/weir-dispatch PreToolUse",
+            "timeout": 600
+          }
+        ]
+      },
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh ./scripts/weir-dispatch PreToolUse worktree",
+            "timeout": 86400
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh ./scripts/weir-dispatch PostToolUse",
+            "timeout": 600
+          }
+        ]
+      }
+    ]
+  }
+}

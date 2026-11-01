@@ -295,6 +295,9 @@ struct AgentProjectionProgramStatus: Encodable, Equatable {
     /// Optional because only a block carries one.
     var kind: String?
     var observedAt: String
+    /// When the program began reporting this state and kind, which a repeat
+    /// of the report leaves.
+    var stateSince: String
 }
 
 /// What a provider declares about itself, as the Rust registry reports it.

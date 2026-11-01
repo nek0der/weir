@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-Weir is a native Mac app for running Claude Code and Codex side by side. It shows which agent needs you and what changed in each turn, one round of an agent's work.
+Weir is a native Mac app for running Claude Code, Codex, and Antigravity side by side. It shows which agent needs you and what changed in each turn, one round of an agent's work.
 
 ![A Weir window, with worktrees on the left, a terminal in the middle, and each turn's changes on the right.](../../../assets/captures/hero-dark.png)
 

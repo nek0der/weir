@@ -9,7 +9,7 @@ sidebar:
 
 - macOS 26 以降、Apple Silicon
 - Git
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) か [Codex](https://github.com/openai/codex)、または両方。Weir はお使いのものを、そのアカウントのまま動かします。
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) か [Codex](https://github.com/openai/codex)、Antigravity CLI（`agy`）のいずれか。複数でもかまいません。Weir はお使いのものを、そのアカウントのまま動かします。
 
 サイドバーに PR の状態を出したい場合は、`gh` か `glab` を入れてサインインしてください。なくても Weir は動きます。
 
@@ -34,6 +34,7 @@ Weir は 1 日に 1 回アップデートを確認します。インストール
 1. Weir を終了して、`Weir.app` をゴミ箱に入れます。
 2. `~/Library/Application Support/Weir/` と `~/Library/Preferences/com.nekoder.Weir.plist` を削除します。
 3. **ログイン項目と機能拡張** に Weir が残っていたら、オフにします。
+4. Weir で Antigravity を動かしたことがあり、`~/.gemini/config/plugins/weir` に `.weir-managed` というファイルがあれば、そのフォルダーも削除します。このファイルがないフォルダーは Weir のものではありません。
 
 各リポジトリには、ターンのスナップショットも残っています。消すには、リポジトリで次を実行します。
 

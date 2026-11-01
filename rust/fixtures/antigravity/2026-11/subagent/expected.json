@@ -1,0 +1,66 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "00000000-0000-4000-8000-000000000004",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "Use invoke_subagent to have a subagent read a.txt and report its content. Then reply with it.",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "invoke_subagent",
+      "detail": "invoke_subagent"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "tool_finished",
+      "tool": "invoke_subagent"
+    }
+  ],
+  [],
+  [],
+  [],
+  [],
+  [],
+  [],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "I have invoked the subagent to read [a.txt](file:///Users/person/project/a.txt) and will report its content as soon as it responds."
+    }
+  ],
+  [],
+  [],
+  [],
+  [],
+  [
+    {
+      "type": "extension",
+      "name": "UnpromptedTurn",
+      "payload": {}
+    }
+  ],
+  [],
+  [],
+  [],
+  [],
+  [],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "The subagent reported the following content from [a.txt](file:///Users/person/project/a.txt):\n\n```text\nhello\n```"
+    }
+  ]
+]

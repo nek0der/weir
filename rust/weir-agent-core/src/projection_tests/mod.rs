@@ -96,6 +96,7 @@ fn reported_status(
             state: status.0,
             kind: status.1,
             observed_at: at.to_owned(),
+            state_since: at.to_owned(),
         },
     );
     input

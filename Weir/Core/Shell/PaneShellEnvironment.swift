@@ -88,7 +88,8 @@ enum PaneShellEnvironment {
             paneID: paneID,
             shimDirectories: [
                 ClaudeShimLocator.shimDirectoryURL,
-                CodexShimLocator.shimDirectoryURL
+                CodexShimLocator.shimDirectoryURL,
+                AntigravityShimLocator.shimDirectoryURL
             ].compactMap(\.self),
             zdotdir: ClaudeShimLocator.zdotdirURL,
             basePath: ProcessInfo.processInfo.environment["PATH"] ?? fallbackPath,

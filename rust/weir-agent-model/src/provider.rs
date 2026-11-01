@@ -112,6 +112,17 @@ pub enum Capability {
     /// its `idle` can arrive before the hook that ends the turn, and would
     /// mark a finished turn as stopped.
     ProgramStatusIdleStopsTurn,
+    /// A `blocked` status report of kind `permission` is a wait of its own.
+    /// A provider that announces its permission prompts with a hook leaves it
+    /// out, as the hook's record says more.
+    ProgramStatusAnnouncesPermission,
+    /// An `error` in its status report is a failure no hook announces, which
+    /// shows until its next report.
+    ProgramStatusAnnouncesFailure,
+    /// A `blocked` status report of kind `auth` is a wait only once it has
+    /// stood for a while, as the agent sends one for a moment at every start,
+    /// signed in or not.
+    ProgramStatusAuthSettles,
 }
 
 /// What the platform needs to know about a provider without linking its

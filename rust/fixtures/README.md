@@ -11,7 +11,7 @@ documentation says.
 fixtures/
   <provider>/<schema-date>/<case>/
     NNNN-<HookEventName>.json                one raw payload per hook call, in order
-    NNNN-<HookEventName>.transcript.jsonl    Claude only: the transcript at that moment
+    NNNN-<HookEventName>.transcript.jsonl    Claude and Antigravity: the transcript at that moment
     expected.json                            neutral events per payload (array of arrays)
     approval.expected.json                   only for approval cases: the ApprovalRequest
   negative/

@@ -1,0 +1,48 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "00000000-0000-4000-8000-000000000008",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "say ok",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "ok"
+    }
+  ],
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "00000000-0000-4000-8000-000000000009",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "say two",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "two"
+    }
+  ]
+]

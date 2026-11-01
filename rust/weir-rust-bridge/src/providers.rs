@@ -133,12 +133,14 @@ pub unsafe extern "C" fn weir_hook_run_v1(
 }
 
 fn outcome_json(outcome: &HookOutcome) -> serde_json::Value {
-    let (name, message) = match outcome {
-        HookOutcome::Applied => ("applied", None),
-        HookOutcome::NotInWeir => ("not_in_weir", None),
-        HookOutcome::Rejected(reason) => ("rejected", Some(reason.clone())),
-        HookOutcome::UnknownProvider => ("unknown_provider", None),
-        HookOutcome::Intercepted { message, .. } => ("intercepted", Some(message.clone())),
+    let (name, message, stdout) = match outcome {
+        HookOutcome::Applied => ("applied", None, None),
+        HookOutcome::NotInWeir => ("not_in_weir", None, None),
+        HookOutcome::Rejected(reason) => ("rejected", Some(reason.clone()), None),
+        HookOutcome::UnknownProvider => ("unknown_provider", None, None),
+        HookOutcome::Intercepted {
+            message, stdout, ..
+        } => ("intercepted", Some(message.clone()), stdout.as_deref()),
     };
     let mut body = serde_json::json!({
         "outcome": name,
@@ -146,6 +148,9 @@ fn outcome_json(outcome: &HookOutcome) -> serde_json::Value {
     });
     if let Some(message) = message {
         body["message"] = serde_json::Value::String(message);
+    }
+    if let Some(stdout) = stdout {
+        body["stdout"] = serde_json::Value::String(String::from_utf8_lossy(stdout).into_owned());
     }
     body
 }

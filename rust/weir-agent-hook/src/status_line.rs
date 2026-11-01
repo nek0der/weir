@@ -96,6 +96,9 @@ fn read_source(
         SettingsSource::HomeFile(name) => env
             .provider_home(adapter.home_directory_variable(), adapter.descriptor())
             .and_then(|home| read_settings(&home.join(name))),
+        SettingsSource::UserHomeFile(path) => env
+            .get("HOME")
+            .and_then(|home| read_settings(&Path::new(home).join(path))),
         // Inline JSON when it parses, otherwise the path of a file, the way
         // the provider reads its own flag.
         SettingsSource::LaunchVariable(variable) => {

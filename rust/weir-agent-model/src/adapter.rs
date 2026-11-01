@@ -91,6 +91,9 @@ pub enum SettingsSource {
     /// A file of this name in the provider's configuration directory
     /// (`ProviderAdapter::home_directory_variable`, else the default home).
     HomeFile(&'static str),
+    /// A file at this path under the person's home folder, for a provider
+    /// whose settings lie apart from its configuration directory.
+    UserHomeFile(&'static str),
     /// The settings the person passed at launch, which the shim moved into
     /// this variable because its own flag took their place: inline JSON, or
     /// the absolute path of a file.
@@ -371,6 +374,29 @@ pub trait ProviderAdapter: Send + Sync {
     fn session_settings(&self, input: RawHookInput<'_>, context: &HookContext) -> SessionSettings {
         let _ = (input, context);
         SessionSettings::default()
+    }
+
+    /// A session start the provider did not send, for a call that shows the
+    /// run is in a session its record does not name. A provider whose resume
+    /// sends no start of its own (`agy --conversation`) answers here, so the
+    /// record and the resume hint name the conversation. The runtime applies
+    /// it before the call's events.
+    fn session_started_if_unseen(
+        &self,
+        input: RawHookInput<'_>,
+        record: Option<&crate::RunRecord>,
+    ) -> Option<AgentEvent> {
+        let _ = (input, record);
+        None
+    }
+
+    /// How the provider cancels a tool call whose worktree the runtime
+    /// created, when exit status 2 does not. `agy` reads any non-zero status
+    /// as a failure and its model retries the call. `None` keeps exit status
+    /// 2 and stderr.
+    fn worktree_block_output(&self, message: &str) -> Option<crate::ProviderOutput> {
+        let _ = message;
+        None
     }
 
     /// Reads a `git worktree add` the agent is about to run out of a tool

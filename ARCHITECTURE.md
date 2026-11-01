@@ -21,7 +21,8 @@ Weir/
   UI/            SwiftUI views, NSViewRepresentable bridges, design system
     Supervision/ the supervision window: title bar, rail, sidebar, session area, panels
   FFI/           libghostty C ABI wrapper (GhosttyFFI)
-  Resources/     Info.plist, xcstrings, claude-shim / codex-shim (sharing agent-shim/runtime-common.sh),
+  Resources/     Info.plist, xcstrings, claude-shim / codex-shim / antigravity-shim (sharing agent-shim/runtime-common.sh),
+                 antigravity-plugin (the plugin that shim places in `agy`'s folder),
                  ghostty/ (shell integration, themes), terminfo
 AgentIntegrationService/
   Service/        launchd-managed macOS XPC host for the Rust approval broker
@@ -40,6 +41,7 @@ rust/
                           and the worktree lock
   weir-provider-claude/ Claude adapter and approval translation
   weir-provider-codex/  Codex adapter and approval translation
+  weir-provider-antigravity/ Antigravity CLI adapter; it answers no approvals
   weir-agent-protocol/  versioned wire messages and authenticated sessions
   weir-rust-bridge/     Rust entry points exposed through a stable C ABI
 ```
@@ -50,9 +52,9 @@ in `FFI/`. The Rust boundary lives behind `Core/Rust/WeirRustBridge.swift`
 and the C header in `rust/weir-rust-bridge/include/`. Rust stays independent
 of Swift and Apple frameworks. UI may consume Core models but never reaches
 into their private state. Core keeps AppKit and SwiftUI out; "Layers and
-dependency direction" below lists the files that predate the rule. The two
-agent folders, `Core/Claude` and `Core/Codex`, never refer to each other in
-code: each is independent, and the two are shaped alike.
+dependency direction" below lists the files that predate the rule. The agent
+folders, `Core/Claude`, `Core/Codex`, and `Core/Antigravity`, never refer to
+each other in code. Each is independent, and the first two are shaped alike.
 
 The bridge-wide ABI number is a compatibility version, not a release or API
 revision. Adding a new exported symbol keeps the current number. Increment it
@@ -178,7 +180,7 @@ parts top to bottom and left to right. View paths are under
 |---|---|---|
 | Title bar: project ▾, worktree ▾, back and forward, palette field, the Needs Attention tray | `TitleBar/SupervisionTitleBar.swift`, `TitleBarHistoryButtons`, `NeedsAttentionButton`, `NeedsAttentionListView`, `TitleBarMenuHost` | `ProjectMenuModel`, `WorktreeDropdownEntry`, `TitleBarHistoryModel`, `NeedsAttentionCountModel`, `NeedsAttentionListModel` |
 | Left rail: worktrees, scratch, all projects, history; update, plan usage, shortcuts, Settings | `LeftRail/LeftRailView.swift`, `LeftRail/RailScratchButton.swift` | `ProjectWindowState` |
-| Plan usage panel: each agent's limit windows, a floating panel beside the rail like the notification history (`WindowLayer.planUsage`) | `LeftRail/PlanUsagePanel.swift` | `PlanUsageStore` and `PlanUsageText` (Claude Code's from the status line relay's record, `PlanUsageRecordDirectory`; Codex's from its app server, `CodexUsageReader`) |
+| Plan usage panel: each agent's limit windows, a floating panel beside the rail like the notification history (`WindowLayer.planUsage`) | `LeftRail/PlanUsagePanel.swift` | `PlanUsageStore` and `PlanUsageText` (Claude Code's from the status line relay's record, `PlanUsageRecordDirectory`; Codex's from its app server, `CodexUsageReader`; Antigravity's from the same relay's record) |
 | Sidebar: every project under its header (folded or open, in the window's order), each open one's working rows and the folds for the missing worktrees, the worktrees ready to clean up, and the other worktrees | `Sidebar/SessionSidebarView.swift`, `SidebarProjectSection`, `SidebarProjectReorderLayer`, `SidebarProjectHeaderView`, `SidebarProjectActions`, `SessionRowView`, `SidebarSectionFoldRow`, `SidebarRowDrop` | `SidebarListModel`, `SidebarProjectHeader`, `SidebarProjectDrag`, `SidebarPinnedLine`, `SessionSidebarModel`, `SidebarPresentedSections`, `SidebarKeyboardCursor`, `SidebarKeyRoute`, `SidebarArrangement`, `ProjectOrder`, `SidebarSectionRule`, `SidebarSectionHold`, `RowName` |
 | Session area: header, pane strip and its Open Tabs list, terminal | `SessionAreaView.swift`, `PaneStrip/SessionHeaderView.swift`, `PaneStrip/PaneStripView.swift`, `PaneStrip/OpenTabsMenu.swift`, `SessionTerminalView.swift` | `SessionHeaderModel`, `PaneStripModel`, `AgentBadgeSlots`, `OpenTabsModel`, `ConversationTabs`, `ConversationIdentityStore` |
 | Panes and splits inside the terminal region, and the frame a hovered turn card puts around its pane | `UI/Pane/PaneAreaView.swift`, `PaneContainerView`, `PaneHostView`, `PaneStrip/PaneConversationFrame.swift` | `WorkspaceSession`, `SurfaceRegistry`, `ConversationHoverRule` |
@@ -399,7 +401,9 @@ the turns, and the commands for the app to perform.
   projection shows the run waiting on a question or a sign-in until the next
   report, without writing its record, and leaves a wait a hook announced as
   it is. A sign-in reads "Needs sign-in" in the row, the list, the decision
-  bar, and the notification, and is counted on its own.
+  bar, and the notification, and is counted on its own. Antigravity has no
+  permission hook, so its permission prompts arrive this way too, as `blocked`
+  with the kind `permission` (`Capability::ProgramStatusAnnouncesPermission`).
 - **Restore Code** ("Restore Code to Before This Turn…" on a changes panel
   row and in the decision bar's ⋯ menu) runs through `RestoreCoordinator` into
   Rust (`WeirRestoreBridge`). Rust journals each operation under the
@@ -714,7 +718,8 @@ build that reads a newer file degrades cleanly.
   recorded fixtures under `rust/fixtures/<agent>/`, and an adapter entry in the
   hook's provider registry. The application projection (`project`, `on_launch`,
   `on_terminate`) runs in Rust and branches on capabilities, so the rules need
-  no change. The Swift side still keys the interface by `AgentKind`: add a
+  no change unless the agent behaves in a way no capability describes yet, as
+  Antigravity did (ADR 0004, "Adding Antigravity"). The Swift side still keys the interface by `AgentKind`: add a
   case there, an `AgentSpec` conformer in `Core/Agent/<Agent>Agent.swift` for
   the resume command, a shim under `Resources/<agent>-shim/` with its
   installer, and the provider's display strings in `Localizable.xcstrings`.

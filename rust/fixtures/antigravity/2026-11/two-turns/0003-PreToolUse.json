@@ -1,0 +1,20 @@
+{
+  "artifactDirectoryPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000001",
+  "conversationId": "00000000-0000-4000-8000-000000000001",
+  "hook_event_name": "PreToolUse",
+  "lastUserInput": "Run the shell command: date. Then say done.",
+  "modelName": "gemini-3.8-flash-high",
+  "stepIdx": 2,
+  "toolCall": {
+    "args": {
+      "CommandLine": "date",
+      "WaitMsBeforeAsync": 5000,
+      "toolSummary": "Run date command"
+    },
+    "name": "run_command"
+  },
+  "transcriptPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000001/.system_generated/logs/transcript_full.jsonl",
+  "workspacePaths": [
+    "/Users/person/project"
+  ]
+}

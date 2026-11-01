@@ -53,6 +53,7 @@ use weir_agent_model::{
     SnapshotStatus, Titles, TmuxEndpoint, TurnReading, TurnUsage, cwd_event_file_name,
     parse_utc_seconds, run_record_file_name, session_hint_file_name,
 };
+use weir_provider_antigravity::AntigravityAdapter;
 use weir_provider_claude::ClaudeAdapter;
 use weir_provider_codex::CodexAdapter;
 use worktree_lock::{Shared, WorktreeLockPaths};
@@ -85,8 +86,13 @@ pub enum HookOutcome {
     /// The provider id is not registered in this build.
     UnknownProvider,
     /// The tool call was intercepted (a worktree was created on the agent's
-    /// behalf); the helper prints `message` to stderr and exits with `code`.
-    Intercepted { code: i32, message: String },
+    /// behalf); the helper prints `message` to stderr, `stdout` to stdout when
+    /// the provider cancels a call that way, and exits with `code`.
+    Intercepted {
+        code: i32,
+        message: String,
+        stdout: Option<Vec<u8>>,
+    },
 }
 
 impl HookOutcome {
@@ -103,9 +109,11 @@ impl HookOutcome {
 /// Resolves a provider adapter by id.
 #[must_use]
 pub fn adapter_for(id: &str) -> Option<&'static dyn ProviderAdapter> {
+    static ANTIGRAVITY: AntigravityAdapter = AntigravityAdapter;
     static CLAUDE: ClaudeAdapter = ClaudeAdapter;
     static CODEX: CodexAdapter = CodexAdapter;
     match id {
+        weir_provider_antigravity::PROVIDER_ID => Some(&ANTIGRAVITY),
         weir_provider_claude::PROVIDER_ID => Some(&CLAUDE),
         weir_provider_codex::PROVIDER_ID => Some(&CODEX),
         _ => None,
@@ -120,6 +128,7 @@ pub fn adapter_for(id: &str) -> Option<&'static dyn ProviderAdapter> {
 #[must_use]
 pub fn installed_providers() -> Vec<&'static ProviderDescriptor> {
     [
+        weir_provider_antigravity::PROVIDER_ID,
         weir_provider_claude::PROVIDER_ID,
         weir_provider_codex::PROVIDER_ID,
     ]
@@ -136,6 +145,7 @@ pub fn installed_providers() -> Vec<&'static ProviderDescriptor> {
 #[must_use]
 pub fn installed_recipes() -> Vec<(&'static ProviderId, InstallRecipe)> {
     [
+        weir_provider_antigravity::PROVIDER_ID,
         weir_provider_claude::PROVIDER_ID,
         weir_provider_codex::PROVIDER_ID,
     ]
@@ -992,6 +1002,13 @@ fn write_events(
         record_path: &record_path,
         turns: &turns,
     };
+    // Before the turn this call may begin, whose record it names.
+    if let Some(started) = call
+        .adapter
+        .session_started_if_unseen(call.input, records::read_record(&record_path).as_ref())
+    {
+        writer.write(&started, None, None);
+    }
     let start = unprompted_start(
         call,
         &turns,
@@ -1413,9 +1430,21 @@ pub fn run_worktree_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>
         &log,
     ) {
         InterceptResult::Passthrough => HookOutcome::Applied,
-        // Exit status 2 is the hook convention both providers share: the
-        // tool call is canceled and stderr is shown to the model.
-        InterceptResult::Created { message, .. } => HookOutcome::Intercepted { code: 2, message },
+        // Exit status 2 is the hook convention Claude and Codex share: the
+        // tool call is canceled and stderr is shown to the model. A provider
+        // that reads it as a failure says how it cancels a call instead.
+        InterceptResult::Created { message, .. } => match adapter.worktree_block_output(&message) {
+            Some(output) => HookOutcome::Intercepted {
+                code: 0,
+                message,
+                stdout: output.stdout,
+            },
+            None => HookOutcome::Intercepted {
+                code: 2,
+                message,
+                stdout: None,
+            },
+        },
     }
 }
 

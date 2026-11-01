@@ -27,7 +27,7 @@ struct NewSessionModelTests {
         head: String? = "main",
         fetchRemote: String? = nil,
         folders: Set<String> = [],
-        installed: [AgentKind] = [.claude, .codex],
+        installed: [AgentKind] = AgentKind.allCases,
         executables: [AgentKind: String] = [:],
         choices: NewWorktreeChoices = choices,
         project: (inout Project) -> Void = { _ in }

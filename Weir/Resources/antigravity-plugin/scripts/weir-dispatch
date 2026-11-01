@@ -1,0 +1,40 @@
+#!/bin/sh
+# Weir's agy hook: each hook of the plugin runs this with the event's name, and
+# `worktree` for the intercept. Weir places the plugin in `agy`'s own folder,
+# which every `agy` reads, so outside a Weir pane this does nothing at all.
+#
+# It always exits 0 with JSON on stdout. `agy` treats any other result as the
+# tool failing and its model retries the call (agy 1.4.12, against its
+# documentation), so a broken Weir must never reach it.
+
+event="${1:-}"
+kind="${2:-}"
+
+reply_default() {
+  case "$event" in
+    PreToolUse) printf '{"decision":"allow"}\n' ;;
+    *) printf '{}\n' ;;
+  esac
+}
+
+hook="${WEIR_ANTIGRAVITY_HOOK_DIR:-}/weir-hook"
+if [ -z "${WEIR_ANTIGRAVITY_HOOK_DIR:-}" ] || [ ! -r "$hook" ]; then
+  cat >/dev/null
+  reply_default
+  exit 0
+fi
+
+# Hooks run in the plugin's folder; the session's is where a turn is recorded.
+cd -- "${WEIR_ANTIGRAVITY_WORKSPACE:-.}" 2>/dev/null || :
+
+# `agy`'s payload names no event, so we add the name as the object's first key.
+reply=$(
+  { printf '{"hook_event_name":"%s",' "$event"; tail -c +2; } |
+    /bin/sh "$hook" $kind 2>/dev/null
+) || reply=""
+if [ -n "$reply" ]; then
+  printf '%s\n' "$reply"
+else
+  reply_default
+fi
+exit 0

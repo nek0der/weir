@@ -17,6 +17,23 @@
         }
       }
     },
+    "Antigravity’s values are as of its last reply.": {
+      "comment": "Plan usage panel, under Antigravity's values: they are only as fresh as its last reply",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Antigravity’s values are as of its last reply."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Antigravity の値は最後の返答時点のものです。"
+          }
+        }
+      }
+    },
     "duration.compact.hours": {
       "comment": "A time in one short unit, in hours (a turn card's duration, a sidebar row's time since); argument: the hours",
       "localizations": {
@@ -174,6 +191,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "ワークツリーメニューを表示"
+          }
+        }
+      }
+    },
+    "Shows once Antigravity replies. Needs a status line of your own (set one with /statusline).": {
+      "comment": "Plan usage panel, Antigravity section before any usage was reported; /statusline is a command name",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shows once Antigravity replies. Needs a status line of your own (set one with /statusline)."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Antigravity の返答後に表示されます。自分のステータスラインが必要です（/statusline で設定）。"
           }
         }
       }

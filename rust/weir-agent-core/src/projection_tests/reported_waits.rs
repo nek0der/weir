@@ -40,6 +40,41 @@ fn notifies(commands: &[Command]) -> bool {
 }
 
 #[test]
+fn a_permission_report_is_a_wait_for_a_provider_that_announces_it_no_other_way() {
+    let mut input = reporting(
+        working(),
+        ProgramState::Blocked,
+        Some(BlockedKind::Permission),
+        "2026-09-14T12:03:10Z",
+    );
+    for descriptor in input.providers.values_mut() {
+        descriptor
+            .capabilities
+            .insert(Capability::ProgramStatusAnnouncesPermission);
+    }
+    let (state, projection, commands) = pass(&ProjectionState::default(), &input);
+    let badge = &projection.runtimes[0].badge;
+    assert_eq!(badge.state, RunState::NeedsInput);
+    assert_eq!(badge.wait_kind, Some(WaitKind::Approval));
+    assert!(notifies(&commands), "a new wait is news");
+
+    // The person allowed it; the agent reports its work again.
+    let mut input = reporting(
+        working(),
+        ProgramState::Working,
+        None,
+        "2026-09-14T12:03:20Z",
+    );
+    for descriptor in input.providers.values_mut() {
+        descriptor
+            .capabilities
+            .insert(Capability::ProgramStatusAnnouncesPermission);
+    }
+    let (_, projection, _) = pass(&state, &input);
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Running);
+}
+
+#[test]
 fn a_question_report_shows_the_run_waiting_and_announces_it() {
     let (state, projection, _) = pass(&ProjectionState::default(), &working());
     assert_eq!(projection.runtimes[0].badge.state, RunState::Running);
@@ -110,6 +145,183 @@ fn an_auth_report_shows_the_run_waiting_on_a_sign_in() {
     let badge = &projection.runtimes[0].badge;
     assert_eq!(badge.state, RunState::NeedsInput);
     assert_eq!(badge.wait_kind, Some(WaitKind::SignIn));
+}
+
+/// `input` with its providers declaring that an `auth` report settles, and
+/// the pane reporting `auth` since `since`.
+fn settling_auth(since: &str) -> ProjectionInput {
+    let mut input = reporting(
+        working(),
+        ProgramState::Blocked,
+        Some(BlockedKind::Auth),
+        "2026-09-14T12:03:10Z",
+    );
+    for descriptor in input.providers.values_mut() {
+        descriptor
+            .capabilities
+            .insert(Capability::ProgramStatusAuthSettles);
+    }
+    for status in input.program_status.values_mut() {
+        status.state_since = since.to_owned();
+    }
+    input
+}
+
+fn at(wall: &str) -> Instants {
+    Instants {
+        wall: wall.to_owned(),
+        ..now()
+    }
+}
+
+#[test]
+fn an_auth_report_that_settles_is_no_wait_and_no_news_until_it_has_stood() {
+    let input = settling_auth("2026-09-14T12:03:10Z");
+    let (state, projection, commands) = project_with(
+        &ProjectionState::default(),
+        &input,
+        &at("2026-09-14T12:03:12Z"),
+        &mut |_, _| false,
+    );
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Running);
+    assert_eq!(projection.runtimes[0].badge.wait_kind, None);
+    assert!(!notifies(&commands), "the agent is only starting");
+    assert_eq!(
+        projection.next_pass_in_ms,
+        Some(3_000),
+        "nothing else asks for the pass that shows it"
+    );
+
+    // Nothing more came: it is a sign-in the person has to make.
+    let (_, projection, commands) =
+        project_with(&state, &input, &at("2026-09-14T12:03:15Z"), &mut |_, _| {
+            false
+        });
+    assert_eq!(projection.runtimes[0].badge.state, RunState::NeedsInput);
+    assert_eq!(
+        projection.runtimes[0].badge.wait_kind,
+        Some(WaitKind::SignIn)
+    );
+    assert!(notifies(&commands), "a wait that stands is news");
+    assert_eq!(projection.next_pass_in_ms, None);
+}
+
+#[test]
+fn a_repeated_auth_report_settles_from_its_first() {
+    // `settling_auth` reports at 12:03:10, the last of the repeats.
+    let input = settling_auth("2026-09-14T12:03:04Z");
+    let (_, projection, _) = project_with(
+        &ProjectionState::default(),
+        &input,
+        &at("2026-09-14T12:03:10Z"),
+        &mut |_, _| false,
+    );
+    assert_eq!(
+        projection.runtimes[0].badge.wait_kind,
+        Some(WaitKind::SignIn)
+    );
+}
+
+#[test]
+fn a_report_after_the_auth_asks_for_no_later_pass() {
+    let mut input = settling_auth("2026-09-14T12:03:10Z");
+    for status in input.program_status.values_mut() {
+        status.state = ProgramState::Working;
+        status.kind = None;
+    }
+    let (_, projection, _) = project_with(
+        &ProjectionState::default(),
+        &input,
+        &at("2026-09-14T12:03:12Z"),
+        &mut |_, _| false,
+    );
+    assert_eq!(projection.next_pass_in_ms, None);
+}
+
+#[test]
+fn a_closed_panes_auth_report_asks_for_no_later_pass() {
+    let mut input = settling_auth("2026-09-14T12:03:10Z");
+    input.program_status.clear();
+    let (_, projection, _) = project_with(
+        &ProjectionState::default(),
+        &input,
+        &at("2026-09-14T12:03:12Z"),
+        &mut |_, _| false,
+    );
+    assert_eq!(projection.next_pass_in_ms, None);
+}
+
+#[test]
+fn an_auth_report_of_a_provider_that_does_not_settle_is_a_wait_at_once() {
+    let mut input = settling_auth("2026-09-14T12:03:10Z");
+    for descriptor in input.providers.values_mut() {
+        descriptor
+            .capabilities
+            .remove(&Capability::ProgramStatusAuthSettles);
+    }
+    let (_, projection, _) = project_with(
+        &ProjectionState::default(),
+        &input,
+        &at("2026-09-14T12:03:10Z"),
+        &mut |_, _| false,
+    );
+    assert_eq!(
+        projection.runtimes[0].badge.wait_kind,
+        Some(WaitKind::SignIn)
+    );
+    assert_eq!(projection.next_pass_in_ms, None);
+}
+
+/// A run of the real Antigravity adapter whose pane reports `status` at
+/// 12:03:10, passed at `wall`: what its descriptor declares has to reach these
+/// rules under the name it gives its agent.
+fn antigravity_badge(status: (ProgramState, Option<BlockedKind>), wall: &str) -> Badge {
+    let descriptor = weir_provider_antigravity::AntigravityAdapter
+        .descriptor()
+        .clone();
+    let mut input = working();
+    input.records[0].provider = descriptor.id.clone();
+    input.program_status.insert(
+        PANE.parse().expect("pane"),
+        ProgramStatus {
+            app: descriptor.program_status_app.clone().expect("app"),
+            state: status.0,
+            kind: status.1,
+            observed_at: "2026-09-14T12:03:10Z".to_owned(),
+            state_since: "2026-09-14T12:03:10Z".to_owned(),
+        },
+    );
+    input.providers = [(descriptor.id.clone(), descriptor)].into_iter().collect();
+    let (_, projection, _) = project_with(
+        &ProjectionState::default(),
+        &input,
+        &at(wall),
+        &mut |_, _| false,
+    );
+    projection.runtimes[0].badge.clone()
+}
+
+#[test]
+fn antigravitys_own_descriptor_reads_its_status_reports() {
+    let wall = "2026-09-14T12:03:10Z";
+    let blocked = |kind| (ProgramState::Blocked, Some(kind));
+    assert_eq!(
+        antigravity_badge(blocked(BlockedKind::Permission), wall).wait_kind,
+        Some(WaitKind::Approval)
+    );
+    assert_eq!(
+        antigravity_badge((ProgramState::Error, None), wall).state,
+        RunState::Error
+    );
+    assert_eq!(
+        antigravity_badge(blocked(BlockedKind::Auth), wall).wait_kind,
+        None,
+        "not yet: it sends one at every start"
+    );
+    assert_eq!(
+        antigravity_badge(blocked(BlockedKind::Auth), "2026-09-14T12:03:15Z").wait_kind,
+        Some(WaitKind::SignIn)
+    );
 }
 
 #[test]
@@ -324,4 +536,67 @@ fn of_two_runs_in_a_pane_only_the_latest_takes_its_report() {
             .count(),
         1
     );
+}
+
+/// `input` with its providers declaring that a report of `error` is a failure.
+fn announcing_failure(mut input: ProjectionInput) -> ProjectionInput {
+    for descriptor in input.providers.values_mut() {
+        descriptor
+            .capabilities
+            .insert(Capability::ProgramStatusAnnouncesFailure);
+    }
+    input
+}
+
+#[test]
+fn an_error_report_is_a_failure_for_a_provider_that_announces_it_no_other_way() {
+    let input = announcing_failure(reporting(
+        working(),
+        ProgramState::Error,
+        None,
+        "2026-09-14T12:03:10Z",
+    ));
+    let (state, projection, commands) = pass(&ProjectionState::default(), &input);
+    let badge = &projection.runtimes[0].badge;
+    assert_eq!(badge.state, RunState::Error);
+    assert_eq!(badge.detail, None);
+    assert_eq!(badge.stop_reason, None);
+    assert!(notifies(&commands), "a new failure is news");
+
+    // The person tried again; the agent reports its work.
+    let input = announcing_failure(reporting(
+        working(),
+        ProgramState::Working,
+        None,
+        "2026-09-14T12:03:20Z",
+    ));
+    let (_, projection, _) = pass(&state, &input);
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Running);
+}
+
+#[test]
+fn an_error_report_changes_nothing_without_the_capability() {
+    let input = reporting(working(), ProgramState::Error, None, "2026-09-14T12:03:10Z");
+    let (_, projection, _) = pass(&ProjectionState::default(), &input);
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Running);
+}
+
+#[test]
+fn an_error_report_leaves_the_words_of_a_failure_a_hook_announced() {
+    let mut input = finished_input(Vec::new());
+    let content = record(Some(5), "2026-09-14T12:03:00Z", "error").replace(
+        r#""state":"error""#,
+        r#""state":"error","detail":"quota exhausted""#,
+    );
+    input.records = vec![file(Some(content))];
+    let input = announcing_failure(reporting(
+        input,
+        ProgramState::Error,
+        None,
+        "2026-09-14T12:03:10Z",
+    ));
+    let (_, projection, _) = pass(&ProjectionState::default(), &input);
+    let badge = &projection.runtimes[0].badge;
+    assert_eq!(badge.state, RunState::Error);
+    assert_eq!(badge.detail.as_deref(), Some("quota exhausted"));
 }

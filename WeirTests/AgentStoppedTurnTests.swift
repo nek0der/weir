@@ -280,7 +280,12 @@ struct AgentStoppedTurnTests {
     /// idle again, in the same second the record last changed.
     private static func reportedIdle(in scene: Scene) throws -> [String: AgentProjectionProgramStatus] {
         let changed = try #require(scene.record()["updatedAt"] as? String)
-        return [scene.pane.uuidString: AgentProjectionProgramStatus(app: "claude-code", state: "idle", observedAt: changed)]
+        return [scene.pane.uuidString: AgentProjectionProgramStatus(
+            app: "claude-code",
+            state: "idle",
+            observedAt: changed,
+            stateSince: changed
+        )]
     }
 
     @Test(.disabled(if: !RepoFixture.hasLocalRepo))
@@ -372,7 +377,8 @@ struct AgentStoppedTurnTests {
                 app: "claude-code",
                 state: "blocked",
                 kind: "question",
-                observedAt: changed
+                observedAt: changed,
+                stateSince: changed
             )]
             scene.adapter.programStatus = { report }
             scene.adapter.refresh()

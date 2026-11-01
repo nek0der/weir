@@ -24,6 +24,7 @@ To turn off the daily update check, use **Settings → General → Software Upda
 ## What Weir writes
 
 - **Agent hooks.** Weir adds nothing to `~/.claude/` or `~/.codex/`. At launch it only removes a hook trust entry that an older version added to `~/.codex/config.toml`. Its panes put a small `claude` and `codex` wrapper first on the `PATH`, which passes the hooks on each launch. Agents you start outside Weir are not affected.
+- **Antigravity plugin.** `agy` takes no hooks on its command line, so the first `agy` run in a Weir pane places a plugin at `~/.gemini/config/plugins/weir`, with a `.weir-managed` file marking it as Weir's. A folder there without the mark is left alone. The plugin does nothing outside a Weir pane. To stop it, run `agy plugin disable weir`. If you remove the folder instead, the next `agy` run in a Weir pane places it again.
 - **Approval service.** The release registers a per-user background service, listed in **System Settings → General → Login Items & Extensions**.
 - **Turn snapshots.** They live in each repository's Git directory, as refs under `refs/weir/` and files under `weir/`.
 

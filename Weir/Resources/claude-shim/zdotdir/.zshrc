@@ -30,7 +30,7 @@ fi
 # whichever directory the user's own PATH edits push down stops
 # intercepting, and the hooks for that agent silently never load.
 typeset -aU path
-for _weir_shim in "${WEIR_SHIM_DIR:-}" "${WEIR_CODEX_SHIM_DIR:-}"; do
+for _weir_shim in "${WEIR_SHIM_DIR:-}" "${WEIR_CODEX_SHIM_DIR:-}" "${WEIR_ANTIGRAVITY_SHIM_DIR:-}"; do
   if [[ -n "$_weir_shim" && -d "$_weir_shim" ]]; then
     path=("$_weir_shim" $path)
     export PATH

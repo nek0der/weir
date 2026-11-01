@@ -9,6 +9,7 @@ rust-version.workspace = true
 libc.workspace = true
 weir-agent-core = { path = "../weir-agent-core" }
 weir-agent-model = { path = "../weir-agent-model" }
+weir-provider-antigravity = { path = "../weir-provider-antigravity" }
 weir-provider-claude = { path = "../weir-provider-claude" }
 weir-provider-codex = { path = "../weir-provider-codex" }
 serde.workspace = true

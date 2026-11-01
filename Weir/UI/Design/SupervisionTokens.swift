@@ -682,6 +682,18 @@ enum SupervisionTokens {
     /// white in dark mode and would have taken dark letters there. The
     /// same in both appearances.
     static let codex = ThemedColor(light: 0x5D60FF, dark: 0x5D60FF)
+    /// The Antigravity badge's ground, the blue of its logo, which is blue
+    /// with green, orange, and red along the top. The same in both
+    /// appearances. White letters reach 4.05:1, over the 3:1 a mark is held
+    /// to (`badgeForeground`), and it stands at least 3.12:1 off every surface.
+    static let antigravity = ThemedColor(light: 0x2B7BEF, dark: 0x2B7BEF)
+    /// The logo's three colors along the top of that badge
+    /// (`SessionAgentBadge.antigravityFill`). White on them falls as low as
+    /// 2.36:1, on the orange, so they stay above the letters and fade into the
+    /// blue before most of the letters' height.
+    static let antigravityGreen = ThemedColor(light: 0x5FA84F, dark: 0x5FA84F)
+    static let antigravityOrange = ThemedColor(light: 0xEE9412, dark: 0xEE9412)
+    static let antigravityRed = ThemedColor(light: 0xE23D32, dark: 0xE23D32)
     /// The edge inside each badge, for a fill that stands under 3:1 off a
     /// surface it sits on. Claude's orange does in light (2.49:1 on a
     /// selected row), so there it takes its own color darkened just far
@@ -691,7 +703,9 @@ enum SupervisionTokens {
     /// lightened to 3:1; in light it stands 3.66:1 off everything. Where an
     /// edge is the fill, it draws nothing. The edges are
     /// `SelectionEdgeRule.color(fill, on: selection)`, written out so the
-    /// badge needs no work at draw time.
+    /// badge needs no work at draw time. Antigravity's badge has none: its
+    /// blue already stands 3:1 off, and a blue edge would ring the colors on
+    /// its top.
     static let claudeEdge = ThemedColor(light: 0xC36B4E, dark: 0xD97757)
     static let codexEdge = ThemedColor(light: 0x5D60FF, dark: 0x676AFF)
     /// The letters on an agent badge: white, in both appearances, so the

@@ -1,0 +1,181 @@
+#!/bin/sh
+# Weir agy shim: intercepts `agy` invocations inside a Weir pty. `agy` takes no
+# hooks on its command line, so we keep a plugin in its folder that reports only
+# for a launch through here, and name this launch's run for it.
+#
+# Locate the real agy: WEIR_REAL_ANTIGRAVITY (an explicit override, a test's
+# stub), then the PATH without our own directory, then WEIR_FOUND_ANTIGRAVITY
+# (the one the new workspace sheet found), then the agent catalog's known
+# locations.
+
+set -u
+
+self="$(command -v -- "$0" 2>/dev/null || printf '%s\n' "$0")"
+case "$self" in
+  /*) ;;
+  *) self="$PWD/$self" ;;
+esac
+self_dir="$(cd -- "$(dirname -- "$self")" && pwd -P)"
+runtime_common="$self_dir/../agent-shim/runtime-common.sh"
+if [ -r "$runtime_common" ]; then
+  . "$runtime_common"
+  weir_ensure_run_id
+fi
+
+filtered_path=""
+old_ifs="$IFS"
+IFS=":"
+for entry in $PATH; do
+  [ "$entry" = "$self_dir" ] && continue
+  if [ -z "$filtered_path" ]; then
+    filtered_path="$entry"
+  else
+    filtered_path="$filtered_path:$entry"
+  fi
+done
+IFS="$old_ifs"
+
+found_agy="${WEIR_FOUND_ANTIGRAVITY:-}"
+unset WEIR_FOUND_ANTIGRAVITY
+
+real_agy="${WEIR_REAL_ANTIGRAVITY:-}"
+found_off_path=0
+if [ -z "$real_agy" ]; then
+  real_agy=$(PATH="$filtered_path" command -v agy 2>/dev/null || true)
+fi
+if [ -z "$real_agy" ] && [ -n "$found_agy" ] && [ -f "$found_agy" ] && [ -x "$found_agy" ]; then
+  real_agy="$found_agy"
+  found_off_path=1
+fi
+if [ -z "$real_agy" ] && command -v weir_find_known_agent >/dev/null 2>&1 &&
+  weir_find_known_agent "${WEIR_ANTIGRAVITY_KNOWN_LOCATIONS:-}" "$self"; then
+  real_agy="$weir_known_agent"
+  found_off_path=1
+fi
+
+if [ -z "$real_agy" ]; then
+  printf 'weir: agy not found in PATH or the usual install folders (searched without %s)\n' "$self_dir" >&2
+  exit 127
+fi
+
+# Set when agy is a script for the node beside it, found off the PATH
+# (`weir_add_agent_folder`).
+agy_node=""
+if [ "$found_off_path" = 1 ] && command -v weir_add_agent_folder >/dev/null 2>&1 &&
+  weir_add_agent_folder "$real_agy"; then
+  agy_node="$weir_agent_node"
+fi
+
+# Places the plugin when it is missing or an older version. Only a folder that
+# carries our mark is ours to change: one named the same without it is the
+# person's, and a link is followed by no one.
+#
+# Each file goes in by rename, in place, so another `agy` starting or a hook
+# running now finds the old file or the new one, and never a gap: a hook that
+# cannot start fails the agent's tool. The mark goes last with the version, and
+# first as a word no version is, so a run cut short is ours and is finished by
+# the next launch. A failure leaves `agy` to start, unwatched.
+weir_place_plugin() {
+  source_dir="$self_dir/../antigravity-plugin"
+  target="${HOME:-}/.gemini/config/plugins/weir"
+  [ -n "${HOME:-}" ] && [ -r "$source_dir/.weir-managed" ] || return 0
+  [ -L "$target" ] && return 0
+  if [ -e "$target" ]; then
+    [ -f "$target/.weir-managed" ] && [ ! -L "$target/.weir-managed" ] || return 0
+    cmp -s "$source_dir/.weir-managed" "$target/.weir-managed" && return 0
+  else
+    mkdir -p "$target" 2>/dev/null || return 0
+    printf 'placing\n' >"$target/.weir-managed" 2>/dev/null || return 0
+  fi
+  [ ! -L "$target/scripts" ] || return 0
+  mkdir -p "$target/scripts" 2>/dev/null || return 0
+  # The script before the hooks that run it, and the mark after everything.
+  for file in scripts/weir-dispatch plugin.json hooks.json .weir-managed; do
+    staged="$target/$file.staged-$$"
+    cp "$source_dir/$file" "$staged" 2>/dev/null && mv -f "$staged" "$target/$file" 2>/dev/null || {
+      rm -f "$staged"
+      return 0
+    }
+  done
+}
+
+# Reports this launch to the same receiver as agy's hooks, since agy sends
+# `SessionStart` only with the first prompt, and none for `--conversation`. A
+# run then shows from the start, and has a record for a failure before any hook
+# to show on. A subcommand or a question about agy itself starts no agent. With
+# a plugin that is not ours no hook would ever follow, so a run that could only
+# sit at rest is not begun. A path JSON cannot carry this way (a newline) is
+# refused by the receiver, which leaves the run to the first hook. A failure
+# here leaves agy to start.
+weir_report_launch() {
+  [ -f "${HOME:-}/.gemini/config/plugins/weir/.weir-managed" ] || return 0
+  case "${1:-}" in
+    "" | -*) ;;
+    *) return 0 ;;
+  esac
+  conversation=""
+  previous=""
+  for arg in "$@"; do
+    case "$arg" in
+      -h | --help | -help | -v | --version | -version) return 0 ;;
+      --conversation=*) conversation="${arg#--conversation=}" ;;
+    esac
+    [ "$previous" = "--conversation" ] && conversation="$arg"
+    previous="$arg"
+  done
+  json_escape='s/\\/\\\\/g; s/"/\\"/g'
+  workspace=$(printf '%s' "$PWD" | sed "$json_escape")
+  conversation=$(printf '%s' "$conversation" | sed "$json_escape")
+  printf '{"hook_event_name":"WeirLaunch","conversationId":"%s","workspacePaths":["%s"]}' \
+    "$conversation" "$workspace" | /bin/sh "$self_dir/weir-hook" >/dev/null 2>&1 || true
+}
+
+# Tells a pane with records apart from a demo's, whose directories are blank:
+# a demo run reports nothing and changes nothing of the person's.
+if [ -n "${WEIR_ANTIGRAVITY_AGENT_STATES_DIR:-}" ]; then
+  weir_place_plugin
+  export WEIR_ANTIGRAVITY_HOOK_DIR="$self_dir"
+  export WEIR_ANTIGRAVITY_WORKSPACE="$PWD"
+fi
+
+# `$$` becomes the agent's pid at the exec, which the host's liveness sweep
+# watches.
+export WEIR_ANTIGRAVITY_PID="$$"
+
+# Never hosted in tmux: `agy` reports its status to the terminal only outside
+# tmux, and with no idle hook either, a turn the person stopped would stay at
+# work until the next prompt.
+if [ -n "${TMUX:-}" ]; then
+  WEIR_AGENT_TMUX_HOST_MODE="manual"
+  export WEIR_AGENT_TMUX_HOST_MODE
+fi
+
+# Before our own `--settings` joins the arguments it reads.
+if [ -n "${WEIR_ANTIGRAVITY_AGENT_STATES_DIR:-}" ]; then
+  weir_report_launch "$@"
+fi
+
+# The plan's usage reaches us only through the status line, so the slot of the
+# person's own goes to our relay, which runs theirs. A launch with its own
+# `--settings`, which `agy` takes once, keeps it as it is and shows no usage.
+helper="$self_dir/../../MacOS/AgentIntegrationHookHelper"
+if [ -n "${WEIR_ANTIGRAVITY_AGENT_STATES_DIR:-}" ] && [ -x "$helper" ]; then
+  has_settings=0
+  for arg in "$@"; do
+    case "$arg" in
+      --settings | --settings=*) has_settings=1 ;;
+    esac
+  done
+  if [ "$has_settings" = 0 ]; then
+    quoted_helper="'$(printf '%s' "$helper" | sed "s/'/'\\\\''/g")'"
+    settings=$(printf '{}' | "$helper" statusline antigravity settings "$quoted_helper statusline antigravity" 2>/dev/null) || settings=""
+    case "$settings" in
+      *statusLine*) set -- --settings "$settings" "$@" ;;
+    esac
+  fi
+fi
+
+if [ -n "$agy_node" ]; then
+  exec "$agy_node" "$real_agy" "$@"
+fi
+exec "$real_agy" "$@"

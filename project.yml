@@ -258,6 +258,8 @@ targets:
           - "Resources/terminfo"
           - "Resources/claude-shim"
           - "Resources/codex-shim"
+          - "Resources/antigravity-shim"
+          - "Resources/antigravity-plugin"
           - "Resources/agent-shim"
           - "Resources/cli"
       - path: AgentIntegrationService/Shared
@@ -296,6 +298,12 @@ targets:
       # directory is prepended to `PATH` too, so `codex` invocations are
       # intercepted the way `claude` ones are.
       - path: Weir/Resources/codex-shim
+        type: folder
+      # The agy shim on the same terms, and the plugin it places in agy's
+      # folder, since agy takes no hooks on its command line.
+      - path: Weir/Resources/antigravity-shim
+        type: folder
+      - path: Weir/Resources/antigravity-plugin
         type: folder
       # Shared POSIX helpers sourced by both agent integrations. Kept as a
       # folder resource so the relative path from each hook stays stable.

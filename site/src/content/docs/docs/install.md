@@ -9,7 +9,7 @@ sidebar:
 
 - macOS 26 or later, on Apple Silicon.
 - Git.
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), or both. Weir runs the copies you already have, signed in as you.
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), the Antigravity CLI (`agy`), or any of them together. Weir runs the copies you already have, signed in as you.
 
 To see pull request status in the sidebar, also install `gh` or `glab` and sign in. Weir works without them.
 
@@ -34,6 +34,7 @@ Weir checks for updates once a day and installs one when you choose to. To check
 1. Quit Weir and move `Weir.app` to the Trash.
 2. Delete `~/Library/Application Support/Weir/` and `~/Library/Preferences/com.nekoder.Weir.plist`.
 3. If **Login Items & Extensions** still lists Weir, turn it off there.
+4. If you ran Antigravity in Weir and `~/.gemini/config/plugins/weir` holds a file named `.weir-managed`, delete that folder. Without that file, the folder is not Weir's.
 
 Each repository also keeps Weir's turn snapshots. To delete them, run this in the repository:
 

@@ -264,6 +264,81 @@ as they are fixed or confirmed.
   agent reports to Weir. Codex reports nothing until its first prompt, so
   until then the pane still shows the stop.
 
+## Antigravity
+
+These describe the Antigravity CLI (`agy`) 1.4.12.
+
+- **Weir places a plugin in `agy`'s own folder.** `agy` takes no hooks on its
+  command line, so the first `agy` run in a Weir pane places one at
+  `~/.gemini/config/plugins/weir`, marked by a `.weir-managed` file. A folder
+  there without the mark is left alone, and `agy` then reports nothing to Weir.
+  The plugin does nothing outside a Weir pane. `agy plugin disable weir` stops
+  the reporting. So does removing the folder, until the next `agy` run in a
+  Weir pane places it again.
+- **No approval card.** `agy` has no permission hook, and its `PreToolUse`
+  runs before its policy decides. A card there could appear for an action `agy`
+  would not ask about, or let through one it should ask about. So `agy`'s own
+  prompt asks, and Weir shows only that it waits. Its questions are answered in
+  the terminal too.
+- **Inside your own tmux, some of this does not show.** `agy` reports its
+  status to the terminal only outside tmux. Inside tmux, a permission prompt
+  does not show as a wait, and a stopped generation or a canceled question stays
+  at work until your next prompt. Weir never hosts `agy` in tmux, so this
+  takes a tmux you started yourself.
+- **Its hook always succeeds, whatever happens in Weir.** `agy` fails the tool
+  on anything but exit status 0 with valid JSON, against its documentation, and
+  its model retries the call. So a Weir problem shows as a run that reports
+  nothing, never as a failing tool, and a `git worktree add` Weir takes over
+  reaches the agent as a refusal with a reason.
+- **A stop is read from `agy`'s status report.** Esc, Ctrl+C, and "No" at its
+  prompt send no hook, so the turn ends when `agy` reports itself idle, and
+  "No" reads as interrupted, not as declined. A command refused with "No" is
+  left out only if `agy` has written the refusal when Weir reads the turn, and
+  `agy` does not always write it in time. Otherwise the command stays with no
+  result, so a refused test shows as a test with no pass or fail mark. Its usage
+  and commands end at your next input, however late the report comes.
+- **`/compact` shows no state of its own.** `agy` has no hook for compaction,
+  and stopping one with Esc sends none either, so a state for it could never
+  end. `/compact` with a message goes on to answer it, and is recorded as an
+  ordinary turn.
+- **Subagents' calls are not shown.** A subagent's tools do not appear in the
+  row. A turn `agy` begins itself, when a background command ends or a subagent
+  reports back, is recorded as a turn with no prompt.
+- **A subagent's wait does not always show, nor its work after the turn.** A
+  subagent waiting for approval shows as a wait in some runs and not in others.
+  `agy` shows it as Blocked, and `ctrl+k` there approves it. Weir also does not
+  report a subagent still running after the turn ends, because `agy`'s
+  `fullyIdle` is false for a pending `schedule` timer too, and no report says
+  when either ends.
+- **A turn that uses a subagent shows at least what it used.** Weir reads only
+  the parent's transcript, so the turn's tokens exclude the subagent's and are
+  marked as partial.
+- **A failure before the first request has no words.** Started offline, for
+  one, `agy` sends no hook and only reports an error to the terminal. Weir shows
+  the run as failed until `agy`'s next report, without the reason, since the
+  report's message does not reach it. `agy`'s own screen says why.
+- **A usage limit is read from the words of the failure, and no real limit has
+  been seen.** `agy` gives the failure only as text, so Weir takes words like
+  "exhausted your quota" as a limit and reads the reset from "reset after
+  3h0m0s". Those words come from `agy`'s program and a 429 we relayed ourselves,
+  not from a real limit. A real limit in other words shows as an ordinary stop,
+  with no "Notify When It Resets". A limit with no readable time shows without
+  one.
+- **A lost connection records two failures.** `agy` sends its request once more
+  by itself after the failure, so Weir records two failures, one of them a turn
+  with no prompt, and notifies of a stop twice. The run shows as running during
+  the retry, about four and a half minutes.
+- **With the plugin disabled, a run sits at rest.** Weir records each launch
+  itself, so after `agy plugin disable weir` the run still shows, and only
+  `agy`'s status reports move it: no turns, no tool, no prompt.
+- **Plan usage needs a status line of your own.** It comes only from the
+  status line, as for Claude Code, and is as fresh as `agy`'s last reply in
+  Weir. Only the weekly Gemini limit (`quota.gemini-weekly`) is shown. A launch
+  that passes `--settings` itself shows no usage, because `agy` takes that flag
+  once.
+- **No permission mode in the pane header.** `agy` does not report it, so
+  neither the mode nor the **Runs without asking** warning shows.
+
 ## For contributors: not yet confirmed on a real machine
 
 These need a signed approval service, sleep, or physical input that the

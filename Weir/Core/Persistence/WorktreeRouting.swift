@@ -78,7 +78,8 @@ extension WorktreeRouting {
                     },
                     routing: [
                         AgentKind.claude.rawValue: project.routeClaudeWorktrees,
-                        AgentKind.codex.rawValue: project.routeCodexWorktrees
+                        AgentKind.codex.rawValue: project.routeCodexWorktrees,
+                        AgentKind.antigravity.rawValue: project.routeAntigravityWorktrees
                     ],
                     worktrees: project.worktrees.map(\.workingDirectory.standardizedFileURL.path),
                     checks: project.checkCommands

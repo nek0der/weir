@@ -1,0 +1,11 @@
+{
+  "artifactDirectoryPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000006",
+  "conversationId": "00000000-0000-4000-8000-000000000006",
+  "hook_event_name": "SessionStart",
+  "lastUserInput": "Run the shell command `sleep 12` in the background as a daemon (IsDaemon true, WaitMsBeforeAsync 500) and immediately reply started without waiting.",
+  "modelName": "gemini-3.8-flash-high",
+  "transcriptPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000006/.system_generated/logs/transcript_full.jsonl",
+  "workspacePaths": [
+    "/Users/person/project"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "artifactDirectoryPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000008",
+  "conversationId": "00000000-0000-4000-8000-000000000008",
+  "hook_event_name": "SessionStart",
+  "lastUserInput": "say ok",
+  "modelName": "gemini-3.8-flash-high",
+  "transcriptPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000008/.system_generated/logs/transcript_full.jsonl",
+  "workspacePaths": [
+    "/Users/person/project"
+  ]
+}

@@ -6,7 +6,8 @@ import WeirDomain
 
 /// One agent, wherever one is named by a mark: a tab, a pane's header, a
 /// card, or a row (`AgentBadgeStrip` for a place with several):
-/// "Cl" and "Cx" in white on Claude's and Codex's brand colors. A session
+/// "Cl", "Cx", and "Ag" in white on Claude's, Codex's, and Antigravity's brand
+/// colors. A session
 /// with only a shell has none: its state glyph is the terminal's mark
 /// already, and a boxed word beside it would only say it again. The letters
 /// are always the same width, so the column the badge sits in lines up from
@@ -55,7 +56,7 @@ struct SessionAgentBadge: View {
                 .background {
                     let shape = RoundedRectangle(cornerRadius: WeirLayout.Supervision.agentBadgeCornerRadius, style: .continuous)
                     shape
-                        .fill(isFaint ? SupervisionTokens.closedMark.color : Self.fill(kind))
+                        .fill(isFaint ? AnyShapeStyle(SupervisionTokens.closedMark.color) : Self.fill(kind))
                         .overlay(shape.strokeBorder(
                             isFaint ? Color.clear : Self.edge(kind),
                             lineWidth: WeirLayout.Supervision.agentBadgeEdgeWidth
@@ -68,12 +69,38 @@ struct SessionAgentBadge: View {
         }
     }
 
-    private static func fill(_ kind: AgentKind) -> Color {
+    private static func fill(_ kind: AgentKind) -> AnyShapeStyle {
         switch kind {
-        case .claude: SupervisionTokens.claude.color
-        case .codex: SupervisionTokens.codex.color
+        case .claude: AnyShapeStyle(SupervisionTokens.claude.color)
+        case .codex: AnyShapeStyle(SupervisionTokens.codex.color)
+        case .antigravity: AnyShapeStyle(antigravityFill)
         }
     }
+
+    /// Antigravity's logo at 15pt: green, orange, and red along the top, fading
+    /// into a blue that holds the lower half. The middle row is all blue, and
+    /// sits higher at the center so the orange takes less of the badge than
+    /// the colors at its corners. One mesh rather than overlaid radial
+    /// gradients, as nothing finer than this shows at the size.
+    private static let antigravityFill: MeshGradient = {
+        let blue = SupervisionTokens.antigravity.color
+        return MeshGradient(
+            width: 3,
+            height: 3,
+            points: [
+                [0, 0], [0.5, 0], [1, 0],
+                [0, 0.62], [0.5, 0.4], [1, 0.62],
+                [0, 1], [0.5, 1], [1, 1]
+            ],
+            colors: [
+                SupervisionTokens.antigravityGreen.color,
+                SupervisionTokens.antigravityOrange.color,
+                SupervisionTokens.antigravityRed.color,
+                blue, blue, blue,
+                blue, blue, blue
+            ]
+        )
+    }()
 
     /// The fill's edge, which keeps the badge clear of a surface its fill
     /// stands too close to (`SupervisionTokens.claudeEdge`).
@@ -81,6 +108,7 @@ struct SessionAgentBadge: View {
         switch kind {
         case .claude: SupervisionTokens.claudeEdge.color
         case .codex: SupervisionTokens.codexEdge.color
+        case .antigravity: .clear
         }
     }
 }
