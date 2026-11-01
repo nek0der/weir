@@ -8,6 +8,7 @@ import SwiftUI
 /// alerts every main window carries (`WindowChromeHost`). It publishes its
 /// window to menu commands and reports its visible panes as that window.
 /// The controller bound the window's observers when it made the window.
+/// The handlers through which its views reach App's actions start here.
 struct MainWindowContent<Root: View>: View {
     let state: AppState
     let window: ProjectWindowState
@@ -24,6 +25,10 @@ struct MainWindowContent<Root: View>: View {
         }
         .ignoresSafeArea()
         .modifier(WindowChromeHost(state: state, window: window))
+        // Over the chrome too, which runs the palette's rows through it.
+        .environment(\.supervisionWindowHandler, SupervisionWindowActions.handler(window: window, state: state))
+        .environment(\.primaryActionHandler, SupervisionWindowActions.primaryActionHandler(window: window, state: state))
+        .environment(\.restoreHandler, RestoreActions.handler(window: window, state: state))
         .environment(\.paneVisibilityReporter, PaneVisibilityReporter(windowID: window.id, registry: state.windowRegistry))
         // The window's own state, for the views that act on this window
         // rather than the one with the keyboard (a sidebar row's click).

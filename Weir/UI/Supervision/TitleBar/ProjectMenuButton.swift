@@ -164,6 +164,7 @@ struct ProjectDropdown: View {
     @Environment(WindowRegistry.self) private var registry
     @Environment(SettingsStore.self) private var settings
     @Environment(\.frecencyStore) private var frecencyStore
+    @Environment(\.supervisionWindowHandler) private var actions
     @Environment(\.popoverSurface.ground) private var ground
     @State private var query = ""
     @State private var selectedID: UUID?
@@ -255,7 +256,7 @@ struct ProjectDropdown: View {
                 shortcut: settings.settings.keyboard.shortcut(for: .openFolder)?.displayString
             ) {
                 dismiss()
-                SupervisionWindowActions.openFolder(from: window, session: session, registry: registry, frecency: frecencyStore)
+                actions?.openFolder()
             }
             if let currentProjectID, let project = session.project(currentProjectID) {
                 DropdownSeparator()

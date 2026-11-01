@@ -136,9 +136,16 @@ and the new worktree sheet take only the stores they use:
 review's hunk discards), and `NewSessionStores`. App builds them in
 `App/AppState+ActionStores.swift`, except that the sheet builds its own from
 the environment; a test builds its own. The other `*Actions` types
-(`RestoreActions`, `CommitAndPRActions`, `MenuBarActions`,
-`AllProjectsActions`, `SupervisionWindowActions`) still take `AppState`. Each
-moves off it the same way the next time it changes.
+(`CommitAndPRActions`, `MenuBarActions`, `AllProjectsActions`) still take
+`AppState`. Each moves off it the same way the next time it changes.
+
+`RestoreActions` and `SupervisionWindowActions` live in App and take `AppState`
+there. A view reaches them by reading `RestoreHandler`, `PrimaryActionHandler`,
+or `SupervisionWindowHandler` from the environment. These are structs of
+closures in Presentation, bound to one window, and `MainWindowContent` builds
+them and hands them down. App may name what is in UI (`ChangesPanelActions`,
+`ProjectFolderPanel`), so these two types do, and UI naming them back closes a
+cycle. `ChangesTurnRow` and `MenuBarActions` still do.
 
 `scripts/check-localization.sh` fails when a string to translate has no
 finished Japanese translation.
@@ -210,8 +217,9 @@ from the session, the attention list, and the window
 (`SessionSidebarModel+Session.swift`, `DecisionBarModel+Session.swift`, …),
 so the rules can be tested without drawing anything. What a button does lives
 in an `*Actions` type beside the view (`ChangesPanelActions`,
-`ReviewTabActions`, `SupervisionWindowActions`), which is handed the stores it
-uses (see "Layers and dependency direction").
+`ReviewTabActions`), which is handed the stores it uses, or in one in App that
+the view reaches through a handler (`SupervisionWindowActions`, see "Layers and
+dependency direction").
 
 ### Per-window state and the shared session
 

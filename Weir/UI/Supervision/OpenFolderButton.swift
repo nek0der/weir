@@ -12,17 +12,14 @@ struct OpenFolderButton: View {
     /// shows in the window rather than under the sheet.
     var beforeOpening: () -> Void = {}
 
-    @Environment(WorkspaceSession.self) private var session
-    @Environment(WindowRegistry.self) private var registry
-    @Environment(ProjectWindowState.self) private var window
     @Environment(SettingsStore.self) private var settings
-    @Environment(\.frecencyStore) private var frecencyStore
+    @Environment(\.supervisionWindowHandler) private var actions
     @Environment(\.locale) private var locale
 
     var body: some View {
         Button {
             beforeOpening()
-            SupervisionWindowActions.openFolder(from: window, session: session, registry: registry, frecency: frecencyStore)
+            actions?.openFolder()
         } label: {
             // The command's own title, as the File menu and project ▾ name it.
             Text(verbatim: WeirShortcutAction.openFolder.localizedTitle.resolved(in: locale))

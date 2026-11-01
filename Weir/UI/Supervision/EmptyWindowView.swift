@@ -15,6 +15,7 @@ struct EmptyWindowView: View {
     @Environment(ProjectWindowState.self) private var window
     @Environment(SettingsStore.self) private var settings
     @Environment(\.frecencyStore) private var frecencyStore
+    @Environment(\.supervisionWindowHandler) private var actions
 
     private typealias Layout = WeirLayout.Supervision
 
@@ -44,7 +45,7 @@ struct EmptyWindowView: View {
                 "Open Folder…",
                 shortcut: settings.settings.keyboard.shortcut(for: .openFolder)?.displayString
             ) {
-                SupervisionWindowActions.openFolder(from: window, session: session, registry: registry, frecency: frecencyStore)
+                actions?.openFolder()
             }
         }
         .frame(width: WeirLayout.Supervision.emptyWindowColumnWidth)

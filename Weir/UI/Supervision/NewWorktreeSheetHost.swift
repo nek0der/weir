@@ -20,6 +20,7 @@ extension View {
 }
 
 private struct NewWorktreeSheetHost: ViewModifier {
+    @Environment(\.supervisionWindowHandler) private var actions
     let state: AppState
     @Environment(ProjectWindowState.self) private var window
     @Environment(SessionLaunchStore.self) private var launches
@@ -75,7 +76,7 @@ private struct NewWorktreeSheetHost: ViewModifier {
 
     private func takeCommand(_ command: WindowCommand) -> Bool {
         guard command == .newWorktreeNow else { return false }
-        if !SupervisionWindowActions.introduceInstantWorktree(in: window, keyboard: state.settingsStore.settings.keyboard) {
+        if actions?.introduceInstantWorktree() != true {
             createWorktreeAtOnce()
         }
         return true
