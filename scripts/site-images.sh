@@ -38,6 +38,7 @@ for look in dark light; do
   capture "hero-${look}" "${look}" en "" ""
   capture "needs-attention-${look}" "${look}" en needs-attention ""
   capture "all-projects-${look}" "${look}" en all-projects ""
+  capture "review-${look}" "${look}" en review ""
 done
 
 # The documents' column is narrower than the window, so all but the whole

@@ -74,13 +74,18 @@ extension DemoFixture {
         }
         switch end {
         case .prompt where lines.isEmpty:
-            return reset
+            return "\(reset) && \(reportsPrinted)"
         case .prompt:
-            return "\(reset) && printf '%b\\n' '\(body)'"
+            return "\(reset) && printf '%b\\n' '\(body)' && \(reportsPrinted)"
         case .holdsScreen:
-            return "\(reset) && printf '\\033[?25l%b' '\(body)' && read -r; printf '\\033[?25h'"
+            return "\(reset) && printf '\\033[?25l%b' '\(body)' && \(reportsPrinted) && read -r; printf '\\033[?25h'"
         }
     }
+
+    /// Tells the capture script this pane's scene is on screen. A shell can
+    /// take seconds to start on a busy Mac, and until the scene runs the pane
+    /// shows the contributor's own prompt and the command being typed.
+    private static let reportsPrinted = "{ [ -z \"$WEIR_DEMO_PANES_READY\" ] || : > \"$WEIR_DEMO_PANES_READY/$$\"; }"
 
     /// A line as `%b` reads it inside single quotes: a backslash doubled, a
     /// quote closed, escaped, and opened again, and the color around it.

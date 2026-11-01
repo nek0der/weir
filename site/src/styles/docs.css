@@ -80,3 +80,7 @@
   .docs-nav .lang-btn { width: 28px; height: 28px; padding: 0; justify-content: center; }
   .docs-nav button[data-open-modal] { width: 28px; padding: 0; justify-content: center; }
 }
+
+/* A capture of one small surface stays at the app's own size: the column would blow it up. */
+.sl-markdown-content img[src*="needs-attention-"] { width: 380px; max-width: 100%; height: auto }
+.sl-markdown-content img[src*="approval-"] { width: 400px; max-width: 100%; height: auto }

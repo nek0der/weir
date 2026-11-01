@@ -46,7 +46,7 @@ From the repository's root:
 make site-images
 ```
 
-This builds the app and takes every capture from demo mode, whose data and time of day are fixed: three in each look for the landing page, and four in the dark look in English and Japanese for the documents, under `src/assets/captures/docs/`. It needs the same Screen Recording grant as `make screenshot`. Stay off the keyboard and mouse while it runs: the app takes what you type, and a run stops if another app comes to the front. No image changes until every capture has succeeded.
+This builds the app and takes every capture from demo mode, whose data and time of day are fixed: four in each look for the landing page, and four in the dark look in English and Japanese for the documents, under `src/assets/captures/docs/`. It needs the same Screen Recording grant as `make screenshot`. Stay off the keyboard and mouse while it runs: the app takes what you type, and a run stops if another app comes to the front. No image changes until every capture has succeeded.
 
 The documents' captures crop to the surface they are about, which the app reports, so a change of layout needs no new coordinates. The fixture's own text, such as prompts and terminal output, stays English in the Japanese captures.
 
