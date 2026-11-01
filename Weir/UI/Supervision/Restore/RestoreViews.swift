@@ -394,12 +394,3 @@ struct RestoreUndoButton: View {
         ))
     }
 }
-
-extension View {
-    /// The handler a supervision window's bars and changes panel use for
-    /// its restores. Its own modifier, so the window's long chain of
-    /// modifiers stays within what the type checker takes.
-    func restoreWindow(_ window: ProjectWindowState, state: AppState) -> some View {
-        environment(\.restoreHandler, RestoreActions.handler(window: window, state: state))
-    }
-}

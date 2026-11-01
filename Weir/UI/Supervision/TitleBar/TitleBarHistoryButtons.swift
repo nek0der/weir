@@ -13,15 +13,16 @@ struct TitleBarHistoryButtons: View {
     @Environment(WorkspaceSession.self) private var session
     @Environment(ProjectWindowState.self) private var window
     @Environment(SettingsStore.self) private var settings
+    @Environment(\.supervisionWindowHandler) private var actions
 
     var body: some View {
         let model = TitleBarHistoryModel(session: session, window: window.id)
         HStack(spacing: WeirLayout.Supervision.titleBarHistoryButtonSpacing) {
             button(.goBack, name: "Go Back", isEnabled: model.canGoBack) {
-                SupervisionWindowActions.goBack(in: window, session: session)
+                actions?.goBack()
             }
             button(.goForward, name: "Go Forward", isEnabled: model.canGoForward) {
-                SupervisionWindowActions.goForward(in: window, session: session)
+                actions?.goForward()
             }
         }
         .fixedSize()

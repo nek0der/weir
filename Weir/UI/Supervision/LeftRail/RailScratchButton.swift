@@ -62,6 +62,7 @@ private struct RailScratchContent: View, Equatable {
     @Environment(ApprovalPresentationStore.self) private var approvals
     @Environment(\.surfaceRegistry) private var registry
     @Environment(\.agentProjection) private var agentProjection
+    @Environment(\.supervisionWindowHandler) private var windowActions
 
     /// The button's frame, which a card asked for from here hangs beside. Not
     /// read by `body`, so a move does not draw the button again.
@@ -81,7 +82,7 @@ private struct RailScratchContent: View, Equatable {
             hint: model.hint,
             spoken: model.spoken
         ) {
-            SupervisionWindowActions.showScratch(in: window, session: session)
+            windowActions?.showScratch()
         }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame = $0 }
         .contextMenu {

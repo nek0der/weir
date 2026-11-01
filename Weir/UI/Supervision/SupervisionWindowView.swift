@@ -16,6 +16,7 @@ struct SupervisionWindowView: View {
     @Environment(ProjectWindowState.self) private var window
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.supervisionWindowHandler) private var actions
     /// The body under the title bar, in global coordinates.
     @State private var bodyFrame: CGRect = .zero
 
@@ -183,11 +184,9 @@ struct SupervisionWindowView: View {
         // before it acts, as after a change of item.
         .onChange(of: appearsActive) { _, isActive in
             if isActive {
-                SupervisionWindowActions.windowCameToFront(window)
+                actions?.cameToFront()
             }
         }
-        .environment(\.primaryActionHandler, SupervisionWindowActions.primaryActionHandler(window: window, state: state))
-        .restoreWindow(window, state: state)
         .environment(\.reviewTabHandler, ReviewTabActions.handler(
             window: window,
             stores: state.reviewTabStores,
@@ -227,58 +226,13 @@ struct SupervisionWindowView: View {
         .hostsNewWorktreeSheet(state: state)
     }
 
-    /// Carries out the commands that are the whole window's, and says
-    /// whether `command` was one.
+    /// Hands on the commands that are the whole window's, and says whether
+    /// `command` was one. The sidebar's slide is the view's to animate.
     private func takeCommand(_ command: WindowCommand) -> Bool {
-        switch command {
-        case .toggleSidebar:
-            withAnimation(reduceMotion ? nil : WeirMotion.sidebarToggle) {
-                SupervisionWindowActions.toggleSidebar(in: session, window: window)
-            }
-        case .toggleChangesPanel:
-            ChangesPanelActions.toggle(window, session: session)
-        case .showScratch:
-            SupervisionWindowActions.showScratch(in: window, session: session)
-        case .showNeedsAttention:
-            SupervisionWindowActions.showNeedsAttention(in: window)
-        case .showOpenTabs:
-            SupervisionWindowActions.showOpenTabs(in: window)
-        case .showProjectMenu, .showWorktreeMenu, .togglePlanUsage:
-            openControlsLayer(command)
-        case .newWindow:
-            SupervisionWindowActions.newWindow(from: window, session: session, registry: state.windowRegistry)
-        case .closeWindow:
-            SupervisionWindowActions.closeWindow(window, registry: state.windowRegistry, session: state.session)
-        // The window's own, so the sheet opens whatever its body shows.
-        case .newWorktree:
-            SupervisionWindowActions.newSession(in: window, session: session)
-        case .openFolder:
-            SupervisionWindowActions.openFolder(
-                from: window,
-                session: session,
-                registry: state.windowRegistry,
-                frecency: state.frecencyStore
-            )
-        case .focusSidebar:
-            SupervisionWindowActions.focusSidebar(in: session, window: window)
-        default:
-            return false
-        }
-        return true
-    }
-
-    /// Opens a title bar dropdown or the rail's plan usage panel from its key.
-    private func openControlsLayer(_ command: WindowCommand) {
-        switch command {
-        case .showProjectMenu:
-            SupervisionWindowActions.showTitleBarMenu(.project, anchor: window.projectMenuAnchor, in: window)
-        case .showWorktreeMenu:
-            SupervisionWindowActions.showTitleBarMenu(.worktree, anchor: window.worktreeMenuAnchor, in: window)
-        // It hangs from its rail button alone.
-        case .togglePlanUsage where !window.areRailsHidden:
-            window.togglePlanUsage(session: session)
-        default:
-            break
+        guard let actions else { return false }
+        guard command == .toggleSidebar else { return actions.takeCommand(command) }
+        return withAnimation(reduceMotion ? nil : WeirMotion.sidebarToggle) {
+            actions.takeCommand(command)
         }
     }
 

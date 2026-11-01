@@ -30,7 +30,7 @@ struct SessionSidebarView: View {
     @Environment(\.prStatusSyncer) private var prStatusSyncer
     @Environment(\.surfaceRegistry) private var registry
     @Environment(\.agentProjection) private var agentProjection
-    @Environment(\.frecencyStore) private var frecencyStore
+    @Environment(\.supervisionWindowHandler) private var windowActions
     @Environment(\.locale) private var locale
     @Environment(UsageLimitResetSync.self) private var resetSync: UsageLimitResetSync?
     @State private var renamingRow: ContainerID?
@@ -86,12 +86,7 @@ struct SessionSidebarView: View {
                 // A folder opened as a project, as ⌘O does; a header's ＋
                 // makes a new worktree in its own.
                 Button {
-                    SupervisionWindowActions.openFolder(
-                        from: window,
-                        session: session,
-                        registry: windowRegistry,
-                        frecency: frecencyStore
-                    )
+                    windowActions?.openFolder()
                 } label: {
                     Image(systemName: "plus")
                         .font(.supervision(.icon, weight: .medium))
@@ -259,8 +254,8 @@ struct SessionSidebarView: View {
         let id = header.id
         let other = otherWindow(showing: id, in: others)
         return SidebarProjectActions(
-            newWorktree: { [window] in
-                SupervisionWindowActions.newWorktree(inProject: id, from: window, session: session, registry: windowRegistry)
+            newWorktree: { [windowActions] in
+                windowActions?.newWorktree(id)
             },
             // ⌘N makes one in the window's own project only.
             newWorktreeShortcut: header.isCurrent ? settings.settings.keyboard.shortcut(for: .newWorktree) : nil,
@@ -625,15 +620,8 @@ struct SessionSidebarView: View {
         let other = row.id.projectID.flatMap { otherWindow(showing: $0, in: others) }
         // Hidden while the card is already up for it.
         guard !(other ?? window).approvalCard.isPresenting(key, in: approvals) else { return nil }
-        return { [window] in
-            SupervisionWindowActions.answer(
-                request,
-                inProject: row.id.projectID,
-                from: window,
-                approvals: approvals,
-                session: session,
-                registry: windowRegistry
-            )
+        return { [windowActions] in
+            windowActions?.answer(request, row.id.projectID)
         }
     }
 
@@ -694,8 +682,8 @@ struct SessionSidebarView: View {
                 prStatusSyncer.map { syncer in { syncer.refreshNow(container: row.id) } }
             },
             revealInFinder: row.isMissing ? nil : { NSWorkspace.shared.activateFileViewerSelecting([folder]) },
-            openChangesPanel: row.isMissing ? nil : { [window] in
-                SupervisionWindowActions.openChangesPanel(row.id, from: window, session: session, registry: windowRegistry)
+            openChangesPanel: row.isMissing ? nil : { [windowActions] in
+                windowActions?.openChangesPanel(row.id)
             },
             removeFromWorking: worktree.flatMap { worktree in
                 guard SessionSidebarModel.offersRemoveFromWorking(row, worktree: worktree, hasTabs: hasTabs),

@@ -26,6 +26,7 @@ struct WindowChromeHost: ViewModifier {
     @State private var loadIssue: SessionLoadIssue?
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.supervisionWindowHandler) private var actions
 
     /// The pending clipboard request when this window asks it
     /// (`AppState.clipboardRequestPlacement`): the shown window that drew
@@ -64,12 +65,7 @@ struct WindowChromeHost: ViewModifier {
                 agentProjection: state.agentProjection,
                 window: window.id,
                 runsInWindow: { action in
-                    SupervisionWindowActions.runPaletteAction(
-                        action,
-                        in: window,
-                        state: state,
-                        opensInNewWindow: execution.opensInNewWindow
-                    )
+                    actions?.runPaletteAction(action, execution.opensInNewWindow) ?? .notHandled
                 }
             )
         case .toggleNotificationHistory:

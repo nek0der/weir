@@ -1,13 +1,15 @@
 // SupervisionWindowActions.swift
 // Weir — the supervision window's own actions, shared by the menu bar and the palette.
 
+import Foundation
 import os
-import SwiftUI
 import WeirDomain
 
 private let log = Logger.weir("supervision.keys")
 
-/// What the supervision window's own keys do. The menu bar runs them
+/// What the supervision window's own keys and buttons do, in App, so views
+/// reach it through `SupervisionWindowHandler` rather than by name, as they
+/// reach the rest through `PrimaryActionHandler`. The menu bar runs them
 /// in the key main window (`WindowRegistry.commandTarget`); the palette
 /// reaches them through a notification the window's root receives, since
 /// Core, where the palette dispatches, cannot name a window.
@@ -562,6 +564,92 @@ enum SupervisionWindowActions {
         return true
     }
 
+    /// Carries out the commands that are the whole window's, and says
+    /// whether `command` was one.
+    static func takeCommand(_ command: WindowCommand, window: ProjectWindowState, state: AppState) -> Bool {
+        let session = state.session
+        switch command {
+        case .toggleSidebar:
+            toggleSidebar(in: session, window: window)
+        case .toggleChangesPanel:
+            ChangesPanelActions.toggle(window, session: session)
+        case .showScratch:
+            showScratch(in: window, session: session)
+        case .showNeedsAttention:
+            showNeedsAttention(in: window)
+        case .showOpenTabs:
+            showOpenTabs(in: window)
+        case .showProjectMenu, .showWorktreeMenu, .togglePlanUsage:
+            openControlsLayer(command, window: window, session: session)
+        case .newWindow:
+            newWindow(from: window, session: session, registry: state.windowRegistry)
+        case .closeWindow:
+            closeWindow(window, registry: state.windowRegistry, session: session)
+        // The window's own, so the sheet opens whatever its body shows.
+        case .newWorktree:
+            newSession(in: window, session: session)
+        case .openFolder:
+            openFolder(from: window, session: session, registry: state.windowRegistry, frecency: state.frecencyStore)
+        case .focusSidebar:
+            focusSidebar(in: session, window: window)
+        default:
+            return false
+        }
+        return true
+    }
+
+    /// Opens a title bar dropdown or the rail's plan usage panel from its key.
+    private static func openControlsLayer(_ command: WindowCommand, window: ProjectWindowState, session: WorkspaceSession) {
+        switch command {
+        case .showProjectMenu:
+            showTitleBarMenu(.project, anchor: window.projectMenuAnchor, in: window)
+        case .showWorktreeMenu:
+            showTitleBarMenu(.worktree, anchor: window.worktreeMenuAnchor, in: window)
+        // It hangs from its rail button alone.
+        case .togglePlanUsage where !window.areRailsHidden:
+            window.togglePlanUsage(session: session)
+        default:
+            break
+        }
+    }
+
+    /// What the window hands its views for its own actions.
+    static func handler(window: ProjectWindowState, state: AppState) -> SupervisionWindowHandler {
+        SupervisionWindowHandler(
+            windowID: window.id,
+            takeCommand: { [window, state] command in takeCommand(command, window: window, state: state) },
+            runPaletteAction: { [window, state] action, opensInNewWindow in
+                runPaletteAction(action, in: window, state: state, opensInNewWindow: opensInNewWindow)
+            },
+            cameToFront: { [window] in windowCameToFront(window) },
+            goBack: { [window, state] in goBack(in: window, session: state.session) },
+            goForward: { [window, state] in goForward(in: window, session: state.session) },
+            showScratch: { [window, state] in showScratch(in: window, session: state.session) },
+            openFolder: { [window, state] in
+                openFolder(from: window, session: state.session, registry: state.windowRegistry, frecency: state.frecencyStore)
+            },
+            newWorktree: { [window, state] projectID in
+                newWorktree(inProject: projectID, from: window, session: state.session, registry: state.windowRegistry)
+            },
+            answer: { [window, state] request, projectID in
+                answer(
+                    request,
+                    inProject: projectID,
+                    from: window,
+                    approvals: state.approvalPresentation,
+                    session: state.session,
+                    registry: state.windowRegistry
+                )
+            },
+            openChangesPanel: { [window, state] row in
+                openChangesPanel(row, from: window, session: state.session, registry: state.windowRegistry)
+            },
+            introduceInstantWorktree: { [window, state] in
+                introduceInstantWorktree(in: window, keyboard: state.settingsStore.settings.keyboard)
+            }
+        )
+    }
+
     /// What the window hands its panes for ⌘⏎ and its bars for their
     /// buttons.
     static func primaryActionHandler(window: ProjectWindowState, state: AppState) -> PrimaryActionHandler {
@@ -653,34 +741,4 @@ enum SupervisionWindowActions {
             window: window
         )
     }
-}
-
-/// The window's way to ⌘⏎, handed to each pane's surface, and to
-/// the decision bar's buttons. Equal by window, so a redraw of the window
-/// does not tell every pane it changed.
-struct PrimaryActionHandler: Equatable, Sendable {
-    let windowID: WindowID
-    let handle: @MainActor @Sendable (PrimaryKeyPress, UUID) -> Bool
-    /// The bar's primary button, clicked: the same action, without the
-    /// gate, which only keeps a key press from landing on an item it was
-    /// not meant for.
-    let perform: @MainActor @Sendable (PrimaryAction, UUID) -> Void
-    /// The bar's Undo on its "Done" line.
-    let undo: @MainActor @Sendable (ViewedLineUndo, UUID) -> Void
-    /// The stop's ⋯ "Start New Conversation" and "Show Partial Changes",
-    /// by the stop's item and its pane.
-    let startNewConversation: @MainActor @Sendable (AttentionItemID, UUID) -> Void
-    let showPartialChanges: @MainActor @Sendable (AttentionItemID, UUID) -> Void
-    /// The bar's "Review Unviewed": the window's review tab on the pane's
-    /// unviewed turns.
-    let openReview: @MainActor @Sendable (UUID, ConversationKey?) -> Void
-
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.windowID == rhs.windowID
-    }
-}
-
-extension EnvironmentValues {
-    /// Nil outside a supervision window, where ⌘⏎ is the terminal's.
-    @Entry var primaryActionHandler: PrimaryActionHandler?
 }
