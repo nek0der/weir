@@ -843,4 +843,38 @@ extension PaneHeaderTests {
         )
     }
 
+    // MARK: - A CLI not tied to one vendor
+
+    @Test func theSettings_nameTheRoleModelAndService_andTheServiceGoesWithTheTokens() {
+        let english = Locale(identifier: "en")
+        var label = PaneHeaderLabel(name: "n", detail: nil, agentKind: .opencode, agentName: "OpenCode", model: "GPT-5.5", effort: "high")
+        label.modelUpstream = "OpenRouter"
+        label.agentProfile = "plan"
+        #expect(label.settingsText(tokens: "12K tok", locale: english) == "plan · GPT-5.5 · OpenRouter · high · 12K tok")
+        #expect(label.settingsText(showsUpstream: false, locale: english) == "plan · GPT-5.5 · high")
+    }
+
+    @Test func aRole_hasASpokenLabel_inBothLanguages() {
+        var label = PaneHeaderLabel(name: "n", detail: nil, agentKind: .opencode, agentName: "OpenCode")
+        #expect(label.spokenProfile(locale: Locale(identifier: "en")) == nil)
+        label.agentProfile = "plan"
+        #expect(label.spokenProfile(locale: Locale(identifier: "en")) == "Agent: plan")
+        #expect(label.spokenProfile(locale: Locale(identifier: "ja")) == "エージェント：plan")
+    }
+
+    @Test func aServiceThatIsTheAgentItself_isNotSaidAgain() {
+        var label = PaneHeaderLabel(name: "n", detail: nil, agentKind: .opencode, agentName: "OpenCode", model: "Big Pickle")
+        label.modelUpstream = "OpenCode"
+        #expect(label.distinctUpstream == nil)
+        #expect(label.settingsText(locale: Locale(identifier: "en")) == "Big Pickle")
+    }
+
+    @Test func aLongModelName_isCutInTheMiddle_soItsEndStillTellsItApart() {
+        let long = "anthropic/claude-opus-5-5-20261101-thinking-extended-1m"
+        let short = PaneHeaderLabel.shortModel(long)
+        #expect(short.count == PaneHeaderLabel.modelCharacterLimit)
+        #expect(short.hasPrefix("anthropic/claude"))
+        #expect(short.hasSuffix("nded-1m"))
+        #expect(PaneHeaderLabel.shortModel("Opus 5.5") == "Opus 5.5")
+    }
 }

@@ -1,0 +1,41 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "cwd": "/repo"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "ses_e67f64f4fffec61Tbm4Oz30TJ0",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "ERROR 401",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "extension",
+      "name": "session.step.started",
+      "payload": {}
+    }
+  ],
+  [
+    {
+      "type": "failed",
+      "error": "stub failure",
+      "kind": "signIn"
+    }
+  ]
+]

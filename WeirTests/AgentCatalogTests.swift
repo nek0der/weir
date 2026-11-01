@@ -9,7 +9,7 @@ import Testing
 
 struct AgentCatalogTests {
     @Test func everyAgent_hasOneEntry_inTheMenusOrder() {
-        #expect(AgentCatalog.entries.map(\.kind) == [.claude, .codex, .antigravity])
+        #expect(AgentCatalog.entries.map(\.kind) == [.claude, .codex, .antigravity, .opencode])
         #expect(Set(AgentCatalog.entries.map(\.kind)) == Set(AgentKind.allCases))
         for kind in AgentKind.allCases {
             let entry = AgentCatalog.entry(for: kind)
@@ -21,6 +21,8 @@ struct AgentCatalogTests {
         #expect(AgentCatalog.entry(for: .codex).displayName == "Codex")
         #expect(AgentCatalog.entry(for: .antigravity).displayName == "Antigravity")
         #expect(AgentKind.antigravity.launchCommand == "agy")
+        #expect(AgentCatalog.entry(for: .opencode).displayName == "OpenCode")
+        #expect(AgentKind.opencode.launchCommand == "opencode")
     }
 
     // MARK: - The rules, with the file system given
@@ -182,7 +184,12 @@ struct AgentCatalogTests {
 
     @Test func theKnownLocations_reachAPane_oneALine_inOrder_withTheHomeFolderFilledIn() {
         let environment = AgentCatalog.knownLocationsEnvironment(home: "/Users/someone")
-        #expect(Set(environment.keys) == ["WEIR_CLAUDE_KNOWN_LOCATIONS", "WEIR_CODEX_KNOWN_LOCATIONS", "WEIR_ANTIGRAVITY_KNOWN_LOCATIONS"])
+        #expect(Set(environment.keys) == [
+            "WEIR_CLAUDE_KNOWN_LOCATIONS",
+            "WEIR_CODEX_KNOWN_LOCATIONS",
+            "WEIR_ANTIGRAVITY_KNOWN_LOCATIONS",
+            "WEIR_OPENCODE_KNOWN_LOCATIONS"
+        ])
         for entry in AgentCatalog.entries {
             let lines = environment[entry.knownLocationsVariable]?.components(separatedBy: "\n")
             // The star stays: the shim's shell expands it at launch.

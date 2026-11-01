@@ -55,6 +55,9 @@ struct ReviewTabHandler: Equatable {
     /// Starts the terminal of a destination that has none yet, for the
     /// insert (`ReviewInsertion.Target.startPane`).
     let startPane: @MainActor (UUID) async -> Bool
+    /// Brings the review's session forward in a pane showing several, and says
+    /// whether it is on screen (`ReviewInsertion.Target.showSession`).
+    let showSession: @MainActor (ReviewDestination) async -> Bool
     /// Every comment went into the pane given: the tab closes to it, if it
     /// is still the one the insert started in; what it did decides whether
     /// the review says it on a toast.

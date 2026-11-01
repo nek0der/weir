@@ -16,6 +16,7 @@ mod declined_waits;
 mod env;
 mod git;
 mod hunks;
+mod preparations;
 mod process;
 mod records;
 pub mod restore;
@@ -59,6 +60,7 @@ use weir_agent_model::{
 use weir_provider_antigravity::AntigravityAdapter;
 use weir_provider_claude::ClaudeAdapter;
 use weir_provider_codex::CodexAdapter;
+use weir_provider_opencode::OpenCodeAdapter;
 use worktree_lock::{Shared, WorktreeLockPaths};
 
 /// How many times a prompt's hook tries a busy run record lock: two
@@ -88,6 +90,10 @@ pub enum HookOutcome {
     Rejected(String),
     /// The provider id is not registered in this build.
     UnknownProvider,
+    /// What a pane has on screen was not written: its record was busy past the
+    /// wait, or does not exist yet. Unlike any other event it is said by exit
+    /// status, as its caller holds the fact and can say it again.
+    NotRecorded(String),
     /// The worktree route has something to tell the provider: a command to run
     /// in place of the agent's, or a worktree it set up. The helper prints
     /// `message` to stderr, `stdout` to stdout, and exits with `code`.
@@ -104,6 +110,8 @@ impl HookOutcome {
     pub fn exit_code(&self) -> i32 {
         match self {
             Self::Intercepted { code, .. } => *code,
+            // `EX_TEMPFAIL`: try again.
+            Self::NotRecorded(_) => 75,
             _ => 0,
         }
     }
@@ -115,10 +123,12 @@ pub fn adapter_for(id: &str) -> Option<&'static dyn ProviderAdapter> {
     static ANTIGRAVITY: AntigravityAdapter = AntigravityAdapter;
     static CLAUDE: ClaudeAdapter = ClaudeAdapter;
     static CODEX: CodexAdapter = CodexAdapter;
+    static OPENCODE: OpenCodeAdapter = OpenCodeAdapter;
     match id {
         weir_provider_antigravity::PROVIDER_ID => Some(&ANTIGRAVITY),
         weir_provider_claude::PROVIDER_ID => Some(&CLAUDE),
         weir_provider_codex::PROVIDER_ID => Some(&CODEX),
+        weir_provider_opencode::PROVIDER_ID => Some(&OPENCODE),
         _ => None,
     }
 }
@@ -134,6 +144,7 @@ pub fn installed_providers() -> Vec<&'static ProviderDescriptor> {
         weir_provider_antigravity::PROVIDER_ID,
         weir_provider_claude::PROVIDER_ID,
         weir_provider_codex::PROVIDER_ID,
+        weir_provider_opencode::PROVIDER_ID,
     ]
     .into_iter()
     .filter_map(|id| adapter_for(id).map(ProviderAdapter::descriptor))
@@ -151,6 +162,7 @@ pub fn installed_recipes() -> Vec<(&'static ProviderId, InstallRecipe)> {
         weir_provider_antigravity::PROVIDER_ID,
         weir_provider_claude::PROVIDER_ID,
         weir_provider_codex::PROVIDER_ID,
+        weir_provider_opencode::PROVIDER_ID,
     ]
     .into_iter()
     .filter_map(|id| {
@@ -192,18 +204,18 @@ impl<'a> HookRuntime<'a> {
 /// exit status zero. Only a successful worktree intercept exits non-zero.
 #[must_use]
 pub fn run_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>) -> HookOutcome {
+    let _deadline = git::HookDeadline::begin(runtime.env.time_limit());
     let log = HookLog::from_env(runtime.env);
     let Some(adapter) = adapter_for(provider) else {
         log.line(&format!("unknown provider {provider:?}"));
         return HookOutcome::UnknownProvider;
     };
-    let recipe = adapter.install_recipe();
 
     let Some(pane_id) = runtime.env.pane_id() else {
         log.line("WEIR_PANE_ID is missing or malformed; not a Weir pane");
         return HookOutcome::NotInWeir;
     };
-    let Some(directories) = runtime.env.directories(&recipe) else {
+    let Some(directories) = runtime.env.directories(&adapter.install_recipe()) else {
         log.line("state directories are not set; not launched through the Weir shim");
         return HookOutcome::NotInWeir;
     };
@@ -228,6 +240,17 @@ pub fn run_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>) -> Hook
     };
 
     let (context, mut apply_context) = identity(runtime.env, adapter, &pane_id);
+    if let Some(preparation) = adapter.turn_preparation(input) {
+        prepare_turn(
+            &preparation,
+            &directories,
+            &apply_context.run_id,
+            &pane_id,
+            runtime,
+            &log,
+        );
+        return HookOutcome::Applied;
+    }
     // We take only the path, for a call that begins a turn or opens a wait:
     // the app reads the file while the run waits (`declined_waits`) and when
     // it ends a turn the person stopped (`stopped_turns`), so this call
@@ -238,6 +261,10 @@ pub fn run_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>) -> Hook
     // prove that the parent has resumed control of the terminal.
     if apply_context.settings.is_empty() {
         apply_context.run_observed_order = None;
+    }
+
+    if apply_context.settings.reports_screen() {
+        return write_pane_screen(adapter, &directories, &apply_context, runtime, &log);
     }
 
     let mut events = match adapter.normalize(input, &context) {
@@ -291,6 +318,37 @@ pub fn run_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>) -> Hook
         );
     }
     HookOutcome::Applied
+}
+
+/// Saves the start of a turn about to be sent (`preparations`). Taken under the
+/// worktree lock, as any begin is, so it never reads a restore half done; a
+/// restore that keeps the lock past the limit leaves nothing saved, and the turn
+/// then says it has no start.
+fn prepare_turn(
+    preparation: &weir_agent_model::TurnPreparation,
+    directories: &ResolvedDirectories,
+    run_id: &str,
+    pane_id: &str,
+    runtime: &HookRuntime<'_>,
+    log: &HookLog,
+) {
+    let cwd = Path::new(&preparation.cwd);
+    let worktree = lock_worktree(cwd, run_id, runtime, log);
+    if worktree
+        .as_ref()
+        .and_then(|(shared, _)| shared.snapshot_skip_reason())
+        .is_some()
+    {
+        return;
+    }
+    let taken = runtime.snapshots.capture(cwd, pane_id, TurnSide::Begin);
+    preparations::store(
+        &directories.state,
+        run_id,
+        &preparation.generation,
+        taken,
+        log,
+    );
 }
 
 /// Records an action the provider refused on the run's current turn.
@@ -772,14 +830,19 @@ fn identity(
     (context, apply_context)
 }
 
-fn write_record(path: &Path, record: &RunRecord, log: &HookLog) {
+fn write_record(path: &Path, record: &RunRecord, log: &HookLog) -> bool {
     match record.encode() {
-        Ok(bytes) => {
-            if let Err(error) = atomic_write(path, &bytes) {
+        Ok(bytes) => match atomic_write(path, &bytes) {
+            Ok(()) => true,
+            Err(error) => {
                 log.line(&format!("write {}: {error}", path.display()));
+                false
             }
+        },
+        Err(error) => {
+            log.line(&format!("encode record: {error}"));
+            false
         }
-        Err(error) => log.line(&format!("encode record: {error}")),
     }
 }
 
@@ -995,7 +1058,9 @@ fn write_events(
         log,
         transcript: Some(&transcript),
     };
+    let prepared = call.adapter.prepared_begin(call.input);
     let writer = EventWriter {
+        prepared: prepared.as_deref(),
         directories,
         apply_context,
         runtime,
@@ -1023,6 +1088,114 @@ fn write_events(
     }
 }
 
+/// Writes what a pane has on screen on the launch's run, and the resume hint that
+/// follows it. A person acts on this at once (a jump, a paste), and nothing else says it
+/// again, so it waits as a prompt does, and what cannot be written is reported rather
+/// than dropped. No record yet counts: the launch's own report may still be on its way.
+fn write_pane_screen(
+    adapter: &dyn ProviderAdapter,
+    directories: &ResolvedDirectories,
+    apply_context: &ApplyContext,
+    runtime: &HookRuntime<'_>,
+    log: &HookLog,
+) -> HookOutcome {
+    let record_path = directories
+        .state
+        .join(run_record_file_name(&apply_context.run_id));
+    let event = AgentEvent::Extension {
+        name: "weir.shown".to_owned(),
+        payload: serde_json::Value::Null,
+    };
+    let now = &runtime.now;
+    let written =
+        records::with_record_lock_attempts(&record_path, PROMPT_RECORD_LOCK_ATTEMPTS, || {
+            let previous = records::read_record(&record_path)?;
+            let writes = apply(
+                Some(&previous),
+                &event,
+                apply_context,
+                adapter.descriptor(),
+                now,
+            );
+            let is_saved = writes
+                .run
+                .as_ref()
+                .is_none_or(|record| write_record(&record_path, record, log));
+            Some((writes, is_saved))
+        });
+    let writes = match written {
+        Some(Some((writes, true))) => writes,
+        Some(Some((_, false))) => return HookOutcome::NotRecorded("record not saved".to_owned()),
+        Some(None) => {
+            log.line(&format!("no record yet at {}", record_path.display()));
+            return HookOutcome::NotRecorded("no record yet".to_owned());
+        }
+        None => {
+            log.line(&format!("record lock busy for {}", record_path.display()));
+            return HookOutcome::NotRecorded("record lock busy".to_owned());
+        }
+    };
+    for side in &writes.side {
+        if let SideWrite::SessionHint {
+            session_id,
+            cwd,
+            owner_run_id,
+        } = side
+            && !write_session_hint(
+                &SessionHintWrite {
+                    session_id,
+                    cwd: cwd.as_deref(),
+                    run_id: owner_run_id.as_deref().unwrap_or(&apply_context.run_id),
+                },
+                directories,
+                &apply_context.pane_id,
+                now,
+                PROMPT_RECORD_LOCK_ATTEMPTS,
+                log,
+            )
+        {
+            return HookOutcome::NotRecorded("session hint lock busy".to_owned());
+        }
+    }
+    HookOutcome::Applied
+}
+
+struct SessionHintWrite<'a> {
+    session_id: &'a str,
+    cwd: Option<&'a str>,
+    run_id: &'a str,
+}
+
+/// Writes the pane's resume hint, and says whether it did.
+fn write_session_hint(
+    hint: &SessionHintWrite<'_>,
+    directories: &ResolvedDirectories,
+    pane_id: &str,
+    now: &str,
+    attempts: u32,
+    log: &HookLog,
+) -> bool {
+    let path = directories.session.join(session_hint_file_name(pane_id));
+    let body = json!({
+        "schemaVersion": 1,
+        "paneId": pane_id,
+        "sessionId": hint.session_id,
+        "cwd": hint.cwd.unwrap_or_default(),
+        "updatedAt": now,
+        "lastHookEvent": "session_started",
+        "runId": hint.run_id,
+    });
+    let written = records::with_record_lock_attempts(&path, attempts, || {
+        atomic_write(&path, body.to_string().as_bytes())
+            .map_err(|error| log.line(&format!("write {}: {error}", path.display())))
+            .is_ok()
+    });
+    if written.is_none() {
+        log.line(&format!("session hint lock busy for {}", path.display()));
+    }
+    written == Some(true)
+}
+
 /// What every event of one call is written with (`write_events`).
 struct EventWriter<'a> {
     directories: &'a ResolvedDirectories,
@@ -1033,6 +1206,8 @@ struct EventWriter<'a> {
     applies: &'a dyn Fn(Option<&RunRecord>) -> bool,
     record_path: &'a Path,
     turns: &'a turn::Turns<'a>,
+    /// The saved start this call's turn names (`ProviderAdapter::prepared_begin`).
+    prepared: Option<&'a str>,
 }
 
 impl EventWriter<'_> {
@@ -1091,6 +1266,14 @@ impl EventWriter<'_> {
         let now = stamp.as_deref().unwrap_or(&runtime.now);
         let turns = turns.at(now);
         let (worktree, worktree_root) = worktree.unzip();
+        let begin = self.begin_from(
+            step,
+            worktree_root.as_deref(),
+            worktree
+                .as_ref()
+                .and_then(Shared::snapshot_skip_reason)
+                .or(judged.start.and_then(UnpromptedStart::begin_skip_reason)),
+        );
         // `git add -A` can take long in a large repository, so the snapshot
         // is taken before the record lock; the result is written under the
         // lock.
@@ -1101,10 +1284,7 @@ impl EventWriter<'_> {
                 event_id,
                 before.as_ref(),
                 runtime.snapshots,
-                worktree
-                    .as_ref()
-                    .and_then(Shared::snapshot_skip_reason)
-                    .or(judged.start.and_then(UnpromptedStart::begin_skip_reason)),
+                begin,
             )
         });
         // A prompt's record is what a restore reads to see the agent at
@@ -1141,7 +1321,7 @@ impl EventWriter<'_> {
                 turns.commit(prepared, previous.as_ref(), writes.run.as_mut())
             });
             if let Some(record) = &writes.run {
-                write_record(record_path, record, log);
+                let _ = write_record(record_path, record, log);
             }
             (writes, pin)
         });
@@ -1154,6 +1334,39 @@ impl EventWriter<'_> {
             turns.pin(pin, runtime.snapshots);
         }
         self.finish(&writes, now);
+    }
+
+    /// Where a turn's begin snapshot comes from, `skip` saying why it takes none.
+    /// A provider's turn with no saved start has none: the agent may already be at
+    /// work, so a snapshot taken now could hold its first edits. Nor does a start
+    /// saved in another worktree than the one the turn runs in (the person moved the
+    /// session as they sent it), which would compare two repositories.
+    fn begin_from(
+        &self,
+        step: Option<TurnStep>,
+        worktree_root: Option<&Path>,
+        skip: Option<&'static str>,
+    ) -> turn::BeginFrom<'static> {
+        if let Some(reason) = skip {
+            return turn::BeginFrom::Skip(reason);
+        }
+        if !self.descriptor.has(Capability::TurnBeginPrepared)
+            || !matches!(step, Some(TurnStep::Begin))
+        {
+            return turn::BeginFrom::Capture;
+        }
+        self.prepared
+            .and_then(|generation| {
+                preparations::take(
+                    &self.directories.state,
+                    &self.apply_context.run_id,
+                    generation,
+                )
+            })
+            .filter(|taken| is_taken_in(taken, worktree_root))
+            .map_or(turn::BeginFrom::Skip(turn::BEGIN_MISSING), |taken| {
+                turn::BeginFrom::Taken(Box::new(taken))
+            })
     }
 
     /// What the event's writes leave to do once the record lock is released:
@@ -1174,6 +1387,15 @@ impl EventWriter<'_> {
                 self.log,
             );
         }
+    }
+}
+
+/// Whether a saved start is of the worktree a turn runs in; `None` is no worktree.
+fn is_taken_in(taken: &weir_agent_core::SnapshotTaken, worktree_root: Option<&Path>) -> bool {
+    match &taken.status {
+        SnapshotStatus::Captured { root, .. } => worktree_root == Some(Path::new(root)),
+        SnapshotStatus::NotGit => worktree_root.is_none(),
+        _ => true,
     }
 }
 
@@ -1292,25 +1514,23 @@ fn perform_side_write(
     log: &HookLog,
 ) {
     match side {
-        SideWrite::SessionHint { session_id, cwd } => {
-            let path = directories.session.join(session_hint_file_name(pane_id));
-            let body = json!({
-                "schemaVersion": 1,
-                "paneId": pane_id,
-                "sessionId": session_id,
-                "cwd": cwd.clone().unwrap_or_default(),
-                "updatedAt": now,
-                "lastHookEvent": "session_started",
-                "runId": run_id,
-            });
-            let written = with_record_lock(&path, || {
-                atomic_write(&path, body.to_string().as_bytes())
-                    .map_err(|error| log.line(&format!("write {}: {error}", path.display())))
-                    .ok()
-            });
-            if written.is_none() {
-                log.line(&format!("session hint lock busy for {}", path.display()));
-            }
+        SideWrite::SessionHint {
+            session_id,
+            cwd,
+            owner_run_id,
+        } => {
+            write_session_hint(
+                &SessionHintWrite {
+                    session_id,
+                    cwd: cwd.as_deref(),
+                    run_id: owner_run_id.as_deref().unwrap_or(run_id),
+                },
+                directories,
+                pane_id,
+                now,
+                records::RECORD_LOCK_ATTEMPTS,
+                log,
+            );
         }
         SideWrite::DeleteSessionHint { session_id } => {
             if !drops_session {
@@ -1368,6 +1588,7 @@ fn perform_side_write(
 /// their shell tool; they write no run record.
 #[must_use]
 pub fn run_worktree_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>) -> HookOutcome {
+    let _deadline = git::HookDeadline::begin(runtime.env.time_limit());
     let log = HookLog::from_env(runtime.env);
     let Some(adapter) = adapter_for(provider) else {
         return HookOutcome::UnknownProvider;
@@ -1385,7 +1606,14 @@ pub fn run_worktree_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>
         Err(error) => return rejected_worktree_payload(&log, &error),
     };
     if let Some(intent) = finished {
-        let Some(created) = worktree::finish(&intent, provider_id, &directories.state) else {
+        // A provider whose finish is proven by its payload leaves no mark of its own, so a
+        // mark here is another agent's, for another command: it never stands in for a
+        // proof that failed.
+        let is_proven = adapter.descriptor().has(Capability::WorktreeFinishProven);
+        let finished = (!is_proven || adapter.worktree_finish_is_proven(input))
+            .then(|| worktree::finish(&intent, provider_id, &directories.state, is_proven))
+            .flatten();
+        let Some(created) = finished else {
             return HookOutcome::Applied;
         };
         if let Err(error) = records::write_worktree_event(
@@ -1403,6 +1631,9 @@ pub fn run_worktree_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>
                 .and_then(|output| output.stdout),
             message: created.message,
         };
+    }
+    if !adapter.descriptor().has(Capability::WorktreePlacement) {
+        return HookOutcome::Applied;
     }
     let intent = match adapter.worktree_intent(input) {
         Ok(Some(intent)) => intent,

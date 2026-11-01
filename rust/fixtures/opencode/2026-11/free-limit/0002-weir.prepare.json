@@ -1,0 +1,6 @@
+{
+  "hook_event_name": "weir.prepare",
+  "preparation": "b1eae062-c05e-49ef-b970-cc7cf90b4785",
+  "cwd": "/repo",
+  "data": {}
+}

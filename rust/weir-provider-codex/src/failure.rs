@@ -217,6 +217,7 @@ fn reached_window(rate_limits: &Value) -> Option<UsageLimit> {
                 .and_then(Value::as_u64)
                 .and_then(PlanUsageWindow::kind_for_minutes)
                 .map(str::to_owned),
+            ..UsageLimit::default()
         })
 }
 
@@ -357,6 +358,7 @@ mod tests {
                 usage_limit: Some(UsageLimit {
                     resets_at: Some("2026-10-07T06:00:00Z".to_owned()),
                     window: Some("five_hour".to_owned()),
+                    ..UsageLimit::default()
                 }),
             }
         );

@@ -9,13 +9,14 @@ package enum AgentKind: String, Codable, CaseIterable, Equatable, Sendable {
     case claude
     case codex
     case antigravity
+    case opencode
 
     /// What a pane types to start the agent. The name resolves to Weir's
     /// shim on the pane's `PATH`, which installs the hooks and finds the
     /// real binary.
     package var launchCommand: String {
         switch self {
-        case .claude, .codex: rawValue
+        case .claude, .codex, .opencode: rawValue
         case .antigravity: "agy"
         }
     }

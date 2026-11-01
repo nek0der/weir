@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "session.execution.started",
+  "event_id": "evt_1980a6d23001LwaSyllGLjaoz0",
+  "created": 1793552182563,
+  "seq": 2,
+  "data": {
+    "sessionID": "ses_e67f59308ffeaUIimY3ThMzwcg"
+  },
+  "cwd": "/repo",
+  "prompt": "ERROR 429",
+  "prompt_kind": "user",
+  "preparation": "e4e0d109-f4e7-41ff-99b0-32de1074778f"
+}

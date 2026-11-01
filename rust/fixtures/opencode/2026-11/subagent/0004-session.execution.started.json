@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "session.execution.started",
+  "event_id": "evt_198108d900017zmYk1TqaqO6o1",
+  "created": 1793552584080,
+  "seq": 2,
+  "data": {
+    "sessionID": "ses_e67ef729dffeWm3X8J12y5AOhj"
+  },
+  "cwd": "/repo",
+  "prompt": "TOOL subagent {\"description\":\"look around\",\"prompt\":\"say hello\",\"agent\":\"general\"}",
+  "prompt_kind": "user",
+  "preparation": "849f225f-af9d-499c-9227-e8554e226d60"
+}

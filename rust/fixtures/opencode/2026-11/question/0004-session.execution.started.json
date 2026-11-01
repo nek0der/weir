@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "session.execution.started",
+  "event_id": "evt_1980fc621001ZYHcFKldNeDeue",
+  "created": 1793552533025,
+  "seq": 2,
+  "data": {
+    "sessionID": "ses_e67f039fbffeSjARELW0ZUCW7l"
+  },
+  "cwd": "/repo",
+  "prompt": "TOOL question {\"questions\":[{\"question\":\"Red or blue?\",\"header\":\"Color\",\"options\":[{\"label\":\"Red\",\"description\":\"warm\"},{\"label\":\"Blue\",\"description\":\"cool\"}]}]}",
+  "prompt_kind": "user",
+  "preparation": "7d7c87d1-f2bc-4915-9074-6192e2b26047"
+}

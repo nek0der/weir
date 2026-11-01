@@ -319,6 +319,7 @@ struct PaneHeaderView: View {
             }
             if form.showsSettings, let settings = label.settingsText(
                 tokens: form.showsTokens ? label.tokens : nil,
+                showsUpstream: form.showsTokens,
                 locale: locale
             ) {
                 settingsText(settings)
@@ -463,7 +464,15 @@ struct PaneHeaderView: View {
             ).resolved(in: locale)
         }
         let tokens = usage.map { ChangesPanelText.tokenTotal($0, isExact: true, locale: locale) }
-        return [label.model, effort, label.permissionMode?.spokenName.resolved(in: locale), tokens].compactMap(\.self)
+        return [
+            label.spokenProfile(locale: locale),
+            label.model,
+            label.distinctUpstream,
+            effort,
+            label.permissionMode?.spokenName.resolved(in: locale),
+            tokens
+        ]
+        .compactMap(\.self)
     }
 
     private func accessibilityDescription(_ label: PaneHeaderLabel, usage: TurnUsage?, mark: PaneHeaderMark?) -> String {

@@ -1,0 +1,76 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "cwd": "/repo"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "ses_e68016458ffeNvQDXve6etKzZ2",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "Run the shell command sleep 15 and then reply A-DONE",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "extension",
+      "name": "session.step.started",
+      "payload": {}
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "shell",
+      "detail": "shell: sleep 15"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "interrupted"
+    }
+  ],
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "ses_e680131d1ffeFQvRzeIc51dMIq",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "Reply with only the word B",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "extension",
+      "name": "session.step.started",
+      "payload": {}
+    }
+  ],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "B"
+    }
+  ]
+]

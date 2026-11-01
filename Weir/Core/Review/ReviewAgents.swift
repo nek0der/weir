@@ -27,6 +27,7 @@ enum ReviewAgents {
         case .claude: "Claude Code"
         case .codex: "Codex"
         case .antigravity: "Antigravity"
+        case .opencode: "OpenCode"
         case nil: nil
         }
         // A tab hosting a plain shell carries the command it was started with

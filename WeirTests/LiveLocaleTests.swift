@@ -67,7 +67,7 @@ struct LiveLocaleTests {
 
     @Test func reviewErrors_switchWithTheLanguage() {
         let errors: [ReviewError] = [
-            .invalidDiff, .unsupported, .tooLarge, .gitFailed, .changed, .targetUnavailable, .invalidText,
+            .invalidDiff, .unsupported, .tooLarge, .gitFailed, .changed, .targetUnavailable, .sessionNotShown, .invalidText,
             .storageFailed, .resolvedBacklogTooLarge, .baseUnavailable, .draftUnreadable, .checkInterrupted,
             .commentLimitReached, .commentTooLong, .nothingToInsert, .promptTooLong, .timedOut,
             .instructionsInvalid, .instructionsTooLong, .unsavedComment

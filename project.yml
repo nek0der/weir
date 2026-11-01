@@ -260,6 +260,8 @@ targets:
           - "Resources/codex-shim"
           - "Resources/antigravity-shim"
           - "Resources/antigravity-plugin"
+          - "Resources/opencode-shim"
+          - "Resources/opencode-plugin"
           - "Resources/agent-shim"
           - "Resources/cli"
       - path: AgentIntegrationService/Shared
@@ -304,6 +306,13 @@ targets:
       - path: Weir/Resources/antigravity-shim
         type: folder
       - path: Weir/Resources/antigravity-plugin
+        type: folder
+      # The opencode shim on the same terms, and the plugin it places in
+      # OpenCode's folder: only the interface in the pane knows whose a session
+      # on the shared service is.
+      - path: Weir/Resources/opencode-shim
+        type: folder
+      - path: Weir/Resources/opencode-plugin
         type: folder
       # Shared POSIX helpers sourced by both agent integrations. Kept as a
       # folder resource so the relative path from each hook stays stable.

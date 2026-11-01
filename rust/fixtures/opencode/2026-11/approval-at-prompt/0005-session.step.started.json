@@ -1,0 +1,19 @@
+{
+  "hook_event_name": "session.step.started",
+  "event_id": "evt_198065e61001ZMtsSw30PZ1Bmi",
+  "created": 1793551916641,
+  "seq": 7,
+  "data": {
+    "sessionID": "ses_e67f9a1f4ffeB5KNXINCC0I5H3",
+    "agent": "build",
+    "model": {
+      "id": "stub",
+      "providerID": "stub",
+      "variant": "default"
+    }
+  },
+  "model_info": {
+    "name": "Stub Model",
+    "provider_name": "Stub Route"
+  }
+}

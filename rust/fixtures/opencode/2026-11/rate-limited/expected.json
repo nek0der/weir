@@ -1,0 +1,76 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "cwd": "/repo"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "ses_e67f59308ffeaUIimY3ThMzwcg",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "ERROR 429",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "extension",
+      "name": "session.step.started",
+      "payload": {}
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "retry",
+      "detail": "stub failure"
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "retry",
+      "detail": "stub failure"
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "retry",
+      "detail": "stub failure"
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "retry",
+      "detail": "stub failure"
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "retry",
+      "detail": "stub failure"
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "retry",
+      "detail": "stub failure"
+    }
+  ]
+]

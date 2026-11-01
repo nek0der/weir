@@ -22,7 +22,8 @@ struct ReviewInsertionTests {
         func target(
             originPaneID: (() -> UUID?)? = nil,
             isSameReview: @escaping () -> Bool = { true },
-            startPane: @escaping @MainActor (UUID) async -> Bool = { _ in false }
+            startPane: @escaping @MainActor (UUID) async -> Bool = { _ in false },
+            showSession: @escaping @MainActor (ReviewDestination) async -> Bool = { _ in true }
         ) -> ReviewInsertion.Target {
             let paneID = paneID
             return ReviewInsertion.Target(
@@ -32,7 +33,8 @@ struct ReviewInsertionTests {
                 instructions: "",
                 locale: Locale(identifier: "en"),
                 isSameReview: isSameReview,
-                startPane: startPane
+                startPane: startPane,
+                showSession: showSession
             )
         }
     }
@@ -259,6 +261,15 @@ struct ReviewInsertionTests {
         #expect(ReviewPasteReadiness.bringsTabForward(hasView: true, hasSurface: false))
         // Its terminal is there: only what it runs is waited for.
         #expect(!ReviewPasteReadiness.bringsTabForward(hasView: true, hasSurface: true))
+    }
+
+    /// A pane showing several sessions takes nothing until the review's is in front.
+    @Test func anInsertWhoseSessionDoesNotComeForward_isRefusedAndPastesNothing() async throws {
+        let insert = try await Self.insert()
+        await #expect(throws: ReviewError.sessionNotShown) {
+            try await ReviewInsertion.run(reviewSession: insert.review, to: insert.target(showSession: { _ in false }))
+        }
+        #expect(insert.deliverer.delivered.isEmpty)
     }
 
     /// A pane whose terminal is up but not ready yet is waited for as one not

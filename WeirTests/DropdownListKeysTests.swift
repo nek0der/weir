@@ -53,9 +53,9 @@ struct DropdownListKeysTests {
         #expect(selection.id == .claude)
         selection.move(forward: false, in: items)
         #expect(selection.id == .claude, "stops at the top")
-        selection.move(forward: true, in: items)
-        selection.move(forward: true, in: items)
-        selection.move(forward: true, in: items)
+        for _ in AddTabMenu.Item.allCases {
+            selection.move(forward: true, in: items)
+        }
         #expect(DropdownListKeys.chosen(selection, in: items) == .shell, "stops at the bottom")
         #expect(AddTabMenu.Item.shell.agent == nil)
         #expect(AddTabMenu.Item.codex.agent == .codex)

@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "session.execution.started",
+  "event_id": "evt_19809b0db001b2S3nBinrQjGSd",
+  "created": 1793552134363,
+  "seq": 2,
+  "data": {
+    "sessionID": "ses_e67f64f4fffec61Tbm4Oz30TJ0"
+  },
+  "cwd": "/repo",
+  "prompt": "ERROR 401",
+  "prompt_kind": "user",
+  "preparation": "7562323e-f0a6-4607-bcbd-2539a7fa4953"
+}

@@ -292,6 +292,13 @@ enum ChangesPanelActions {
             in: window.id,
             intent: .person
         )
+        // The pane may show another of its agent's sessions in front of this one, as ⌘J
+        // finds too: the session's own tab is asked for.
+        if let behind = stores.attention.allRuntimes.first(where: {
+            $0.conversation == conversation && $0.panesNotInFront.contains(place.paneID)
+        }) {
+            AgentTabFocus.request(behind)
+        }
         ReviewTabActions.putBehind(
             window: window,
             session: stores.session,

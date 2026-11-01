@@ -295,6 +295,9 @@ fn build_runtimes(
                 panes,
                 attachment,
                 tmux_endpoint_key: endpoint_key(&run.record),
+                panes_behind_shown_tab: Vec::new(),
+                panes_not_in_front: Vec::new(),
+                tab_channel: None,
                 event_token,
                 episode_token,
                 id,
@@ -306,7 +309,61 @@ fn build_runtimes(
         })
         .collect();
     runtimes.sort_by(|left, right| left.id.cmp(&right.id));
+    mark_sibling_tabs(&mut runtimes, &state.accepted);
     runtimes
+}
+
+/// Says of each run of a process that shows several sessions whether its pane
+/// shows it. Asked of the launch's run in that same pane alone: a run ID says nothing
+/// across panes, and a family whose launch's run is gone says nothing at all.
+fn mark_sibling_tabs(
+    runtimes: &mut [RuntimePresentation],
+    accepted: &BTreeMap<String, AcceptedRun>,
+) {
+    // Read once: this runs for every provider's runs on every pass.
+    let by_run: BTreeMap<(&ProviderId, &str), &AcceptedRun> = accepted
+        .values()
+        .filter_map(|run| Some(((&run.provider, run.record.run_id.as_deref()?), run)))
+        .collect();
+    let family_of = |runtime: &RuntimePresentation| {
+        let run = by_run
+            .get(&(&runtime.provider, runtime.run_id.as_deref()?))
+            .copied()?;
+        let family = run.record.pane_family_run_id.clone()?;
+        Some(((family, run.record.pane_id.clone()), run))
+    };
+    let mut heads: BTreeMap<(String, String), (Option<String>, bool)> = BTreeMap::new();
+    for runtime in runtimes.iter() {
+        let Some((key, run)) = family_of(runtime) else {
+            continue;
+        };
+        if run.record.run_id.as_ref() == Some(&key.0) {
+            heads.insert(
+                key.clone(),
+                (
+                    run.record.pane_shown_run_id.clone(),
+                    run.record.pane_shows_home == Some(true),
+                ),
+            );
+        }
+    }
+    // `build_runtimes` leaves a run outside any family with no marks.
+    for runtime in runtimes.iter_mut() {
+        let Some((key, _)) = family_of(runtime) else {
+            continue;
+        };
+        let (shown, is_home) = heads
+            .get(&key)
+            .map_or((None, false), |(shown, is_home)| (shown.as_ref(), *is_home));
+        let is_behind = shown.is_some_and(|shown| runtime.run_id.as_ref() != Some(shown));
+        if is_behind {
+            runtime.panes_behind_shown_tab = runtime.panes.clone();
+        }
+        if is_behind || is_home {
+            runtime.panes_not_in_front = runtime.panes.clone();
+        }
+        runtime.tab_channel = Uuid::parse_str(&key.0).ok();
+    }
 }
 
 /// What was read of each turn, after this pass's files. A file sent with
@@ -582,6 +639,11 @@ fn badge_from(record: &RunRecord, descriptor: Option<&ProviderDescriptor>) -> Ba
         model: present(&record.model),
         effort: present(&record.effort),
         permission_mode: record.permission_mode,
+        model_upstream: present(&record.model_upstream),
+        agent_profile: present(&record.agent_profile),
+        failure_kind: (record.state == RunState::Error)
+            .then_some(record.failure_kind)
+            .flatten(),
     }
 }
 
@@ -1073,6 +1135,7 @@ fn seen_where_the_user_is_looking(
     let in_sight = |runtime: &RuntimePresentation| {
         runtime.panes.iter().any(|pane| {
             input.seen_panes.contains(pane)
+                && !runtime.panes_not_in_front.contains(pane)
                 && input
                     .presence
                     .shows(runtime.tmux_endpoint_key.as_deref(), pane)

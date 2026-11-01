@@ -50,6 +50,13 @@ struct ReviewTargetMove {
             window: window.id,
             intent: .person
         )
+        // Getting to the pane is not getting to the session: one in a tab behind asks
+        // the pane to bring it forward, which also opens a tab closed since.
+        if let runtime = attention.allRuntimes.first(where: { $0.id == runtimeID }),
+           runtime.panesNotInFront.contains(paneID)
+        {
+            AgentTabFocus.request(runtime)
+        }
         putReviewBehind(in: window)
     }
 

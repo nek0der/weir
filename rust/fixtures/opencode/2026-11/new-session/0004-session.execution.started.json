@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "session.execution.started",
+  "event_id": "evt_197fe9bcf001070nlbzwW1c9xb",
+  "created": 1793551408079,
+  "seq": 2,
+  "data": {
+    "sessionID": "ses_e68016458ffeNvQDXve6etKzZ2"
+  },
+  "cwd": "/repo",
+  "prompt": "Run the shell command sleep 15 and then reply A-DONE",
+  "prompt_kind": "user",
+  "preparation": "8a70d5f2-0742-4d3e-bd26-b07b6921f515"
+}

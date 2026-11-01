@@ -22,7 +22,8 @@ extension AttentionState {
         // but settings describe the agent the terminal currently shows.
         // We retain a warning from any visible split, even when another
         // split has focus. Its model and provider identify the same agent.
-        let runtimes = allRuntimes.filter { $0.paneIDs.contains(paneID) }
+        // A session in a tab the pane does not show has no say in what its header names.
+        let runtimes = allRuntimes.filter { $0.paneIDs.contains(paneID) && !$0.panesBehindShownTab.contains(paneID) }
         let facts = runtimes.map { runtime in
             let location = runtime.tmuxLocations[paneID]
             return PaneHeaderOwnershipRules.Run(
@@ -65,7 +66,9 @@ extension AttentionState {
                 title: PaneHeaderRules.agentTitle(for: runtime.badge),
                 model: settingsRuntime?.badge.model,
                 permissionMode: settingsRuntime?.badge.agentPermissionMode,
-                effort: settingsRuntime?.badge.effort
+                effort: settingsRuntime?.badge.effort,
+                modelUpstream: settingsRuntime?.badge.modelUpstream,
+                agentProfile: settingsRuntime?.badge.agentProfile
             )
         } ?? tab?.agentKind(inPane: paneID).map { kind in
             PaneHeaderAgent(kind: kind, providerName: AgentProviderRegistry.displayName(for: kind), title: nil)
@@ -88,6 +91,8 @@ extension AttentionState {
             label.model = nil
             label.permissionMode = nil
             label.effort = nil
+            label.modelUpstream = nil
+            label.agentProfile = nil
             label.settingsAreAmbiguous = true
         }
         return label

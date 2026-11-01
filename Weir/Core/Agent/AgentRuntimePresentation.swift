@@ -40,13 +40,23 @@ struct AgentRuntimePresentation: Equatable {
     /// is named by its pane, and a provider this build does not know keeps
     /// its own name. `nil` on fixtures, which use `id(kind:runID:)`.
     var projectedID: String?
+    /// The panes where another session of this run's process is on screen in its
+    /// place, as the rules work it out (OpenCode's tabs). Empty for every other run.
+    var panesBehindShownTab: Set<UUID> = []
+    /// Those, and every pane while the process's screen shows no session: where the
+    /// run is out of sight, though a header may still name it.
+    var panesNotInFront: Set<UUID> = []
+    /// The process's name for a request to bring one of its sessions forward: its
+    /// launch's run. Nil for a process with no tabs.
+    var tabChannel: UUID?
 
     /// The panes that would show the agent if they were on screen: every
     /// pane it is attached to, except a tmux pane that is not its window's
-    /// active one, which shows another tmux pane instead. Whether the pane
+    /// active one, which shows another tmux pane instead, and a pane that shows
+    /// another session of the agent's in a tab in front of this one. Whether the pane
     /// is on screen at all is `PaneVisibility`'s to say.
     var activeAttachmentPaneIDs: Set<UUID> {
-        paneIDs.filter { tmuxLocations[$0]?.isActive ?? true }
+        paneIDs.filter { (tmuxLocations[$0]?.isActive ?? true) && !panesNotInFront.contains($0) }
     }
 
     var resolution: AgentAttachmentResolution {
@@ -121,7 +131,12 @@ extension AgentRuntimePresentation {
     /// topology probe, for this run's own tmux pane: focus-driven viewed
     /// marks skip a tmux pane that is not its window's active one, and ⌘J
     /// selects the pane inside tmux.
-    init(projected runtime: AgentProjectedRuntime, tmuxLocationsByEndpoint: [String: [UUID: TmuxPaneLocation]]) {
+    ///
+    /// `nil` for a provider this build does not know, as a record a newer build
+    /// left: the interface has no badge or words for it, and naming it as another
+    /// agent would be false.
+    init?(projected runtime: AgentProjectedRuntime, tmuxLocationsByEndpoint: [String: [UUID: TmuxPaneLocation]]) {
+        guard let kind = AgentKind(rawValue: runtime.provider) else { return nil }
         let panes = Set(runtime.panes)
         let resolution: AgentAttachmentResolution = switch runtime.attachment {
         case "attached": .attached
@@ -129,7 +144,7 @@ extension AgentRuntimePresentation {
         default: .unresolved
         }
         self.init(
-            kind: AgentKind(rawValue: runtime.provider) ?? .claude,
+            kind: kind,
             runID: runtime.runID ?? runtime.id,
             revision: runtime.revision,
             badge: runtime.badge.asAgentBadge,
@@ -142,7 +157,10 @@ extension AgentRuntimePresentation {
             sessionID: runtime.sessionID,
             conversation: runtime.conversation?.key,
             currentTurnID: runtime.currentTurnID.map(TurnID.init),
-            projectedID: runtime.id
+            projectedID: runtime.id,
+            panesBehindShownTab: Set(runtime.panesBehindShownTab ?? []),
+            panesNotInFront: Set(runtime.panesNotInFront ?? []),
+            tabChannel: runtime.tabChannel
         )
     }
 }

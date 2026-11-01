@@ -694,6 +694,10 @@ enum SupervisionTokens {
     static let antigravityGreen = ThemedColor(light: 0x5FA84F, dark: 0x5FA84F)
     static let antigravityOrange = ThemedColor(light: 0xEE9412, dark: 0xEE9412)
     static let antigravityRed = ThemedColor(light: 0xE23D32, dark: 0xE23D32)
+    /// The OpenCode badge's ground, the near-black of its logo, which is
+    /// otherwise black and white. White letters are far over the 3:1 a mark is
+    /// held to; it stands too close to the dark surfaces, which its edge is for.
+    static let opencode = ThemedColor(light: 0x211E1E, dark: 0x211E1E)
     /// The edge inside each badge, for a fill that stands under 3:1 off a
     /// surface it sits on. Claude's orange does in light (2.49:1 on a
     /// selected row), so there it takes its own color darkened just far
@@ -708,6 +712,7 @@ enum SupervisionTokens {
     /// its top.
     static let claudeEdge = ThemedColor(light: 0xC36B4E, dark: 0xD97757)
     static let codexEdge = ThemedColor(light: 0x5D60FF, dark: 0x676AFF)
+    static let opencodeEdge = ThemedColor(light: 0x211E1E, dark: 0x8E8989)
     /// The letters on an agent badge: white, in both appearances, so the
     /// fill reads as the brand's color rather than one muddied by dark
     /// letters. On Codex's blue that is

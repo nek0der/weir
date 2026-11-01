@@ -1,0 +1,17 @@
+{
+  "hook_event_name": "session.tool.called",
+  "event_id": "evt_197fea3b1001fMoiTPeLqCbtxi",
+  "created": 1793551410097,
+  "seq": 8,
+  "data": {
+    "sessionID": "ses_e68016458ffeNvQDXve6etKzZ2",
+    "assistantMessageID": "msg_197fe9bda001TO6EmMfbfLJNPb",
+    "id": "call_00_qfwghjkt6kj7v3upk0f3h2q6",
+    "input": {
+      "command": "sleep 15",
+      "timeout": 30000
+    },
+    "executed": false,
+    "name": "shell"
+  }
+}

@@ -1,0 +1,56 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "cwd": "/repo"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "ses_e67ef729dffeWm3X8J12y5AOhj",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "TOOL subagent {\"description\":\"look around\",\"prompt\":\"say hello\",\"agent\":\"general\"}",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "extension",
+      "name": "session.step.started",
+      "payload": {}
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "subagent",
+      "detail": "subagent"
+    }
+  ],
+  [
+    {
+      "type": "tool_finished",
+      "tool": "subagent"
+    }
+  ],
+  [
+    {
+      "type": "turn_finished",
+      "titles": {
+        "session_title": "STUB"
+      },
+      "reply": "STUB"
+    }
+  ]
+]

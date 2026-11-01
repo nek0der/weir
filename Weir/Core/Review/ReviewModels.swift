@@ -562,6 +562,9 @@ enum ReviewError: WeirLocalizedError {
     /// The paste was started and the terminal did not take it: refused at
     /// the confirmation sheet, or dropped with its pane. Nothing was marked.
     case pasteRefused
+    /// The pane shows several sessions, and the one the review is about did not come
+    /// to the front in time. A paste would have gone to another conversation.
+    case sessionNotShown
 
     var message: DisplayText {
         .localized(text)
@@ -589,6 +592,8 @@ enum ReviewError: WeirLocalizedError {
             "This review’s worktree is no longer where it was. Close the review and open it again."
         case .paneDidNotStart:
             "The pane’s terminal didn’t start. Try again."
+        case .sessionNotShown:
+            "This review’s conversation didn’t come to the front of its pane, so the comments weren’t inserted. They stay in this review."
         case .pasteRefused:
             // The comments are what Insert puts in the pane, not
             // the review, which stays open around them.

@@ -729,9 +729,10 @@ enum DemoFixture {
         case .claude: "Opus 5.5"
         case .codex: "gpt-5.5"
         case .antigravity: "Gemini 3.8 Flash"
+        case .opencode: "GPT-5.5"
         }
         badge.effort = switch agent {
-        case .claude, .antigravity: "high"
+        case .claude, .antigravity, .opencode: "high"
         case .codex: "medium"
         }
         var tab = Tab(
@@ -764,7 +765,7 @@ enum DemoFixture {
         badge.conversationID = conversation.conversationID
         switch agent {
         case .claude: badge.providerGeneratedTitle = conversationTitle(of: slot)
-        case .codex, .antigravity: badge.providerSessionTitle = conversationTitle(of: slot)
+        case .codex, .antigravity, .opencode: badge.providerSessionTitle = conversationTitle(of: slot)
         }
         return badge
     }

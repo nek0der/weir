@@ -165,7 +165,8 @@ fn finishing_a_route_runs_the_bootstrap_and_notifies() {
     let (expected, command) = rerouted(&repo, &states, "git worktree add -b feature/demo ../demo");
     assert!(shell(&repo, &command));
 
-    let created = finish_worktree(&intent(&repo, &command), "claude", &states).expect("created");
+    let created =
+        finish_worktree(&intent(&repo, &command), "claude", &states, false).expect("created");
 
     assert_eq!(created.path, expected);
     assert_eq!(created.repo_root, repo.path);
@@ -197,7 +198,7 @@ fn a_command_that_failed_runs_no_bootstrap() {
     // Codex sends `PostToolUse` for a failed command too.
     assert!(!shell(&repo, &command), "git refuses a folder in use");
     assert_eq!(
-        finish_worktree(&intent(&repo, &command), "claude", &states),
+        finish_worktree(&intent(&repo, &command), "claude", &states, false),
         None
     );
     assert!(!path.join("sub").exists());
@@ -209,7 +210,7 @@ fn a_repeated_command_does_not_run_the_bootstrap_again() {
     let states = routing(&repo, "");
     let (path, command) = rerouted(&repo, &states, "git worktree add -b demo ../demo");
     assert!(shell(&repo, &command));
-    assert!(finish_worktree(&intent(&repo, &command), "claude", &states).is_some());
+    assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
     fs::remove_dir_all(path.join("sub")).expect("the person's change");
 
     assert_eq!(
@@ -218,7 +219,7 @@ fn a_repeated_command_does_not_run_the_bootstrap_again() {
     );
     assert!(!shell(&repo, &command), "git refuses a folder in use");
     assert_eq!(
-        finish_worktree(&intent(&repo, &command), "claude", &states),
+        finish_worktree(&intent(&repo, &command), "claude", &states, false),
         None
     );
     assert!(!path.join("sub").exists(), "the bootstrap ran again");
@@ -248,7 +249,7 @@ fn a_worktree_made_elsewhere_is_not_set_up() {
         InterceptResult::Passthrough
     );
     assert_eq!(
-        finish_worktree(&intent(&repo, &command), "claude", &states),
+        finish_worktree(&intent(&repo, &command), "claude", &states, false),
         None
     );
     assert!(!path.join("sub").exists());
@@ -262,7 +263,7 @@ fn a_command_that_went_elsewhere_is_not_set_up() {
     assert!(!repo.root.join("repo-demo").exists());
     assert!(shell(&repo, command));
     assert_eq!(
-        finish_worktree(&intent(&repo, command), "claude", &states),
+        finish_worktree(&intent(&repo, command), "claude", &states, false),
         None
     );
 }
@@ -296,7 +297,7 @@ fn an_overlapping_call_leaves_the_setup_to_the_call_that_made_the_worktree() {
         InterceptResult::Passthrough
     );
 
-    assert!(finish_worktree(&intent(&repo, &command), "claude", &states).is_some());
+    assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
     assert!(path.join("sub").exists());
 }
 
@@ -317,7 +318,7 @@ fn a_retry_after_a_lost_post_tool_use_runs_the_setup() {
     );
     assert!(!shell(&repo, &command), "git refuses a folder in use");
 
-    assert!(finish_worktree(&intent(&repo, &command), "codex", &states).is_some());
+    assert!(finish_worktree(&intent(&repo, &command), "codex", &states, false).is_some());
     assert!(path.join("sub").exists());
 }
 
@@ -405,7 +406,7 @@ fn of_calls_that_finish_together_one_runs_the_setup() {
                 .map(|_| {
                     scope.spawn(|| {
                         barrier.wait();
-                        finish_worktree(&asked, "codex", &states).is_some()
+                        finish_worktree(&asked, "codex", &states, false).is_some()
                     })
                 })
                 .collect();
@@ -434,7 +435,7 @@ fn a_call_from_another_provider_leaves_the_setup_to_the_one_that_made_it() {
         InterceptResult::Passthrough
     );
 
-    assert!(finish_worktree(&intent(&repo, &command), "claude", &states).is_some());
+    assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
     assert!(path.join("sub").exists());
 }
 
@@ -461,7 +462,7 @@ fn a_mark_from_long_ago_sets_nothing_up() {
     assert!(shell(&repo, &command));
 
     assert_eq!(
-        finish_worktree(&intent(&repo, &command), "claude", &states),
+        finish_worktree(&intent(&repo, &command), "claude", &states, false),
         None
     );
     assert!(!path.join("sub").exists());
@@ -480,7 +481,7 @@ fn a_command_that_already_names_the_folder_is_set_up() {
         InterceptResult::Passthrough
     );
     assert!(shell(&repo, &command));
-    assert!(finish_worktree(&intent(&repo, &command), "claude", &states).is_some());
+    assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
     assert!(path.join("sub").exists());
 }
 
@@ -498,7 +499,7 @@ fn a_worktree_in_the_right_folder_is_set_up_however_the_command_spelled_it() {
     );
     assert!(shell(&repo, &command));
 
-    assert!(finish_worktree(&intent(&repo, &command), "claude", &states).is_some());
+    assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
     assert!(folder.join("sub").exists());
 }
 
@@ -559,7 +560,7 @@ fn the_bootstrap_waits_for_the_checkout() {
                 assert!(started.elapsed().as_secs() < 25, "{name}: never listed");
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
-            let finishing = scope.spawn(|| finish_worktree(&asked, "claude", &states));
+            let finishing = scope.spawn(|| finish_worktree(&asked, "claude", &states, false));
             std::thread::sleep(std::time::Duration::from_millis(600));
             assert!(!finishing.is_finished(), "{name}: did not wait");
             assert!(
@@ -591,7 +592,7 @@ fn a_locked_worktree_without_a_checkout_is_not_waited_for() {
     assert!(shell(&repo, &command));
     let started = std::time::Instant::now();
 
-    assert!(finish_worktree(&intent(&repo, &command), "claude", &states).is_some());
+    assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
 
     assert!(started.elapsed().as_secs() < 30);
 }
@@ -610,7 +611,7 @@ fn a_lock_a_person_called_initializing_does_not_hold_the_setup() {
     );
     let started = std::time::Instant::now();
 
-    assert!(finish_worktree(&intent(&repo, &command), "claude", &states).is_some());
+    assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
 
     assert!(started.elapsed().as_secs() < 30);
 }
@@ -632,7 +633,7 @@ fn a_branch_that_shares_another_branchs_folder_runs_as_written() {
     );
     assert!(shell(&repo, other));
     assert_eq!(
-        finish_worktree(&intent(&repo, other), "claude", &states),
+        finish_worktree(&intent(&repo, other), "claude", &states, false),
         None
     );
 }
@@ -675,7 +676,7 @@ fn route_honors_a_custom_placement_with_spaces_in_its_folder() {
 
     assert!(shell(&repo, &command), "{command}");
     assert!(path.join("README.md").exists());
-    assert!(finish_worktree(&intent(&repo, &command), "claude", &states).is_some());
+    assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
 }
 
 #[test]
@@ -944,7 +945,7 @@ fn a_command_for_another_repository_does_not_set_up_this_one() {
     );
     assert!(shell(&repo, &elsewhere));
     assert_eq!(
-        finish_worktree(&intent(&repo, &elsewhere), "claude", &states),
+        finish_worktree(&intent(&repo, &elsewhere), "claude", &states, false),
         None
     );
     assert!(!path.join("sub").exists());

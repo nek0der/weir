@@ -9,6 +9,7 @@
 
 use crate::background::BackgroundWork;
 use crate::cache::CacheWindow;
+use crate::event::FailureKind;
 use crate::serde_helpers::lenient;
 use crate::session_settings::PermissionMode;
 use crate::usage::UsageLimit;
@@ -134,6 +135,22 @@ pub struct RunRecord {
     /// permission mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_observed_order: Option<u64>,
+    /// The launch's run, for a process that shows several sessions in one pane
+    /// with a run each: what the pane's tabs have in common. Not `parent_run_id`,
+    /// which says what launched the process and is what nested launches go by.
+    /// Absent for a provider whose adapter never says it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_family_run_id: Option<String>,
+    /// The run of the session on screen, kept on the launch's run alone. One
+    /// fact in one place: a sibling not seen yet, or one whose tab closed, then
+    /// reads right with no write of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_shown_run_id: Option<String>,
+    /// That the screen shows no session (OpenCode's home screen), said apart from
+    /// `pane_shown_run_id`: a header keeps naming the last session, but nothing is
+    /// in sight or takes a paste.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane_shows_home: Option<bool>,
     /// Monotonic per-run counter. Required in version 3; a version 2 record
     /// may lack it, in which case readers fall back to `updated_at`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -320,6 +337,28 @@ pub struct RunRecord {
         deserialize_with = "lenient"
     )]
     pub permission_mode: Option<PermissionMode>,
+    /// Whom the provider goes through for the session's model, kept as `model` is.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient"
+    )]
+    pub model_upstream: Option<String>,
+    /// The role the person chose for the session's agent, kept as `model` is.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient"
+    )]
+    pub agent_profile: Option<String>,
+    /// What the person has to do about the failure the run rests in. Set or
+    /// cleared with `usage_limit`, read leniently as it is.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient"
+    )]
+    pub failure_kind: Option<FailureKind>,
     /// Fields this version does not model, preserved verbatim.
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -455,6 +494,9 @@ impl From<RunRecordV2> for RunRecord {
             run_launch_order: None,
             parent_run_id: None,
             run_observed_order: None,
+            pane_family_run_id: None,
+            pane_shown_run_id: None,
+            pane_shows_home: None,
             turn_base_tree: record.turn_base_tree,
             turn_root: record.turn_root,
             worktree_root: None,
@@ -475,6 +517,9 @@ impl From<RunRecordV2> for RunRecord {
             // The shell receivers recorded neither.
             model: None,
             effort: None,
+            model_upstream: None,
+            agent_profile: None,
+            failure_kind: None,
             permission_mode: None,
             extra: record.extra,
         }
@@ -664,6 +709,7 @@ mod tests {
         let limit = UsageLimit {
             resets_at: Some("2026-09-14T05:00:00Z".to_owned()),
             window: Some("five_hour".to_owned()),
+            ..UsageLimit::default()
         };
         let encoded = RunRecord {
             usage_limit: Some(limit.clone()),

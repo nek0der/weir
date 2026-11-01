@@ -175,6 +175,16 @@ pub struct QuestionTurn {
     pub state_directory_variable: String,
 }
 
+/// A request to save the start of a turn about to be sent
+/// (`ProviderAdapter::turn_preparation`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TurnPreparation {
+    /// Names this preparation, so the turn takes its own and no other.
+    pub generation: String,
+    /// The folder the turn will run in, where the snapshot is taken.
+    pub cwd: String,
+}
+
 /// A provider is one implementation of this trait plus recorded fixtures.
 pub trait ProviderAdapter: Send + Sync {
     /// Identity, capabilities, timing, and directory names.
@@ -390,6 +400,26 @@ pub trait ProviderAdapter: Send + Sync {
         None
     }
 
+    /// Reads a request to save the start of a turn about to be sent, for a
+    /// provider with `Capability::TurnBeginPrepared`. The runtime takes the
+    /// snapshot and keeps it, under the generation given, for the turn that names
+    /// it (`prepared_begin`). The call changes no record: an input that never
+    /// becomes a turn (an empty line) leaves nothing behind but the snapshot.
+    /// `None` for any other payload.
+    fn turn_preparation(&self, input: RawHookInput<'_>) -> Option<TurnPreparation> {
+        let _ = input;
+        None
+    }
+
+    /// The generation of the preparation this call's turn begins from
+    /// (`turn_preparation`). `None` for a turn with no preparation. Only read for
+    /// a provider with `Capability::TurnBeginPrepared`; a preparation that is
+    /// missing or another's gives the same: the turn records it has no start.
+    fn prepared_begin(&self, input: RawHookInput<'_>) -> Option<String> {
+        let _ = input;
+        None
+    }
+
     /// The `PreToolUse` reply that has the shell tool run `command` in place
     /// of the `git worktree add` in `input`, and leaves the decision on it to
     /// the provider's own permission checks: the person's prompt, deny rules,
@@ -445,6 +475,15 @@ pub trait ProviderAdapter: Send + Sync {
     ) -> Result<Option<WorktreeIntent>, NormalizeError> {
         let _ = input;
         Ok(None)
+    }
+
+    /// Whether this tool payload itself proves its command made the worktree
+    /// `worktree_finished` read, for a provider that can run no hook before the tool
+    /// and so has no awaited mark to go by. Only a command whose own exit status the
+    /// provider reports can say so. The others keep the default.
+    fn worktree_finish_is_proven(&self, input: RawHookInput<'_>) -> bool {
+        let _ = input;
+        false
     }
 
     /// Reads a shell command the agent ran, and how it exited, out of a tool

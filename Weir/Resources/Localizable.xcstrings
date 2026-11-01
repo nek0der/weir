@@ -1,6 +1,87 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "%@ %@": {
+      "comment": "Two sentences of a paragraph, one after the other: a space between them where the language puts one",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ %2$@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@%2$@"
+          }
+        }
+      }
+    },
+    "%@ isn’t listed because Weir can’t step in before it runs a command.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ isn’t listed because Weir can’t step in before it runs a command."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ は、コマンドの実行前に Weir が処理できないため表示していません。"
+          }
+        }
+      }
+    },
+    "%@ aren’t listed because Weir can’t step in before they run a command.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ aren’t listed because Weir can’t step in before they run a command."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ は、コマンドの実行前に Weir が処理できないため表示していません。"
+          }
+        }
+      }
+    },
+    "A worktree %@ makes gets the setup commands only when it lands in this project’s location.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A worktree %@ makes gets the setup commands only when it lands in this project’s location."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ が作るワークツリーには、この場所に作られたときだけセットアップコマンドを適用します。"
+          }
+        }
+      }
+    },
+    "A worktree %@ make gets the setup commands only when it lands in this project’s location.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A worktree %@ make gets the setup commands only when it lands in this project’s location."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ が作るワークツリーには、この場所に作られたときだけセットアップコマンドを適用します。"
+          }
+        }
+      }
+    },
     "Add ⌥, ⇧, or ⌃ to see the keys that use them too.": {
       "localizations": {
         "en": {
@@ -10518,6 +10599,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "Git の確認中に、コメントか、チェックアウトしているコミットが変更されました。もう一度挿入してください。"
+          }
+        }
+      }
+    },
+    "This review’s conversation didn’t come to the front of its pane, so the comments weren’t inserted. They stay in this review.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This review’s conversation didn’t come to the front of its pane, so the comments weren’t inserted. They stay in this review."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このレビューの会話をペインの前面に出せなかったため、コメントは挿入していません。コメントはこのレビューに残っています。"
           }
         }
       }
@@ -23498,6 +23596,108 @@
           "stringUnit": {
             "state": "translated",
             "value": "シェルコマンドを変更するため、Weir に管理者パスワードが必要です。"
+          }
+        }
+      }
+    },
+    "Sign-in required.": {
+      "comment": "Why an agent stopped: the service behind its model wants a sign-in; the service is not known",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign-in required."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サインインが必要です。"
+          }
+        }
+      }
+    },
+    "Sign in to %@ to go on.": {
+      "comment": "Why an agent stopped: the service behind its model wants a sign-in; argument: the service's name, as in OpenRouter",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in to %@ to go on."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ へのサインインが必要です。"
+          }
+        }
+      }
+    },
+    "The model isn’t available.": {
+      "comment": "Why an agent stopped: the model it asked for cannot be reached; the model is not known",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The model isn’t available."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルを使えません。"
+          }
+        }
+      }
+    },
+    "Can’t use the model %@.": {
+      "comment": "Why an agent stopped: the model it asked for cannot be reached; argument: the model's name",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Can’t use the model %@."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデル %@ を使えません。"
+          }
+        }
+      }
+    },
+    "stopReason.labeledLimitResets": {
+      "comment": "Why an agent stopped: a usage limit in the agent's own words, and when it resets (3:40 PM, Tue 3:40 PM)",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · resets %2$@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ · %2$@ に解除"
+          }
+        }
+      }
+    },
+    "paneHeader.agentProfile": {
+      "comment": "Pane header's hover text and VoiceOver: the agent's chosen role; argument: the agent's word, as in plan",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent: %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エージェント：%@"
           }
         }
       }

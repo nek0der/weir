@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "session.execution.started",
+  "event_id": "evt_197f5c216001i1ypylWVsRJZm3",
+  "created": 1793550828054,
+  "seq": 2,
+  "data": {
+    "sessionID": "ses_e680a3e14ffeQ6sWTHY4TED89Z"
+  },
+  "cwd": "/repo",
+  "prompt": "Run the shell command false once, do not retry, and then reply DONE",
+  "prompt_kind": "user",
+  "preparation": "787c0d5e-90d9-41fa-ad37-6b9d57c4b768"
+}

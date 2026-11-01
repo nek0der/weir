@@ -174,7 +174,7 @@ pub fn end_stopped_turn(
             )),
             before.as_ref(),
             snapshots,
-            None,
+            turn::BeginFrom::Capture,
         )
     });
     let outcome = records::with_record_lock(&record_path, || {

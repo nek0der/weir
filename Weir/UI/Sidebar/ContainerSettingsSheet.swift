@@ -134,12 +134,9 @@ struct ContainerSettingsSheet: View {
             generalSection
             worktreesSection
             RoutedAgentsSection(
-                claudeEnabled: project?.routeClaudeWorktrees ?? true,
-                codexEnabled: project?.routeCodexWorktrees ?? true,
-                antigravityEnabled: project?.routeAntigravityWorktrees ?? true,
-                onClaudeChange: applyRouteClaudeToggle,
-                onCodexChange: applyRouteCodexToggle,
-                onAntigravityChange: applyRouteAntigravityToggle
+                model: AgentWorktreeSettingsModel(),
+                isEnabled: { kind in project?.routesWorktrees(for: kind) ?? true },
+                onChange: applyRouteToggle
             )
             bootstrapSection
             filesSection
@@ -254,18 +251,16 @@ struct ContainerSettingsSheet: View {
     /// section list otherwise blows past Swift's IRGen capacity at
     /// `Onone` (`llvm::report_fatal_error` in `Explosion::setArgs`).
     private struct RoutedAgentsSection: View {
-        let claudeEnabled: Bool
-        let codexEnabled: Bool
-        let antigravityEnabled: Bool
+        let model: AgentWorktreeSettingsModel
         // The setters land via SwiftUI `Binding`, which expects an
         // `@isolated(any) @Sendable` closure. Annotating these properties
         // with `@MainActor` (or `@MainActor @Sendable`) currently trips a
         // Swift 6 IRGen crash on this file, so `body` wraps them in closure
         // literals instead: those inherit the view's main-actor isolation,
         // which is what makes handing them to `Binding` race-free.
-        let onClaudeChange: (Bool) -> Void
-        let onCodexChange: (Bool) -> Void
-        let onAntigravityChange: (Bool) -> Void
+        let isEnabled: (AgentKind) -> Bool
+        let onChange: (AgentKind, Bool) -> Void
+        @Environment(\.locale) private var locale
 
         private static func label(for kind: AgentKind) -> LocalizedStringResource {
             let name = AgentProviderRegistry.displayName(for: kind)
@@ -278,19 +273,14 @@ struct ContainerSettingsSheet: View {
                 // translated part is the word around the name. The rows are
                 // the Settings window's switch rows, so the switches are the
                 // mini ones System Settings uses in a form and keep the
-                // accent the form drops as `.tint`.
-                SettingsToggle(
-                    Text(Self.label(for: .claude)),
-                    isOn: Binding(get: { claudeEnabled }, set: { onClaudeChange($0) })
-                )
-                SettingsToggle(
-                    Text(Self.label(for: .codex)),
-                    isOn: Binding(get: { codexEnabled }, set: { onCodexChange($0) })
-                )
-                SettingsToggle(
-                    Text(Self.label(for: .antigravity)),
-                    isOn: Binding(get: { antigravityEnabled }, set: { onAntigravityChange($0) })
-                )
+                // accent the form drops as `.tint`. Which agents get one is what
+                // their descriptors say (`AgentWorktreeSettingsModel`).
+                ForEach(model.routed, id: \.self) { kind in
+                    SettingsToggle(
+                        Text(Self.label(for: kind)),
+                        isOn: Binding(get: { isEnabled(kind) }, set: { onChange(kind, $0) })
+                    )
+                }
             } header: {
                 Text(ProjectSettingsText.agentWorktrees)
             } footer: {
@@ -302,6 +292,9 @@ struct ContainerSettingsSheet: View {
                     its own default location.
                     """
                 )
+                if let note = model.note(locale: locale) {
+                    Text(note)
+                }
             }
         }
     }
@@ -486,16 +479,8 @@ struct ContainerSettingsSheet: View {
         )
     }
 
-    private func applyRouteClaudeToggle(_ enabled: Bool) {
-        session.setProjectRouteClaudeWorktrees(projectID, to: enabled)
-    }
-
-    private func applyRouteCodexToggle(_ enabled: Bool) {
-        session.setProjectRouteCodexWorktrees(projectID, to: enabled)
-    }
-
-    private func applyRouteAntigravityToggle(_ enabled: Bool) {
-        session.setProjectRouteAntigravityWorktrees(projectID, to: enabled)
+    private func applyRouteToggle(_ kind: AgentKind, _ enabled: Bool) {
+        session.setProjectRoutesWorktrees(projectID, for: kind, to: enabled)
     }
 
     private func commitName() {

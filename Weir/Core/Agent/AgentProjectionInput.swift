@@ -399,6 +399,12 @@ struct AgentProjectedRuntime: Decodable, Sendable {
     /// The tmux endpoint key the run's record names, when it runs in tmux:
     /// where the host looks up the run's own tmux locations.
     var tmuxEndpointKey: String?
+    /// The panes where another session of the run's process is on screen instead.
+    var panesBehindShownTab: [UUID]?
+    /// Those, and every pane of a process whose screen shows no session.
+    var panesNotInFront: [UUID]?
+    /// The process's launch run, for a process with tabs.
+    var tabChannel: UUID?
 
     private enum CodingKeys: String, CodingKey {
         case id, provider
@@ -408,6 +414,7 @@ struct AgentProjectedRuntime: Decodable, Sendable {
         case conversation
         case currentTurnID = "currentTurnId"
         case tmuxEndpointKey
+        case panesBehindShownTab, panesNotInFront, tabChannel
     }
 }
 
@@ -491,6 +498,9 @@ struct AgentProjectedBadge: Decodable, Sendable {
     var model: String?
     var effort: String?
     var permissionMode: String?
+    var modelUpstream: String?
+    var agentProfile: String?
+    var failureKind: String?
 
     private enum CodingKeys: String, CodingKey {
         case state, detail, runStartedAt, isTmuxHosted, updatedAt
@@ -498,7 +508,7 @@ struct AgentProjectedBadge: Decodable, Sendable {
         case conversationID = "conversationId"
         case providerSessionTitle, providerGeneratedTitle, sessionStartedAt, runLaunchOrder, parentRunID, runObservedOrder
         case cacheWindow, usageLimit, waitKind, tool, stopReason, hasPrompt
-        case backgroundWork, model, effort, permissionMode
+        case backgroundWork, model, effort, permissionMode, modelUpstream, agentProfile, failureKind
     }
 
     /// The badge as the interface holds it. An unreadable state shows as
@@ -532,7 +542,10 @@ struct AgentProjectedBadge: Decodable, Sendable {
             backgroundWork: backgroundWork?.work,
             model: model,
             effort: effort,
-            permissionMode: permissionMode
+            permissionMode: permissionMode,
+            modelUpstream: modelUpstream,
+            agentProfile: agentProfile,
+            failureKind: failureKind
         )
     }
 }
@@ -575,15 +588,18 @@ struct AgentProjectedUsageLimit: Decodable, Sendable {
     var limit: UsageLimit
 
     private enum CodingKeys: String, CodingKey {
-        case resetsAt, window
+        case resetsAt, window, scope, label
     }
 
     init(from decoder: any Decoder) throws {
         let container = try? decoder.container(keyedBy: CodingKeys.self)
         let resetsAt = (try? container?.decodeIfPresent(String.self, forKey: .resetsAt)) ?? nil
+        let scope = (try? container?.decodeIfPresent(String.self, forKey: .scope)) ?? nil
         limit = UsageLimit(
             resetAt: resetsAt.flatMap(AgentDateParsing.parseISO8601),
-            window: (try? container?.decodeIfPresent(String.self, forKey: .window)) ?? nil
+            window: (try? container?.decodeIfPresent(String.self, forKey: .window)) ?? nil,
+            scope: scope.map(UsageLimitScope.init(word:)),
+            label: (try? container?.decodeIfPresent(String.self, forKey: .label)) ?? nil
         )
     }
 }

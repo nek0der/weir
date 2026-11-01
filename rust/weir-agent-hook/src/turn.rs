@@ -33,6 +33,17 @@ struct Begun {
     prompt_kind: Option<PromptKind>,
 }
 
+/// Where a begin's snapshot comes from.
+pub(crate) enum BeginFrom<'a> {
+    /// It is taken now.
+    Capture,
+    /// None is taken, for this reason (`BEGIN_MISSING` reads as a turn missing
+    /// its begin).
+    Skip(&'a str),
+    /// It was saved ahead of the turn (`preparations`).
+    Taken(Box<SnapshotTaken>),
+}
+
 /// What was prepared for one event before the run record's lock.
 pub(crate) enum Prepared {
     /// A prompt begins a turn. `event` is `None` when the call carried no id:
@@ -294,9 +305,9 @@ impl Turns<'_> {
 
     /// Takes the snapshot `step` needs, before the lock. `record` is the run
     /// record as it stood before the lock, which is enough to skip a retried
-    /// event; the decision is made again under the lock. A begin is not
-    /// captured when `begin_skip` gives a reason: a restore kept the
-    /// worktree past the hook's limit.
+    /// event; the decision is made again under the lock. `begin` says where a
+    /// begin's snapshot comes from: none is captured when a restore kept the
+    /// worktree past the hook's limit, or when it was saved ahead of the turn.
     pub(crate) fn prepare(
         &self,
         step: TurnStep,
@@ -304,7 +315,7 @@ impl Turns<'_> {
         event_id: Option<EventId>,
         record: Option<&RunRecord>,
         snapshots: &dyn SnapshotRunner,
-        begin_skip: Option<&str>,
+        begin: BeginFrom<'_>,
     ) -> Prepared {
         let current = self.current(record);
         if let (Some(turn), Some(event_id)) = (current.turn(), &event_id)
@@ -324,16 +335,17 @@ impl Turns<'_> {
                     AgentEvent::PromptSubmitted { kind, .. } => *kind,
                     _ => None,
                 },
-                taken: match begin_skip {
+                taken: match begin {
                     // Nothing could be taken in time: the record reads as
                     // missing its begin, as an end-only record does.
-                    Some(BEGIN_MISSING) => SnapshotTaken {
+                    BeginFrom::Skip(BEGIN_MISSING) => SnapshotTaken {
                         status: SnapshotStatus::Pending,
                         skipped: Vec::new(),
                         git_context: None,
                     },
-                    Some(reason) => not_taken(reason),
-                    None => snapshots.capture(
+                    BeginFrom::Skip(reason) => not_taken(reason),
+                    BeginFrom::Taken(taken) => *taken,
+                    BeginFrom::Capture => snapshots.capture(
                         &self.begin_directory(event),
                         self.pane_id,
                         TurnSide::Begin,

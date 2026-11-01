@@ -334,6 +334,7 @@ fn the_usage_limit_reaches_the_badge_only_while_the_run_rests_in_error() {
         Some(weir_agent_model::UsageLimit {
             resets_at: Some("2026-09-14T15:00:00Z".to_owned()),
             window: Some("five_hour".to_owned()),
+            ..weir_agent_model::UsageLimit::default()
         })
     );
     let json = serde_json::to_value(&projection).expect("encode");

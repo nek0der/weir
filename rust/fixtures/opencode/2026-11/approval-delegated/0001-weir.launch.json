@@ -1,0 +1,5 @@
+{
+  "hook_event_name": "weir.launch",
+  "data": {},
+  "cwd": "/repo"
+}

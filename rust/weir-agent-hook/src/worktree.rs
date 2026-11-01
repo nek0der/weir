@@ -113,11 +113,17 @@ pub fn plan(intent: &WorktreeIntent, provider_id: &str, state_dir: &Path) -> Int
 /// that failed, one that went elsewhere, and a worktree made elsewhere. We go by
 /// what Git lists rather than how the command spelled the folder: a model may
 /// quote it its own way.
+///
+/// `is_proven` is for a command the provider's payload proves made the worktree
+/// (`ProviderAdapter::worktree_finish_is_proven`), which needs no mark: a provider
+/// that can run nothing before its tool has none to leave, and the mark exists only
+/// to tell a command that made the worktree from one that failed on it.
 #[must_use]
 pub fn finish(
     intent: &WorktreeIntent,
     provider_id: &str,
     state_dir: &Path,
+    is_proven: bool,
 ) -> Option<CreatedWorktree> {
     let (project, worktree) = routed(intent, provider_id, state_dir)?;
     // A mark left by a refused command says nothing about one for another repository.
@@ -125,7 +131,13 @@ pub fn finish(
         return None;
     }
     listed_worktree(&project.root, &worktree, &intent.branch)?;
-    if !take_awaited(state_dir, &worktree) || !wait_for_checkout(intent, &project.root, &worktree) {
+    // Proven by its payload alone: the folder its words name has to be this one.
+    if is_proven && !plain_add_names(intent, &worktree) {
+        return None;
+    }
+    if !(is_proven || take_awaited(state_dir, &worktree))
+        || !wait_for_checkout(intent, &project.root, &worktree)
+    {
         return None;
     }
     run_bootstrap(&project.bootstrap, &worktree);
@@ -140,6 +152,23 @@ pub fn finish(
         path: worktree,
         branch: intent.branch.clone(),
     })
+}
+
+/// Whether a plain `git worktree add` (`WorktreeIntent::plain_add_folder`) names
+/// `worktree`, read from the folder the agent ran it in.
+fn plain_add_names(intent: &WorktreeIntent, worktree: &Path) -> bool {
+    let Some(folder) = intent.plain_add_folder() else {
+        return false;
+    };
+    let named = match intent.cwd.as_deref() {
+        Some(cwd) => Path::new(cwd).join(folder),
+        None if Path::new(folder).is_absolute() => PathBuf::from(folder),
+        None => return false,
+    };
+    match (named.canonicalize(), worktree.canonicalize()) {
+        (Ok(named), Ok(worktree)) => named == worktree,
+        _ => false,
+    }
 }
 
 /// Whether the command adds to the project's repository, as `-C` can point it at

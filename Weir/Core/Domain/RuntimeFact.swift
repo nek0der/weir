@@ -8,6 +8,12 @@ import Foundation
 /// The rules take this instead of `AgentRuntimePresentation` so they depend
 /// on a few plain values rather than on the projection's wire shape; the
 /// store that feeds them does the mapping.
+/// A failure the interface words itself, with the name it needs.
+package enum RuntimeFailure: Equatable, Sendable {
+    case signIn(upstream: String?)
+    case modelUnavailable(model: String?)
+}
+
 package struct RuntimeFact: Equatable, Sendable {
     package let runtimeID: String
     package let provider: AgentKind
@@ -59,6 +65,10 @@ package struct RuntimeFact: Equatable, Sendable {
     /// Whether the run's session holds a conversation to resume (`AgentBadge`);
     /// `false` for one never prompted, `nil` when its record does not say.
     package var hasPrompt: Bool?
+    /// What the person has to do about the run's error, when it is one the
+    /// interface words itself (`signIn`, `modelUnavailable`), with the service or
+    /// model it names.
+    package var failure: RuntimeFailure?
 
     package init(
         runtimeID: String,
@@ -79,7 +89,8 @@ package struct RuntimeFact: Equatable, Sendable {
         waitKind: PromptWaitKind? = nil,
         tool: String? = nil,
         hasProcessExited: Bool = false,
-        hasPrompt: Bool? = nil
+        hasPrompt: Bool? = nil,
+        failure: RuntimeFailure? = nil
     ) {
         self.runtimeID = runtimeID
         self.provider = provider
@@ -100,6 +111,7 @@ package struct RuntimeFact: Equatable, Sendable {
         self.tool = tool
         self.hasProcessExited = hasProcessExited
         self.hasPrompt = hasPrompt
+        self.failure = failure
     }
 
     /// The session id a stop of this run resumes: none for a session never
@@ -122,6 +134,10 @@ package struct RuntimeFact: Equatable, Sendable {
         if hasProcessExited {
             return .processExited
         }
-        return usageLimit.map(StopReason.usageLimit) ?? .error(detail)
+        switch failure {
+        case let .signIn(upstream): return .signInRequired(upstream: upstream)
+        case let .modelUnavailable(model): return .modelUnavailable(model: model)
+        case nil: return usageLimit.map(StopReason.usageLimit) ?? .error(detail)
+        }
     }
 }

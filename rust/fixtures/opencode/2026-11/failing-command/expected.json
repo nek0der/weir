@@ -1,0 +1,56 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "cwd": "/repo"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "ses_e680a3e14ffeQ6sWTHY4TED89Z",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "Run the shell command false once, do not retry, and then reply DONE",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "extension",
+      "name": "session.step.started",
+      "payload": {}
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "shell",
+      "detail": "shell: false"
+    }
+  ],
+  [
+    {
+      "type": "tool_finished",
+      "tool": "shell"
+    }
+  ],
+  [
+    {
+      "type": "turn_finished",
+      "titles": {
+        "session_title": "Run false without retry"
+      },
+      "reply": "DONE"
+    }
+  ]
+]

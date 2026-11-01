@@ -33,7 +33,7 @@ pub mod conformance;
 pub use adapter::{
     CommandRun, FailureReport, FailureWatch, HookContext, ListDirectory, MAX_HOOK_INPUT_BYTES,
     NormalizeError, ProviderAdapter, QuestionTurn, QuestionTurnPhase, RawHookInput, SettingsSource,
-    StatusLineAdapter, TmuxEndpoint, TurnReading, UnpromptedPrompt, parse_object,
+    StatusLineAdapter, TmuxEndpoint, TurnPreparation, TurnReading, UnpromptedPrompt, parse_object,
     transcript_path_for_events,
 };
 pub use approval::{
@@ -46,7 +46,7 @@ pub use command::{
     NotifyCommand, OnMismatch, PaneStoreKind, Patch, Precondition, RETIRED_RECORD_LIFETIME_SECS,
     RecordPatch, ResumeIntent, Target,
 };
-pub use event::{AgentEvent, EventId, SessionSource, Titles};
+pub use event::{AgentEvent, EventId, FailureKind, SessionSource, Titles};
 pub use layout::{
     CWD_EVENT_FILE_SUFFIX, LOCK_FILE_SUFFIX, SESSION_HINT_FILE_SUFFIX, TURNS_DIRECTORY,
     WORKTREE_EVENT_FILE_SUFFIX, WORKTREE_EVENTS_DIRECTORY, cwd_event_file_name,
@@ -86,5 +86,7 @@ pub use turn::{
     SnapshotStatus, TURN_COUNTER_FILE_SUFFIX, TURN_RECORD_FILE_SUFFIX, TurnCounter, TurnPhase,
     TurnRecord, TurnRecordError, TurnSummary, TurnUsage, turn_record_file_name,
 };
-pub use usage::{PlanResetCredits, PlanUsage, PlanUsageAnswer, PlanUsageWindow, UsageLimit};
+pub use usage::{
+    PlanResetCredits, PlanUsage, PlanUsageAnswer, PlanUsageWindow, UsageLimit, UsageLimitScope,
+};
 pub use worktree::{WorktreeIntent, finished_hook_output, rerouted_hook_output};

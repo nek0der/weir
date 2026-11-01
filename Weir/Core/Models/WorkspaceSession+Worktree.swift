@@ -89,6 +89,18 @@ extension WorkspaceSession {
         projects[pi].routeAntigravityWorktrees = enabled
     }
 
+    /// Flips the project's routing toggle of `kind`, through the field that keeps it.
+    /// A kind with no field of its own has no toggle to flip.
+    @MainActor
+    func setProjectRoutesWorktrees(_ projectID: UUID, for kind: AgentKind, to enabled: Bool) {
+        switch kind {
+        case .claude: setProjectRouteClaudeWorktrees(projectID, to: enabled)
+        case .codex: setProjectRouteCodexWorktrees(projectID, to: enabled)
+        case .antigravity: setProjectRouteAntigravityWorktrees(projectID, to: enabled)
+        case .opencode: break
+        }
+    }
+
     /// Append a freshly-created git worktree to a project's sidebar
     /// list. Caller is responsible for actually running `git worktree
     /// add` first — this only mutates Weir's in-memory model.

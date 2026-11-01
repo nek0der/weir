@@ -1,0 +1,50 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "cwd": "/repo"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "ses_e68029d2bffe3mRCTl3dt0Sxyy",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "Reply with only the word ONE",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "extension",
+      "name": "session.step.started",
+      "payload": {}
+    }
+  ],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "ONE"
+    }
+  ],
+  [
+    {
+      "type": "compacting"
+    }
+  ],
+  [
+    {
+      "type": "compaction_finished"
+    }
+  ]
+]

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use weir_agent_model::{InstallRecipe, ProviderDescriptor, RecipePlaceholder, TmuxEndpoint};
 
 /// The variable the application sets to the pane's id in every pane it
@@ -235,6 +236,14 @@ impl HookEnv {
     #[must_use]
     pub fn log_path(&self) -> Option<PathBuf> {
         self.get("WEIR_HOOK_LOG").map(PathBuf::from)
+    }
+
+    /// How long the hook's caller waits for it (`WEIR_HOOK_TIME_LIMIT_MS`), for a
+    /// caller that kills it then; `None` for one that waits it out.
+    #[must_use]
+    pub fn time_limit(&self) -> Option<Duration> {
+        self.positive_order("WEIR_HOOK_TIME_LIMIT_MS")
+            .map(Duration::from_millis)
     }
 
     /// Whether turn snapshots are disabled (`WEIR_TURN_SNAPSHOT=0`).

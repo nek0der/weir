@@ -577,6 +577,42 @@ mod tests {
         assert!(on_terminate(&gone, NOW).is_empty());
     }
 
+    /// A second session's run in one process: the hint names the last run a session
+    /// started in, whichever is on screen.
+    fn with_sibling(mut input: LifecycleInput) -> LifecycleInput {
+        const SIBLING: &str = "BBBBBBBB-1111-4111-8111-BBBBBBBBBBB2";
+        input.records.push(RecordFile {
+            provider: provider("opencode"),
+            name: SIBLING.to_owned(),
+            content: Some(record_json("").replace(RUN, SIBLING)),
+        });
+        input.session_records[0].content = Some(format!(
+            r#"{{"schemaVersion":1,"paneId":"{PANE}","runId":"{SIBLING}","sessionId":"B"}}"#
+        ));
+        input
+    }
+
+    #[test]
+    fn a_quit_marks_every_sibling_and_writes_one_intent_for_the_hints_owner() {
+        let input = with_sibling(base("opencode", true, record_json(""), PidStatus::Alive));
+        let commands = on_terminate(&input, NOW);
+        let all = ops(&commands);
+        assert_eq!(
+            all.iter().filter(|op| **op == "update").count(),
+            2,
+            "{all:?}"
+        );
+        let intents: Vec<&ResumeIntent> = commands
+            .iter()
+            .filter_map(|command| match &command.op {
+                CommandOp::WriteResumeIntent(intent) => Some(intent),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(intents.len(), 1, "{all:?}");
+        assert_eq!(intents[0].session_id, "B");
+    }
+
     #[test]
     fn a_hint_owned_by_another_run_yields_only_the_marker() {
         // The pane has moved on to a newer run. There is no session this

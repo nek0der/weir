@@ -1,0 +1,20 @@
+{
+  "hook_event_name": "session.tool.success",
+  "event_id": "evt_19807445f001NeLYtBbffpDsg8",
+  "created": 1793551975519,
+  "seq": 12,
+  "data": {
+    "sessionID": "ses_e67f8d6c4ffePhQBQjRPnHdr7Z",
+    "assistantMessageID": "msg_19807296e001GaFzZw0itjK7fP",
+    "id": "call_stub_1",
+    "metadata": {
+      "status": "completed",
+      "truncated": false,
+      "exit": 0
+    },
+    "executed": false,
+    "name": "shell"
+  },
+  "command": "touch card-4.txt",
+  "cwd": "/repo"
+}

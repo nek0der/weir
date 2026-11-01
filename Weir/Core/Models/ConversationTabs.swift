@@ -77,6 +77,27 @@ struct ConversationTabs: Equatable, Sendable {
     /// pane strip and the changes panel name a pane's agent.
     init(tabs: [Tab], runtimes: [AgentRuntimePresentation]) {
         self.init(tabs: tabs) { AttentionState.headerRuntime(inPane: $0, among: runtimes)?.conversation }
+        // A session in a tab behind the one on screen still runs in the pane, so a
+        // card or "Show Tab" of it answers there. The title follows what is on screen.
+        for (index, tab) in tabs.enumerated() {
+            var all = self.tabs[tab.id]?.all ?? []
+            for pane in tab.splitTree.allLeafIDs() {
+                // A closed tab's run is no conversation the pane runs.
+                for runtime in runtimes where runtime.panesBehindShownTab.contains(pane) && runtime.badge.state != .unknown {
+                    guard let key = runtime.conversation else { continue }
+                    if !all.contains(key) {
+                        all.append(key)
+                    }
+                    if places[key] == nil {
+                        places[key] = Place(tabID: tab.id, position: index + 1, paneID: pane)
+                        running.append(key)
+                    }
+                }
+            }
+            if !all.isEmpty {
+                self.tabs[tab.id] = TabConversations(titled: self.tabs[tab.id]?.titled, all: all)
+            }
+        }
     }
 
     /// What the tab with `id` runs; `nil` for a tab not in the mapping.

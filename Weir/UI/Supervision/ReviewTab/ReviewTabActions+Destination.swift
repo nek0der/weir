@@ -95,7 +95,14 @@ extension ReviewTabActions {
         return ReviewTabModel.destinationChoices(
             destinationPanes(in: tabs, stores: stores),
             agent: { pane in
-                stores.attention.headerRuntime(inPane: pane)?.conversation.flatMap { conversation in
+                // A pane with several sessions gets the paste in the reviewed one, which
+                // `ReviewSessionFocus` brings forward; it is named so.
+                let reviewed = ReviewSessionFocus.conversation(
+                    reviewed: tab.conversation,
+                    inPane: pane,
+                    runtimes: stores.attention.allRuntimes
+                )
+                return (reviewed ?? stores.attention.headerRuntime(inPane: pane)?.conversation).flatMap { conversation in
                     agents.first { $0.conversation == conversation }
                 }
             },

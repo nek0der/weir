@@ -22,6 +22,8 @@ struct PaneHeaderAgent: Equatable {
     var model: String?
     var permissionMode: AgentPermissionMode?
     var effort: String?
+    var modelUpstream: String?
+    var agentProfile: String?
 }
 
 /// What a pane header shows, left to right: the name, then the dimmer
@@ -45,6 +47,11 @@ struct PaneHeaderLabel: Equatable {
     var permissionMode: AgentPermissionMode?
     /// How hard the pane's agent's model reasons, in the provider's own word.
     var effort: String?
+    /// Whom the pane's agent goes through for the model, for a CLI not tied to
+    /// one vendor.
+    var modelUpstream: String?
+    /// The role the person chose for the pane's agent, in the agent's word.
+    var agentProfile: String?
     /// What the pane's conversation has used, as the header writes it; only
     /// the header sets it, as the other surfaces that read a label do not
     /// show it.
@@ -82,12 +89,54 @@ struct PaneHeaderLabel: Equatable {
     /// wrote it. The effort stays the agent's own word, as the model does. The
     /// default mode is left unsaid, and the mode that runs without asking is
     /// named by the warning instead.
-    func settingsText(tokens: String? = nil, locale: Locale) -> String? {
+    ///
+    /// A CLI not tied to one vendor names its role first, and the service after
+    /// the model while `showsUpstream` lets it: it goes with the tokens, as what the
+    /// agent runs matters more than how it gets there. A service that is the
+    /// agent itself says nothing the badge did not (`distinctUpstream`). A long model name is cut in
+    /// the middle, where its ending still tells one from another (`shortModel`);
+    /// the hover text has it whole.
+    func settingsText(tokens: String? = nil, showsUpstream: Bool = true, locale: Locale) -> String? {
         if settingsAreAmbiguous {
             return nil
         }
-        let pieces = [model, effort, permissionMode?.headerName?.resolved(in: locale), tokens].compactMap(\.self)
+        let upstream = showsUpstream ? distinctUpstream : nil
+        let pieces = [
+            agentProfile,
+            model.map(Self.shortModel),
+            upstream,
+            effort,
+            permissionMode?.headerName?.resolved(in: locale),
+            tokens
+        ].compactMap(\.self)
         return pieces.isEmpty ? nil : pieces.joined(separator: " · ")
+    }
+
+    /// The service the agent goes through, unless it is the agent itself.
+    var distinctUpstream: String? {
+        modelUpstream == agentName ? nil : modelUpstream
+    }
+
+    /// The role, as the hover text and VoiceOver say it.
+    func spokenProfile(locale: Locale) -> String? {
+        agentProfile.map { profile in
+            LocalizedStringResource(
+                "paneHeader.agentProfile",
+                defaultValue: "Agent: \(profile)",
+                comment: "Pane header's hover text and VoiceOver: the agent's chosen role; argument: the agent's word, as in plan"
+            ).resolved(in: locale)
+        }
+    }
+
+    /// Longest model name the row shows whole. A model name on a CLI with many
+    /// services runs to 65 characters, and the row keeps its settings whole or not
+    /// at all, so one name could cost all of them.
+    static let modelCharacterLimit = 28
+
+    static func shortModel(_ model: String) -> String {
+        guard model.count > modelCharacterLimit else { return model }
+        let tail = modelCharacterLimit / 3
+        return "\(model.prefix(modelCharacterLimit - tail - 1))…\(model.suffix(tail))"
     }
 }
 
@@ -347,7 +396,9 @@ enum PaneHeaderRules {
             isNamedByPerson: personName != nil,
             model: normalizedName(agent?.model),
             permissionMode: agent?.permissionMode,
-            effort: normalizedName(agent?.effort)
+            effort: normalizedName(agent?.effort),
+            modelUpstream: normalizedName(agent?.modelUpstream),
+            agentProfile: normalizedName(agent?.agentProfile)
         )
     }
 }

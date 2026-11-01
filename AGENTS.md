@@ -30,7 +30,7 @@ The Makefile is the canonical entry point — `make help` lists the common targe
 make dev           # Debug build + launch
 make build         # Debug build only
 make run           # Launch the most recently built app
-make test          # Rust and Swift Testing suites
+make test          # Rust, OpenCode plugin (needs Node), and Swift Testing suites
 make test-measure  # Timing suite that `make test` leaves out (prints, checks nothing)
 make rust-test     # Rust workspace tests only
 make review-core   # Terminal-probe review scenario that runs outside the test target

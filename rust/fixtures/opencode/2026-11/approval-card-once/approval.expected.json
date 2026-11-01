@@ -1,0 +1,13 @@
+{
+  "0007-permission.asked.json": {
+    "provider": "opencode",
+    "session_id": "ses_e67f1a00effe3jUQwm0dn3aMOZ",
+    "operation_id": "per_1980e6050001JsLJL38Zlxf0BU",
+    "tool_name": "Bash",
+    "summary": "touch card-1.txt",
+    "input": {
+      "command": "touch card-1.txt"
+    },
+    "timeout_ms": 570000
+  }
+}

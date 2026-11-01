@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use weir_agent_core::SnapshotTaken;
 use weir_agent_model::{DiffStat, GitContext, SkippedFile, SnapshotStatus};
 
@@ -545,6 +545,10 @@ thread_local! {
     /// out of time; it is `None` outside one.
     static SCOPE: Cell<Option<bool>> = const { Cell::new(None) };
 
+    /// When the hook on this thread must be done by, as its caller set it
+    /// (`HookDeadline`); `None` for no limit but `COMMAND_LIMIT`'s.
+    static DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
+
     /// This holds a shorter `COMMAND_LIMIT` for the tests on this thread.
     #[cfg(test)]
     static TEST_LIMIT: Cell<Option<Duration>> = const { Cell::new(None) };
@@ -583,7 +587,34 @@ fn command_limit() -> Duration {
     if let Some(limit) = TEST_LIMIT.get() {
         return limit;
     }
-    COMMAND_LIMIT
+    match DEADLINE.get() {
+        Some(deadline) => COMMAND_LIMIT.min(deadline.saturating_duration_since(Instant::now())),
+        None => COMMAND_LIMIT,
+    }
+}
+
+/// The time a hook's caller gives it, for the git commands it runs, while this
+/// lives. A caller that stops waiting can only kill the hook, and git runs in a
+/// process group of its own, which the kill does not reach: a filter that never
+/// answers would stay, one for each call, with its scratch index. Under a limit,
+/// the hook stops git itself, reaps it, and cleans up as for any git failure, before
+/// its caller gives up.
+pub(crate) struct HookDeadline(Option<Instant>);
+
+impl HookDeadline {
+    pub(crate) fn begin(limit: Option<Duration>) -> Self {
+        let before = DEADLINE.get();
+        if let Some(limit) = limit {
+            DEADLINE.set(Some(Instant::now() + limit));
+        }
+        Self(before)
+    }
+}
+
+impl Drop for HookDeadline {
+    fn drop(&mut self) {
+        DEADLINE.set(self.0);
+    }
 }
 
 /// Shortens `COMMAND_LIMIT` for the rest of the test on this thread. Only
@@ -747,6 +778,67 @@ pub(crate) fn is_object_id(value: &str) -> bool {
         && value.bytes().any(|byte| byte != b'0')
 }
 
+/// A capture's scratch index, removed with its Git lock however the capture ends.
+struct ScratchIndex(PathBuf);
+
+impl Drop for ScratchIndex {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+        let mut lock = self.0.clone().into_os_string();
+        lock.push(".lock");
+        let _ = std::fs::remove_file(PathBuf::from(lock));
+    }
+}
+
+/// Removes the pane's scratch files whose capture is over: one named for a process
+/// that is gone, and the shared names of earlier builds. A live capture keeps its
+/// file, which a sibling's start or end must not take from under it.
+fn sweep_scratch(directory: &Path, key: &str) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    let prefix = format!("turn-{key}.");
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(rest) = name.to_str().and_then(|name| name.strip_prefix(&prefix)) else {
+            continue;
+        };
+        if scratch_is_over(rest) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// What follows a scratch file's `turn-<pane>.`: `<pid>.index`, `<pid>.end.index`, or
+/// with no process, `index` and `end.index` from before captures had their own.
+fn scratch_is_over(rest: &str) -> bool {
+    match rest.split_once('.') {
+        Some((pid, _)) if !pid.is_empty() && pid.bytes().all(|byte| byte.is_ascii_digit()) => {
+            pid.parse().map_or(true, |pid: u32| !process_is_alive(pid))
+        }
+        _ => matches!(
+            rest,
+            "index" | "index.lock" | "end.index" | "end.index.lock"
+        ),
+    }
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    // SAFETY: Signal 0 delivers nothing; the call only asks whether the process exists.
+    let answer = unsafe { libc::kill(pid, 0) };
+    answer == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// The hook runtime only runs on Unix; elsewhere nothing is taken as gone.
+#[cfg(not(unix))]
+fn process_is_alive(_pid: u32) -> bool {
+    true
+}
+
 impl SnapshotRunner for GitSnapshots {
     fn capture(&self, cwd: &Path, pane_id: &str, side: TurnSide) -> SnapshotTaken {
         let Some((git_dir, root)) = Self::repository(cwd) else {
@@ -757,23 +849,32 @@ impl SnapshotRunner for GitSnapshots {
         if std::fs::create_dir_all(&directory).is_err() {
             return failed("snapshot directory");
         }
-        // Each end has its own scratch index, so the end of one turn and the
-        // start of the next in the same pane cannot write into one file.
-        let index = directory.join(match side {
-            TurnSide::Begin => format!("turn-{key}.index"),
-            TurnSide::End => format!("turn-{key}.end.index"),
-        });
+        // Each capture has its own scratch index, so two ends of one turn, and the
+        // sessions of a pane that shows several, cannot write into one file: Git
+        // fails rather than waits on an index's lock. It is seeded afresh either
+        // way, and goes with this capture. What a killed one left goes with the
+        // next, whichever side that is.
+        sweep_scratch(&directory, &key);
+        let scratch = ScratchIndex(directory.join(format!(
+            "turn-{key}.{}.{}index",
+            std::process::id(),
+            match side {
+                TurnSide::Begin => "",
+                TurnSide::End => "end.",
+            }
+        )));
+        let index = scratch.0.as_path();
         // A skip-worktree file keeps what the index holds, which is what a
         // sparse checkout has; a restore to the snapshot refuses there.
-        if let Err(step) = Self::seed_index(&git_dir, &root, &index) {
+        if let Err(step) = Self::seed_index(&git_dir, &root, index) {
             return failed(step);
         }
-        let skipped = Self::large_untracked(&root, &index);
-        if Self::stage(&root, &index, &skipped).is_none() {
+        let skipped = Self::large_untracked(&root, index);
+        if Self::stage(&root, index, &skipped).is_none() {
             return failed("add");
         }
         let Some(tree) =
-            Self::git(&root, &["write-tree"], Some(&index)).filter(|tree| is_object_id(tree))
+            Self::git(&root, &["write-tree"], Some(index)).filter(|tree| is_object_id(tree))
         else {
             return failed("write-tree");
         };
@@ -892,13 +993,9 @@ impl SnapshotRunner for GitSnapshots {
             );
             // The read index is what the review of earlier builds wrote; the
             // run owns its removal.
-            for file in [
-                format!("turn-{name}.index"),
-                format!("turn-{name}.end.index"),
-                format!("turn-{name}.read.index"),
-            ] {
-                let _ = std::fs::remove_file(git_dir.join("weir").join(file));
-            }
+            let _ =
+                std::fs::remove_file(git_dir.join("weir").join(format!("turn-{name}.read.index")));
+            sweep_scratch(&git_dir.join("weir"), &name);
         }
         Ok(())
     }
@@ -942,6 +1039,43 @@ mod tests {
         }
         assert!(GitSnapshots::run(scratch.path(), &["--version"], None).is_some());
 
+        let pid: libc::pid_t = std::fs::read_to_string(&pid_file)
+            .expect("pid")
+            .trim()
+            .parse()
+            .expect("a pid");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        // SAFETY: `kill` with signal 0 sends nothing; it only asks whether
+        // the process is there.
+        while unsafe { libc::kill(pid, 0) } == 0 {
+            assert!(
+                Instant::now() < deadline,
+                "the alias's sleep is still there"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// The time a hook's caller gives it stops git as `COMMAND_LIMIT` does, with what
+    /// it started, and leaves the thread as it was.
+    #[test]
+    fn a_git_past_the_hooks_deadline_is_stopped_with_what_it_started() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let pid_file = scratch.path().join("pid");
+        let alias = format!(
+            "alias.hang=!echo $$ > '{}'; exec sleep 30",
+            pid_file.display()
+        );
+        let started = Instant::now();
+        {
+            let _deadline = super::HookDeadline::begin(Some(Duration::from_millis(300)));
+            assert_eq!(
+                GitSnapshots::run(scratch.path(), &["-c", &alias, "hang"], None),
+                None
+            );
+        }
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(super::command_limit(), super::COMMAND_LIMIT);
         let pid: libc::pid_t = std::fs::read_to_string(&pid_file)
             .expect("pid")
             .trim()

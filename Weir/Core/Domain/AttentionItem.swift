@@ -98,6 +98,11 @@ package enum StopReason: Equatable, Sendable {
     /// The plan's usage limit, with when it resets and which it is, as far
     /// as the provider said.
     case usageLimit(UsageLimit)
+    /// Whatever serves the model wants the person to sign in; the service's name
+    /// when the agent gave one.
+    case signInRequired(upstream: String?)
+    /// No route to the model the session asked for; its name when known.
+    case modelUnavailable(model: String?)
     case worktreeMissing
     /// The last lines of the failing step's output, for the person to read
     /// without opening a log.

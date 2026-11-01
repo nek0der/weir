@@ -174,6 +174,7 @@ struct AgentResumeCommandBuilderTests {
         case .claude: "claude --resume \(id)"
         case .codex: "codex resume \(id)"
         case .antigravity: "agy --conversation \(id)"
+        case .opencode: "opencode --session \(id)"
         }
     }
 
@@ -182,6 +183,7 @@ struct AgentResumeCommandBuilderTests {
         case .claude: ClaudeResumeCommandBuilder.resumeCommand(sessionId: sessionId, cwd: cwd)
         case .codex: CodexResumeCommandBuilder.resumeCommand(sessionId: sessionId, cwd: cwd)
         case .antigravity: AgentResumeCommandBuilder<AntigravityAgent>.resumeCommand(sessionId: sessionId, cwd: cwd)
+        case .opencode: AgentResumeCommandBuilder<OpenCodeAgent>.resumeCommand(sessionId: sessionId, cwd: cwd)
         }
     }
 
@@ -190,6 +192,7 @@ struct AgentResumeCommandBuilderTests {
         case .claude: ClaudeResumeCommandBuilder.resume(for: tab, paneID: paneID)
         case .codex: CodexResumeCommandBuilder.resume(for: tab, paneID: paneID)
         case .antigravity: AgentResumeCommandBuilder<AntigravityAgent>.resume(for: tab, paneID: paneID)
+        case .opencode: AgentResumeCommandBuilder<OpenCodeAgent>.resume(for: tab, paneID: paneID)
         }
     }
 
@@ -198,6 +201,7 @@ struct AgentResumeCommandBuilderTests {
         case .claude: ClaudeResumeCommandBuilder.initialCommand(for: tab, paneID: paneID)
         case .codex: CodexResumeCommandBuilder.initialCommand(for: tab, paneID: paneID)
         case .antigravity: AgentResumeCommandBuilder<AntigravityAgent>.initialCommand(for: tab, paneID: paneID)
+        case .opencode: AgentResumeCommandBuilder<OpenCodeAgent>.initialCommand(for: tab, paneID: paneID)
         }
     }
 }

@@ -1,0 +1,19 @@
+{
+  "hook_event_name": "session.execution.succeeded",
+  "event_id": "evt_197fd6a28001UMgtMlPXCdp0Iw",
+  "created": 1793551329832,
+  "seq": 10,
+  "data": {
+    "sessionID": "ses_e68029d2bffe3mRCTl3dt0Sxyy"
+  },
+  "cwd": "/repo",
+  "usage": {
+    "input": 84,
+    "output": 2,
+    "reasoning": 0,
+    "cacheRead": 8320,
+    "cacheWrite": 0,
+    "isPartial": false
+  },
+  "reply": "ONE"
+}

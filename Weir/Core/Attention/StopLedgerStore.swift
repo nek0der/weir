@@ -125,6 +125,12 @@ final class StopLedgerStore {
             case let .usageLimit(limit):
                 kind = "usageLimit"
                 usageLimit = limit
+            case let .signInRequired(upstream):
+                kind = "signInRequired"
+                message = upstream
+            case let .modelUnavailable(model):
+                kind = "modelUnavailable"
+                message = model
             case .notResumedAtLaunch:
                 kind = "notResumedAtLaunch"
             case .launchFailed, .worktreeMissing:
@@ -137,6 +143,8 @@ final class StopLedgerStore {
             case "processExited": .processExited
             case "error": .error(message)
             case "usageLimit": usageLimit.map(StopReason.usageLimit)
+            case "signInRequired": .signInRequired(upstream: message)
+            case "modelUnavailable": .modelUnavailable(model: message)
             case "notResumedAtLaunch": .notResumedAtLaunch
             default: nil
             }

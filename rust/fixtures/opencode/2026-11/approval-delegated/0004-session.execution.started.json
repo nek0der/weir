@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "session.execution.started",
+  "event_id": "evt_1980729630016ivONinYHc7Wd7",
+  "created": 1793551968611,
+  "seq": 2,
+  "data": {
+    "sessionID": "ses_e67f8d6c4ffePhQBQjRPnHdr7Z"
+  },
+  "cwd": "/repo",
+  "prompt": "TOOL shell {\"command\":\"touch card-4.txt\",\"description\":\"make a file\"}",
+  "prompt_kind": "user",
+  "preparation": "9da51ae2-7110-4a27-8740-e273ff3bb330"
+}

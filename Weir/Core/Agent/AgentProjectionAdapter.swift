@@ -668,7 +668,7 @@ final class AgentProjectionAdapter {
             attention?.replaceRuntimes(
                 projection.runtimes
                     .filter { $0.provider == provider }
-                    .map(runtimePresentation),
+                    .compactMap(runtimePresentation),
                 kind: kind
             )
         }
@@ -732,7 +732,7 @@ final class AgentProjectionAdapter {
         onProjectionApplied?(session)
     }
 
-    private func runtimePresentation(_ runtime: AgentProjectedRuntime) -> AgentRuntimePresentation {
+    private func runtimePresentation(_ runtime: AgentProjectedRuntime) -> AgentRuntimePresentation? {
         AgentRuntimePresentation(projected: runtime, tmuxLocationsByEndpoint: tmuxLocationsByEndpoint)
     }
 

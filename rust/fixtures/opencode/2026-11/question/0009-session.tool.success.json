@@ -1,0 +1,21 @@
+{
+  "hook_event_name": "session.tool.success",
+  "event_id": "evt_1980fdc6f0017egxbzVN8gJdGN",
+  "created": 1793552538735,
+  "seq": 12,
+  "data": {
+    "sessionID": "ses_e67f039fbffeSjARELW0ZUCW7l",
+    "assistantMessageID": "msg_1980fc62a001aPHaQJ040q7xO3",
+    "id": "call_stub_1",
+    "metadata": {
+      "answers": [
+        [
+          "Red"
+        ]
+      ],
+      "truncated": false
+    },
+    "executed": false,
+    "name": "question"
+  }
+}

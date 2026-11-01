@@ -94,6 +94,19 @@ struct Project: Codable, Equatable, Identifiable {
     var routeCodexWorktrees: Bool
     /// The same opt-out for the Antigravity CLI's `git worktree add`.
     var routeAntigravityWorktrees: Bool
+
+    /// Whether `kind`'s `git worktree add` goes to the placement: the stored field
+    /// of that kind, which `state.json` and the routing file keep under their own
+    /// names. On for a kind with no field, which has no toggle either.
+    func routesWorktrees(for kind: AgentKind) -> Bool {
+        switch kind {
+        case .claude: routeClaudeWorktrees
+        case .codex: routeCodexWorktrees
+        case .antigravity: routeAntigravityWorktrees
+        case .opencode: true
+        }
+    }
+
     /// The commands that count as a turn's check, as patterns whose last
     /// word may end in `*`. Nil means the defaults the hook carries
     /// (`AgentProviderRegistry.checkDefaults`); empty means no checks.

@@ -132,7 +132,12 @@ struct AgentShimLaunchTests {
                 for (path, directory) in cases {
                     let status = try Self.startShim(entry.kind, home: home, scratch: root, path: path, directory: directory)
                     try #require(status == 0, "\(entry.kind) \(path)")
-                    #expect(Self.recorded(record) == [agent.path, path], "\(entry.kind) \(path)")
+                    // OpenCode hands its environment to the commands its agent runs, so
+                    // its shim leaves itself and the other shims off the `PATH`.
+                    let expected = entry.kind == .opencode
+                        ? (directory == nil ? "\(tools.path):/usr/bin:/bin" : "/usr/bin:\(tools.path):/bin")
+                        : path
+                    #expect(Self.recorded(record) == [agent.path, expected], "\(entry.kind) \(path)")
                     try manager.removeItem(at: record)
                 }
             }

@@ -1,4 +1,4 @@
-.PHONY: build build-release release-check run dev test test-measure rust-test review-core fmt rust-fmt lint rust-lint rust-header dmg xcodegen ghostty site-images screenshot clean help FORCE
+.PHONY: build build-release release-check run dev test test-measure rust-test plugin-test review-core fmt rust-fmt lint rust-lint rust-header dmg xcodegen ghostty site-images screenshot clean help FORCE
 
 SCHEME  := Weir
 PROJECT := Weir.xcodeproj
@@ -45,9 +45,10 @@ help:
 	@echo "  make build       Build Debug"
 	@echo "  make run         Launch the built app"
 	@echo "  make dev         build + run"
-	@echo "  make test        Run the Rust and Swift Testing suites"
+	@echo "  make test        Run the Rust, OpenCode plugin, and Swift Testing suites"
 	@echo "  make test-measure Run the timing suite that make test leaves out"
 	@echo "  make rust-test   Run Rust workspace tests"
+	@echo "  make plugin-test Run the OpenCode plugin's tests"
 	@echo "  make review-core Run the review scenarios without building the app"
 	@echo "  make fmt         Auto-format with SwiftFormat"
 	@echo "  make lint        Lint Swift and Rust sources, mirrors CI"
@@ -111,10 +112,15 @@ run:
 
 dev: build run
 
-test: rust-test $(PBXPROJ)
+test: rust-test plugin-test $(PBXPROJ)
 	$(debug_signing_guard)
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -destination 'platform=macOS' \
 		$(DEBUG_SIGNING) test
+
+# The OpenCode plugin is the one thing we ship that runs in JavaScript. Its tests
+# stub OpenCode and use nothing but Node.
+plugin-test:
+	node --test scripts/opencode-plugin-tests/tui.test.mjs
 
 # The timing tests print numbers for a person to compare and check none of
 # them, so they are off unless asked for. The Rust measurements are the ignored

@@ -332,6 +332,7 @@ final class WeirNotificationManager {
         case .claude: "Claude"
         case .codex: "Codex"
         case .antigravity: "Antigravity"
+        case .opencode: "OpenCode"
         }
         let content = UNMutableNotificationContent()
         content.title = LocalizedStringResource(

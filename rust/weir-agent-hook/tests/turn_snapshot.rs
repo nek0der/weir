@@ -38,10 +38,12 @@ fn capture_writes_a_private_index_without_touching_the_real_index() {
         git(&repo.path, &["rev-parse", "--verify", "-q", &pane_ref]),
         None
     );
+    // A capture's scratch index goes with it.
     assert!(
-        repo.git_dir()
+        !repo
+            .git_dir()
             .join("weir")
-            .join(format!("turn-{key}.index"))
+            .join(format!("turn-{key}.{}.index", std::process::id()))
             .exists()
     );
     // The untracked file is in the snapshot tree but still untracked for the user.
@@ -55,9 +57,16 @@ fn capture_writes_a_private_index_without_touching_the_real_index() {
         Some("?? untracked.txt")
     );
 
-    // What an earlier build left: the pane's ref, and the read index its
-    // review wrote. Removal still takes both.
+    // What an earlier build left: the pane's ref, its shared index, and the read
+    // index its review wrote. Removal still takes them.
     git(&repo.path, &["update-ref", &pane_ref, &tree]).expect("earlier ref");
+    fs::write(
+        repo.git_dir()
+            .join("weir")
+            .join(format!("turn-{key}.index")),
+        b"",
+    )
+    .expect("earlier index");
     fs::write(
         repo.git_dir()
             .join("weir")

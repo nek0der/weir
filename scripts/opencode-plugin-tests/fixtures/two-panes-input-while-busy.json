@@ -1,0 +1,143 @@
+{
+  "about": "Recorded with two OpenCode 2.2.5 interfaces on one session and one service (2026-11-02). The right pane sends SLOW 12; the left pane, while it runs, types an input and sends it with Enter (steer) or with the queue key (queue). OpenCode delivers it into the execution that is running and starts none for it. Ids are shortened; order and fields are as recorded.",
+  "right": [
+    {
+      "prepare": true
+    },
+    {
+      "type": "session.inbox.enqueued",
+      "data": {
+        "inboxID": "msg_1",
+        "sessionID": "ses_q",
+        "item": {
+          "type": "user",
+          "payload": {
+            "text": "SLOW 12",
+            "files": [],
+            "agents": []
+          },
+          "delivery": "steer"
+        }
+      }
+    },
+    {
+      "type": "session.execution.started",
+      "data": {
+        "sessionID": "ses_q"
+      }
+    },
+    {
+      "type": "session.inbox.delivered",
+      "data": {
+        "sessionID": "ses_q",
+        "inboxID": "msg_1"
+      }
+    },
+    {
+      "type": "session.inbox.enqueued",
+      "data": {
+        "inboxID": "msg_2",
+        "sessionID": "ses_q",
+        "item": {
+          "type": "user",
+          "payload": {
+            "text": "queued again from left",
+            "files": [],
+            "agents": []
+          },
+          "delivery": "DELIVERY"
+        }
+      }
+    },
+    {
+      "type": "session.inbox.delivered",
+      "data": {
+        "sessionID": "ses_q",
+        "inboxID": "msg_2"
+      }
+    },
+    {
+      "type": "session.execution.succeeded",
+      "data": {
+        "sessionID": "ses_q"
+      }
+    },
+    {
+      "type": "session.viewed",
+      "data": {
+        "sessionID": "ses_q",
+        "idle": 1
+      }
+    }
+  ],
+  "left": [
+    {
+      "type": "session.inbox.enqueued",
+      "data": {
+        "inboxID": "msg_1",
+        "sessionID": "ses_q",
+        "item": {
+          "type": "user",
+          "payload": {
+            "text": "SLOW 12",
+            "files": [],
+            "agents": []
+          },
+          "delivery": "steer"
+        }
+      }
+    },
+    {
+      "type": "session.execution.started",
+      "data": {
+        "sessionID": "ses_q"
+      }
+    },
+    {
+      "type": "session.inbox.delivered",
+      "data": {
+        "sessionID": "ses_q",
+        "inboxID": "msg_1"
+      }
+    },
+    {
+      "keys": 22
+    },
+    {
+      "type": "session.inbox.enqueued",
+      "data": {
+        "inboxID": "msg_2",
+        "sessionID": "ses_q",
+        "item": {
+          "type": "user",
+          "payload": {
+            "text": "queued again from left",
+            "files": [],
+            "agents": []
+          },
+          "delivery": "DELIVERY"
+        }
+      }
+    },
+    {
+      "type": "session.inbox.delivered",
+      "data": {
+        "sessionID": "ses_q",
+        "inboxID": "msg_2"
+      }
+    },
+    {
+      "type": "session.execution.succeeded",
+      "data": {
+        "sessionID": "ses_q"
+      }
+    },
+    {
+      "type": "session.viewed",
+      "data": {
+        "sessionID": "ses_q",
+        "idle": 1
+      }
+    }
+  ]
+}

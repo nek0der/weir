@@ -3,6 +3,32 @@
 
 import Foundation
 
+/// Which of an agent's work a usage limit stops.
+package enum UsageLimitScope: String, Codable, Equatable, Hashable, Sendable {
+    /// Every session of the agent on this account.
+    case account
+    /// The sessions going through one service: a CLI that reaches its models
+    /// many ways has a limit on each.
+    case upstream
+    /// The sessions on one model.
+    case model
+
+    /// The scope a word names. A word this build does not know says the limit holds
+    /// less than the account, as every word but the default does, and reads as the
+    /// one that marks no other agent, here as in the Rust model.
+    package init(word: String) {
+        self = Self(rawValue: word) ?? .upstream
+    }
+
+    /// The scope of a limit that says none: one written before limits said,
+    /// when the weekly limits of one Claude model were told only by their window.
+    /// It stays here, not in the Rust model, because the stop ledger keeps such
+    /// limits too, and the ledger never passes through Rust.
+    static func ofUnscoped(window: String?) -> Self {
+        ["seven_day_opus", "seven_day_sonnet"].contains(window) ? .model : .account
+    }
+}
+
 /// The usage limit an agent's turn stopped at, as its run reports it.
 package struct UsageLimit: Codable, Equatable, Hashable, Sendable {
     /// When the limit resets; `nil` when the provider did not say.
@@ -10,20 +36,45 @@ package struct UsageLimit: Codable, Equatable, Hashable, Sendable {
     /// Which limit, as the provider names it (Claude's `five_hour`,
     /// `seven_day`, …); `nil` when not given.
     package var window: String?
+    /// Whom the limit holds.
+    package var scope: UsageLimitScope
+    /// The limit in the provider's own words, for one with no `window` the
+    /// interface has a name for; `nil` when not given.
+    package var label: String?
 
     package init(
         resetAt: Date? = nil,
-        window: String? = nil
+        window: String? = nil,
+        scope: UsageLimitScope? = nil,
+        label: String? = nil
     ) {
         self.resetAt = resetAt
         self.window = window
+        self.scope = scope ?? .ofUnscoped(window: window)
+        self.label = label
     }
 
-    /// Whether the limit holds every agent of the account. Claude's weekly
-    /// limits of one model (`seven_day_opus`, `seven_day_sonnet`) stop only
-    /// the agents on that model, so they do not mark the others.
+    private enum CodingKeys: String, CodingKey {
+        case resetAt, window, scope, label
+    }
+
+    /// A limit kept from before the field read as what it was then.
+    package init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let window = try container.decodeIfPresent(String.self, forKey: .window)
+        try self.init(
+            resetAt: container.decodeIfPresent(Date.self, forKey: .resetAt),
+            window: window,
+            scope: (try? container.decodeIfPresent(String.self, forKey: .scope))?.map(UsageLimitScope.init(word:)),
+            label: container.decodeIfPresent(String.self, forKey: .label)
+        )
+    }
+
+    /// Whether the limit holds every agent of the account. One on a single
+    /// model or service stops only the agents on it, so it does not mark the
+    /// others, and the agent it stopped may go on by changing model.
     var isAccountWide: Bool {
-        !["seven_day_opus", "seven_day_sonnet"].contains(window)
+        scope == .account
     }
 
     /// Whether the reset is known and still ahead at `now`.
@@ -56,9 +107,10 @@ package enum UsageLimitResetNotice: Equatable, Sendable {
     /// provider is held, judged by the same time the notice is sent at
     /// (`UsageLimits.releaseAt`), so the bar never offers to resume into a
     /// limit that still holds nor to notify of one that has passed. Any
-    /// other stop resumes as it would.
+    /// other stop resumes as it would. So does one on a single service: the agent
+    /// can go on by changing model, which waiting would hide.
     package static func of(_ item: AttentionItem, in limits: UsageLimits, isRequested: (AgentKind) -> Bool, now: Date) -> Self? {
-        guard case .stop(.usageLimit) = item.kind, let provider = item.subject.provider,
+        guard case let .stop(.usageLimit(limit)) = item.kind, limit.scope != .upstream, let provider = item.subject.provider,
               limits.releaseAt(of: provider, now: now) != nil
         else { return nil }
         return isRequested(provider) ? .requested : .offered

@@ -41,6 +41,14 @@ This can happen inside a tmux you started yourself, where `agy` does not report 
 
 Weir places a plugin at `~/.gemini/config/plugins/weir` the first time `agy` runs in a pane. If a folder of that name already exists without Weir's `.weir-managed` file, Weir leaves it alone, so move it aside. If you ran `agy plugin disable weir`, enable the plugin again in `agy`.
 
+## OpenCode reports nothing to Weir
+
+Weir places a plugin at `~/.config/opencode/plugins/weir` the first time `opencode` runs in a pane, or at `plugins/weir` in the folder `OPENCODE_CONFIG_DIR` names when you set it. If a folder of that name already exists without Weir's `.weir-managed` file, Weir leaves it alone, so move it aside. Weir does not watch a launch with `--server`, or `opencode run` and OpenCode's other subcommands. A newer OpenCode than this Weir supports may also have changed what the plugin relies on, and the pane then works as a plain OpenCode.
+
+## An OpenCode turn shows no changes
+
+Weir saves a turn's start when you press Enter. A `--prompt` launch, a slash command chosen from OpenCode's menu, a rebound submit key, and a turn the agent goes on to by itself have no start, so they show no change summary or **Restore Code**. If the save takes more than ten seconds, as it can in a very large repository, Weir sends your input without a start.
+
 ## A row has no pull request status
 
 Install `gh` or `glab` and sign in to the project's remote. **Create PR** needs `gh`, so Weir does not create GitLab merge requests.

@@ -21,8 +21,8 @@ Weir/
   UI/            SwiftUI views, NSViewRepresentable bridges, design system
     Supervision/ the supervision window: title bar, rail, sidebar, session area, panels
   FFI/           libghostty C ABI wrapper (GhosttyFFI)
-  Resources/     Info.plist, xcstrings, claude-shim / codex-shim / antigravity-shim (sharing agent-shim/runtime-common.sh),
-                 antigravity-plugin (the plugin that shim places in `agy`'s folder),
+  Resources/     Info.plist, xcstrings, claude-shim / codex-shim / antigravity-shim / opencode-shim (sharing agent-shim/runtime-common.sh),
+                 antigravity-plugin and opencode-plugin (the plugins those shims place in each agent's folder),
                  ghostty/ (shell integration, themes), terminfo
 AgentIntegrationService/
   Service/        launchd-managed macOS XPC host for the Rust approval broker
@@ -42,6 +42,7 @@ rust/
   weir-provider-claude/ Claude adapter and approval translation
   weir-provider-codex/  Codex adapter and approval translation
   weir-provider-antigravity/ Antigravity CLI adapter; it answers no approvals
+  weir-provider-opencode/ OpenCode adapter; its report comes from a plugin in the pane's interface
   weir-agent-protocol/  versioned wire messages and authenticated sessions
   weir-rust-bridge/     Rust entry points exposed through a stable C ABI
 ```
@@ -52,7 +53,7 @@ in `FFI/`. The Rust boundary lives behind `Core/Rust/WeirRustBridge.swift`
 and the C header in `rust/weir-rust-bridge/include/`. Rust stays independent
 of Swift and Apple frameworks. UI may consume Core models but never reaches
 into their private state. Core keeps AppKit and SwiftUI out. The agent
-folders, `Core/Claude`, `Core/Codex`, and `Core/Antigravity`, never refer to
+folders, `Core/Claude`, `Core/Codex`, `Core/Antigravity`, and `Core/OpenCode`, never refer to
 each other in code. Each is independent, and the first two are shaped alike.
 
 The bridge-wide ABI number is a compatibility version, not a release or API
@@ -602,17 +603,36 @@ composer open. A versioned file is read through
 `MigrationBackup` has copied it; `docs/data-migration.md` has every file this
 covers and how to go back.
 
+### Several sessions in a pane
+
+OpenCode's interface shows several sessions in tabs in one pane. Each gets its own
+run, sharing the process's id. The launch's run holds which run is on screen
+(`pane_shown_run_id`), and the projection derives from it, within that pane,
+`panes_behind_shown_tab`. The header (`activeAttachmentPaneIDs` and the pane's label) and
+the rules for the turns read by sight and for the banners each read that mark, and take a
+run behind as out of sight. Its approvals are
+held like any other, and going to one (⌘J, the decision bar, **Answer in terminal**, Show Tab)
+asks the pane for its tab.
+The home screen is its own fact (`pane_shows_home`, `panes_not_in_front`): the header keeps
+the last session, and nothing is in sight. To reach a session, Weir writes a request its
+plugin reads, under the process's own name, its launch's run (`AgentTabFocus`). Review asks for an answer, a read
+of the screen, right before it pastes (`ReviewSessionFocus`). A person's switch in the moment between
+that read and the paste is not caught.
+
 ### Turn review snapshots
 
 At `UserPromptSubmit`, each agent hook copies the worktree's real index into
-`<git-dir>/weir/turn-<pane>.index`, runs `git add -A` against that private
-index, and writes its tree. The private index is separate from the real one;
-user staging state and `git status` remain untouched.
+a scratch index of that capture, `<git-dir>/weir/turn-<pane>.<pid>.index`, runs
+`git add -A` against it, writes its tree, and removes it. The scratch index is
+separate from the real one; user staging state and `git status` remain untouched.
+Git fails rather than waits on an index another process holds, and siblings of a pane
+can capture at once, so no capture shares its file. What a killed one left goes with the
+next capture of the pane, or when a session ends.
 
 That snapshot begins a turn record. At the end of the turn (`Stop`, a
 failure, or an interrupt the provider reports) the hook takes a second
 snapshot in the repository the turn began in, through
-`turn-<pane>.end.index`, and writes what changed between the two trees to
+`turn-<pane>.<pid>.end.index`, and writes what changed between the two trees to
 `<state>/turns/<turn-id>.turn.json`, with the tokens the turn used as the
 agent's transcript records them (and, for Codex, the checks it ran). A stop that follows work another stop
 hook asked for (`stop_hook_active`) takes the end again, since the turn went

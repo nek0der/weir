@@ -138,6 +138,7 @@ fn outcome_json(outcome: &HookOutcome) -> serde_json::Value {
         HookOutcome::NotInWeir => ("not_in_weir", None, None),
         HookOutcome::Rejected(reason) => ("rejected", Some(reason.clone()), None),
         HookOutcome::UnknownProvider => ("unknown_provider", None, None),
+        HookOutcome::NotRecorded(reason) => ("not_recorded", Some(reason.clone()), None),
         HookOutcome::Intercepted {
             message, stdout, ..
         } => ("intercepted", Some(message.clone()), stdout.as_deref()),
@@ -443,6 +444,14 @@ fn provider_boundary(operation: impl FnOnce() -> Result<i32, i32>) -> Result<i32
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_write_not_recorded_crosses_with_its_exit_status() {
+        let body = outcome_json(&HookOutcome::NotRecorded("record lock busy".to_owned()));
+        assert_eq!(body["outcome"], "not_recorded");
+        assert_eq!(body["exit_code"], 75);
+        assert_eq!(body["message"], "record lock busy");
+    }
     use crate::test_support::take_bytes;
 
     fn request(provider: &str, payload: &[u8]) -> (i32, Option<Value>) {

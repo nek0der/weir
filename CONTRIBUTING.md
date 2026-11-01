@@ -19,6 +19,7 @@ By participating, you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
   xcodebuild -downloadComponent MetalToolchain
   ```
 - [Homebrew](https://brew.sh)
+- [Node](https://nodejs.org), for the OpenCode plugin's tests in `make test`
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen), Zig 0.17.0, and Rustup
   ```bash
   brew install xcodegen zig@0.17 rustup
@@ -132,7 +133,7 @@ make ghostty      # Only if vendor/ghostty/macos/GhosttyKit.xcframework is
                   # missing (fresh clone). `make test` does not rebuild it
                   # and will fail at link time without the xcframework.
 make xcodegen     # Regenerate the Xcode project from project.yml.
-make test         # Run the Rust and Swift test suites.
+make test         # Run the Rust, OpenCode plugin, and Swift test suites.
 make review-core  # The one review scenario the test target cannot host. It
                   # opens a pty and spawns processes, and under the parallel
                   # suites its descriptors reuse numbers another test

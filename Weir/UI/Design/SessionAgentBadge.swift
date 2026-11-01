@@ -6,8 +6,9 @@ import WeirDomain
 
 /// One agent, wherever one is named by a mark: a tab, a pane's header, a
 /// card, or a row (`AgentBadgeStrip` for a place with several):
-/// "Cl", "Cx", and "Ag" in white on Claude's, Codex's, and Antigravity's brand
-/// colors. A session
+/// "Cl", "Cx", "Ag", and "Op" in white on Claude's, Codex's, Antigravity's, and
+/// OpenCode's brand colors. OpenCode's stays "Op" whichever model it runs: the
+/// badge names the agent, and the header names the model. A session
 /// with only a shell has none: its state glyph is the terminal's mark
 /// already, and a boxed word beside it would only say it again. The letters
 /// are always the same width, so the column the badge sits in lines up from
@@ -74,6 +75,7 @@ struct SessionAgentBadge: View {
         case .claude: AnyShapeStyle(SupervisionTokens.claude.color)
         case .codex: AnyShapeStyle(SupervisionTokens.codex.color)
         case .antigravity: AnyShapeStyle(antigravityFill)
+        case .opencode: AnyShapeStyle(SupervisionTokens.opencode.color)
         }
     }
 
@@ -109,6 +111,7 @@ struct SessionAgentBadge: View {
         case .claude: SupervisionTokens.claudeEdge.color
         case .codex: SupervisionTokens.codexEdge.color
         case .antigravity: .clear
+        case .opencode: SupervisionTokens.opencodeEdge.color
         }
     }
 }

@@ -27,6 +27,7 @@ pub(crate) fn descriptor() -> &'static ProviderDescriptor {
             Capability::Resume,
             Capability::CwdEvents,
             Capability::WorktreeEvents,
+            Capability::WorktreePlacement,
             Capability::ApprovalHook,
             Capability::Subagents,
             Capability::TurnSnapshot,
@@ -103,6 +104,8 @@ mod tests {
         assert!(descriptor.has(Capability::CwdEvents));
         assert!(!descriptor.has(Capability::ResumeDefersToOtherLiveSession));
         assert!(descriptor.has(Capability::CacheWindow));
+        assert!(descriptor.has(Capability::WorktreePlacement));
+        assert!(!descriptor.has(Capability::WorktreeFinishProven));
         assert_eq!(descriptor.state_directory, "agent-states");
         assert_eq!(
             descriptor.cwd_events_directory.as_deref(),

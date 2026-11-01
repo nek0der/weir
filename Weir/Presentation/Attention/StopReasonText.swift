@@ -36,6 +36,10 @@ enum StopReasonText {
             launchFailure(stage).resolved(in: locale)
         case let .usageLimit(limit):
             usageLimit(limit, locale: locale, now: now)
+        case let .signInRequired(upstream):
+            signInRequired(upstream).resolved(in: locale)
+        case let .modelUnavailable(model):
+            modelUnavailable(model).resolved(in: locale)
         case .worktreeMissing:
             LocalizedStringResource(
                 "Worktree not found.",
@@ -52,6 +56,15 @@ enum StopReasonText {
     /// "5-hour limit reached · resets 3:40 PM": the limit by
     /// name when the provider gave it, and the time while it is ahead.
     static func usageLimit(_ limit: UsageLimit, locale: Locale, now: Date) -> String {
+        // The provider's own words, which already say the limit was reached.
+        if let label = limit.label {
+            guard limit.resetsLater(than: now), let resetAt = limit.resetAt else { return label }
+            return LocalizedStringResource(
+                "stopReason.labeledLimitResets",
+                defaultValue: "\(label) · resets \(resetTime(resetAt, locale: locale, now: now))",
+                comment: "Why an agent stopped: a usage limit in the agent's own words, and when it resets (3:40 PM, Tue 3:40 PM)"
+            ).resolved(in: locale)
+        }
         let name = limitName(limit.window).resolved(in: locale)
         guard limit.resetsLater(than: now), let resetAt = limit.resetAt else {
             return LocalizedStringResource(
@@ -63,6 +76,32 @@ enum StopReasonText {
             "\(name) reached · resets \(resetTime(resetAt, locale: locale, now: now))",
             comment: "Why an agent stopped: its plan's usage limit, named as in 5-hour limit, and when it resets (3:40 PM, Tue 3:40 PM)"
         ).resolved(in: locale)
+    }
+
+    private static func signInRequired(_ upstream: String?) -> LocalizedStringResource {
+        guard let upstream else {
+            return LocalizedStringResource(
+                "Sign-in required.",
+                comment: "Why an agent stopped: the service behind its model wants a sign-in; the service is not known"
+            )
+        }
+        return LocalizedStringResource(
+            "Sign in to \(upstream) to go on.",
+            comment: "Why an agent stopped: the service behind its model wants a sign-in; argument: the service's name, as in OpenRouter"
+        )
+    }
+
+    private static func modelUnavailable(_ model: String?) -> LocalizedStringResource {
+        guard let model else {
+            return LocalizedStringResource(
+                "The model isn’t available.",
+                comment: "Why an agent stopped: the model it asked for cannot be reached; the model is not known"
+            )
+        }
+        return LocalizedStringResource(
+            "Can’t use the model \(model).",
+            comment: "Why an agent stopped: the model it asked for cannot be reached; argument: the model's name"
+        )
     }
 
     /// The limit as the person knows it from the agent's own words; Claude's

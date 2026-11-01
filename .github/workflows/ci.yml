@@ -201,6 +201,13 @@ jobs:
       - name: Run tests
         if: env.SKIPS_STEPS != 'true'
         run: cargo test --locked --workspace --all-targets
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: env.SKIPS_STEPS != 'true' && runner.os != 'Windows'
+        with:
+          node-version-file: site/.node-version
+      - name: OpenCode plugin tests
+        if: env.SKIPS_STEPS != 'true' && runner.os != 'Windows'
+        run: make plugin-test
 
   # The two build jobs do not wait for SwiftFormat and SwiftLint: those take
   # under a minute, and waiting put that minute in front of the longest job.

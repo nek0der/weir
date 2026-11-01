@@ -16,7 +16,7 @@
 
 use serde_json::{Map, Value};
 use std::time::{Duration, UNIX_EPOCH};
-use weir_agent_model::{UsageLimit, format_utc_seconds};
+use weir_agent_model::{UsageLimit, UsageLimitScope, format_utc_seconds};
 
 /// What the transcript says of the turn's failure.
 #[derive(Debug, PartialEq, Eq)]
@@ -117,16 +117,23 @@ fn finding_of(record: &Map<String, Value>) -> Finding {
     if quota.get("status").and_then(Value::as_str) != Some("rejected") && !is_usage_limit_error {
         return Finding::NotALimit;
     }
+    let window = quota
+        .get("rateLimitType")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     Finding::Limit(UsageLimit {
         resets_at: quota
             .get("resetsAt")
             .and_then(Value::as_u64)
             .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
             .map(format_utc_seconds),
-        window: quota
-            .get("rateLimitType")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        scope: match window.as_deref() {
+            // The weekly limits of one model stop only the sessions on it.
+            Some("seven_day_opus" | "seven_day_sonnet") => UsageLimitScope::Model,
+            _ => UsageLimitScope::Account,
+        },
+        window,
+        label: None,
     })
 }
 
@@ -144,6 +151,23 @@ mod tests {
     const REJECTED: &str = r#"{"type":"assistant","isSidechain":false,"message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"You've hit your session limit"}]},"quotaLimits":{"status":"rejected","resetsAt":1791352800,"rateLimitType":"five_hour","overageStatus":"rejected"},"error":"rate_limit","isApiErrorMessage":true,"apiErrorStatus":429}"#;
     const PROMPT: &str =
         r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"go on"}}"#;
+
+    #[test]
+    fn the_weekly_limits_of_one_model_hold_that_model_and_the_others_the_account() {
+        for (window, scope) in [
+            ("seven_day_opus", UsageLimitScope::Model),
+            ("seven_day_sonnet", UsageLimitScope::Model),
+            ("seven_day", UsageLimitScope::Account),
+            ("five_hour", UsageLimitScope::Account),
+        ] {
+            let line = REJECTED.replace("five_hour", window);
+            let found = transcript_usage_limit(&tail(&[PROMPT, &line]));
+            assert!(
+                matches!(&found, Finding::Limit(limit) if limit.scope == scope),
+                "{window}"
+            );
+        }
+    }
     const ANSWER: &str =
         r#"{"type":"assistant","isSidechain":false,"message":{"role":"assistant","content":[]}}"#;
     const TURN_DURATION: &str = r#"{"type":"system","subtype":"turn_duration"}"#;
@@ -160,6 +184,7 @@ mod tests {
             Finding::Limit(UsageLimit {
                 resets_at: Some("2026-10-07T06:00:00Z".to_owned()),
                 window: Some("five_hour".to_owned()),
+                ..UsageLimit::default()
             })
         );
     }
@@ -236,6 +261,7 @@ mod tests {
             Finding::Limit(UsageLimit {
                 resets_at: None,
                 window: Some("five_hour".to_owned()),
+                ..UsageLimit::default()
             })
         );
     }

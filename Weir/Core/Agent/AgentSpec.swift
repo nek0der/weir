@@ -177,6 +177,29 @@ struct AgentBadge: Codable, Equatable {
     /// (`agentPermissionMode`).
     var permissionMode: String?
 
+    /// Whom the provider goes through for the model, in words for a person
+    /// (`OpenRouter`), for a CLI not tied to one vendor; `nil` for one that is,
+    /// and in a badge persisted before this field existed.
+    var modelUpstream: String?
+
+    /// The role the person chose for the session's agent, in the agent's word
+    /// (`plan`); `nil` when it is the ordinary one. Not a permission mode: nothing
+    /// says it limits what the agent may do.
+    var agentProfile: String?
+
+    /// What the person has to do about the failure the run rests in, as the
+    /// projection spells it ("signIn"). Kept as the word, as `waitKind` is.
+    var failureKind: String?
+
+    /// `failureKind` with the words it needs, for the attention list.
+    var runtimeFailure: RuntimeFailure? {
+        switch failureKind {
+        case "signIn": .signIn(upstream: modelUpstream)
+        case "modelUnavailable": .modelUnavailable(model: model)
+        default: nil
+        }
+    }
+
     var agentPermissionMode: AgentPermissionMode? {
         permissionMode.flatMap(AgentPermissionMode.init(rawValue:))
     }
@@ -278,6 +301,7 @@ extension AgentKind {
         case .claude: ClaudeAgent.strictResumeArguments(sessionId: sessionId)
         case .codex: CodexAgent.strictResumeArguments(sessionId: sessionId)
         case .antigravity: AntigravityAgent.strictResumeArguments(sessionId: sessionId)
+        case .opencode: OpenCodeAgent.strictResumeArguments(sessionId: sessionId)
         }
         guard let cwd, !cwd.isEmpty else { return resume }
         return "cd \(ShellQuote.single(cwd)) && \(resume)"

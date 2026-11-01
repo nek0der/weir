@@ -52,6 +52,7 @@ fn a_tool_outside_a_turn_runs_in_the_rests_episode_until_the_agent_is_idle() {
     let failure = AgentEvent::Failed {
         error: "server_error".into(),
         usage_limit: None,
+        kind: None,
     };
     let cases = [
         Stretch {
@@ -254,6 +255,7 @@ fn a_permission_prompt_after_a_late_tool_names_the_tool_not_the_old_error() {
             AgentEvent::Failed {
                 error: "server_error".into(),
                 usage_limit: None,
+                kind: None,
             },
         ],
     );

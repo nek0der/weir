@@ -151,6 +151,7 @@ pub(crate) fn normalize(
                     }
                     limit
                 }),
+                kind: None,
             }
         }
         "Stop" => AgentEvent::TurnFinished {
@@ -313,6 +314,7 @@ pub(crate) fn session_settings(input: RawHookInput<'_>, context: &HookContext) -
         is_awaiting_answer: false,
         effort: input.transcript.and_then(rollout_effort),
         permission_mode: string(&object, "permission_mode").and_then(PermissionMode::parse),
+        ..SessionSettings::default()
     }
 }
 
@@ -538,6 +540,7 @@ mod tests {
                 is_awaiting_answer: false,
                 effort: None,
                 permission_mode: Some(PermissionMode::BypassPermissions),
+                ..SessionSettings::default()
             }
         );
         assert_eq!(
@@ -786,7 +789,9 @@ mod tests {
                 usage_limit: Some(weir_agent_model::UsageLimit {
                     resets_at: Some("2026-10-07T06:00:00Z".into()),
                     window: Some("five_hour".into()),
+                    ..weir_agent_model::UsageLimit::default()
                 }),
+                kind: None,
             }]
         );
         assert_eq!(
@@ -803,7 +808,9 @@ mod tests {
                 usage_limit: Some(weir_agent_model::UsageLimit {
                     resets_at: Some("2026-10-07T06:00:00Z".into()),
                     window: None,
+                    ..weir_agent_model::UsageLimit::default()
                 }),
+                kind: None,
             }]
         );
     }
@@ -827,6 +834,7 @@ mod tests {
             vec![AgentEvent::Failed {
                 error: "model_not_found".into(),
                 usage_limit: None,
+                kind: None,
             }]
         );
         // Without the rollout the watcher's word stands.
@@ -835,6 +843,7 @@ mod tests {
             vec![AgentEvent::Failed {
                 error: "server_overloaded".into(),
                 usage_limit: None,
+                kind: None,
             }]
         );
         assert_eq!(
@@ -842,6 +851,7 @@ mod tests {
             vec![AgentEvent::Failed {
                 error: "error".into(),
                 usage_limit: None,
+                kind: None,
             }]
         );
     }
@@ -943,7 +953,9 @@ mod tests {
                 usage_limit: Some(weir_agent_model::UsageLimit {
                     resets_at: Some("2026-10-07T06:00:00Z".into()),
                     window: None,
+                    ..weir_agent_model::UsageLimit::default()
                 }),
+                kind: None,
             }]
         );
     }

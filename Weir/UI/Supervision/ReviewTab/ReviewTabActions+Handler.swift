@@ -28,6 +28,13 @@ extension ReviewTabActions {
             startPane: { [window, stores] paneID in
                 await startPane(paneID, window: window, stores: stores, paneVisibility: paneVisibility)
             },
+            showSession: { [window, stores] destination in
+                await ReviewSessionFocus.show(
+                    conversation: window.review?.conversation,
+                    destination: destination,
+                    runtimes: { stores.attention.allRuntimes }
+                )
+            },
             closeAfterInsert: { [window, stores] inserted in
                 // An agent the session's tab does not list (one run inside
                 // tmux) is still the one the pane's bar shows.

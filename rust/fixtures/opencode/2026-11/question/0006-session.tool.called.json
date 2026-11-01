@@ -1,0 +1,31 @@
+{
+  "hook_event_name": "session.tool.called",
+  "event_id": "evt_1980fc653001rOIHZk7rRDLP5V",
+  "created": 1793552533075,
+  "seq": 10,
+  "data": {
+    "sessionID": "ses_e67f039fbffeSjARELW0ZUCW7l",
+    "assistantMessageID": "msg_1980fc62a001aPHaQJ040q7xO3",
+    "id": "call_stub_1",
+    "input": {
+      "questions": [
+        {
+          "question": "Red or blue?",
+          "header": "Color",
+          "options": [
+            {
+              "label": "Red",
+              "description": "warm"
+            },
+            {
+              "label": "Blue",
+              "description": "cool"
+            }
+          ]
+        }
+      ]
+    },
+    "executed": false,
+    "name": "question"
+  }
+}

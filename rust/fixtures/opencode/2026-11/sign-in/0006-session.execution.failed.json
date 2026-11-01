@@ -1,0 +1,26 @@
+{
+  "hook_event_name": "session.execution.failed",
+  "event_id": "evt_19809b13000161cYN1AG1ptns5",
+  "created": 1793552134448,
+  "seq": 7,
+  "data": {
+    "sessionID": "ses_e67f64f4fffec61Tbm4Oz30TJ0",
+    "error": {
+      "type": "provider.auth",
+      "message": "stub failure",
+      "status": 401,
+      "response": {
+        "body": "{\"error\":{\"message\":\"stub failure\",\"type\":\"stub\"}}"
+      }
+    }
+  },
+  "cwd": "/repo",
+  "usage": {
+    "input": 0,
+    "output": 0,
+    "reasoning": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "isPartial": false
+  }
+}

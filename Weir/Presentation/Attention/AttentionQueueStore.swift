@@ -198,7 +198,8 @@ final class AttentionQueueStore {
                 waitKind: runtime.badge.promptWaitKind,
                 tool: runtime.badge.tool,
                 hasProcessExited: runtime.badge.hasProcessExited,
-                hasPrompt: runtime.badge.hasPrompt
+                hasPrompt: runtime.badge.hasPrompt,
+                failure: runtime.badge.runtimeFailure
             )
         }
         // A hidden row is not shown, so its worktree's stop would be listed
