@@ -36,6 +36,21 @@
 /* The current page in the quiet tone the bar's menu uses, not an accent block. */
 .sidebar-content a[aria-current="page"], .sidebar-content a[aria-current="page"]:hover { background: var(--hover); color: var(--fg); }
 
+/* Every table fills the column with the same first column. Starlight's `display: block` sizes each one to its own content, so tables on one page disagree. */
+.sl-markdown-content table { display: table; width: 100%; }
+.sl-markdown-content th:first-child { width: 30%; }
+/* A long path breaks rather than pushing the table past a phone's width. */
+.sl-markdown-content td code { overflow-wrap: anywhere; }
+
+/* Japanese breaks between phrases, not inside a word. A browser without `auto-phrase` breaks as it normally does. */
+:root:lang(ja) { word-break: auto-phrase; }
+
+/* A key reads apart from the words around it. */
+.sl-markdown-content kbd { padding: .1em .4em; border: 1px solid var(--hair); border-radius: 5px; background: var(--hover); font-family: var(--sans); font-size: .875em; white-space: nowrap; }
+
+/* A path or command in a sentence: the quiet tint a key has, without a key's edge. */
+.sl-markdown-content :not(pre) > code { padding: .1em .35em; border-radius: 5px; background: var(--hover); color: var(--fg); font-size: .875em; }
+
 /* The top bar in Starlight's header, which sets its height and side margins. */
 .docs-nav, .docs-nav .nav { height: 100%; }
 .docs-nav .nav-row { max-width: none; height: 100%; }

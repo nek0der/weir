@@ -50,7 +50,16 @@ This builds the app and takes three captures in each look from demo mode, whose 
 
 ## Add a document
 
-Add a Markdown file under `src/content/docs/docs/`, and its translation at the same path under `ja/docs/`. The sidebar picks it up. A page marked `noindex` in its frontmatter stays out of search and the sitemap, so take that off the placeholder pages when their text is written. Use the names the app's `Localizable.xcstrings` uses for its parts.
+Add a Markdown file under `src/content/docs/docs/`, and its translation at the same path under `ja/docs/`. The sidebar picks it up. A page marked `noindex` in its frontmatter stays out of search and the sitemap. Use the names the app's `Localizable.xcstrings` uses for its parts.
+
+## Write the documents
+
+- Update a page in every language when a change alters what it describes: a label, a step, a shortcut, or a limit.
+- Check the steps in the running app, not only in the code. Use the labels and order you see there.
+- Keep each language's content the same as the English, and write it as a native speaker would rather than as a translation.
+- Add an image only where words cannot show the thing clearly: the window's layout, the review, Needs Attention, the approval card. Install, shortcuts, troubleshooting, and privacy need none.
+- Images come from `make site-images`, never by hand. Run it before a release when a pictured screen changed.
+- Write a key as `<kbd>⌘N</kbd>`.
 
 ## Add a language
 

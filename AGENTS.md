@@ -245,7 +245,8 @@ Short index of load-bearing files. Skim these before touching their domain.
   `FileManager`.
 - **Site**: `make build`, `make test`, and `make lint` do not cover `site/`, so
   run `pnpm build` there after a change to it. Its words need both `en` and `ja`
-  in `site/src/site.ts`, not in `Localizable.xcstrings`. `site/README.md` has the rest.
+  in `site/src/site.ts`, not in `Localizable.xcstrings`. A change to what the documents
+  describe updates `site/src/content/docs/` in every language. `site/README.md` has the rest.
 - **When stuck**, search GitHub issues/PRs, OSS projects, and WWDC sessions
   before guessing. Web-first beats trial-and-error rebuilds.
 - **Demo mode**: set `WEIR_DEMO=1` in the launching shell to swap the
