@@ -14,79 +14,84 @@ enum MenuBarActions {
 
     /// The ledger's entry for an approval or a question; `nil` for anything
     /// else, or a request the ledger no longer holds.
-    private static func entry(_ id: AttentionItemID, state: AppState) -> ApprovalLedger.Entry? {
+    private static func entry(_ id: AttentionItemID, stores: MenuBarStores) -> ApprovalLedger.Entry? {
         switch id {
         case let .approval(key), let .question(key):
-            state.approvalPresentation.ledger.entries[key]
+            stores.approvals.ledger.entries[key]
         case .prompt, .stop, .unread:
             nil
         }
     }
 
     /// The request behind an approval or a question, as the menu shows it.
-    static func request(for id: AttentionItemID, state: AppState) -> MenuBarModel.Request? {
-        entry(id, state: state).map { MenuBarModel.Request($0.presentation, state: $0.state) }
+    static func request(for id: AttentionItemID, stores: MenuBarStores) -> MenuBarModel.Request? {
+        entry(id, stores: stores).map { MenuBarModel.Request($0.presentation, state: $0.state) }
     }
 
     /// Whether the stop `id` can resume in the same conversation, as its
     /// decision bar last read it (`StopLedgerStore.offers`): the pane's job
     /// is read on a timer, not while drawing, and read again at the press.
-    static func canResume(_ id: AttentionItemID, state: AppState) -> Bool {
-        [.available, .failed].contains(state.stopLedger.offers[id] ?? .unavailable)
+    static func canResume(_ id: AttentionItemID, stores: MenuBarStores) -> Bool {
+        [.available, .failed].contains(stores.stopLedger.offers[id] ?? .unavailable)
     }
 
     /// What a usage limit stop offers while its limit holds, as its
     /// decision bar reads it (`UsageLimitResetNotice`).
-    static func resetNotice(_ id: AttentionItemID, state: AppState, now: Date) -> UsageLimitResetNotice? {
-        guard let item = state.attentionQueue.queue.item(id) else { return nil }
-        return state.usageLimitResetSync?.notice(for: item, now: now)
+    static func resetNotice(_ id: AttentionItemID, stores: MenuBarStores, now: Date) -> UsageLimitResetNotice? {
+        guard let item = stores.attentionQueue.queue.item(id) else { return nil }
+        return stores.resetNotice(item, now)
     }
 
     /// Whether the item has a pane to go to, rather than a card to open.
-    static func isInPane(_ id: AttentionItemID, state: AppState) -> Bool {
-        state.attentionQueue.queue.item(id)?.subject.paneID != nil
+    static func isInPane(_ id: AttentionItemID, stores: MenuBarStores) -> Bool {
+        stores.attentionQueue.queue.item(id)?.subject.paneID != nil
     }
 
     /// A button under a row: it acts at once and leaves Weir, and the
     /// menu, as they are, so the next row can be settled from here too.
-    static func perform(_ action: MenuBarModel.Action, on id: AttentionItemID, state: AppState) {
+    static func perform(_ action: MenuBarModel.Action, on id: AttentionItemID, stores: MenuBarStores) {
         switch action {
         case .allowOnce:
-            decide(id, .allowOnce, state: state)
+            decide(id, .allowOnce, stores: stores)
         case .deny:
-            decide(id, .deny, state: state)
+            decide(id, .deny, stores: stores)
         case .resume:
-            resume(id, state: state)
+            resume(id, stores: stores)
         case .notifyAtReset:
-            _ = SupervisionWindowActions.requestResetNotice(id, state: state)
+            stores.requestResetNotice(id)
         }
     }
 
     /// Runs the row's own button, the list's Answer…. It takes the person into
     /// Weir, so the menu closes first, as Esc would, and does not stay
     /// over the window it opened.
-    static func perform(_ action: NeedsAttentionListModel.RowAction, on id: AttentionItemID, state: AppState, menuWindow: MenuWindow) {
+    static func perform(
+        _ action: NeedsAttentionListModel.RowAction,
+        on id: AttentionItemID,
+        stores: MenuBarStores,
+        menuWindow: MenuWindow
+    ) {
         close(menuWindow)
         switch action {
         case .answer:
-            answer(id, state: state)
+            answer(id, stores: stores)
         }
     }
 
     /// The row itself: the menu closes, and Weir comes to the front at
     /// the item's pane. ⌘-click opens an item of a project no window shows
     /// in a new window, as the Needs Attention list does.
-    static func open(_ id: AttentionItemID, opening: NeedsAttentionListOpening, state: AppState, menuWindow: MenuWindow) {
+    static func open(_ id: AttentionItemID, opening: NeedsAttentionListOpening, stores: MenuBarStores, menuWindow: MenuWindow) {
         close(menuWindow)
-        open(id, opensInNewWindow: opening.opensInNewWindow, state: state)
+        open(id, opensInNewWindow: opening.opensInNewWindow, stores: stores)
     }
 
     /// The heading's Open Weir: the window commands act on, brought back
     /// if hidden or minimized, in front, on whatever it shows.
-    static func openWeir(state: AppState, menuWindow: MenuWindow) {
+    static func openWeir(stores: MenuBarStores, menuWindow: MenuWindow) {
         close(menuWindow)
         NSApp.activate()
-        state.windowRegistry.bringBack(nil)
+        stores.windows.bringBack(nil)
     }
 
     /// The heading's Settings…, through `openSettings`, which the view
@@ -123,12 +128,12 @@ enum MenuBarActions {
     /// buttons: the menu's (`MenuBarApprovalRule`), and the list's, that
     /// the broker still takes a decision (`AttentionItem.canAnswerInWeir`).
     /// Weir stays where it is.
-    private static func decide(_ id: AttentionItemID, _ resolution: ApprovalResolution, state: AppState) {
-        guard let entry = entry(id, state: state),
-              state.attentionQueue.queue.item(id)?.canAnswerInWeir == true,
+    private static func decide(_ id: AttentionItemID, _ resolution: ApprovalResolution, stores: MenuBarStores) {
+        guard let entry = entry(id, stores: stores),
+              stores.attentionQueue.queue.item(id)?.canAnswerInWeir == true,
               MenuBarModel.Request(entry.presentation, state: entry.state).offer == .allowOrDeny
         else { return }
-        state.approvalPresentation.resolve(entry.presentation, resolution)
+        stores.approvals.resolve(entry.presentation, resolution)
     }
 
     /// "Answer…": Weir comes to the front with the request's card open,
@@ -142,15 +147,15 @@ enum MenuBarActions {
     /// rule that answering moves no window is the card's, and no card
     /// opens then; doing nothing would leave the person a press that
     /// answered nothing and a closed menu.
-    private static func answer(_ id: AttentionItemID, state: AppState) {
-        guard let entry = entry(id, state: state), entry.presentation.supportsNativeAnswer,
+    private static func answer(_ id: AttentionItemID, stores: MenuBarStores) {
+        guard let entry = entry(id, stores: stores), entry.presentation.supportsNativeAnswer,
               entry.state.acceptsDecision
         else {
-            open(id, opensInNewWindow: false, state: state)
+            open(id, opensInNewWindow: false, stores: stores)
             return
         }
         NSApp.activate()
-        answerWindow(registry: state.windowRegistry).approvalCard.present(entry.presentation, from: state.approvalPresentation)
+        answerWindow(registry: stores.windows).approvalCard.present(entry.presentation, from: stores.approvals)
     }
 
     /// The window "Answer…" opens the card in: the one commands act on,
@@ -164,25 +169,25 @@ enum MenuBarActions {
     /// Needs Attention list opens it: the window commands act
     /// on, brought back if hidden, switches to the item's project in place,
     /// unless another window shows that project and comes forward instead.
-    private static func open(_ id: AttentionItemID, opensInNewWindow: Bool, state: AppState) {
-        guard let item = state.attentionQueue.queue.item(id) else { return }
+    private static func open(_ id: AttentionItemID, opensInNewWindow: Bool, stores: MenuBarStores) {
+        guard let item = stores.attentionQueue.queue.item(id) else { return }
         NSApp.activate()
-        state.attentionQueue.focus(item, from: nil, opensInNewWindow: opensInNewWindow)
+        stores.attentionQueue.focus(item, from: nil, opensInNewWindow: opensInNewWindow)
     }
 
     /// "Resume Same Conversation", as the stop's decision bar resumes it.
     /// Weir stays where it is: no window is shown or made. The resume is
     /// kept against the window that shows the pane, else the project's, else
     /// the one commands act on.
-    private static func resume(_ id: AttentionItemID, state: AppState) {
-        guard let item = state.attentionQueue.queue.item(id), let record = state.stopLedger.ledger.record(id) else { return }
+    private static func resume(_ id: AttentionItemID, stores: MenuBarStores) {
+        guard let item = stores.attentionQueue.queue.item(id), let record = stores.stopLedger.ledger.record(id) else { return }
         let window = resumeWindow(
             paneID: record.paneID,
             projectID: item.subject.projectID,
-            session: state.session,
-            registry: state.windowRegistry
+            session: stores.session,
+            registry: stores.windows
         )
-        SupervisionWindowActions.perform(.resume(id), inPane: record.paneID, window: window, state: state)
+        stores.resume(id, record.paneID, window)
     }
 
     /// The window a resume from the menu is kept against: the one that

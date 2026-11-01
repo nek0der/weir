@@ -30,7 +30,7 @@ struct ChangesTurnRow: View {
     /// section of the list grouped by conversation, whose heading carries
     /// them. The card still marks its tab under the pointer.
     let showsConversation: Bool
-    let state: AppState
+    let stores: ChangesPanelStores
     /// Whether the card takes the keyboard and VoiceOver as it appears: the
     /// first card a fold opened from the keyboard or VoiceOver showed, whose
     /// line had them and has left the list. `tookFocus` tells the list it
@@ -155,7 +155,7 @@ struct ChangesTurnRow: View {
         // show for it as for one that does.
         if row.isSelectable {
             Button {
-                ChangesPanelActions.open(row.turn, window: window, stores: state.changesPanelStores)
+                ChangesPanelActions.open(row.turn, window: window, stores: stores)
             } label: {
                 summary
             }
@@ -198,7 +198,7 @@ struct ChangesTurnRow: View {
     @ViewBuilder private var menu: some View {
         if offersShowTab {
             Button {
-                ChangesPanelActions.showTab(of: row.turn.conversation, window: window, stores: state.changesPanelStores)
+                ChangesPanelActions.showTab(of: row.turn.conversation, window: window, stores: stores)
             } label: {
                 Text(
                     "Show Tab",
@@ -235,7 +235,7 @@ struct ChangesTurnRow: View {
                     movesOnlyItsOwnLine: row.movesOnlyItsOwnLine,
                     named: name,
                     window: window,
-                    stores: state.changesPanelStores
+                    stores: stores
                 )
             case .markUnviewedFrom:
                 ChangesPanelActions.markNotViewed(
@@ -243,11 +243,11 @@ struct ChangesTurnRow: View {
                     movesOnlyItsOwnLine: row.movesOnlyItsOwnLine,
                     named: name,
                     window: window,
-                    stores: state.changesPanelStores
+                    stores: stores
                 )
             }
         case .restore:
-            RestoreActions.ask(row.turn, window: window, state: state)
+            stores.askRestore(row.turn, window)
         }
     }
 

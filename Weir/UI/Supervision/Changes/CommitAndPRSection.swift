@@ -24,7 +24,7 @@ struct CommitAndPRSection: View {
     @State private var footGate = CommitAndPRFootGate()
 
     var body: some View {
-        let model = CommitAndPRActions.model(window: window, state: state)
+        let model = CommitAndPRActions.model(window: window, stores: state.commitAndPRStores)
         // The sidebar's ground, so the foot reads as apart from the turns
         // above it. At the panel's opacity, so with transparency on it is
         // not an opaque patch (laid over the panel, a little denser).
@@ -123,13 +123,13 @@ struct CommitAndPRSection: View {
         guard footGate.accepts(action.kind, at: SuspendingClock().now, settle: settle) else { return }
         switch action {
         case .showCurrentDiff:
-            CommitAndPRActions.showCurrentDiff(window: window, state: state)
+            CommitAndPRActions.showCurrentDiff(window: window, stores: state.commitAndPRStores)
         case .createPullRequest:
-            CommitAndPRActions.createPullRequest(window: window, state: state)
+            CommitAndPRActions.createPullRequest(window: window, stores: state.commitAndPRStores)
         case let .openPullRequest(request):
             NSWorkspace.shared.open(request.url)
         case let .openExternalTool(tool):
-            CommitAndPRActions.open(tool, window: window, state: state)
+            CommitAndPRActions.open(tool, window: window, stores: state.commitAndPRStores)
         }
     }
 
@@ -149,7 +149,7 @@ struct CommitAndPRSection: View {
                 }
                 if let create = model.create, model.offersCreateAboveFoot {
                     Button("Create PR") {
-                        CommitAndPRActions.createPullRequest(window: window, state: state)
+                        CommitAndPRActions.createPullRequest(window: window, stores: state.commitAndPRStores)
                     }
                     .disabled(!create.isAvailable)
                     .accessibilityLabel(Text("Create PR"))
@@ -159,7 +159,7 @@ struct CommitAndPRSection: View {
                 }
                 if let tool = model.externalTool, offersTool {
                     Button {
-                        CommitAndPRActions.open(tool, window: window, state: state)
+                        CommitAndPRActions.open(tool, window: window, stores: state.commitAndPRStores)
                     } label: {
                         Text("Open in \(tool.name)")
                     }
@@ -207,7 +207,7 @@ struct CommitAndPRSection: View {
         isCheckingCleanUp = true
         Task {
             defer { isCheckingCleanUp = false }
-            switch await CommitAndPRActions.cleanUp(window: window, state: state, locale: locale) {
+            switch await CommitAndPRActions.cleanUp(window: window, stores: state.commitAndPRStores, locale: locale) {
             case let .blocked(message):
                 cleanUpBlocked = message
             case let .confirm(target):

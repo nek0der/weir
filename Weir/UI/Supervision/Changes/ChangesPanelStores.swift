@@ -34,6 +34,8 @@ struct ChangesPanelStores {
     /// The restore of the worktree at a root that may still be undone
     /// (`RestoreActions.record(forRoot:state:)`).
     let restoreRecord: (String) -> RestoreJournal?
+    /// Opens the restore strip for a card's turn (`RestoreActions.ask`).
+    let askRestore: (TurnSummary, ProjectWindowState) -> Void
     /// Opens the review tab: a row's turn, or the worktree's unviewed turns
     /// (`ReviewTabActions.open`).
     let openReview: (ReviewTabRequest, _ agentPaneID: UUID?, ConversationKey?, ProjectWindowState) async -> Void

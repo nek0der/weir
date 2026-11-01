@@ -130,22 +130,23 @@ Design and review, not a checker, keep the type dependencies beyond that.
 Core never names UI's `SurfaceView`. It reaches a pane's terminal through `PaneSurface` and `PaneSurfaceProviding`, and the code that needs the view itself (`GhosttyApp`, `GhosttyActionRouter`, `SurfaceRegistry`, `SecureInputManager`) lives in `UI/Terminal/`. `App/GhosttyEventCoordinator.swift` applies those events to the session.
 
 One edge goes up rather than down: UI views read `AppState`, the composition
-root, for the app's stores. The actions of the changes panel, the review tab,
-and the new worktree sheet take only the stores they use:
-`ChangesPanelStores`, `ReviewTabStores`, `ReviewHunkDiscardStores` (for the
-review's hunk discards), and `NewSessionStores`. App builds them in
+root, for the app's stores. The actions of the changes panel and its "Commit
+& PR", the review tab, the all projects sheet, the menu bar extra, and the new
+worktree sheet take only the stores they use: `ChangesPanelStores`,
+`CommitAndPRStores`, `ReviewTabStores`, `ReviewHunkDiscardStores` (for the
+review's hunk discards), `AllProjectsStores`, `MenuBarStores`, and
+`NewSessionStores`. App builds them in
 `App/AppState+ActionStores.swift`, except that the sheet builds its own from
-the environment; a test builds its own. The other `*Actions` types
-(`CommitAndPRActions`, `MenuBarActions`, `AllProjectsActions`) still take
-`AppState`. Each moves off it the same way the next time it changes.
+the environment; a test builds its own.
 
 `RestoreActions` and `SupervisionWindowActions` live in App and take `AppState`
 there. A view reaches them by reading `RestoreHandler`, `PrimaryActionHandler`,
 or `SupervisionWindowHandler` from the environment. These are structs of
 closures in Presentation, bound to one window, and `MainWindowContent` builds
 them and hands them down. App may name what is in UI (`ChangesPanelActions`,
-`ProjectFolderPanel`), so these two types do, and UI naming them back closes a
-cycle. `ChangesTurnRow` and `MenuBarActions` still do.
+`ProjectFolderPanel`), so these two types do, and UI naming them back would
+close a cycle. `ChangesTurnRow` and `MenuBarActions` reach them through closures
+in their stores.
 
 `scripts/check-localization.sh` fails when a string to translate has no
 finished Japanese translation.

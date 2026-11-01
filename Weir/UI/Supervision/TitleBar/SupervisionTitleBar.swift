@@ -41,7 +41,7 @@ struct SupervisionTitleBar: View {
             ToolbarPaletteField()
             HStack(spacing: WeirLayout.Supervision.titleBarSpacing) {
                 NeedsAttentionButton()
-                ChangesPanelToggle(state: state)
+                ChangesPanelToggle(stores: state.changesPanelStores)
             }
         }
         .frame(height: WeirLayout.Supervision.titleBarHeight)

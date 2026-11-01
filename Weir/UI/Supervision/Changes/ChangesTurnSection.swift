@@ -21,7 +21,7 @@ struct ChangesTurnSection: View {
     let offersShowTab: Bool
     /// The worktree's conversations, for a move's toast.
     let conversations: [ConversationChoice]
-    let state: AppState
+    let stores: ChangesPanelStores
     /// The card that takes the keyboard and VoiceOver as it appears
     /// (`ChangesTurnRow.takesFocus`), and what clears it once taken.
     let focusOnAppear: TurnID?
@@ -37,7 +37,7 @@ struct ChangesTurnSection: View {
             choice: section.choice,
             isCollapsed: isCollapsed,
             offersShowTab: offersShowTab,
-            state: state,
+            stores: stores,
             toggle: toggleCollapse
         )
         .padding(.top, isFirst ? 0 : Layout.changesSectionGap)
@@ -54,7 +54,7 @@ struct ChangesTurnSection: View {
                         isShownInReview: shownInReview.contains(row.id),
                         offersShowTab: offersShowTab,
                         showsConversation: false,
-                        state: state,
+                        stores: stores,
                         takesFocus: focusOnAppear == row.id,
                         tookFocus: tookFocus
                     )
@@ -63,7 +63,7 @@ struct ChangesTurnSection: View {
             }
             // The section's own line, whose "Unmark as Viewed" never moves
             // another section's.
-            ViewedLineRow(line: section.line, state: state)
+            ViewedLineRow(line: section.line, stores: stores)
                 .conversationHoverDimming(section.id)
         }
     }
@@ -80,7 +80,7 @@ struct ChangesSectionHeading: View {
     let choice: ConversationChoice
     let isCollapsed: Bool
     let offersShowTab: Bool
-    let state: AppState
+    let stores: ChangesPanelStores
     let toggle: () -> Void
     @Environment(ProjectWindowState.self) private var window
     @Environment(\.locale) private var locale
@@ -101,7 +101,7 @@ struct ChangesSectionHeading: View {
             .accessibilityAddTraits(.isHeader)
             if offersShowTab {
                 Button {
-                    ChangesPanelActions.showTab(of: choice.conversation, window: window, stores: state.changesPanelStores)
+                    ChangesPanelActions.showTab(of: choice.conversation, window: window, stores: stores)
                 } label: {
                     Text(
                         "Show Tab",

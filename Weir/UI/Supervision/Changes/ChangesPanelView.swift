@@ -532,7 +532,7 @@ private struct ChangesTurnList: View {
             shownInReview: shownInReview,
             offersShowTab: withTab.contains(section.id),
             conversations: list.conversations,
-            state: state,
+            stores: state.changesPanelStores,
             focusOnAppear: focusOnAppear,
             tookFocus: { focusOnAppear = nil },
             toggleCollapse: { toggle(section.id, in: $collapsedSections) },
@@ -562,14 +562,14 @@ private struct ChangesTurnList: View {
                     isShownInReview: shownInReview.contains(row.id),
                     offersShowTab: withTab.contains(row.turn.conversation),
                     showsConversation: true,
-                    state: state,
+                    stores: state.changesPanelStores,
                     takesFocus: focusOnAppear == row.id,
                     tookFocus: { focusOnAppear = nil }
                 )
                 .id(row.id)
             }
         }
-        ViewedLineRow(line: list.line, state: state)
+        ViewedLineRow(line: list.line, stores: state.changesPanelStores)
     }
 
     /// Opens a fold (`unfold`), and where its line had the keyboard or
@@ -652,7 +652,7 @@ private struct ChangesTurnList: View {
 /// still can, never another list's.
 struct ViewedLineRow: View {
     let line: ChangesPanelModel.Line?
-    let state: AppState
+    let stores: ChangesPanelStores
     @Environment(ProjectWindowState.self) private var window
 
     var body: some View {
@@ -669,8 +669,8 @@ struct ViewedLineRow: View {
         guard !line.undo.isEmpty else { return nil }
         let undo = line.undo
         let window = window
-        let state = state
-        return { ChangesPanelActions.unmark(undo, window: window, stores: state.changesPanelStores) }
+        let stores = stores
+        return { ChangesPanelActions.unmark(undo, window: window, stores: stores) }
     }
 }
 
