@@ -174,6 +174,20 @@ struct CommandPaletteTests {
         #expect(Self.isEnabled(.showOpenTabs, in: choosing) == false)
     }
 
+    @Test("Plan Usage needs the rail, and Show Worktree Menu needs its button")
+    func catalog_controlsWithNoAnchor_areOff() throws {
+        let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+        var facts = SupervisionPaletteFacts.empty
+        let plain = try Self.items(session, supervision: facts)
+        #expect(Self.isEnabled(.planUsage, in: plain) == true)
+        #expect(Self.isEnabled(.showWorktreeMenu, in: plain) == false)
+        facts.areRailsHidden = true
+        facts.hasWorktreeMenu = true
+        let changed = try Self.items(session, supervision: facts)
+        #expect(Self.isEnabled(.planUsage, in: changed) == false)
+        #expect(Self.isEnabled(.showWorktreeMenu, in: changed) == true)
+    }
+
     @Test("a window with no project, or one whose project is gone, offers no project rows")
     func catalog_projectRows_needTheProject() throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")

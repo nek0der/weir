@@ -334,6 +334,8 @@ struct DecisionBarRow: View {
             )
         }
         .buttonStyle(SupervisionPrimaryButtonStyle())
+        // Past the three uses that take "⌘⏎" off its label.
+        .heldKeyCap(chord: .command) { keyHint.isShown && shape.showsKeyHint ? nil : "⏎" }
         // Out of the ⇥ order, so ⇥ stays the terminal's for its TUI.
         .focusable(false)
         .help(Text(verbatim: ShortcutHelpText.make(name: Self.name(action), shortcut: "⌘⏎", locale: locale)))

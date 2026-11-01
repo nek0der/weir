@@ -111,6 +111,8 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
     case toggleChangesPanel
     case allProjects
     case showScratch
+    /// Opens the plan usage panel from its rail button.
+    case planUsage
 
     // Navigation (worktree + tab cycling)
     case nextSession = "nextSection"
@@ -121,6 +123,9 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
     case showNeedsAttention
     /// Opens the Open Tabs list: the session's tabs, from the pane strip.
     case showOpenTabs
+    /// Open the title bar's project ▾ and worktree ▾ from the keyboard.
+    case showProjectMenu
+    case showWorktreeMenu
     /// Moves the keyboard to the sessions sidebar.
     case focusSidebar
     /// Move the project the sidebar's keys are on (or the window's) up or
@@ -130,8 +135,7 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
     /// (`sharesKeys(with:)`, `SidebarKeyRoute`).
     case moveProjectUp
     case moveProjectDown
-    /// The window's history of tabs it showed. No default; a person may
-    /// bind them.
+    /// The window's history of tabs it showed.
     case goBack
     case goForward
     /// Jump focus to the next / previous pane whose agent needs the
@@ -198,9 +202,10 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .newTab, .newWorktree, .newWorktreeNow, .renameTab, .reopenClosedTab,
              .closeSurface, .closeTab, .openFolder, .closeWindow, .newWindow: .file
         case .toggleSidebar, .notificationHistory, .review, .reviewLatestTurn,
-             .toggleChangesPanel, .allProjects, .showScratch: .view
+             .toggleChangesPanel, .allProjects, .showScratch, .planUsage: .view
         case .nextSession, .previousSession, .nextTab, .previousTab,
-             .nextAttention, .previousAttention, .showNeedsAttention, .showOpenTabs, .focusSidebar,
+             .nextAttention, .previousAttention, .showNeedsAttention, .showOpenTabs,
+             .showProjectMenu, .showWorktreeMenu, .focusSidebar,
              .moveProjectUp, .moveProjectDown, .goBack, .goForward: .navigation
         case .splitRight, .splitDown, .equalizeSplits, .toggleSplitZoom,
              .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown: .splits
@@ -236,9 +241,10 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .newTab, .newWorktree, .newWorktreeNow, .renameTab, .reopenClosedTab,
              .closeSurface, .closeTab, .openFolder, .closeWindow, .newWindow,
              .toggleSidebar,
-             .notificationHistory, .review, .reviewLatestTurn, .toggleChangesPanel, .allProjects, .showScratch,
+             .notificationHistory, .review, .reviewLatestTurn, .toggleChangesPanel, .allProjects, .showScratch, .planUsage,
              .nextSession, .previousSession, .nextTab, .previousTab,
-             .nextAttention, .previousAttention, .showNeedsAttention, .showOpenTabs, .focusSidebar,
+             .nextAttention, .previousAttention, .showNeedsAttention, .showOpenTabs,
+             .showProjectMenu, .showWorktreeMenu, .focusSidebar,
              .moveProjectUp, .moveProjectDown, .goBack, .goForward,
              .splitRight, .splitDown,
              .equalizeSplits, .toggleSplitZoom,
@@ -275,12 +281,15 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .toggleChangesPanel: "Toggle Changes"
         case .allProjects: "All Projects"
         case .showScratch: "Scratch"
+        case .planUsage: "Plan Usage"
         case .nextSession: "Next Worktree"
         case .previousSession: "Previous Worktree"
         case .nextTab: "Next Tab"
         case .previousTab: "Previous Tab"
         case .showNeedsAttention: "Show Needs Attention"
         case .showOpenTabs: "Show Open Tabs"
+        case .showProjectMenu: "Show Project Menu"
+        case .showWorktreeMenu: "Show Worktree Menu"
         case .focusSidebar: "Focus Sidebar"
         case .moveProjectUp: "Move Project Up"
         case .moveProjectDown: "Move Project Down"
@@ -334,12 +343,15 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .toggleChangesPanel: "sidebar.right"
         case .allProjects: "square.grid.2x2"
         case .showScratch: "apple.terminal"
+        case .planUsage: "timer"
         case .nextSession: "chevron.left.chevron.right"
         case .previousSession: "chevron.left.chevron.right"
         case .nextTab: "arrow.left.arrow.right"
         case .previousTab: "arrow.left.arrow.right"
         case .showNeedsAttention: "list.bullet.rectangle"
         case .showOpenTabs: "chevron.down.square"
+        case .showProjectMenu: "folder"
+        case .showWorktreeMenu: ContainerSymbol.worktree
         case .focusSidebar: "sidebar.squares.left"
         case .moveProjectUp: "arrow.up.square"
         case .moveProjectDown: "arrow.down.square"
@@ -432,25 +444,34 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .toggleSidebar: .init(key: "b", modifiers: [.command])
         case .notificationHistory: .init(key: "n", modifiers: [.command, .shift])
         case .review: .init(key: "r", modifiers: [.command, .option])
-        case .reviewLatestTurn: .init(key: "j", modifiers: [.command, .option])
+        case .reviewLatestTurn: .init(key: "l", modifiers: [.command, .option])
         // ⌥⌘I is the inspector's key across macOS.
         case .toggleChangesPanel: .init(key: "i", modifiers: [.command, .option])
-        case .allProjects: .init(key: "o", modifiers: [.command, .option])
-        case .showScratch: .init(key: "s", modifiers: [.command, .option])
+        // The left rail's places stand on ⇧⌘, and the title bar's panels on ⌥⌘,
+        // so a modifier held says which part of the window the keys are for.
+        // ⌘B, ⌘/, ⌘,, and ⌥⌘I stay what other apps have them as.
+        case .allProjects: .init(key: "o", modifiers: [.command, .shift])
+        case .showScratch: .init(key: "s", modifiers: [.command, .shift])
+        case .planUsage: .init(key: "u", modifiers: [.command, .shift])
         case .nextSession: .init(key: "]", modifiers: [.command])
         case .previousSession: .init(key: "[", modifiers: [.command])
         case .nextTab: .init(key: "]", modifiers: [.command, .shift])
         case .previousTab: .init(key: "[", modifiers: [.command, .shift])
-        // In the J row with ⌘J, ⇧⌘J, and ⌥⌘J.
-        case .showNeedsAttention: .init(key: "j", modifiers: [.command, .control])
+        // In the J row with ⌘J and ⇧⌘J.
+        case .showNeedsAttention: .init(key: "j", modifiers: [.command, .option])
         // Chrome's key for its tab search, which Open Tabs follows.
         case .showOpenTabs: .init(key: "a", modifiers: [.command, .shift])
+        case .showProjectMenu: .init(key: "p", modifiers: [.command, .option])
+        // B for the branch it names: ⌘T, ⇧⌘T, and ⌥⌘W read as the tabs'.
+        case .showWorktreeMenu: .init(key: "b", modifiers: [.command, .option])
         case .focusSidebar: .init(key: "0", modifiers: [.command, .option])
         // Focus Pane Above and Below's keys, which the sidebar takes only
         // while it has the keyboard (`sharesKeys(with:)`).
         case .moveProjectUp: .init(key: "up", modifiers: [.command, .option])
         case .moveProjectDown: .init(key: "down", modifiers: [.command, .option])
-        case .goBack, .goForward: nil
+        // ⌘[ ⌘] walk the worktrees, so the history is one modifier over.
+        case .goBack: .init(key: "[", modifiers: [.command, .option])
+        case .goForward: .init(key: "]", modifiers: [.command, .option])
         case .nextAttention: .init(key: "j", modifiers: [.command])
         case .previousAttention: .init(key: "j", modifiers: [.command, .shift])
         case .splitRight: .init(key: "d", modifiers: [.command])

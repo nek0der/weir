@@ -25,7 +25,9 @@ extension SupervisionPaletteFacts {
             rowOrder: session.projects.flatMap { sections.ordered($0).map(\.row) },
             rowSections: sections.sections,
             arePanesHidden: window.arePanesHidden,
-            isChoosingProject: selection.isChoosingProject
+            isChoosingProject: selection.isChoosingProject,
+            areRailsHidden: window.areRailsHidden,
+            hasWorktreeMenu: selection.shownProjectID.flatMap { session.project($0) }.map(CheckoutName.hasWorktreeMenu) ?? false
         )
     }
 }

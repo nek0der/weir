@@ -54,7 +54,7 @@ enum SupervisionWindowActions {
         }
     }
 
-    /// ⌃⌘J: the Needs Attention list, hung from its button in the title bar.
+    /// ⌥⌘J: the Needs Attention list, hung from its button in the title bar.
     static func showNeedsAttention(in window: ProjectWindowState) {
         window.toggleTitleBarMenu(.needsAttention, anchor: window.needsAttentionAnchor, isOpenedFromKeyboard: true)
     }
@@ -69,6 +69,14 @@ enum SupervisionWindowActions {
             anchor: window.openTabsAnchor,
             isOpenedFromKeyboard: true
         )
+    }
+
+    /// The title bar's project ▾ or worktree ▾ from its key, hung from its
+    /// button. The worktree ▾ has no button in a project with no checkout to
+    /// choose, and so nothing to hang from.
+    static func showTitleBarMenu(_ menu: TitleBarMenuRequest.Menu, anchor: CGRect, in window: ProjectWindowState) {
+        guard anchor != .zero else { return }
+        window.toggleTitleBarMenu(menu, anchor: anchor, isOpenedFromKeyboard: true)
     }
 
     /// Go Back, from the menu or the title bar's back button: one step back

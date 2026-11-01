@@ -33,7 +33,7 @@ Building from source: [CONTRIBUTING.md](CONTRIBUTING.md#setup). A Debug build ru
 
 1. **Start.** **New Worktree** (⌘N) makes a worktree on a new or existing branch and opens Claude Code, Codex, a shell, or nothing in it. Give the agent its first instruction in its own prompt.
 2. **It works.** The sidebar row and the decision bar show what the agent is doing. Nothing moves or takes focus on its own.
-3. **It needs you.** An approval, a question, a stop, or a finished turn joins **Needs Attention**. ⌘J goes to the next item, ⌃⌘J opens the list.
+3. **It needs you.** An approval, a question, a stop, or a finished turn joins **Needs Attention**. ⌘J goes to the next item, ⌥⌘J opens the list.
 4. **You review.** **Review Unviewed** or ⌥⌘R opens a review tab. Its *scope* menu picks what it shows: one conversation's unviewed turns, all of them in the worktree, a single turn, uncommitted changes, or the branch against its base. Comment on lines, insert the comments into the agent's input, and press Return. You can also discard a *hunk* (one block of changed lines) and undo that.
 5. **You decide.** **Mark as Viewed** (⌘⏎) moves the *viewed line*, the mark of how far you have reviewed, past the turns you read. **Restore Code to Before This Turn…** puts the working tree back, and can be undone. **Resume Same Conversation** picks up after a stop.
 
@@ -58,7 +58,7 @@ The [user guide](docs/user-guide.md#the-window) covers each part in detail.
 - **Pull request status.** Each row shows its PR's state and checks, through whatever `gh` or `glab` is already signed in.
 - **Session restore.** Projects, worktrees, tabs, splits, windows, and scrollback come back after a relaunch, and agent panes resume their conversations.
 - **Quick Terminal.** A system-wide hotkey drops a terminal over any app; set one in **Settings → Quick Terminal**.
-- **All Projects** (⌥⌘O) and **Notification History** (⇧⌘N). Every project at once, sorted by state, and the notifications Weir sent.
+- **All Projects** (⇧⌘O) and **Notification History** (⇧⌘N). Every project at once, sorted by state, and the notifications Weir sent.
 - **Plan Usage.** How much of each agent's plan limits your account has used, and when each limit resets: Claude Code's from its status line, Codex's from Codex itself.
 - **Languages.** English and Japanese; choose in **Settings → General → Display Language**.
 
@@ -88,7 +88,7 @@ Weir has no account, analytics, or telemetry.
 | Shortcut | Action |
 |---|---|
 | ⌘J / ⇧⌘J | Next / previous item that needs you |
-| ⌃⌘J | Show Needs Attention |
+| ⌥⌘J | Show Needs Attention |
 | ⌘⏎ | Decision bar's main action (Mark as Viewed, Resume, Notify When It Resets) |
 | ⌥⌘R | Review |
 | ⌥⌘I | Changes panel |

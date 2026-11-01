@@ -80,6 +80,7 @@ struct WindowRoutingTests {
             (.reviewLatestTurn, .reviewLatestTurn), (.toggleChangesPanel, .toggleChangesPanel), (.showScratch, .showScratch),
             (.allProjects, .toggleAllProjects), (.keyboardShortcuts, .toggleKeyboardShortcuts),
             (.showNeedsAttention, .showNeedsAttention), (.showOpenTabs, .showOpenTabs),
+            (.showProjectMenu, .showProjectMenu), (.showWorktreeMenu, .showWorktreeMenu), (.planUsage, .togglePlanUsage),
             (.focusSidebar, .focusSidebar)
         ]
         for (action, command) in table {

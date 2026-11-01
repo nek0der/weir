@@ -73,13 +73,13 @@ struct KeyboardShortcutTests {
     }
 
     @Test("Review Latest Turn is a View action on option-command-J")
-    func reviewLatestTurn_isAViewActionOnOptionCommandJ() {
+    func reviewLatestTurn_isAViewActionOnOptionCommandL() {
         #expect(WeirShortcutAction.reviewLatestTurn.category == .view)
         #expect(WeirShortcutAction.reviewLatestTurn.localizedTitle == "Review Latest Turn")
         #expect(WeirShortcutAction.reviewLatestTurn.iconName == ReviewPresentation.symbol)
         #expect(
             WeirShortcutAction.reviewLatestTurn.defaultShortcut
-                == StoredShortcut(key: "j", modifiers: [.command, .option])
+                == StoredShortcut(key: "l", modifiers: [.command, .option])
         )
     }
 

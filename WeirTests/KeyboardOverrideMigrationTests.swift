@@ -44,8 +44,8 @@ struct KeyboardOverrideMigrationTests {
         #expect(settings.keyboard.unbound.isEmpty)
         #expect(settings.keyboard.retired.isEmpty)
         #expect(settings.keyboard.shortcut(for: .toggleSidebar) == commandB)
-        let optionCommandT = StoredShortcut(key: "t", modifiers: [.command, .option])
-        #expect(settings.keyboard.validate(optionCommandT, for: .newTab) == .ok)
+        let controlCommandT = StoredShortcut(key: "t", modifiers: [.command, .control])
+        #expect(settings.keyboard.validate(controlCommandT, for: .newTab) == .ok)
         let saved = try PersistenceCoders.makeDecoder().decode(
             WeirSettings.self,
             from: WeirSettings.makeFileEncoder().encode(settings)
@@ -64,8 +64,8 @@ struct KeyboardOverrideMigrationTests {
             }
         }
         #expect(WeirShortcutAction.newWorktree.defaultShortcut == Self.commandN)
-        #expect(WeirShortcutAction.goBack.defaultShortcut == nil)
-        #expect(WeirShortcutAction.showNeedsAttention.defaultShortcut == StoredShortcut(key: "j", modifiers: [.command, .control]))
+        #expect(WeirShortcutAction.goBack.defaultShortcut == StoredShortcut(key: "[", modifiers: [.command, .option]))
+        #expect(WeirShortcutAction.showNeedsAttention.defaultShortcut == StoredShortcut(key: "j", modifiers: [.command, .option]))
         #expect(WeirShortcutAction.showOpenTabs.defaultShortcut == StoredShortcut(key: "a", modifiers: [.command, .shift]))
     }
 

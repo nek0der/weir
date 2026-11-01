@@ -45,6 +45,7 @@ struct TitleBarHistoryButtons: View {
                 )
         }
         .buttonStyle(.supervisionIcon(cornerRadius: WeirLayout.Supervision.iconControlCornerRadius))
+        .heldKeyCap(action)
         .disabled(!isEnabled)
         .hoverChip(name, shortcut: settings.settings.keyboard.shortcut(for: action)?.displayString, placement: .belowLeading)
         .accessibilityLabel(Text(name))

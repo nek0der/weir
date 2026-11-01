@@ -3,6 +3,7 @@
 
 import Sparkle
 import SwiftUI
+import WeirDomain
 
 /// The left rail: the entries to what does not depend on the current
 /// session. Its top holds what the work uses (the sessions sidebar, the
@@ -60,6 +61,7 @@ struct LeftRailView: View {
             ) {
                 window.commands.send(.toggleSidebar)
             }
+            .heldKeyCap(.toggleSidebar)
             RailScratchButton(isHighlighted: highlight == .scratch)
             IconControlButton(
                 systemImage: WeirShortcutAction.allProjects.iconName,
@@ -70,6 +72,7 @@ struct LeftRailView: View {
             ) {
                 window.commands.send(.toggleAllProjects)
             }
+            .heldKeyCap(.allProjects)
             // A dot says there is something unread, and no more: a number
             // here reads as a second Needs Attention count. The count is in
             // the VoiceOver value.
@@ -85,6 +88,7 @@ struct LeftRailView: View {
             ) {
                 toggleNotificationHistory(historyPresentation, session: session)
             }
+            .heldKeyCap(.notificationHistory)
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
                 historyButtonFrame = frame
                 anchorPanels()
@@ -103,11 +107,13 @@ struct LeftRailView: View {
             IconControlButton(systemImage: "keyboard", name: "Keyboard Shortcuts", shortcut: shortcut(.keyboardShortcuts)) {
                 window.commands.send(.toggleKeyboardShortcuts)
             }
+            .heldKeyCap(.keyboardShortcuts)
             // The same scene ⌘, opens (`OpenSettingsCommand`), so a person
             // who never learned the key still finds Settings here.
             IconControlButton(systemImage: "gearshape", name: "Settings", shortcut: OpenSettingsCommand.shortcutDisplay) {
                 openWindow(id: WeirApp.settingsWindowID)
             }
+            .heldKeyCap(chord: .command) { "," }
         }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
             railFrame = frame

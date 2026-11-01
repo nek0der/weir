@@ -149,5 +149,6 @@ private struct RailScratchFace: View {
             value: spoken,
             action: action
         )
+        .heldKeyCap(.showScratch)
     }
 }

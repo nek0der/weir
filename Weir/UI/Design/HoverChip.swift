@@ -49,6 +49,8 @@ private struct HoverChip: ViewModifier {
     /// person has moved on, and the chip stays down until the pointer leaves.
     @State private var isDismissed = false
     @State private var controlSize = CGSize.zero
+    /// The keys on show while ⌘ is held, which the chip would stand over.
+    @Environment(\.heldKeyHints) private var heldKeyHints
 
     /// How long the pointer rests before the chip comes up.
     private static let delay: Duration = .milliseconds(600)
@@ -76,7 +78,7 @@ private struct HoverChip: ViewModifier {
                 }
             }
             .overlay(alignment: placement.alignment) {
-                if isShown {
+                if isShown, heldKeyHints?.shownChord == nil {
                     HoverChipFace(name: name, shortcut: shortcut)
                         .offset(placement.offset(clearing: controlSize))
                         .allowsHitTesting(false)

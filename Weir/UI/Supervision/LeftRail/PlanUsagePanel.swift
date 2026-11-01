@@ -11,6 +11,7 @@ struct RailPlanUsageButton: View {
     @Environment(PlanUsageStore.self) private var store
     @Environment(ProjectWindowState.self) private var window
     @Environment(WorkspaceSession.self) private var session
+    @Environment(SettingsStore.self) private var settings
     @Environment(\.locale) private var locale
 
     var body: some View {
@@ -21,7 +22,7 @@ struct RailPlanUsageButton: View {
             IconControlButton(
                 systemImage: "timer",
                 name: "Plan Usage",
-                shortcut: nil,
+                shortcut: settings.settings.keyboard.shortcut(for: .planUsage)?.displayString,
                 isSelected: window.planUsage.isPresented,
                 isLit: isLit,
                 badge: PlanUsageText.railBadge(level),
@@ -29,6 +30,7 @@ struct RailPlanUsageButton: View {
             ) {
                 window.togglePlanUsage(session: session)
             }
+            .heldKeyCap(.planUsage)
         }
     }
 }

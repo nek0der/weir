@@ -53,6 +53,12 @@ struct KeyboardPane: View {
                     quickTerminalHotKey: store.settings.quickTerminal.hotKey
                 )
             }
+            Section {
+                SettingsToggle("Show keys while holding ⌘", isOn: $store.settings.keyboard.showsHeldKeyHints)
+                    .settingsSearchTarget(SettingsSearchCatalog.keyboardHeldKeyHints.id)
+            } footer: {
+                SettingsFootnote("Add ⌥, ⇧, or ⌃ to see the keys that use them too.")
+            }
             ForEach(WeirShortcutCategory.allCases) { category in
                 let actions = WeirShortcutAction.allCases
                     .filter { $0.category == category }

@@ -484,6 +484,8 @@ enum TabActions {
             scope.perform(.toggleAllProjects)
         case .showScratch:
             scope.perform(.showScratch)
+        case .planUsage:
+            scope.perform(.togglePlanUsage)
         default:
             log.fault("dispatchViewAction missing handler for \(action.rawValue, privacy: .public) — add a case or fix action.category")
             assertionFailure("dispatchViewAction missing handler for \(action) — add a case or fix action.category")
@@ -497,6 +499,17 @@ enum TabActions {
         default:
             log.fault("dispatchHelpAction missing handler for \(action.rawValue, privacy: .public) — add a case or fix action.category")
             assertionFailure("dispatchHelpAction missing handler for \(action) — add a case or fix action.category")
+        }
+    }
+
+    private static func windowCommand(forNavigation action: WeirShortcutAction) -> WindowCommand? {
+        switch action {
+        case .showNeedsAttention: .showNeedsAttention
+        case .showOpenTabs: .showOpenTabs
+        case .showProjectMenu: .showProjectMenu
+        case .showWorktreeMenu: .showWorktreeMenu
+        case .focusSidebar: .focusSidebar
+        default: nil
         }
     }
 
@@ -517,12 +530,11 @@ enum TabActions {
             attention.walkAttention?(true)
         case .previousAttention:
             attention.walkAttention?(false)
-        case .showNeedsAttention:
-            scope.perform(.showNeedsAttention)
-        case .showOpenTabs:
-            scope.perform(.showOpenTabs)
-        case .focusSidebar:
-            scope.perform(.focusSidebar)
+        case .showNeedsAttention, .showOpenTabs, .showProjectMenu, .showWorktreeMenu, .focusSidebar:
+            // The window carries these out, with what it knows of its controls.
+            if let command = windowCommand(forNavigation: action) {
+                scope.perform(command)
+            }
         // From the palette the sidebar does not have the keyboard, so the
         // project to move is the one the window shows.
         case .moveProjectUp, .moveProjectDown:

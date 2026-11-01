@@ -582,6 +582,10 @@ struct KeyboardSettings: Codable, Equatable {
     /// builds do not know, carried through `unknownFields`.
     var keysToIntroduce: [String] = []
 
+    /// Whether holding ⌘ shows the keys on the window's controls
+    /// (`HeldKeyHints`).
+    var showsHeldKeyHints = true
+
     /// See `WeirSettings.unknownFields`.
     var unknownFields: [String: WeirJSONValue] = [:]
 
@@ -600,6 +604,7 @@ struct KeyboardSettings: Codable, Equatable {
         self.unassigned = try c.decodeIfPresent([String].self, forKey: .unassigned) ?? []
         self.retired = try c.decodeIfPresent([String: StoredShortcut].self, forKey: .retired) ?? [:]
         self.keysToIntroduce = try c.decodeIfPresent([String].self, forKey: .keysToIntroduce) ?? []
+        self.showsHeldKeyHints = try c.decodeIfPresent(Bool.self, forKey: .showsHeldKeyHints) ?? true
         self.unknownFields = try CodableSidecar.decodeUnknownFields(
             from: decoder,
             knownKeys: Self.knownKeyStrings
@@ -623,6 +628,9 @@ struct KeyboardSettings: Codable, Equatable {
         if !keysToIntroduce.isEmpty {
             try c.encode(keysToIntroduce, forKey: .keysToIntroduce)
         }
+        if !showsHeldKeyHints {
+            try c.encode(showsHeldKeyHints, forKey: .showsHeldKeyHints)
+        }
         try CodableSidecar.encodeUnknownFields(unknownFields, to: encoder)
     }
 
@@ -632,6 +640,7 @@ struct KeyboardSettings: Codable, Equatable {
         case unassigned
         case retired
         case keysToIntroduce
+        case showsHeldKeyHints
     }
 
     private static let knownKeyStrings: Set<String> = Set(CodingKeys.allCases.map(\.stringValue))

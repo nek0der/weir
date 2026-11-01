@@ -1,6 +1,22 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Add ⌥, ⇧, or ⌃ to see the keys that use them too.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add ⌥, ⇧, or ⌃ to see the keys that use them too."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥、⇧、⌃ を足すと、それらを使うキーに変わります。"
+          }
+        }
+      }
+    },
     "duration.compact.hours": {
       "comment": "A time in one short unit, in hours (a turn card's duration, a sidebar row's time since); argument: the hours",
       "localizations": {
@@ -94,6 +110,70 @@
           "stringUnit": {
             "state": "translated",
             "value": "テスト実行 %lld 回以上"
+          }
+        }
+      }
+    },
+    "Shortcut hints": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shortcut hints"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ショートカットのヒント"
+          }
+        }
+      }
+    },
+    "Show keys while holding ⌘": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show keys while holding ⌘"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌘ を押している間、キーを表示"
+          }
+        }
+      }
+    },
+    "Show Project Menu": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show Project Menu"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロジェクトメニューを表示"
+          }
+        }
+      }
+    },
+    "Show Worktree Menu": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show Worktree Menu"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ワークツリーメニューを表示"
           }
         }
       }

@@ -85,7 +85,7 @@ final class ProjectWindowState: Identifiable {
     /// last. Excluded from observation so window resizes don't redraw
     /// every view that reads this window.
     @ObservationIgnored var paletteFieldFrame: CGRect = .zero
-    /// The Needs Attention button's frame, which the list hangs from when ⌃⌘J
+    /// The Needs Attention button's frame, which the list hangs from when ⌥⌘J
     /// opens it rather than a click. Not observed: it moves with every
     /// resize, and only the next key press reads it.
     @ObservationIgnored var needsAttentionAnchor: CGRect = .zero
@@ -93,6 +93,11 @@ final class ProjectWindowState: Identifiable {
     /// from when ⇧⌘A opens it; not observed, for the same reason. `.zero`
     /// until the window has shown a strip.
     @ObservationIgnored var openTabsAnchor: CGRect = .zero
+    /// The frames of the title bar's project ▾ and worktree ▾, which their
+    /// dropdowns hang from when their keys open them; not observed, for the
+    /// same reason. `.zero` while the button is not there.
+    @ObservationIgnored var projectMenuAnchor: CGRect = .zero
+    @ObservationIgnored var worktreeMenuAnchor: CGRect = .zero
     /// Asks the sessions sidebar to take the keyboard (⌥⌘0); each
     /// request is new, so asking twice moves the keyboard twice.
     var sidebarFocusRequest: UUID?
@@ -249,6 +254,8 @@ final class ProjectWindowState: Identifiable {
     /// stands beside; the requests themselves are shared
     /// (`ApprovalPresentationStore`).
     let approvalCard = WindowApprovalCard()
+    /// The keys its controls show while ⌘ is held.
+    let heldKeyHints = HeldKeyHints()
     let paneRename = PaneRenamePresentation()
     let promptCachePanel = PromptCachePanelPresentation()
     let containerColor = ContainerColorPresentation()
