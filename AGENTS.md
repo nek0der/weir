@@ -38,7 +38,7 @@ make lint          # Rust and Swift lint plus the repo checks (mirrors CI)
 make release-check # Unsigned Release archive, checked for what `exportArchive` needs
 make dmg           # Release DMG artifact
 make screenshot    # Regenerate .github/assets/hero.png (builds Release first)
-make site-images   # Regenerate the site's captures in both looks (builds Release first)
+make site-images   # Regenerate the site's and the documents' captures (builds Release first)
 make xcodegen      # Regenerate Weir.xcodeproj from project.yml
 make ghostty       # Build vendored libghostty
 make clean         # Remove DerivedData for this project
@@ -259,7 +259,8 @@ Short index of load-bearing files. Skim these before touching their domain.
   approval service, so a demo run does not replace the running app's
   service and agents use their native prompts. It starts no updater
   either. `WEIR_DEMO_APPEARANCE=dark` shows it in the dark look, and
-  `WEIR_DEMO_LAYER=needs-attention` or `all-projects` opens that layer. `WEIR_DEMO_TIME=09:15` sets
+  `WEIR_DEMO_LAYER=needs-attention`, `all-projects`, `review`, `approval-list`, or `approval-card` opens that layer.
+  `WEIR_DEMO_LANGUAGE=ja` shows the Japanese UI. `WEIR_DEMO_TIME=09:15` sets
   the time of day it shows, 14:30 by default. `make screenshot` regenerates the hero screenshot at
   `.github/assets/hero.png`. It needs a one-time Screen Recording grant
   for the calling terminal and a 2x display with room for the window,

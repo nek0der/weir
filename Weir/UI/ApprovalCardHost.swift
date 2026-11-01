@@ -369,6 +369,7 @@ private struct ApprovalCard: View {
             arrow: arrow,
             arrowHeight: WeirLayout.floatingPanelArrowHeight
         ))
+        .reportsDemoCaptureRegion(for: .approvalCard, cornerRadius: WeirLayout.floatingPanelCornerRadius)
         .pointerStyle(.default)
         .onAppear {
             beginAllowDelay()

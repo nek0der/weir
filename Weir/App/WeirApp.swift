@@ -36,7 +36,8 @@ final class AppState {
     /// appearance and the font, the shell prompt), and by the approval
     /// service registrar, which would replace a system registration rather
     /// than write a file. The pull-request marks and the Git facts are
-    /// chosen here (`prStatusSource`, `stagedGitFacts`).
+    /// chosen here (`prStatusSource`, `stagedGitFacts`), and the approvals
+    /// and the review's repository where they are made.
     let writesUserFiles: Bool
     /// `writesUserFiles` as decided at launch, for the stores made as
     /// AppState's properties: whether one writes, or stands in for demo
@@ -76,7 +77,9 @@ final class AppState {
     /// `AttentionState` for the responsibility split with `WorkspaceSession`.
     let attention: AttentionState
     /// Transient approval projection, intentionally excluded from persistence.
-    let approvalPresentation = ApprovalPresentationStore()
+    let approvalPresentation = AppState.writesUserFilesAtLaunch
+        ? ApprovalPresentationStore()
+        : DemoFixture.makeApprovalStore()
     /// The attention list every window reads. Rebuilt from its sources,
     /// never saved.
     let attentionQueue = AttentionQueueStore()
@@ -305,7 +308,9 @@ final class AppState {
         // for one launch.
         let writesUserFiles = Self.writesUserFilesAtLaunch
         self.writesUserFiles = writesUserFiles
-        self.reviewWriters = ReviewDraftWriterPool(shouldPersist: writesUserFiles)
+        self.reviewWriters = writesUserFiles
+            ? ReviewDraftWriterPool()
+            : ReviewDraftWriterPool(drafts: DemoReviewDraftStore(), git: DemoReviewRepository())
         let settingsStore = SettingsStore(writesFiles: writesUserFiles)
         self.settingsStore = settingsStore
         self.lastAppliedSettings = settingsStore.settings

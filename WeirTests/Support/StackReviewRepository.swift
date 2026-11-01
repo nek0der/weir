@@ -179,3 +179,9 @@ final class StackReviewRepository: ReviewRepositoryReading, @unchecked Sendable 
         "main"
     }
 }
+
+extension StackReviewRepository {
+    func root(at directory: URL) async throws -> URL {
+        directory
+    }
+}

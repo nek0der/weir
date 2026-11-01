@@ -16,6 +16,8 @@ Each of these opens a review tab in place of the terminal:
 
 Use the scope menu to choose what the review shows: one conversation's unviewed turns, all unviewed turns in the worktree, a single turn, the uncommitted changes, or the branch against its base.
 
+![A review tab showing a file's diff, with a saved comment under one of its lines](../../../assets/captures/docs/review-en.png)
+
 ## Send comments to the agent
 
 Click the number of a line you want changed, press <kbd>C</kbd>, write your comment, and choose **Add**. Then choose **Insert *n* Comments**. Weir puts the comments into the agent's input as one message, and you press <kbd>Return</kbd> to send it.

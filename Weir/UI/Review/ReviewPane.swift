@@ -26,6 +26,7 @@ struct ReviewPane: View {
     var session: ReviewSession?
 
     @Environment(\.reviewTabHandler) private var reviewTabHandler
+    @Environment(\.reviewWriters) private var reviewWriters
     @Environment(ProjectWindowState.self) private var window
     /// `session`, once its worktree resolves to the review's own.
     @State private var reviewSession: ReviewSession?
@@ -106,7 +107,7 @@ struct ReviewPane: View {
         failure = nil
         guard let session else { return }
         do {
-            let root = try await ReviewGit.root(at: directory)
+            let root = try await reviewWriters.root(of: directory)
             try Task.checkCancellation()
             // Nothing to do when this task ran again for the repository
             // already on screen: clearing the review session would start the

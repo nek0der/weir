@@ -201,7 +201,26 @@ struct SupervisionWindowView: View {
         .task {
             guard let layer = DemoFixture.openLayer else { return }
             try? await Task.sleep(for: .seconds(2))
-            window.commands.send(layer == .needsAttention ? .showNeedsAttention : .toggleAllProjects)
+            switch layer {
+            case .needsAttention, .approvalList:
+                window.commands.send(.showNeedsAttention)
+            case .allProjects:
+                window.commands.send(.toggleAllProjects)
+            case .review:
+                await ReviewTabActions.open(
+                    .uncommitted,
+                    agentPaneID: DemoFixture.Slot.reminders.paneID,
+                    window: window,
+                    stores: state.reviewTabStores
+                )
+            case .approvalCard:
+                let anchor = window.needsAttentionAnchor
+                window.approvalCard.present(
+                    DemoFixture.stagedApproval,
+                    from: state.approvalPresentation,
+                    openedFrom: anchor == .zero ? nil : anchor
+                )
+            }
         }
         // Here, not on the session's body, so it opens whatever the window
         // shows, a window that shows no project included.

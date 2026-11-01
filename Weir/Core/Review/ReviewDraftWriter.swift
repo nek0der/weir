@@ -305,18 +305,31 @@ final class ReviewDraftWriter {
 /// pool is an `@Entry` default value, which SwiftUI builds outside any actor —
 /// so the type itself cannot be `@MainActor`.
 final class ReviewDraftWriterPool: @unchecked Sendable {
-    /// Where the writers this pool hands out keep their drafts. In demo mode
-    /// that is nowhere: `DemoFixture` is an app-level fact, so which one it is
+    /// Where the writers this pool hands out keep their drafts. Demo mode's
+    /// keep none: `DemoFixture` is an app-level fact, so which one it is
     /// arrives from above rather than being read here.
     private let drafts: any ReviewDraftStoring
+    /// How the sessions this pool hands out ask the repository.
+    private let git: any ReviewRepositoryReading
 
-    /// Demo mode keeps its comments in memory: the fixture is a stage set, and
-    /// writing its review into the reader's own draft directory would outlive
-    /// the demo.
+    /// `shouldPersist: false` keeps comments in memory, for a pool nothing
+    /// should outlive: a test's, or the environment's default.
     init(shouldPersist: Bool = true, directory: URL? = nil) {
         drafts = shouldPersist
             ? FileReviewDraftStore(directory: directory ?? Self.defaultDirectory)
             : EphemeralReviewDraftStore()
+        git = LiveReviewRepository()
+    }
+
+    /// Demo mode's: its folders do not exist, so neither Git nor the disk is asked.
+    init(drafts: any ReviewDraftStoring, git: any ReviewRepositoryReading) {
+        self.drafts = drafts
+        self.git = git
+    }
+
+    /// The Git top level of `directory`, asked as these sessions ask.
+    func root(of directory: URL) async throws -> URL {
+        try await git.root(at: directory)
     }
 
     private final class WeakWriter {
@@ -361,6 +374,6 @@ final class ReviewDraftWriterPool: @unchecked Sendable {
     /// A new view of `root`'s review, writing through the shared writer.
     @MainActor
     func session(root: URL) -> ReviewSession {
-        ReviewSession(writer: writer(root: root))
+        ReviewSession(writer: writer(root: root), git: git)
     }
 }

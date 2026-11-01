@@ -10,7 +10,7 @@ The landing page and the documents, published at `weir.nekoder.com`. The site de
 | `src/components/SiteNav.astro`, `src/styles/nav.css` | The top bar that every page shares |
 | `src/components/NotFound.astro` | The 404 page in each language |
 | `src/icons/*.svg` | The top bar's icons, one file each |
-| `src/assets/captures/*.png` | The captures of the app. The build converts them to WebP in the sizes the page uses |
+| `src/assets/captures/` | The captures of the app, with the documents' under `docs/`. The build converts them to WebP in the sizes the page uses |
 | `src/styles/tokens.css` | The colors of every page, one set for each look |
 | `src/styles/docs.css` | The documents' look in Starlight |
 | `public/_headers` | The security and caching headers Cloudflare Pages sends |
@@ -46,7 +46,9 @@ From the repository's root:
 make site-images
 ```
 
-This builds the app and takes three captures in each look from demo mode, whose data and time of day are fixed. It needs the same Screen Recording grant as `make screenshot`. Stay off the keyboard while it runs, because the app takes what you type.
+This builds the app and takes every capture from demo mode, whose data and time of day are fixed: three in each look for the landing page, and four in the dark look in English and Japanese for the documents, under `src/assets/captures/docs/`. It needs the same Screen Recording grant as `make screenshot`. Stay off the keyboard and mouse while it runs: the app takes what you type, and a run stops if another app comes to the front. No image changes until every capture has succeeded.
+
+The documents' captures crop to the surface they are about, which the app reports, so a change of layout needs no new coordinates. The fixture's own text, such as prompts and terminal output, stays English in the Japanese captures.
 
 ## Add a document
 

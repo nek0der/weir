@@ -231,13 +231,13 @@ final class SettingsStore {
         let raw = languageSources.defaults.string(forKey: Self.appLanguageDefaultsKey)
             ?? AppLanguage.system.rawValue
         let stored = AppLanguage(rawValue: raw) ?? .system
-        // Demo mode pins the SwiftUI tree to English so the README hero
-        // screenshot reads the same regardless of the contributor's OS
-        // locale. UserDefaults stays untouched so the user's real
-        // preference survives a `WEIR_DEMO=1` run. AppKit menu bar
-        // still follows `AppleLanguages` (untouched here) — capture
-        // pipelines crop to the SwiftUI window content.
-        let language = DemoFixture.isDemoActive ? AppLanguage.english : stored
+        // Demo mode pins the SwiftUI tree to the capture's language, English
+        // unless it asks otherwise, so a screenshot reads the same regardless
+        // of the contributor's OS locale. UserDefaults stays untouched so the
+        // user's real preference survives a `WEIR_DEMO=1` run. AppKit menu bar
+        // still follows `AppleLanguages` (untouched here) — capture pipelines
+        // crop to the SwiftUI window content.
+        let language = DemoFixture.isDemoActive ? DemoFixture.language : stored
         self.appLanguage = language
         self.appLanguageAtLaunch = language
         self.appLocale = Self.locale(for: language, sources: languageSources)
