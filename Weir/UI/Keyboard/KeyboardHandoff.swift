@@ -108,6 +108,26 @@ enum KeyboardHandoff {
         )
     }
 
+    /// Closes the command palette and gives the keyboard back to the focused
+    /// pane of the window it was open in. Taking the palette's field away
+    /// gives the keys to no one, so a dismissal that moves the keyboard
+    /// nowhere else comes through here. At once: the field is still fading
+    /// out and holds the keys, and any field in the window is that one,
+    /// since the palette's click catcher covers the rest of the window.
+    static func closePalette(session: WorkspaceSession, registry: any SurfaceViewProviding) {
+        guard let window = session.commandPaletteState?.windowID else { return }
+        CommandPaletteActions.closeCommandPalette(session)
+        returnToFocusedPane(in: window, session: session, registry: registry, keeper: .terminal, timing: .now)
+    }
+
+    /// Ends `paneID`'s search and gives the keyboard back to that pane. Only
+    /// the focused pane's bar takes input, so it is the pane the person was
+    /// in. At once, for the same reason as `closePalette`.
+    static func closePaneSearch(paneID: UUID, session: WorkspaceSession, registry: any SurfaceViewProviding) {
+        SearchActions.endSearch(session, registry: registry, paneID: paneID)
+        returnToTerminal(paneID: paneID, registry: registry, keeper: .terminal, timing: .now)
+    }
+
     private static func holder(of responder: NSResponder?) -> Holder {
         switch responder {
         case is SurfaceView:

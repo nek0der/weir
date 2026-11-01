@@ -151,6 +151,7 @@ private struct ActivePill: View {
     @Environment(WorkspaceSession.self) private var session
     @Environment(WindowRegistry.self) private var windowRegistry
     @Environment(\.frecencyStore) private var frecencyStore
+    @Environment(\.surfaceRegistry) private var registry
     @FocusState private var fieldFocused: Bool
     @State private var debounceTask: Task<Void, Never>?
 
@@ -202,7 +203,7 @@ private struct ActivePill: View {
             executeSelected(opensInNewWindow: true)
             return .handled
         }
-        .onExitCommand { CommandPaletteActions.closeCommandPalette(session) }
+        .onExitCommand { KeyboardHandoff.closePalette(session: session, registry: registry) }
         .onKeyPress(.upArrow) {
             state.moveSelection(up: true)
             return .handled
