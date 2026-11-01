@@ -88,11 +88,29 @@ private struct InactivePill: View {
     /// and the palette's keys in a cap. The title bar sets its width.
     private var field: some View {
         let shape = RoundedRectangle(cornerRadius: WeirLayout.Supervision.paletteFieldCornerRadius, style: .continuous)
-        return HStack(spacing: WeirLayout.Supervision.spaceSnug) {
+        // Too narrow for the placeholder, a word that fits rather than the
+        // placeholder cut: "Type a com…" says less than "Search".
+        return ViewThatFits(in: .horizontal) {
+            row(Text("Type a command or search…"))
+            row(Text("Search"))
+        }
+        .padding(.horizontal, WeirLayout.Supervision.spaceS)
+        .frame(height: WeirLayout.titleBarControlHeight)
+        // As see-through as the title bar's ground (`SurfaceGround`), so
+        // with the background opacity under 100% it is not an opaque box.
+        .background(SurfaceGround {
+            shape.fill(isHovering ? SupervisionTokens.hover.color : SupervisionTokens.window.color)
+        })
+        .overlay(shape.strokeBorder(SupervisionTokens.line.color, lineWidth: 1))
+        .contentShape(shape)
+    }
+
+    private func row(_ placeholder: Text) -> some View {
+        HStack(spacing: WeirLayout.Supervision.spaceSnug) {
             Image(systemName: "magnifyingglass")
                 .font(.supervision(WeirLayout.Supervision.paletteFieldSymbolSize))
                 .foregroundStyle(SupervisionTokens.muted.color)
-            Text("Type a command or search…")
+            placeholder
                 .font(.supervision(.body))
                 .foregroundStyle(SupervisionTokens.muted.color)
                 .lineLimit(1)
@@ -105,15 +123,6 @@ private struct InactivePill: View {
                 SupervisionKeycap(keys: shortcutHint, isFaceFilled: isHovering)
             }
         }
-        .padding(.horizontal, WeirLayout.Supervision.spaceS)
-        .frame(height: WeirLayout.titleBarControlHeight)
-        // As see-through as the title bar's ground (`SurfaceGround`), so
-        // with the background opacity under 100% it is not an opaque box.
-        .background(SurfaceGround {
-            shape.fill(isHovering ? SupervisionTokens.hover.color : SupervisionTokens.window.color)
-        })
-        .overlay(shape.strokeBorder(SupervisionTokens.line.color, lineWidth: 1))
-        .contentShape(shape)
     }
 
     private var shortcutHint: String {

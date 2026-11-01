@@ -24,10 +24,17 @@ struct SupervisionTitleBar: View {
             ),
             trailingInset: WeirLayout.Supervision.titleBarTrailingInset,
             spacing: WeirLayout.Supervision.titleBarSpacing,
-            fieldRange: WeirLayout.Supervision.paletteFieldWidthRange
+            fieldRange: WeirLayout.Supervision.paletteFieldWidthRange,
+            fieldPreferred: WeirLayout.Supervision.paletteFieldPreferredWidth,
+            placeFloor: WeirLayout.Supervision.titleBarPlaceFloorWidth,
+            placeRoomOffCenter: WeirLayout.Supervision.titleBarPlaceRoomOffCenter
         )) {
             TitleBarPlaceLayout(spacing: WeirLayout.Supervision.titleBarSpacing) {
-                ProjectMenuButton()
+                // Capped on any window: a project is known by its start, and
+                // the branch beside it is what tells two worktrees apart.
+                WidthCap(max: WeirLayout.Supervision.titleBarProjectMaxWidth) {
+                    ProjectMenuButton()
+                }
                 WorktreeMenuButton()
             }
             TitleBarHistoryButtons()
@@ -117,7 +124,7 @@ struct SupervisionTitleBarLayout: Layout {
             metrics: metrics
         )
         let historyGap = historyWidth > 0 ? metrics.spacing : 0
-        let groupMinX = bounds.midX - (historyWidth + historyGap + widths.field) / 2
+        let groupMinX = bounds.midX - (historyWidth + historyGap + widths.field) / 2 + widths.groupOffset
         leading.place(
             at: CGPoint(x: bounds.minX + metrics.leadingInset, y: bounds.midY),
             anchor: .leading,
