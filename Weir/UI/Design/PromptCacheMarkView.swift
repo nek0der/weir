@@ -84,7 +84,7 @@ struct PromptCacheMarkView: View {
         } label: {
             switch style {
             case .clock:
-                // The slot of `AgentStateMark.Placement.headerStatus`, so the clock and
+                // The slot of `AgentStateMark` (`stateMarkSlot`), so the clock and
                 // the state mark beside it share one square.
                 Image(systemName: "clock")
                     .foregroundStyle(mark.tint)

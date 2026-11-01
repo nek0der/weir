@@ -12,18 +12,21 @@ import SwiftUI
 /// `.destructive` tone.
 /// `.compact` is the size a row's own button takes (Answer… beside a Needs
 /// Attention row) under a heading's (Next Action); `.mini` is a review hunk
-/// header's, whose 10.5pt line it sits on.
+/// header's, whose 10.5pt line it sits on; `.rowLine` is Answer…'s on a sidebar
+/// row, whose face, inside its edge, is as tall as the badges under it.
 struct SupervisionSecondaryButtonStyle: ButtonStyle {
     enum Size {
         case regular
         case compact
         case mini
+        case rowLine
 
         var height: CGFloat {
             switch self {
             case .regular: WeirLayout.Supervision.secondaryButtonHeight
             case .compact: WeirLayout.Supervision.secondaryButtonCompactHeight
             case .mini: WeirLayout.Supervision.secondaryButtonMiniHeight
+            case .rowLine: WeirLayout.Supervision.secondaryButtonRowLineHeight
             }
         }
 
@@ -31,7 +34,7 @@ struct SupervisionSecondaryButtonStyle: ButtonStyle {
             switch self {
             case .regular: .row
             case .compact: .meta
-            case .mini: .caption
+            case .mini, .rowLine: .caption
             }
         }
 
@@ -39,7 +42,7 @@ struct SupervisionSecondaryButtonStyle: ButtonStyle {
             switch self {
             case .regular: WeirLayout.Supervision.spaceM
             case .compact: WeirLayout.Supervision.spaceS
-            case .mini: WeirLayout.Supervision.spaceSnug
+            case .mini, .rowLine: WeirLayout.Supervision.spaceSnug
             }
         }
     }

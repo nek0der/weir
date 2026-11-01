@@ -522,11 +522,6 @@ final class ApprovalPresentationStore {
         return nearest
     }
 
-    func approval(forPaneID paneID: UUID, in session: WorkspaceSession) -> ApprovalPresentation? {
-        // Any pane its run is attached to, a tmux run's second one included.
-        pending.first { panes(for: $0, in: session).contains { $0.paneID == paneID } }
-    }
-
     /// When Weir first saw the request pending: the ledger's record
     /// (`ApprovalLedger.Entry.firstSeenAt`), else the pending list's. Now,
     /// for a request neither knows, which only makes it the newest; it can

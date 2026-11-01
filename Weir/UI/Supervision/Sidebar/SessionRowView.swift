@@ -159,7 +159,9 @@ struct SessionRowView: View {
                 Button(action: onAnswer) {
                     Text("Answer…")
                 }
-                .buttonStyle(.supervisionSecondary(size: .compact))
+                // The row has room above the second line's badges for a face
+                // no taller than theirs, with even gaps around it.
+                .buttonStyle(.supervisionSecondary(size: .rowLine))
                 // It shows only on a hovered row, whose fill is opaque.
                 .environment(\.supervisionSurfaceOpacity, 1)
                 .padding(Layout.sessionRowAnswerInsets)
@@ -307,12 +309,12 @@ struct SessionRowView: View {
     @ViewBuilder private var trailingLineOne: some View {
         if isShowingAnswer {
             // As wide as the button laid over it
-            // (`SupervisionSecondaryButtonStyle`'s compact size), so the
+            // (`SupervisionSecondaryButtonStyle`'s row line size), so the
             // name is cut where the button begins.
             Text("Answer…")
-                .font(.supervision(.meta, weight: .medium))
+                .font(.supervision(.caption, weight: .medium))
                 .fixedSize()
-                .padding(.horizontal, WeirLayout.Supervision.spaceS)
+                .padding(.horizontal, WeirLayout.Supervision.spaceSnug)
                 .hidden()
         } else if let lastActivity = row.lastActivity {
             Text(verbatim: SessionRowFactText.elapsed(since: lastActivity, now: now, locale: locale))

@@ -21,11 +21,6 @@ struct PaneContainerView: View {
     @Environment(\.surfaceRegistry) private var registry
     @Environment(WorkspaceSession.self) private var session
     @Environment(SettingsStore.self) private var settingsStore
-    @Environment(ApprovalPresentationStore.self) private var approvalPresentation
-    /// The window the pane is in, whose card its badge opens. Panes are
-    /// drawn only by `PaneAreaView` and its splits, inside a main window,
-    /// whose `MainWindowContent` puts the window in the environment.
-    @Environment(ProjectWindowState.self) private var window
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// `1.0` when this leaf is focused, sits in a single-pane tab, or
@@ -178,28 +173,6 @@ struct PaneContainerView: View {
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 .pointerStyle(.default)
                 .modalTransition(.floatingPanel, reduceMotion: reduceMotion)
-            }
-            if let approval = approvalPresentation.approval(forPaneID: paneID, in: session) {
-                Button {
-                    window.approvalCard.present(approval, from: approvalPresentation)
-                } label: {
-                    // A pending request is a wait, so the badge is the wait's
-                    // glyph, named as the request it is.
-                    AgentStateMark(
-                        kind: approval.isQuestion ? .needsAnswer : .needsApproval,
-                        placement: .paneBadge
-                    )
-                }
-                .buttonStyle(.plain)
-                .padding(WeirLayout.Supervision.spaceS)
-                .padding(.top, session.paneSearchStates[paneID] == nil ? 0 : 52)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                // A question is no tool's approval; its tool's name
-                // (AskUserQuestion) would say it is.
-                .accessibilityLabel(approval.isQuestion
-                    ? Text("Answer the Question", comment: "Pane, VoiceOver: the badge of a question the agent asks")
-                    : Text("Answer approval request for \(approval.toolName)"))
-                .accessibilityHint(Text("Opens the approval card"))
             }
         }
         .animation(ModalMotion.floatingPanel.animation(reduceMotion: reduceMotion), value: exitCode)
