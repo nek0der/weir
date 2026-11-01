@@ -1,12 +1,12 @@
 // ReviewFileAction.swift
 // Weir — resolves reviewed worktree paths for actions outside the app.
 
-import AppKit
 import Foundation
 import WeirDomain
 
 /// The boundary between Review's Git-relative paths and macOS file actions.
-/// Opening goes through `FileOpener`, shared with terminal links.
+/// Opening goes through `FileOpener`, shared with terminal links, and the UI
+/// shows a file in Finder itself.
 enum ReviewFileAction {
     /// Resolves a Git-relative or absolute file path only when its canonical
     /// location remains under the canonical repository root. Resolving both
@@ -23,10 +23,5 @@ enum ReviewFileAction {
         let resolved = candidate.standardizedFileURL.resolvingSymlinksInPath()
         guard RepositoryPath.isStrictDescendant(resolved.path, of: root.path) else { return nil }
         return resolved
-    }
-
-    /// Shows the file in Finder without changing the reader's app preference.
-    static func revealInFinder(_ fileURL: URL) {
-        NSWorkspace.shared.activateFileViewerSelecting([fileURL])
     }
 }

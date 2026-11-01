@@ -9,7 +9,7 @@
 //      can decide whether to present the alert while the app is in
 //      the foreground (Ghostty mac's `shouldPresentNotification` pattern).
 
-import AppKit
+import Foundation
 import OSLog
 import UserNotifications
 import WeirDomain
@@ -365,23 +365,6 @@ final class WeirNotificationManager {
     /// Takes back the wake summary once nothing it counted needs attention.
     func removeSummaryBanner() {
         center.removeDeliveredNotifications(withIdentifiers: [Self.summaryIdentifier])
-    }
-
-    /// Tell the Dock to bounce, drawing the user's attention without
-    /// stealing focus. Use sparingly — fire only on the *first* unread
-    /// notification for a tab.
-    func bounceDockIcon() {
-        NSApp.requestUserAttention(.informationalRequest)
-    }
-
-    /// Shows `badge` on the Dock tile: the attention count, a dot, or
-    /// nothing (the tile renders empty rather than "0"). Called by
-    /// `DockBadgeSync` whenever the badge changes.
-    func setDockBadge(_ badge: DockBadge) {
-        // Use `NSApplication.shared` rather than the implicitly-
-        // unwrapped `NSApp` global, which can still be nil while the
-        // SwiftUI app finishes booting.
-        NSApplication.shared.dockTile.badgeLabel = badge.label
     }
 }
 

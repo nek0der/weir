@@ -43,7 +43,7 @@ struct QuickTerminalSurfaceTests {
         let controller = QuickTerminalController(
             settingsStore: SettingsStore(directory: directory),
             reduceTransparencyResolver: ReduceTransparencyResolver(),
-            clipboard: ClipboardConfirmationCoordinator(),
+            clipboard: ClipboardConfirmationCoordinator(answerer: .system),
             secureInputManager: SecureInputManager(),
             surfaceFactory: {
                 PaneHostRepresentable.makeSurfaceView(

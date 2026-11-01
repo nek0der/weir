@@ -10,14 +10,18 @@ import AppKit
 final class AppVisibilityObserver: NSObject {
     private weak var registry: WindowRegistry?
     private var voiceOverObservation: NSKeyValueObservation?
+    private let onBecomeActive: @MainActor () -> Void
 
-    init(registry: WindowRegistry) {
+    /// `onBecomeActive` runs each time Weir comes to the front, for the Core
+    /// code that refreshes what may have changed outside it.
+    init(registry: WindowRegistry, onBecomeActive: @escaping @MainActor () -> Void) {
         self.registry = registry
+        self.onBecomeActive = onBecomeActive
         super.init()
         let center = NotificationCenter.default
         center.addObserver(
             self,
-            selector: #selector(activityChanged(_:)),
+            selector: #selector(didBecomeActive(_:)),
             name: NSApplication.didBecomeActiveNotification,
             object: nil
         )
@@ -45,6 +49,11 @@ final class AppVisibilityObserver: NSObject {
 
     nonisolated deinit {
         NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func didBecomeActive(_ note: Notification) {
+        activityChanged(note)
+        onBecomeActive()
     }
 
     @objc private func activityChanged(_ note: Notification) {

@@ -219,7 +219,9 @@ final class QuickTerminalContentModel {
         guard isPanelVisible,
               let request = clipboard.pending,
               let panel,
-              request.view?.window === panel
+              let surfaceView,
+              request.target === surfaceView,
+              surfaceView.window === panel
         else { return nil }
         return request
     }

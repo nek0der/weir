@@ -7,12 +7,32 @@ import AppKit
 /// `NSWindow.identifier`, so identifier-string filtering cannot tell the
 /// main window from Settings. The UI tags each window through an associated
 /// object instead (`WeirWindowRoleMarker`),
-/// and `WeirUpdateDriver.hasInlineTarget` reads the tag here. Both
+/// and `isUpdateControlInSight` reads the tag for `WeirUpdateDriver`. Both
 /// windows can show the inline update popover; a Sparkle alert window
 /// carries neither tag.
 enum WeirWindowRole {
     case main
     case settings
+
+    /// True when a visible window can show the update inline: a main Weir
+    /// window, in the left rail's icon, or Settings. The two are told from
+    /// other windows by the markers their roots set on the host `NSWindow`
+    /// (`weirMainWindowEnvironment`, `SettingsScene`).
+    @MainActor
+    static var isUpdateControlInSight: Bool {
+        NSApp.windows.contains { window in
+            // Both the main window and the Settings window host an
+            // inline `UpdatePopover` (GeneralPane mirrors the main
+            // window's popover so the user who initiated the check from
+            // Settings sees the result in place). Treating Settings as
+            // a valid inline target stops the driver from layering
+            // Sparkle's standard modal on top of the Settings popover
+            // when the main window is hidden.
+            // A main window whose rails are hidden shows no update control.
+            window.isVisible
+                && ((window.isWeirMainWindow && !window.hidesUpdateControl) || window.isWeirSettingsWindow)
+        }
+    }
 
     /// `objc_setAssociatedObject` needs a stable raw key. A static let keeps
     /// the address fixed for the process lifetime.

@@ -15,7 +15,7 @@ private final class FakeClipboardTarget: ClipboardRequestTarget {
     private nonisolated(unsafe) let storage = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
     var isAlive = true
     let clipboardRequests = ClipboardRequestTracker()
-    let hostView: NSView? = nil
+    let paneID: UUID? = nil
 
     var surface: ghostty_surface_t? {
         isAlive ? storage : nil

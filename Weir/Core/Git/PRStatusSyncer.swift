@@ -20,7 +20,6 @@
 //     CLIs; a fixture is written to the store once and nothing is
 //     scheduled.
 
-import AppKit
 import Foundation
 import OSLog
 import WeirDomain
@@ -141,11 +140,8 @@ final class PRStatusSyncer {
     private static let pollInterval: TimeInterval = 45
     private static let pollGranularity: Duration = .seconds(pollInterval)
 
-    /// AppKit observer token. Held with `nonisolated(unsafe)` so the
-    /// nonisolated `deinit` can remove it; every mutation site
-    /// (`observeFocus`) runs on @MainActor, so the unsafety is only
-    /// paid at teardown — same posture as `GitSyncCoordinator`.
-    private nonisolated(unsafe) var focusObserver: (any NSObjectProtocol)?
+    /// Set by `start()`, once there is something to refetch.
+    private var isFollowingActivation = false
 
     convenience init(
         session: WorkspaceSession,
@@ -180,12 +176,6 @@ final class PRStatusSyncer {
         self.fixture = fixture
     }
 
-    deinit {
-        if let f = focusObserver {
-            NotificationCenter.default.removeObserver(f)
-        }
-    }
-
     // MARK: - Lifecycle
 
     func start() {
@@ -197,7 +187,7 @@ final class PRStatusSyncer {
             }
             return
         }
-        observeFocus()
+        isFollowingActivation = true
         scheduleRecurring()
         // start() runs on @MainActor, so the implicit Task isolation
         // is also @MainActor — no need to re-annotate.
@@ -208,24 +198,13 @@ final class PRStatusSyncer {
 
     // MARK: - Triggers
 
-    private func observeFocus() {
-        // The user often comes back to Weir expecting "what I did
-        // outside is reflected" — pushing a PR, merging it on the web,
-        // approving a review. didBecomeActive is a cheap signal that
-        // covers all three. The callback runs on the main queue so the
-        // assumeIsolated wrapper lets us spawn a Task that inherits
-        // MainActor without the compiler-ambiguous `@MainActor in`
-        // capture form.
-        focusObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                Task { await self.tick(reason: .focus) }
-            }
-        }
+    /// The user often comes back to Weir expecting "what I did outside is
+    /// reflected" — pushing a PR, merging it on the web, approving a review.
+    /// Becoming active is a cheap signal that covers all three. A fixture
+    /// never starts this, so it is never refetched.
+    func appDidBecomeActive() {
+        guard isFollowingActivation else { return }
+        Task { await tick(reason: .focus) }
     }
 
     /// Wake on a fixed granularity and let each row decide whether it is

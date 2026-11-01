@@ -13,7 +13,7 @@ import Foundation
 /// (`StoredShortcut.modifiers`), so the bits never change meaning. The
 /// conversions from and to AppKit and SwiftUI live in the files that
 /// already import them (`KeyboardShortcut+Capture.swift`,
-/// `StoredShortcut+AppKitMenu.swift`, `KeyboardShortcut.swift`).
+/// `StoredShortcut+AppKitMenu.swift`, `KeyboardShortcut+SwiftUI.swift`).
 package struct KeyModifiers: OptionSet, Codable, Hashable, Sendable {
     package let rawValue: UInt8
 

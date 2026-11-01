@@ -168,7 +168,7 @@ struct LiveLocaleAppKitTests {
             let controller = QuickTerminalController(
                 settingsStore: store,
                 reduceTransparencyResolver: ReduceTransparencyResolver(),
-                clipboard: ClipboardConfirmationCoordinator(),
+                clipboard: ClipboardConfirmationCoordinator(answerer: .system),
                 secureInputManager: SecureInputManager(),
                 surfaceFactory: { nil }
             )

@@ -14,7 +14,6 @@
 //     worktree are migrated to "Project direct" so the user's work
 //     isn't lost.
 
-import AppKit
 import Foundation
 import OSLog
 import WeirDomain
@@ -41,13 +40,12 @@ final class GitSyncCoordinator {
     /// makes (`WorktreeAdmissionRule.Facts.homePath`). A test passes its own.
     private let homePath: String
 
-    // `deinit` is nonisolated, but `NSObjectProtocol?` is non-Sendable,
-    // so accessing these tokens to remove the observers needs the
-    // `nonisolated(unsafe)` escape hatch. The mutation sites all live
-    // on @MainActor (init / handleSyncRequest paths), so the unsafety
-    // is only paid at teardown.
+    /// `deinit` is nonisolated, but `NSObjectProtocol?` is non-Sendable,
+    /// so accessing this token to remove the observer needs the
+    /// `nonisolated(unsafe)` escape hatch. The mutation sites all live
+    /// on @MainActor (init / handleSyncRequest paths), so the unsafety
+    /// is only paid at teardown.
     private nonisolated(unsafe) var syncRequestObserver: (any NSObjectProtocol)?
-    private nonisolated(unsafe) var activateObserver: (any NSObjectProtocol)?
 
     init(
         session: WorkspaceSession,
@@ -80,27 +78,18 @@ final class GitSyncCoordinator {
                 self?.handleSyncRequest(pid)
             }
         }
-        // Window focus refresh — many users tab out to delete a
-        // worktree in Terminal, then come back expecting Weir to
-        // notice. NSApplication's didBecomeActive fires every time
-        // the app gains focus.
-        activateObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.handleSyncRequest(nil)
-            }
-        }
+    }
+
+    /// Window focus refresh — many users tab out to delete a worktree in
+    /// Terminal, then come back expecting Weir to notice. Called every time
+    /// the app gains focus (`AppVisibilityObserver`).
+    func appDidBecomeActive() {
+        handleSyncRequest(nil)
     }
 
     deinit {
         if let s = syncRequestObserver {
             NotificationCenter.default.removeObserver(s)
-        }
-        if let a = activateObserver {
-            NotificationCenter.default.removeObserver(a)
         }
     }
 
@@ -159,7 +148,7 @@ private final class ProjectSync {
         // triggered by Weir's own git CLI calls (rename/delete/
         // create) would clobber the optimistic in-memory state and
         // produce a long tail of race conditions. The refetch triggers are:
-        //   1. App focus (didBecomeActiveNotification, GitSyncCoordinator init)
+        //   1. App focus (`appDidBecomeActive`)
         //   2. Manual `Sync Worktrees` (weirGitSyncRequested)
         //   3. Self-triggered — `WorkspaceSession+Worktree` posts the
         //      same notification at the end of each mutation.

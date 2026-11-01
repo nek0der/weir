@@ -16,8 +16,8 @@ extension SurfaceView: PaneSurface {
         convert(bounds, to: nil)
     }
 
-    var isFirstResponderOfKeyWindow: Bool {
-        guard let keyWindow = NSApp.keyWindow else { return false }
+    var holdsKeyboardFocus: Bool {
+        guard NSApp.isActive, let keyWindow = NSApp.keyWindow else { return false }
         return window === keyWindow && keyWindow.firstResponder === self
     }
 

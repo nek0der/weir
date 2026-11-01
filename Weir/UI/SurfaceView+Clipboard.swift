@@ -11,14 +11,18 @@ final class SurfaceUserdataToken {
     let clipboardRequests = ClipboardRequestTracker()
 }
 
+extension ClipboardRequestAnswerer {
+    /// What answers a request in the running app.
+    static let system = ClipboardRequestAnswerer.libghostty { text in
+        NSPasteboard.general.declareTypes([.string], owner: nil)
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+}
+
 extension SurfaceView: ClipboardRequestTarget {
     /// The unanswered clipboard requests of this view's surface.
     var clipboardRequests: ClipboardRequestTracker {
         Self.clipboardRequests(forUserdata: userdata)
-    }
-
-    var hostView: NSView? {
-        self
     }
 
     /// The clipboard requests of the surface `userdata` belongs to, read in

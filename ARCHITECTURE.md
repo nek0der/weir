@@ -51,8 +51,7 @@ boundaries** (the layers are described below). The libghostty boundary lives
 in `FFI/`. The Rust boundary lives behind `Core/Rust/WeirRustBridge.swift`
 and the C header in `rust/weir-rust-bridge/include/`. Rust stays independent
 of Swift and Apple frameworks. UI may consume Core models but never reaches
-into their private state. Core keeps AppKit and SwiftUI out; "Layers and
-dependency direction" below lists the files that predate the rule. The agent
+into their private state. Core keeps AppKit and SwiftUI out. The agent
 folders, `Core/Claude`, `Core/Codex`, and `Core/Antigravity`, never refer to
 each other in code. Each is independent, and the first two are shaped alike.
 
@@ -62,8 +61,8 @@ only when an existing symbol's calling convention, exposed layout, ownership
 contract, or documented behavior must become incompatible. Prefer a new
 version-suffixed symbol, such as `_v2`, when both contracts can coexist.
 
-The AppKit and SwiftUI imports that remain in `Core/` are listed in
-`.swiftlint.yml` (`layer_ui_framework_import`).
+`.swiftlint.yml` (`layer_ui_framework_import`) refuses an AppKit or SwiftUI
+import in `Core/` or `Presentation/`.
 
 ### Layers and dependency direction
 
@@ -99,8 +98,7 @@ hook.
 
 New Presentation code goes in `Weir/Presentation/`, new Domain code in
 `Weir/Core/Domain/`, and new Infrastructure code in the rest of
-`Weir/Core/`, which today still holds older display stores and AppKit
-coordinators. Core never refers to a Presentation type: what a window saves is
+`Weir/Core/`, which today still holds older display stores. Core never refers to a Presentation type: what a window saves is
 the Core value `WindowSelection`, and Presentation adds its display-only state
 on top. Domain receives facts as its own small values rather than
 presentation models, and side effects travel up as values that App performs.
@@ -119,8 +117,7 @@ A static module has no resources, so its strings live in the app's catalog.
 `make lint` enforces the part a pattern can see (`.swiftlint.yml`):
 
 - `layer_ui_framework_import` keeps AppKit, SwiftUI, and the modules that
-  carry them out of Core and Presentation. The files that predate the rule
-  are listed there, each with the condition under which it leaves.
+  carry them out of Core and Presentation, with no file excepted.
 - `domain_foundation_only` and `domain_side_effect` limit Domain to
   Foundation and keep it free of `Process`, `FileManager`, and `URLSession`.
 - `core_names_presentation_type` catches Core code that names the

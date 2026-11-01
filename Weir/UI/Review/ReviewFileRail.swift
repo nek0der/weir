@@ -569,7 +569,7 @@ struct ReviewFileActionsMenu: View {
             let target = FileManager.default.fileExists(atPath: fileURL.path)
                 ? fileURL
                 : fileURL.deletingLastPathComponent()
-            ReviewFileAction.revealInFinder(target)
+            NSWorkspace.shared.activateFileViewerSelecting([target])
         }
         .disabled(fileURL == nil)
     }

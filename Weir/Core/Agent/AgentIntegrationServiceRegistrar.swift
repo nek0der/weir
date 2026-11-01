@@ -1,7 +1,6 @@
 // AgentIntegrationServiceRegistrar.swift
 // Weir — reconciles the bundled approval service without needless restarts.
 
-import AppKit
 import Foundation
 import OSLog
 import ServiceManagement
@@ -190,7 +189,9 @@ final class AgentIntegrationServiceRegistrar {
     private let appVersion: String
     private var reconcileTask: Task<Void, Never>?
     private var retryTask: Task<Void, Never>?
-    private var activeObserver: Any?
+    /// Set once recurring reconciles are scheduled; a demo run and a test
+    /// never get there.
+    private var isFollowingActivation = false
     private var readinessChanged: ((Bool) -> Void)?
     /// Set once the running app turns out to be ad hoc-signed. Its signature
     /// cannot change while it runs, so later activations skip reconciling.
@@ -232,13 +233,13 @@ final class AgentIntegrationServiceRegistrar {
             }
         #endif
 
-        activeObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reconcile() }
-        }
+        isFollowingActivation = true
+        reconcile()
+    }
+
+    /// Called every time the app gains focus (`AppVisibilityObserver`).
+    func appDidBecomeActive() {
+        guard isFollowingActivation else { return }
         reconcile()
     }
 

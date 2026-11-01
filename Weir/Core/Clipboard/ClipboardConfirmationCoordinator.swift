@@ -6,7 +6,6 @@
 // confirmation UI — auto-confirming would let any escape sequence
 // the shell receives read or overwrite the user's clipboard.
 
-import AppKit
 import Foundation
 import GhosttyKit
 import OSLog
@@ -133,8 +132,9 @@ protocol ClipboardRequestTarget: AnyObject {
     /// The live libghostty surface; nil when the pane has none.
     var surface: ghostty_surface_t? { get }
     var clipboardRequests: ClipboardRequestTracker { get }
-    /// The pane as a view, for the UI that decides where the sheet goes.
-    var hostView: NSView? { get }
+    /// The pane's id, for the app layer that decides which window asks.
+    /// Nil for a terminal no pane holds, as the quick terminal's.
+    var paneID: UUID? { get }
 }
 
 /// The calls that answer a request. Injected so a test can see what would
@@ -145,23 +145,24 @@ struct ClipboardRequestAnswerer {
     var complete: @MainActor (ghostty_surface_t, String, ClipboardRequestState) -> Void
     var writePasteboard: @MainActor (String) -> Void
 
-    static let libghostty = ClipboardRequestAnswerer(
-        deny: { surface, state in
-            ghostty_surface_deny_clipboard_request(surface, state.pointer)
-        },
-        complete: { surface, text, state in
-            GhosttyFFI.completeClipboardRequest(
-                surface: surface,
-                text: text,
-                state: state.pointer,
-                confirmed: true
-            )
-        },
-        writePasteboard: { text in
-            NSPasteboard.general.declareTypes([.string], owner: nil)
-            NSPasteboard.general.setString(text, forType: .string)
-        }
-    )
+    /// Answers through libghostty; the pasteboard belongs to the caller,
+    /// since writing it takes AppKit.
+    static func libghostty(writePasteboard: @escaping @MainActor (String) -> Void) -> ClipboardRequestAnswerer {
+        ClipboardRequestAnswerer(
+            deny: { surface, state in
+                ghostty_surface_deny_clipboard_request(surface, state.pointer)
+            },
+            complete: { surface, text, state in
+                GhosttyFFI.completeClipboardRequest(
+                    surface: surface,
+                    text: text,
+                    state: state.pointer,
+                    confirmed: true
+                )
+            },
+            writePasteboard: writePasteboard
+        )
+    }
 
     /// Refuse a request. Every refusal goes through here, so the rule that
     /// keeps the C deny safe lives in one place: a write is refused by
@@ -227,11 +228,6 @@ struct PendingClipboardRequest: Identifiable {
     var kind: ClipboardConfirmationKind {
         source.kind
     }
-
-    /// The originating view, for the UI that decides where the sheet goes.
-    var view: NSView? {
-        target?.hostView
-    }
 }
 
 /// Holds at most one pending request. If a second request arrives
@@ -263,7 +259,7 @@ final class ClipboardConfirmationCoordinator {
     private let reviewPasteLedger = ReviewPasteLedger()
     private let answerer: ClipboardRequestAnswerer
 
-    init(answerer: ClipboardRequestAnswerer = .libghostty) {
+    init(answerer: ClipboardRequestAnswerer) {
         self.answerer = answerer
     }
 

@@ -190,9 +190,13 @@ final class UpdaterStack {
     /// demo run of a Release build has the same bundle identifier. Not
     /// started, it checks nothing and writes nothing, and "Check for
     /// Updates…" does nothing in a demo run, which is for screenshots.
-    init(allowsAutomaticChecks: Bool, startsUpdater: Bool = true) {
+    init(
+        allowsAutomaticChecks: Bool,
+        startsUpdater: Bool = true,
+        hasInlineTarget: @escaping @MainActor () -> Bool
+    ) {
         let stateModel = UpdateStateModel()
-        let driver = WeirUpdateDriver(stateModel: stateModel, hostBundle: .main)
+        let driver = WeirUpdateDriver(stateModel: stateModel, hostBundle: .main, hasInlineTarget: hasInlineTarget)
         self.stateModel = stateModel
         self.driver = driver
         self.updater = SPUUpdater(

@@ -205,7 +205,7 @@ extension ReviewDiffTable.Coordinator {
             })
             items.append(ReviewMenuItem(title: LocalizedStringResource("Show in Finder").resolved(in: locale)) {
                 let target = FileManager.default.fileExists(atPath: fileURL.path) ? fileURL : fileURL.deletingLastPathComponent()
-                ReviewFileAction.revealInFinder(target)
+                NSWorkspace.shared.activateFileViewerSelecting([target])
             })
         }
         return items

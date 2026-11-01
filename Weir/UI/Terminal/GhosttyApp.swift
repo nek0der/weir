@@ -536,7 +536,7 @@ final class GhosttyApp {
                     // prompt for — the OSC 5522 clipboard reads and
                     // writes libghostty gained in 1.4 land here.
                     // Deny rather than allow: fail closed.
-                    ClipboardRequestAnswerer.libghostty.refuse(tracked, on: view)
+                    ClipboardRequestAnswerer.system.refuse(tracked, on: view)
                     return
                 }
                 coordinator.enqueue(

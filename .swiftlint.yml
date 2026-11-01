@@ -75,13 +75,8 @@ custom_rules:
   # Core and Presentation decide what the app does; AppKit and SwiftUI are the
   # boundary where that is drawn and wired to the system (CLAUDE.md, "SwiftUI
   # before AppKit"), and code below it that imports them cannot be tested
-  # without a window server. The excluded files predate the rule: they
-  # observe NSWindow, NSWorkspace, or NSApp, bridge libghostty's callbacks,
-  # or post notifications and the Dock badge. Each leaves the list when it
-  # moves to App/ or sits behind a port that App/ implements, as the window
-  # syncs and SurfaceRegistry's occlusion did with the per-window state of
-  # the supervision UI; the rest leave as their callers are rewritten. Do
-  # not add a file here: put the AppKit part in App/ or UI/. `Cocoa` and
+  # without a window server. Do not exclude a file here: put the AppKit part in
+  # App/ or UI/, or behind a port that App/ implements. `Cocoa` and
   # `SwiftUICore` are matched because they carry AppKit and SwiftUI under
   # another name.
   layer_ui_framework_import:
@@ -95,22 +90,6 @@ custom_rules:
       - doccomment
       - doccomment.field
       - string
-    excluded:
-      - 'Weir/Core/Agent/AgentIntegrationServiceRegistrar\.swift$'
-      - 'Weir/Core/Clipboard/ClipboardConfirmationCoordinator\.swift$'
-      - 'Weir/Core/Files/FileOpener\.swift$'
-      - 'Weir/Core/Git/GitSyncCoordinator\.swift$'
-      - 'Weir/Core/Git/PRStatusSyncer\.swift$'
-      - 'Weir/Core/Links/TerminalLinkOpener\.swift$'
-      - 'Weir/Core/Notifications/WeirNotificationManager\.swift$'
-      - 'Weir/Core/Notifications/NotificationDelegate\.swift$'
-      - 'Weir/Core/QuickTerminal/QuickTerminalHotKeyCenter\.swift$'
-      - 'Weir/Core/Review/ReviewFileAction\.swift$'
-      - 'Weir/Core/Settings/KeyboardShortcut\+Capture\.swift$'
-      - 'Weir/Core/Settings/KeyboardShortcut\.swift$'
-      - 'Weir/Core/Settings/ReduceTransparencyResolver\.swift$'
-      - 'Weir/Core/Updates/WeirUpdateDriver\.swift$'
-      - 'Weir/Core/Updates/WeirWindowRole\.swift$'
     message: >-
       Core and Presentation do not import AppKit or SwiftUI. Put the AppKit
       or SwiftUI part in App/ or UI/ and pass values or a port in.
