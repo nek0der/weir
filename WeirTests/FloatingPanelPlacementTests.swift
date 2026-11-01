@@ -236,68 +236,64 @@ struct FloatingPanelLayoutTests {
     }
 }
 
-/// The approval card beside the row that opened it.
+/// The approval card on the session's surface, level with the row that opened it.
 struct FloatingPanelBesideTests {
-    private static let container = CGSize(width: 1000, height: 700)
+    private static let surface = FloatingPanelPlacement.Surface(minX: 330, top: 50, bottom: 680)
     private static let panel = CGSize(width: 400, height: 200)
 
     private static func beside(
         _ anchor: CGRect,
         panel: CGSize = Self.panel,
         placementHeight: CGFloat? = nil,
-        container: CGSize = Self.container
-    ) -> (origin: CGPoint, arrow: FloatingPanelPlacement.Arrow?) {
+        surface: FloatingPanelPlacement.Surface = Self.surface,
+        containerWidth: CGFloat = 1000
+    ) -> CGPoint {
         FloatingPanelPlacement.beside(
             anchor: anchor,
             panelSize: panel,
             placementHeight: placementHeight ?? panel.height,
-            container: container,
-            style: .init(margin: 8, gap: 12, arrowInset: 30)
+            surface: surface,
+            containerWidth: containerWidth,
+            margin: 6
         )
     }
 
-    @Test func standsBesideTheRowAndPointsAtItsMiddle() throws {
-        let row = CGRect(x: 0, y: 300, width: 280, height: 40)
-        let placed = Self.beside(row)
-        #expect(placed.origin == CGPoint(x: 292, y: 220))
-        let arrow = try #require(placed.arrow)
-        #expect(arrow.edge == .leading)
-        #expect(placed.origin.y + arrow.offset == row.midY)
+    @Test func standsOnTheSurfacesEdge_levelWithTheRow() {
+        let row = CGRect(x: 10, y: 300, width: 280, height: 40)
+        #expect(Self.beside(row) == CGPoint(x: 330, y: 220))
     }
 
-    @Test func nearTheTop_staysInsideAndStillPointsAtTheRow() throws {
-        let row = CGRect(x: 0, y: 30, width: 280, height: 40)
-        let placed = Self.beside(row)
-        #expect(placed.origin.y == 8)
-        let arrow = try #require(placed.arrow)
-        #expect(placed.origin.y + arrow.offset == row.midY)
+    @Test func aRowNearTheTop_keepsThePanelLevelWithTheColumnsTop() {
+        let row = CGRect(x: 10, y: 60, width: 280, height: 40)
+        #expect(Self.beside(row).y == Self.surface.top)
     }
 
-    @Test func aRowTooCloseToTheCorner_getsNoArrow() {
-        // The row's middle would put the arrow on the rounded corner.
-        let row = CGRect(x: 0, y: 0, width: 280, height: 20)
-        #expect(Self.beside(row).arrow == nil)
+    @Test func aRowNearTheBottom_endsThePanelOnTheColumnsBottom() {
+        let row = CGRect(x: 10, y: 650, width: 280, height: 40)
+        #expect(Self.beside(row).y + Self.panel.height == Self.surface.bottom)
     }
 
-    @Test func aRowScrolledAway_getsNoArrow() {
-        let row = CGRect(x: 0, y: 900, width: 280, height: 40)
-        let placed = Self.beside(row)
-        #expect(placed.origin.y == Self.container.height - Self.panel.height - 8)
-        #expect(placed.arrow == nil)
+    @Test func aRowScrolledAway_staysWithinTheColumns() {
+        let row = CGRect(x: 10, y: 900, width: 280, height: 40)
+        #expect(Self.beside(row).y + Self.panel.height == Self.surface.bottom)
     }
 
-    @Test func aNarrowWindow_overlapsTheRowWithNoArrow() {
-        let row = CGRect(x: 0, y: 300, width: 400, height: 40)
-        let placed = Self.beside(row, container: CGSize(width: 600, height: 700))
-        #expect(placed.origin.x == 192)
-        #expect(placed.arrow == nil)
+    @Test func aNarrowWindow_pullsThePanelInsideTheMargin() {
+        let row = CGRect(x: 10, y: 300, width: 280, height: 40)
+        #expect(Self.beside(row, containerWidth: 600).x == 194)
     }
 
     @Test func aShrunkPanel_keepsItsTopWhereTheTallestPutIt() {
-        let row = CGRect(x: 0, y: 300, width: 280, height: 40)
+        let row = CGRect(x: 10, y: 300, width: 280, height: 40)
         let tall = Self.beside(row, panel: CGSize(width: 400, height: 300))
         let shrunk = Self.beside(row, panel: CGSize(width: 400, height: 200), placementHeight: 300)
-        #expect(shrunk.origin.y == tall.origin.y)
+        #expect(shrunk.y == tall.y)
+    }
+
+    @Test func columnsTooShort_centerThePanelOnThem() {
+        let short = FloatingPanelPlacement.Surface(minX: 330, top: 50, bottom: 150)
+        let row = CGRect(x: 10, y: 60, width: 280, height: 40)
+        #expect(Self.beside(row, surface: short).y == 0)
     }
 }
 
@@ -351,18 +347,19 @@ struct FloatingPanelHeightTests {
             == FloatingPanelPlacement.minimumScrollingHeight)
     }
 
-    @Test func aCappedPanelStandsInsideTheWindow() {
-        let container = CGSize(width: 800, height: 600)
-        let height = FloatingPanelPlacement.maximumHeight(container: container.height, margin: 8)
-        let placed = FloatingPanelPlacement.beside(
+    @Test func aCappedPanelStandsWithinTheColumns() {
+        let surface = FloatingPanelPlacement.Surface(minX: 300, top: 50, bottom: 570)
+        let height = FloatingPanelPlacement.maximumHeight(container: surface.bottom - surface.top, margin: 0)
+        let origin = FloatingPanelPlacement.beside(
             anchor: CGRect(x: 0, y: 560, width: 240, height: 30),
             panelSize: CGSize(width: 400, height: height),
             placementHeight: height,
-            container: container,
-            style: .init(margin: 8, gap: 4, arrowInset: 12)
+            surface: surface,
+            containerWidth: 800,
+            margin: 6
         )
-        #expect(placed.origin.y >= 8)
-        #expect(placed.origin.y + height <= container.height - 8)
+        #expect(origin.y == surface.top)
+        #expect(origin.y + height == surface.bottom)
     }
 }
 

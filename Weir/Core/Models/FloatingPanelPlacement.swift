@@ -30,13 +30,11 @@ enum FloatingPanelPlacement {
         case top
         /// The panel sits above the anchor, near the window's bottom.
         case bottom
-        /// The panel stands beside the anchor, to its trailing side.
-        case leading
     }
 
     /// Where the panel's arrow goes: the edge facing the anchor, and the
     /// arrow's center along that edge in the panel's own coordinates (from
-    /// the leading edge on `top` and `bottom`, from the top on `leading`).
+    /// the leading edge).
     struct Arrow: Equatable {
         let edge: ArrowEdge
         let offset: CGFloat
@@ -216,49 +214,41 @@ enum FloatingPanelPlacement {
         max(minimumScrollingHeight, containerMaxY - anchor.maxY - gap - margin)
     }
 
-    /// How a panel stands beside its anchor (`beside`): kept `margin` inside
-    /// the window, `gap` from the anchor, and its arrow at least
-    /// `arrowInset` from either corner.
-    struct BesideStyle: Equatable {
-        let margin: CGFloat
-        let gap: CGFloat
-        let arrowInset: CGFloat
+    /// The surface a panel stands on (`beside`): its leading edge, and the
+    /// top and bottom of the window's columns, in the anchor's coordinates.
+    struct Surface: Equatable {
+        let minX: CGFloat
+        let top: CGFloat
+        let bottom: CGFloat
     }
 
-    /// A panel beside its anchor, to the trailing side and centered on it
-    /// vertically: the approval card beside the row that opened it. Placed
-    /// by `placementHeight` rather than the panel's own height, so a panel
-    /// that shrinks keeps its top edge where it was. The arrow points at the
-    /// anchor's middle from the leading edge; nil when the window is too
-    /// narrow to keep the panel clear of the anchor, or the anchor's middle
-    /// is not beside the panel (the row scrolled away).
-    static func beside(
+    /// A panel on `surface`, level with its anchor: the approval card opened
+    /// from a sidebar row. Its leading edge is the surface's and it stays
+    /// between the columns' top and bottom, centered on the anchor where
+    /// there is room. Placed by `placementHeight` rather than the panel's own
+    /// height, so a panel that shrinks keeps its top edge where it was. A
+    /// window too narrow for it pulls it left, `margin` from the window's
+    /// side, and columns too short for it center it on them.
+    static func beside( // swiftlint:disable:this function_parameter_count
         anchor: CGRect,
         panelSize: CGSize,
         placementHeight: CGFloat,
-        container: CGSize,
-        style: BesideStyle
-    ) -> (origin: CGPoint, arrow: Arrow?) {
-        let margin = style.margin
+        surface: Surface,
+        containerWidth: CGFloat,
+        margin: CGFloat
+    ) -> CGPoint {
         let x = clampX(
-            preferredX: anchor.maxX + style.gap,
+            preferredX: surface.minX,
             panelWidth: panelSize.width,
-            containerWidth: container.width,
+            containerWidth: containerWidth,
             margin: margin
         )
-        let y: CGFloat = if container.height > placementHeight + margin * 2 {
-            min(max(anchor.midY - placementHeight / 2, margin), container.height - placementHeight - margin)
+        let y: CGFloat = if surface.bottom - surface.top >= placementHeight {
+            min(max(anchor.midY - placementHeight / 2, surface.top), surface.bottom - placementHeight)
         } else {
-            (container.height - panelSize.height) / 2
+            (surface.top + surface.bottom - panelSize.height) / 2
         }
-        let offset = anchor.midY - y
-        // Pulled in by a narrow window, the panel would cover the arrow's
-        // tip or the anchor itself.
-        guard x >= anchor.maxX + style.gap,
-              offset >= style.arrowInset,
-              offset <= panelSize.height - style.arrowInset
-        else { return (CGPoint(x: x, y: y), nil) }
-        return (CGPoint(x: x, y: y), Arrow(edge: .leading, offset: offset))
+        return CGPoint(x: x, y: y)
     }
 }
 

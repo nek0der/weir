@@ -10,9 +10,9 @@ private struct ApprovalCardMeasurement: Equatable {
     let height: CGFloat
 }
 
-/// The card deliberately lives above the window's layout: it stands beside
-/// the row that opened it and points back at it, while the pane, the Needs
-/// Attention list, and the notifications are only entry points. The
+/// The card deliberately lives above the window's layout: it stands on the
+/// session's surface, level with the row that opened it, while the pane, the
+/// Needs Attention list, and the notifications are only entry points. The
 /// otherwise empty host has no hit-test shape, so clicks outside the card
 /// continue to reach the terminal and sidebar.
 struct ApprovalCardHost: View {
@@ -36,8 +36,9 @@ struct ApprovalCardHost: View {
     @State private var placementHeights: [String: CGFloat] = [:]
     static let cardWidth: CGFloat = 400
     private let fallbackCardHeight: CGFloat = 180
-    /// Between the card and the window's edges.
-    private let cardMargin: CGFloat = 8
+    /// Between the card and the window's edges, so a card held at the
+    /// window's side lines up with the surfaces as the other panels do.
+    private let cardMargin = WeirLayout.floatingPanelWindowMargin
 
     /// The selection of the window this card is in.
     private var selection: WindowSelection {
@@ -53,11 +54,13 @@ struct ApprovalCardHost: View {
                 let origin = geometry.frame(in: .global).origin
                 let openedFrom = window.approvalCard.state.openedFrom?.offsetBy(dx: -origin.x, dy: -origin.y)
                 let rowAnchor = window.approvalCard.rowAnchor(for: approval)?.offsetBy(dx: -origin.x, dy: -origin.y)
-                let columnTop = window.historyAnchor.map { $0.columnTop - origin.y }
+                let columnTop = window.historyAnchor.map { $0.columnTop - origin.y } ?? cardMargin
+                let columnBottom = window.historyAnchor.map { $0.columnBottom - origin.y } ?? geometry.size.height - cardMargin
                 let cardHeight = measuredCardHeights[approval.id] ?? fallbackCardHeight
                 let placed = placement(
                     openedFrom: openedFrom,
                     columnTop: columnTop,
+                    columnBottom: columnBottom,
                     rowAnchor: rowAnchor,
                     panelSize: CGSize(width: width, height: cardHeight),
                     placementHeight: placementHeights[approval.id] ?? cardHeight,
@@ -68,17 +71,13 @@ struct ApprovalCardHost: View {
                     card: window.approvalCard,
                     model: model,
                     place: place(of: approval),
-                    // Only beside a row, which the arrow tells from its
-                    // neighbors; a control's panels have no arrow. Without its
-                    // row there is nothing to point at: once the request leaves
-                    // the pending list, its row is gone and the last anchor
-                    // marks another one.
-                    arrow: openedFrom == nil && rowAnchor != nil && approvals.hasRow(for: approval) ? placed.arrow : nil,
                     onClose: { [window] in window.approvalCard.dismiss() },
                     onAnswerInTerminal: { answerInTerminal(approval) },
                     movesToPane: openPaneAction(for: approval) != nil,
                     onOpenPane: openPaneAction(for: approval),
-                    maxHeight: FloatingPanelPlacement.maximumHeight(container: geometry.size.height, margin: cardMargin)
+                    // The columns' height: a taller card would cover the
+                    // status bar under them.
+                    maxHeight: FloatingPanelPlacement.maximumHeight(container: columnBottom - columnTop, margin: 0)
                 )
                 .id(approval.id)
                 .frame(width: width)
@@ -97,9 +96,9 @@ struct ApprovalCardHost: View {
                     }
                 }
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { window.approvalCard.frame = $0 }
-                .position(x: placed.origin.x + width / 2, y: placed.origin.y + cardHeight / 2)
+                .position(x: placed.x + width / 2, y: placed.y + cardHeight / 2)
                 // A floating panel like the dropdowns: it fades and does not
-                // scale, so it never looks to come from anywhere but its row.
+                // scale.
                 .modalTransition(.floatingPanel, reduceMotion: reduceMotion)
                 .zIndex(200)
             }
@@ -117,28 +116,28 @@ struct ApprovalCardHost: View {
 
     /// Where the card goes. Opened from the rail, it stands beside the rail as
     /// the rail's panels do; from the title bar's Needs Attention, it hangs
-    /// below it as the list does, pointing up at it; otherwise it stands beside its row in this window's sidebar. A
-    /// request may arrive one layout pass before its row reports a frame:
-    /// it then starts beside the window's sidebar edge (the window's left
-    /// edge with the sidebar hidden) rather than flashing over the sidebar.
+    /// below it as the list does; otherwise it stands on the session's surface,
+    /// level with its row in this window's sidebar. A request may arrive one
+    /// layout pass before its row reports a frame: it then starts at the
+    /// middle of the columns, on the same edge.
     private func placement( // swiftlint:disable:this function_parameter_count
         openedFrom: CGRect?,
-        columnTop: CGFloat?,
+        columnTop: CGFloat,
+        columnBottom: CGFloat,
         rowAnchor: CGRect?,
         panelSize: CGSize,
         placementHeight: CGFloat,
         container: CGSize
-    ) -> (origin: CGPoint, arrow: FloatingPanelPlacement.Arrow?) {
+    ) -> CGPoint {
         if let openedFrom, window.approvalCard.state.isOpenedFromRail {
-            let origin = FloatingPanelPlacement.besideRail(
+            return FloatingPanelPlacement.besideRail(
                 button: openedFrom,
-                columnTop: columnTop ?? openedFrom.minY,
+                columnTop: columnTop,
                 panelSize: panelSize,
                 container: container,
                 gap: WeirLayout.Supervision.railPanelGap,
                 margin: cardMargin
             )
-            return (origin, nil)
         }
         if let openedFrom, window.approvalCard.state.standsLeftOfOpener, let origin = FloatingPanelPlacement.leftOf(
             anchor: openedFrom,
@@ -147,40 +146,25 @@ struct ApprovalCardHost: View {
             gap: WeirLayout.Supervision.railPanelGap,
             margin: cardMargin
         ) {
-            return (origin, nil)
+            return origin
         }
         if let openedFrom {
-            return FloatingPanelPlacement.layout(
+            return FloatingPanelPlacement.origin(
                 anchor: openedFrom,
                 panelSize: panelSize,
                 container: container,
                 margin: cardMargin,
-                style: .init(
-                    alignment: .centered,
-                    gap: WeirLayout.floatingPanelArrowAnchorGap,
-                    arrowInset: WeirLayout.floatingPanelArrowInset
-                )
+                gap: WeirLayout.Supervision.titleBarDropdownGap,
+                alignment: .centered
             )
         }
-        let sidebarWidth = !window.isSidebarPresented
-            ? 0
-            : window.sidebarDrawnWidth
-        let anchor = rowAnchor ?? CGRect(
-            x: 0,
-            y: container.height / 2,
-            width: min(sidebarWidth, container.width),
-            height: 0
-        )
         return FloatingPanelPlacement.beside(
-            anchor: anchor,
+            anchor: rowAnchor ?? CGRect(x: 0, y: (columnTop + columnBottom) / 2, width: 0, height: 0),
             panelSize: panelSize,
             placementHeight: placementHeight,
-            container: container,
-            style: .init(
-                margin: cardMargin,
-                gap: WeirLayout.floatingPanelArrowAnchorGap,
-                arrowInset: WeirLayout.floatingPanelArrowInset
-            )
+            surface: .init(minX: window.sessionSurfaceMinX, top: columnTop, bottom: columnBottom),
+            containerWidth: container.width,
+            margin: cardMargin
         )
     }
 
@@ -224,7 +208,6 @@ private struct ApprovalCard: View {
     let model: ApprovalCardModel
     /// "{session} · {project}", or `nil` while the request is in no pane.
     let place: String?
-    let arrow: FloatingPanelPlacement.Arrow?
     let onClose: () -> Void
     let onAnswerInTerminal: () -> Void
     /// Whether Answer in terminal takes the keyboard to the request's pane.
@@ -364,11 +347,7 @@ private struct ApprovalCard: View {
         .foregroundStyle(SupervisionTokens.text.color)
         .padding(WeirLayout.Supervision.approvalCardInsets)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { cardHeight = $0 }
-        .floatingPanelSurface(in: FloatingPanelShape(
-            cornerRadius: WeirLayout.floatingPanelCornerRadius,
-            arrow: arrow,
-            arrowHeight: WeirLayout.floatingPanelArrowHeight
-        ))
+        .floatingPanelSurface(cornerRadius: WeirLayout.floatingPanelCornerRadius)
         .reportsDemoCaptureRegion(for: .approvalCard, cornerRadius: WeirLayout.floatingPanelCornerRadius)
         .pointerStyle(.default)
         .onAppear {

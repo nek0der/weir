@@ -26,12 +26,5 @@ struct FloatingPanelShapeTests {
         let bottomBounds = bottom.path(in: rect).boundingRect
         #expect(bottomBounds.maxY == rect.maxY + 10)
         #expect(bottomBounds.minY == rect.minY)
-
-        let leading = FloatingPanelShape(cornerRadius: 16, arrow: .init(edge: .leading, offset: 35), arrowHeight: 10)
-        let leadingBounds = leading.path(in: rect).boundingRect
-        #expect(leadingBounds.minX == rect.minX - 10)
-        #expect(leadingBounds.maxX == rect.maxX)
-        #expect(leadingBounds.minY == rect.minY)
-        #expect(leadingBounds.maxY == rect.maxY)
     }
 }

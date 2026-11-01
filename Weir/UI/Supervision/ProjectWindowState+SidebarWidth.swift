@@ -20,6 +20,16 @@ extension ProjectWindowState {
         )
     }
 
+    /// Where the session's surface starts, from the window's leading edge:
+    /// past the window's margin, the rail and the sidebar while each shows.
+    /// What the approval card lines up with, wherever it stands.
+    var sessionSurfaceMinX: CGFloat {
+        let layout = WeirLayout.Supervision.self
+        let rail = areRailsHidden ? 0 : layout.railWidth + layout.surfaceGap
+        let sidebar = isSidebarPresented ? sidebarDrawnWidth + layout.surfaceSpacing : 0
+        return layout.surfaceGap + rail + sidebar
+    }
+
     /// The widest the sidebar can be drawn in this window now
     /// (`SupervisionWindowWidths.sidebarDrawnMaxWidth`).
     var sidebarDrawnMaxWidth: CGFloat {
