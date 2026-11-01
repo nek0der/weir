@@ -161,10 +161,10 @@ struct SupervisionMenuBarContent: View {
         )
         let menu = MenuBarModel(
             rows: list.rows,
-            request: { id in MenuBarActions.request(for: id, state: state) },
-            canResume: { id in MenuBarActions.canResume(id, state: state) },
-            resetNotice: { id in MenuBarActions.resetNotice(id, state: state, now: now) },
-            isInPane: { id in MenuBarActions.isInPane(id, state: state) }
+            request: { id in MenuBarActions.request(for: id, stores: state.menuBarStores) },
+            canResume: { id in MenuBarActions.canResume(id, stores: state.menuBarStores) },
+            resetNotice: { id in MenuBarActions.resetNotice(id, stores: state.menuBarStores, now: now) },
+            isInPane: { id in MenuBarActions.isInPane(id, stores: state.menuBarStores) }
         )
         return (list, menu)
     }
@@ -182,7 +182,7 @@ struct SupervisionMenuBarContent: View {
                 MenuBarMoreMenu(
                     opener: moreMenuOpener,
                     isKeyboardOn: selection.isOnHeading,
-                    onOpenWeir: { MenuBarActions.openWeir(state: state, menuWindow: menuWindow) },
+                    onOpenWeir: { MenuBarActions.openWeir(stores: state.menuBarStores, menuWindow: menuWindow) },
                     onOpenSettings: openSettings,
                     onQuit: quit
                 )
@@ -341,7 +341,7 @@ struct SupervisionMenuBarContent: View {
                                 press: { press($0, on: item) },
                                 open: { opening in
                                     selection.select(item.id)
-                                    MenuBarActions.open(item.id, opening: opening, state: state, menuWindow: menuWindow)
+                                    MenuBarActions.open(item.id, opening: opening, stores: state.menuBarStores, menuWindow: menuWindow)
                                 },
                                 hover: { isHovering in
                                     if isHovering {
@@ -370,11 +370,11 @@ struct SupervisionMenuBarContent: View {
     private func press(_ control: MenuBarModel.Control, on item: MenuBarModel.Item) {
         switch control {
         case .row:
-            MenuBarActions.open(item.id, opening: .returnKey, state: state, menuWindow: menuWindow)
+            MenuBarActions.open(item.id, opening: .returnKey, stores: state.menuBarStores, menuWindow: menuWindow)
         case let .inPlace(action):
-            MenuBarActions.perform(action, on: item.id, state: state)
+            MenuBarActions.perform(action, on: item.id, stores: state.menuBarStores)
         case let .rowAction(action):
-            MenuBarActions.perform(action, on: item.id, state: state, menuWindow: menuWindow)
+            MenuBarActions.perform(action, on: item.id, stores: state.menuBarStores, menuWindow: menuWindow)
         }
     }
 }

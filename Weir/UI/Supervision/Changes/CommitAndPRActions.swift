@@ -13,38 +13,39 @@ enum CommitAndPRActions {
     /// commits and asks before it pushes, in a tab the person reads.
     static let createPullRequestCommand = "gh pr create --fill"
 
-    static func model(window: ProjectWindowState, state: AppState) -> CommitAndPRModel {
-        let session = state.session
+    static func model(window: ProjectWindowState, stores: CommitAndPRStores) -> CommitAndPRModel {
+        let changes = stores.changes
+        let session = changes.session
         let container = window.selection.activeContainerID
         let panes = session.paneIDs(in: container)
-        let items = state.attentionQueue.queue.items.filter { $0.subject.paneID.map(panes.contains) ?? false }
-        let root = ChangesPanelActions.root(window: window, stores: state.changesPanelStores)
+        let items = changes.attentionQueue.queue.items.filter { $0.subject.paneID.map(panes.contains) ?? false }
+        let root = ChangesPanelActions.root(window: window, stores: changes)
         // A worktree gone from disk has nothing to clean up here; the
         // sidebar removes its row.
         let worktree = container.projectID.flatMap { projectID in
             container.worktreeID.flatMap { session.worktree(projectID: projectID, worktreeID: $0) }
         }
         return CommitAndPRModel.make(CommitAndPRModel.Input(
-            facts: state.gitFacts.facts(for: container),
-            pullRequest: state.prStatusStore.info(for: container),
-            hasGitHubCLI: state.prStatusStore.forge(for: container) == .gitHub,
+            facts: stores.gitFacts.facts(for: container),
+            pullRequest: stores.prStatus.info(for: container),
+            hasGitHubCLI: stores.prStatus.forge(for: container) == .gitHub,
             isWorktree: worktree.map { !$0.isMissing } ?? false,
-            unviewedTurns: ChangesPanelActions.unviewedCount(window: window, stores: state.changesPanelStores),
+            unviewedTurns: ChangesPanelActions.unviewedCount(window: window, stores: changes),
             isWaiting: CommitAndPRModel.isWaiting(items),
-            isRunning: state.attention.isAgentMidTurn(inPanes: panes),
+            isRunning: changes.attention.isAgentMidTurn(inPanes: panes),
             unviewedOutsideTurns: root.map {
                 WorktreeChanges.unviewed(
-                    state.worktreeChanges.outsideTurnsContents[$0] ?? [:],
-                    viewed: state.viewedLines.outsideTurns[$0]
+                    changes.worktreeChanges.outsideTurnsContents[$0] ?? [:],
+                    viewed: changes.viewedLines.outsideTurns[$0]
                 ).count
             } ?? 0,
-            externalCommand: state.settingsStore.settings.review.externalDiffCommand
+            externalCommand: stores.settingsStore.settings.review.externalDiffCommand
         ))
     }
 
-    static func createPullRequest(window: ProjectWindowState, state: AppState) {
+    static func createPullRequest(window: ProjectWindowState, stores: CommitAndPRStores) {
         TabActions.newTab(
-            state.session,
+            stores.changes.session,
             in: window.selection.activeContainerID,
             typing: createPullRequestCommand,
             window: window.id,
@@ -53,9 +54,9 @@ enum CommitAndPRActions {
         )
     }
 
-    static func open(_ tool: CommitAndPRModel.ExternalTool, window: ProjectWindowState, state: AppState) {
+    static func open(_ tool: CommitAndPRModel.ExternalTool, window: ProjectWindowState, stores: CommitAndPRStores) {
         TabActions.newTab(
-            state.session,
+            stores.changes.session,
             in: window.selection.activeContainerID,
             typing: tool.command,
             window: window.id,
@@ -71,28 +72,22 @@ enum CommitAndPRActions {
     /// and where comments go: no pane when that agent runs no more, as the
     /// rows open it, rather than another agent's. The focused pane while
     /// the panel shows every conversation.
-    static func showCurrentDiff(window: ProjectWindowState, state: AppState) {
+    static func showCurrentDiff(window: ProjectWindowState, stores: CommitAndPRStores) {
         let conversation: ConversationKey? = if case let .turns(list) = ChangesPanelActions.content(
             window: window,
-            stores: state.changesPanelStores
+            stores: stores.changes
         ) {
             list.filter
         } else {
             nil
         }
         let pane = if let conversation {
-            ChangesPanelActions.pane(of: conversation, window: window, stores: state.changesPanelStores)
+            ChangesPanelActions.pane(of: conversation, window: window, stores: stores.changes)
         } else {
-            state.session.activeTab(in: window.id)?.splitTree.effectiveFocusedLeafID
+            stores.changes.session.activeTab(in: window.id)?.splitTree.effectiveFocusedLeafID
         }
         Task {
-            await ReviewTabActions.open(
-                .uncommitted,
-                agentPaneID: pane,
-                conversation: conversation,
-                window: window,
-                stores: state.reviewTabStores
-            )
+            await stores.changes.openReview(.uncommitted, pane, conversation, window)
         }
     }
 
@@ -111,14 +106,14 @@ enum CommitAndPRActions {
     /// to another session, or closed the window, while Git answered
     /// (`WorkspaceSession.intentAfterWait(from:)`): the answer is about one they no
     /// longer look at.
-    static func cleanUp(window: ProjectWindowState, state: AppState, locale: Locale) async -> CleanUp? {
-        let session = state.session
+    static func cleanUp(window: ProjectWindowState, stores: CommitAndPRStores, locale: Locale) async -> CleanUp? {
+        let session = stores.changes.session
         let container = window.selection.activeContainerID
         guard let projectID = container.projectID, let worktreeID = container.worktreeID,
               let worktree = session.worktree(projectID: projectID, worktreeID: worktreeID)
         else { return nil }
         let asked = session.waitOrigin(in: window.id)
-        let read = await state.gitFacts.read(container, at: worktree.workingDirectory)
+        let read = await stores.gitFacts.read(container, at: worktree.workingDirectory)
         guard session.intentAfterWait(from: asked) == .person else { return nil }
         let facts: GitFacts
         switch read {

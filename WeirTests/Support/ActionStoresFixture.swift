@@ -94,6 +94,7 @@ final class ActionStoresFixture {
             restoredTurnIDs: { [] },
             restoreGateLookup: { RestoreGateLookup(tabs: [], runtimes: [], waitingPanes: [], isBusy: { _ in false }) },
             restoreRecord: { _ in nil },
+            askRestore: { _, _ in },
             openReview: { [unowned self] request, pane, conversation, _ in
                 opened.append(Opened(request: request, pane: pane, conversation: conversation))
             },

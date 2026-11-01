@@ -22,7 +22,7 @@ struct AllProjectsOverlay: View {
         .onWindowCommand(of: window) { command in
             guard command == .toggleAllProjects else { return false }
             if window.isAllProjectsPresented {
-                AllProjectsActions.close(window, state: state)
+                AllProjectsActions.close(window, stores: state.allProjectsStores)
             } else {
                 // One layer at a time (`WindowLayer`): what is open over or
                 // under the window goes as the sheet comes.
@@ -41,7 +41,7 @@ struct AllProjectsOverlay: View {
     }
 
     private func close() {
-        AllProjectsActions.close(window, state: state)
+        AllProjectsActions.close(window, stores: state.allProjectsStores)
     }
 }
 
@@ -164,7 +164,7 @@ private struct AllProjectsPanel: View {
         // knows when the keyboard is in the approval card; the × takes no key.
         SupervisionSheetHeader(
             title: Text("All Projects"),
-            onClose: { AllProjectsActions.close(window, state: state) },
+            onClose: { AllProjectsActions.close(window, stores: state.allProjectsStores) },
             closeHelp: "Close (⎋)",
             isCloseFocused: selection.control == .close,
             leading: {
@@ -235,13 +235,13 @@ private struct AllProjectsPanel: View {
         case .open where selection.control == .cardAction:
             actionPress += 1
         case .open where selection.control == .close:
-            AllProjectsActions.close(window, state: state)
+            AllProjectsActions.close(window, stores: state.allProjectsStores)
         case .open, .openInNewWindow:
             if let card = model.cards.first(where: { $0.id == selection.selectedID }) {
-                AllProjectsActions.open(card, from: window, state: state, opensInNewWindow: key == .openInNewWindow)
+                AllProjectsActions.open(card, from: window, stores: state.allProjectsStores, opensInNewWindow: key == .openInNewWindow)
             }
         case .close:
-            AllProjectsActions.close(window, state: state)
+            AllProjectsActions.close(window, stores: state.allProjectsStores)
         case .nextControl, .previousControl:
             selection.nextControl(backward: key == .previousControl, in: model.cards)
             isFilterFocused = true
@@ -261,7 +261,7 @@ private struct AllProjectsPanel: View {
     @ViewBuilder
     private func content(_ model: AllProjectsModel) -> some View {
         if let emptyState = model.emptyState {
-            AllProjectsEmptyState(state: emptyState) { AllProjectsActions.close(window, state: state) }
+            AllProjectsEmptyState(state: emptyState) { AllProjectsActions.close(window, stores: state.allProjectsStores) }
         } else {
             VStack(alignment: .leading, spacing: Layout.allProjectsSectionGap) {
                 ForEach(model.groups, id: \.section) { group in
@@ -366,7 +366,12 @@ private struct AllProjectsCardView: View {
         .supervisionFocusRing(isFocused: isSelected, cornerRadius: Layout.allProjectsCardCornerRadius)
         .contentShape(shape)
         .onHover { isHovering = $0 }
-        .onClick { holdsCommand in AllProjectsActions.open(card, from: window, state: state, opensInNewWindow: holdsCommand) }
+        .onClick { holdsCommand in AllProjectsActions.open(
+            card,
+            from: window,
+            stores: state.allProjectsStores,
+            opensInNewWindow: holdsCommand
+        ) }
         .modifier(NewWindowHelp(isShown: card.opensInNewWindow))
         .onAppear {
             guard let pane = card.leadPaneID else { return }
@@ -380,7 +385,7 @@ private struct AllProjectsCardView: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityAction { AllProjectsActions.open(card, from: window, state: state) }
+        .accessibilityAction { AllProjectsActions.open(card, from: window, stores: state.allProjectsStores) }
         // The card's own button, as an action of its own: combined into the
         // card, it would not be reached otherwise.
         .accessibilityActions {
@@ -390,7 +395,7 @@ private struct AllProjectsCardView: View {
             // What ⌘-click does, which VoiceOver cannot do with a key held.
             if card.opensInNewWindow {
                 Button {
-                    AllProjectsActions.open(card, from: window, state: state, opensInNewWindow: true)
+                    AllProjectsActions.open(card, from: window, stores: state.allProjectsStores, opensInNewWindow: true)
                 } label: {
                     Text(NewWindowText.actionName)
                 }
@@ -517,7 +522,7 @@ private struct AllProjectsCardView: View {
             guard let request = approvals.ledger.entries[key]?.presentation else { return }
             window.approvalCard.present(request, from: approvals, openedFrom: actionFrame)
         case .openPane:
-            AllProjectsActions.open(card, from: window, state: state)
+            AllProjectsActions.open(card, from: window, stores: state.allProjectsStores)
         }
     }
 
