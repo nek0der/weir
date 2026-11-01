@@ -16945,6 +16945,23 @@
         }
       }
     },
+    "Your settings aren’t being saved: settings.json can’t be read as it stands, so Weir keeps using the settings it had. Correct the file and saving starts again.": {
+      "comment": "Settings, General: saving settings is suspended, as the file stopped being readable while Weir ran",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your settings aren’t being saved: settings.json can’t be read as it stands, so Weir keeps using the settings it had. Correct the file and saving starts again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定を保存していません。settings.json を読み込めないため、これまでの設定を使い続けています。ファイルを修正すると保存を再開します。"
+          }
+        }
+      }
+    },
     "Your settings aren’t being saved: settings.json can’t be read by this version and couldn’t be set aside. Move it out of the folder, then quit and reopen Weir.": {
       "comment": "Settings, General, and an alert at launch: saving settings is suspended, as the file cannot be read",
       "localizations": {

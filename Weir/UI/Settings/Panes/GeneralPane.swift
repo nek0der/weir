@@ -79,7 +79,7 @@ struct GeneralPane: View {
 
 /// Tells, above everything else in the pane, that this launch has stopped
 /// saving the sessions or the settings (`SavingSuspendedNotice`), with a
-/// way to the files the person has to move. Absent while both are saved.
+/// way to the files the person has to act on. Absent while both are saved.
 private struct SavingSuspendedSection: View {
     @Environment(SettingsStore.self) private var settings
     @Environment(\.suspendedSessionFile) private var suspendedSessionFile

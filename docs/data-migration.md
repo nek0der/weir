@@ -55,6 +55,10 @@ release that came just before the change being described.
     stands is renamed
     `settings.json.bak-decode-failed-<unix>`. Weir then starts from
     the defaults and saves them.
+  - A file that stops decoding while Weir runs may be a save still in
+    progress, so it stays where it is, unrenamed. Weir keeps the settings in
+    use and does not save until the file decodes again, and says so at the
+    top of Settings → General.
 
   For a review draft (`reviews/<hash>.json`):
   - A draft written by a newer build is renamed
