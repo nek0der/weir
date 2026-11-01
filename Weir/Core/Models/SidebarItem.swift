@@ -92,6 +92,8 @@ struct Project: Codable, Equatable, Identifiable {
     /// with the bootstrap chain while Codex still goes to its
     /// default).
     var routeCodexWorktrees: Bool
+    /// The same opt-out for the Antigravity CLI's `git worktree add`.
+    var routeAntigravityWorktrees: Bool
     /// The commands that count as a turn's check, as patterns whose last
     /// word may end in `*`. Nil means the defaults the hook carries
     /// (`AgentProviderRegistry.checkDefaults`); empty means no checks.
@@ -118,6 +120,7 @@ struct Project: Codable, Equatable, Identifiable {
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case id, name, rootURL, worktrees, paletteIndex, lastActiveTabID, worktreePlacement
         case mainBranchName, mainHeadSHA, bootstrap, routeClaudeWorktrees, routeCodexWorktrees
+        case routeAntigravityWorktrees
         case checkCommands, ignoredFilesToCopy, rootDisplayName, isExpanded
     }
 
@@ -136,6 +139,7 @@ struct Project: Codable, Equatable, Identifiable {
         bootstrap: [BootstrapItem] = [],
         routeClaudeWorktrees: Bool = true,
         routeCodexWorktrees: Bool = true,
+        routeAntigravityWorktrees: Bool = true,
         checkCommands: [String]? = nil
     ) {
         self.id = id
@@ -150,6 +154,7 @@ struct Project: Codable, Equatable, Identifiable {
         self.bootstrap = bootstrap
         self.routeClaudeWorktrees = routeClaudeWorktrees
         self.routeCodexWorktrees = routeCodexWorktrees
+        self.routeAntigravityWorktrees = routeAntigravityWorktrees
         self.checkCommands = checkCommands
     }
 
@@ -189,6 +194,9 @@ struct Project: Codable, Equatable, Identifiable {
         self.routeCodexWorktrees = try c.decodeIfPresent(
             Bool.self, forKey: .routeCodexWorktrees
         ) ?? true
+        self.routeAntigravityWorktrees = try c.decodeIfPresent(
+            Bool.self, forKey: .routeAntigravityWorktrees
+        ) ?? true
         // Absent in every state.json written before checks existed, which
         // reads as the defaults.
         self.checkCommands = try c.decodeIfPresent([String].self, forKey: .checkCommands)
@@ -215,6 +223,7 @@ struct Project: Codable, Equatable, Identifiable {
         try c.encode(bootstrap, forKey: .bootstrap)
         try c.encode(routeClaudeWorktrees, forKey: .routeClaudeWorktrees)
         try c.encode(routeCodexWorktrees, forKey: .routeCodexWorktrees)
+        try c.encode(routeAntigravityWorktrees, forKey: .routeAntigravityWorktrees)
         try c.encodeIfPresent(checkCommands, forKey: .checkCommands)
         try c.encodeIfPresent(ignoredFilesToCopy, forKey: .ignoredFilesToCopy)
         try c.encodeIfPresent(rootDisplayName, forKey: .rootDisplayName)

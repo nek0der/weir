@@ -333,8 +333,8 @@ them crosses the service. They are described here because the Hook Helper
 and the application share their shape, which `weir-agent-model`
 (`turn.rs`, `TurnRecord`) owns.
 
-A provider whose descriptor has the `turn_snapshot` capability (Claude Code
-and Codex today) records turns. Its hook events map to provider-neutral
+A provider whose descriptor has the `turn_snapshot` capability (Claude Code,
+Codex, and Antigravity today) records turns. Its hook events map to provider-neutral
 events, and those decide what is written (`turn_step` in
 `weir-agent-core`):
 
@@ -346,6 +346,28 @@ events, and those decide what is written (`turn_step` in
 | Codex `Interrupt` | `Interrupted` | ends it as `interrupted`, with `usage` and the checks read from the rollout as `Stop` reads them; a command still running when the turn stopped is not counted |
 | Claude `Notification` (`idle_prompt`) | `AwaitingPrompt` | for a run working after its turn's `Stop`, takes that turn's end snapshot and difference again and keeps how it ended; for a turn open at least 55 seconds, ends it as `interrupted`, a turn waiting on a question or permission only when the transcript shows the awaited call ended: every call of the latest assistant message has a result, or an interrupt line follows it (`awaited_call_ended`); otherwise nothing (docs/adr/0004-provider-adapter-contract.md, "Work outside a turn") |
 | Claude `PostToolUse` / `PostToolUseFailure` of a check command | — | sets the turn's `lastCheck`, adds a mark to `checks`, and counts it in `checkCount` (and in `failureCount` when it failed) |
+
+Antigravity (`agy` 1.4.12) maps onto the same events differently, because it
+has no hook for a prompt and names no event in its payloads. `weir-dispatch`
+adds `hook_event_name` from the argument each plugin hook passes.
+
+| `agy` signal | Event | Effect |
+|---|---|---|
+| the shim's `WeirLaunch`, sent before `agy` starts | `SessionStarted`, `resume` with `--conversation` and `startup` otherwise | a run rests from the launch, since `agy` sends `SessionStart` only with the first prompt and none for a resume |
+| `PreToolUse` | `ToolStarted`, or `WaitingForInput` for `ask_question` | names the tool and its `CommandLine`, `Path`, or `AbsolutePath` |
+| `PreInvocation` numbered 0 | `PromptSubmitted` | begins a turn, kept as `<conversation>#<initialNumSteps>`, whose reading runs from that step to the next input of the person's, and keeps a command with no result with no exit status; a request the transcript shows no person began records as a turn with no prompt |
+| `Stop` | `TurnFinished`, or `Failed` when it carries `error` | ends the turn |
+| OSC 7501 `idle` | none (`Capability::ProgramStatusIdleStopsTurn`) | ends a turn stopped with Esc or Ctrl+C, or a "No" at its prompt, which send no hook, as `interrupted` |
+| OSC 7501 `blocked kind=permission` | none (`Capability::ProgramStatusAnnouncesPermission`) | shows the run waiting on permission, without writing its record |
+| OSC 7501 `blocked kind=auth` | none (`Capability::ProgramStatusAuthSettles`) | shows the run waiting on a sign-in only once the report has stood for 5 seconds, since `agy` sends one for up to 2.1 seconds at every start, signed in or not; until then no notification, bar, or sidebar row treats it as a wait |
+| OSC 7501 `error` | none (`Capability::ProgramStatusAnnouncesFailure`) | shows the run failed until the next report, without writing its record, and with no words, since libghostty passes on no `msg` |
+
+`agy` answers no approvals through the service. It has no `PermissionRequest`,
+and its `PreToolUse` runs before its policy, so its adapter declares no
+approval capability and its own prompt asks. Its hook always exits 0 with valid
+JSON, since `agy` fails the tool on any other result, and a worktree intercept
+replies with a `deny` and a reason instead of exit status 2
+(`ProviderAdapter::worktree_block_output`).
 
 Codex begins some turns itself, with no `UserPromptSubmit`: those its `/goal`
 starts and continues. Every hook inside a Codex turn names it (`turn_id` on

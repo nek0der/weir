@@ -1,0 +1,16 @@
+[
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "say back",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "back"
+    }
+  ]
+]

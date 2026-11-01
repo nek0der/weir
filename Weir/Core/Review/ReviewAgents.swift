@@ -26,6 +26,7 @@ enum ReviewAgents {
         let agent: String? = switch kind {
         case .claude: "Claude Code"
         case .codex: "Codex"
+        case .antigravity: "Antigravity"
         case nil: nil
         }
         // A tab hosting a plain shell carries the command it was started with

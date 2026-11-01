@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-This walks through one task from start to finish. You need [Weir installed](/docs/install/), a Git repository, and Claude Code or Codex signed in.
+This walks through one task from start to finish. You need [Weir installed](/docs/install/), a Git repository, and Claude Code, Codex, or Antigravity signed in.
 
 ## 1. Open your project
 

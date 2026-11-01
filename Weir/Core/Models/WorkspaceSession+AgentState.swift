@@ -6,6 +6,7 @@
 // worth protecting before close.
 
 import Foundation
+import WeirDomain
 
 @MainActor
 extension WorkspaceSession {
@@ -27,13 +28,9 @@ extension WorkspaceSession {
     /// torn down, so the question is whether *that* leaf carries a
     /// tracked agent, not the tab as a whole.
     func hasLiveAgent(pane paneID: UUID, in tab: Tab) -> Bool {
-        if let state = tab.agentBadges[.claude]?[paneID]?.state, state != .unknown {
-            return true
+        AgentKind.allCases.contains { kind in
+            tab.agentBadges[kind]?[paneID].map { $0.state != .unknown } ?? false
         }
-        if let state = tab.agentBadges[.codex]?[paneID]?.state, state != .unknown {
-            return true
-        }
-        return false
     }
 
     /// Window-wide twin of `hasLiveAgent(in:)`. Used by ⌘Q's

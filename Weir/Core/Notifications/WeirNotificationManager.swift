@@ -331,6 +331,7 @@ final class WeirNotificationManager {
         // Product names, the same in every language.
         case .claude: "Claude"
         case .codex: "Codex"
+        case .antigravity: "Antigravity"
         }
         let content = UNMutableNotificationContent()
         content.title = LocalizedStringResource(

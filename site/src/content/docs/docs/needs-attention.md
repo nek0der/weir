@@ -39,6 +39,8 @@ Weir adds no "always allow" option and writes nothing to an agent's settings. To
 
 Codex questions are always answered in the terminal.
 
+Antigravity has no approval card. Its approvals and questions are always answered in its own prompt, and Weir shows that it waits. A subagent's approval does not always show as a wait: `agy` shows it as Blocked, and `ctrl+k` there approves it.
+
 ## After a stop
 
 When an agent stops on an API error, a usage limit, or by exiting, the bar under its pane offers:
@@ -46,7 +48,7 @@ When an agent stops on an API error, a usage limit, or by exiting, the bar under
 - **Resume Same Conversation**, to pick up where it left off
 - **Show Partial Changes** and **Start New Conversation**, in its **⋯** menu
 
-If a usage limit stopped it, Weir can also notify you when the limit resets.
+If a usage limit stopped it, Weir can also notify you when the limit resets. Antigravity reports a limit only in the words of its error, so a limit in words Weir does not recognize stops like any other error, and one with no readable reset time offers no notification.
 
 ## An agent that runs without asking
 

@@ -74,6 +74,13 @@ enum AgentCatalog {
             executables: ["codex"],
             knownLocations: ["/opt/homebrew/bin/codex", "/usr/local/bin/codex", "~/.local/bin/codex"]
                 + managerLocations(of: "codex")
+        ),
+        AgentCatalogEntry(
+            kind: .antigravity,
+            displayName: "Antigravity",
+            executables: ["agy"],
+            knownLocations: ["/opt/homebrew/bin/agy", "/usr/local/bin/agy", "~/.local/bin/agy"]
+                + managerLocations(of: "agy")
         )
     ]
 

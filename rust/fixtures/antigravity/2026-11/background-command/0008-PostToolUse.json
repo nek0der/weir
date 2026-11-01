@@ -1,0 +1,22 @@
+{
+  "artifactDirectoryPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000006",
+  "conversationId": "00000000-0000-4000-8000-000000000006",
+  "error": "",
+  "hook_event_name": "PostToolUse",
+  "lastUserInput": "Run the shell command `sleep 12` in the background as a daemon (IsDaemon true, WaitMsBeforeAsync 500) and immediately reply started without waiting.",
+  "modelName": "gemini-3.8-flash-high",
+  "stepIdx": 2,
+  "toolCall": {
+    "args": {
+      "CommandLine": "sleep 12",
+      "IsDaemon": true,
+      "WaitMsBeforeAsync": 500,
+      "toolSummary": "Sleep command execution"
+    },
+    "name": "run_command"
+  },
+  "transcriptPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000006/.system_generated/logs/transcript_full.jsonl",
+  "workspacePaths": [
+    "/Users/person/project"
+  ]
+}

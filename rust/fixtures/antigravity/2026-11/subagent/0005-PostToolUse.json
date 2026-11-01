@@ -1,0 +1,22 @@
+{
+  "artifactDirectoryPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000004",
+  "conversationId": "00000000-0000-4000-8000-000000000004",
+  "error": "",
+  "hook_event_name": "PostToolUse",
+  "lastUserInput": "Use invoke_subagent to have a subagent read a.txt and report its content. Then reply with it.",
+  "modelName": "gemini-3.8-flash-high",
+  "stepIdx": 2,
+  "toolCall": {
+    "args": {
+      "Prompt": "Please read the file `a.txt` in the workspace (/Users/person/project/a.txt) and reply with its contents.",
+      "Role": "File Reader",
+      "TypeName": "research",
+      "Workspace": "inherit"
+    },
+    "name": "invoke_subagent"
+  },
+  "transcriptPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000004/.system_generated/logs/transcript_full.jsonl",
+  "workspacePaths": [
+    "/Users/person/project"
+  ]
+}

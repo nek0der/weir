@@ -1,0 +1,68 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "Run the shell command: date. Then say done.",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "run_command",
+      "detail": "run_command: date"
+    }
+  ],
+  [
+    {
+      "type": "tool_finished",
+      "tool": "run_command"
+    }
+  ],
+  [],
+  [],
+  [],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "done."
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "say ok",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "ok"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "say ok",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "ok"
+    }
+  ]
+]

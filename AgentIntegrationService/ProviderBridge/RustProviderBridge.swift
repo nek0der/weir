@@ -146,6 +146,8 @@ enum RustProviderBridge {
         let outcome: String
         let exitCode: Int32
         let message: String?
+        /// What the hook prints, when the provider cancels a call that way.
+        var stdout: String?
     }
 
     /// Runs one lifecycle or worktree hook call in-process. `environment` is
@@ -179,7 +181,12 @@ enum RustProviderBridge {
               let outcome = object["outcome"] as? String,
               let exitCode = object["exit_code"] as? Int
         else { throw AgentIntegrationError.invalidResponse }
-        return HookOutcome(outcome: outcome, exitCode: Int32(exitCode), message: object["message"] as? String)
+        return HookOutcome(
+            outcome: outcome,
+            exitCode: Int32(exitCode),
+            message: object["message"] as? String,
+            stdout: object["stdout"] as? String
+        )
     }
 
     /// The input pointer-length pairs one ABI call receives, plus the output

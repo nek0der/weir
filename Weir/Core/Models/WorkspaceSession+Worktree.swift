@@ -81,6 +81,14 @@ extension WorkspaceSession {
         projects[pi].routeCodexWorktrees = enabled
     }
 
+    /// The same for the Antigravity CLI.
+    @MainActor
+    func setProjectRouteAntigravityWorktrees(_ projectID: UUID, to enabled: Bool) {
+        guard let pi = projects.firstIndex(where: { $0.id == projectID }) else { return }
+        guard projects[pi].routeAntigravityWorktrees != enabled else { return }
+        projects[pi].routeAntigravityWorktrees = enabled
+    }
+
     /// Append a freshly-created git worktree to a project's sidebar
     /// list. Caller is responsible for actually running `git worktree
     /// add` first — this only mutates Weir's in-memory model.

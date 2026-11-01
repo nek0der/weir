@@ -1,0 +1,27 @@
+{
+  "artifactDirectoryPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000003",
+  "conversationId": "00000000-0000-4000-8000-000000000003",
+  "hook_event_name": "PreToolUse",
+  "lastUserInput": "Use the ask_question tool to ask me to pick red or blue, then reply with my pick.",
+  "modelName": "gemini-3.8-flash-high",
+  "stepIdx": 2,
+  "toolCall": {
+    "args": {
+      "questions": [
+        {
+          "is_multi_select": false,
+          "options": [
+            "(Recommended) Red",
+            "Blue"
+          ],
+          "question": "Please pick a color:"
+        }
+      ]
+    },
+    "name": "ask_question"
+  },
+  "transcriptPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000003/.system_generated/logs/transcript_full.jsonl",
+  "workspacePaths": [
+    "/Users/person/project"
+  ]
+}

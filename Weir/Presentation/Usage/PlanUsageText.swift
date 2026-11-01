@@ -67,6 +67,23 @@ enum PlanUsageText {
         )
     }
 
+    static func antigravitySection(_ usage: PlanUsage?, now: Date, locale: Locale) -> PlanUsageSection {
+        let note = LocalizedStringResource(
+            "Shows once Antigravity replies. Needs a status line of your own (set one with /statusline).",
+            comment: "Plan usage panel, Antigravity section before any usage was reported; /statusline is a command name"
+        )
+        let asOfLastReply = LocalizedStringResource(
+            "Antigravity’s values are as of its last reply.",
+            comment: "Plan usage panel, under Antigravity's values: they are only as fresh as its last reply"
+        )
+        return section(
+            agent: .antigravity,
+            Content(usage: usage, isDimmed: false, note: usage == nil ? note : asOfLastReply),
+            now: now,
+            locale: locale
+        )
+    }
+
     static func codexSection(
         _ state: PlanUsageStore.CodexState,
         last: PlanUsage?,

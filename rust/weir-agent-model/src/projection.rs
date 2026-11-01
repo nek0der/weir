@@ -192,6 +192,9 @@ pub struct ProgramStatus {
     pub kind: Option<BlockedKind>,
     /// ISO-8601 UTC, when the terminal forwarded the report.
     pub observed_at: String,
+    /// ISO-8601 UTC, when the program began reporting this state and kind. A
+    /// repeat of a report moves `observed_at` and leaves this.
+    pub state_since: String,
 }
 
 /// The states a program reports, as the protocol names them.

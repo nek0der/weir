@@ -86,7 +86,14 @@ pub fn project_with(
         .map(str::to_owned)
         .collect();
     let mut stopped_turns: Vec<(String, StoppedBy)> = Vec::new();
-    let runtimes = build_runtimes(&mut state, input, &exited, declined, &mut stopped_turns);
+    let runtimes = build_runtimes(
+        &mut state,
+        input,
+        &exited,
+        now,
+        declined,
+        &mut stopped_turns,
+    );
     let pane_to_tab = pane_to_tab(input);
     let alive: BTreeSet<Uuid> = pane_to_tab.keys().copied().collect();
     let badges = dominant_badges(&runtimes, input, &pane_to_tab, now);
@@ -135,7 +142,13 @@ pub fn project_with(
             || previous.turns.is_empty()
             || live_runs(&state) != live_runs(previous))
         .then(|| conversations(input, &state.turns, &live_runs(&state))),
-        next_pass_in_ms: crate::notifications::next_pass_in_ms(&state.outbox, now),
+        next_pass_in_ms: [
+            crate::notifications::next_pass_in_ms(&state.outbox, now),
+            next_settled_auth_in_ms(&state.accepted, input, now),
+        ]
+        .into_iter()
+        .flatten()
+        .min(),
     };
     (state, projection, commands)
 }
@@ -229,6 +242,7 @@ fn build_runtimes(
     state: &mut ProjectionState,
     input: &ProjectionInput,
     exited: &BTreeSet<String>,
+    now: &Instants,
     declined: &mut DeclinedWait<'_>,
     stopped_turns: &mut Vec<(String, StoppedBy)>,
 ) -> Vec<RuntimePresentation> {
@@ -257,8 +271,10 @@ fn build_runtimes(
             } else if let Some(evidence) = stopped_turn(run, input, is_pane_agent, declined) {
                 stopped_turns.push((storage_id.clone(), evidence));
                 stopped_badge(badge, run.record.state)
-            } else if let Some(kind) = reported_wait(run, input, is_pane_agent) {
+            } else if let Some(kind) = reported_wait(run, input, is_pane_agent, now) {
                 reported_wait_badge(badge, kind)
+            } else if reported_failure(run, input, is_pane_agent) {
+                reported_failure_badge(badge)
             } else {
                 badge
             };
@@ -704,11 +720,18 @@ fn pane_agents<'a>(
         .collect()
 }
 
+/// How long an `auth` report must stand before it counts as a wait, for a
+/// provider that declares `ProgramStatusAuthSettles`. `agy` 1.4.12 was seen
+/// holding one for up to 2.1 seconds when signed in; this leaves room for a
+/// slower machine, and is short enough for a real sign-in to be heard soon.
+const AUTH_SETTLE_SECS: u64 = 5;
+
 /// The wait the agent's own status report shows and no hook announced: an
 /// MCP server's request for input (Codex's; Claude's `Elicitation` hook
 /// announces its own), a question left after the turn, a
-/// sign-in. `None` for a block that asks the person's leave, which the
-/// agents announce with a hook (`PermissionRequest`), and while the record
+/// sign-in. `None` for a block that asks the person's leave, which Claude and
+/// Codex announce with a hook (`PermissionRequest`) and `agy` only here
+/// (`ProgramStatusAnnouncesPermission`), and while the record
 /// waits on a question its hook announced, which says more and keeps its
 /// words. A record waiting on an approval is no reason to keep it: no hook
 /// says the approval was answered, so a question or a sign-in reported since
@@ -718,6 +741,7 @@ fn reported_wait(
     run: &AcceptedRun,
     input: &ProjectionInput,
     is_pane_agent: bool,
+    now: &Instants,
 ) -> Option<WaitKind> {
     let is_past_hook_wait = run.record.state != RunState::NeedsInput
         || run.record.wait_kind == Some(WaitKind::Approval);
@@ -730,9 +754,54 @@ fn reported_wait(
     }
     match status.kind? {
         BlockedKind::Question => Some(WaitKind::Question),
-        BlockedKind::Auth => Some(WaitKind::SignIn),
-        BlockedKind::Permission => None,
+        BlockedKind::Auth => {
+            (auth_settling_secs(run, input, status, now) == 0).then_some(WaitKind::SignIn)
+        }
+        BlockedKind::Permission => capabilities_of(input, &run.provider)
+            .is_some_and(|descriptor| descriptor.has(Capability::ProgramStatusAnnouncesPermission))
+            .then_some(WaitKind::Approval),
     }
+}
+
+/// What remains before an `auth` report counts as a wait, for a provider that
+/// sends one for a moment as it starts (`ProgramStatusAuthSettles`), and zero
+/// for any other. Until then the run shows what its record says, so a person
+/// already signed in hears nothing, and the agent's next report simply takes
+/// the place of the one that was settling.
+fn auth_settling_secs(
+    run: &AcceptedRun,
+    input: &ProjectionInput,
+    status: &ProgramStatus,
+    now: &Instants,
+) -> u64 {
+    let settles = capabilities_of(input, &run.provider)
+        .is_some_and(|descriptor| descriptor.has(Capability::ProgramStatusAuthSettles));
+    if !settles {
+        return 0;
+    }
+    seconds_between(&status.state_since, &now.wall)
+        .map_or(0, |stood| AUTH_SETTLE_SECS.saturating_sub(stood))
+}
+
+/// How soon a pass should run to show an `auth` report that will have stood
+/// by then, since nothing watched changes when it does.
+fn next_settled_auth_in_ms(
+    accepted: &BTreeMap<String, AcceptedRun>,
+    input: &ProjectionInput,
+    now: &Instants,
+) -> Option<u64> {
+    let agents = pane_agents(accepted, input);
+    accepted
+        .iter()
+        .filter_map(|(storage_id, run)| {
+            let is_pane_agent = agents.contains(storage_id.as_str());
+            let status = current_program_status(run, input, is_pane_agent)?;
+            (status.kind == Some(BlockedKind::Auth) && status.state == ProgramState::Blocked)
+                .then(|| auth_settling_secs(run, input, status, now))
+        })
+        .filter(|left| *left > 0)
+        .min()
+        .map(|left| left * 1_000)
 }
 
 /// Returns the badge of a run whose agent reported a wait no hook announced
@@ -746,6 +815,33 @@ fn reported_wait_badge(badge: Badge, kind: WaitKind) -> Badge {
         detail: None,
         wait_kind: Some(kind),
         tool: None,
+        stop_reason: None,
+        ..badge
+    }
+}
+
+/// Returns whether the run's agent last reported a failure no hook announced
+/// (`ProgramStatusAnnouncesFailure`). Other providers' `error` reports say
+/// nothing the record does not, so they are not read. A failure a hook did
+/// announce keeps its words: the report has none.
+fn reported_failure(run: &AcceptedRun, input: &ProjectionInput, is_pane_agent: bool) -> bool {
+    run.record.state != RunState::Error
+        && capabilities_of(input, &run.provider)
+            .is_some_and(|descriptor| descriptor.has(Capability::ProgramStatusAnnouncesFailure))
+        && current_program_status(run, input, is_pane_agent)
+            .is_some_and(|status| status.state == ProgramState::Error)
+}
+
+/// Returns the badge of a run whose agent reported a failure. As with a
+/// reported wait the record is not written: the agent's next report ends it.
+/// It carries no words, since libghostty passes on none of the report's.
+fn reported_failure_badge(badge: Badge) -> Badge {
+    Badge {
+        state: RunState::Error,
+        detail: None,
+        wait_kind: None,
+        tool: None,
+        run_started_at: None,
         stop_reason: None,
         ..badge
     }

@@ -51,6 +51,10 @@ is used up. A click outside the panel or Escape closes it.
   minute while the panel is open. It answers when you are signed in to Codex
   with ChatGPT. When your account has limit resets to spend, the panel says
   how many are left and when the first one lapses.
+- **Antigravity** reports its usage to its status line too, so it works as
+  for Claude Code: the weekly Gemini limit, as of its last reply in a Weir
+  pane, and only with a status line of your own. A launch that passes its own
+  `--settings` shows no usage.
 
 ### Sidebar
 
@@ -133,7 +137,8 @@ agent it adds the model, the effort, the permission mode unless it is the
 default, and the tokens its conversation's kept turns have used.
 When the agent runs every action without asking (Claude Code's bypass mode, or Codex with approvals
 set to never), the header says **Runs without asking** beside a warning
-sign. As the pane narrows, the folder goes first, then the tokens, then the
+sign. Antigravity does not report its permission mode, so its header shows
+neither the mode nor this warning. As the pane narrows, the folder goes first, then the tokens, then the
 model, the effort, and the mode, then the name. The warning stays as its sign.
 
 When tmux shows several agents in one terminal, the header gives priority
@@ -168,7 +173,8 @@ with none left. Claude starts that turn itself when a task ends. The row,
 the tab, and the pane header show the circling dot meanwhile, and the agent
 still counts as finished for **Needs Attention** and notifications. A turn
 that fails or is interrupted says nothing about them. Codex does not report
-its background terminals, so its line never says this.
+its background terminals, so its line never says this. Antigravity's line never
+says it either.
 
 ### Changes panel
 
@@ -253,8 +259,8 @@ encoding.
 
 1. **Start.** **New Worktree** (⌘N) makes a worktree on a new or existing
    branch, fetching a remote base first and copying in the ignored files the
-   project names, such as `.env`, then opens Claude Code, Codex, a shell, or
-   nothing in it. The sheet only makes the worktree; you give the agent its
+   project names, such as `.env`, then opens Claude Code, Codex, Antigravity, a
+   shell, or nothing in it. The sheet only makes the worktree; you give the agent its
    first instruction in its own prompt. **Create** (⌘⏎) makes it; ⌥⌘N makes
    one at once with the last choices, without the sheet.
 2. **It works.** The sidebar row and the decision bar show what the agent is
@@ -266,7 +272,7 @@ encoding.
    sight waits on the window's approval card, where you can answer it without
    switching panes. While another app is in front, every request waits, and
    the menu bar can answer one that is a short, low-impact shell command. Codex questions are always answered in
-   the terminal.
+   the terminal, and so is everything Antigravity asks.
 4. **You review.** **Review Unviewed**, **Review All Unviewed**, or ⌥⌘R opens
    a review tab in place of the terminal. Its scope menu picks one
    conversation's unviewed turns, all unviewed turns in the worktree, a
@@ -290,6 +296,8 @@ encoding.
   permission requests for the approval card. The release DMG has it. A build
   without a Team ID leaves every approval to the agent's own prompt; see
   [CONTRIBUTING.md](../CONTRIBUTING.md#native-approvals-in-a-debug-build).
+  Antigravity always asks in its own prompt, in any build, and Weir shows
+  that it waits; [Known limitations](known-limitations.md#antigravity) says why.
 - **Worktrees.** Create, switch, and delete worktrees from **New Worktree**,
   the worktree menu, and the sidebar row. When an agent `cd`s into another
   worktree, Weir offers to move the tab there.

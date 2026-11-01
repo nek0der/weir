@@ -1,0 +1,25 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "00000000-0000-4000-8000-000000000002",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "Create a file named z.txt containing x, then say done.",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "write_file",
+      "detail": "write_file: /Users/person/project/z.txt"
+    }
+  ]
+]

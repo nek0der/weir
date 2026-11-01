@@ -1,0 +1,49 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "00000000-0000-4000-8000-000000000006",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "Run the shell command `sleep 12` in the background as a daemon (IsDaemon true, WaitMsBeforeAsync 500) and immediately reply started without waiting.",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "run_command",
+      "detail": "run_command: sleep 12"
+    }
+  ],
+  [],
+  [],
+  [],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "started"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "extension",
+      "name": "UnpromptedTurn",
+      "payload": {}
+    }
+  ],
+  [],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "The background command `sleep 12` has finished successfully (exit code 0)."
+    }
+  ]
+]

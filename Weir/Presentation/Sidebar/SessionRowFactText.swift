@@ -376,6 +376,7 @@ enum SessionRowFactText {
         // Product names, the same in every language.
         case .agent(.claude): "Claude"
         case .agent(.codex): "Codex"
+        case .agent(.antigravity): "Antigravity"
         case .shell: LocalizedStringResource("Shell").resolved(in: locale)
         }
     }
@@ -426,6 +427,7 @@ enum SessionRowFactText {
         // Abbreviations of product names, the same in every language.
         case .agent(.claude): "Cl"
         case .agent(.codex): "Cx"
+        case .agent(.antigravity): "Ag"
         case .shell: ""
         }
     }

@@ -121,17 +121,19 @@ release that came just before the change being described.
 | `settings.json` | schema 1 → 2 | `settings.json.pre-v2` |
 | `reviews/<hash>.json` | version 1 → 2 | `reviews/<hash>.json.pre-v2` |
 | `notifications.json` | two optional fields, no version | none |
-| `worktree-routing.json` | still version 1, two optional fields | none |
+| `worktree-routing.json` | still version 1, two optional fields, and a third agent in `routing` | none |
 | Run records (`agent-states/`, `codex-agent-states/`) | still schema 3, seven optional fields | none |
+| Antigravity's run records and resume hints (`antigravity-agent-states/`, `antigravity-sessions/`) | new | — |
 | Turn records and counters (`<state>/turns/`) | new | — |
 | `turn-reads.json`, `viewed-lines.json` | new | — |
 | `stops.json` | new | — |
 | `ended-session-hints.json` | new | — |
 | `turn-deletions.json` | new | — |
 | `restore-pending-stops.json` | new | — |
-| `usage/claude.json` | new: Claude Code's plan usage as its status line last reported it, for the usage panel | — |
+| `usage/claude.json`, `usage/antigravity.json` | new: each agent's plan usage as its status line last reported it, for the usage panel | — |
 | `pane-path-<project ID>.txt` | new: the `PATH` the last shell of a pane of that project ended up with, where an agent is looked up for that project | — |
 | Codex's `~/.codex/config.toml` (the person's own) | our tables and markers are taken out | none |
+| Antigravity's plugin (`~/.gemini/config/plugins/weir`) | new | — |
 | Refs and files in each repository's Git directory | new, and one no longer written | — |
 
 ### `state.json`: version 5 to 6
@@ -282,6 +284,12 @@ key skips it:
   `SidebarItem.swift`). A file without it copies nothing, as an empty list
   does. The build before skips the key and drops it when it saves, so a
   round trip through that build loses the list.
+- A project's `routeAntigravityWorktrees`
+  (`containers[].project.routeAntigravityWorktrees`) says whether a worktree
+  `agy` makes is routed to the project's placement, as
+  `routeClaudeWorktrees` and `routeCodexWorktrees` do for the others
+  (`Project` in `SidebarItem.swift`). A file without it reads as `true`. The
+  build before carries it through as an unknown field of the project.
 - A window record's `sidebar` (`windows[].sidebar`) is how that window's
   sidebar lists the projects: `projectOrder`, the project IDs in the order
   the person left them; `collapsedProjects`, the IDs of the folded headers;
@@ -384,6 +392,19 @@ Some keys of version 6 are still written but no longer read:
     them already reads (`ProjectView.init(from:)` uses `decodeIfPresent`),
     so dropping them needs no version bump. They then move to the list
     above, as keys passed over and not written again.
+
+A saved `antigravity` agent adds no version either. The build before opens a
+file that names it and loses only what belongs to that agent:
+
+- A tab's `agentSessions` and `agentBadges` skip the provider they do not know
+  (`Tab.decodeByProvider`), and the next save drops those entries. The tab's
+  panes come back as plain shells, with no resume.
+- A tab's `conversationName` of that agent reads as none, and the next save
+  drops it. An entry of `conversationTabNames` of that agent is passed over,
+  and the next save drops it too.
+- `settings.json` keeps `newSession.lastOpen` and a project's `open` as
+  strings. A value of `antigravity` reads as no choice there, and is written
+  back only until the sheet records another.
 
 The previous release reads version 5 only. A version 6 file fails to decode
 there before its version is even compared, because version 6 drops keys that
@@ -549,6 +570,10 @@ for the per-pane "This turn" review. The `turn` layer it names still decodes.
 The previous release reads version 1 only. It sets a version 2 draft aside as
 `<hash>.json.bak-decode-failed-<unix>` and starts that review empty.
 
+A draft holding a range of an Antigravity conversation is a shape the build
+before cannot read, since its `ConversationKey` knows no such provider. It sets
+that draft aside as `<hash>.json.bak-decode-failed-<unix>` and starts empty.
+
 A version 2 range (`ReviewTurnRange`) now also carries `conversations`: every
 conversation with a turn in the range. It sits beside `conversation`, which
 names the last turn's conversation. The changes panel's "Review Unviewed" uses
@@ -606,6 +631,10 @@ saving stops for that launch.
 The previous release ignores the two fields and drops them when it next
 saves. Those rows then name their place by the recorded label.
 
+A row's `event` can name `antigravity` as its agent. The build before cannot
+read that event, which costs the event and not the row: the row shows the
+title and body recorded with it, and the next save drops the event.
+
 ### `worktree-routing.json`
 
 Written beside `state.json` by every save, for the hook. Still version 1.
@@ -613,11 +642,18 @@ Each project now also lists its worktrees and its check commands
 (`worktrees`, `checks`, both optional). The previous release's hook reads the
 file and ignores them.
 
+Each project's `routing` also gains `antigravity`, from the project's
+`routeAntigravityWorktrees` (`WorktreeRouting.swift`). The hook of a build
+before looks up only its own agents.
+
 ### Run records
 
 The hook's run records (`agent-states/<id>.state.json` for Claude,
-`codex-agent-states/<id>.state.json` for Codex) stay at schema 3 and gain nine
-optional fields. The first five are `worktreeRoot`, `currentTurnId`,
+`codex-agent-states/<id>.state.json` for Codex, and
+`antigravity-agent-states/<id>.state.json` for Antigravity, new with its resume
+hints in `antigravity-sessions/`) stay at schema 3 and gain nine optional
+fields. An earlier build has no Antigravity provider, so it neither reads nor
+deletes those two folders. The first five are `worktreeRoot`, `currentTurnId`,
 `usageLimit`, and, while a run waits at its prompt, `waitKind` (`approval` or
 `question`) and `tool` (the tool it waits to use). A record without the last
 two is worded from its `detail`, as before. The previous release carries
@@ -649,10 +685,11 @@ prompt the previous release took. A relaunch in this release then retires
 that run rather than resuming it, unless this release has written the record
 since.
 
-The eighth, `transcriptPath`, is set only while a Claude run is in a turn
-or waits on its question or permission prompt. It names the transcript that
-the turn's `UserPromptSubmit`, the question's `PreToolUse`, or the
-permission prompt's `Notification` named. Esc at either prompt, and Esc or
+The eighth, `transcriptPath`, is set only while a Claude or Antigravity run is
+in a turn or waits on its question or permission prompt. For Claude it names
+the transcript that the turn's `UserPromptSubmit`, the question's `PreToolUse`,
+or the permission prompt's `Notification` named, and for Antigravity the one
+its turn's first `PreInvocation` or the question's `PreToolUse` named. Esc at either prompt, and Esc or
 Ctrl+C at work, send no hook, so the app reads the stop from Claude's own
 status report, or a declined wait from that transcript, and shows the turn
 stopped (ADR 0004, "Work outside a turn"). The app then writes that end into
@@ -680,11 +717,16 @@ writes the record again at its next write.
 ### Turn records
 
 New. Each agent's hook writes one record per turn in the provider's state
-directory, `agent-states/turns/<turn-id>.turn.json` or
-`codex-agent-states/turns/<turn-id>.turn.json` (schema 1). It numbers a
+directory, `agent-states/turns/<turn-id>.turn.json`,
+`codex-agent-states/turns/<turn-id>.turn.json`, or
+`antigravity-agent-states/turns/<turn-id>.turn.json` (schema 1). It numbers a
 conversation's turns from `turns/<hash>.counter`, which only grows. In the
 repository, `refs/weir/turns/<turn-id>/begin` and `/end` pin the turn's two
 snapshot trees. `docs/agent-integration-protocol.md` describes the record.
+
+A turn of Antigravity keeps `<conversation>#<first step>` as its
+`providerTurnId`, which is where its reading of the transcript starts. A record
+without it, from an earlier development build, reads from the latest input.
 
 A record a newer schema wrote is read when its shape allows, and is never
 rewritten or deleted. A record whose shape this build cannot read is counted
@@ -837,6 +879,9 @@ and their panes stay plain shells.
 The previous release does not know the file and leaves it alone. It lists no
 stop after a relaunch, and the file stays as this release last wrote it.
 
+An Antigravity stop is an entry the build before cannot read, so that build
+drops it alone, as above.
+
 ### `ended-session-hints.json`
 
 New, `schemaVersion` 1 (`AgentForgottenHintFile`), beside `state.json`. It
@@ -964,6 +1009,21 @@ build.
 An earlier build writes its tables back on its next launch. That is
 harmless here: a hash in the flags takes the place of the one in the file,
 and this release takes the tables out again at its next launch.
+
+### Antigravity's plugin
+
+Not in the Application Support folder: `agy` takes no hooks on its command line,
+so the shim of a Weir pane places a plugin at `~/.gemini/config/plugins/weir`
+(`Weir/Resources/antigravity-shim/agy`), marked by a `.weir-managed` file inside
+it. The shim places it again when the mark differs from the one this build
+ships, and leaves alone a folder without the mark. Weir takes no copy, as every
+file in the folder is its own.
+
+The plugin stays when you go back. An earlier build places nothing and does
+not run this shim, so `WEIR_ANTIGRAVITY_HOOK_DIR` is unset in its panes, as it
+is outside Weir, and the plugin's hook only gives `agy` the default reply.
+`agy plugin disable weir` stops it. So does removing the folder, until the next
+`agy` run in a pane of this release.
 
 ### Git directories
 

@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-Weir は、Claude Code と Codex を並行して動かすための Mac アプリです。どのエージェントが待っているか、1 回分の作業（ターン）ごとに何が変わったかがすぐ分かります。
+Weir は、Claude Code、Codex、Antigravity を並行して動かすための Mac アプリです。どのエージェントが待っているか、1 回分の作業（ターン）ごとに何が変わったかがすぐ分かります。
 
 ![Weir のウインドウ。左にワークツリー、中央にターミナル、右に各ターンの変更。](../../../../assets/captures/docs/window-ja.png)
 

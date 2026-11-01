@@ -25,6 +25,8 @@ final class PlanUsageStore {
     /// Claude Code's last reported usage. Optional because no Claude Code
     /// on a plan with limits has answered in a Weir pane yet.
     private(set) var claude: PlanUsage?
+    /// The Antigravity CLI's last reported usage, the same way.
+    private(set) var antigravity: PlanUsage?
     private(set) var codex: CodexState = .unread
     /// Codex's last usage, kept through a later read that failed, so the
     /// panel can show it dimmed rather than nothing. Dropped when Codex says
@@ -58,6 +60,7 @@ final class PlanUsageStore {
 
     func reloadClaude() {
         claude = records.record(for: .claude)
+        antigravity = records.record(for: .antigravity)
     }
 
     /// Asks Codex now and every `codexRefreshInterval` until the calling
@@ -102,6 +105,6 @@ final class PlanUsageStore {
     /// most an understatement, and a window that has since reset no longer
     /// counts at all.
     func level(at now: Date) -> PlanUsageLevel {
-        [claude, lastCodexUsage].compactMap(\.self).map { $0.level(at: now) }.max() ?? .normal
+        [claude, lastCodexUsage, antigravity].compactMap(\.self).map { $0.level(at: now) }.max() ?? .normal
     }
 }

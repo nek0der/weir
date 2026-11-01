@@ -1,0 +1,19 @@
+{
+  "artifactDirectoryPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000005",
+  "conversationId": "00000000-0000-4000-8000-000000000005",
+  "hook_event_name": "PreToolUse",
+  "lastUserInput": "",
+  "modelName": "gemini-3.8-flash-high",
+  "stepIdx": 4,
+  "toolCall": {
+    "args": {
+      "Message": "The contents of `a.txt` are:\n\n```\nhello\n```",
+      "Recipient": "00000000-0000-4000-8000-000000000004"
+    },
+    "name": "send_message"
+  },
+  "transcriptPath": "/Users/person/.gemini/antigravity-cli/brain/00000000-0000-4000-8000-000000000005/.system_generated/logs/transcript_full.jsonl",
+  "workspacePaths": [
+    "/Users/person/project"
+  ]
+}

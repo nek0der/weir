@@ -17,6 +17,7 @@ uuid.workspace = true
 # `conformance` feature brings the minimal descriptor the other tests share.
 [dev-dependencies]
 weir-agent-model = { path = "../weir-agent-model", features = ["conformance"] }
+weir-provider-antigravity = { path = "../weir-provider-antigravity" }
 weir-provider-claude = { path = "../weir-provider-claude" }
 weir-provider-codex = { path = "../weir-provider-codex" }
 

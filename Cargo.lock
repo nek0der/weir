@@ -436,6 +436,7 @@ dependencies = [
  "serde_json",
  "uuid",
  "weir-agent-model",
+ "weir-provider-antigravity",
  "weir-provider-claude",
  "weir-provider-codex",
 ]
@@ -451,6 +452,7 @@ dependencies = [
  "uuid",
  "weir-agent-core",
  "weir-agent-model",
+ "weir-provider-antigravity",
  "weir-provider-claude",
  "weir-provider-codex",
 ]
@@ -473,6 +475,14 @@ dependencies = [
  "serde_json",
  "uuid",
  "weir-agent-core",
+]
+
+[[package]]
+name = "weir-provider-antigravity"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "weir-agent-model",
 ]
 
 [[package]]

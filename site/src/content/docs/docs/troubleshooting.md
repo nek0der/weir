@@ -29,6 +29,18 @@ Claude Code reports its usage only to a status line, so Weir needs one of your o
 
 Plan usage appears when you are signed in to Codex with ChatGPT. Weir asks for the account in `~/.codex`, so a `CODEX_HOME` set in your shell does not change which account it reads.
 
+## Plan Usage shows nothing for Antigravity
+
+Antigravity reports its usage only to a status line, so Weir needs one of your own. Run `/statusline` in `agy` to set one up. The panel then fills in with the next reply in a Weir pane. A launch that passes its own `--settings` shows no usage.
+
+## Antigravity keeps saying it is at work
+
+This can happen inside a tmux you started yourself, where `agy` does not report its status. A stopped generation or a canceled question stays at work until your next prompt, and a permission prompt does not show as a wait. Weir does not host `agy` in tmux, so running it directly in the pane avoids this.
+
+## Antigravity reports nothing to Weir
+
+Weir places a plugin at `~/.gemini/config/plugins/weir` the first time `agy` runs in a pane. If a folder of that name already exists without Weir's `.weir-managed` file, Weir leaves it alone, so move it aside. If you ran `agy plugin disable weir`, enable the plugin again in `agy`.
+
 ## A row has no pull request status
 
 Install `gh` or `glab` and sign in to the project's remote. **Create PR** needs `gh`, so Weir does not create GitLab merge requests.
