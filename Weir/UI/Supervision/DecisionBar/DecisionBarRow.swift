@@ -65,7 +65,7 @@ struct DecisionBarRow: View {
 
     var body: some View {
         // Each fit is measured with its words (the sentence, and where to
-        // answer and the time left beside it, all under the one cap) at no
+        // answer beside it, both under the one cap) at no
         // more than their least, or at nothing where the fit is chosen
         // while the rest fits at all (`Shape.keepsWordsFloor`); the fit
         // chosen then gives the words all the rest.
@@ -91,8 +91,17 @@ struct DecisionBarRow: View {
             IdealWidthCap(maxIdealWidth: shape.keepsWordsFloor ? layout.decisionBarTextMinWidth : 0) {
                 words(model, showsTag: shape.showsTag)
             }
+            // One spacer, however much follows it, so what ends the line sits
+            // on the bar's inset rather than a spacer's width and its spacing
+            // short of it.
+            Spacer(minLength: 0)
+            if let deadline = model.heldUntil {
+                // Seconds count down, so this one part redraws each second.
+                TimelineView(.periodic(from: .now, by: 1)) { _ in
+                    ApprovalTimeLeft(remaining: deadline.remaining(at: SuspendingClock().now), size: .body)
+                }
+            }
             if shape.showsButtons {
-                Spacer(minLength: WeirLayout.Supervision.spaceS)
                 HStack(spacing: layout.decisionBarButtonSpacing) {
                     buttons(model, shape: shape)
                 }
@@ -100,7 +109,7 @@ struct DecisionBarRow: View {
         }
     }
 
-    /// The sentence, then where to answer and the time left, quieter: one
+    /// The sentence, then where to answer, quieter: one
     /// line, the two sharing it as `DecisionBarWordsLayout` lays them out.
     private func words(_ model: DecisionBarModel, showsTag: Bool) -> some View {
         HStack(spacing: WeirLayout.Supervision.spaceXS) {
@@ -135,24 +144,6 @@ struct DecisionBarRow: View {
                 }
             } else {
                 sentence(model, showsTag: showsTag)
-            }
-            if let deadline = model.heldUntil {
-                // Seconds count down, so this one part redraws each second.
-                Text(verbatim: "·")
-                    .font(.supervision(.body))
-                    .foregroundStyle(SupervisionTokens.muted.color)
-                    .accessibilityHidden(true)
-                TimelineView(.periodic(from: .now, by: 1)) { _ in
-                    let now = SuspendingClock().now
-                    Text(verbatim: DecisionBarModel.timeLeft(deadline, now: now, locale: locale))
-                        .font(.supervision(.body).monospacedDigit())
-                        .foregroundStyle(SupervisionTokens.muted.color)
-                        .fixedSize()
-                        .accessibilityLabel(Text(verbatim: ApprovalCardModel.spokenTimeLeftText(
-                            for: deadline.remaining(at: now),
-                            locale: locale
-                        )))
-                }
             }
         }
     }

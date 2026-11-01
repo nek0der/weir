@@ -50,6 +50,18 @@ struct TitleBarMenuHost: View {
         let isChoosingProject: Bool
     }
 
+    /// The approval card stands beside the open list (`standsLeftOfOpener`).
+    private var isCardBesideList: Bool {
+        window.approvalCard.state.standsLeftOfOpener && window.approvalCard.isOpen(in: approvals)
+    }
+
+    /// The mouse press being handled landed on the approval card.
+    private var isPressInCard: Bool {
+        guard let event = NSApp.currentEvent, let height = event.window?.contentView?.bounds.height else { return false }
+        let point = CGPoint(x: event.locationInWindow.x, y: height - event.locationInWindow.y)
+        return window.approvalCard.frame.contains(point)
+    }
+
     private var place: Place {
         Place(container: window.selection.activeContainerID, isChoosingProject: window.selection.isChoosingProject)
     }
@@ -69,11 +81,21 @@ struct TitleBarMenuHost: View {
                 width: shown.map { Self.width(of: $0.menu) } ?? 0,
                 style: .init(alignment: .leading, gap: shown.map { Self.gap(of: $0.menu) } ?? 0, arrowInset: nil),
                 onPointerPressedOutside: {
+                    // The card beside the list is the list's own next step, so
+                    // a press in it leaves the list; a press outside both closes
+                    // both. The request stays pending, with its unsent answer.
+                    guard !(isCardBesideList && isPressInCard) else { return }
                     isClosingForPress = true
                     window.titleBarMenu = nil
                 },
                 onKey: { key in
                     guard key.isEscape, !window.approvalCard.isFocused else { return false }
+                    // The card beside the list closes first, with the keyboard
+                    // in it or not: a press on its words takes the focus away.
+                    if isCardBesideList {
+                        window.approvalCard.dismiss()
+                        return true
+                    }
                     window.titleBarMenu = nil
                     return true
                 },
@@ -94,6 +116,10 @@ struct TitleBarMenuHost: View {
         .onChange(of: window.titleBarMenu?.id) { previous, current in
             openedOn = current == nil ? nil : place
             isClosingForPress = false
+            // However the list closed, the card beside it goes with it.
+            if previous != nil, window.approvalCard.state.standsLeftOfOpener {
+                window.approvalCard.dismiss()
+            }
             if previous != nil, current == nil {
                 // At once: anything but a terminal holding the keys is the
                 // dropdown's own field or list, still fading out.

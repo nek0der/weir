@@ -284,6 +284,7 @@ enum ApprovalControllerConnection {
             questions: ApprovalQuestion.decode(request["questions"]),
             command: command(toolName: toolName, input: input),
             hasInputCommand: hasCommand(input: input),
+            inputAddsToSummary: inputAddsToSummary(input: input, summary: request["summary"] as? String),
             agentRunID: (request["agent_run_id"] as? String).flatMap(UUID.init(uuidString:))
         )
     }
@@ -293,6 +294,17 @@ enum ApprovalControllerConnection {
     /// `description` (rust/weir-provider-*/src/approval.rs).
     static func hasCommand(input: Any) -> Bool {
         (input as? [String: Any])?["command"] is String
+    }
+
+    /// Whether the input holds more than the card shows above Show Details:
+    /// the summary when it is the input's `command`, and the input's
+    /// `description`. Anything else, as a run's time limit, is worth a look.
+    static func inputAddsToSummary(input: Any, summary: String?) -> Bool {
+        guard let fields = input as? [String: Any],
+              let command = fields["command"] as? String,
+              command == summary
+        else { return true }
+        return !Set(fields.keys).subtracting(["command", "description"]).isEmpty
     }
 
     /// The shell command a request runs: Bash's `command` when it is a

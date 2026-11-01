@@ -32,6 +32,8 @@ struct NeedsAttentionListView: View {
     /// a row the pointer selected is under it already, and scrolling
     /// would put another row there, which the pointer would then select.
     @State private var keyboardMoves = 0
+    /// Where the list is, in the window, which the approval card stands beside.
+    @State private var listFrame = CGRect.zero
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -52,6 +54,7 @@ struct NeedsAttentionListView: View {
                 rows(model.rows)
             }
         }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { listFrame = $0 }
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
@@ -129,7 +132,7 @@ struct NeedsAttentionListView: View {
                                 NeedsAttentionRowView(
                                     row: row,
                                     now: context.date,
-                                    isSelected: row.id == selection.rowID,
+                                    isSelected: isLit(row, in: rows),
                                     isActionSelected: row.id == selection.rowID && selection.isOnAction,
                                     onOpen: { open(row, $0) },
                                     onAction: { row.action.map { perform($0, on: row) } },
@@ -176,14 +179,43 @@ struct NeedsAttentionListView: View {
         }
     }
 
+    /// One row is lit: while the card stands beside the list, the row it
+    /// answers, so the list says which one was chosen wherever the pointer
+    /// goes; otherwise the selected row.
+    private func isLit(_ row: NeedsAttentionListModel.Row, in rows: [NeedsAttentionListModel.Row]) -> Bool {
+        if rows.contains(where: isAnswered) {
+            return isAnswered(row)
+        }
+        return row.id == selection.rowID
+    }
+
+    private func isAnswered(_ row: NeedsAttentionListModel.Row) -> Bool {
+        guard case let .answer(key) = row.action else { return false }
+        return window.approvalCard.isPresenting(key, in: approvals)
+    }
+
     private func perform(_ action: NeedsAttentionListModel.RowAction, on row: NeedsAttentionListModel.Row) {
         switch action {
         case let .answer(key):
             // Answering moves neither the window nor the pane: the card
-            // opens where it is and takes the keyboard, over the list.
+            // opens where it is and takes the keyboard, left of the list. The
+            // two never overlap: in a window with no room beside the list, the
+            // list closes and the card takes its place under the control.
             guard let presentation = approvals.ledger.entries[key]?.presentation else { return }
-            let anchor = window.needsAttentionAnchor
-            window.approvalCard.present(presentation, from: approvals, openedFrom: anchor == .zero ? nil : anchor)
+            let hasRoom = FloatingPanelPlacement.leftOf(
+                anchor: listFrame,
+                panelSize: CGSize(width: ApprovalCardHost.cardWidth, height: 0),
+                container: CGSize(width: listFrame.maxX, height: .greatestFiniteMagnitude),
+                gap: WeirLayout.Supervision.railPanelGap,
+                margin: WeirLayout.floatingPanelWindowMargin
+            ) != nil
+            if hasRoom {
+                window.approvalCard.present(presentation, from: approvals, openedFrom: listFrame, standsLeftOfOpener: true)
+            } else {
+                let anchor = window.needsAttentionAnchor
+                window.titleBarMenu = nil
+                window.approvalCard.present(presentation, from: approvals, openedFrom: anchor == .zero ? nil : anchor)
+            }
         }
     }
 }
