@@ -338,6 +338,8 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
             env["HOST"] = "localhost"
             env["PROMPT"] = "demo@weir %1~ %% "
             env["PS1"] = "demo@weir \\W $ "
+            // Where the capture script waits for this pane's scene (`DemoFixture.scene`).
+            env["WEIR_DEMO_PANES_READY"] = ProcessInfo.processInfo.environment["WEIR_DEMO_PANES_READY"] ?? ""
         }
         view.extraEnvironment = env
         return view

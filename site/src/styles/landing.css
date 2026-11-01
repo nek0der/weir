@@ -34,7 +34,8 @@ h1 { font-weight: 510; font-size: clamp(38px, 5vw, 64px); line-height: 1.04; let
 .peek::after { content: ""; position: absolute; inset: auto 0 0; height: 45%; background: linear-gradient(transparent, var(--bg)); pointer-events: none }
 
 /* ---------- The app window: its frame, and the captures inside it ---------- */
-.frame { position: relative; border-radius: 12px; overflow: hidden; box-shadow: var(--frame-shadow); background: var(--win) }
+/* The window inside shrinks with the screen, so its corners do too: a fixed radius reads as too round on a phone. */
+.frame { position: relative; border-radius: clamp(4px, 1vw, 12px); overflow: hidden; box-shadow: var(--frame-shadow); background: var(--win) }
 /* The edge is one line drawn over the window, all the way around its corners, fading toward the foot. */
 .frame::after { content: ""; position: absolute; inset: 0; z-index: 3; border-radius: inherit; padding: 1px; pointer-events: none; background: linear-gradient(to bottom, var(--edge-top), var(--edge-mid) 55%, var(--edge-foot)); -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0) }
 .stage-w { width: var(--window-width); height: var(--window-height); transform-origin: 0 0; transition: transform 1s cubic-bezier(.65,0,.2,1) }
@@ -48,7 +49,7 @@ h1 { font-weight: 510; font-size: clamp(38px, 5vw, 64px); line-height: 1.04; let
 .spot { position: absolute; border-radius: 14px; box-shadow: 0 0 0 3000px var(--dimmer); transition: left .8s, top .8s, width .8s, height .8s }
 
 /* ---------- Scroll story ---------- */
-.story { height: 900vh; position: relative }
+.story { height: 1080vh; position: relative }
 /* `dvh` follows a phone browser's bars as they come and go, so the story stays centered in what can be seen. */
 .pin { position: sticky; top: var(--bar); height: calc(100vh - var(--bar)); height: calc(100dvh - var(--bar)); display: flex; flex-direction: column; justify-content: center; gap: clamp(20px, 3.5vh, 36px); padding-block: clamp(24px, 5.5vh, 56px) }
 /* The script gives this box the height of the tallest caption. */
@@ -116,7 +117,7 @@ h1 { font-weight: 510; font-size: clamp(38px, 5vw, 64px); line-height: 1.04; let
 @media (prefers-reduced-motion: reduce) { .stage-w, .cap, .w > * { transition: none } }
 
 /* ---------- Without a script: the hero's image from the markup, and the story as plain text ---------- */
-.no-script-capture { display: block; width: 100%; height: auto; border-radius: 12px }
+.no-script-capture { display: block; width: 100%; height: auto; border-radius: clamp(4px, 1vw, 12px) }
 html:not(.js) .peek, html:not(.js) .st { display: none }
 html:not(.js) .story { height: auto }
 html:not(.js) .pin { position: static; height: auto }

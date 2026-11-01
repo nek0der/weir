@@ -30,7 +30,7 @@ async function capture(name: string, look: string) {
   return { small: small?.src, large: large?.src };
 }
 const captures: Record<string, Record<string, { small?: string; large?: string }>> = {};
-for (const name of ["hero", "needs-attention", "all-projects"]) {
+for (const name of ["hero", "needs-attention", "all-projects", "review"]) {
   captures[name] = { dark: await capture(name, "dark"), light: await capture(name, "light") };
 }
 const heroFile = captureFiles["../assets/captures/hero-dark.png"];

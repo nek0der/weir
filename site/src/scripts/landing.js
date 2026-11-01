@@ -12,6 +12,7 @@
     { r: [960, 0, 480, 430], spot: [1054, 4, 380, 408], img: 'needs-attention' },
     { r: [90, 30, 1260, 840], img: 'all-projects' },
     { r: [960, 0, 480, 560], spot: [1122, 4, 311, 870] },
+    { r: [322, 110, 794, 530], spot: [322, 49, 794, 825], img: 'review' },
     { r: [322, 640, 794, 234], spot: [322, 49, 794, 825] }
   ];
   var cur = 0, caps = document.querySelectorAll('.cap');

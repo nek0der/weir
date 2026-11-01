@@ -24,6 +24,13 @@ struct DemoFixtureTests {
         #expect(DemoFixture.OpenLayer(rawValue: "approval-card") == .approvalCard)
     }
 
+    /// The capture waits for these reports, so a scene without one stops it.
+    @Test func everySlotsScene_reportsItIsOnScreen() {
+        for slot in DemoFixture.Slot.allCases {
+            #expect(DemoFixture.transcript(for: slot).contains("WEIR_DEMO_PANES_READY"), "\(slot)")
+        }
+    }
+
     @Test func language_isJapaneseOnlyWhenNamed() {
         #expect(DemoFixture.language(named: "ja") == .japanese)
         #expect(DemoFixture.language(named: "en") == .english)
@@ -254,7 +261,7 @@ struct DemoFixtureTests {
     /// and reopens them rather than ending the argument.
     @Test func aScenesQuote_isClosedEscapedAndReopened() {
         let command = DemoFixture.scene([DemoFixture.Line(.plain, "don't")], prompt: "p", end: .prompt)
-        #expect(command == "PS1='p \\$ ' PROMPT='p %% ' && clear && printf '%b\\n' 'don'\\''t'")
+        #expect(command.hasPrefix("PS1='p \\$ ' PROMPT='p %% ' && clear && printf '%b\\n' 'don'\\''t' && "))
     }
 
     /// The script starts the demo shells in this folder under its isolated

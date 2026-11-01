@@ -162,6 +162,9 @@ REGION_PATH=""
 if [ -n "${WEIR_DEMO_LAYER:-}" ]; then
   REGION_PATH="${CAPTURE_HOME}/capture-region"
 fi
+# Where each demo pane reports that its scene is on screen (`DemoFixture.scene`).
+PANES_READY_PATH="${CAPTURE_HOME}/panes-ready"
+mkdir -p "${PANES_READY_PATH}"
 CROP_PATH=""
 if [ -n "${WEIR_SCREENSHOT_CROP:-}" ]; then
   CROP_PATH="${REGION_PATH}"
@@ -177,7 +180,7 @@ fi
 # The subshell `exec`s the app, so `$!` is the app's own pid.
 (
   cd "${DEMO_SHELL_DIR}"
-  CFFIXED_USER_HOME="${CAPTURE_HOME}" WEIR_DEMO=1 WEIR_DEMO_REGION_OUT="${REGION_PATH}" exec "${APP_BINARY}" \
+  CFFIXED_USER_HOME="${CAPTURE_HOME}" WEIR_DEMO=1 WEIR_DEMO_REGION_OUT="${REGION_PATH}" WEIR_DEMO_PANES_READY="${PANES_READY_PATH}" exec "${APP_BINARY}" \
     -AppleLanguages "${APPLE_LANGUAGES}" \
     -AppleLocale "${APPLE_LOCALE}" \
     -ApplePersistenceIgnoreState YES
@@ -271,6 +274,38 @@ if [ "${SHELL_COUNT}" -eq 0 ]; then
   cat "${APP_LOG}" >&2
   exit 1
 fi
+
+# Wait for every pane's scene. Until a pane runs it, the pane shows the
+# contributor's own prompt, branch, and path, so a pane that never reports stops
+# the run. Each pane runs under one `login`, the app's direct child, counted
+# again each time because a pane can still be opening.
+panes_open() {
+  local child count=0
+  for child in $(pgrep -P "${APP_PID}"); do
+    [ "$(ps -o comm= -p "${child}" 2>/dev/null)" = "/usr/bin/login" ] && count=$((count + 1))
+  done
+  echo "${count}"
+}
+panes_ready() {
+  find "${PANES_READY_PATH}" -type f | wc -l | tr -d ' '
+}
+every_pane_ready() {
+  local open
+  open="$(panes_open)"
+  # None open is not done: the wait would end at once if panes stop starting under `login`.
+  [ "${open}" -gt 0 ] && [ "$(panes_ready)" -ge "${open}" ]
+}
+for _ in {1..120}; do
+  every_pane_ready && break
+  sleep 0.5
+done
+if ! every_pane_ready; then
+  echo "" >&2
+  echo "error: $(panes_ready) of $(panes_open) demo panes showed their scene, so nothing was captured." >&2
+  exit 1
+fi
+# The prompt a scene ends at draws just after it reports.
+sleep 1
 
 # Wait for the surface to report itself, then for its animation to end. The
 # last report is the one read, so a surface still settling cannot set the crop.
