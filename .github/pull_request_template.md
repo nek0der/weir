@@ -26,5 +26,6 @@
 - [ ] `make review-core` passes (its own CI job; `make test` does not cover it)
 - [ ] Tests added or updated where applicable
 - [ ] User-facing strings added to `Localizable.xcstrings` with both `en` and `ja`
+- [ ] Documents in `site/` updated in every language, if this changes what they describe
 - [ ] Verified manually on macOS 26 or later — see "How verified" above
 - [ ] Code comments are in English
