@@ -19999,16 +19999,6 @@
         }
       }
     },
-    "Answer approval request for %@": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ の承認要求に回答"
-          }
-        }
-      }
-    },
     "Couldn’t Start the Terminal": {
       "comment": "Pane surface NULL recovery title",
       "localizations": {
@@ -21986,23 +21976,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "%lld 行目からのハンクにコメント"
-          }
-        }
-      }
-    },
-    "Answer the Question": {
-      "comment": "Pane, VoiceOver: the badge of a question the agent asks",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Answer the Question"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "質問に回答"
           }
         }
       }

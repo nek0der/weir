@@ -231,7 +231,7 @@ enum WeirLayout {
     static let inlineRenameWellCornerRadius: CGFloat = 4
 
     /// The prompt cache clock in a pane header, sized to sit in the same
-    /// slot as the state mark beside it (`AgentStateMark.Placement.headerStatus`).
+    /// slot as the state mark beside it (`AgentStateMark`, `stateMarkSlot`).
     static let promptCacheClockFontSize = WeirFont.Supervision.Size.row
 
     /// The panel a prompt cache clock opens, after the design: wide enough
@@ -614,6 +614,7 @@ enum WeirLayout {
         static let secondaryButtonHeight = buttonHeight
         static let secondaryButtonCompactHeight: CGFloat = 20
         static let secondaryButtonMiniHeight: CGFloat = 18
+        static let secondaryButtonRowLineHeight = agentBadgeSize + 2
         static let needsAttentionRowCornerRadius: CGFloat = 8
         static let needsAttentionRowSpacing = popoverTwoLineRowSpacing
 

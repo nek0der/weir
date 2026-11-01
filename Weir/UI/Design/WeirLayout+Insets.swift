@@ -50,8 +50,12 @@ extension WeirLayout.Supervision {
         bottom: 0,
         trailing: surfaceHeadingButtonTrailingInset
     )
-    /// Answer… over a row's top trailing corner.
-    static let sessionRowAnswerInsets = EdgeInsets(top: spaceXS, leading: 0, bottom: 0, trailing: spaceSnug)
+    /// Answer… over a row's top trailing corner. Its 1pt edge is the color of
+    /// an open row's fill, so we place its face, the part the eye reads: on the
+    /// badges' right edge, with the gap above it matching those below it and
+    /// under the badges. On a row that is only hovered, the faint edge stands
+    /// 1pt past the badges, which we accept over a shared style for one row.
+    static let sessionRowAnswerInsets = EdgeInsets(top: 3.5, leading: 0, bottom: 0, trailing: sessionRowHorizontalInset - 1)
 
     // MARK: Pane strip
 
