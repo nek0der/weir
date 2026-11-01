@@ -19,6 +19,78 @@ struct DemoFixtureTests {
         #expect(DemoFixture.OpenLayer(rawValue: "needs-attention") == .needsAttention)
         #expect(DemoFixture.OpenLayer(rawValue: "all-projects") == .allProjects)
         #expect(DemoFixture.OpenLayer(rawValue: "needsAttention") == nil)
+        #expect(DemoFixture.OpenLayer(rawValue: "review") == .review)
+        #expect(DemoFixture.OpenLayer(rawValue: "approval-list") == .approvalList)
+        #expect(DemoFixture.OpenLayer(rawValue: "approval-card") == .approvalCard)
+    }
+
+    @Test func language_isJapaneseOnlyWhenNamed() {
+        #expect(DemoFixture.language(named: "ja") == .japanese)
+        #expect(DemoFixture.language(named: "en") == .english)
+        #expect(DemoFixture.language(named: nil) == .english)
+    }
+
+    /// Only the layers that show the approval stage one, so the landing
+    /// page's captures do not change.
+    @Test func onlyTheApprovalLayers_stageAnApproval() {
+        #expect(DemoFixture.OpenLayer.allCases.filter(\.stagesApproval) == [.approvalList, .approvalCard])
+    }
+
+    @Test func stagedReview_opensWithItsCommentCurrent_andItsCountsTrue() async throws {
+        let root = DemoFixture.selectedWorktreeRoot
+        let pool = ReviewDraftWriterPool(drafts: DemoReviewDraftStore(), git: DemoReviewRepository())
+        #expect(try await pool.root(of: root) == root, "Git is not asked")
+        let session = pool.session(root: root)
+        _ = await session.reload(scope: .uncommitted, selectedFileID: DemoFixture.reviewedFile.id)
+        let diff = try await DemoReviewRepository().diff(DemoFixture.reviewedFile, root: root, scope: .uncommitted)
+
+        #expect(diff.lines.count(where: { $0.kind == .added }) == 31)
+        #expect(diff.lines.count(where: { $0.kind == .removed }) == 4)
+        #expect(session.errorMessage == nil)
+        let comment = try #require(session.comments.first)
+        #expect(session.comments.count == 1)
+        #expect(comment.fingerprint == diff.fingerprint)
+        #expect(diff.lines.contains { $0.id == comment.anchor.lineID && $0.text == comment.code })
+        #expect(session.staleCommentIDs.isEmpty)
+
+        let counts = DemoFixture.stagedReviewFiles.map(\.stat)
+        #expect(DemoFixture.worktreeCounts == .changed(
+            files: counts.count,
+            added: counts.map(\.added).reduce(0, +),
+            removed: counts.map(\.removed).reduce(0, +)
+        ))
+    }
+
+    @Test func stagedApproval_staysHeldWhileItsPaneIsOutOfSight_withAClockThatDoesNotMove() throws {
+        let session = WorkspaceSession()
+        _ = session.restore(from: DemoFixture.snapshot)
+        let attention = AttentionState()
+        AgentProjectionAdapter.seedRuntimes(fromBadgesIn: session, into: attention)
+        let store = DemoFixture.makeApprovalStore()
+        store.runtimes = { attention.allRuntimes }
+        let now = SuspendingClock.Instant.now
+        DemoFixture.stageApproval(in: store, now: now)
+
+        #expect(store.isRunning)
+        let input = try JSONSerialization.jsonObject(with: Data(DemoFixture.stagedApproval.inputDescription.utf8))
+        #expect(DemoFixture.stagedApproval.inputAddsToSummary == ApprovalControllerConnection.inputAddsToSummary(
+            input: input,
+            summary: DemoFixture.stagedApproval.summary
+        ))
+        let key = try #require(store.ledger.entries.keys.first)
+        #expect(store.opensCard(key))
+        // The window shows the reminders worktree, and the request's pane is
+        // in another: a person looking at the pane would take it to the prompt.
+        let shown = store.shownPanes(for: DemoFixture.stagedApproval, in: session)
+        #expect(shown == [DemoFixture.Slot.proration.paneID])
+        let windowsPanes = AttentionVisibility(attendedPanes: [DemoFixture.Slot.reminders.paneID], isAppActive: true)
+        #expect(!windowsPanes.allowsHandOff(toAnyOf: shown))
+        #expect(AttentionVisibility(attendedPanes: Set(shown), isAppActive: true).allowsHandOff(toAnyOf: shown))
+        store.handOffSeenRequests(attention: windowsPanes, session: session, holdsWhileHidden: true)
+        #expect(store.ledger.entries[key]?.state == .held)
+        let deadline = try #require(store.serviceDeadlines[DemoFixture.stagedApproval.id])
+        #expect(deadline.remaining(at: now) == .seconds(522))
+        #expect(deadline.remaining(at: now.advanced(by: .seconds(60))) == .seconds(522))
     }
 
     @Test func clockShift_movesNowToTheNamedTime_orToTheDefault() throws {

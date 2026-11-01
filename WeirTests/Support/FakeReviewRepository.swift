@@ -136,3 +136,9 @@ func fakeReviewSession(git: any ReviewRepositoryReading) -> ReviewSession {
         drafts: EphemeralReviewDraftStore()
     )
 }
+
+extension FakeReviewRepository {
+    func root(at directory: URL) async throws -> URL {
+        directory
+    }
+}

@@ -35,10 +35,17 @@ protocol ReviewRepositoryReading: Sendable {
     /// nothing rather than throwing: it is an offer, not a requirement.
     func source(_ file: ReviewFile, root: URL, scope: ReviewScope) async -> [String]
     func defaultBase(at root: URL) async throws -> String?
+    /// The Git top level of a folder, which a review opens on. Throws, in
+    /// Git's own words, outside a repository.
+    func root(at directory: URL) async throws -> URL
 }
 
 /// The live implementation, which is the Git commands themselves.
 struct LiveReviewRepository: ReviewRepositoryReading {
+    func root(at directory: URL) async throws -> URL {
+        try await ReviewGit.root(at: directory)
+    }
+
     func files(at root: URL, scope: ReviewScope) async throws -> [ReviewFile] {
         try await ReviewGit.files(at: root, scope: scope)
     }

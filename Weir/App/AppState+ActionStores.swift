@@ -48,7 +48,7 @@ extension AppState {
             reviewWriters: reviewWriters,
             primaryKeyHint: primaryKeyHint,
             locale: { [settingsStore] in settingsStore.appLocale },
-            gitRoot: { try await ReviewGit.root(at: $0) },
+            gitRoot: { [reviewWriters] in try await reviewWriters.root(of: $0) },
             hunks: ReviewHunkDiscardStores(
                 session: session,
                 windows: windowRegistry,

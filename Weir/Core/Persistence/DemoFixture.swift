@@ -1,8 +1,8 @@
 // DemoFixture.swift
-// Weir — the fixed session demo mode shows: a made-up invoicing product's three projects and their worktrees, for the hero screenshot.
+// Weir — the fixed session demo mode shows: a made-up invoicing product's three projects and their worktrees, for the captures.
 //
 // Powers `scripts/screenshot.sh`: the same session every launch means the
-// README image can be made again without setting up projects, worktrees,
+// README's, the site's, and the documents' images can be made again without setting up projects, worktrees,
 // and agents by hand. Persistence is short-circuited in demo mode (see
 // `SessionStore.load()` / `scheduleSave`), so the in-memory snapshot is the
 // whole truth for that process.
@@ -61,11 +61,42 @@ enum DemoFixture {
     enum OpenLayer: String, CaseIterable {
         case needsAttention = "needs-attention"
         case allProjects = "all-projects"
+        /// The review tab on the uncommitted changes, with one saved comment.
+        case review
+        /// The Needs Attention list with a native approval in it.
+        case approvalList = "approval-list"
+        /// The approval card of that request.
+        case approvalCard = "approval-card"
+
+        /// Whether the layer shows the staged approval. The other layers
+        /// show none, so the landing page's captures stay what they are.
+        var stagesApproval: Bool {
+            self == .approvalList || self == .approvalCard
+        }
     }
 
     /// The layer demo mode opens; `nil` for the plain window, and for a name it
     /// does not know, so a mistyped one shows as the plain capture.
     static let openLayer = isDemoActive ? ProcessInfo.processInfo.environment["WEIR_DEMO_LAYER"].flatMap(OpenLayer.init(rawValue:)) : nil
+
+    /// The language demo mode shows, pinned so a capture does not follow the
+    /// contributor's Mac. Set `WEIR_DEMO_LANGUAGE=ja` for Japanese.
+    static let language = language(named: ProcessInfo.processInfo.environment["WEIR_DEMO_LANGUAGE"])
+
+    /// Anything but `ja` is English. The fixture's own text stays English
+    /// either way: it stands for what a person and their agents wrote.
+    static func language(named name: String?) -> AppLanguage {
+        name == "ja" ? .japanese : .english
+    }
+
+    /// Writes where the open layer's surface is, in the window's points, to
+    /// the file `WEIR_DEMO_REGION_OUT` names. `scripts/screenshot.sh` crops to it.
+    static func writeCaptureRegion(_ frame: CGRect, cornerRadius: CGFloat) {
+        guard let path = ProcessInfo.processInfo.environment["WEIR_DEMO_REGION_OUT"], !path.isEmpty else { return }
+        let text = "\(frame.minX) \(frame.minY) \(frame.width) \(frame.height) \(cornerRadius)"
+        // A capture without its report stops with an error, so a failed write needs no handling of its own.
+        try? SecureFileWrite.writeAtomic(Data(text.utf8), to: URL(fileURLWithPath: path))
+    }
 
     // MARK: - Stable IDs
 
@@ -78,7 +109,7 @@ enum DemoFixture {
     // timestamps on badges and turns are relative to now, so the encoded JSON
     // is not bit-identical across runs; the IDs are.
 
-    fileprivate static func fixtureID(_ role: UInt8, _ index: UInt8) -> UUID {
+    static func fixtureID(_ role: UInt8, _ index: UInt8) -> UUID {
         UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, role, index))
     }
 

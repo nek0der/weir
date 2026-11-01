@@ -6,9 +6,12 @@
 # takes the most recent Weir.app under Xcode DerivedData (we don't rebuild
 # here so the script stays fast and decoupled from the toolchain).
 #
-# WEIR_DEMO_APPEARANCE=dark captures the dark look; WEIR_DEMO_LAYER=needs-attention
-# or all-projects captures that layer open; WEIR_DEMO_TIME=09:15 sets the time of
-# day it shows, 14:30 by default; WEIR_SCREENSHOT_OUT writes the image
+# WEIR_DEMO_APPEARANCE=dark captures the dark look; WEIR_DEMO_LAYER=needs-attention,
+# all-projects, review, approval-list, or approval-card captures that layer open,
+# and stops when it does not report itself open, so a surface that failed to open
+# never becomes an image; WEIR_SCREENSHOT_CROP=1 crops to that surface;
+# WEIR_DEMO_TIME=09:15 sets the time of day it shows, 14:30 by default;
+# WEIR_DEMO_LANGUAGE=ja shows the Japanese UI; WEIR_SCREENSHOT_OUT writes the image
 # somewhere other than the hero's path.
 #
 # Usage:
@@ -144,19 +147,39 @@ CAPTURE_HOME="$(cd "${CAPTURE_HOME_PATH}" && pwd -P)"
 DEMO_SHELL_DIR="${CAPTURE_HOME}/code/duesmith-feat-overdue-reminders"
 mkdir -p "${DEMO_SHELL_DIR}"
 
+# The AppKit side of the language, which `WEIR_DEMO_LANGUAGE` pins for SwiftUI.
+if [ "${WEIR_DEMO_LANGUAGE:-}" = "ja" ]; then
+  APPLE_LANGUAGES='(ja)'
+  APPLE_LOCALE=ja_JP
+else
+  APPLE_LANGUAGES='(en-US)'
+  APPLE_LOCALE=en_US
+fi
+
+# Where the app reports the layer's surface. Inside the isolated home, so the
+# cleanup takes it.
+REGION_PATH=""
+if [ -n "${WEIR_DEMO_LAYER:-}" ]; then
+  REGION_PATH="${CAPTURE_HOME}/capture-region"
+fi
+CROP_PATH=""
+if [ -n "${WEIR_SCREENSHOT_CROP:-}" ]; then
+  CROP_PATH="${REGION_PATH}"
+fi
+
 # Launch the selected bundle's executable directly. `open -a` resolves through
 # LaunchServices and can activate an installed copy with the same bundle id.
 # Keeping the child pid gives activation, window lookup, capture, and cleanup
 # one unambiguous identity. Give it an isolated Application Support directory
 # so an installed copy cannot reload the user's settings into the demo process.
 # Ignore macOS window restoration so a saved frame cannot replace DemoFixture's
-# reproducible 1440×900 frame. Demo mode forces English UI and an opaque toolbar.
+# reproducible 1440×900 frame. Demo mode forces its language and an opaque toolbar.
 # The subshell `exec`s the app, so `$!` is the app's own pid.
 (
   cd "${DEMO_SHELL_DIR}"
-  CFFIXED_USER_HOME="${CAPTURE_HOME}" WEIR_DEMO=1 exec "${APP_BINARY}" \
-    -AppleLanguages '(en-US)' \
-    -AppleLocale en_US \
+  CFFIXED_USER_HOME="${CAPTURE_HOME}" WEIR_DEMO=1 WEIR_DEMO_REGION_OUT="${REGION_PATH}" exec "${APP_BINARY}" \
+    -AppleLanguages "${APPLE_LANGUAGES}" \
+    -AppleLocale "${APPLE_LOCALE}" \
     -ApplePersistenceIgnoreState YES
 ) >"${APP_LOG}" 2>&1 &
 APP_PID=$!
@@ -249,6 +272,24 @@ if [ "${SHELL_COUNT}" -eq 0 ]; then
   exit 1
 fi
 
+# Wait for the surface to report itself, then for its animation to end. The
+# last report is the one read, so a surface still settling cannot set the crop.
+if [ -n "${REGION_PATH}" ]; then
+  for _ in {1..60}; do
+    [ -s "${REGION_PATH}" ] && break
+    sleep 0.5
+  done
+  if [ ! -s "${REGION_PATH}" ]; then
+    echo "" >&2
+    echo "error: layer '${WEIR_DEMO_LAYER:-}' reported no surface, so nothing was captured." >&2
+    echo "" >&2
+    echo "App output:" >&2
+    cat "${APP_LOG}" >&2
+    exit 1
+  fi
+  sleep 1.5
+fi
+
 # Capture the exact process's normal window through ScreenCaptureKit. Filtering
 # by pid avoids collisions with an installed copy; `pointPixelScale` preserves
 # Retina detail, and the desktop-independent window filter keeps the rounded
@@ -261,15 +302,16 @@ fi
 # seconds to reach the fixture's frame, the display it is on must be 2x, and
 # the image must come out at exactly that size.
 CAPTURE_STATUS=0
-swift - "${APP_PID}" "${CAPTURE_PATH}" <<'SWIFT' 2>"${CAPTURE_LOG}" || CAPTURE_STATUS=$?
+swift - "${APP_PID}" "${CAPTURE_PATH}" "${CROP_PATH}" <<'SWIFT' 2>"${CAPTURE_LOG}" || CAPTURE_STATUS=$?
 import AppKit
 import ImageIO
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 
 _ = NSApplication.shared
-guard CommandLine.arguments.count == 3,
+guard CommandLine.arguments.count == 4,
       let raw = Int32(CommandLine.arguments[1]) else { exit(1) }
+let regionPath = CommandLine.arguments[3]
 let outputURL = URL(fileURLWithPath: CommandLine.arguments[2]) as CFURL
 let expectedPoints = CGSize(width: 1440, height: 900)
 let expectedScale: CGFloat = 2
@@ -291,15 +333,25 @@ func largestWindow() async throws -> SCWindow? {
 }
 
 var found = try await largestWindow()
-let deadline = Date().addingTimeInterval(5)
+// Long enough for a Mac busy building, whose app can take its time to show.
+let deadline = Date().addingTimeInterval(20)
 while found?.frame.size != expectedPoints, Date() < deadline {
     try await Task.sleep(for: .milliseconds(250))
     found = try await largestWindow()
 }
-guard let window = found else { exit(2) }
+guard let window = found else {
+    report("no window of the app is on screen; was another Space or a full-screen app in front?")
+    exit(2)
+}
 guard window.frame.size == expectedPoints else {
     report("window is \(window.frame.size) points, expected \(expectedPoints)")
     exit(5)
+}
+
+// Another app in front changes how the window draws, so that image is refused.
+guard NSRunningApplication(processIdentifier: raw)?.isActive == true else {
+    report("the app is not in front; something took the focus. Stay off the mouse and keyboard while this runs")
+    exit(2)
 }
 
 let filter = SCContentFilter(desktopIndependentWindow: window)
@@ -317,22 +369,76 @@ configuration.showsCursor = false
 configuration.ignoreShadowsSingleWindow = true
 configuration.shouldBeOpaque = false
 
-let image: CGImage = try await SCScreenshotManager.captureImage(
+let captured: CGImage = try await SCScreenshotManager.captureImage(
     contentFilter: filter,
     configuration: configuration
 )
-guard image.width == configuration.width, image.height == configuration.height else {
-    report("captured \(image.width)×\(image.height) pixels, expected \(configuration.width)×\(configuration.height)")
+guard captured.width == configuration.width, captured.height == configuration.height else {
+    report("captured \(captured.width)×\(captured.height) pixels, expected \(configuration.width)×\(configuration.height)")
     exit(7)
+}
+
+// The surface the layer reported, in the window's points. No room around it,
+// which would show pieces of whatever the surface stands over.
+var image = captured
+if !regionPath.isEmpty {
+    let numbers = (try String(contentsOfFile: regionPath, encoding: .utf8))
+        .split(separator: " ")
+        .compactMap { Double($0) }
+    guard numbers.count == 5 else {
+        report("the region file holds no frame")
+        exit(8)
+    }
+    let region = CGRect(x: numbers[0], y: numbers[1], width: numbers[2], height: numbers[3])
+        .intersection(CGRect(origin: .zero, size: expectedPoints))
+    let pixels = CGRect(
+        x: region.minX * scale,
+        y: region.minY * scale,
+        width: region.width * scale,
+        height: region.height * scale
+    ).integral
+    guard let cropped = captured.cropping(to: pixels) else {
+        report("the region \(region) is outside the window")
+        exit(8)
+    }
+    image = cropped
+    // A floating surface's corners and its last point at each edge show what it
+    // stands over, so only the surface itself stays.
+    let radius = numbers[4] * scale
+    if radius > 0 {
+        let size = CGSize(width: cropped.width, height: cropped.height)
+        guard let context = CGContext(
+            data: nil,
+            width: cropped.width,
+            height: cropped.height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: cropped.colorSpace ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { exit(8) }
+        let edge = 2 * scale
+        let surface = CGRect(origin: .zero, size: size).insetBy(dx: edge, dy: edge)
+        context.addPath(CGPath(roundedRect: surface, cornerWidth: radius - edge, cornerHeight: radius - edge, transform: nil))
+        context.clip()
+        context.draw(cropped, in: CGRect(origin: .zero, size: size))
+        guard let masked = context.makeImage() else { exit(8) }
+        image = masked
+    }
 }
 guard let destination = CGImageDestinationCreateWithURL(
     outputURL,
     UTType.png.identifier as CFString,
     1,
     nil
-) else { exit(3) }
+) else {
+    report("could not create the image file")
+    exit(3)
+}
 CGImageDestinationAddImage(destination, image, nil)
-guard CGImageDestinationFinalize(destination) else { exit(4) }
+guard CGImageDestinationFinalize(destination) else {
+    report("could not write the image file")
+    exit(4)
+}
 SWIFT
 
 if [ "${CAPTURE_STATUS}" -ge 5 ] && [ "${CAPTURE_STATUS}" -le 7 ]; then
@@ -344,6 +450,11 @@ if [ "${CAPTURE_STATUS}" -ge 5 ] && [ "${CAPTURE_STATUS}" -le 7 ]; then
   echo "       points with the menu bar (a 13.6-inch MacBook Air at its default" >&2
   echo "       resolution is; a 1440×900 display is not). Leave the window there" >&2
   echo "       and rerun." >&2
+  exit 1
+elif [ "${CAPTURE_STATUS}" -ge 2 ] && [ "${CAPTURE_STATUS}" -le 4 ] || [ "${CAPTURE_STATUS}" -eq 8 ]; then
+  echo "" >&2
+  echo "error: could not capture the launched Weir window." >&2
+  echo "       $(cat "${CAPTURE_LOG}")" >&2
   exit 1
 elif [ "${CAPTURE_STATUS}" -ne 0 ]; then
   echo "" >&2

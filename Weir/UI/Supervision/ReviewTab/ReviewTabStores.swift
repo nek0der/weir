@@ -21,7 +21,7 @@ struct ReviewTabStores {
     /// The language the toasts the review raises are named in.
     let locale: () -> Locale
     /// The Git top level of a folder, which the review opens on
-    /// (`ReviewGit.root(at:)`). It throws, in Git's own words, outside a
+    /// (`ReviewDraftWriterPool.root(of:)`). It throws, in Git's own words, outside a
     /// repository.
     let gitRoot: (URL) async throws -> URL
     /// What the hunks' discards and their undos use.

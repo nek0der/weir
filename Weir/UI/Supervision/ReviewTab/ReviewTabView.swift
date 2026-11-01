@@ -71,6 +71,7 @@ struct ReviewTabView: View {
         )) {
             await handler?.refreshPathsOutsideTurns()
         }
+        .reportsDemoCaptureRegion(for: .review, isReady: window.reviewSession?.diff != nil)
     }
 
     private struct OutsideTurnsRead: Equatable {

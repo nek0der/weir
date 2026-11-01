@@ -5,6 +5,8 @@ sidebar:
   order: 4
 ---
 
+![A Weir window: the sidebar of projects and worktrees on the left, the agent's pane in the middle, and the Changes panel of its turns on the right](../../../assets/captures/docs/window-en.png)
+
 ## Project
 
 A Git repository you opened in Weir. Each window shows one project at a time, and the sidebar lists all of them.

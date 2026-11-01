@@ -54,6 +54,12 @@ struct NeedsAttentionListView: View {
                 rows(model.rows)
             }
         }
+        .reportsDemoCaptureRegion(
+            for: .needsAttention,
+            .approvalList,
+            cornerRadius: WeirLayout.floatingPanelCornerRadius,
+            isReady: !model.rows.isEmpty
+        )
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { listFrame = $0 }
         .focusable()
         .focusEffectDisabled()

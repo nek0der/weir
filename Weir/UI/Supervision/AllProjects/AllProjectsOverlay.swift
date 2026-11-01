@@ -123,6 +123,7 @@ private struct AllProjectsPanel: View {
         // On the window's ground, so the cards read on the same ground as
         // the surfaces they stand for.
         .overlayPanelSurface()
+        .reportsDemoCaptureRegion(for: .allProjects)
         .background(WindowOverlayKeyMonitor(
             key: AllProjectsKeys.key(for:),
             onKey: { handle($0, self.model) },

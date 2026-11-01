@@ -177,7 +177,18 @@ final class ApprovalPresentationStore {
     /// a request reaches Weir through the service rather than only as the
     /// agent's own prompt.
     var isRunning: Bool {
-        observerTask != nil
+        observerTask != nil || isStaged
+    }
+
+    /// Demo mode's stand-in for a running service: it starts no service
+    /// (`AgentIntegrationServiceRegistrar`), and a list that thinks none runs
+    /// offers no card to answer on.
+    private var isStaged = false
+
+    /// Takes demo mode's request (`DemoFixture.stageApproval`).
+    func stage(_ projection: ApprovalControllerConnection.Projection, epoch: UUID, now: SuspendingClock.Instant) {
+        isStaged = true
+        apply(projection, epoch: epoch, now: now)
     }
 
     func start() {

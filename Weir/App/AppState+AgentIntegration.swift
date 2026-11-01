@@ -28,6 +28,11 @@ extension AppState {
                 approvalPresentation?.stop()
             }
         }
+        // Before the attention queue starts: what the list holds by then was
+        // waiting at launch, so this request posts no real notification.
+        if DemoFixture.openLayer?.stagesApproval == true {
+            DemoFixture.stageApproval(in: approvalPresentation)
+        }
         connectWindowOverlays()
         connectProgramStatus()
         startApprovalHandOff()
