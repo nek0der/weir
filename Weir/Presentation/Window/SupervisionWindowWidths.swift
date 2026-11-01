@@ -63,16 +63,24 @@ enum SupervisionWindowWidths {
         var leading: CGFloat
         /// What Needs Attention and the changes button are offered.
         var trailing: CGFloat
+        /// How far right of the bar's center back, forward, and the field
+        /// stand. 0 unless the window is too narrow for the names.
+        var groupOffset: CGFloat = 0
     }
 
     /// The title bar's fixed measures: its insets (the leading one past the
     /// traffic lights, or in their place in full screen), the gap between
-    /// its parts, and the field's range.
+    /// its parts, the field's range and the width it holds against long
+    /// names, how narrow the names go before the field gives way to them, and
+    /// the room they are given by moving the field off the center.
     struct TitleBarMetrics: Equatable {
         var leadingInset: CGFloat
         var trailingInset: CGFloat
         var spacing: CGFloat
         var fieldRange: ClosedRange<CGFloat>
+        var fieldPreferred: CGFloat
+        var placeFloor: CGFloat
+        var placeRoomOffCenter: CGFloat
     }
 
     /// How the title bar shares `width`: the back and forward buttons
@@ -83,8 +91,15 @@ enum SupervisionWindowWidths {
     /// place controls, so the field's center moves by only half their
     /// width, and the place controls keep the room they had beside the
     /// field. The field is as wide as `fieldRange` allows while both sides
-    /// keep their ideal widths, and gives way first, down to the range's
-    /// floor; the buttons never do. Past that the leading names are cut.
+    /// keep their ideal widths, and gives way first, down to `fieldPreferred`,
+    /// where its placeholder still reads. A long name then gives way, down to
+    /// `placeFloor`, as a project's name is known by its start and the field
+    /// is what the bar is for. Only then does the field go to the range's
+    /// floor; the buttons never give way. Past that the names are cut further.
+    /// While the names have less than `placeRoomOffCenter` and the trailing
+    /// side has room it does not use, the group moves right of the center to
+    /// give it to them: a name read matters more in a narrow window than a
+    /// centered field, and nothing has to be hidden for it.
     /// Each side's room is half the bar less half the group, the gap beside
     /// the group, and the bar's inset on that side. `historyWidth` 0 is a
     /// bar without the buttons, whose field stands on the center itself.
@@ -101,14 +116,20 @@ enum SupervisionWindowWidths {
         let history = historyWidth > 0 ? historyWidth + spacing : 0
         let leadingFree = half - metrics.leadingInset - spacing - leadingIdeal
         let trailingFree = half - metrics.trailingInset - spacing - trailingIdeal
-        let field = min(max(2 * min(leadingFree, trailingFree) - history, range.lowerBound), range.upperBound)
+        let leadingAtFloor = half - metrics.leadingInset - spacing - min(leadingIdeal, metrics.placeFloor)
+        let held = min(metrics.fieldPreferred, 2 * min(leadingAtFloor, trailingFree) - history)
+        let wanted = max(2 * min(leadingFree, trailingFree) - history, held)
+        let field = min(max(wanted, range.lowerBound), range.upperBound)
         let halfGroup = (history + field) / 2
         let leadingRoom = max(half - halfGroup - spacing - metrics.leadingInset, 0)
         let trailingRoom = max(half - halfGroup - spacing - metrics.trailingInset, 0)
+        let nameShortfall = min(leadingIdeal, metrics.placeRoomOffCenter) - leadingRoom
+        let groupOffset = max(min(nameShortfall, trailingRoom - trailingIdeal), 0)
         return TitleBar(
             field: field,
-            leading: min(leadingIdeal, leadingRoom),
-            trailing: min(trailingIdeal, trailingRoom)
+            leading: min(leadingIdeal, leadingRoom + groupOffset),
+            trailing: min(trailingIdeal, trailingRoom),
+            groupOffset: groupOffset
         )
     }
 

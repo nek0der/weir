@@ -100,6 +100,18 @@ extension WeirLayout.Supervision {
     /// (`SupervisionWindowWidths.titleBar`). At the floor the placeholder
     /// is cut and the field's key still shows.
     static let paletteFieldWidthRange: ClosedRange<CGFloat> = 150...340
+    /// The width the field holds against long names, where its placeholder
+    /// still reads whole in both languages.
+    static let paletteFieldPreferredWidth: CGFloat = 260
+    /// The widest the project control is, however much room the bar has.
+    static let titleBarProjectMaxWidth: CGFloat = 240
+    /// How narrow long names go, shared by the project and the worktree,
+    /// before the field gives way to them.
+    static let titleBarPlaceFloorWidth: CGFloat = 200
+    /// The room long names are given in a narrow window by moving the field
+    /// off the bar's center, which is what the trailing side leaves unused at
+    /// the window's minimum.
+    static let titleBarPlaceRoomOffCenter: CGFloat = 270
     static let paletteFieldCornerRadius = iconControlCornerRadius
     static let paletteFieldSymbolSize = WeirFont.Supervision.Size.label
     /// Wider than the field it hangs under, so a row's name, detail,

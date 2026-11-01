@@ -32,7 +32,11 @@ struct ProjectMenuButton: View {
             }
         }
         .heldKeyCap(.showProjectMenu)
-        .help(Text(verbatim: ProjectMenuModel.controlHelp(otherProjectsCount: others.count, locale: locale)))
+        // The name first, as the bar may have cut it.
+        .help(Text(verbatim: AgentStatusText.joined(
+            [title, ProjectMenuModel.controlHelp(otherProjectsCount: others.count, locale: locale)],
+            locale: locale
+        )))
         .accessibilityLabel(Text(verbatim: title))
         .accessibilityHint(Text(
             "Shows the projects to switch to",

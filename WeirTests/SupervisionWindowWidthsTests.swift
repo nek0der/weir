@@ -128,7 +128,15 @@ struct SupervisionWindowWidthsTests {
             leadingIdeal: leading,
             historyWidth: history,
             trailingIdeal: trailing,
-            metrics: .init(leadingInset: leadingInset, trailingInset: 12, spacing: 6, fieldRange: 150...340)
+            metrics: .init(
+                leadingInset: leadingInset,
+                trailingInset: 12,
+                spacing: 6,
+                fieldRange: 150...340,
+                fieldPreferred: 260,
+                placeFloor: 200,
+                placeRoomOffCenter: 270
+            )
         )
     }
 
@@ -145,11 +153,46 @@ struct SupervisionWindowWidthsTests {
         #expect(bar == .init(field: 250, leading: 142, trailing: 168))
     }
 
-    /// At its floor the field stays; the leading names are cut to what is
-    /// left beside it.
+    /// At its floor the field stays; the group moves right of the center to
+    /// give the names up to 270, and they are cut to that.
     @Test func titleBar_longPlace_cutsTheNamesPastTheFieldsFloor() {
         let bar = Self.titleBar(width: 730, leading: 400, trailing: 168)
-        #expect(bar == .init(field: 150, leading: 192, trailing: 168))
+        #expect(bar == .init(field: 150, leading: 270, trailing: 168, groupOffset: 78))
+    }
+
+    /// A long project name no longer squeezes the field where the window
+    /// has room: the field holds its preferred width and the name is cut to
+    /// what is left, 640 - 166 - 6 - 92 with back and forward beside it.
+    @Test func titleBar_longPlace_inAWideWindow_cutsTheNameBeforeTheFieldGoesPastItsPreferredWidth() {
+        let bar = Self.titleBar(width: 1280, leading: 900, history: 66, trailing: 70)
+        #expect(bar == .init(field: 260, leading: 376, trailing: 70))
+    }
+
+    /// The field still takes all the room a short name leaves it.
+    @Test func titleBar_shortPlace_leavesTheFieldAboveItsPreferredWidth() {
+        let bar = Self.titleBar(width: 1280, leading: 300, history: 66, trailing: 70)
+        #expect(bar.field > 260)
+        #expect(bar.leading == 300)
+    }
+
+    /// At the window's minimum the names take what the trailing side leaves
+    /// unused, so the group moves right of the center: 341.5 - 111 - 6 - 92
+    /// is the 132.5 it would leave them on the center.
+    @Test func titleBar_longPlace_atTheWindowsMinimum_movesTheGroupOffCenter() {
+        let bar = Self.titleBar(width: 683, leading: 900, history: 66, trailing: 70)
+        #expect(bar == .init(field: 150, leading: 270, trailing: 70, groupOffset: 137.5))
+    }
+
+    /// The group moves only as far as the trailing side has room to spare.
+    @Test func titleBar_longPlace_neverMovesTheGroupOverTheTrailingSide() {
+        let bar = Self.titleBar(width: 683, leading: 900, history: 66, trailing: 200)
+        #expect(bar.groupOffset == 12.5)
+        #expect(bar.trailing == 200)
+    }
+
+    /// A window with room keeps the group on the center, however long the name.
+    @Test func titleBar_wideWindow_keepsTheGroupOnTheCenter() {
+        #expect(Self.titleBar(width: 1280, leading: 900, history: 66, trailing: 70).groupOffset == 0)
     }
 
     /// At the window's real minimum, the two trailing buttons (32 + 6 + 32)
@@ -171,11 +214,11 @@ struct SupervisionWindowWidthsTests {
         #expect(bar.trailing < 250)
     }
 
-    /// Full screen takes the traffic lights away; the field still stands
-    /// on the bar's center, so the sides' rooms differ only by the insets.
-    @Test func titleBar_withoutTrafficLights_keepsTheFieldCentered() {
+    /// Full screen takes the traffic lights away, which leaves the names more
+    /// room, so the group moves only as far as the trailing side allows.
+    @Test func titleBar_withoutTrafficLights_movesTheGroupLess() {
         let bar = Self.titleBar(width: 730, leading: 400, trailing: 168, leadingInset: 18)
-        #expect(bar == .init(field: 150, leading: 266, trailing: 168))
+        #expect(bar == .init(field: 260, leading: 260, trailing: 168, groupOffset: 49))
     }
 
     /// Back and forward stand with the field, so in a narrow window the
@@ -194,11 +237,12 @@ struct SupervisionWindowWidthsTests {
         #expect(bar == .init(field: 340, leading: 142, trailing: 168))
     }
 
-    /// At the field's floor the buttons keep their width and the names are
-    /// cut to what is left: half the bar less half the group (66 + 6 + 150).
+    /// At the field's floor the buttons keep their width, and the group moves
+    /// as far as the trailing side has room: the 156 left on the center (half
+    /// the bar less half the group, 66 + 6 + 150), and its 68 to spare.
     @Test func titleBar_withHistory_longPlace_cutsTheNamesPastTheFieldsFloor() {
         let bar = Self.titleBar(width: 730, leading: 400, history: Self.historyWidth, trailing: 168)
-        #expect(bar == .init(field: 150, leading: 156, trailing: 168))
+        #expect(bar == .init(field: 150, leading: 224, trailing: 168, groupOffset: 68))
     }
 
     @Test func titleBar_tooNarrowForAnything_offersNoNegativeWidths() {
@@ -236,19 +280,15 @@ struct SupervisionWindowWidthsTests {
     }
 
     /// At a 730pt window with the traffic lights shown and back and forward
-    /// beside the field, the leading side is offered 156pt
-    /// (`titleBar_withHistory_longPlace_cutsTheNamesPastTheFieldsFloor`),
-    /// and the measured detached case needs 202.5: both names are
-    /// cut, to an even 75pt each. On record as the trade-off, not a bug: the
-    /// row has no room for both, the field is at its floor, and the
-    /// buttons stand with the field. Without them the branch
-    /// kept its whole name (192pt offered: 94.5 and 91.5).
-    @Test func placeControls_inA730ptWindow_cutBothNamesOfTheDetachedCase() {
+    /// beside the field, the center would leave the leading side 156pt, and
+    /// the measured detached case needs 202.5. The group moves right of the
+    /// center into the trailing side's spare room, so both names stay whole.
+    @Test func placeControls_inA730ptWindow_keepBothNamesOfTheDetachedCase() {
         let bar = Self.titleBar(width: 730, leading: 202.5, history: Self.historyWidth, trailing: 168)
-        #expect(bar.leading == 156)
-        #expect(SupervisionWindowWidths.placeControlWidths(ideals: [105, 91.5], spacing: 6, width: bar.leading) == [75, 75])
+        #expect(bar.leading == 202.5)
+        #expect(SupervisionWindowWidths.placeControlWidths(ideals: [105, 91.5], spacing: 6, width: bar.leading) == [105, 91.5])
         let withoutHistory = Self.titleBar(width: 730, leading: 202.5, trailing: 168)
-        #expect(SupervisionWindowWidths.placeControlWidths(ideals: [105, 91.5], spacing: 6, width: withoutHistory.leading) == [94.5, 91.5])
+        #expect(SupervisionWindowWidths.placeControlWidths(ideals: [105, 91.5], spacing: 6, width: withoutHistory.leading) == [105, 91.5])
     }
 }
 
@@ -266,7 +306,15 @@ struct SupervisionTitleBarLayoutTests {
 
     private static func layOut(width: CGFloat, leading: CGFloat, history: CGFloat = 58, trailing: CGFloat) -> Frames {
         let frames = Frames()
-        let metrics = SupervisionWindowWidths.TitleBarMetrics(leadingInset: 92, trailingInset: 12, spacing: 6, fieldRange: 150...340)
+        let metrics = SupervisionWindowWidths.TitleBarMetrics(
+            leadingInset: 92,
+            trailingInset: 12,
+            spacing: 6,
+            fieldRange: 150...340,
+            fieldPreferred: 260,
+            placeFloor: 200,
+            placeRoomOffCenter: 270
+        )
         let bar = SupervisionTitleBarLayout(metrics: metrics) {
             Color.clear.frame(minWidth: 0, idealWidth: leading, maxWidth: leading).frame(height: 28)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frames.leading = $0 }
@@ -304,12 +352,14 @@ struct SupervisionTitleBarLayoutTests {
         #expect(frames.field.midX == 365)
     }
 
-    /// A long place is cut beside the buttons rather than push the group
-    /// off the center or under the buttons.
-    @Test func longPlace_leavesTheGroupCentered() {
+    /// In a narrow window a long place moves the group right of the center,
+    /// only into what the trailing side leaves unused, and is cut beside the
+    /// buttons rather than run under them.
+    @Test func longPlace_movesTheGroupIntoTheTrailingSidesSpareRoom() {
         let frames = Self.layOut(width: 730, leading: 400, trailing: 168)
         #expect(frames.field.width == 150)
-        #expect((frames.history.minX + frames.field.maxX) / 2 == 365)
+        #expect((frames.history.minX + frames.field.maxX) / 2 == 437)
         #expect(frames.leading.maxX <= frames.history.minX - 6)
+        #expect(frames.trailing.minX >= frames.field.maxX + 6)
     }
 }
