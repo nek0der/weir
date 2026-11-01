@@ -161,31 +161,36 @@ struct PopUpMenuButtonTests {
         #expect(menu.items[0].accessibilityValue() as? String == "1 unviewed turn")
     }
 
-    @Test("a heading carries its badge and name in their own colors, so it does not read as an item that is off")
-    func make_headingKeepsItsColors() throws {
-        let badge = NSImage(size: NSSize(width: 16, height: 12))
-        let menu = PopUpMenu.make([
-            .heading(PopUpMenuHeading(
-                title: "Claude #4",
-                subtitle: "Unviewed 2",
-                image: { badge },
-                accessibilityLabel: "Claude #4, 2 unviewed"
-            ))
-        ], locale: Locale(identifier: "en"))
+    @Test("a numbered item draws its digits at one width, so its words stay in a column")
+    func make_tabularDigits() throws {
+        var numbered = PopUpMenuItem(verbatim: "T1 · Fix") {}
+        numbered.hasTabularDigits = true
+        let menu = PopUpMenu.make([.item(numbered)], locale: Locale(identifier: "en"))
 
-        let item = try #require(menu.items.first)
-        #expect(item.isSectionHeader)
-        // A heading is drawn as a disabled item, which fades an item image:
-        // the badge rides in the title instead.
-        #expect(item.image == nil)
-        let title = try #require(item.attributedTitle)
-        #expect(title.string == "\u{FFFC} Claude #4\u{2028}Unviewed 2")
-        let attachment = title.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment
-        #expect(attachment?.image === badge)
-        let name = (title.string as NSString).range(of: "Claude #4")
-        #expect(title.attribute(.foregroundColor, at: name.location, effectiveRange: nil) as? NSColor == .labelColor)
-        let state = (title.string as NSString).range(of: "Unviewed 2")
-        #expect(title.attribute(.foregroundColor, at: state.location, effectiveRange: nil) as? NSColor == .secondaryLabelColor)
-        #expect(item.accessibilityLabel() == "Claude #4, 2 unviewed")
+        let title = try #require(menu.items.first?.attributedTitle)
+        #expect(title.string == "T1 · Fix")
+        let font = try #require(title.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)
+        let widths = ["1", "8"].map { ($0 as NSString).size(withAttributes: [.font: font]).width }
+        #expect(widths[0] == widths[1])
+    }
+
+    @Test("an item too wide for a menu is cut, and its tooltip and VoiceOver keep it whole")
+    func make_cutsAWideItem() throws {
+        let long = String(repeating: "とても長い会話の名前", count: 20)
+        let menu = PopUpMenu.make([
+            .item(PopUpMenuItem(verbatim: long, subtitle: long) {}),
+            .item(PopUpMenuItem(verbatim: long, help: "Says more", accessibilityLabel: "Named") {}),
+            .item(PopUpMenuItem(verbatim: "Short") {})
+        ], locale: Locale(identifier: "ja"))
+
+        let lines = try #require(menu.items[0].attributedTitle?.string.split(separator: "\n").map(String.init))
+        #expect(lines.count == 2)
+        #expect(lines.allSatisfy { $0.hasSuffix("…") && MenuLine.width(of: $0) <= MenuLine.maxWidth + 1 })
+        #expect(menu.items[0].toolTip == long)
+        #expect(menu.items[0].accessibilityLabel() == long)
+        #expect(menu.items[1].toolTip == "Says more", "a tooltip of its own stays")
+        #expect(menu.items[1].accessibilityLabel() == "Named")
+        #expect(menu.items[2].title == "Short")
+        #expect(menu.items[2].toolTip == nil)
     }
 }

@@ -20,8 +20,8 @@ enum ConversationMenuItem {
         perform: @escaping @MainActor () -> Void
     ) -> PopUpMenuItem {
         PopUpMenuItem(
-            // Cut, as a menu is as wide as its widest item; the tooltip
-            // and VoiceOver say the whole name.
+            // The title cut before its number, which a cut of the whole
+            // line would lose; the tooltip and VoiceOver say the whole name.
             verbatim: ConversationText.menuName(choice, locale: locale),
             subtitle: ConversationText.detail(choice, locale: locale),
             isChecked: isChecked,

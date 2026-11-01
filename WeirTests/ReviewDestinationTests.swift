@@ -128,8 +128,9 @@ struct ReviewDestinationTests {
         #expect(choices.map(\.agent?.conversation) == [conversation.conversation, nil], "a kind alone keeps the pane's name")
         #expect(choices.map { ReviewTabText.destinationLabel($0, locale: Self.english) } == [long, "Codex"])
         let named = try #require(choices.first)
-        #expect(ReviewTabText
-            .destinationChoice(named, foreground: "claude", form: .menu, locale: Self.english) == String(long.prefix(32)) + "… · claude")
+        let menu = ReviewTabText.destinationChoice(named, foreground: "claude", form: .menu, locale: Self.english)
+        #expect(menu.hasPrefix(String(long.prefix(12))) && menu.hasSuffix("… · claude"))
+        #expect(MenuLine.width(of: menu) <= MenuLine.titleBeforeNumberWidth + MenuLine.width(of: " · claude") + 1)
         #expect(ReviewTabText.destinationChoice(named, foreground: "claude", locale: Self.english) == "\(long) · claude")
         #expect(
             ReviewTabText.destinationChoice(named, foreground: "claude", form: .spoken, locale: Self.english)

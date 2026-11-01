@@ -58,8 +58,10 @@ struct IgnoredFilesList: View {
                         get: { draft.contains(path) },
                         set: { _ in draft.toggle(path) }
                     )) {
-                        Text(verbatim: path)
+                        Text(verbatim: MenuLine.fit(path, as: .path))
                     }
+                    .help(Text(verbatim: path))
+                    .accessibilityLabel(Text(verbatim: path))
                 }
             } label: {
                 Text(LocalizedStringResource(

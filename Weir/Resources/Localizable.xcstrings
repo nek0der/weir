@@ -19212,57 +19212,6 @@
         }
       }
     },
-    "review.scopeAllConversations": {
-      "comment": "Review scope menu: the heading over the worktree's unviewed turns, every conversation's as one range",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "All Conversations"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "すべての会話"
-          }
-        }
-      }
-    },
-    "review.scopeMoreConversations": {
-      "comment": "Review scope menu: the heading over further conversations with unviewed turns, each folded into one entry",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "More Conversations"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ほかの会話"
-          }
-        }
-      }
-    },
-    "review.scopeTurns": {
-      "comment": "Review scope menu: the submenu of a conversation's single turns, newest first",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Turns"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "ターン"
-          }
-        }
-      }
-    },
     "This file changed in a turn after this scope, so the hunk can’t be discarded. Start from the latest turn.": {
       "comment": "Review: why Discard is off for a range across conversations; a later turn of any conversation changed the file",
       "localizations": {

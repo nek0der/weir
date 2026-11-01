@@ -344,42 +344,8 @@ enum ReviewTabText {
 
     // MARK: - The scope menu across conversations
 
-    /// "All Conversations", the heading over the worktree's unviewed turns,
-    /// every conversation's, at the top of "Review Scope": the word the
-    /// changes panel's filter uses for every conversation. Not "Whole
-    /// Worktree", which the uncommitted changes and the branch under the
-    /// separator are, and this range is not.
-    static func worktreeHeading(locale: Locale) -> String {
-        LocalizedStringResource(
-            "review.scopeAllConversations",
-            defaultValue: "All Conversations",
-            comment: "Review scope menu: the heading over the worktree's unviewed turns, every conversation's as one range"
-        ).resolved(in: locale)
-    }
-
-    /// "More Conversations", the heading over the conversations with turns
-    /// to read past those listed whole (`ReviewScopeMenu.listedLimit`),
-    /// each folded into one entry.
-    static func moreConversationsHeading(locale: Locale) -> String {
-        LocalizedStringResource(
-            "review.scopeMoreConversations",
-            defaultValue: "More Conversations",
-            comment: "Review scope menu: the heading over further conversations with unviewed turns, each folded into one entry"
-        ).resolved(in: locale)
-    }
-
-    /// "Turns", the submenu of a conversation's single turns under its
-    /// heading.
-    static func turnsSubmenu(locale: Locale) -> String {
-        LocalizedStringResource(
-            "review.scopeTurns",
-            defaultValue: "Turns",
-            comment: "Review scope menu: the submenu of a conversation's single turns, newest first"
-        ).resolved(in: locale)
-    }
-
     /// `text` read with its conversation ("Claude #4: Turns"), as VoiceOver
-    /// hears an entry under a heading it does not read with each item. Only
+    /// hears an entry of a conversation's submenu, whose row it does not read with each item. Only
     /// ever spoken, so a titled conversation is named with its agent
     /// (`ConversationText.spokenName`), as every other VoiceOver path names
     /// it: two conversations of one title, of different agents, read apart.
@@ -538,6 +504,16 @@ enum ReviewTabText {
         let label = ReceiptText.turns(numbers, locale: locale)
         guard let shown = TurnPromptText.shortInstruction(prompt, characters: promptCharacters, locale: locale) else { return label }
         return AgentStatusText.joined([label, shown], locale: locale)
+    }
+
+    /// A single turn's choice with its number filled out to `digits` places
+    /// by figure spaces, each as wide as a digit, so "T9 · …" lines up with
+    /// "T10 · …" in a face of tabular digits. A range is left as it is.
+    static func alignedTurn(_ text: String, numbers: ClosedRange<Int>, digits: Int) -> String {
+        let number = String(numbers.lowerBound)
+        let missing = digits - number.count
+        guard numbers.count == 1, missing > 0, let found = text.range(of: number) else { return text }
+        return text.replacingCharacters(in: found, with: number + String(repeating: "\u{2007}", count: missing))
     }
 
     private static func uncommitted(locale: Locale) -> String {

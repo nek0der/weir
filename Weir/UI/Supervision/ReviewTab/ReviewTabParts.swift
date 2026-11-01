@@ -578,7 +578,12 @@ struct ReviewTabDestinationMenu: View {
             } else {
                 foregrounds[paneID]
             }
-            let title = ReviewTabText.destinationChoice(choice, foreground: foreground, form: .menu, locale: locale)
+            // The middle goes, as on the menu's face, so the pane's name and
+            // what runs there both stay.
+            let title = MenuLine.fit(
+                ReviewTabText.destinationChoice(choice, foreground: foreground, form: .menu, locale: locale),
+                as: .subject
+            )
             let whole = ReviewTabText.destinationChoice(choice, foreground: foreground, locale: locale)
             let spoken = ReviewTabText.destinationChoice(choice, foreground: foreground, form: .spoken, locale: locale)
             // The menu's own checkmark, as the scope menu's (`ReviewTabScopeMenu`).

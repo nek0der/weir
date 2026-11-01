@@ -7,12 +7,11 @@ import WeirDomain
 
 /// What "Review Scope" lists, in one menu that also chooses the
 /// conversation, so what the tab reads is said in one place: the
-/// worktree's unviewed turns; under a heading per conversation (its badge,
-/// name, and state) that conversation's unviewed turns, and its single
-/// turns folded into a submenu; then the uncommitted changes and the
-/// branch, which no conversation owns. A worktree of one conversation has no headings and
-/// no worktree entry, which would be that conversation's again: the four
-/// kinds of choice it always had.
+/// worktree's unviewed turns; a row per conversation (its badge, name, and
+/// state) opening that conversation's unviewed turns and its single turns;
+/// then the uncommitted changes and the branch, which no conversation owns.
+/// A worktree of one conversation has no rows and no worktree entry, which
+/// would be that conversation's again: the four kinds of choice it always had.
 ///
 /// The tab's own fixed choice stands in place of the one of its kind
 /// computed now, so the menu always shows what the tab reads: once a turn
@@ -28,15 +27,15 @@ struct ReviewScopeMenu: Equatable {
         let isChecked: Bool
     }
 
-    /// One conversation's entries, under its heading.
+    /// One conversation's entries, under its row.
     struct Section: Equatable {
-        /// `nil` in a worktree of one conversation, which needs no heading.
+        /// `nil` in a worktree of one conversation, which needs no row.
         let conversation: ConversationChoice?
         let choices: [Choice]
 
-        /// The entry a heading puts first, at the menu's top level: the
-        /// conversation's unviewed turns, the tab's own fixed range in
-        /// their place. `nil` when the first choice is a single turn.
+        /// The entry its row opens on: the conversation's unviewed turns,
+        /// the tab's own fixed range in their place. `nil` when the first
+        /// choice is a single turn.
         var lead: Choice? {
             guard let first = choices.first else { return nil }
             return switch first.option {
@@ -45,21 +44,11 @@ struct ReviewScopeMenu: Equatable {
             }
         }
 
-        /// The conversation's single turns, newest first, which a menu of
-        /// two or more conversations folds into a submenu under its lead,
-        /// so each conversation takes a few lines however many turns it
-        /// ran.
+        /// The conversation's single turns, newest first, after its lead.
         var turns: [Choice] {
             Array(choices.dropFirst(lead == nil ? 0 : 1))
         }
     }
-
-    /// How many conversations with turns to read the menu lists under
-    /// headings of their own; those after them, by their latest activity,
-    /// are each folded into one entry under "More Conversations". Fourteen
-    /// conversations listed each under its heading ran past the screen, and
-    /// put the uncommitted changes and the branch out of sight.
-    static let listedLimit = 5
 
     /// The worktree's unviewed turns, with two or more conversations.
     let worktree: Choice?
@@ -67,16 +56,10 @@ struct ReviewScopeMenu: Equatable {
     /// their conversations, and the viewed turns it reads through
     /// ("Includes 16 viewed turns"); `nil` without a range.
     let worktreeCounts: ReviewScopeCatalog.RangeCounts?
-    /// The conversations listed under their headings: those a pane of the
-    /// session runs and the tab's own, always, then those with turns to
-    /// read, newest first, up to `listedLimit` in all.
+    /// The conversations with something to read and the tab's own, running
+    /// first, then the latest activity first, a row each.
     let sections: [Section]
-    /// Conversations with turns to read past `listedLimit`, each folded into
-    /// one entry of its own under one heading.
-    let more: [Section]
-    /// The rest, every turn viewed, each folded into an entry of its own
-    /// under one heading, so a worktree of many conversations keeps a menu
-    /// of a few lines.
+    /// The rest, every turn viewed, a row each under one heading.
     let folded: [Section]
     let tail: [Choice]
     /// The conversation the label names beside the choice ("[Cl] Claude #4
@@ -91,7 +74,7 @@ struct ReviewScopeMenu: Equatable {
 
     /// Every entry, in the menu's order.
     var choices: [Choice] {
-        [worktree].compactMap(\.self) + (sections + more + folded).flatMap(\.choices) + tail
+        [worktree].compactMap(\.self) + (sections + folded).flatMap(\.choices) + tail
     }
 
     static func make(_ tab: ReviewTabState, _ context: ReviewTabModel.Context) -> ReviewScopeMenu {
@@ -124,7 +107,6 @@ struct ReviewScopeMenu: Equatable {
         }
 
         var sections: [Section] = []
-        var more: [Section] = []
         var folded: [Section] = []
         if isShared {
             var listed = named
@@ -137,8 +119,6 @@ struct ReviewScopeMenu: Equatable {
             let ordered = ConversationChoice.Section.allCases.flatMap { section in
                 ConversationChoice.byLatestActivity(listed.filter { $0.section == section })
             }
-            let kept = ordered.filter { $0.conversation == tab.conversation || $0.section == .running }.count
-            var room = max(0, listedLimit - kept)
             for agent in ordered {
                 let isOwn = agent.conversation == tab.conversation
                 let turns = isOwn ? context.turns : context.conversationTurns[agent.conversation] ?? []
@@ -151,15 +131,10 @@ struct ReviewScopeMenu: Equatable {
                     place(selection, in: &options)
                 }
                 let section = Section(conversation: agent, choices: options.map { choice($0, agent.conversation) })
-                if isOwn || agent.section == .running {
+                if isOwn || agent.section != .viewed {
                     sections.append(section)
-                } else if agent.section == .viewed {
-                    folded.append(section)
-                } else if room > 0 {
-                    sections.append(section)
-                    room -= 1
                 } else {
-                    more.append(section)
+                    folded.append(section)
                 }
             }
         } else {
@@ -187,7 +162,6 @@ struct ReviewScopeMenu: Equatable {
             worktree: worktreeOption.map { choice($0, nil) },
             worktreeCounts: worktreeCounts,
             sections: sections,
-            more: more,
             folded: folded,
             tail: tail.map { choice($0, nil) },
             labelConversation: labelConversation
