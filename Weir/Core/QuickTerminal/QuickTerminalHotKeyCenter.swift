@@ -2,8 +2,8 @@
 // Weir — keeps the quick terminal's global hotkey registered to match
 // the setting, the keyboard layout, and the recorder.
 
-import AppKit
 import Carbon.HIToolbox
+import Foundation
 import Observation
 
 /// Why the configured hotkey is not active. Shown under the recorder.

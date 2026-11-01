@@ -106,7 +106,7 @@ final class QuickTerminalController {
     /// Whether `request` belongs to the panel, so the main window leaves
     /// it to the panel's own sheet.
     func ownsClipboardRequest(_ request: PendingClipboardRequest) -> Bool {
-        request.view?.window === panel
+        request.target === surfaceView && surfaceView?.window === panel
     }
 
     // MARK: - Toggle
@@ -401,7 +401,7 @@ final class QuickTerminalController {
             guard let self, let clipboard,
                   let request = clipboard.pending,
                   let surfaceView,
-                  request.view === surfaceView,
+                  request.target === surfaceView,
                   !isVisible
             else { return }
             log.notice("clipboard request from the hidden quick terminal denied")

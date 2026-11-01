@@ -320,7 +320,7 @@ final class GhosttyEventCoordinator {
         let durationSeconds = Double(durationNs) / 1_000_000_000.0
         guard durationSeconds >= config.minimumDuration else { return }
 
-        let isFocusedSource = WeirNotificationDelegate.isViewFocused(view)
+        let isFocusedSource = view.holdsKeyboardFocus
         if config.mode == .unfocused, isFocusedSource {
             return
         }
@@ -379,7 +379,7 @@ final class GhosttyEventCoordinator {
         // pane being focused as "the user is right here, no need to
         // bounce the Dock". The pane flash still fires because it is the
         // visible feedback the Visual setting promises in that state.
-        let isFocusedSource = WeirNotificationDelegate.isViewFocused(view)
+        let isFocusedSource = view.holdsKeyboardFocus
         let hasSystem = features.contains(.system)
         let hasAttention = features.contains(.attention)
         let hasPaneFlash = features.contains(.paneFlash)
@@ -473,7 +473,7 @@ final class GhosttyEventCoordinator {
             containerLabel: owningTab.map { session.containerLabel(for: $0.container, locale: notificationManager.appLocale()) }
         )
 
-        let isFocusedSource = WeirNotificationDelegate.isViewFocused(view)
+        let isFocusedSource = view.holdsKeyboardFocus
         log.notice("DESKTOP_NOTIFICATION focusedSource=\(isFocusedSource, privacy: .public)")
         if !isFocusedSource {
             session.markUnread(paneID: paneID)

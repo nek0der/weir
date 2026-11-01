@@ -11,7 +11,7 @@ private let log = Logger.weir("links")
 @MainActor
 final class TerminalLinkOpener {
     /// Shows a one-line explanation when a click does something other than
-    /// open the target. A closure so Core does not own the toast view state.
+    /// open the target. A closure so this type does not own the toast view state.
     private let notify: (DisplayText) -> Void
     /// Read at click time so a change in Settings applies to the next click.
     private let fileApplication: () -> FileApplication?
@@ -20,8 +20,8 @@ final class TerminalLinkOpener {
     /// the language the process launched with.
     private let locale: @MainActor () -> Locale
     /// Shows the confirmation on the terminal's window, or on its own when
-    /// it has none, and hands the answer on. The app's (`WindowAlert`), so
-    /// Core does not decide how a window presents an alert.
+    /// it has none, and hands the answer on. A closure so `WindowAlert` alone
+    /// decides how a window presents an alert.
     private let presentAlert: AlertPresenter
 
     typealias AlertPresenter = @MainActor (

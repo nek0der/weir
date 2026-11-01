@@ -15,7 +15,7 @@
 // at the driver boundary and consume the OneShot whenever we discard
 // a state (auto-dismiss timer, state overwrites).
 
-import AppKit
+import Foundation
 import Sparkle
 
 /// Declared `@MainActor` because Sparkle calls every `SPUUserDriver`
@@ -27,32 +27,19 @@ import Sparkle
 final class WeirUpdateDriver: NSObject, SPUUserDriver {
     private let stateModel: UpdateStateModel
     private let standard: SPUStandardUserDriver
+    /// Whether some window can show the update inline, read at each event;
+    /// the UI knows its windows (`WeirWindowRole.isUpdateControlInSight`).
+    private let isInlineTargetInSight: @MainActor () -> Bool
 
-    init(stateModel: UpdateStateModel, hostBundle: Bundle) {
-        self.stateModel = stateModel
-        self.standard = SPUStandardUserDriver(hostBundle: hostBundle, delegate: nil)
-        super.init()
+    private var hasInlineTarget: Bool {
+        isInlineTargetInSight()
     }
 
-    /// True when at least one main Weir window is visible — i.e.
-    /// somewhere an update control can actually render: the left rail's
-    /// icon. The Settings window is also titled and visible but has no
-    /// such control, so it's filtered out via the `isWeirMainWindow`
-    /// marker the main window's root (`weirMainWindowEnvironment`) sets
-    /// on its host `NSWindow`.
-    private var hasInlineTarget: Bool {
-        NSApp.windows.contains { window in
-            // Both the main window and the Settings window host an
-            // inline `UpdatePopover` (GeneralPane mirrors the main
-            // window's popover so the user who initiated the check from
-            // Settings sees the result in place). Treating Settings as
-            // a valid inline target stops the driver from layering
-            // Sparkle's standard modal on top of the Settings popover
-            // when the main window is hidden.
-            // A main window whose rails are hidden shows no update control.
-            window.isVisible
-                && ((window.isWeirMainWindow && !window.hidesUpdateControl) || window.isWeirSettingsWindow)
-        }
+    init(stateModel: UpdateStateModel, hostBundle: Bundle, hasInlineTarget: @escaping @MainActor () -> Bool) {
+        self.stateModel = stateModel
+        self.isInlineTargetInSight = hasInlineTarget
+        self.standard = SPUStandardUserDriver(hostBundle: hostBundle, delegate: nil)
+        super.init()
     }
 
     /// Pre-flight any pending OneShot embedded in the current state so

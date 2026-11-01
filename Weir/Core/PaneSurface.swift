@@ -17,8 +17,12 @@ protocol PaneSurface: AnyObject {
     var boundsSize: CGSize { get }
     /// The pane's rect in its window's coordinates, which grow upward.
     var rectInWindow: CGRect { get }
-    /// Whether the pane holds keyboard focus in the app's key window.
-    var isFirstResponderOfKeyWindow: Bool { get }
+    /// Whether the pane is the first responder of the key window of the
+    /// active app. The window check matters once the quick terminal can be
+    /// key: a main-window pane is still its own window's first responder
+    /// then, and treating it as focused would suppress its notifications
+    /// and unread marks while the user is typing in the panel.
+    var holdsKeyboardFocus: Bool { get }
     /// Asks the pane's window for keyboard focus; nothing happens while the
     /// pane is not in a window.
     func takeKeyboardFocus()

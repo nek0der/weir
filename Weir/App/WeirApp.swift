@@ -318,7 +318,7 @@ final class AppState {
         // boots — the `confirm_read_clipboard_cb` reaches it through
         // the static `shared` and we don't want a window of time
         // where a callback could fire with no UI to route into.
-        let clipboardConfirmation = ClipboardConfirmationCoordinator()
+        let clipboardConfirmation = ClipboardConfirmationCoordinator(answerer: .system)
         ClipboardConfirmationCoordinator.shared = clipboardConfirmation
         self.clipboardConfirmation = clipboardConfirmation
         let resolver = ReduceTransparencyResolver()
@@ -439,7 +439,7 @@ final class AppState {
 
         self.dragState = WeirDragState()
         self.toastCenter = ToastCenter()
-        let delegate = WeirNotificationDelegate()
+        let delegate = WeirNotificationDelegate(activateApp: { NSApp.activate(ignoringOtherApps: true) })
         self.notificationDelegate = delegate
         // Hand the registry to the delegate so `willPresent` can
         // resolve a pane id back to its `SurfaceView` and ask which
@@ -461,7 +461,10 @@ final class AppState {
             historyStore: historyStore,
             session: session,
             attentionCount: { [attentionQueue] in attentionQueue.queue.counts().total },
-            setBadge: { [notificationManager] in notificationManager.setDockBadge($0) }
+            // `NSApplication.shared` rather than the implicitly-unwrapped
+            // `NSApp` global, which can still be nil while the SwiftUI app
+            // finishes booting.
+            setBadge: { NSApplication.shared.dockTile.badgeLabel = $0.label }
         )
         self.usageLimitResetSync = Self.makeUsageLimitResetSync(attentionQueue, settingsStore, notificationManager)
         self.notificationReadSync = NotificationReadSync(
@@ -478,7 +481,7 @@ final class AppState {
         saveObserver = installTerminateHandler()
 
         windowRegistry.occlusion = registry
-        appVisibilityObserver = AppVisibilityObserver(registry: windowRegistry)
+        startAppVisibilityObserver()
         startAutoSave()
         startActiveTabSync()
         startNoticePlacement()
@@ -583,6 +586,15 @@ final class AppState {
         placeNotices()
     }
 
+    private func startAppVisibilityObserver() {
+        let refreshers = (gitSync, prStatusSyncer, agentIntegrationServiceRegistrar)
+        appVisibilityObserver = AppVisibilityObserver(registry: windowRegistry) {
+            refreshers.0?.appDidBecomeActive()
+            refreshers.1?.appDidBecomeActive()
+            refreshers.2.appDidBecomeActive()
+        }
+    }
+
     private func placeNotices() {
         let windows = windowRegistry
         let issueWindow = agentIntegrationServiceRegistrar.issue.map { _ in
@@ -593,7 +605,7 @@ final class AppState {
         }
         let placement = clipboardConfirmation.pending.map { request in
             let kept = clipboardRequestPlacement.flatMap { $0.requestID == request.id ? $0.window : nil }
-            let paneID = (request.view as? SurfaceView).flatMap { registry.id(for: $0) }
+            let paneID = request.target?.paneID
             let window = windows.placeNotice(keeping: kept) { windows.requestWindow(forPane: paneID, in: session) }
             return ClipboardRequestPlacement(requestID: request.id, window: window)
         }
@@ -757,7 +769,8 @@ struct WeirApp: App {
     /// A demo run starts no updater at all (`UpdaterStack.init`).
     private let updaterStack = UpdaterStack(
         allowsAutomaticChecks: !WeirPaths.isDevBuild,
-        startsUpdater: AppState.writesUserFilesAtLaunch
+        startsUpdater: AppState.writesUserFilesAtLaunch,
+        hasInlineTarget: { WeirWindowRole.isUpdateControlInSight }
     )
 
     init() {

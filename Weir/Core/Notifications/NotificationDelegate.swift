@@ -1,7 +1,7 @@
 // NotificationDelegate.swift
 // Weir — UN delegate that filters foreground notification presentation.
 
-import AppKit
+import Foundation
 import UserNotifications
 import WeirDomain
 
@@ -31,7 +31,11 @@ final class WeirNotificationDelegate: NSObject, UNUserNotificationCenterDelegate
     /// `nonisolated(unsafe)` rationale as `registry`.
     nonisolated(unsafe) static var isSourceSeen: (@MainActor (_ paneID: UUID?, _ runtimeID: String?) -> Bool)?
 
-    override init() {
+    /// Brings the app forward. The app layer's, as it takes AppKit.
+    private let activateApp: @MainActor () -> Void
+
+    init(activateApp: @escaping @MainActor () -> Void) {
+        self.activateApp = activateApp
         super.init()
     }
 
@@ -54,7 +58,7 @@ final class WeirNotificationDelegate: NSObject, UNUserNotificationCenterDelegate
     /// would trap any time Apple drains the callback on its private
     /// queue. Hop through a `Task { @MainActor }` and call the
     /// completion handler from inside that hop — the focus read
-    /// (`NSApp.keyWindow` / `firstResponder`) is main-thread-only, and
+    /// (`PaneSurface.holdsKeyboardFocus`) is main-thread-only, and
     /// the small dispatch latency is preferable to a release-build
     /// trap if the queue contract ever changes. `completionHandler` is
     /// `@Sendable` so crossing the actor boundary is safe.
@@ -104,7 +108,7 @@ final class WeirNotificationDelegate: NSObject, UNUserNotificationCenterDelegate
             // stale notification (pre-tap-plumbing or after the
             // origin pane / tab / container was deleted) should
             // still act like the system default.
-            NSApp.activate(ignoringOtherApps: true)
+            activateApp()
             onTap?(payload)
             completionHandler()
         }
@@ -120,7 +124,6 @@ final class WeirNotificationDelegate: NSObject, UNUserNotificationCenterDelegate
     /// recoverable, but a notification dropped on the floor is gone.
     @MainActor
     static func isPaneFocused(paneIDString: String?) -> Bool {
-        guard NSApp.isActive, NSApp.keyWindow != nil else { return false }
         guard let paneIDString,
               let paneID = UUID(uuidString: paneIDString),
               let registry,
@@ -133,17 +136,7 @@ final class WeirNotificationDelegate: NSObject, UNUserNotificationCenterDelegate
             // is recoverable (the user sees + dismisses it).
             return false
         }
-        return isViewFocused(view)
-    }
-
-    /// True only when `view` is the first responder of the key window of the
-    /// active app. The window check matters once the quick terminal can be
-    /// key: a main-window pane is still its own window's first responder
-    /// then, and treating it as focused would suppress its notifications
-    /// and unread marks while the user is typing in the panel.
-    @MainActor
-    static func isViewFocused(_ view: any PaneSurface) -> Bool {
-        NSApp.isActive && view.isFirstResponderOfKeyWindow
+        return view.holdsKeyboardFocus
     }
 }
 
