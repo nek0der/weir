@@ -1,126 +1,77 @@
 # Weir
 
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/nek0der/weir/actions/workflows/ci.yml/badge.svg)](https://github.com/nek0der/weir/actions/workflows/ci.yml)
+A native Mac window for Claude Code, Codex, and Antigravity. See which one needs you and what each turn changed.
+
+**[Website](https://weir.nekoder.com)** · **[Documentation](https://weir.nekoder.com/docs/)** · **[Download](https://github.com/nek0der/weir/releases/latest)**
+
+English | [日本語](README.ja.md)
+
 [![Release](https://img.shields.io/github/v/release/nek0der/weir?sort=semver)](https://github.com/nek0der/weir/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![macOS 26+](https://img.shields.io/badge/macOS-26%2B-black)
 
-> A native macOS window for supervising Claude Code, Codex, and Antigravity: run them in real terminals, see which one needs you, and review what each turn changed.
-
-<p align="center"><img src=".github/assets/hero.png" alt="A Weir window. On the left, a sidebar of every project's worktrees, the current project's rows showing each agent's state: unread, waiting, running, stopped on an API error, and a pull request that is open. In the middle, Claude Code in a terminal tab beside a Codex tab and two shell tabs, its turn just finished, with a decision bar under it that sums up two unviewed turns and their last test run, and offers Mark as Viewed and Review Unviewed. On the right, the Changes panel lists the worktree's unviewed turns from Claude Code and Codex, with the viewed ones folded away and a switch between one timeline and a section per conversation. Each card shows its unviewed turn number in a blue pill and a short colored bar before its agent badge that matches the bar on that conversation's terminal tab, then the files and lines it changed, its test runs, its tokens, how long it took, and the start of the agent's reply; the last card shows buttons to mark the turns up to it viewed and to restore the code to before it. The title bar shows Needs Attention with a count of 6, and the Changes button beside it." width="900" /></p>
+<p align="center"><img src=".github/assets/hero.png" alt="A Weir window: worktrees on the left, a terminal in the middle, each turn's changes on the right." width="900" /></p>
 
 ## Why Weir
 
-When several agents work at once, the hard part is not typing; it is knowing which one is blocked, what each turn changed, and what you have already read. Weir keeps the agents in their own terminal UI (built on libghostty) and adds what the terminal cannot show:
+When several agents work at once, the hard part is not typing. It is knowing which one is blocked, what each turn changed, and what you have already read.
 
-- **One list of what needs you.** Approvals, questions, stops, and turns you have not read, across every project, in the order they arrived. ⌘J takes you to the next one.
-- **Every turn is recorded.** A *turn* is one round of an agent's work, from the prompt you send until it stops. Weir snapshots the worktree at the start and end of each turn, so you can review exactly what a turn changed, mark it viewed, or restore the code to before it.
-- **One worktree per task.** Each task gets its own branch and folder, with its PR status beside it.
-- **You still type in the agent's own prompt.** Weir inserts your review comments into the agent's input, and you press Return.
+- **One list of what needs you.** Approvals, questions, stops, and unviewed turns, across every project. ⌘J goes to the next one.
+- **Every turn is recorded.** Weir snapshots the worktree around each round of an agent's work, so you can review that turn or restore the code to before it.
+- **One worktree per task.** Each task gets its own branch and folder, with its pull request status beside it.
+- **Comments go back to the agent.** Comment on any line, then insert your comments into the agent's prompt. Nothing is sent until you press Return.
 
-**What Weir is not.** It is not an editor, and it is not an agent. It hosts the agents' own CLIs, Claude Code, Codex, and Antigravity, in real terminals and supervises them; the agents do the work.
+Weir is not an editor, and it is not an agent. The agents keep their own terminal UI in real terminals, built on libghostty, and you still type in their prompts.
 
-## Requirements and install
+## Install
 
-- macOS 26 (Tahoe) on Apple Silicon.
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://github.com/openai/codex), or the Antigravity CLI (`agy`), whichever you use.
+Weir needs macOS 26 or later on Apple Silicon, Git, and Claude Code, Codex, or the Antigravity CLI (`agy`).
 
-Download the [latest DMG](https://github.com/nek0der/weir/releases/latest) and drag `Weir.app` to `/Applications`. Weir offers updates through Sparkle from then on. The release DMG includes native approvals: Claude Code and Codex permission requests can be answered on Weir's approval card. Antigravity asks in its own prompt.
-
-Building from source: [CONTRIBUTING.md](CONTRIBUTING.md#setup). A Debug build runs without native approvals unless you sign it with a Team ID ([details](CONTRIBUTING.md#native-approvals-in-a-debug-build)).
+Download the DMG from the [latest release](https://github.com/nek0der/weir/releases/latest) and drag `Weir.app` to `/Applications`. Weir updates itself through Sparkle when you choose to. To build from source, see [CONTRIBUTING.md](CONTRIBUTING.md#setup).
 
 ## Quick start
 
-1. **Start.** **New Worktree** (⌘N) makes a worktree on a new or existing branch and opens Claude Code, Codex, Antigravity, a shell, or nothing in it. Give the agent its first instruction in its own prompt.
-2. **It works.** The sidebar row and the decision bar show what the agent is doing. Nothing moves or takes focus on its own.
-3. **It needs you.** An approval, a question, a stop, or a finished turn joins **Needs Attention**. ⌘J goes to the next item, ⌥⌘J opens the list.
-4. **You review.** **Review Unviewed** or ⌥⌘R opens a review tab. Its *scope* menu picks what it shows: one conversation's unviewed turns, all of them in the worktree, a single turn, uncommitted changes, or the branch against its base. Comment on lines, insert the comments into the agent's input, and press Return. You can also discard a *hunk* (one block of changed lines) and undo that.
-5. **You decide.** **Mark as Viewed** (⌘⏎) moves the *viewed line*, the mark of how far you have reviewed, past the turns you read. **Restore Code to Before This Turn…** puts the working tree back, and can be undone. **Resume Same Conversation** picks up after a stop.
+1. Press ⌘O and choose your repository's folder.
+2. Press ⌘N to make a worktree on a new or existing branch, and choose the agent to open.
+3. Give the agent its first instruction in its own prompt, then leave it running.
+4. When it needs you, press ⌘J to go to it.
+5. Read the turn, comment on it if you want a fix, and press ⌘⏎ to mark it as viewed.
 
-The [user guide](docs/user-guide.md#the-workflow) has each step in full.
+The [quick start](https://weir.nekoder.com/docs/quick-start/) has each step in full.
 
-## The window
+## Privacy
 
-Each window shows one project at a time. From left to right in the screenshot:
+Weir has no accounts, analytics, or telemetry. It adds nothing to `~/.claude/` or `~/.codex/`: wrappers in its panes pass the hooks on each launch, so agents you start elsewhere are not affected. For Antigravity, it places a plugin in `~/.gemini/config/plugins/weir`. Turn snapshots stay in each repository's Git directory.
 
-- **Title bar.** Project and worktree menus, the command palette, **Needs Attention**, and **Changes**.
-- **Left rail.** Show or hide the **Worktrees** sidebar, and open **Scratch**, **All Projects**, **Notification History**, **Plan Usage**, and **Settings**.
-- **Sidebar.** Every project's worktrees, one row each, with what each agent is doing.
-- **Session area.** The worktree's commits and changes, its tabs, and the terminal.
-- **Decision bar.** Under each agent pane: what the unviewed turns did, and what to do about them.
-- **Changes panel** (⌥⌘I). The worktree's turns as one timeline, and **Commit & PR**.
-- **Status band.** Where you are, the agent, the folder, the terminal size, and the encoding.
-
-The [user guide](docs/user-guide.md#the-window) covers each part in detail.
-
-## More
-
-- **Pull request status.** Each row shows its PR's state and checks, through whatever `gh` or `glab` is already signed in.
-- **Session restore.** Projects, worktrees, tabs, splits, windows, and scrollback come back after a relaunch, and agent panes resume their conversations.
-- **Quick Terminal.** A system-wide hotkey drops a terminal over any app; set one in **Settings → Quick Terminal**.
-- **All Projects** (⇧⌘O) and **Notification History** (⇧⌘N). Every project at once, sorted by state, and the notifications Weir sent.
-- **Plan Usage.** How much of each agent's plan limits your account has used, and when each limit resets: Claude Code's and Antigravity's from their status lines, Codex's from Codex itself.
-- **Languages.** English and Japanese; choose in **Settings → General → Display Language**.
-
-## Privacy and data
-
-Weir has no account, analytics, or telemetry.
-
-**Network.** Weir itself reaches the network in three ways:
-
-- **Update checks.** Sparkle fetches `https://nek0der.github.io/weir/appcast.xml` once a day and downloads a release only when you choose to install it. Turn the daily check off with **Settings → General → Software Update → Automatically check for updates**; **Check for Updates…** still works by hand.
-- **`git fetch`.** When **New Worktree** starts a new branch from a remote branch or checks out a PR, Weir fetches it from that remote with your own Git credentials.
-- **`gh` and `glab`.** Weir runs the copies you installed, which talk to the forge with their own credentials: `gh pr view` or `glab mr view` for the sidebar's PR status (when the app comes back to the front, every 5 minutes, and every 45 seconds while checks run), `gh auth token` or `glab auth status` once per host to tell which forge an unfamiliar host is and before **New Worktree** offers to check out a PR, `gh pr list`/`view` or `glab mr list`/`view` when **New Worktree** checks out a PR, and `gh pr create --fill` when you press **Create PR**.
-- **`codex app-server`.** For **Plan Usage**, Weir starts the `codex` you installed once at launch and every minute while the panel is open, and asks it for your plan's usage. Codex answers with its own sign-in; Weir reads none of its credentials.
-
-**What Weir writes or installs.**
-
-- **Codex hooks.** Nothing is written to `~/.codex/`. Weir's `codex` shim, first on the `PATH` of Weir's panes, passes the hooks as `-c` flags on each launch, with the trust Codex needs to run them and two terminal-title and notification settings, so they work whatever `CODEX_HOME` is. Earlier builds kept one `[hooks.state."/<session-flags>/config.toml:…"]` table per hook in `~/.codex/config.toml`, between `# BEGIN weir` and `# END weir` markers; at launch Weir takes those tables and markers out, and every other line, including a table Codex added between the markers, stays as it is.
-- **Claude Code hooks.** Nothing is written to `~/.claude/`. Weir's `claude` shim, first on the `PATH` of Weir's panes, passes the hooks with `--settings` on each launch, filled in from a template the build copies into the app. It merges a `--settings` of your own, and keeps links to the hook commands in a `weir-claude-shim-*` folder in your temporary directory. When you have a status line of your own, the same `--settings` puts Weir's relay in its place: the relay keeps the plan usage Claude Code hands it, then runs your status line on the same input.
-- **Antigravity hooks.** `agy` takes no hooks on its command line, so the first `agy` run in a Weir pane places a plugin at `~/.gemini/config/plugins/weir`, marked by a `.weir-managed` file inside it. A folder there without the mark is left alone. The plugin does nothing outside a Weir pane. `agy plugin disable weir` or removing the folder stops the reporting; a removed folder returns on the next launch in a Weir pane. When you have a status line of your own, Weir's `agy` shim passes `--settings` with Weir's relay in its place, as for Claude Code; a launch with its own `--settings` is left as it is.
-- **Approval service.** A build signed with a Team ID, such as the release DMG, registers a per-user launchd agent, `com.nekoder.weir.agent-integration-service`, from inside the app. It is listed in **System Settings → General → Login Items & Extensions**.
-- **Turn snapshots.** In each repository, the snapshots live in the Git directory as refs under `refs/weir/` and files under `weir/`. A turn and its refs are deleted after 14 days or past 200 turns per conversation (change this in **Settings → Advanced → Turn History**), or when a repository's snapshots pass 500 MB or all turns pass 8,000; Git can then reclaim the space. Unviewed turns of open sessions are exempt from the day limit for up to 90 days.
-- **Under `~/Library`.** `Application Support/Weir/` (`Weir Dev/` for a Debug build) holds the session, settings, notification history, scrollback, review drafts, turn records, and Claude Code's and Antigravity's last plan usage. Preferences are in `Preferences/com.nekoder.Weir.plist`.
-
-**Uninstalling.** Quit Weir and move `Weir.app` to the Trash. Then remove by hand: `~/Library/Application Support/Weir/` and `~/Library/Preferences/com.nekoder.Weir.plist`; and in each repository, the refs (`git for-each-ref --format='%(refname)' refs/weir/ | xargs -n1 git update-ref -d`) and the `weir` folder in its Git directories. If **Login Items & Extensions** still lists Weir, turn it off there. If you ran Antigravity in Weir and `~/.gemini/config/plugins/weir` holds a `.weir-managed` file, also remove that folder; without that file, it is not Weir's. Worktrees Weir made are ordinary Git worktrees; remove them with `git worktree remove` if you no longer want them.
-
-## Shortcuts
-
-| Shortcut | Action |
-|---|---|
-| ⌘J / ⇧⌘J | Next / previous item that needs you |
-| ⌥⌘J | Show Needs Attention |
-| ⌘⏎ | Decision bar's main action (Mark as Viewed, Resume, Notify When It Resets) |
-| ⌥⌘R | Review |
-| ⌥⌘I | Changes panel |
-| ⌘N | New Worktree |
-| ⇧⌘P | Command Palette |
-| ⌘/ | Keyboard Shortcuts |
-
-⌘/ shows the full list with your own bindings, and **Settings → Keyboard** changes the keys. The [user guide](docs/user-guide.md#shortcuts) has every default.
-
-## Status
-
-Pre-alpha. Settings and data formats may still change between releases; Weir migrates its files forward, and [Going back to an earlier build](docs/data-migration.md#going-back-to-an-earlier-build) says how to return to one. [Known limitations](docs/known-limitations.md) lists what does not work yet and the deliberate behavior that may surprise you.
+[Privacy and data](https://weir.nekoder.com/docs/privacy/) lists what Weir sends and writes, and [Uninstall](https://weir.nekoder.com/docs/install/#uninstall) how to remove it all.
 
 ## Documentation
 
-- [docs/user-guide.md](docs/user-guide.md) — the window part by part, the workflow in full, and every shortcut.
-- [ARCHITECTURE.md](ARCHITECTURE.md) — module map, the supervision window part by part, load-bearing files, invariants, and "How to add X" walkthroughs.
-- [AGENTS.md](AGENTS.md) — repo conventions and Swift style (for humans and agents).
-- [docs/known-limitations.md](docs/known-limitations.md) — what does not work yet, what is surprising on purpose, and what has not been checked on a real machine.
-- [docs/data-migration.md](docs/data-migration.md) — the files Weir keeps, how they are migrated, and how to go back one release.
-- [docs/agent-integration-protocol.md](docs/agent-integration-protocol.md) — the contract between the hook helper, the approval service, and the app.
-- [CONTRIBUTING.md](CONTRIBUTING.md) — setup, build, signing for native approvals, and the PR workflow.
-- [SECURITY.md](SECURITY.md) — vulnerability reporting policy.
+For using Weir:
+
+- [Documentation](https://weir.nekoder.com/docs/): install, quick start, review, Needs Attention, shortcuts, and troubleshooting.
+- [User guide](docs/user-guide.md): every part of the window in detail.
+- [Known limitations](docs/known-limitations.md): what does not work yet, and what is surprising on purpose.
+- [Data migration](docs/data-migration.md): the files Weir keeps, and how to go back one release.
+
+For working on Weir:
+
+- [CONTRIBUTING.md](CONTRIBUTING.md): setup, build, signing, and the pull request workflow.
+- [ARCHITECTURE.md](ARCHITECTURE.md): the modules, load-bearing files, and invariants.
+- [AGENTS.md](AGENTS.md): repository conventions, for people and agents.
+- [Agent integration protocol](docs/agent-integration-protocol.md): the contract between the hook helper, the approval service, and the app.
+
+## Status
+
+Weir is pre-alpha. Settings and data formats may change between releases.
 
 ## Contributing
 
-PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md). Questions and ideas go in [Discussions](https://github.com/nek0der/weir/discussions).
+Pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), and [SECURITY.md](SECURITY.md) to report a vulnerability. Questions and ideas go in [Discussions](https://github.com/nek0der/weir/discussions).
 
 ## Acknowledgements
 
-Built on [Ghostty](https://github.com/ghostty-org/ghostty) (libghostty) and [Sparkle](https://github.com/sparkle-project/Sparkle). The full third-party list is in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES); the build fills in its Rust crates from `Cargo.lock`, and the copy inside Weir.app carries them.
+Built on [Ghostty](https://github.com/ghostty-org/ghostty) (libghostty) and [Sparkle](https://github.com/sparkle-project/Sparkle). The full list is in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES).
 
 ## License
 

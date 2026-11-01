@@ -107,7 +107,8 @@ open Weir.xcodeproj
 ## Language policy
 
 - **Source code, comments, and doc comments**: English only.
-- **User-facing documentation** (`README.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`): English.
+- **README**: `README.md` in English and `README.ja.md` in Japanese. A change to one lands in the other in the same pull request.
+- **Other user-facing documentation** (`CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`): English.
 - **Internal design documents** under `docs/` (ADRs, protocol and migration notes): English, like the rest of the repository.
 - **Commit messages, PR titles, and PR descriptions**: English. A squash merge turns the PR into the commit on `main`, and the release notes are built from those commits, so they have to read for every contributor and user.
 - **Issues and discussion**: either language is fine.
