@@ -1,7 +1,7 @@
 // SurfaceView+Clipboard.swift
 // Weir — the surface's userdata token and the clipboard requests it tracks.
 
-import Foundation
+import AppKit
 
 /// Its address, unique while retained, is a surface's `userdata`. It also
 /// carries the surface's unanswered clipboard requests, because it is the
@@ -17,7 +17,7 @@ extension SurfaceView: ClipboardRequestTarget {
         Self.clipboardRequests(forUserdata: userdata)
     }
 
-    var surfaceView: SurfaceView? {
+    var hostView: NSView? {
         self
     }
 

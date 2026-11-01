@@ -9,7 +9,7 @@ enum ContainerActions {
     /// every `SurfaceView` that lived inside.
     static func removeProject(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         projectID: UUID
     ) {
         let leafIDs = session.removeProject(projectID)
@@ -24,7 +24,7 @@ enum ContainerActions {
     /// instead because that flow needs to keep tabs alive.
     static func removeWorktree(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         projectID: UUID,
         worktreeID: UUID
     ) {
@@ -38,7 +38,7 @@ enum ContainerActions {
     /// `SurfaceView`s.
     static func pruneMissingWorktrees(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         projectID: UUID
     ) {
         let leafIDs = session.pruneMissingWorktrees(projectID: projectID)
@@ -51,7 +51,7 @@ enum ContainerActions {
     /// also frees the affected `SurfaceView`s on success.
     static func deleteGitWorktree(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         projectID: UUID,
         worktreeID: UUID,
         force: Bool
@@ -74,7 +74,7 @@ enum ContainerActions {
     /// request's branch may hold the only copy of its commits.
     static func deleteGitWorktrees(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         projectID: UUID,
         worktreeIDs: [UUID],
         force: Bool,

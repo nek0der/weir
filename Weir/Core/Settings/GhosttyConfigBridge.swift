@@ -277,11 +277,10 @@ enum GhosttyConfigBridge {
     /// config could be made. The running config then stays as it is, with
     /// its forced overrides.
     static func reloadConfig(
-        app: GhosttyApp,
         settings: WeirSettings,
         resourcesDir: String?,
         includeUserConfig: Bool,
-        surfaces: [SurfaceView] = []
+        install: (ghostty_config_t) -> Void
     ) -> [String]? {
         let diagnostics: [String] = if includeUserConfig {
             configDiagnostics() ?? []
@@ -296,10 +295,10 @@ enum GhosttyConfigBridge {
             log.error("no config to reload; keeping the running one")
             return nil
         }
-        // Ownership moves to GhosttyApp so a later conditional-state soft
-        // reload uses this exact layered config rather than the startup copy.
-        app.replaceConfig(with: cfg, surfaces: surfaces)
-        log.notice("ghostty config reloaded (\(surfaces.count, privacy: .public) live surfaces)")
+        // Ownership moves to the caller's GhosttyApp so a later conditional-state
+        // soft reload uses this exact layered config rather than the startup copy.
+        install(cfg)
+        log.notice("ghostty config reloaded")
         return diagnostics
     }
 

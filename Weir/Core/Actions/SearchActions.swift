@@ -60,11 +60,11 @@ enum SearchActions {
     /// overlay. Single source of truth for "search lifetime ends".
     static func endSearch(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         paneID: UUID
     ) {
         session.paneSearchStates[paneID] = nil
-        guard let surface = registry.view(for: paneID)?.surface else { return }
+        guard let surface = registry.paneSurface(for: paneID)?.surface else { return }
         let action = "end_search"
         GhosttyFFI.performBindingAction(action, on: surface)
     }
@@ -72,12 +72,12 @@ enum SearchActions {
     /// ⌘G — jump to the next match for the focused pane, if any.
     static func searchNext(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         in window: WindowID
     ) {
         guard let id = focusedPaneID(session, in: window),
               session.paneSearchStates[id] != nil,
-              let view = registry.view(for: id),
+              let view = registry.paneSurface(for: id),
               let surface = view.surface
         else { return }
         let action = PaneSearchDirection.forward.bindingAction
@@ -87,12 +87,12 @@ enum SearchActions {
     /// ⇧⌘G — jump to the previous match.
     static func searchPrevious(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         in window: WindowID
     ) {
         guard let id = focusedPaneID(session, in: window),
               session.paneSearchStates[id] != nil,
-              let view = registry.view(for: id),
+              let view = registry.paneSurface(for: id),
               let surface = view.surface
         else { return }
         let action = PaneSearchDirection.backward.bindingAction

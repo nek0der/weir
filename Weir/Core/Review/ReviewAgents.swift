@@ -16,7 +16,7 @@ enum ReviewAgents {
     static func destination(
         session: WorkspaceSession,
         paneID: UUID?,
-        registry: any SurfaceViewProviding
+        registry: any PaneSurfaceProviding
     ) -> ReviewDestination? {
         guard let paneID, let tab = session.tab(containing: paneID) else { return nil }
         // We name the agent the pane runs now, as its badge says, not the resume
@@ -61,9 +61,9 @@ enum ReviewAgents {
     /// from a view body.
     static func foregroundCommand(
         paneID: UUID,
-        registry: any SurfaceViewProviding
+        registry: any PaneSurfaceProviding
     ) async -> String? {
-        guard let surfaceTTY = registry.view(for: paneID)?.ttyName else { return nil }
+        guard let surfaceTTY = registry.paneSurface(for: paneID)?.ttyName else { return nil }
         return await offMain {
             // The surface's own foreground first: it costs a `sysctl` and
             // it is what says whether the tmux scan is worth starting.
@@ -83,9 +83,9 @@ enum ReviewAgents {
     /// actor, and tmux's clients listed once, in a second, for the panes
     /// that host one. A pane with no terminal yet is not in the answer.
     /// `nil` once the task is canceled, so a pass cut short writes nothing.
-    static func foregroundCommands(paneIDs: [UUID], registry: any SurfaceViewProviding) async -> [UUID: String]? {
+    static func foregroundCommands(paneIDs: [UUID], registry: any PaneSurfaceProviding) async -> [UUID: String]? {
         guard !Task.isCancelled else { return nil }
-        let surfaces = paneIDs.compactMap { paneID in registry.view(for: paneID)?.ttyName.map { (paneID, $0) } }
+        let surfaces = paneIDs.compactMap { paneID in registry.paneSurface(for: paneID)?.ttyName.map { (paneID, $0) } }
         let ttys = surfaces.map(\.1)
         let names = await offMain { ttys.map { ReviewTerminalProbe.foregroundProcess(on: $0)?.name } }
         guard !Task.isCancelled else { return nil }
@@ -123,7 +123,7 @@ enum ReviewAgents {
     static func insert(
         _ prompt: ReviewPrompt,
         into destination: ReviewDestination,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         receipt: ReviewPasteReceipt? = nil
     ) throws {
         guard let target = registry.deliverer(for: destination.paneID) else {

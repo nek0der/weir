@@ -61,10 +61,10 @@ extension AppState {
             // Recorded only once applied, so a reload that kept the running
             // config is tried again by the next change.
             if let diagnostics = GhosttyConfigBridge.reloadConfig(
-                app: ghosttyApp, settings: latest,
+                settings: latest,
                 resourcesDir: resourcesDir,
                 includeUserConfig: includeUserConfig,
-                surfaces: self.allSurfaceViews
+                install: { ghosttyApp.replaceConfig(with: $0, surfaces: self.allSurfaceViews) }
             ) {
                 self.lastAppliedConfigKey = key
                 self.settingsStore.ghosttyConfigDiagnostics = diagnostics
@@ -80,11 +80,10 @@ extension AppState {
         guard let ghosttyApp else { return }
         let latest = settingsStore.settings
         if let diagnostics = GhosttyConfigBridge.reloadConfig(
-            app: ghosttyApp,
             settings: latest,
             resourcesDir: GhosttyApp.resolveResourcesDir(),
             includeUserConfig: latest.advanced.ghosttyConfig.isOn,
-            surfaces: allSurfaceViews
+            install: { ghosttyApp.replaceConfig(with: $0, surfaces: allSurfaceViews) }
         ) {
             settingsStore.ghosttyConfigDiagnostics = diagnostics
         }

@@ -146,7 +146,7 @@ extension AttentionState {
     /// one value for both would hide the intent at the call site.
     func focusAttention( // swiftlint:disable:this function_parameter_count
         in session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         tabID: UUID,
         paneID: UUID,
         runtimeID: String? = nil,

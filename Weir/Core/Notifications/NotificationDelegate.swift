@@ -12,7 +12,7 @@ final class WeirNotificationDelegate: NSObject, UNUserNotificationCenterDelegate
     /// the delegate's `willPresent` callback runs synchronously on a
     /// system queue, so it can't reach back into AppState through the
     /// SwiftUI environment.
-    nonisolated(unsafe) static var registry: (any SurfaceViewProviding)?
+    nonisolated(unsafe) static var registry: (any PaneSurfaceProviding)?
 
     /// Tap-handler closure invoked from `didReceive` with the full
     /// routing payload the notification's `userInfo` carried —
@@ -124,7 +124,7 @@ final class WeirNotificationDelegate: NSObject, UNUserNotificationCenterDelegate
         guard let paneIDString,
               let paneID = UUID(uuidString: paneIDString),
               let registry,
-              let view = registry.view(for: paneID)
+              let view = registry.paneSurface(for: paneID)
         else {
             // No pane plumbing — fail-closed (treat the pane as not
             // focused) so the banner shows. Suppressing on missing
@@ -142,9 +142,8 @@ final class WeirNotificationDelegate: NSObject, UNUserNotificationCenterDelegate
     /// then, and treating it as focused would suppress its notifications
     /// and unread marks while the user is typing in the panel.
     @MainActor
-    static func isViewFocused(_ view: SurfaceView) -> Bool {
-        guard NSApp.isActive, let keyWindow = NSApp.keyWindow else { return false }
-        return view.window === keyWindow && keyWindow.firstResponder === view
+    static func isViewFocused(_ view: any PaneSurface) -> Bool {
+        NSApp.isActive && view.isFirstResponderOfKeyWindow
     }
 }
 

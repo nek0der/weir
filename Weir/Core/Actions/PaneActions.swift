@@ -5,7 +5,7 @@
 // the ⌘W cascade that closes the tab when the focused pane was last.
 // See `SearchActions` for the pattern.
 
-import AppKit
+import CoreGraphics
 import Foundation
 import WeirDomain
 
@@ -25,7 +25,7 @@ enum PaneActions {
     static func split(
         _ session: WorkspaceSession,
         direction: SplitDirection,
-        registry: (any SurfaceViewProviding)? = nil,
+        registry: (any PaneSurfaceProviding)? = nil,
         minPaneSize: PaneMinimumSize = .zero,
         toastCenter: ToastCenter? = nil,
         in window: WindowID
@@ -104,22 +104,22 @@ enum PaneActions {
     private static func renderedPaneAreaSize(
         tab: Tab,
         pivotID: UUID,
-        registry: any SurfaceViewProviding
+        registry: any PaneSurfaceProviding
     ) -> CGSize? {
         if tab.zoomedLeafID != nil {
-            guard let view = registry.view(for: pivotID), view.window != nil else { return nil }
-            return view.bounds.size
+            guard let view = registry.paneSurface(for: pivotID), view.isInWindow else { return nil }
+            return view.boundsSize
         }
         return mountedPaneAreaSize(of: tab.splitTree, registry: registry)
     }
 
     /// The size of the union of every leaf's view, which includes the
     /// dividers between them, or nil while any leaf is not in a window.
-    static func mountedPaneAreaSize(of tree: SplitTree, registry: any SurfaceViewProviding) -> CGSize? {
+    static func mountedPaneAreaSize(of tree: SplitTree, registry: any PaneSurfaceProviding) -> CGSize? {
         let paneIDs = tree.allLeafIDs()
         let rects = paneIDs.compactMap { paneID -> CGRect? in
-            guard let view = registry.view(for: paneID), view.window != nil else { return nil }
-            return view.convert(view.bounds, to: nil)
+            guard let view = registry.paneSurface(for: paneID), view.isInWindow else { return nil }
+            return view.rectInWindow
         }
         guard rects.count == paneIDs.count, let first = rects.first else { return nil }
         return rects.dropFirst().reduce(first) { $0.union($1) }.size
@@ -134,7 +134,7 @@ enum PaneActions {
     /// closes as its tab does.
     static func closeActivePane(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         source: CloseConfirmer.Source = .keyboard,
         attention: AttentionState? = nil,
         agentProjection: AgentProjectionAdapter? = nil,
@@ -169,7 +169,7 @@ enum PaneActions {
     private static func closePane(
         _ pane: ClosingPane,
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         agentProjection: AgentProjectionAdapter?
     ) {
         let leafID = pane.leafID
@@ -252,7 +252,7 @@ enum PaneActions {
     /// regardless of which branch we end up taking.
     static func closeActivePaneOrTab(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         source: CloseConfirmer.Source = .keyboard,
         attention: AttentionState? = nil,
         agentProjection: AgentProjectionAdapter? = nil,
@@ -292,7 +292,7 @@ enum PaneActions {
     /// actions and the Pane menu's per-direction enabled state.
     static func adjacentLeaf(
         _ session: WorkspaceSession,
-        registry: (any SurfaceViewProviding)? = nil,
+        registry: (any PaneSurfaceProviding)? = nil,
         direction: SpatialDirection,
         in window: WindowID
     ) -> PaneAdjacency? {
@@ -302,8 +302,8 @@ enum PaneActions {
         let paneIDs = tab.splitTree.allLeafIDs()
         let renderedRects: [(id: UUID, rect: CGRect)] = registry.map { registry in
             paneIDs.compactMap { paneID in
-                guard let view = registry.view(for: paneID), view.window != nil else { return nil }
-                let windowRect = view.convert(view.bounds, to: nil)
+                guard let view = registry.paneSurface(for: paneID), view.isInWindow else { return nil }
+                let windowRect = view.rectInWindow
                 // AppKit window coordinates grow upward; SplitTree spatial
                 // directions use SwiftUI's top-down convention.
                 let topDownRect = CGRect(
@@ -330,16 +330,15 @@ enum PaneActions {
     /// skip; `viewDidMoveToWindow` grabs focus on mount via the
     /// `focusedLeafID` the caller set. Do *not* "fix" the nil view by
     /// crashing.
-    static func pullKeyboardFocus(to paneID: UUID, registry: any SurfaceViewProviding) {
-        guard let view = registry.view(for: paneID) else { return }
-        view.window?.makeFirstResponder(view)
+    static func pullKeyboardFocus(to paneID: UUID, registry: any PaneSurfaceProviding) {
+        registry.paneSurface(for: paneID)?.takeKeyboardFocus()
     }
 
     /// ⌥⌘←/↑/↓/→ — move keyboard focus to the adjacent pane in the
     /// requested direction. tmux `select-pane -L/U/D/R` analogue.
     static func focusPane(
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         direction: SpatialDirection,
         in window: WindowID
     ) {
@@ -361,7 +360,7 @@ enum PaneActions {
     /// one value for both would hide the intent at the call site.
     static func activateAndFocus( // swiftlint:disable:this function_parameter_count
         _ session: WorkspaceSession,
-        registry: any SurfaceViewProviding,
+        registry: any PaneSurfaceProviding,
         tabID: UUID,
         paneID: UUID,
         in window: WindowID,

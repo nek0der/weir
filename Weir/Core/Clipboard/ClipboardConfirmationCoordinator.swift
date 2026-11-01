@@ -134,7 +134,7 @@ protocol ClipboardRequestTarget: AnyObject {
     var surface: ghostty_surface_t? { get }
     var clipboardRequests: ClipboardRequestTracker { get }
     /// The pane as a view, for the UI that decides where the sheet goes.
-    var surfaceView: SurfaceView? { get }
+    var hostView: NSView? { get }
 }
 
 /// The calls that answer a request. Injected so a test can see what would
@@ -229,8 +229,8 @@ struct PendingClipboardRequest: Identifiable {
     }
 
     /// The originating view, for the UI that decides where the sheet goes.
-    var view: SurfaceView? {
-        target?.surfaceView
+    var view: NSView? {
+        target?.hostView
     }
 }
 

@@ -96,13 +96,9 @@ custom_rules:
       - doccomment.field
       - string
     excluded:
-      - 'Weir/Core/Actions/PaneActions\.swift$'
       - 'Weir/Core/Agent/AgentIntegrationServiceRegistrar\.swift$'
       - 'Weir/Core/Clipboard/ClipboardConfirmationCoordinator\.swift$'
       - 'Weir/Core/Files/FileOpener\.swift$'
-      - 'Weir/Core/GhosttyActionRouter\.swift$'
-      - 'Weir/Core/GhosttyApp\.swift$'
-      - 'Weir/Core/GhosttyEventCoordinator\.swift$'
       - 'Weir/Core/Git/GitSyncCoordinator\.swift$'
       - 'Weir/Core/Git/PRStatusSyncer\.swift$'
       - 'Weir/Core/Links/TerminalLinkOpener\.swift$'
@@ -110,11 +106,9 @@ custom_rules:
       - 'Weir/Core/Notifications/NotificationDelegate\.swift$'
       - 'Weir/Core/QuickTerminal/QuickTerminalHotKeyCenter\.swift$'
       - 'Weir/Core/Review/ReviewFileAction\.swift$'
-      - 'Weir/Core/SecureInputManager\.swift$'
       - 'Weir/Core/Settings/KeyboardShortcut\+Capture\.swift$'
       - 'Weir/Core/Settings/KeyboardShortcut\.swift$'
       - 'Weir/Core/Settings/ReduceTransparencyResolver\.swift$'
-      - 'Weir/Core/SurfaceRegistry\.swift$'
       - 'Weir/Core/Updates/WeirUpdateDriver\.swift$'
       - 'Weir/Core/Updates/WeirWindowRole\.swift$'
     message: >-
@@ -183,7 +177,7 @@ custom_rules:
   # glyphs: a Core type that needs one takes the value from its caller.
   core_names_ui_type:
     name: "Core names a UI type"
-    regex: '\b(?:WeirLayout|SupervisionTokens|StateGlyph)\b'
+    regex: '\b(?:WeirLayout|SupervisionTokens|StateGlyph|SurfaceView|SurfaceRegistry|GhosttyApp|GhosttyActionRouter|GhosttyEventCoordinator|SecureInputManager)\b'
     included: 'Weir/Core/'
     excluded_match_kinds:
       - comment
@@ -193,7 +187,8 @@ custom_rules:
       - doccomment.field
     message: >-
       Core does not depend on UI. Hand the size, token, or glyph in from
-      the caller, or keep a Core value the UI maps.
+      the caller, or keep a Core value the UI maps. A pane's terminal is
+      reached through PaneSurface.
     severity: error
 
   # US spelling in comments (AGENTS.md §3), which no compiler checks. Code
