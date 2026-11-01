@@ -1,17 +1,15 @@
 // ReviewTabScopeMenu.swift
 // Weir — "Review Scope": the one menu that chooses what the review tab reads, and whose turns.
 
-import AppKit
 import SwiftUI
 import WeirDomain
 
 /// "Review Scope": the menu that chooses what the tab reads, the
-/// conversation with it. It lists the worktree's unviewed turns, then each
-/// conversation's under a heading with its badge, name, and state, then the
-/// uncommitted changes and the branch (`ReviewScopeMenu`), and holds no
+/// conversation with it. It lists the worktree's unviewed turns, then a row
+/// per conversation with its badge, name, and state, opening its turns, then
+/// the uncommitted changes and the branch (`ReviewScopeMenu`), and holds no
 /// turn rows, line, or receipts: the changes panel has those. An AppKit
-/// menu (`PopUpMenuButton`), whose items carry a second line and whose
-/// headings carry the badge.
+/// menu (`PopUpMenuButton`), whose items carry a second line and the badge.
 struct ReviewTabScopeMenu: View {
     let tab: ReviewTabState
     let handler: ReviewTabHandler
@@ -34,34 +32,33 @@ struct ReviewTabScopeMenu: View {
         }
     }
 
-    /// The worktree's unviewed turns under their heading; each listed
-    /// conversation under its own, its unviewed turns and then its single
-    /// turns in a submenu; the rest with turns to read, then the viewed
-    /// ones, each folded into one entry under a heading; then what no
+    /// The worktree's unviewed turns; each conversation as one row opening
+    /// its choices; the viewed ones the same under a heading; then what no
     /// conversation owns. A worktree of one conversation lists its choices
-    /// as they are, with no headings.
+    /// as they are. What the worktree's range reads through is its tooltip,
+    /// and the top edge says it once it is chosen (`ReviewTabScopeNotes`).
     private func entries(_ menu: ReviewScopeMenu) -> [PopUpMenuEntry] {
         var entries: [PopUpMenuEntry] = []
         if let worktree = menu.worktree {
-            entries.append(.header(ReviewTabText.worktreeHeading(locale: locale)))
             let viewed = ReviewTabText.includesViewedTurns(menu.worktreeCounts?.viewedTurns ?? 0, locale: locale)
-            entries.append(.item(item(worktree, counts: menu.worktreeCounts, subtitle: viewed)))
+            entries.append(.item(item(worktree, counts: menu.worktreeCounts, note: viewed)))
+            entries.append(.separator)
         }
         for section in menu.sections {
-            guard let agent = section.conversation else {
-                entries += section.choices.map { .item(item($0)) }
-                continue
-            }
-            entries.append(.heading(heading(agent)))
-            if let lead = section.lead {
-                entries.append(.item(item(lead, of: agent)))
-            }
-            if let turns = turnsSubmenu(section.turns, of: agent) {
-                entries.append(turns)
+            if section.conversation == nil {
+                let digits = Self.numberDigits(section.choices)
+                entries += section.choices.map { .item(item($0, numberDigits: digits)) }
+            } else if let row = row(section) {
+                entries.append(row)
             }
         }
-        folded(menu.more, under: ReviewTabText.moreConversationsHeading(locale: locale), into: &entries)
-        folded(menu.folded, under: ConversationText.section(.viewed, locale: locale), into: &entries)
+        if !menu.folded.isEmpty {
+            entries.append(.header(ConversationText.section(.viewed, locale: locale)))
+            entries += menu.folded.compactMap(row)
+        }
+        if let last = entries.last, case .separator = last {
+            entries.removeLast()
+        }
         if !entries.isEmpty, !menu.tail.isEmpty {
             entries.append(.separator)
         }
@@ -69,73 +66,80 @@ struct ReviewTabScopeMenu: View {
         return entries
     }
 
-    /// "Turns ▸": a conversation's single turns, newest first, in a
-    /// submenu, checked while the tab reads one of them. `nil` for none.
-    private func turnsSubmenu(_ turns: [ReviewScopeMenu.Choice], of agent: ConversationChoice) -> PopUpMenuEntry? {
-        guard !turns.isEmpty else { return nil }
-        let title = ReviewTabText.turnsSubmenu(locale: locale)
-        let opener = PopUpMenuItem(
-            verbatim: title,
-            isChecked: turns.contains(where: \.isChecked),
-            accessibilityLabel: ReviewTabText.conversationsChoice(title, conversation: agent, locale: locale)
-        ) {}
-        return .submenu(opener, turns.map { .item(item($0, of: agent)) })
-    }
-
-    /// `sections` under `heading`, each one entry with the conversation's
-    /// badge, name, and line, opening its choices: its unviewed turns, then
-    /// its single turns.
-    private func folded(_ sections: [ReviewScopeMenu.Section], under heading: String, into entries: inout [PopUpMenuEntry]) {
-        guard !sections.isEmpty else { return }
-        let locale = locale
-        entries.append(.header(heading))
-        for section in sections {
-            guard let agent = section.conversation else { continue }
-            let opener = ConversationMenuItem.make(
-                choice: agent,
-                isChecked: section.choices.contains(where: \.isChecked),
-                locale: locale,
-                perform: {}
-            )
-            entries.append(.submenu(opener, section.choices.map { .item(item($0, of: agent)) }))
+    /// A conversation's row: its badge, name, and line, checked while the
+    /// tab reads one of its choices, opening its unviewed turns and then
+    /// its single turns, newest first. `nil` without a conversation; off
+    /// with nothing to choose, as an empty submenu would open on nothing.
+    private func row(_ section: ReviewScopeMenu.Section) -> PopUpMenuEntry? {
+        guard let agent = section.conversation else { return nil }
+        var opener = ConversationMenuItem.make(
+            choice: agent,
+            isChecked: section.choices.contains(where: \.isChecked),
+            locale: locale,
+            perform: {}
+        )
+        // A row's tooltip lands on the first entry of the submenu it opens,
+        // the one most often chosen, so it shows only for what the row cut.
+        if ConversationText.menuName(agent, locale: locale) == ConversationText.name(agent, locale: locale) {
+            opener.help = nil
         }
+        guard !section.choices.isEmpty else {
+            opener.isEnabled = false
+            return .item(opener)
+        }
+        var choices: [PopUpMenuEntry] = section.lead.map { [.item(item($0, of: agent))] } ?? []
+        if !choices.isEmpty, !section.turns.isEmpty {
+            choices.append(.separator)
+        }
+        let digits = Self.numberDigits(section.turns)
+        choices += section.turns.map { .item(item($0, of: agent, numberDigits: digits)) }
+        return .submenu(opener, choices)
     }
 
     /// One choice, with the menu's checkmark on the one the tab reads.
-    /// Under a conversation's heading VoiceOver hears the conversation with
-    /// it ("Claude #4: T6 · …"), as the heading is not read with each item.
+    /// In a conversation's submenu VoiceOver hears the conversation with it
+    /// ("Claude #4: T6 · …"), as its row is not read with each item. The
+    /// base is cut alone, so a long one keeps the words around it. A turn's
+    /// number takes `numberDigits` places, so its words line up with the
+    /// other turns'.
     private func item(
         _ choice: ReviewScopeMenu.Choice,
         of conversation: ConversationChoice? = nil,
         counts: ReviewScopeCatalog.RangeCounts? = nil,
-        subtitle: String? = nil
+        note: String? = nil,
+        numberDigits: Int = 0
     ) -> PopUpMenuItem {
-        let text = ReviewTabText.option(choice.option, counts: counts, locale: locale)
-        return PopUpMenuItem(
+        let whole = ReviewTabText.option(choice.option, counts: counts, locale: locale)
+        var text = whole
+        if case let .branch(base) = choice.option {
+            let cut = MenuLine.fit(base, as: .branch, maxWidth: MenuLine.nameBeforeWordsWidth)
+            text = ReviewTabText.option(.branch(base: cut), locale: locale)
+        }
+        var isTurn = false
+        if case let .turn(range, _) = choice.option {
+            isTurn = true
+            text = ReviewTabText.alignedTurn(whole, numbers: range.numbers, digits: numberDigits)
+        }
+        var item = PopUpMenuItem(
             verbatim: text,
-            subtitle: subtitle,
             isChecked: choice.isChecked,
-            help: subtitle,
-            accessibilityLabel: conversation.map { ReviewTabText.scope(choice.option, conversation: $0, locale: locale) },
-            accessibilityValue: subtitle
+            help: note ?? (isTurn || text == whole ? nil : whole),
+            accessibilityLabel: conversation.map { ReviewTabText.scope(choice.option, conversation: $0, locale: locale) }
+                ?? (text == whole ? nil : whole),
+            accessibilityValue: note
         ) { [handler] in
             handler.select(choice.option, choice.conversation)
         }
+        item.hasTabularDigits = isTurn
+        return item
     }
 
-    /// A conversation's heading: its identity bar where it has one and its
-    /// badge, its name cut as a menu cuts it, and under it the line the
-    /// changes panel's filter gives each conversation
-    /// (`ConversationText.detail`). VoiceOver reads the whole name with its
-    /// agent.
-    private func heading(_ agent: ConversationChoice) -> PopUpMenuHeading {
-        let locale = locale
-        return PopUpMenuHeading(
-            title: ConversationText.menuName(agent, locale: locale),
-            subtitle: ConversationText.detail(agent, locale: locale),
-            image: { AgentBadgeMenuImage.image(for: agent.conversation.provider, size: .row, identity: agent.identity, in: .current) },
-            accessibilityLabel: ConversationText.spokenHelp(agent, locale: locale)
-        )
+    /// How many places the widest single turn's number among `choices` takes.
+    private static func numberDigits(_ choices: [ReviewScopeMenu.Choice]) -> Int {
+        choices.reduce(0) { widest, choice in
+            guard case let .turn(range, _) = choice.option, range.numbers.count == 1 else { return widest }
+            return max(widest, String(range.numbers.lowerBound).count)
+        }
     }
 }
 

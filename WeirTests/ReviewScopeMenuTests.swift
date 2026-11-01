@@ -190,11 +190,10 @@ struct ReviewScopeMenuTests {
     }
 
     /// Fifteen ended conversations of five turns each, every one with turns
-    /// to read: each listed conversation puts its unviewed turns at the top
-    /// level and its single turns in one submenu; past the limit, newest
-    /// first, they fold into one entry each, so the menu stays a few lines
-    /// per conversation and the worktree's own comparisons stay in sight.
-    @Test func manyConversations_keepTheMenuShort_eachTurnInASubmenu_newestListedWhole() throws {
+    /// to read: each is one row, newest first, opening its unviewed turns
+    /// and its single turns, so the menu stays one row per conversation and
+    /// the worktree's own comparisons stay in sight.
+    @Test func manyConversations_keepTheMenuShort_aRowEach_newestFirst() throws {
         let now = Date(timeIntervalSince1970: 1_791_800_000)
         var turns: [ConversationKey: [TurnSummary]] = [:]
         var named: [ConversationChoice] = []
@@ -219,29 +218,26 @@ struct ReviewScopeMenuTests {
 
         let menu = ReviewScopeMenu.make(tab, context)
 
-        #expect(menu.sections.count == ReviewScopeMenu.listedLimit)
         #expect(
-            menu.sections.map { $0.conversation?.ordinal } == [15, 14, 13, 12, 1],
-            "the newest by their latest activity, and the tab's own, whatever its age, in its place"
+            menu.sections.map { $0.conversation?.ordinal } == Array((1...15).reversed()),
+            "by their latest activity"
         )
-        #expect(menu.more.count == 10 && menu.folded.isEmpty)
+        #expect(menu.folded.isEmpty)
         for section in menu.sections {
             guard case .unviewedTurns? = section.lead?.option else {
-                Issue.record("a listed conversation leads with its unviewed turns")
+                Issue.record("a conversation's row opens on its unviewed turns")
                 continue
             }
-            #expect(section.turns.count == 5, "its single turns, in the submenu")
+            #expect(section.turns.count == 5, "its single turns, after them")
         }
-        // The top level: the worktree's heading and entry; per listed
-        // conversation its heading, unviewed turns, and "Turns ▸"; one
-        // heading and one entry per further conversation; the separator
-        // and the worktree's own two.
-        let topLevel = 2 + menu.sections.count * 3 + 1 + menu.more.count + 1 + menu.tail.count
-        #expect(topLevel <= 32, "a few lines per conversation, not one per turn")
         #expect(menu.choices.count == 1 + 15 * 6 + 2, "every choice still reachable")
-        #expect(ReviewTabText.turnsSubmenu(locale: Self.ja) == "ターン")
-        #expect(ReviewTabText.moreConversationsHeading(locale: Self.ja) == "ほかの会話")
-        #expect(ReviewTabText.moreConversationsHeading(locale: Self.en) == "More Conversations")
+    }
+
+    /// A turn's words start in one column whatever its number's width.
+    @Test func aTurnsNumber_isFilledOutToTheWidestOnesPlaces() {
+        #expect(ReviewTabText.alignedTurn("T9 · Fix", numbers: 9...9, digits: 2) == "T9\u{2007} · Fix")
+        #expect(ReviewTabText.alignedTurn("T10 · Fix", numbers: 10...10, digits: 2) == "T10 · Fix")
+        #expect(ReviewTabText.alignedTurn("T7–T8 · Fix", numbers: 7...8, digits: 3) == "T7–T8 · Fix", "a range is left as it is")
     }
 
     /// One conversation: no headings and no worktree entry, the four kinds

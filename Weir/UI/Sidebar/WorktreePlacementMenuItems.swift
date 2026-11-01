@@ -14,10 +14,12 @@ struct WorktreePlacementMenuItems: View {
     let onChooseFolder: () -> Void
 
     var body: some View {
-        item(.siblingPrefixed, Text("Next to the Project (\(WorktreePlacementActions.siblingPreview(of: project)))"))
+        let sibling = MenuLine.fit(WorktreePlacementActions.siblingPreview(of: project), as: .path, maxWidth: MenuLine.nameBeforeWordsWidth)
+        item(.siblingPrefixed, Text("Next to the Project (\(sibling))"))
         item(.insideHidden, Text(WorktreePlacementActions.insideTitle))
         if let project, case let .custom(folder) = project.worktreePlacement {
-            item(.custom, Text(verbatim: PathFormatting.abbreviateHome(folder.path)))
+            item(.custom, Text(verbatim: MenuLine.fit(PathFormatting.abbreviateHome(folder.path), as: .path)))
+                .help(Text(verbatim: folder.path))
         }
         Divider()
         Button {

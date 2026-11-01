@@ -78,14 +78,14 @@ enum ConversationText {
     }
 
     /// The name as a menu shows it: the title cut to
-    /// `SupervisionTruncation.menuNameLimit` characters, before its number,
+    /// `MenuLine.titleBeforeNumberWidth`, before its number,
     /// so two conversations of one long title still read apart by their
     /// number ("Fix the flaky snapshot tests in… #2"). The item's tooltip
     /// and VoiceOver say the whole name.
     static func menuName(_ choice: ConversationChoice, locale: Locale) -> String {
         name(
             choice.conversation.provider,
-            title: choice.title.map(SupervisionTruncation.menuName),
+            title: choice.title.map { MenuLine.fit($0, maxWidth: MenuLine.titleBeforeNumberWidth) },
             ordinal: choice.ordinal,
             locale: locale
         )

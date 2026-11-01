@@ -306,8 +306,10 @@ extension NewSessionSheet {
                     Button {
                         bound.wrappedValue.choosePullRequest(head)
                     } label: {
-                        Text(verbatim: "#\(head.number)  \(head.title)")
+                        Text(verbatim: MenuLine.fit("#\(head.number)  \(head.title)"))
                     }
+                    .help(Text(verbatim: head.title))
+                    .accessibilityLabel(Text(verbatim: "#\(head.number)  \(head.title)"))
                 }
             } label: {
                 NewSessionMenuFace(fillsWidth: false) {
@@ -357,8 +359,10 @@ extension NewSessionSheet {
                     get: { bound.wrappedValue.existingBranch == branch },
                     set: { _ in bound.wrappedValue.existingBranch = branch }
                 )) {
-                    Text(verbatim: branch)
+                    Text(verbatim: MenuLine.fit(branch, as: .branch))
                 }
+                .help(Text(verbatim: branch))
+                .accessibilityLabel(Text(verbatim: branch))
             }
         } label: {
             NewSessionMenuFace(fillsWidth: true) {
@@ -482,8 +486,10 @@ extension NewSessionSheet {
                     get: { bound.wrappedValue.base == base },
                     set: { _ in bound.wrappedValue.baseName = base.name }
                 )) {
-                    baseLabel(base)
+                    baseLabel(base, name: MenuLine.fit(base.name, as: .branch, maxWidth: MenuLine.nameBeforeWordsWidth))
                 }
+                .help(Text(verbatim: base.name))
+                .accessibilityLabel(baseLabel(base))
             }
         } label: {
             NewSessionMenuFace(fillsWidth: true) {
@@ -500,7 +506,7 @@ extension NewSessionSheet {
         .disabled(model.source != .newBranch || model.bases.isEmpty)
         .accessibilityLabel(Text(Self.baseLabel))
         .accessibilityValue(model.source == .pullRequest ? Text(verbatim: baseFace(model)) : model.base
-            .map(baseLabel) ?? Text(verbatim: ""))
+            .map { baseLabel($0) } ?? Text(verbatim: ""))
     }
 
     /// The base menu's face: the base in use, or for a pull request the
@@ -513,13 +519,14 @@ extension NewSessionSheet {
     }
 
     /// A base as the menu lists it: the current worktree's branch says so.
-    private func baseLabel(_ base: NewSessionModel.Base) -> Text {
-        base.isCurrentWorktree
+    private func baseLabel(_ base: NewSessionModel.Base, name: String? = nil) -> Text {
+        let name = name ?? base.name
+        return base.isCurrentWorktree
             ? Text(
-                "\(base.name) (Current Worktree)",
+                "\(name) (Current Worktree)",
                 comment: "New worktree sheet: a base, the branch of the worktree the window shows; the argument is the branch"
             )
-            : Text(verbatim: base.name)
+            : Text(verbatim: name)
     }
 
     // MARK: - Checkboxes

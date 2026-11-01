@@ -12,29 +12,10 @@ enum PopUpMenuEntry {
     /// A heading over the items after it, as the system draws one
     /// (`NSMenuItem.sectionHeader`): words already resolved, never chosen.
     case header(String)
-    /// A heading with more to say than its words: a second line, and an
-    /// image before it (a conversation's badge over its turns, in the
-    /// review's scope menu).
-    case heading(PopUpMenuHeading)
     /// An item that opens a menu of its own, `entries`, rather than doing
-    /// something: what a long menu folds away (the review's viewed
-    /// conversations).
+    /// something: what a long menu folds away (a conversation's turns, in
+    /// the review's scope menu).
     case submenu(PopUpMenuItem, [PopUpMenuEntry])
-}
-
-/// A section heading of a `PopUpMenuButton`'s menu with a second line and
-/// an image (`PopUpMenuEntry.heading`). Never chosen.
-struct PopUpMenuHeading {
-    let title: String
-    /// Under the title, in the menu's smaller secondary face; `nil` for
-    /// none.
-    var subtitle: String?
-    /// Before the title; `nil` for none. Drawn once the menu opens, in its
-    /// appearance (`PopUpMenu.make`).
-    var image: (@MainActor () -> NSImage?)?
-    /// What VoiceOver reads for the heading, where its lines say more
-    /// together than the title does; `nil` reads the title.
-    var accessibilityLabel: String?
 }
 
 /// An item in a `PopUpMenuButton`'s menu.
@@ -75,6 +56,9 @@ struct PopUpMenuItem {
     /// the `NSMenuItem` it makes: same title, same image, nothing set for
     /// accessibility), and macOS menus never color an item to warn.
     var isDestructive = false
+    /// Whether its digits are all one width, so a list of numbered items
+    /// keeps what follows each number in one column.
+    var hasTabularDigits = false
     /// Whether the item is the one chosen, drawn with the menu's checkmark.
     var isChecked = false
     /// The item's tooltip, `nil` for none. AppKit shows it on a disabled
@@ -259,7 +243,6 @@ enum PopUpMenu {
             switch entry {
             case .separator: menu.addItem(.separator())
             case let .header(title): menu.addItem(.sectionHeader(title: title))
-            case let .heading(heading): menu.addItem(item(for: heading))
             case let .item(item): menu.addItem(PopUpMenuActionItem(item, locale: locale))
             case let .submenu(item, entries):
                 let parent = PopUpMenuActionItem(item, locale: locale)
@@ -272,45 +255,16 @@ enum PopUpMenu {
         return menu
     }
 
-    /// A section heading with its second line and image: the system's
-    /// heading item, with the two lines in the faces a two-line item uses.
-    ///
-    /// The image goes inside the title rather than in the item's image
-    /// column, and the name carries the label color: a heading is never
-    /// chosen, so AppKit draws it as a disabled item, fading an item image
-    /// and an uncolored title until the heading reads as an item that
-    /// cannot be used. An attributed title is drawn in the colors it
-    /// carries, so the badge keeps its own and the name the primary color;
-    /// only the second line stays secondary.
-    private static func item(for heading: PopUpMenuHeading) -> NSMenuItem {
-        let item = NSMenuItem.sectionHeader(title: heading.title)
-        let image = heading.image?()
-        if image != nil || heading.subtitle != nil {
-            item.attributedTitle = title(
-                heading.title,
-                subtitle: heading.subtitle,
-                after: image,
-                font: .boldSystemFont(ofSize: NSFont.smallSystemFontSize),
-                color: .labelColor
-            )
-        }
-        if let label = heading.accessibilityLabel {
-            item.setAccessibilityLabel(label)
-        }
-        return item
-    }
-
     /// `title` in `font` after `image`, with the second line under the
     /// name rather than under the image: a line separator keeps both lines
     /// one paragraph, so the second takes the indent the image and its
-    /// space leave. `color` `nil` leaves the title to the menu's own color,
-    /// which fades it on a disabled item.
+    /// space leave. Both lines are cut to what the image leaves of a line
+    /// (`MenuLine`).
     static func title(
         _ title: String,
         subtitle: String?,
         after image: NSImage?,
-        font: NSFont,
-        color: NSColor?
+        font: NSFont
     ) -> NSAttributedString {
         let lines = NSMutableAttributedString()
         if let image {
@@ -328,11 +282,10 @@ enum PopUpMenu {
             lines.append(NSAttributedString(string: " ", attributes: [.font: font]))
         }
         let indent = lines.size().width
-        var titleAttributes: [NSAttributedString.Key: Any] = [.font: font]
-        titleAttributes[.foregroundColor] = color
-        lines.append(NSAttributedString(string: title, attributes: titleAttributes))
+        let room = MenuLine.maxWidth - indent
+        lines.append(NSAttributedString(string: MenuLine.fit(title, maxWidth: room), attributes: [.font: font]))
         if let subtitle {
-            lines.append(NSAttributedString(string: "\u{2028}" + subtitle, attributes: [
+            lines.append(NSAttributedString(string: "\u{2028}" + MenuLine.fit(subtitle, maxWidth: room), attributes: [
                 .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
                 .foregroundColor: NSColor.secondaryLabelColor
             ]))
@@ -526,26 +479,29 @@ final class PopUpMenuActionItem: NSMenuItem {
     init(_ item: PopUpMenuItem, locale: Locale) {
         perform = item.perform
         isDestructive = item.isDestructive
-        super.init(title: item.name.resolved(in: locale), action: #selector(run(_:)), keyEquivalent: "")
+        let name = item.name.resolved(in: locale)
+        let shown = MenuLine.fit(name)
+        super.init(title: shown, action: #selector(run(_:)), keyEquivalent: "")
         target = self
-        // A drawn image goes inside the title, as a heading's does: AppKit
-        // draws no image set on an item of this menu, so a conversation's
-        // badge and identity bar would not show.
+        // A drawn image goes inside the title: AppKit draws no image set on
+        // an item of this menu, so a conversation's badge and identity bar
+        // would not show.
         if let drawn = item.image?() {
-            attributedTitle = PopUpMenu.title(
-                item.name.resolved(in: locale),
-                subtitle: item.subtitle,
-                after: drawn,
-                font: .menuFont(ofSize: 0),
-                color: nil
-            )
+            attributedTitle = PopUpMenu.title(name, subtitle: item.subtitle, after: drawn, font: .menuFont(ofSize: 0))
         } else if let subtitle = item.subtitle {
-            attributedTitle = Self.twoLines(item.name.resolved(in: locale), subtitle)
+            attributedTitle = Self.twoLines(shown, MenuLine.fit(subtitle))
+        } else if item.hasTabularDigits {
+            let size = NSFont.menuFont(ofSize: 0).pointSize
+            attributedTitle = NSAttributedString(string: shown, attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: .regular)
+            ])
         }
         isEnabled = item.isEnabled
         state = item.isChecked ? .on : .off
-        toolTip = item.help?.resolved(in: locale)
-        if let label = item.accessibilityLabel {
+        // A cut line is still said whole.
+        let isCut = shown != name
+        toolTip = item.help?.resolved(in: locale) ?? (isCut ? name : nil)
+        if let label = item.accessibilityLabel ?? (isCut ? name : nil) {
             setAccessibilityLabel(label)
         }
         if let value = item.accessibilityValue {

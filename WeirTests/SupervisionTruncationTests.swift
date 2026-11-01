@@ -25,17 +25,31 @@ struct SupervisionTruncationTests {
         }
     }
 
-    /// A menu cannot cut its own lines, so a long name is cut by count:
-    /// its first 32 characters and an ellipsis. A short one is left whole.
-    @Test func aNameInAMenu_isCutTo32CharactersAndAnEllipsis() {
-        let long = "Review every libghostty patch on the fork and list the ones upstream took"
-        let cut = SupervisionTruncation.menuName(long)
-        #expect(cut == String(long.prefix(32)) + "…")
-        #expect(cut.count == SupervisionTruncation.menuNameLimit + 1)
-        #expect(SupervisionTruncation.menuName("Fix tests") == "Fix tests")
-        let exact = String(repeating: "a", count: SupervisionTruncation.menuNameLimit)
-        #expect(SupervisionTruncation.menuName(exact) == exact, "32 fits whole")
-        #expect(SupervisionTruncation.end("Fix the flaky tests", keeping: 8) == "Fix the…", "no space before the ellipsis")
+    /// A menu cannot cut its own lines, so a line is cut by its width: one
+    /// that fits stays whole, and Japanese, about twice as wide per
+    /// character, gets no wider a menu than English.
+    @Test func aLineInAMenu_isCutByItsWidth_whateverItsLanguage() {
+        let english = String(repeating: "Review every patch ", count: 20)
+        let japanese = String(repeating: "フォークのパッチをすべて確認する", count: 20)
+        for line in [english, japanese] {
+            let cut = MenuLine.fit(line)
+            #expect(cut.hasSuffix("…"))
+            #expect(MenuLine.width(of: cut) <= MenuLine.maxWidth)
+            #expect(MenuLine.width(of: cut) > MenuLine.maxWidth * 0.9, "nearly all the room is used")
+        }
+        #expect(MenuLine.fit(japanese).count < MenuLine.fit(english).count)
+        #expect(MenuLine.fit("Fix tests") == "Fix tests")
+    }
+
+    /// Each kind of line loses the part its kind gives up.
+    @Test func aLineInAMenu_losesThePartItsKindGivesUp() {
+        let branch = "feature/" + String(repeating: "long-", count: 40) + "chatbot"
+        let cut = MenuLine.fit(branch, as: .branch)
+        #expect(cut.hasPrefix("feature/") && cut.hasSuffix("chatbot") && cut.contains("…"))
+        #expect(MenuLine.fit(branch, as: .pathTitle).hasPrefix("…"))
+        let spaced = "Fix the " + String(repeating: "x", count: 200)
+        let room = MenuLine.width(of: "Fix the …")
+        #expect(MenuLine.fit(spaced, maxWidth: room) == "Fix the…", "no space before the ellipsis")
     }
 
     /// A conversation's menu name cuts its title before its number, so two
@@ -50,7 +64,9 @@ struct SupervisionTruncationTests {
             unviewedCount: 0
         )
         let english = Locale(identifier: "en")
-        #expect(ConversationText.menuName(choice, locale: english) == String(title.prefix(32)) + "… #2")
+        let menuName = ConversationText.menuName(choice, locale: english)
+        #expect(menuName.hasPrefix("Review every") && menuName.hasSuffix("… #2"))
+        #expect(MenuLine.width(of: menuName) <= MenuLine.maxWidth)
         #expect(ConversationText.name(choice, locale: english) == "\(title) #2")
         #expect(ConversationText.spokenName(choice, locale: english) == "Claude, \(title) #2")
         let short = ConversationChoice(

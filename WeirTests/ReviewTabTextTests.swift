@@ -92,8 +92,6 @@ struct ReviewTabTextTests {
     }
 
     @Test func theWords_inEnglishAndJapanese_eachNumberWithItsUnit() {
-        #expect(ReviewTabText.worktreeHeading(locale: Self.en) == "All Conversations")
-        #expect(ReviewTabText.worktreeHeading(locale: Self.ja) == "すべての会話")
         #expect(ReviewTabText.includesViewedTurns(0, locale: Self.en) == nil)
         #expect(ReviewTabText.includesViewedTurns(1, locale: Self.en) == "Includes 1 viewed turn")
         #expect(ReviewTabText.includesViewedTurns(2, locale: Self.en) == "Includes 2 viewed turns")
