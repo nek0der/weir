@@ -419,7 +419,9 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .closeTab: .init(key: "w", modifiers: [.command, .option])
         case .openFolder: .init(key: "o", modifiers: [.command])
         case .closeWindow: .init(key: "w", modifiers: [.command, .shift])
-        case .newWindow: nil
+        // ⌘N is New Worktree… and ⇧⌘N the notification history, both
+        // older than this default; ⌃⌘N moves neither.
+        case .newWindow: .init(key: "n", modifiers: [.command, .control])
         case .toggleSidebar: .init(key: "b", modifiers: [.command])
         case .notificationHistory: .init(key: "n", modifiers: [.command, .shift])
         case .review: .init(key: "r", modifiers: [.command, .option])

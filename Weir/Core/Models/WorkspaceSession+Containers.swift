@@ -187,9 +187,8 @@ extension WorkspaceSession {
     /// The projects no window shows, hidden ones included, `besides` left
     /// out: those used most recently first (`recentProjectPaths`),
     /// then the others in the projects' order, which the recent list,
-    /// capped, may have let go. The one order for the projects a window can
-    /// take: where a window whose project was removed goes, and what a
-    /// window that shows nothing offers (`EmptyWindowModel`).
+    /// capped, may have let go: where a window whose project was removed
+    /// goes.
     func projectsNoWindowShows(besides window: WindowID?) -> [Project] {
         let shown = Set(selections.values.filter { $0.windowID != window }.compactMap(\.shownProjectID))
         let free = projects.filter { !shown.contains($0.id) }

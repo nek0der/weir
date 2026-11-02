@@ -169,9 +169,10 @@ struct NeedsAttentionListModel: Equatable {
         guard let projectID = item.subject.projectID else { return false }
         switch windowProjectID {
         case let .some(shown):
-            return projectID != shown && !isInAnotherWindow
+            return ProjectOpening.offersNewWindow(isShownHere: projectID == shown, isShownElsewhere: isInAnotherWindow)
         case nil:
-            return projectsInWindows.map { !$0.contains(projectID) } ?? false
+            guard let projectsInWindows else { return false }
+            return ProjectOpening.offersNewWindow(isShownHere: false, isShownElsewhere: projectsInWindows.contains(projectID))
         }
     }
 

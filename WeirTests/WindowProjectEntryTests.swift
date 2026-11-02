@@ -339,8 +339,10 @@ extension WindowProjectSwitchTests {
         #expect(session.windowIDs.count == 2)
     }
 
-    /// A file is no project, nor is a package, which ⌘O cannot choose.
-    @Test func aFolderFromOutside_opensInTheWindowLastUsed_andAFileOrAPackageIsLeftAlone() async throws {
+    /// A file is no project, nor is a package, which ⌘O cannot choose. A
+    /// folder opens in a new window, leaving the project the window last
+    /// used shows where it is.
+    @Test func aFolderFromOutside_opensInANewWindow_andAFileOrAPackageIsLeftAlone() async throws {
         let fixture = Fixture()
         try await withTempDir { dir in
             let folder = dir.appending(path: "opened", directoryHint: .isDirectory)
@@ -358,6 +360,7 @@ extension WindowProjectSwitchTests {
                 frecency: nil
             ) { $0 }
             #expect(fixture.session.projects.count == projectCount)
+            #expect(fixture.registry.windows.count == 1)
 
             await SupervisionWindowActions.openFolders(
                 [file, folder],
@@ -369,18 +372,87 @@ extension WindowProjectSwitchTests {
             let opened = try #require(fixture.session.projects.last)
             #expect(fixture.session.projects.count == projectCount + 1)
             #expect(opened.rootURL == folder.standardizedFileURL)
-            #expect(fixture.primary.selection.shownProjectID == opened.id)
-            #expect(fixture.registry.windows.count == 1)
-            // On screen already, it still comes in front of the app the
-            // folder came from.
-            #expect(fixture.presenter.shown == [fixture.primary.id])
+            #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
+            let window = try #require(fixture.registry.window(showingProject: opened.id, in: fixture.session))
+            #expect(window !== fixture.primary)
+            #expect(fixture.registry.windows.count == 2)
+            // It comes in front of the app the folder came from.
+            #expect(fixture.presenter.shown.last == window.id)
+        }
+    }
+
+    /// The window the person was last in shows nothing: the folder fills
+    /// it rather than opening another beside it.
+    @Test func aFolderFromOutside_fillsTheEmptyWindowLastUsed() async throws {
+        let fixture = Fixture()
+        let empty = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
+        fixture.registry.windowBecameKey(empty.id)
+        fixture.presenter.shown = []
+        try await withTempDir { dir in
+            let folder = dir.appending(path: "opened", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+            await SupervisionWindowActions.openFolders(
+                [folder],
+                session: fixture.session,
+                registry: fixture.registry,
+                frecency: nil
+            ) { $0 }
+
+            let opened = try #require(fixture.session.projects.first { $0.rootURL == folder.standardizedFileURL })
+            #expect(empty.selection.shownProjectID == opened.id)
+            #expect(!empty.selection.isChoosingProject)
+            #expect(fixture.registry.windows.count == 2)
+            #expect(fixture.presenter.shown == [empty.id])
+        }
+    }
+
+    /// Every window closed, the last one hidden on its project: a folder
+    /// from outside opens in a new window, and the hidden one closes,
+    /// keeping its project, as New Window does. A folder of the hidden
+    /// window's own project brings that window back instead.
+    @Test func aFolderFromOutside_withEveryWindowClosed_opensANewWindow_andTheHiddenOneCloses() async throws {
+        let fixture = Fixture()
+        let hidden = fixture.primary
+        try await withTempDir { dir in
+            let folder = dir.appending(path: "opened", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let own = fixture.a.rootURL
+            try FileManager.default.createDirectory(at: own, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: own) }
+
+            fixture.registry.close(hidden.id, in: fixture.session)
+            await SupervisionWindowActions.openFolders(
+                [own],
+                session: fixture.session,
+                registry: fixture.registry,
+                frecency: nil
+            ) { $0 }
+            #expect(!hidden.isHidden)
+            #expect(fixture.registry.windows.map(\.id) == [hidden.id])
+            #expect(hidden.selection.shownProjectID == fixture.a.id)
+
+            fixture.registry.close(hidden.id, in: fixture.session)
+            await SupervisionWindowActions.openFolders(
+                [folder],
+                session: fixture.session,
+                registry: fixture.registry,
+                frecency: nil
+            ) { $0 }
+
+            let opened = try #require(fixture.session.projects.first { $0.rootURL == folder.standardizedFileURL })
+            let window = try #require(fixture.registry.window(showingProject: opened.id, in: fixture.session))
+            #expect(window !== hidden)
+            #expect(fixture.registry.windows.map(\.id) == [window.id])
+            #expect(fixture.session.projectViews[fixture.a.id] != nil)
+            #expect(fixture.session.hiddenWindowIDs.isEmpty)
         }
     }
 
     /// A launch to open a folder, with two windows restored and none yet
-    /// given the keyboard: the folder opens in the window restored in
-    /// front, not in the primary behind it.
-    @Test func aFolderOpenedAtLaunch_opensInTheWindowRestoredInFront() async throws {
+    /// given the keyboard: the folder's new window is placed from the
+    /// window restored in front, and neither restored window changes.
+    @Test func aFolderOpenedAtLaunch_opensBesideTheWindowRestoredInFront() async throws {
         let fixture = Fixture()
         let front = try fixture.window(showing: fixture.c)
         fixture.session.frontWindowID = front.id
@@ -399,15 +471,16 @@ extension WindowProjectSwitchTests {
             ) { $0 }
 
             let opened = try #require(fixture.session.projects.first { $0.rootURL == folder.standardizedFileURL })
-            #expect(front.selection.shownProjectID == opened.id)
+            let window = try #require(fixture.registry.window(showingProject: opened.id, in: fixture.session))
+            #expect(front.selection.shownProjectID == fixture.c.id)
             #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
-            #expect(fixture.presenter.shown == [front.id])
-            #expect(fixture.registry.windows.count == 2)
+            #expect(fixture.presenter.openedFrom[window.id] == front.id)
+            #expect(fixture.registry.windows.count == 3)
         }
     }
 
-    /// Several folders at once: the first in the window last used, each
-    /// other in a window of its own, or the one that shows it already.
+    /// Several folders at once: each in a window of its own, or the one
+    /// that shows it already.
     @Test func severalFoldersFromOutside_eachComeToAWindow() async throws {
         let fixture = Fixture()
         let other = try fixture.window(showing: fixture.c)
@@ -433,13 +506,13 @@ extension WindowProjectSwitchTests {
             let secondProject = try #require(fixture.session.projects.first { $0.rootURL == second.standardizedFileURL })
             let windowOfFirst = try #require(fixture.registry.window(showingProject: firstProject.id, in: fixture.session))
             let windowOfSecond = try #require(fixture.registry.window(showingProject: secondProject.id, in: fixture.session))
-            // The window the person was last in.
-            #expect(windowOfFirst === fixture.primary)
-            #expect(![fixture.primary.id, other.id].contains(windowOfSecond.id))
+            // The window the person was last in keeps its project.
+            #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
+            #expect(Set([windowOfFirst.id, windowOfSecond.id, fixture.primary.id, other.id]).count == 4)
             // A folder a window shows already brings that window forward.
             #expect(fixture.registry.window(showingProject: fixture.c.id, in: fixture.session) === other)
             #expect(fixture.presenter.shown.last == other.id)
-            #expect(fixture.registry.windows.count == 3)
+            #expect(fixture.registry.windows.count == 4)
         }
     }
 

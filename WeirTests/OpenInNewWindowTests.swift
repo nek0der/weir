@@ -9,11 +9,11 @@ import Testing
 
 /// A new window opens only when the person asks for one:
 /// ⌘-click or ⌘Return on another project's row opens the project in a new
-/// window, on what it showed last; New Window opens a window that shows
-/// nothing until the person chooses a project or the scratch tabs. A
-/// project another window shows brings that window forward instead, and
-/// a window that shows nothing is saved only when no other window is, on
-/// the scratch row.
+/// window, on what it showed last; New Window always opens a new window
+/// that shows nothing until the person chooses a project or the scratch
+/// tabs, and lists every project. A project another window shows brings
+/// that window forward instead, and a window that shows nothing is saved
+/// and comes back showing nothing.
 @MainActor
 struct OpenInNewWindowTests {
     typealias Fixture = ProjectWindowsFixture
@@ -142,24 +142,45 @@ struct OpenInNewWindowTests {
         #expect(fixture.presenter.openedFrom[empty.id] == other.id)
     }
 
-    @Test func askedOfAHiddenWindow_itSwitchesInPlace_andComesBack() {
+    @Test func askedOfAHiddenWindow_aNewWindowOpens_andTheHiddenOneClosesKeepingItsProject() throws {
         let fixture = Fixture()
-        fixture.registry.hide(fixture.primary.id)
+        let hidden = fixture.primary
+        fixture.registry.close(hidden.id, in: fixture.session)
+        #expect(hidden.isHidden)
 
-        let shown = fixture.registry.openInNewWindow(project: fixture.b.id, in: fixture.session, from: fixture.primary)
+        let opened = try #require(fixture.registry.openInNewWindow(project: fixture.b.id, in: fixture.session, from: hidden))
 
-        // No window beside the hidden one.
-        #expect(shown === fixture.primary)
-        #expect(fixture.registry.windows.count == 1)
-        #expect(!fixture.primary.isHidden)
-        #expect(fixture.primary.selection.shownProjectID == fixture.b.id)
+        // The hidden window's project is not replaced: it closes, and `a`
+        // keeps what it showed. No window stands hidden beside the new one.
+        #expect(opened !== hidden)
+        #expect(opened.selection.shownProjectID == fixture.b.id)
+        #expect(fixture.registry.windows.map(\.id) == [opened.id])
+        #expect(fixture.session.projectViews[fixture.a.id] != nil)
+        #expect(fixture.session.hiddenWindowIDs.isEmpty)
+        fixture.expectInvariants()
+    }
+
+    @Test func aRowOpenedInANewWindow_isChosenThere_andThisWindowStays() throws {
+        let fixture = Fixture()
+        let row = fixture.bTab.container
+
+        let opened = try #require(fixture.registry.openInNewWindow(row: row, in: fixture.session, from: fixture.primary))
+
+        #expect(opened !== fixture.primary)
+        #expect(opened.selection.shownProjectID == fixture.b.id)
+        #expect(opened.selection.activeContainerID == row)
+        #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
+        // The scratch tabs are no project's row, and open in no new window.
+        #expect(fixture.registry.openInNewWindow(row: .loose, in: fixture.session, from: fixture.primary) == nil)
+        #expect(fixture.registry.windows.count == 2)
+        fixture.expectInvariants()
     }
 
     // MARK: - New Window
 
-    @Test func newWindow_showsNothing_andOffersOnlyTheProjectsNoOtherWindowShows() throws {
+    @Test func newWindow_showsNothing_andOffersEveryProject_sayingWhichAnotherWindowShows() throws {
         let fixture = Fixture()
-        _ = try fixture.window(showing: fixture.c)
+        let forC = try fixture.window(showing: fixture.c)
         fixture.presenter.shown = []
 
         let empty = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
@@ -169,9 +190,17 @@ struct OpenInNewWindowTests {
         #expect(empty.selection.isChoosingProject)
         #expect(empty.selection.shownProjectID == nil)
         #expect(empty.selection.activeTabID == nil)
-        let offered = EmptyWindowModel(session: fixture.session, window: empty.selection).rows.map(\.id)
-        #expect(offered == [fixture.b.id])
+        let rows = EmptyWindowModel(session: fixture.session, window: empty.selection).rows
+        #expect(rows.map(\.id) == [fixture.a.id, fixture.b.id, fixture.c.id])
+        #expect(rows.map(\.isInOtherWindow) == [true, false, true])
+        #expect(rows.map(\.opensInNewWindow) == [false, true, false])
         fixture.expectInvariants()
+
+        // A project another window shows brings that window forward; the
+        // empty window stays as it is.
+        let shown = fixture.registry.show(project: fixture.c.id, in: fixture.session, from: empty, intent: .person)
+        #expect(shown === forC)
+        #expect(empty.selection.isChoosingProject)
     }
 
     @Test func aRemovedProjectsHeir_isTheMostRecentNoWindowShows_whileAnEmptyWindowListsThemInItsSidebarsOrder() throws {
@@ -183,10 +212,10 @@ struct OpenInNewWindowTests {
         // order (`d` is not in the recent list).
         let free = fixture.session.projectsNoWindowShows(besides: nil).map(\.id)
         #expect(free == [fixture.b.id, fixture.c.id, d.id])
-        // The empty window lists them in its sidebar's order instead.
+        // An empty window lists every project in its sidebar's order instead.
         fixture.primary.selection.sidebarArrangement = SidebarArrangement(projectOrder: [d.id, fixture.c.id])
         #expect(EmptyWindowModel(session: fixture.session, window: fixture.primary.selection).rows.map(\.id) == [
-            d.id, fixture.c.id, fixture.b.id
+            d.id, fixture.c.id, fixture.a.id, fixture.b.id
         ])
 
         // A window whose project is removed takes the first of them.
@@ -195,17 +224,87 @@ struct OpenInNewWindowTests {
         #expect(other.selection.shownProjectID == fixture.b.id)
     }
 
-    @Test func newWindow_withEveryWindowHidden_bringsTheHiddenOneBack() {
+    @Test func newWindow_withEveryWindowHidden_opensANewOne_andTheHiddenOneCloses() {
         let fixture = Fixture()
-        fixture.registry.close(fixture.primary.id, in: fixture.session)
-        #expect(fixture.primary.isHidden)
+        let hidden = fixture.primary
+        hidden.selection.sidebarArrangement = SidebarArrangement(projectOrder: [fixture.a.id, fixture.b.id, fixture.c.id])
+        fixture.registry.close(hidden.id, in: fixture.session)
+        #expect(hidden.isHidden)
 
-        let shown = fixture.registry.openEmptyWindow(in: fixture.session, from: nil)
+        let opened = fixture.registry.openEmptyWindow(in: fixture.session, from: nil)
 
-        #expect(shown === fixture.primary)
-        #expect(!fixture.primary.isHidden)
-        #expect(fixture.registry.windows.count == 1)
-        #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
+        #expect(opened !== hidden)
+        #expect(opened.selection.isChoosingProject)
+        #expect(!opened.isHidden)
+        // No hidden window beside a shown one: it closed, and its project
+        // keeps what it showed.
+        #expect(fixture.registry.windows.map(\.id) == [opened.id])
+        #expect(fixture.registry.primary === opened)
+        #expect(fixture.session.projectViews[fixture.a.id] != nil)
+        #expect(fixture.session.hiddenWindowIDs.isEmpty)
+        // The project the hidden window showed is no window's now, so the
+        // new window's sidebar does not fold it as another window's.
+        #expect(!opened.selection.sidebarArrangement.collapsedProjects.contains(fixture.a.id))
+        #expect(EmptyWindowModel(session: fixture.session, window: opened.selection).rows.allSatisfy { !$0.isInOtherWindow })
+    }
+
+    @Test func newWindow_besideAShownWindow_foldsThatWindowsProject() {
+        let fixture = Fixture()
+        fixture.primary.selection.sidebarArrangement = SidebarArrangement(projectOrder: [fixture.a.id, fixture.b.id])
+
+        let opened = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
+
+        #expect(opened.selection.sidebarArrangement.collapsedProjects.contains(fixture.a.id))
+    }
+
+    @Test func newWindow_besideAnotherThatShowsNothing_isANewOneEachTime() {
+        let fixture = Fixture()
+        let first = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
+        let second = fixture.registry.openEmptyWindow(in: fixture.session, from: first)
+
+        #expect(first !== second)
+        #expect(fixture.registry.windows.count == 3)
+        #expect(second.selection.isChoosingProject)
+    }
+
+    @Test func anEmptyWindowsRow_saysOneThingAtItsEnd_itsWindowFirst() {
+        let fixture = Fixture()
+        let rows = EmptyWindowModel(
+            projects: [fixture.a, fixture.b, fixture.c],
+            shownElsewhere: [fixture.a.id],
+            running: { $0 == fixture.a.id || $0 == fixture.b.id ? 2 : 0 }
+        ).rows
+
+        // Another window's project says only that, whatever runs in it.
+        #expect(rows.map(\.mark) == [.otherWindow, .running, nil])
+
+        // What waits on the person comes before what runs.
+        let store = AttentionQueueStore()
+        store.apply(.init(runtimes: [RuntimeFact.stopped("b", in: fixture.bTab, of: fixture.b)]), announces: false)
+        let waiting = EmptyWindowModel(
+            projects: [fixture.b],
+            attentionQueue: store.queue,
+            running: { _ in 2 }
+        ).rows
+        #expect(waiting.map(\.mark) == [.attention])
+        #expect(waiting.first?.attention.style == .blocking)
+        // The folder is the tooltip's, kept for each row.
+        #expect(rows.allSatisfy { !$0.folder.isEmpty })
+    }
+
+    @Test func anEmptyWindow_drawsNoChangesPanel_andKeepsThePersonsChoiceForTheProjectChosen() {
+        let fixture = Fixture()
+        fixture.primary.selection.isChangesPanelPresented = true
+        let empty = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
+        #expect(empty.selection.isChangesPanelPresented)
+        #expect(!empty.selection.showsChangesPanel)
+
+        // ⌥⌘I and the menu leave the choice as it is while nothing shows.
+        ChangesPanelActions.toggle(empty, session: fixture.session)
+        #expect(empty.selection.isChangesPanelPresented)
+
+        fixture.registry.show(project: fixture.b.id, in: fixture.session, from: empty, intent: .person)
+        #expect(empty.selection.showsChangesPanel)
     }
 
     @Test func aWindowThatShowsNothing_drawsNoScratchTab_untilTheScratchIsChosen() {
@@ -259,15 +358,27 @@ struct OpenInNewWindowTests {
         #expect(fixture.session.holdsSelection(of: .loose))
     }
 
-    @Test func aWindowThatShowsNothing_isNotSaved() {
+    @Test func aWindowThatShowsNothing_isSaved_andComesBackShowingNothing() throws {
         let fixture = Fixture()
         let empty = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
+        empty.selection.sidebarWidth = 277
 
         let snapshot = fixture.session.makeSnapshot()
 
-        #expect(snapshot.windows.count == 1)
+        #expect(snapshot.windows.map(\.isChoosingProject) == [false, true])
         #expect(snapshot.windows.first?.projectID == fixture.a.id)
-        #expect(!fixture.session.savedWindowIDs.contains(empty.id))
+        #expect(fixture.session.savedWindowIDs.contains(empty.id))
+
+        let restored = WorkspaceSession()
+        restored.restore(from: snapshot)
+        let ids = restored.windowIDs
+        #expect(ids.count == 2)
+        let later = try #require(ids.last.flatMap { restored.selection($0) })
+        #expect(later.isChoosingProject)
+        #expect(later.shownProjectID == nil)
+        #expect(later.activeTabID == nil)
+        #expect(later.sidebarWidth == 277)
+        #expect(restored.primarySelection.shownProjectID == fixture.a.id)
     }
 
     /// A session of one project with a tab of its own, which the primary
@@ -326,7 +437,7 @@ struct OpenInNewWindowTests {
         #expect(session.tabs.count == 1)
     }
 
-    @Test func aPrimaryThatShowedNothing_comesBackOnTheScratchTabs() throws {
+    @Test func aPrimaryThatShowedNothing_comesBackShowingNothing() throws {
         var scratchTab: Tab?
         let scene = Self.oneProject("only") { session, only in
             scratchTab = session.openTab(container: .loose, in: session.primaryWindowID, intent: .person, selects: false)
@@ -337,16 +448,64 @@ struct OpenInNewWindowTests {
         withExtendedLifetime(scene.registry) {}
         #expect(session.primarySelection.isChoosingProject)
 
+        let snapshot = session.makeSnapshot()
+        // A build that reads past the flag finds the scratch tab.
+        #expect(snapshot.windows.first?.activeTabID == scratch.id)
         let restored = WorkspaceSession()
-        restored.restore(from: session.makeSnapshot())
+        restored.restore(from: snapshot)
 
-        #expect(!restored.primarySelection.isChoosingProject)
+        #expect(restored.primarySelection.isChoosingProject)
         #expect(restored.primarySelection.activeContainerID == .loose)
-        #expect(restored.primarySelection.activeTabID == scratch.id)
-        #expect(restored.scratchDrawingWindowID == restored.primaryWindowID)
+        #expect(restored.primarySelection.activeTabID == nil)
+        #expect(restored.scratchDrawingWindowID == nil)
+        #expect(restored.openLaunchTabIfNone() == nil)
     }
 
-    @Test func onlyAWindowThatShowedNothing_withNoScratchTab_comesBackOnTheEmptyScratchRow() throws {
+    @Test func twoWindowsThatShowedNothing_bothComeBack() {
+        let fixture = Fixture()
+        _ = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
+        _ = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
+
+        let restored = WorkspaceSession()
+        restored.restore(from: fixture.session.makeSnapshot())
+
+        let selections = restored.windowIDs.compactMap { restored.selection($0) }
+        #expect(selections.map(\.isChoosingProject) == [false, true, true])
+    }
+
+    @Test func theLastWindow_closedWhileItShowedNothing_comesBackHiddenAndShowingNothing() {
+        let fixture = Fixture()
+        let (session, registry) = (fixture.session, fixture.registry)
+        let empty = registry.openEmptyWindow(in: session, from: registry.primary)
+        registry.close(registry.primary.id, in: session)
+        registry.close(empty.id, in: session)
+        #expect(empty.isHidden)
+
+        let snapshot = session.makeSnapshot()
+        #expect(snapshot.windows.count == 1)
+        #expect(snapshot.windows.first?.isHidden == true)
+        #expect(snapshot.windows.first?.isChoosingProject == true)
+
+        let restored = WorkspaceSession()
+        restored.restore(from: snapshot)
+        #expect(restored.windowIDs == [restored.primaryWindowID])
+        #expect(restored.primarySelection.isChoosingProject)
+        #expect(restored.hiddenWindowIDs.contains(restored.primaryWindowID))
+    }
+
+    @Test func aPrimaryThatShowedNothing_withNoTabAtAll_comesBackOnTheScratchTabs_whereTheLaunchOpensOne() throws {
+        var record = WindowRecord()
+        record.isChoosingProject = true
+        let restored = WorkspaceSession()
+        restored.restore(from: SessionSnapshot(projects: [], tabs: [], windows: [record]))
+
+        #expect(!restored.primarySelection.isChoosingProject)
+        let made = try #require(restored.openLaunchTabIfNone())
+        #expect(made.container == .loose)
+        #expect(restored.activeTab(in: restored.primaryWindowID)?.id == made.id)
+    }
+
+    @Test func onlyAWindowThatShowedNothing_withNoScratchTab_comesBackShowingNothing() throws {
         let scene = Self.oneProject("kept")
         let session = scene.session
         let registry = scene.registry
@@ -358,15 +517,18 @@ struct OpenInNewWindowTests {
         let snapshot = session.makeSnapshot()
         let record = try #require(snapshot.windows.first)
         #expect(snapshot.windows.count == 1)
+        #expect(record.isChoosingProject)
         #expect(record.activeContainerID == .loose)
         #expect(record.activeTabID == nil)
 
         let restored = WorkspaceSession()
         let issue = restored.restore(from: snapshot)
 
-        // The scratch row, empty, and not another project's tab with a
-        // repair to report; the launch makes no tab, as there are some.
+        // Showing nothing, and not another project's tab with a repair to
+        // report; the launch makes no tab, as there are some.
         #expect(issue == nil)
+        #expect(restored.primarySelection.isChoosingProject)
+        #expect(restored.primarySelection.shownProjectID == nil)
         #expect(restored.primarySelection.activeContainerID == .loose)
         #expect(restored.primarySelection.activeTabID == nil)
         #expect(restored.openLaunchTabIfNone() == nil)

@@ -5,7 +5,7 @@ import SwiftUI
 
 /// What a sidebar row's right-click menu offers. Each entry is shown
 /// only when its action is set, in the order every row uses: reorder, name,
-/// the pull request, Finder and the changes panel, then the entries that
+/// the pull request, a new window, Finder and the changes panel, then the entries that
 /// put the row away, with the one that deletes a folder last. Only what
 /// acts on the row is here; the operations on all of a project's worktrees
 /// are its header's (`SidebarProjectActions`).
@@ -34,6 +34,9 @@ struct SessionRowActions {
     /// Offered only on rows with a pull request on file; on one with none
     /// there is nothing to refresh, and the entry would read as dead.
     var refreshPRStatus: (() -> Void)?
+    /// Open in New Window: what ⌘-click on the row does, offered only on a
+    /// row of a project no window shows (`ProjectOpening.offersNewWindow`).
+    var openInNewWindow: (() -> Void)?
     var revealInFinder: (() -> Void)?
     /// Selects the row and opens the changes panel on it: from the menu, a
     /// person reads another row's changes without first switching to it.
@@ -74,7 +77,7 @@ struct SessionRowActionsMenu: View {
     }
 
     private var hasPlaces: Bool {
-        actions.revealInFinder != nil || actions.openChangesPanel != nil
+        actions.openInNewWindow != nil || actions.revealInFinder != nil || actions.openChangesPanel != nil
     }
 
     private var hasPutAway: Bool {
@@ -128,6 +131,12 @@ struct SessionRowActionsMenu: View {
         }
         if hasPlaces, hasMoves || actions.rename != nil || hasPullRequest {
             Divider()
+        }
+        if let openInNewWindow = actions.openInNewWindow {
+            Button(action: openInNewWindow) {
+                Label { Text(NewWindowText.actionName) } icon: { Image(systemName: WeirShortcutAction.newWindow.iconName) }
+            }
+            .tint(Color.primary)
         }
         if let revealInFinder = actions.revealInFinder {
             Button(action: revealInFinder) {

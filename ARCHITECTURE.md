@@ -274,8 +274,33 @@ window's chrome.
 
 A window shows one project at a time, and a project is shown in one window at
 a time. Choosing another project switches the window in place, or brings
-forward the window that already shows it (`connectProjectSwitching`). New
-windows are made only when asked for (New Window, or a ⌘-click). The scratch
+forward the window that already shows it (`connectProjectSwitching`). Every
+row that opens a project reads where it lands from one rule,
+`ProjectOpening` (`Core/Domain/ProjectOpening.swift`):
+
+| The row's project | Click | ⌘-click, Open in New Window |
+| --- | --- | --- |
+| Shown by this window | Opens here | Opens here |
+| Shown by another window, hidden or not | That window comes forward | That window comes forward |
+| Shown by no window | This window switches to it | A new window opens on it |
+
+⌘Return does the same in project ▾, the palette, and the all projects sheet.
+The sidebar and the Needs Attention list leave ⌘Return to the decision bar,
+which has it everywhere.
+
+New windows are made only when asked for. New Window (⌃⌘N, the File and Dock
+menus, the palette) opens a new window that shows nothing
+(`WindowSelection.isChoosingProject`) each time, even beside another such
+window; it lists every project, says which another window shows, and is
+saved and restored as it is. A Dock click, not New Window, brings back the
+window hidden as the last one closed. When a new window opens while that
+hidden window is the only one, the hidden window closes for real, its
+project keeping what it showed, and its frame and full screen going with
+it. A folder from outside the app opens in a new window, or fills the empty
+window the person was last in; folders handed over one after another open
+in that order. A new window takes the size, sidebar, and changes panel of
+the window it was opened from, and cascades from it; from a window in full
+screen, macOS decides where it goes. The scratch
 tabs belong to no project and draw in one window at a time
 (`WorkspaceSession.scratchOwnerWindowID`, `scratchDrawingWindowID`,
 `claimScratch(for:)`).

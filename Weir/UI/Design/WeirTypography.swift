@@ -14,7 +14,7 @@ import SwiftUI
 ///   which sets each key in a cell so equal combinations are equally wide.
 /// - Every size is a step of `WeirFont.Supervision.Size`; no view writes
 ///   a point size of its own. The empty states (`SupervisionEmptyState`)
-///   and the empty session area's hints (`EmptySessionHintRow`, with their
+///   and the empty areas' hints (`EmptyHintRow`, with their
 ///   keycaps) alone scale their steps with Dynamic Type.
 enum WeirFont {
 

@@ -11,9 +11,12 @@ import WeirDomain
 enum ChangesPanelActions {
     /// The title bar toggle, the menu, the panel's ×, and ⌥⌘I through the
     /// palette's dispatch. The window's layout animates the change.
-    /// Written only while the window has its selection.
+    /// Written only while the window has its selection, and not while it
+    /// shows nothing, where no panel is drawn to open or close
+    /// (`WindowSelection.showsChangesPanel`): the person's choice waits for
+    /// the project they open there.
     static func toggle(_ window: ProjectWindowState, session: WorkspaceSession) {
-        guard let selection = session.selections[window.id] else { return }
+        guard let selection = session.selections[window.id], !selection.isChoosingProject else { return }
         selection.isChangesPanelPresented.toggle()
         // A sidebar kept over the panel was kept for that panel.
         if !selection.isChangesPanelPresented {

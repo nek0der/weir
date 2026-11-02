@@ -402,7 +402,7 @@ final class ProjectWindowState: Identifiable {
     /// Whether the sidebar is on screen: the person's choice, folded for
     /// now while the panel needs its room. What the window draws.
     var isSidebarShown: Bool {
-        !selection.sidebarHidden && !isSidebarFoldedForChanges(isPresented: selection.isChangesPanelPresented)
+        !selection.sidebarHidden && !isSidebarFoldedForChanges(isPresented: selection.showsChangesPanel)
     }
 
     /// Whether the sessions sidebar is on screen, reserved or laid over the

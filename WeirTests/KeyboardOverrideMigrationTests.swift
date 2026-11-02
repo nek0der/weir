@@ -127,7 +127,7 @@ struct KeyboardOverrideMigrationTests {
         keyboard.overrides.removeAll()
         #expect(keyboard.holderOfDefault(for: .newWorktree, quickTerminalHotKey: Self.commandN) == .quickTerminalHotKey)
         #expect(keyboard.holderOfDefault(for: .newWorktree, quickTerminalHotKey: nil) == nil)
-        #expect(keyboard.holderOfDefault(for: .newWindow, quickTerminalHotKey: nil) == nil, "no default, nothing to hold")
+        #expect(keyboard.holderOfDefault(for: .newWindow, quickTerminalHotKey: nil) == nil, "its keys are free")
     }
 
     @Test func aStaleUnboundEntry_isDroppedOnceItsKeysAreFree() {

@@ -117,7 +117,7 @@ struct AllProjectsModel: Equatable {
         /// card's tooltip and VoiceOver action say. Any other card goes
         /// where it would without ⌘.
         var opensInNewWindow: Bool {
-            windowNote == nil
+            ProjectOpening.offersNewWindow(isShownHere: windowNote == .current, isShownElsewhere: windowNote == .otherWindow)
         }
 
         /// Whether the card holds every word of `query`, ignoring case:

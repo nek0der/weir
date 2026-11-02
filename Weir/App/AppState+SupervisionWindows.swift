@@ -120,16 +120,18 @@ extension AppState {
             guard let self else { return }
             windowRegistry.showRestoredWindows(of: session)
         }
-        // A folder from Finder, `open -a`, or the Dock icon opens as ⌘O
-        // opens one.
+        // A folder from Finder, `open -a`, or the Dock icon opens in a new
+        // window, or fills the empty window the person was last in. Folders
+        // handed over one after another open in that order.
+        let folderOpens = FolderOpenQueue()
         WeirAppDelegate.openHandler = { [weak self] urls in
             guard let self else { return }
-            Task {
+            folderOpens.enqueue {
                 await SupervisionWindowActions.openFolders(
                     urls,
-                    session: session,
-                    registry: windowRegistry,
-                    frecency: frecencyStore
+                    session: self.session,
+                    registry: self.windowRegistry,
+                    frecency: self.frecencyStore
                 )
             }
         }
@@ -138,8 +140,9 @@ extension AppState {
             windowRegistry.showLastWindow()
             return false
         }
-        // New Window, in the Dock menu as in the File menu: the hidden
-        // window back, or a window that shows nothing.
+        // New Window, in the Dock menu as in the File menu: always a new
+        // window, one that shows nothing. A Dock click brings back the
+        // hidden one (`reopenHandler`).
         let dockMenu = NewWindowDockMenu(
             locale: { [weak self] in self?.settingsStore.appLocale ?? .current },
             open: { [weak self] in
@@ -148,5 +151,22 @@ extension AppState {
             }
         )
         WeirAppDelegate.dockMenu = { dockMenu.makeMenu() }
+    }
+}
+
+/// The folders handed to Weir from outside, opened in the order they
+/// arrived: each waits for the one before it, whose folder takes a git
+/// command to resolve, so a quick second open does not land before the
+/// first and take the empty window the first was meant for.
+@MainActor
+private final class FolderOpenQueue {
+    private var last: Task<Void, Never>?
+
+    func enqueue(_ open: @escaping @MainActor () async -> Void) {
+        let previous = last
+        last = Task {
+            await previous?.value
+            await open()
+        }
     }
 }

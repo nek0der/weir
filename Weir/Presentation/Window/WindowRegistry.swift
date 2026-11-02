@@ -15,8 +15,9 @@ private let log = Logger.weir("window.registry")
 /// switches the window in place, or brings forward the window that shows
 /// it (`show(project:in:from:intent:)`, `connectProjectSwitching`). A
 /// window is made only when the person asks for one: New Window, which
-/// shows nothing (`openEmptyWindow`), and a project ⌘-clicked or chosen
-/// with ⌘Return (`openInNewWindow`). The primary is the window the
+/// always opens one that shows nothing (`openEmptyWindow`), a row of a
+/// project no window shows opened with ⌘ (`openInNewWindow`, where
+/// `ProjectOpening` decides), and a folder from outside the app. The primary is the window the
 /// app opens at launch. Closing a window ends it while another is shown;
 /// the last one shown is hidden instead, so the Dock brings it back as it
 /// was (`close`). The primary is a role, handed on as its window closes.

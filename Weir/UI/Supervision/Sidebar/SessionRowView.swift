@@ -32,7 +32,9 @@ struct SessionRowView: View {
     /// Opens the approval card beside the row; `nil` when the row offers
     /// no Answer….
     let onAnswer: (() -> Void)?
-    let onActivate: () -> Void
+    /// Opens the row; `holdsCommand` for a click with ⌘ alone, which opens
+    /// a row of a project no window shows in a new window.
+    let onActivate: (_ holdsCommand: Bool) -> Void
     /// Rename submit; `nil` for a row that cannot be renamed.
     let onRename: ((String) -> Void)?
     @Binding var isRenaming: Bool
@@ -145,9 +147,13 @@ struct SessionRowView: View {
         // Not `.onTapGesture`: it waits out the double-click window that
         // the rename field's double-click opens, and the row would feel
         // slow to open.
+        // The click AppKit is handling says whether it was a ⌘-click, as
+        // the project's header reads it, rather than the keys held when
+        // the tap ends: ⌘ let go a moment early would otherwise switch
+        // this window in place instead.
         .simultaneousGesture(TapGesture().onEnded {
             if !isRenaming {
-                onActivate()
+                onActivate(NewWindowModifier.isCommandClick)
             }
         })
         // Laid over the row after its tap rather than inside it, so
@@ -187,10 +193,14 @@ struct SessionRowView: View {
         .accessibilityAddTraits(row.isActive ? .isSelected : [])
         // The tap gesture opens the row for the pointer; VoiceOver and
         // other assistive tools press it through this.
-        .accessibilityAction { onActivate() }
+        .accessibilityAction { onActivate(false) }
         .accessibilityActions {
             if let onAnswer {
                 Button("Answer…", action: onAnswer)
+            }
+            // What ⌘-click does, out of VoiceOver's reach.
+            if let openInNewWindow = actions.openInNewWindow {
+                Button(action: openInNewWindow) { Text(NewWindowText.actionName) }
             }
             // The card's one action, for a person who cannot point at the
             // mark; the right-click menu offers it too.
