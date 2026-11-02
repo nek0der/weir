@@ -61,16 +61,106 @@ struct GitSyncCoordinatorTests {
     }
 
     /// A listing's entry for `path`: detached when it names no branch.
-    private static func listed(_ path: URL, headSHA: String, branch: String?) -> GitWorktreeInfo {
+    private static func listed(
+        _ path: URL,
+        headSHA: String,
+        branch: String?,
+        isBare: Bool = false,
+        isPrunable: Bool = false
+    ) -> GitWorktreeInfo {
         GitWorktreeInfo(
             path: path,
             headSHA: headSHA,
             branch: branch,
-            isDetached: branch == nil,
-            isBare: false,
+            isDetached: branch == nil && !isBare,
+            isBare: isBare,
             isLocked: false,
-            isPrunable: false
+            isPrunable: isPrunable
         )
+    }
+
+    /// Counts the listings asked for, and fails each one, as `git worktree
+    /// list` does on a repository git refuses.
+    private final class FailingListing: Sendable {
+        private let count = OSAllocatedUnfairLock(initialState: 0)
+
+        var calls: Int {
+            count.withLock { $0 }
+        }
+
+        func list(_: URL) async throws -> [GitWorktreeInfo] {
+            count.withLock { $0 += 1 }
+            throw GitProcessError.nonZeroExit(.failure("fatal: detected dubious ownership in repository"))
+        }
+    }
+
+    /// A listing that failed says nothing about the worktrees: every row
+    /// stays as it was, none is marked missing for Remove Missing to close,
+    /// and the main checkout keeps its branch.
+    @Test func aFailedListing_keepsEveryRow_andMarksNoneMissing() async throws {
+        try await withTempDir { root in
+            let (session, project) = WorkspaceSessionFixture.withProject(rootURL: root)
+            let index = try #require(session.projects.firstIndex { $0.id == project.id })
+            let row = WorktreeFixture.make(workingDirectory: root.appendingPathComponent("feat-x"), admission: .opened)
+            session.projects[index].worktrees.append(row)
+            session.projects[index].mainBranchName = "main"
+            let before = session.projects[index]
+            let listing = FailingListing()
+            let coordinator = GitSyncCoordinator(session: session) { try await listing.list($0) }
+            await pollUntil(timeout: .seconds(3), interval: .milliseconds(10)) { listing.calls >= 1 }
+            // The sync writes on the main actor after its listing returns:
+            // the shortest wait that would let a write land.
+            await pollUntil(timeout: .milliseconds(200)) {
+                session.projects.first { $0.id == project.id } != before
+            }
+            let after = try #require(session.projects.first { $0.id == project.id })
+            #expect(after == before)
+            #expect(!session.hasMissingWorktrees(projectID: project.id))
+            withExtendedLifetime(coordinator) {}
+        }
+    }
+
+    /// Git keeps listing a worktree whose folder was deleted outside it,
+    /// marked prunable, until `git worktree prune`: its row is missing.
+    @Test func aSync_marksAPrunableWorktreeMissing() async throws {
+        try await withTempDir { root in
+            let (session, project) = WorkspaceSessionFixture.withProject(rootURL: root)
+            let path = root.appendingPathComponent("deleted")
+            let index = try #require(session.projects.firstIndex { $0.id == project.id })
+            session.projects[index].worktrees.append(WorktreeFixture.make(workingDirectory: path, admission: .opened))
+            let infos = [
+                Self.listed(root, headSHA: "abc", branch: "main"),
+                Self.listed(path, headSHA: "abc", branch: "deleted", isPrunable: true)
+            ]
+            let coordinator = GitSyncCoordinator(session: session) { _ in infos }
+            await pollUntil(timeout: .seconds(3), interval: .milliseconds(20)) {
+                session.hasMissingWorktrees(projectID: project.id)
+            }
+            #expect(session.hasMissingWorktrees(projectID: project.id))
+            withExtendedLifetime(coordinator) {}
+        }
+    }
+
+    /// With the repository cloned bare and worked on in linked worktrees,
+    /// the listing's first entry is the bare repository itself, which is no
+    /// checkout: only the other worktrees become rows.
+    @Test func aSync_ofABareRepository_makesNoRowForIt() async throws {
+        try await withTempDir { root in
+            let checkout = root.appendingPathComponent("main")
+            let (session, project) = WorkspaceSessionFixture.withProject(rootURL: checkout)
+            let infos = [
+                Self.listed(root.appendingPathComponent(".bare"), headSHA: "abc", branch: nil, isBare: true),
+                Self.listed(checkout, headSHA: "abc", branch: "main"),
+                Self.listed(root.appendingPathComponent("feat-x"), headSHA: "abc", branch: "feat-x")
+            ]
+            let coordinator = GitSyncCoordinator(session: session) { _ in infos }
+            @MainActor func rows() -> [Worktree] {
+                session.projects.first { $0.id == project.id }?.worktrees.filter { $0.origin == .gitWorktree } ?? []
+            }
+            await pollUntil(timeout: .seconds(3), interval: .milliseconds(20)) { !rows().isEmpty }
+            #expect(rows().map(\.workingDirectory.lastPathComponent) == ["feat-x"])
+            withExtendedLifetime(coordinator) {}
+        }
     }
 
     /// A sync started later describes the repository as it is later, so an

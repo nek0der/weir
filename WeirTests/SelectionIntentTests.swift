@@ -299,6 +299,10 @@ extension SelectionIntentTests {
             try await git.pruneWorktrees(repoRoot: repoRoot)
         }
 
+        func listWorktrees(repoRoot: URL) async throws -> [GitWorktreeInfo] {
+            try await git.listWorktrees(repoRoot: repoRoot)
+        }
+
         func fetch(repoRoot: URL, remote: String, branch: String) async throws -> GitResult {
             try await git.fetch(repoRoot: repoRoot, remote: remote, branch: branch)
         }

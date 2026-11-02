@@ -34,6 +34,10 @@ protocol GitRunning: Sendable {
     /// `git worktree prune`, after a stopped `git worktree add`.
     func pruneWorktrees(repoRoot: URL) async throws -> GitResult
 
+    /// `git worktree list`, as `GitWorktreeList.fetch` reads it: what a
+    /// removal git refused for a reason we cannot read checks.
+    func listWorktrees(repoRoot: URL) async throws -> [GitWorktreeInfo]
+
     /// Runs `git fetch <remote> refs/heads/<branch>` before a new worktree
     /// starts from the remote's branch. It fetches that one branch of that
     /// one remote, never waiting on a password or a host key no one is
@@ -107,6 +111,10 @@ struct LiveGit: GitRunning {
 
     func pruneWorktrees(repoRoot: URL) async throws -> GitResult {
         try await GitProcess.pruneWorktrees(repoRoot: repoRoot)
+    }
+
+    func listWorktrees(repoRoot: URL) async throws -> [GitWorktreeInfo] {
+        try await GitWorktreeList.fetch(repoRoot: repoRoot)
     }
 
     /// How long a fetch may take before the worktree starts from the local

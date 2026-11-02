@@ -15,8 +15,9 @@
 //   HEAD ghi789...
 //   detached
 //
-// `bare`, `locked`, and `prunable` flags can also appear; we record
-// the ones that matter for sidebar display.
+// `bare`, `locked`, and `prunable` flags can also appear. The sync
+// leaves out a bare repository's own entry, which is no checkout, and a
+// prunable one, whose folder is gone.
 
 import Foundation
 
@@ -79,15 +80,32 @@ enum GitWorktreeList {
     }
 
     /// Run `git worktree list --porcelain` against `repoRoot` and
-    /// parse the result. Throws on launch failure; returns `[]` on a
-    /// non-zero exit (e.g. not a git repo).
+    /// parse the result. `[]` when `repoRoot` is in no repository; throws
+    /// on launch failure and on any other non-zero exit.
+    ///
+    /// A listing that failed says nothing about the worktrees. Read as
+    /// none, it marked every row missing, and Remove Missing then closed
+    /// their tabs, when git had only refused the repository (an owner
+    /// `safe.directory` does not trust, an extension an older git does not
+    /// know, a `.git/config` it cannot parse).
     static func fetch(repoRoot: URL) async throws -> [GitWorktreeInfo] {
         let result = try await GitProcess.run(
             ["worktree", "list", "--porcelain"],
             cwd: repoRoot
         )
-        guard result.succeeded else { return [] }
+        guard result.succeeded else {
+            if isOutsideRepository(result) {
+                return []
+            }
+            throw GitProcessError.nonZeroExit(result)
+        }
         return parse(result.stdout)
+    }
+
+    /// Whether git failed because `repoRoot` is in no repository: its
+    /// words under the C locale `GitProcess` runs it in.
+    static func isOutsideRepository(_ result: GitResult) -> Bool {
+        !result.succeeded && result.stderr.contains("not a git repository")
     }
 }
 
