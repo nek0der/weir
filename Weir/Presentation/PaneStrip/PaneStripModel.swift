@@ -139,7 +139,7 @@ struct PaneStripModel: Equatable {
         let paneCount: Int
         /// Every conversation the tab's panes run that holds an identity
         /// color, with it (`ConversationTabs.TabConversations.all`): a card
-        /// of any of them outlines the tab, in that conversation's color,
+        /// of any of them tints the tab, in that conversation's color,
         /// and the pointer on the tab marks the cards of them all, so a
         /// split tab answers for its second pane too. Empty for a worktree
         /// with one active conversation, and a scratch tab, which has no

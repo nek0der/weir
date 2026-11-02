@@ -32,7 +32,7 @@ struct ConversationHoverRuleTests {
         #expect(ConversationHoverRule.cardEmphasis(of: first, hover: same, hasIdentity: true) == .none)
     }
 
-    /// The hovered tab's own card with no color has none to be outlined in.
+    /// The hovered tab's own card with no color has none to be tinted in.
     @Test func cardEmphasis_noIdentity_isNone() {
         let same = ConversationHover(conversations: [first], source: .tab)
         #expect(ConversationHoverRule.cardEmphasis(of: first, hover: same, hasIdentity: false) == .none)
@@ -61,10 +61,10 @@ struct ConversationHoverRuleTests {
     }
 
     /// The selected tab's pane is framed in sight, so the tab says nothing more.
-    @Test func tabOutline_selectedTab_isNone() {
+    @Test func tabTint_selectedTab_isNone() {
         let card = ConversationHover(conversations: [first], source: .card)
-        #expect(ConversationHoverRule.tabOutline(running: [first: 2], isSelected: true, hover: card) == nil)
-        #expect(ConversationHoverRule.tabOutline(running: [first: 2], isSelected: false, hover: card) == 2)
+        #expect(ConversationHoverRule.tabTint(running: [first: 2], isSelected: true, hover: card) == nil)
+        #expect(ConversationHoverRule.tabTint(running: [first: 2], isSelected: false, hover: card) == 2)
     }
 
     @Test func framesPane_onlyUnderACardOfItsConversation() {
@@ -76,22 +76,22 @@ struct ConversationHoverRuleTests {
         #expect(!ConversationHoverRule.framesPane(of: nil, hover: card))
     }
 
-    @Test func tabOutline_cardHoverOfConversationTheTabRuns_isThatColor() {
+    @Test func tabTint_cardHoverOfConversationTheTabRuns_isThatColor() {
         let same = ConversationHover(conversations: [first], source: .card)
         let ownTab = ConversationHover(conversations: [first], source: .tab)
-        #expect(ConversationHoverRule.tabOutline(running: [first: 2], isSelected: false, hover: same) == 2)
+        #expect(ConversationHoverRule.tabTint(running: [first: 2], isSelected: false, hover: same) == 2)
         // Only a tab that runs the card's conversation, never for the
         // tab's own hover, and never without a color.
-        #expect(ConversationHoverRule.tabOutline(running: [second: 1], isSelected: false, hover: same) == nil)
-        #expect(ConversationHoverRule.tabOutline(running: [first: 2], isSelected: false, hover: ownTab) == nil)
-        #expect(ConversationHoverRule.tabOutline(running: [:], isSelected: false, hover: same) == nil)
-        #expect(ConversationHoverRule.tabOutline(running: [first: 2], isSelected: false, hover: nil) == nil)
+        #expect(ConversationHoverRule.tabTint(running: [second: 1], isSelected: false, hover: same) == nil)
+        #expect(ConversationHoverRule.tabTint(running: [first: 2], isSelected: false, hover: ownTab) == nil)
+        #expect(ConversationHoverRule.tabTint(running: [:], isSelected: false, hover: same) == nil)
+        #expect(ConversationHoverRule.tabTint(running: [first: 2], isSelected: false, hover: nil) == nil)
     }
 
-    /// A split tab whose title stands for one conversation is outlined for
+    /// A split tab whose title stands for one conversation is tinted for
     /// the card of the conversation in its second pane, in that one's color.
-    @Test func tabOutline_splitTab_answersForItsSecondPaneInItsColor() {
+    @Test func tabTint_splitTab_answersForItsSecondPaneInItsColor() {
         let secondPane = ConversationHover(conversations: [second], source: .card)
-        #expect(ConversationHoverRule.tabOutline(running: [first: 0, second: 3], isSelected: false, hover: secondPane) == 3)
+        #expect(ConversationHoverRule.tabTint(running: [first: 0, second: 3], isSelected: false, hover: secondPane) == 3)
     }
 }

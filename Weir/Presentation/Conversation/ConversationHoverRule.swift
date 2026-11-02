@@ -28,10 +28,10 @@ struct ConversationHover: Equatable, Sendable {
 /// in Domain, which holds the product's rules. The pointer on a card asks
 /// "where is this?", so the pane that runs it is framed in its color, or,
 /// where that pane is out of sight behind another tab, the tab that runs it
-/// is outlined (a split tab's second pane's conversation's too), and the other cards stay as
+/// is tinted (a split tab's second pane's conversation's too), and the other cards stay as
 /// they are: the panel is what is being read.
 /// The pointer on a tab asks "which of these cards are this tab's?", so
-/// the cards of every conversation it runs are outlined and every other card
+/// the cards of every conversation it runs are tinted and every other card
 /// is dimmed; a pane's header asks the same of its one conversation;
 /// the tabs are never dimmed, as the strip is how the person moves on.
 /// Every other card dims, whether or not its own conversation still holds
@@ -39,11 +39,11 @@ struct ConversationHover: Equatable, Sendable {
 /// left bright it would read as the hovered tab's. Only the hovered
 /// conversation needs a color: a tab, a header, or a card without one (a
 /// worktree of one conversation) does not report its hover at all, so it marks
-/// nothing; and a card is outlined only in its own color.
+/// nothing; and a card is tinted only in its own color.
 enum ConversationHoverRule {
     enum Emphasis: Equatable, Sendable {
         case none
-        /// Outlined in its conversation's color.
+        /// Tinted in its conversation's color.
         case lit
         /// Faded behind the hovered tab's cards.
         case dimmed
@@ -51,7 +51,7 @@ enum ConversationHoverRule {
 
     /// A turn card of `conversation`, whose identity color is there or not
     /// (`hasIdentity`), while `hover` is under the pointer. The color
-    /// decides only whether the card can be outlined; it never keeps the
+    /// decides only whether the card can be tinted; it never keeps the
     /// card from dimming.
     static func cardEmphasis(of conversation: ConversationKey?, hover: ConversationHover?, hasIdentity: Bool) -> Emphasis {
         guard let conversation, let hover, hover.source == .tab else { return .none }
@@ -59,14 +59,14 @@ enum ConversationHoverRule {
         return hasIdentity ? .lit : .none
     }
 
-    /// The identity color a tab is outlined in, `nil` for none: the
+    /// The identity color a tab is tinted in, `nil` for none: the
     /// hovered conversation's, while one of its cards is under the pointer
     /// and the tab runs it in any of its panes. `running` is each
     /// conversation the tab runs that holds a color, with it
     /// (`PaneStripModel.Item.runningIdentities`). None on the selected tab,
-    /// whose pane is in sight and framed: an outline there as well says the
+    /// whose pane is in sight and framed: a tint there as well says the
     /// same thing twice, one on top of the other.
-    static func tabOutline(running: [ConversationKey: Int], isSelected: Bool, hover: ConversationHover?) -> Int? {
+    static func tabTint(running: [ConversationKey: Int], isSelected: Bool, hover: ConversationHover?) -> Int? {
         guard !isSelected, let hover, hover.source == .card else { return nil }
         return hover.conversations.lazy.compactMap { running[$0] }.first
     }

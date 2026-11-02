@@ -30,9 +30,9 @@ extension View {
     }
 
     /// A strip tab as a surface of the hover: it reports every conversation
-    /// its panes run that holds a color (`running`), and is outlined for a
+    /// its panes run that holds a color (`running`), and is tinted for a
     /// card of any of them, unless it is the selected tab, whose pane answers
-    /// instead (`ConversationHoverRule.tabOutline`).
+    /// instead (`ConversationHoverRule.tabTint`).
     func conversationHover(
         tab id: UUID,
         running: [ConversationKey: Int],
@@ -65,7 +65,7 @@ extension View {
 /// How a surface is marked while another surface's conversation is under
 /// the pointer.
 enum ConversationHoverMark: Equatable {
-    /// A strip tab: outlined in the color of a hovered card's conversation
+    /// A strip tab: tinted in the color of a hovered card's conversation
     /// when the tab runs it in any pane. `running` is each conversation the
     /// tab runs that holds a color, with it. Not while the tab is selected:
     /// the pane's frame is in sight then (`PaneConversationFrame`).
@@ -73,10 +73,9 @@ enum ConversationHoverMark: Equatable {
     /// A pane's header: only reports. It is the whole pane that answers a
     /// hovered card (`PaneConversationFrame`).
     case paneHeader
-    /// A turn card: outlined in its own color under its own tab's hover,
-    /// dimmed under another's. `isRinged` leaves the outline to the review's
-    /// ring, which says more.
-    case card(isRinged: Bool)
+    /// A turn card: tinted in its own color under its own tab's hover,
+    /// dimmed under another's.
+    case card
     /// A section heading: dimmed with its cards, never outlined.
     case heading
 }
@@ -137,28 +136,24 @@ private struct ConversationHoverModifier: ViewModifier {
     @ViewBuilder private func marked(_ content: Content, hover: ConversationHover?) -> some View {
         switch mark {
         case let .tab(running, isSelected):
-            let outline = ConversationHoverRule.tabOutline(running: running, isSelected: isSelected, hover: hover)
+            let tint = ConversationHoverRule.tabTint(running: running, isSelected: isSelected, hover: hover)
             content
-                .overlay {
-                    if let outline {
-                        // On the tab's folder shape, as the hover fill is.
-                        // Silent: the card under the pointer names its
-                        // conversation.
-                        UnevenRoundedRectangle(
-                            topLeadingRadius: Layout.paneStripTabCornerRadius,
-                            topTrailingRadius: Layout.paneStripTabCornerRadius,
-                            style: .circular
-                        )
-                        .strokeBorder(ConversationIdentityBar.color(outline), lineWidth: Layout.conversationHoverOutlineWidth)
-                        .padding(.bottom, Layout.paneStripRuleWidth)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                    }
-                }
-                .animation(reduceMotion ? nil : WeirMotion.conversationHover, value: outline)
+                // On the tab's folder shape, as the hover fill is, down to
+                // the rule. Silent: the card under the pointer names its
+                // conversation.
+                .modifier(ConversationHoverHighlight(
+                    identity: tint,
+                    shape: UnevenRoundedRectangle(
+                        topLeadingRadius: Layout.paneStripTabCornerRadius,
+                        topTrailingRadius: Layout.paneStripTabCornerRadius,
+                        style: .circular
+                    ),
+                    bottomInset: Layout.paneStripRuleWidth
+                ))
+                .animation(reduceMotion ? nil : WeirMotion.conversationHover, value: tint)
         case .paneHeader:
             content
-        case let .card(isRinged):
+        case .card:
             let emphasis = emphasis(hover)
             let shape = RoundedRectangle(cornerRadius: Layout.turnCardCornerRadius, style: .continuous)
             content
@@ -166,15 +161,10 @@ private struct ConversationHoverModifier: ViewModifier {
                 // the review reads keeps its ring at full strength behind
                 // another tab's hover.
                 .opacity(emphasis == .dimmed ? Layout.conversationHoverDimmedOpacity : 1)
-                .overlay {
-                    // The ring says the review reads this turn, which the
-                    // conversation's outline must not hide; the ring stands
-                    // alone.
-                    if emphasis == .lit, !isRinged, let identity {
-                        shape.strokeBorder(ConversationIdentityBar.color(identity), lineWidth: Layout.conversationHoverOutlineWidth)
-                            .accessibilityHidden(true)
-                    }
-                }
+                // A tint rather than an outline: several cards light at once,
+                // and a run of colored edges out-shouted the cards' words.
+                // The review's ring is drawn after it, so it reads over it.
+                .modifier(ConversationHoverHighlight(identity: emphasis == .lit ? identity : nil, shape: shape))
                 .animation(reduceMotion ? nil : WeirMotion.conversationHover, value: emphasis)
         case .heading:
             let emphasis = emphasis(hover)
@@ -199,6 +189,44 @@ private struct ConversationHoverModifier: ViewModifier {
         } else if report.identity != nil {
             window.conversationHover.enter(report.conversations, from: report.surface)
         }
+    }
+}
+
+/// How a tab or a card says it is the hovered conversation's: a tint behind
+/// it, so its words keep their contrast, or under Increase Contrast an
+/// outline over it, as a tint that faint would be all but lost and a tab has
+/// no other mark. `identity` is `nil` while it says nothing.
+private struct ConversationHoverHighlight<Mark: InsettableShape>: ViewModifier {
+    let identity: Int?
+    let shape: Mark
+    var bottomInset: CGFloat = 0
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    private typealias Layout = WeirLayout.Supervision
+
+    private var tintOpacity: Double {
+        colorScheme == .dark ? Layout.conversationHoverTintOpacityDark : Layout.conversationHoverTintOpacityLight
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .background {
+                if let identity, contrast != .increased {
+                    shape.fill(ConversationIdentityBar.color(identity).opacity(tintOpacity))
+                        .padding(.bottom, bottomInset)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .overlay {
+                if let identity, contrast == .increased {
+                    shape.strokeBorder(ConversationIdentityBar.color(identity), lineWidth: Layout.conversationHoverOutlineWidth)
+                        .padding(.bottom, bottomInset)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
     }
 }
 
