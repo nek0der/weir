@@ -24,13 +24,10 @@ struct StatusBandModel: Equatable {
         /// `nil` for a pane with no agent.
         var agentName: String?
         /// Home abbreviated (`~/…`); `nil` until the pane's directory is
-        /// known, or when it is the pane's name already (the header's rule).
+        /// known.
         var folder: String?
         /// `nil` while the terminal has no grid yet (off screen, starting).
         var gridSize: TerminalGridSize?
-        /// The folder a scratch tab works in, home abbreviated: it stands
-        /// in the path where a project's branch would.
-        var scratchFolder: String?
         /// The project's folder, home abbreviated, for a window that shows
         /// no tab: the only fact there is to state.
         var projectFolder: String?
@@ -84,20 +81,14 @@ struct StatusBandModel: Equatable {
         } else {
             input.paneName
         }
-        // A scratch shell named by its folder would say the folder twice,
-        // so a crumb that repeats the one before it is dropped.
-        let candidates = [
+        // A scratch tab has no step between: its folder is where the shell
+        // is now, a fact the right states, not a place the tab sits in the
+        // way a branch is.
+        crumbs = [
             Crumb(text: place, isCode: false),
-            (input.checkoutName ?? input.scratchFolder).map { Crumb(text: $0, isCode: true) },
+            input.checkoutName.map { Crumb(text: $0, isCode: true) },
             pane.map { Crumb(text: $0, isCode: false) }
-        ]
-        crumbs = candidates
-            .compactMap(\.self)
-            .reduce(into: [Crumb]()) { parts, part in
-                if parts.last?.text != part.text {
-                    parts.append(part)
-                }
-            }
+        ].compactMap(\.self)
         let pathParts = crumbs.map(\.text)
         path = pathParts.joined(separator: Self.crumbSeparator)
         let grid = input.gridSize.map { "\($0.columns)×\($0.rows)" }

@@ -33,15 +33,11 @@ extension StatusBandModel {
             projectName: container.projectID.flatMap { session.project($0)?.name },
             checkoutName: CheckoutName.of(container, in: session)
         )
-        if container.projectID == nil {
-            // Scratch: where the tab works, as the folder it opened in.
-            input.scratchFolder = (tab.workingDirectory ?? tab.pwd).map(PathFormatting.abbreviateHome)
-        }
         let label = attention.paneHeaderLabel(paneID: paneID, in: session, locale: locale)
         input.paneName = label.name
         input.isUnnamedShell = !label.isAgent && !label.isNamedByPerson
         input.agentName = label.agentName
-        input.folder = label.detail
+        input.folder = label.folder
         input.gridSize = gridSize(paneID)
         input.isReviewShown = window.review?.isShown == true
         return input
