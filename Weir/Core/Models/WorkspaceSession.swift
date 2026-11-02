@@ -129,6 +129,10 @@ final class WorkspaceSession {
     /// one connects (`ProjectSwitchHandlers.unconnected`), so no session
     /// can show a project in two windows.
     @ObservationIgnored var projectSwitching = ProjectSwitchHandlers.unconnected
+    /// Told of a closed tab about to come back, with its panes' new ids (old
+    /// to new), before the tab is in the session. Optional because a session
+    /// no app has connected, as in a test, has no runs to bring back.
+    @ObservationIgnored var onTabReopening: ((_ closed: Tab, _ paneIDs: [UUID: UUID]) -> Void)?
 
     /// Lets the scratch tabs go from `window` as it switches projects,
     /// or keeps them where they were drawn: `drawer` is the window

@@ -25,7 +25,7 @@ private let log = Logger.weir("agent.projection.adapter")
 final class AgentProjectionAdapter {
     private let directories: [String: AgentDirectories]
     private let descriptors: [String: AgentProviderDescriptor]
-    private let executor: AgentCommandExecutor
+    let executor: AgentCommandExecutor
     /// Deletes the turns a pass asks to, off the main actor.
     private let turnCollector: TurnGarbageCollector
     /// This ends the turns a pass read as stopped by the person, off the
@@ -170,7 +170,7 @@ final class AgentProjectionAdapter {
     }
 
     /// See the designated initializer.
-    private let writesFiles: Bool
+    let writesFiles: Bool
     /// What demo mode shows in place of a pass; `nil` when passes run.
     private let staged: StagedProjection?
 

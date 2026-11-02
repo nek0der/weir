@@ -198,6 +198,83 @@ struct PaneStripAgentBadgeTests {
         #expect(result.attention.headerRuntime(inPane: pane) == nil)
     }
 
+    // MARK: - A tab reopened
+
+    /// A closed tab comes back under new pane ids, and `codex resume` runs no
+    /// hook before its first prompt. The run retired when the tab closed
+    /// comes back for the new pane: the agent's report makes the pane the
+    /// conversation's, and the hint lets a relaunch resume it.
+    @Test func aReopenedTabsRun_comesBackForItsNewPane() throws {
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        let oldPane = UUID()
+        let run = "1E9FFA50-B32F-46C4-BCED-C789AFACE803"
+        let sessionID = "01a15490-ade7-7223-a767-7eb22b5c69e1"
+        var closed = tab
+        closed.agentSessions[.codex] = [oldPane: AgentSessionInfo(sessionId: sessionID, cwd: "/tmp/repo")]
+        closed.agentResumeCandidates[oldPane] = [.codex]
+
+        try withTempDir { root in
+            let state = root.appendingPathComponent("agent-states", isDirectory: true)
+            let sessions = root.appendingPathComponent("sessions", isDirectory: true)
+            let retired = state.appendingPathComponent("retired", isDirectory: true)
+            for directory in [state, sessions, retired] {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            }
+            // As the pass that saw the pane close retired it.
+            let record = """
+            {"schemaVersion":3,"paneId":"\(oldPane.uuidString)","runId":"\(run)","revision":3,\
+            "stateEpisodeToken":"3","state":"finished","updatedAt":"2026-10-20T06:40:00Z",\
+            "lastHookEvent":"turn_finished","hasPrompt":true,"pid":"4242","sessionId":"\(sessionID)"}
+            """
+            let retiredFile = try retired
+                .appendingPathComponent(AgentRecordFixtures.recordFileName("\(run).1793000000.\(UUID().uuidString)"))
+            try Data(record.utf8).write(to: retiredFile)
+
+            let adapter = ProjectionFixture.adapter(provider: "codex", state: state, sessions: sessions, processStatus: { _ in .dead })
+            adapter.reviveRuns(of: closed, paneIDs: [oldPane: pane])
+            #expect(!FileManager.default.fileExists(atPath: retiredFile.path))
+            let revived = try #require(AgentRecordFixtures.records(in: state).first)
+            #expect(revived.paneId == pane.uuidString)
+            #expect(revived.state == "unknown")
+            #expect(revived.pid == nil)
+            #expect(revived.resumeAttemptedAt != nil)
+
+            let at = AgentDateParsing.formatISO8601(Date().addingTimeInterval(5))
+            adapter.programStatus = {
+                [pane.uuidString: AgentProjectionProgramStatus(app: "codex", state: "idle", kind: nil, observedAt: at, stateSince: at)]
+            }
+            let attention = AttentionState()
+            adapter.bootstrap(into: session, attention: attention)
+            #expect(adapter.lastFailure == nil)
+            let header = try #require(attention.headerRuntime(inPane: pane))
+            #expect(header.badge.state == .idle)
+            #expect(header.conversation != nil)
+            #expect(session.tab(tab.id)?.agentSessions[.codex]?[pane]?.sessionId == sessionID)
+            #expect(session.tab(tab.id)?.agentResumeCandidates[pane]?.contains(.codex) == true)
+        }
+    }
+
+    /// A pane with no resume to type, or a session with no record, gets nothing.
+    @Test func aReopenedTab_revivesOnlyWhatItResumes() throws {
+        let (_, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        let oldPane = UUID()
+        var closed = tab
+        closed.agentSessions[.codex] = [oldPane: AgentSessionInfo(sessionId: "s", cwd: nil)]
+        try withTempDir { root in
+            let state = root.appendingPathComponent("agent-states", isDirectory: true)
+            let sessions = root.appendingPathComponent("sessions", isDirectory: true)
+            for directory in [state, sessions] {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            }
+            let adapter = ProjectionFixture.adapter(provider: "codex", state: state, sessions: sessions)
+            adapter.reviveRuns(of: closed, paneIDs: [oldPane: pane])
+            closed.agentResumeCandidates[oldPane] = [.codex]
+            adapter.reviveRuns(of: closed, paneIDs: [oldPane: pane])
+            #expect(AgentRecordFixtures.records(in: state).isEmpty)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: sessions.path).allSatisfy { !$0.hasSuffix(".json") })
+        }
+    }
+
     // MARK: - An agent that is gone
 
     @Test func aRunWhoseProcessDied_isRetired_andTheTabIsAShellAgain() throws {
