@@ -675,13 +675,13 @@ enum SupervisionTokens {
     /// the same in both appearances, so the badge reads as Claude's. Badge
     /// fills only: as text on white it reaches 3.12:1, under 4.5:1.
     static let claude = ThemedColor(light: 0xD97757, dark: 0xD97757)
-    /// The Codex badge's fill: a blue from the gradient on Codex's app
-    /// icon (#B1A7FF to #3941FF), taken far enough along it that white
-    /// letters reach 4.5:1 (4.58:1). Codex has a mark of its own, so the
-    /// badge takes its blue rather than OpenAI's black, whose mark turns
-    /// white in dark mode and would have taken dark letters there. The
-    /// same in both appearances.
-    static let codex = ThemedColor(light: 0x5D60FF, dark: 0x5D60FF)
+    /// The Codex badge's fill: white, under black letters
+    /// (`codexBadgeForeground`), as Codex's app icon draws OpenAI's mark.
+    /// The blue from the icon's gradient it wore before was not the mark's
+    /// own color. The same in both appearances, as the icon is. In light,
+    /// white barely differs from the surfaces around it, so its edge
+    /// (`codexEdge`) keeps the badge's shape.
+    static let codex = ThemedColor(light: 0xFFFFFF, dark: 0xFFFFFF)
     /// The Antigravity badge's ground, the blue of its logo, which is blue
     /// with green, orange, and red along the top. The same in both
     /// appearances. White letters reach 4.05:1, over the 3:1 a mark is held
@@ -702,25 +702,33 @@ enum SupervisionTokens {
     /// surface it sits on. Claude's orange does in light (2.49:1 on a
     /// selected row), so there it takes its own color darkened just far
     /// enough for 3:1 on every light surface, which stays close to the
-    /// fill; in dark it stands 4:1 off everything. Codex's blue does in
-    /// dark (2.76:1 on a selected row), so there it takes its own color
-    /// lightened to 3:1; in light it stands 3.66:1 off everything. Where an
-    /// edge is the fill, it draws nothing. The edges are
-    /// `SelectionEdgeRule.color(fill, on: selection)`, written out so the
-    /// badge needs no work at draw time. Antigravity's badge has none: its
-    /// blue already stands 3:1 off, and a blue edge would ring the colors on
-    /// its top.
+    /// fill; in dark it stands 4:1 off everything. Codex's white does in
+    /// light (1.00:1 on the window, 1.25:1 on a selected row), so there it
+    /// takes white darkened to 3:1 off a selected row: a neutral gray, as
+    /// the mark is black and white, that stands 3.20:1 to 4.00:1 off every
+    /// light surface and still leaves the white inside it reading as the
+    /// fill. A softer gray from the palette (`line`, `faint`) would have
+    /// left the badge's shape under 3:1, and black would have read as a
+    /// frame around the letters. In dark the white stands 12.65:1 off
+    /// everything. Where an edge is the fill, it draws nothing. The edges
+    /// are `SelectionEdgeRule.color(fill, on: selection)`, written out so
+    /// the badge needs no work at draw time. Antigravity's badge has none:
+    /// its blue already stands 3:1 off, and a blue edge would ring the
+    /// colors on its top.
     static let claudeEdge = ThemedColor(light: 0xC36B4E, dark: 0xD97757)
-    static let codexEdge = ThemedColor(light: 0x5D60FF, dark: 0x676AFF)
+    static let codexEdge = ThemedColor(light: 0x7F7F7F, dark: 0xFFFFFF)
     static let opencodeEdge = ThemedColor(light: 0x211E1E, dark: 0x8E8989)
-    /// The letters on an agent badge: white, in both appearances, so the
-    /// fill reads as the brand's color rather than one muddied by dark
-    /// letters. On Codex's blue that is
-    /// 4.58:1. On Claude's orange it is 3.12:1: the two letters are a mark
-    /// that says whose badge it is, not words to read, so they are held to
-    /// 3:1 for marks, as a logotype is; reaching 4.5:1 would have
-    /// meant darkening the orange to brown.
+    /// The letters on an agent badge but Codex's: white, in both
+    /// appearances, so the fill reads as the brand's color rather than one
+    /// muddied by dark letters. On Claude's orange it is 3.12:1: the two
+    /// letters are a mark that says whose badge it is, not words to read,
+    /// so they are held to 3:1 for marks, as a logotype is; reaching 4.5:1
+    /// would have meant darkening the orange to brown.
     static let badgeForeground = ThemedColor(light: 0xFFFFFF, dark: 0xFFFFFF)
+    /// The letters on Codex's white badge: black, as OpenAI's mark is on
+    /// Codex's icon, 21:1, in both appearances. A closed Codex badge takes
+    /// white on `closedMark`, as every closed badge does.
+    static let codexBadgeForeground = ThemedColor(light: 0x000000, dark: 0x000000)
     /// A closed source's mark in the notification history: the badge's
     /// fill under its white letters, and the shell's or the place's glyph;
     /// also a turn card's ✓ for a check run on part of the suite
