@@ -3,12 +3,14 @@
 
 import Foundation
 
-/// What the decision bar's primary button does. There is none for an
-/// approval or a question: ⌘⏎ never lets a command run, since those are
-/// answered in the terminal or on the approval card. Each carries the item
-/// it was shown for, so the press acts on that item even if the bar moves
-/// on before it runs.
+/// What the decision bar's primary button does. For an approval or a
+/// question Weir holds it only opens the approval card: ⌘⏎ never lets a
+/// command run, and the card is where it is allowed, denied, or handed to
+/// the terminal. Each carries the item it was shown for, so the press acts
+/// on that item even if the bar moves on before it runs.
 package enum PrimaryAction: Equatable, Sendable {
+    /// An approval or a question Weir holds opens its card ("Answer…").
+    case openCard(AttentionItemID)
     /// Unread turns that changed files are marked as reviewed, through
     /// the last turn the bar showed (`throughTurn`, its number), so a turn
     /// joining the item a moment before the press is not marked unseen;
@@ -24,6 +26,16 @@ package enum PrimaryAction: Equatable, Sendable {
     /// Close All Tabs' own confirmation: there is no folder left to resume
     /// or start in.
     case closeAllTabs(AttentionItemID)
+
+    /// Whether one press uses the button up while the bar shows it. Opening
+    /// a card is not: the person may close it and want it back, and opening
+    /// it again changes nothing.
+    package var isSpentByPress: Bool {
+        switch self {
+        case .openCard: false
+        case .markReviewed, .resume, .notifyAtReset, .closeAllTabs: true
+        }
+    }
 }
 
 /// One press of Return or the keypad's Enter with ⌘ held, in a terminal
@@ -170,7 +182,9 @@ package struct PrimaryActionGate: Sendable {
               let action = current.primaryAction,
               spent[paneID] != action
         else { return .swallow }
-        spent[paneID] = action
+        if action.isSpentByPress {
+            spent[paneID] = action
+        }
         return .perform(action)
     }
 }

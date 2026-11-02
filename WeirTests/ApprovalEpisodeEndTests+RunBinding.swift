@@ -51,8 +51,8 @@ extension ApprovalEpisodeEndTests {
 
     @Test func aStuckRun_doesNotHoldTheRequestsOfAnotherRunOfItsConversation() async {
         // "No" in the first run's dialog left it running with no hook. The
-        // conversation goes on in a second run, whose request goes to its
-        // TUI while its pane is seen, and leaves with its turn.
+        // conversation goes on in a second run, whose request its person
+        // hands to its TUI, and which leaves with its turn.
         let (session, _, pane) = WorkspaceSessionFixture.withLooseTab()
         let resumedID = UUID()
         let request = ApprovalPresentation.test(sessionID: "session", agentRunID: resumedID)
@@ -60,11 +60,8 @@ extension ApprovalEpisodeEndTests {
         let stuck = Self.run("stuck", prompt: Self.ownPrompt.addingTimeInterval(-60), in: pane)
         store.runtimes = { [stuck, Self.run(resumedID.uuidString, .needsInput, prompt: Self.ownPrompt, in: pane)] }
 
-        store.handOffSeenRequests(
-            attention: AttentionVisibility(attendedPanes: [pane], isAppActive: true),
-            session: session,
-            holdsWhileHidden: true
-        )
+        store.bindRequestsToRuns(in: session)
+        store.resolve(request, .delegate)
         await store.waitUntilResolved(request)
         store.apply(
             ApprovalControllerConnection.Projection.test(pending: [], terminals: [request.id: .resolved(.delegate)]),
@@ -94,7 +91,7 @@ extension ApprovalEpisodeEndTests {
         let session = WorkspaceSession()
         let pane = UUID()
         store.runtimes = { [Self.run(asking.uuidString, prompt: Self.ownPrompt, in: pane)] }
-        store.handOffSeenRequests(attention: AttentionVisibility(), session: session, holdsWhileHidden: true)
+        store.bindRequestsToRuns(in: session)
 
         store.resolve(request, .allowOnce)
         await store.waitUntilResolved(request)
@@ -142,12 +139,6 @@ extension ApprovalEpisodeEndTests {
         store.releaseStaleApprovals(in: session)
         #expect(store.ledger.entry(for: request)?.runtimeIDs == nil)
         #expect(store.turnStanding(for: request, in: session) == .awaitingRun)
-
-        store.handOffSeenRequests(
-            attention: AttentionVisibility(attendedPanes: [pane], isAppActive: true),
-            session: session,
-            holdsWhileHidden: true
-        )
         #expect(store.ledger.entry(for: request)?.state == .held)
     }
 
@@ -198,7 +189,7 @@ extension ApprovalEpisodeEndTests {
         #expect(store.ledger.entry(for: request) == nil)
     }
 
-    @Test func aDetachedTmuxRunsRequest_isHeldWhileAPaneItsConversationHintsIsSeen() {
+    @Test func aDetachedTmuxRunsRequest_showsInNoPane() {
         // The run is bound, but detached: it shows nowhere. The hint names a
         // pane of another run of the conversation, or an older one.
         let asking = UUID()
@@ -214,11 +205,7 @@ extension ApprovalEpisodeEndTests {
             sessionID: "session"
         )] }
 
-        store.handOffSeenRequests(
-            attention: AttentionVisibility(attendedPanes: [hinted], isAppActive: true),
-            session: session,
-            holdsWhileHidden: true
-        )
+        store.bindRequestsToRuns(in: session)
 
         #expect(store.panes(for: request, in: session).isEmpty)
         #expect(store.ledger.entry(for: request)?.state == .held)
@@ -367,21 +354,5 @@ extension ApprovalEpisodeEndTests {
         }
         fixture.store.releaseStaleApprovals(in: fixture.session)
         #expect(fixture.store.ledger.entry(for: fixture.request) == nil)
-    }
-
-    @Test func aRequestEitherOfTwoRunsCouldHaveAsked_isHeldWhileItsPaneIsSeen() {
-        let request = ApprovalPresentation.test(sessionID: "session")
-        let store = Self.pendingStore(request, seenAt: Self.seenAt)
-        let (session, _, pane) = WorkspaceSessionFixture.withLooseTab()
-        let runs = [Self.run("one", prompt: Self.ownPrompt, in: pane), Self.run("other", prompt: Self.ownPrompt, in: pane)]
-        store.runtimes = { runs }
-
-        store.handOffSeenRequests(
-            attention: AttentionVisibility(attendedPanes: [pane], isAppActive: true),
-            session: session,
-            holdsWhileHidden: true
-        )
-
-        #expect(store.ledger.entry(for: request)?.state == .held)
     }
 }

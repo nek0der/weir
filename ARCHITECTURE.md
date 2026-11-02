@@ -353,11 +353,18 @@ the turns, and the commands for the app to perform.
   subscribes to the broker as its controller, through the exchanges in
   `ApprovalControllerConnection`, and holds what it sees. Its
   `ApprovalLedger` keeps each request after it leaves the pending list,
-  until its turn is over. A request whose pane is in sight goes straight to
-  the agent's own prompt. A request whose pane is out of sight is held for
-  the approval card. `handOffSeenRequests` makes that split;
-  `AppState+AgentIntegration.swift` runs it, and
-  `AttentionVisibility.allowsHandOff` decides each request. Each window has its own card, with the frames of the sidebar
+  until its turn is over. Every request is held for the approval card,
+  wherever its pane is, until the person answers it or hands it to the
+  agent's own prompt (Answer in terminal), or its time runs out: a pane in
+  sight says nothing about where the person wants to answer, and a hand-off
+  cannot be taken back. The decision bar under the pane opens the card
+  (Answer…, ⌘⏎) and hands the request over from its ⋯. Claude Code draws
+  its own dialog meanwhile, and whichever answers first wins; Codex shows
+  none until the hand-off. The service withdraws a request whose hook
+  helper's connection is gone (the agent stopped the hook), and the app
+  hands every held request over as it quits. A hidden setting,
+  `holdsApprovals`, hands each request over as it arrives instead
+  (`handOverHeldRequests`, run by `AppState+AgentIntegration.swift`). Each window has its own card, with the frames of the sidebar
   rows it stands beside (`WindowApprovalCard`, `Presentation/Approval`, held
   by `ProjectWindowState.approvalCard`). The requests, the ledger, and the
   unsent answers are shared, and every window's card follows them as they

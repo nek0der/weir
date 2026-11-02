@@ -258,7 +258,7 @@ struct ApprovalLedgerTests {
         let store = ApprovalPresentationStore(decisionSender: { _, _ in await gate.wait() })
         let request = ApprovalPresentation.test()
         store.receive([request])
-        store.handOffSeenRequests(attention: AttentionVisibility(), session: WorkspaceSession(), holdsWhileHidden: false)
+        store.handOverHeldRequests()
         await gate.waitUntilRequested()
 
         store.stop()

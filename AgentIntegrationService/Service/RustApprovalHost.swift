@@ -33,6 +33,22 @@ final class RustApprovalService {
         return RustApprovalSession(service: self, handle: handle)
     }
 
+    /// Withdraws every pending request of the requester run `runID`, whose
+    /// connection is gone (`weir_approval_service_withdraw_requester_v1`).
+    func withdrawRequester(runID: UUID) throws {
+        var bytes = runID.uuid
+        let status = withUnsafeBytes(of: &bytes) { buffer in
+            weir_approval_service_withdraw_requester_v1(
+                self.handle,
+                buffer.bindMemory(to: UInt8.self).baseAddress,
+                buffer.count
+            )
+        }
+        guard status == WEIR_APPROVAL_OK.rawValue else {
+            throw AgentIntegrationError.rustFailure(status)
+        }
+    }
+
     func controllerSession() throws -> RustApprovalSession {
         guard let handle = weir_approval_session_create_controller_v1(handle) else {
             throw AgentIntegrationError.rustFailure(Int32(WEIR_APPROVAL_INTERNAL.rawValue))

@@ -323,6 +323,7 @@ struct SupervisionFootBarTests {
         undo: { _, _ in },
         startNewConversation: { _, _ in },
         showPartialChanges: { _, _ in },
+        answerInTerminal: { _, _ in },
         openReview: { _, _ in }
     )
 

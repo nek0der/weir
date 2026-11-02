@@ -198,9 +198,13 @@ extension ApprovalCardModel {
     /// Where keyboard focus lands when the card is asked for it: the action
     /// that commits nothing while the person can still decide, the pane once
     /// only the agent's prompt answers and there is one, and otherwise the
-    /// close button.
-    static func initialFocus(for actions: Actions, canOpenPane: Bool) -> ApprovalCardFocus {
+    /// close button. A card the decision bar opened (`focusesClose`) starts
+    /// on Close while the person can still decide: on an approval the
+    /// action there is Deny, and keys typed on after ⌘⏎ were likely meant
+    /// for the terminal.
+    static func initialFocus(for actions: Actions, canOpenPane: Bool, focusesClose: Bool = false) -> ApprovalCardFocus {
         switch actions {
+        case .decide where focusesClose: .close
         case .decide: .secondaryAction
         case .openPane where canOpenPane: .primaryAction
         case .sending, .openPane, .none: .close

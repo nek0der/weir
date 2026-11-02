@@ -166,9 +166,10 @@ package enum AttentionQueueReducer {
                 }
                 // A request's banner comes from here, as it arrives, so it
                 // carries the request and can open its card. The runtime's
-                // own wait reaches Weir on another schedule (after the
-                // hand-off for an approval, before the request for a
-                // question), so it cannot say which request it is.
+                // own wait reaches Weir on another schedule (once the
+                // agent's own prompt shows for an approval, before the
+                // request for a question), so it cannot say which request
+                // it is.
                 if item.kind.isNotified {
                     effects.append(.notify(item.id))
                 }

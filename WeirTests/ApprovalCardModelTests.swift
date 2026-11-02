@@ -204,5 +204,9 @@ struct ApprovalCardModelTests {
         #expect(ApprovalCardModel.initialFocus(for: .openPane, canOpenPane: false) == .close)
         #expect(ApprovalCardModel.initialFocus(for: .sending, canOpenPane: true) == .close)
         #expect(ApprovalCardModel.initialFocus(for: .none, canOpenPane: true) == .close)
+        // Opened from the decision bar: Close first, never Deny, while the
+        // person can still decide.
+        #expect(ApprovalCardModel.initialFocus(for: .decide, canOpenPane: true, focusesClose: true) == .close)
+        #expect(ApprovalCardModel.initialFocus(for: .openPane, canOpenPane: true, focusesClose: true) == .primaryAction)
     }
 }

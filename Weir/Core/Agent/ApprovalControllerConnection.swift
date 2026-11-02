@@ -187,6 +187,44 @@ enum ApprovalControllerConnection {
         }
     }
 
+    /// Hands `approvals` to the agents' own prompts in one session, as Weir
+    /// quits. It runs on the main thread ahead of the session's save, so the
+    /// whole of it stays within `budget`: each exchange gets only what is left,
+    /// and the first one that fails ends it, as a service that stopped
+    /// answering would only fail the rest one timeout at a time. Whatever does
+    /// not go through is left to the broker's deadline, as before. A request
+    /// of another epoch is skipped: that broker never held it.
+    static func handOverBeforeQuit(_ approvals: [ApprovalPresentation], budget: Duration) {
+        guard !approvals.isEmpty else { return }
+        let clock = ContinuousClock()
+        let deadline = clock.now + budget
+        func secondsLeft() -> Int? {
+            let left = clock.now.duration(to: deadline)
+            guard left > .zero else { return nil }
+            // The XPC client counts whole seconds; never less than one.
+            return max(1, Int(left.components.seconds) + (left.components.attoseconds > 0 ? 1 : 0))
+        }
+        // Opening is two exchanges (the session and its hello), each given
+        // the shortest wait the client counts.
+        guard let (client, currentEpoch) = try? openSession(timeoutSeconds: 1) else { return }
+        for approval in approvals where approval.epoch == currentEpoch {
+            guard let timeout = secondsLeft() else { return }
+            do {
+                // A refusal changes nothing now: the app is going, and the
+                // request ends at its deadline either way.
+                _ = try client.exchange(AgentIntegrationApprovalWire.resolve(
+                    epoch: approval.epoch,
+                    runID: approval.runID,
+                    requestID: approval.requestID,
+                    decision: ApprovalResolution.delegate.wireDecision,
+                    answers: ApprovalResolution.delegate.answers
+                ), timeoutSeconds: timeout)
+            } catch {
+                return
+            }
+        }
+    }
+
     /// The refusal a failed `approval.resolve` stands for, asking the broker
     /// with `fetch` how the request ended when it says it already did. Any
     /// other answer is a plain failure the person may retry.

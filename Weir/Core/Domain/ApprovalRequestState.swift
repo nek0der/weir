@@ -62,8 +62,9 @@ package enum BrokerTerminal: Equatable, Sendable {
 package enum ApprovalEvent: Equatable, Sendable {
     /// The person chose an answer on the card or in the menu bar.
     case userDecided(ApprovalResolution)
-    /// The request's pane became visible, so it goes to the TUI.
-    case paneBecameVisible
+    /// Weir holds no request (the hidden `holdsApprovals` setting is off), so
+    /// it goes to the TUI as it arrives.
+    case handedOverBySetting
     case sendSucceeded
     case sendFailed(String)
     case brokerTerminal(BrokerTerminal)
@@ -166,11 +167,12 @@ package enum ApprovalRequestState: Equatable, Sendable {
     ///
     /// The broker is the authority: whatever it reports settles the request,
     /// even while our own send is in flight and even after our clock called
-    /// it timed out. A visible pane does not hand a request to the TUI while
-    /// a send is in flight, so the person's answer and the delegation never
-    /// race. A request whose send failed is open again, but nothing hands it
-    /// over by itself: the failure stays for the person to see and retry,
-    /// and resending on every change would retry a broken send forever.
+    /// it timed out. The setting that holds no request does not hand one to
+    /// the TUI while a send is in flight, so the person's answer and the
+    /// delegation never race. A request whose send failed is open again, but
+    /// nothing hands it over by itself: the failure stays for the person to
+    /// see and retry, and resending on every change would retry a broken
+    /// send forever.
     package static func transition(
         _ state: Self,
         _ event: ApprovalEvent,
@@ -197,7 +199,7 @@ package enum ApprovalRequestState: Equatable, Sendable {
     private static func fromOpen(_ event: ApprovalEvent, now: SuspendingClock.Instant) -> Self? {
         switch event {
         case let .userDecided(resolution): .sending(resolution, since: now)
-        case .paneBecameVisible: .sending(.delegate, since: now)
+        case .handedOverBySetting: .sending(.delegate, since: now)
         case let .brokerTerminal(terminal): settled(by: terminal, now: now)
         case .brokerRecordMissing: .unknownResult
         case .deadlinePassed: .timedOut
@@ -225,7 +227,7 @@ package enum ApprovalRequestState: Equatable, Sendable {
             .unknownResult
         // The broker decides whether a send that crosses the deadline
         // counts; we wait for its answer rather than declaring a timeout.
-        case .deadlinePassed, .userDecided, .paneBecameVisible:
+        case .deadlinePassed, .userDecided, .handedOverBySetting:
             nil
         }
     }
@@ -238,7 +240,7 @@ package enum ApprovalRequestState: Equatable, Sendable {
         case .brokerRecordMissing: .unknownResult
         case .brokerTerminal(.expired): nil
         case let .brokerTerminal(terminal): settled(by: terminal, now: now)
-        case .userDecided, .paneBecameVisible, .sendSucceeded, .sendFailed, .deadlinePassed: nil
+        case .userDecided, .handedOverBySetting, .sendSucceeded, .sendFailed, .deadlinePassed: nil
         }
     }
 

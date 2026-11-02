@@ -880,12 +880,14 @@ struct AdvancedSettings: Codable, Equatable {
     /// opening always resolves the identifier again through `NSWorkspace`.
     var fileApplication: FileApplication?
 
-    /// Whether Weir holds an approval request while its pane is out of
-    /// sight and hands it to the TUI only once the pane is seen. Not shown in
-    /// Settings: it is the way out if a provider draws its own prompt while
-    /// the request is held, which would leave two prompts for one request.
-    /// Off hands every request to the TUI at once, as if nothing held it.
-    var holdsApprovalsWhileHidden = true
+    /// Whether Weir holds an approval request until the person answers it or
+    /// hands it to the TUI, wherever its pane is. Not shown in Settings: it
+    /// is the way out if holding a request ever gets in a provider's way.
+    /// Claude Code draws its own dialog while we hold (measured on 2.1.316),
+    /// and whichever answers first wins; Codex shows none until we hand the
+    /// request over. Off hands every request to the TUI at once, as if
+    /// nothing held it.
+    var holdsApprovals = true
 
     /// How long the turns' records are kept.
     var turnRetention: TurnRetentionSettings = .init()
@@ -902,8 +904,8 @@ struct AdvancedSettings: Codable, Equatable {
 
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.holdsApprovalsWhileHidden = try c.decodeIfPresent(
-            Bool.self, forKey: .holdsApprovalsWhileHidden
+        self.holdsApprovals = try c.decodeIfPresent(
+            Bool.self, forKey: .holdsApprovals
         ) ?? true
         self.reviewInstructions = try c.decodeIfPresent(
             String.self, forKey: .reviewInstructions
@@ -933,8 +935,8 @@ struct AdvancedSettings: Codable, Equatable {
         try c.encodeIfPresent(fileApplication, forKey: .fileApplication)
         // Written only when changed, so a file nobody touched does not grow
         // a key nobody can see.
-        if !holdsApprovalsWhileHidden {
-            try c.encode(holdsApprovalsWhileHidden, forKey: .holdsApprovalsWhileHidden)
+        if !holdsApprovals {
+            try c.encode(holdsApprovals, forKey: .holdsApprovals)
         }
         try CodableSidecar.encodeUnknownFields(unknownFields, to: encoder)
     }
@@ -946,7 +948,9 @@ struct AdvancedSettings: Codable, Equatable {
         /// existing settings files keep their choice.
         case fileApplication = "reviewFileApplication"
         case hostsAgentsInTmux
-        case holdsApprovalsWhileHidden = "approvalHoldWhileHidden"
+        /// Named when Weir held a request only while its pane was out of
+        /// sight; the stored key stays so a person's choice carries over.
+        case holdsApprovals = "approvalHoldWhileHidden"
         case turnRetention
     }
 

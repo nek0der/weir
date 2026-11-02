@@ -36,6 +36,7 @@ extension AppState {
         let agentProjection = self.agentProjection
         let tmuxPresence = self.tmuxPresence
         let sessionLaunches = self.sessionLaunches
+        let approvalPresentation = self.approvalPresentation
         return NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
@@ -61,6 +62,15 @@ extension AppState {
                 // A setup step left running would go on in a worktree no
                 // one watches.
                 sessionLaunches.cancelAll()
+                // The requests Weir holds go to the agents' own prompts: an
+                // agent that outlives the app (under tmux) would otherwise
+                // wait out its deadline for a card no one can open.
+                if approvalPresentation.followsService {
+                    ApprovalControllerConnection.handOverBeforeQuit(
+                        approvalPresentation.requestsToHandOverAtQuit,
+                        budget: .seconds(2)
+                    )
+                }
                 // Independent intents protect a direct agent's resume even if
                 // a concurrent hook owns the lifecycle record's advisory lock.
                 agentProjection.prepareForTermination()

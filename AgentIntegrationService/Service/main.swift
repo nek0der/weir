@@ -5,7 +5,9 @@ import Foundation
 
 private final class AgentIntegrationConnection: NSObject, AgentIntegrationXPCProtocol {
     private let role: AgentIntegrationRole
-    private let runID: UUID?
+    /// The requester run this connection's session was created for; `nil` for
+    /// the controller, which asks for nothing.
+    let runID: UUID?
     private let session: RustApprovalSession
     private let serviceArtifact: AgentIntegrationServiceArtifact
 
@@ -48,6 +50,37 @@ private final class AgentIntegrationConnection: NSObject, AgentIntegrationXPCPro
             ) as NSError)
             return
         }
+        // Off the connection's own queue. NSXPCConnection delivers a
+        // connection's messages and its invalidation on one serial queue,
+        // and a requester's `approval.wait` blocks for up to its whole
+        // deadline: run there, it would hold back the withdrawal that the
+        // invalidation exists for (`shouldAcceptNewConnection`).
+        let exchange = PendingExchange(session: session, request: request, reply: reply)
+        Self.exchangeQueue.async {
+            exchange.run()
+        }
+    }
+
+    private static let exchangeQueue = DispatchQueue(
+        label: "com.nekoder.weir.approval-exchange",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
+}
+
+/// One exchange carried off the connection's queue.
+///
+/// `@unchecked Sendable` because neither the session wrapper nor XPC's reply
+/// block is marked `Sendable`. It is safe: the Rust session serializes its
+/// own use behind a mutex (`weir_approval_service_create_v1`), a helper or
+/// the controller sends its next request only after this one's reply, and an
+/// XPC reply block may be called from any thread, once.
+private struct PendingExchange: @unchecked Sendable {
+    let session: RustApprovalSession
+    let request: Data
+    let reply: (Data?, NSError?) -> Void
+
+    func run() {
         do {
             try reply(session.exchange(request), nil)
         } catch {
@@ -80,6 +113,18 @@ private final class AgentIntegrationListenerDelegate: NSObject, NSXPCListenerDel
             )
             connection.exportedInterface = NSXPCInterface(with: (any AgentIntegrationXPCProtocol).self)
             connection.exportedObject = exportedObject
+            if let runID = exportedObject.runID {
+                // A hook helper holds its connection for as long as it waits,
+                // so a connection gone means the hook stopped: Claude sends it
+                // SIGTERM when its own dialog is answered No or Esc, and Codex
+                // ends it on Esc or Ctrl-C without a signal it could catch.
+                // Its requests are withdrawn so no card offers an answer that
+                // can no longer arrive. A wait still blocked on this run wakes
+                // with them withdrawn.
+                connection.invalidationHandler = { [service] in
+                    try? service.withdrawRequester(runID: runID)
+                }
+            }
             connection.activate()
             return true
         } catch {

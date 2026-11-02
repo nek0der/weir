@@ -33,7 +33,7 @@ struct ApprovalRequestStateTests {
         .held, sendingAllow, sendingDelegate, failed, handed, .timedOut, .withdrawn, .unknownResult, .answered(.allowOnce)
     ]
     private static let events: [ApprovalEvent] = [
-        .userDecided(.allowOnce), .userDecided(.delegate), .paneBecameVisible, .sendSucceeded, .sendFailed("offline"),
+        .userDecided(.allowOnce), .userDecided(.delegate), .handedOverBySetting, .sendSucceeded, .sendFailed("offline"),
         .brokerTerminal(.resolved(.deny)), .brokerTerminal(.resolved(.answer(["q": "a"]))),
         .brokerTerminal(.resolved(.delegate)), .brokerTerminal(.canceled),
         .brokerTerminal(.expired), .brokerRecordMissing, .deadlinePassed
@@ -47,7 +47,7 @@ struct ApprovalRequestStateTests {
     }
 
     private enum EventCase: CaseIterable {
-        case userDecided, paneBecameVisible, sendSucceeded, sendFailed, brokerTerminal, brokerRecordMissing,
+        case userDecided, handedOverBySetting, sendSucceeded, sendFailed, brokerTerminal, brokerRecordMissing,
              deadlinePassed
     }
 
@@ -67,7 +67,7 @@ struct ApprovalRequestStateTests {
     private static func kind(of event: ApprovalEvent) -> EventCase {
         switch event {
         case .userDecided: .userDecided
-        case .paneBecameVisible: .paneBecameVisible
+        case .handedOverBySetting: .handedOverBySetting
         case .sendSucceeded: .sendSucceeded
         case .sendFailed: .sendFailed
         case .brokerTerminal: .brokerTerminal
@@ -80,7 +80,7 @@ struct ApprovalRequestStateTests {
     private static let openMoves: [(ApprovalEvent, ApprovalRequestState)] = [
         (.userDecided(.allowOnce), .sending(.allowOnce, since: now)),
         (.userDecided(.delegate), .sending(.delegate, since: now)),
-        (.paneBecameVisible, .sending(.delegate, since: now)),
+        (.handedOverBySetting, .sending(.delegate, since: now)),
         (.brokerTerminal(.resolved(.deny)), .answered(.deny)),
         (.brokerTerminal(.resolved(.answer(["q": "a"]))), .answered(.answer(["q": "a"]))),
         (.brokerTerminal(.resolved(.delegate)), .handedToTerminal(since: now)),

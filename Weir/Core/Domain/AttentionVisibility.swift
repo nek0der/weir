@@ -1,5 +1,5 @@
 // AttentionVisibility.swift
-// Weir — whether the person can be said to see a pane, for routing requests and notifications.
+// Weir — whether the person can be said to see a pane, for routing notifications and reading turns.
 
 import Foundation
 
@@ -15,18 +15,13 @@ package struct AttentionVisibility: Equatable, Sendable {
     /// The union of every on-screen window's attended panes.
     package var attendedPanes: Set<UUID> = []
     package var isAppActive = false
-    /// VoiceOver does not read the terminal's text, so a request handed to
-    /// the TUI would be one the person cannot hear.
-    package var isVoiceOverRunning = false
 
     package init(
         attendedPanes: Set<UUID> = [],
-        isAppActive: Bool = false,
-        isVoiceOverRunning: Bool = false
+        isAppActive: Bool = false
     ) {
         self.attendedPanes = attendedPanes
         self.isAppActive = isAppActive
-        self.isVoiceOverRunning = isVoiceOverRunning
     }
 
     /// Every pane `isSeen` holds for: none while another app is in front.
@@ -36,13 +31,5 @@ package struct AttentionVisibility: Equatable, Sendable {
 
     package func isSeen(_ paneID: UUID) -> Bool {
         isAppActive && attendedPanes.contains(paneID)
-    }
-
-    /// Whether a held request may go to the TUI by itself, for a runtime
-    /// shown in `paneIDs` (more than one under tmux, when the session is
-    /// attached in several panes). Any seen pane is enough. No known pane
-    /// means we cannot tell where it would show, so the request is held.
-    package func allowsHandOff(toAnyOf paneIDs: [UUID]) -> Bool {
-        !isVoiceOverRunning && paneIDs.contains(where: isSeen)
     }
 }

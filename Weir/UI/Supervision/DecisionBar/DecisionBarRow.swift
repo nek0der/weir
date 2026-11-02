@@ -306,6 +306,11 @@ struct DecisionBarRow: View {
             ) {
                 actions.startNewConversation(itemID, paneID)
             }
+        case let .answerInTerminal(itemID):
+            guard let actions else { return nil }
+            return PopUpMenuItem(title: LocalizedStringResource("Answer in terminal")) {
+                actions.answerInTerminal(itemID, paneID)
+            }
         case let .restore(entry):
             guard let restore else { return nil }
             // Destructive, as every action that rewrites the person's files
@@ -320,7 +325,7 @@ struct DecisionBarRow: View {
         }
     }
 
-    /// "Mark as Viewed" or "Resume Same Conversation", with "⌘⏎" beside
+    /// "Answer…", "Mark as Viewed", or "Resume Same Conversation", with "⌘⏎" beside
     /// its title until the person has used the key a few times; short of
     /// room, without the key and in its short form, whole in its tooltip
     /// and VoiceOver label.
@@ -368,6 +373,8 @@ struct DecisionBarRow: View {
     /// The primary button's name.
     private static func name(_ action: PrimaryAction) -> LocalizedStringResource {
         switch action {
+        case .openCard:
+            LocalizedStringResource("Answer…")
         case .markReviewed:
             LocalizedStringResource("Mark as Viewed")
         case .resume:
@@ -388,6 +395,8 @@ struct DecisionBarRow: View {
     /// The primary button's name in a pane too narrow for `name`.
     private static func shortName(_ action: PrimaryAction) -> LocalizedStringResource {
         switch action {
+        case .openCard:
+            LocalizedStringResource("Answer…")
         case .markReviewed:
             LocalizedStringResource("Mark as Viewed")
         case .resume:
@@ -407,6 +416,8 @@ struct DecisionBarRow: View {
 
     private func primaryHint(_ action: PrimaryAction) -> Text {
         switch action {
+        case .openCard:
+            Text("Opens the approval card")
         case .markReviewed:
             Text(
                 "Marks this conversation’s turns as viewed, through the last one shown",

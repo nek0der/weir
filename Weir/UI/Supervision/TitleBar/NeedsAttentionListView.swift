@@ -172,8 +172,8 @@ struct NeedsAttentionListView: View {
         }
     }
 
-    /// Choosing the row itself goes to its pane; a request whose pane is
-    /// in sight is handed to the terminal there. The window's ⌘J
+    /// Choosing the row itself goes to its pane, whose decision bar answers
+    /// a request Weir holds; going there hands nothing to the terminal. The window's ⌘J
     /// continues from it. How it was chosen (`opening`) decides whether an
     /// item of another project opens in a new window: ⌘-click does, and
     /// VoiceOver's Open in New Window; Return never does.

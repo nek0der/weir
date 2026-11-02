@@ -500,6 +500,8 @@ enum SupervisionWindowActions {
     @discardableResult
     static func perform(_ action: PrimaryAction, inPane paneID: UUID, window: ProjectWindowState, state: AppState) -> Bool {
         switch action {
+        case let .openCard(itemID):
+            openApprovalCard(itemID, window: window, state: state)
         case let .markReviewed(itemID, throughTurn):
             viewedLineActions(window: window, state: state).markViewed(itemID, through: throughTurn, inPane: paneID)
         case let .resume(itemID):
@@ -508,6 +510,40 @@ enum SupervisionWindowActions {
             requestResetNotice(itemID, state: state)
         case let .closeAllTabs(itemID):
             closeAllTabs(itemID, window: window, state: state)
+        }
+    }
+
+    /// The held request an approval or a question item names, while Weir
+    /// can still answer it on the card.
+    private static func heldRequest(_ itemID: AttentionItemID, state: AppState) -> ApprovalPresentation? {
+        switch itemID {
+        case let .approval(key), let .question(key):
+            guard state.approvalPresentation.opensCard(key) else { return nil }
+            return state.approvalPresentation.ledger.entries[key]?.presentation
+        case .prompt, .stop, .unread:
+            return nil
+        }
+    }
+
+    /// "Answer…" on an approval or a question Weir holds: its card, beside
+    /// the request's row as a row's Answer… opens it. The keyboard lands on
+    /// the card's Close, not on Deny: the key that opened it may be followed
+    /// by keys meant for the terminal, and one of them must not answer.
+    private static func openApprovalCard(_ itemID: AttentionItemID, window: ProjectWindowState, state: AppState) -> Bool {
+        guard let request = heldRequest(itemID, state: state) else { return false }
+        window.approvalCard.present(request, from: state.approvalPresentation, focusesClose: true)
+        return true
+    }
+
+    /// The ⋯ "Answer in terminal" on an approval or a question Weir holds:
+    /// hands it to the agent's own prompt and takes the keyboard to the pane
+    /// that shows it, as the card's own button does. The bar stands under
+    /// that pane, but the keyboard may be in another split or tmux pane.
+    private static func answerInTerminal(_ itemID: AttentionItemID, window: ProjectWindowState, state: AppState) {
+        guard let request = heldRequest(itemID, state: state) else { return }
+        state.approvalPresentation.resolve(request, .delegate)
+        if let item = state.attentionQueue.item(for: request.key), item.subject.paneID != nil {
+            state.attentionQueue.focus(item, from: window)
         }
     }
 
@@ -669,6 +705,9 @@ enum SupervisionWindowActions {
             },
             showPartialChanges: { [window, state] itemID, paneID in
                 showPartialChanges(itemID, inPane: paneID, window: window, state: state)
+            },
+            answerInTerminal: { [window, state] itemID, _ in
+                answerInTerminal(itemID, window: window, state: state)
             },
             openReview: { [window, state] paneID, conversation in
                 Task {

@@ -215,6 +215,20 @@ struct weir_approval_session_v1 *weir_approval_session_create_requester_v1(const
 // `service` must be a live service handle.
 struct weir_approval_session_v1 *weir_approval_session_create_controller_v1(const struct weir_approval_service_v1 *service);
 
+// Withdraws every pending request of the requester run `run_id`, for when
+// the host learns that run's connection is gone: the hook that asked has
+// stopped, so nobody would read a decision. Returns `WEIR_APPROVAL_OK` also
+// when there was nothing to withdraw. `run_id` is exactly 16 raw UUID bytes,
+// the same ones its requester session was created with.
+//
+// # Safety
+//
+// `service` must be a live service handle. `run_id` must be readable for
+// `run_id_len` bytes when non-null.
+int32_t weir_approval_service_withdraw_requester_v1(const struct weir_approval_service_v1 *service,
+                                                    const uint8_t *run_id,
+                                                    size_t run_id_len);
+
 // Releases a session handle. Passing null is a no-op.
 //
 // # Safety

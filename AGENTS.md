@@ -150,8 +150,9 @@ Short index of load-bearing files. Skim these before touching their domain.
 - `Weir/Presentation/Attention/AttentionQueueStore.swift` — the app's one
   attention list behind ⌘J, Needs Attention, and the decision bars.
 - `Weir/Core/Agent/ApprovalPresentationStore.swift` — native approvals as
-  the app holds them: the requests, their ledger, and when a request goes to
-  the agent's own prompt. Each window's approval card is
+  the app holds them: the requests, their ledger, and the hand-overs to the
+  agent's own prompt (the person's, the hidden setting's, and the quit's).
+  Each window's approval card is
   `Weir/Presentation/Approval/WindowApprovalCard.swift`.
 - `Weir/Core/Persistence/TurnReadStore.swift` — which turns are read; with
   `ViewedLineStore`, what decides an unread turn.

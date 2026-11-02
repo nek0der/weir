@@ -42,6 +42,20 @@ struct PrimaryActionGateTests {
         #expect(Self.decide(&gate, at: start.advanced(by: .milliseconds(600))) == .perform(.resume(Self.stop)))
     }
 
+    @Test func answer_opensTheCardAgainOnEachPress_whileOtherButtonsArePressedOnce() {
+        let approval = AttentionItemID.approval(ApprovalKey(epoch: UUID(), runID: UUID(), requestID: UUID()))
+        let start = SuspendingClock().now
+        var gate = Self.gate(showing: approval, action: .openCard(approval), at: start)
+        let settled = start.advanced(by: .seconds(1))
+        // Opened, closed with Escape, and asked for again.
+        #expect(Self.decide(&gate, at: settled) == .perform(.openCard(approval)))
+        #expect(Self.decide(&gate, at: settled.advanced(by: .seconds(1))) == .perform(.openCard(approval)))
+
+        var resume = Self.gate(at: start)
+        #expect(Self.decide(&resume, at: settled) == .perform(.resume(Self.stop)))
+        #expect(Self.decide(&resume, at: settled.advanced(by: .seconds(1))) == .swallow)
+    }
+
     @Test func theSettleTime_startsOverWhenTheItemOrItsButtonChanges_only() {
         let start = SuspendingClock().now
         var gate = Self.gate(at: start)

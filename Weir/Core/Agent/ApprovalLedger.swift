@@ -161,7 +161,7 @@ final class ApprovalLedger {
             // Even when the state stays (a request our clock timed out that
             // the broker then expired), the broker has had its say.
             entries[key]?.hasBrokerOutcome = true
-        case .userDecided, .paneBecameVisible, .sendSucceeded, .sendFailed, .deadlinePassed:
+        case .userDecided, .handedOverBySetting, .sendSucceeded, .sendFailed, .deadlinePassed:
             break
         }
         guard let next = ApprovalRequestState.transition(current.state, event, now: now) else { return }

@@ -36,7 +36,7 @@ extension AppState {
         connectWindowOverlays()
         connectProgramStatus()
         connectTabReopening()
-        startApprovalHandOff()
+        startApprovalHandOver()
         startAttentionQueue()
         startNotificationRouting()
         // Before the first reading of the journals, so none goes unheard.
@@ -78,41 +78,24 @@ extension AppState {
         }
     }
 
-    /// Hands a held request to the TUI once its pane is seen, whichever
-    /// changed: what the person can see, the requests, where the agents run,
-    /// or the hidden setting. Here rather than in the store because the
-    /// facts about windows live in the window registry, which Core cannot
-    /// name.
-    private func startApprovalHandOff() {
+    /// With the hidden setting that holds requests off, hands every held
+    /// request to the TUI as it arrives, and those already held once the
+    /// setting turns off. Here rather than in the store because the setting
+    /// lives in the settings store, which the approvals store does not read.
+    private func startApprovalHandOver() {
         observeRepeatedly { [weak self] in
             guard let self else { return }
-            _ = windowRegistry.attention
             _ = approvalPresentation.pending
             _ = approvalPresentation.ledger.entries
-            _ = session.tabs
-            _ = settingsStore.settings.advanced.holdsApprovalsWhileHidden
+            _ = settingsStore.settings.advanced.holdsApprovals
         } onChange: { [weak self] in
-            self?.handOffSeenApprovals()
+            self?.handOverApprovalsIfNotHeld()
         }
-        // Which tmux pane is in front changes without touching anything
-        // observed above: the projection pass is what reads it, so the
-        // hand-off runs again after every pass. We wrap the handler `init`
-        // set (the release of stale approvals) rather than replace it;
-        // anything that assigns the handler after this point must keep
-        // calling the wrapped one, or the hand-off silently stops.
-        let afterProjection = agentProjection.onProjectionApplied
-        agentProjection.onProjectionApplied = { [weak self] session in
-            afterProjection?(session)
-            self?.handOffSeenApprovals()
-        }
-        handOffSeenApprovals()
+        handOverApprovalsIfNotHeld()
     }
 
-    private func handOffSeenApprovals() {
-        approvalPresentation.handOffSeenRequests(
-            attention: windowRegistry.attention,
-            session: session,
-            holdsWhileHidden: settingsStore.settings.advanced.holdsApprovalsWhileHidden
-        )
+    private func handOverApprovalsIfNotHeld() {
+        guard !settingsStore.settings.advanced.holdsApprovals else { return }
+        approvalPresentation.handOverHeldRequests()
     }
 }

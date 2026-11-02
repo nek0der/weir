@@ -23,17 +23,20 @@ To see every project's worktrees grouped by state, press <kbd>⌥⌘O</kbd> for 
 
 ## Answer an approval
 
-Where a request appears depends on what you are looking at.
+Weir holds each request until you answer it, wherever its pane is. You answer it on the approval card, which opens from any of these:
 
-| When | Where the request goes |
+| Where | How |
 |---|---|
-| You can see the agent's pane | The agent's own prompt |
-| The pane is out of sight | It waits. To answer without switching panes, choose **Answer…** in the **Needs Attention** list to open the approval card. The button also appears when you hover over the worktree's sidebar row. If you go to the pane, the request moves to the agent's prompt |
-| Another app is in front | It waits. The menu bar can answer a short, low-impact shell command. For any other request, choose **Answer…** there to open Weir |
+| The bar under the agent's pane | Choose **Answer…**, or press <kbd>⌘⏎</kbd> |
+| The **Needs Attention** list | Choose **Answer…** |
+| The worktree's sidebar row | Hover over it and choose **Answer…** |
+| The menu bar, while another app is in front | A short, low-impact shell command can be answered right there. For any other request, choose **Answer…** to open Weir |
+
+Going to the pane leaves the request with Weir, so you can still answer it on the card after you leave. Claude Code also shows its own prompt in the pane, and whichever you answer first counts. Codex shows its prompt only after you choose **Answer in terminal** or the request times out.
 
 ![The approval card: the command the agent wants to run, the time left, and Answer in terminal, Deny, and Allow once](../../../assets/captures/docs/approval-en.png)
 
-**Answer in terminal** on the card goes to the pane and sends the request to the agent's prompt. The card shows the time left. Once a request times out, you answer it in the terminal. While VoiceOver is running, a request does not move to the prompt on its own, so answer on the card or choose this.
+**Answer in terminal** on the card, or in the bar's **⋯** menu, goes to the pane and sends the request to the agent's prompt. After that you answer it there. The card shows the time left. Once a request times out, you answer it in the terminal.
 
 Weir adds no "always allow" option and writes nothing to an agent's settings. To always allow something, use the agent's own prompt.
 

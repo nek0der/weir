@@ -22,6 +22,10 @@ struct ApprovalCardState: Equatable {
     /// It is only that request: the card stays whether or not the focus
     /// ever arrived.
     var cardFocusRequestID: String?
+    /// The hand-off lands on Close rather than on the card's first answer:
+    /// the card was opened from the decision bar, perhaps with ⌘⏎ from the
+    /// terminal, and the person's next keys may be meant for the terminal.
+    var focusesClose = false
     /// The control the card was opened from when that was not its row (the
     /// title bar's Needs Attention list), in global coordinates. The card
     /// stands beside it instead: the row may be off screen.
@@ -78,10 +82,12 @@ final class WindowApprovalCard {
         shouldFocusCard: Bool = true,
         openedFrom: CGRect? = nil,
         isOpenedFromRail: Bool = false,
-        standsLeftOfOpener: Bool = false
+        standsLeftOfOpener: Bool = false,
+        focusesClose: Bool = false
     ) {
         guard approvals.approvalForCard(approval.id) != nil else { return }
         update { card in
+            card.focusesClose = focusesClose
             card.openedFrom = openedFrom
             card.isOpenedFromRail = isOpenedFromRail
             card.standsLeftOfOpener = standsLeftOfOpener
