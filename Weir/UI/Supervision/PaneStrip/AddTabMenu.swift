@@ -154,8 +154,7 @@ private struct AddTabMenuItem: View {
                 }
                 Spacer(minLength: WeirLayout.Supervision.spaceS)
                 if let shortcut {
-                    Text(verbatim: shortcut)
-                        .font(.supervision(.meta))
+                    KeyComboText(shortcut, size: .meta, weight: .regular)
                         .foregroundStyle(SupervisionTokens.muted.color)
                 }
             }
