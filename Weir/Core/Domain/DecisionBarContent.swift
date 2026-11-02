@@ -6,8 +6,9 @@ import Foundation
 /// The 32pt line under an agent's pane. It shows the one item of the
 /// pane's attention it is on, or what the agent is doing when nothing waits
 /// on the person, or, right after an item was handled, what became of it
-/// and what ⌘J goes to next. It never answers a request itself: approvals
-/// and questions are answered in the terminal or on the approval card.
+/// and what ⌘J goes to next. It never answers a request itself: on an
+/// approval or a question Weir holds, its Answer… (and ⌘⏎) opens the
+/// approval card, and its ⋯ hands the request to the terminal.
 package struct DecisionBarContent: Equatable, Sendable {
     package enum Body: Equatable, Sendable {
         /// Nothing waits on the person: what the agent is doing ("Bash:
@@ -38,9 +39,10 @@ package struct DecisionBarContent: Equatable, Sendable {
 
     /// Where a request is answered, and the time left while Weir holds it.
     package enum AnswerPlace: Equatable, Sendable {
-        /// Weir still holds it, as while VoiceOver runs or after a failed
-        /// send: the provider's prompt is not on screen, so the card is
-        /// where to answer.
+        /// Weir still holds it, as it does every request until the person
+        /// answers it or hands it over, and after a failed send: the card is
+        /// where to answer. Codex shows no prompt of its own meanwhile;
+        /// Claude Code does, and whichever answers first wins.
         case card(heldUntil: ServiceDeadline?)
         /// Handed to the provider's own prompt, whose deadline Weir
         /// cannot read.
@@ -337,7 +339,10 @@ package struct DecisionBarContent: Equatable, Sendable {
     }
 
     private static func answerPlace(of fact: ApprovalFact) -> AnswerPlace {
-        switch fact.state {
+        // A request Weir can never answer (a Codex question) is the TUI's,
+        // however Weir holds it.
+        guard fact.supportsNativeAnswer else { return .terminal }
+        return switch fact.state {
         // Being handed to the terminal: its prompt is about to appear.
         case .sending(.delegate, _):
             .terminal

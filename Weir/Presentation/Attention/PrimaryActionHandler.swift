@@ -20,6 +20,9 @@ struct PrimaryActionHandler: Equatable, Sendable {
     /// by the stop's item and its pane.
     let startNewConversation: @MainActor @Sendable (AttentionItemID, UUID) -> Void
     let showPartialChanges: @MainActor @Sendable (AttentionItemID, UUID) -> Void
+    /// The ⋯ "Answer in terminal" on an approval or a question Weir holds,
+    /// by its item and the pane: hands it to the agent's own prompt.
+    let answerInTerminal: @MainActor @Sendable (AttentionItemID, UUID) -> Void
     /// The bar's "Review Unviewed": the window's review tab on the pane's
     /// unviewed turns.
     let openReview: @MainActor @Sendable (UUID, ConversationKey?) -> Void

@@ -278,6 +278,38 @@ impl ApprovalBroker {
         Ok(canceled)
     }
 
+    /// Withdraws every pending request of the requester's run, for when its
+    /// host connection is gone: the hook that asked has stopped (the agent
+    /// interrupted the tool, or its person answered in the TUI's own
+    /// dialog), so nobody would ever read a decision. Without this the
+    /// request stays pending until its deadline and keeps offering a card
+    /// for an answer that can no longer arrive.
+    ///
+    /// # Errors
+    ///
+    /// Returns an authorization error for a controller, or a counter error.
+    pub fn cancel_run(
+        &mut self,
+        principal: &Principal,
+        now_ms: u64,
+    ) -> Result<Vec<ApprovalSnapshot>, BrokerError> {
+        self.expire(now_ms)?;
+        let Principal::Requester { run_id } = principal else {
+            return Err(BrokerError::Unauthorized);
+        };
+        let keys: Vec<ApprovalKey> = self
+            .records
+            .iter()
+            .filter(|(key, record)| key.run_id == *run_id && record.state == ApprovalState::Pending)
+            .map(|(key, _)| *key)
+            .collect();
+        let mut canceled = Vec::with_capacity(keys.len());
+        for key in keys {
+            canceled.push(self.cancel(principal, key, now_ms)?);
+        }
+        Ok(canceled)
+    }
+
     /// Returns a controller-only consistent snapshot after applying expiry.
     ///
     /// # Errors
@@ -564,6 +596,57 @@ mod tests {
                 11
             ),
             Err(BrokerError::AlreadyTerminal)
+        );
+    }
+
+    #[test]
+    fn cancel_run_withdraws_only_that_runs_pending_requests() {
+        let mut broker = broker();
+        let pending = request(1, 2);
+        let answered = request(1, 3);
+        let other_run = request(4, 5);
+        let requester = requester_of(&pending);
+        broker.submit(&requester, pending.clone(), 0).unwrap();
+        broker.submit(&requester, answered.clone(), 0).unwrap();
+        broker
+            .submit(&requester_of(&other_run), other_run.clone(), 0)
+            .unwrap();
+        broker
+            .resolve(
+                &Principal::Controller,
+                answered.key,
+                ApprovalDecision::AllowOnce,
+                1,
+            )
+            .unwrap();
+
+        let canceled = broker.cancel_run(&requester, 2).unwrap();
+
+        assert_eq!(
+            canceled
+                .iter()
+                .map(|record| record.request.key)
+                .collect::<Vec<_>>(),
+            vec![pending.key]
+        );
+        assert_eq!(
+            broker.get(&requester, pending.key, 3).unwrap().state,
+            ApprovalState::Canceled
+        );
+        assert_ne!(
+            broker.get(&requester, answered.key, 3).unwrap().state,
+            ApprovalState::Canceled
+        );
+        assert_eq!(
+            broker
+                .get(&requester_of(&other_run), other_run.key, 3)
+                .unwrap()
+                .state,
+            ApprovalState::Pending
+        );
+        assert_eq!(
+            broker.cancel_run(&Principal::Controller, 4),
+            Err(BrokerError::Unauthorized)
         );
     }
 

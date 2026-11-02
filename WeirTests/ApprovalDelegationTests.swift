@@ -137,260 +137,89 @@ struct ApprovalDelegationTests {
         #expect(store.ledger.entry(for: request)?.state == .timedOut)
     }
 
-    // MARK: - Handing a held request to the TUI
+    // MARK: - Handing held requests to the TUI
 
-    /// A store with one held request from the agent in `paneID`'s pane, and
-    /// in `otherPaneID`'s when `inTwoPanes` (a tmux session attached twice).
-    /// `requestSessionID` nil makes a request that names no session.
-    private static func handOffStore(
-        requestSessionID: String? = "session",
-        inTwoPanes: Bool = false,
-        sender: @escaping @Sendable (ApprovalPresentation, ApprovalResolution) async throws -> Void
-    ) -> HandOff {
-        let store = ApprovalPresentationStore(decisionSender: sender)
-        // The second pane is a real one, in a tab of its own, so a run
-        // attached to it is placed there.
-        let session: WorkspaceSession
-        let paneID: UUID
-        let otherPaneID: UUID
-        if inTwoPanes {
-            let fixture = WorkspaceSessionFixture.withTwoLooseTabs()
-            (session, paneID, otherPaneID) = (fixture.session, fixture.paneA, fixture.paneB)
-        } else {
-            let fixture = WorkspaceSessionFixture.withLooseTab()
-            (session, paneID, otherPaneID) = (fixture.session, fixture.paneID, UUID())
-        }
-        let hinted = inTwoPanes ? [paneID, otherPaneID] : [paneID]
-        session.applyAcrossTabs { tab in
-            let leaves = tab.splitTree.allLeafIDs()
-            tab.agentSessions[.claude] = Dictionary(uniqueKeysWithValues: hinted.filter(leaves.contains).map {
-                ($0, AgentSessionInfo(sessionId: "session", cwd: nil))
-            })
-        }
-        let request = ApprovalPresentation.test(sessionID: requestSessionID)
-        store.receive([request])
-        return HandOff(store: store, session: session, request: request, paneID: paneID, otherPaneID: otherPaneID)
-    }
-
-    @MainActor
-    private struct HandOff {
-        let store: ApprovalPresentationStore
-        let session: WorkspaceSession
-        let request: ApprovalPresentation
-        let paneID: UUID
-        let otherPaneID: UUID
-
-        func seen(isVoiceOverRunning: Bool = false) -> AttentionVisibility {
-            AttentionVisibility(attendedPanes: [paneID], isAppActive: true, isVoiceOverRunning: isVoiceOverRunning)
-        }
-
-        func handOff(_ attention: AttentionVisibility) {
-            store.handOffSeenRequests(attention: attention, session: session, holdsWhileHidden: true)
-        }
-    }
-
-    /// A Claude run of `sessionID` in a turn, attached to `inFront` and
-    /// `behind` through tmux: its tmux pane is the active one in the first
-    /// and behind another tmux pane in the second.
-    private static func tmuxRun(
-        id: String,
-        sessionID: String = "session",
-        inFront: Set<UUID> = [],
-        behind: Set<UUID> = []
-    ) -> AgentRuntimePresentation {
-        func location(isActive: Bool) -> TmuxPaneLocation {
-            TmuxPaneLocation(
-                socketPath: "/tmp/s", serverPID: "42", serverStartedAt: "100", sessionID: "$2",
-                windowID: "@3", paneID: "%\(id)", isActive: isActive
-            )
-        }
-        var locations: [UUID: TmuxPaneLocation] = [:]
-        for pane in inFront {
-            locations[pane] = location(isActive: true)
-        }
-        for pane in behind {
-            locations[pane] = location(isActive: false)
-        }
-        return AgentRuntimePresentation.test(
-            runID: id,
-            badge: AgentBadge(state: .needsInput, updatedAt: Date()),
-            paneIDs: inFront.union(behind),
-            tmuxLocations: locations,
-            sessionID: sessionID
-        )
-    }
-
-    @Test func aHeldRequestWhosePaneIsSeen_goesToTheTerminal() async {
+    @Test func aHeldRequest_staysHeldUntilSomeoneDecides() async {
         let sent = DecisionRecorder()
-        let fixture = Self.handOffStore { _, resolution in
-            #expect(resolution == .delegate)
-            await sent.next()
-        }
+        let (store, request) = Self.store { _, _ in await sent.next() }
 
-        fixture.handOff(fixture.seen())
-        await fixture.store.waitUntilResolved(fixture.request)
+        // Nothing hands a request over by itself: not its pane coming into
+        // sight, not a pass of the projection.
+        store.releaseStaleApprovals(in: WorkspaceSession())
 
-        #expect(await sent.count == 1)
-        guard case .handedToTerminal? = fixture.store.ledger.entry(for: fixture.request)?.state else {
-            Issue.record("expected the request to be with the TUI")
-            return
-        }
-    }
-
-    @Test func aRequestNobodySees_isHeld() async {
-        let sent = DecisionRecorder()
-        let fixture = Self.handOffStore { _, _ in await sent.next() }
-        let cases: [AttentionVisibility] = [
-            // Another app in front.
-            AttentionVisibility(attendedPanes: [fixture.paneID], isAppActive: false),
-            // The pane is not on screen.
-            AttentionVisibility(attendedPanes: [], isAppActive: true),
-            // VoiceOver does not read the terminal.
-            fixture.seen(isVoiceOverRunning: true)
-        ]
-
-        for attention in cases {
-            fixture.handOff(attention)
-        }
-        // The pane is attached to the tmux session, but another window of
-        // it is in front.
-        fixture.store.runtimes = { [Self.tmuxRun(id: "1", behind: [fixture.paneID])] }
-        fixture.handOff(fixture.seen())
-        #expect(fixture.store.resolvingIDs.isEmpty)
-
+        #expect(store.resolvingIDs.isEmpty)
         #expect(await sent.count == 0)
-        #expect(fixture.store.ledger.entry(for: fixture.request)?.state == .held)
+        #expect(store.ledger.entry(for: request)?.state == .held)
+        #expect(store.requestsToHandOverAtQuit == [request])
     }
 
     @Test func withoutHolding_everyRequestGoesToTheTerminal() async {
         let sent = DecisionRecorder()
-        let fixture = Self.handOffStore { _, _ in await sent.next() }
+        let (store, request) = Self.store { _, resolution in
+            #expect(resolution == .delegate)
+            await sent.next()
+        }
 
-        fixture.store.handOffSeenRequests(attention: AttentionVisibility(), session: fixture.session, holdsWhileHidden: false)
-        await fixture.store.waitUntilResolved(fixture.request)
+        store.handOverHeldRequests()
+        await store.waitUntilResolved(request)
 
         #expect(await sent.count == 1)
+        guard case .handedToTerminal? = store.ledger.entry(for: request)?.state else {
+            Issue.record("expected the request to be with the TUI")
+            return
+        }
+        #expect(store.requestsToHandOverAtQuit.isEmpty)
     }
 
     @Test func aRequestTheBrokerIsAnswering_isNotHandedOver() async {
         let gate = Gate<Void>()
         let sent = DecisionRecorder()
-        let fixture = Self.handOffStore { _, _ in
+        let (store, request) = Self.store { _, _ in
             await sent.next()
             await gate.wait()
         }
-        fixture.store.resolve(fixture.request, .allowOnce)
+        store.resolve(request, .allowOnce)
 
-        fixture.handOff(fixture.seen())
+        store.handOverHeldRequests()
+        #expect(store.requestsToHandOverAtQuit.isEmpty)
         gate.open()
-        await fixture.store.waitUntilResolved(fixture.request)
+        await store.waitUntilResolved(request)
 
         // Only the person's answer went out.
         #expect(await sent.count == 1)
-        #expect(fixture.store.ledger.entry(for: fixture.request)?.state == .answered(.allowOnce))
+        #expect(store.ledger.entry(for: request)?.state == .answered(.allowOnce))
     }
 
-    @Test func aRequestWhosePaneIsUnknown_isHeld() async {
+    @Test func aFailedHandOver_staysForThePersonAndIsNotResent() async {
         let sent = DecisionRecorder()
-        let unnamed = Self.handOffStore(requestSessionID: nil) { _, _ in await sent.next() }
-        let elsewhere = Self.handOffStore(requestSessionID: "another session") { _, _ in await sent.next() }
-
-        unnamed.handOff(unnamed.seen())
-        elsewhere.handOff(elsewhere.seen())
-        #expect(unnamed.store.resolvingIDs.isEmpty)
-        #expect(elsewhere.store.resolvingIDs.isEmpty)
-
-        #expect(await sent.count == 0)
-        #expect(unnamed.store.ledger.entry(for: unnamed.request)?.state == .held)
-        #expect(elsewhere.store.ledger.entry(for: elsewhere.request)?.state == .held)
-    }
-
-    @Test func aSessionInTwoPanes_goesOverOnlyFromThePaneShowingTheAgent() async {
-        let sent = DecisionRecorder()
-        let fixture = Self.handOffStore(inTwoPanes: true) { _, _ in await sent.next() }
-        fixture.store.runtimes = { [Self.tmuxRun(id: "1", inFront: [fixture.otherPaneID], behind: [fixture.paneID])] }
-
-        // The seen pane is attached to the session, but shows another window.
-        fixture.handOff(fixture.seen())
-        #expect(fixture.store.resolvingIDs.isEmpty)
-        #expect(await sent.count == 0)
-
-        fixture.handOff(AttentionVisibility(attendedPanes: [fixture.otherPaneID], isAppActive: true))
-        await fixture.store.waitUntilResolved(fixture.request)
-        #expect(await sent.count == 1)
-    }
-
-    @Test func aPaneOnlyTheHintNames_isHeldWhileARunIsBehindAnotherTmuxPaneThere() async {
-        // No run reports the request's session, so its pane comes from the
-        // hint alone, and which run asked cannot be told there.
-        let sent = DecisionRecorder()
-        let fixture = Self.handOffStore { _, _ in await sent.next() }
-        fixture.store.runtimes = { [Self.tmuxRun(id: "1", sessionID: "elsewhere", behind: [fixture.paneID])] }
-        fixture.handOff(fixture.seen())
-        #expect(fixture.store.resolvingIDs.isEmpty)
-        #expect(await sent.count == 0)
-
-        fixture.store.runtimes = { [Self.tmuxRun(id: "1", sessionID: "elsewhere", inFront: [fixture.paneID])] }
-        fixture.handOff(fixture.seen())
-        await fixture.store.waitUntilResolved(fixture.request)
-        #expect(await sent.count == 1)
-    }
-
-    @Test func twoRunsInOnePane_holdTheRequestOfTheRunBehind() async {
-        func runs(in pane: UUID) -> [AgentRuntimePresentation] {
-            [
-                Self.tmuxRun(id: "1", sessionID: "front", inFront: [pane]),
-                Self.tmuxRun(id: "2", sessionID: "session", behind: [pane])
-            ]
-        }
-        // One tmux session runs two agents, and the seen pane shows the
-        // front one's tmux pane. The request of the one behind it stays held;
-        // the front one's goes to its TUI.
-        let sent = DecisionRecorder()
-        let behind = Self.handOffStore { _, _ in await sent.next() }
-        behind.store.runtimes = { runs(in: behind.paneID) }
-        behind.handOff(behind.seen())
-        #expect(behind.store.resolvingIDs.isEmpty)
-        #expect(await sent.count == 0)
-        #expect(behind.store.ledger.entry(for: behind.request)?.state == .held)
-
-        let front = Self.handOffStore(requestSessionID: "front") { _, _ in await sent.next() }
-        front.store.runtimes = { runs(in: front.paneID) }
-        front.handOff(front.seen())
-        await front.store.waitUntilResolved(front.request)
-        #expect(await sent.count == 1)
-    }
-
-    @Test func aFailedHandOff_staysForThePersonAndIsNotResent() async {
-        let sent = DecisionRecorder()
-        let fixture = Self.handOffStore { _, _ in
+        let (store, request) = Self.store { _, _ in
             await sent.next()
             throw Offline()
         }
 
-        fixture.handOff(fixture.seen())
-        await fixture.store.waitUntilResolved(fixture.request)
-        fixture.handOff(fixture.seen())
-        #expect(fixture.store.resolvingIDs.isEmpty)
+        store.handOverHeldRequests()
+        await store.waitUntilResolved(request)
+        store.handOverHeldRequests()
+        #expect(store.resolvingIDs.isEmpty)
 
         #expect(await sent.count == 1)
-        guard case .sendFailed(.delegate, _)? = fixture.store.ledger.entry(for: fixture.request)?.state else {
-            Issue.record("expected the failed hand-off to stay open")
+        guard case .sendFailed(.delegate, _)? = store.ledger.entry(for: request)?.state else {
+            Issue.record("expected the failed hand-over to stay open")
             return
         }
         // Nobody pressed anything, so the card shows no failure line.
-        #expect(fixture.store.lastFailureID == nil)
+        #expect(store.lastFailureID == nil)
     }
 
-    @Test func aHandOffAnAnswerBeat_isAnsweredButNotByAnotherPerson() async {
-        let fixture = Self.handOffStore { _, _ in
+    @Test func aHandOverAnAnswerBeat_isAnsweredButNotByAnotherPerson() async {
+        let (store, request) = Self.store { _, _ in
             throw ApprovalControllerConnection.DecisionRefusal.alreadySettled(.resolved(.allowOnce))
         }
 
-        fixture.handOff(fixture.seen())
-        await fixture.store.waitUntilResolved(fixture.request)
+        store.handOverHeldRequests()
+        await store.waitUntilResolved(request)
 
-        let entry = fixture.store.ledger.entry(for: fixture.request)
+        let entry = store.ledger.entry(for: request)
         #expect(entry?.state == .answered(.allowOnce))
         #expect(entry?.isAnsweredElsewhere == false)
     }

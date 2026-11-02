@@ -11,7 +11,7 @@ A turn that changed files stays there until you mark it as viewed. Press <kbd>�
 
 ## An approval did not appear on the card
 
-The card does not open by itself. For a request whose pane is out of sight, choose **Answer…** in the **Needs Attention** list, or hover over the worktree's sidebar row and choose it there. A request from a pane you can see goes to the agent's own prompt, so answer it there.
+The card does not open by itself. Choose **Answer…** on the bar under the agent's pane (or press <kbd>⌘⏎</kbd> there), in the **Needs Attention** list, or on the worktree's sidebar row when you hover over it. A request you sent to the terminal with **Answer in terminal** is answered in the agent's own prompt.
 
 If every approval goes to the prompt, check that Weir's service is on in **System Settings → General → Login Items & Extensions**. A build you made yourself without a Team ID has no approval service.
 

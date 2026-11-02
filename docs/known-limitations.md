@@ -23,15 +23,14 @@ as they are fixed or confirmed.
   in a build signed with a Team ID. An ad-hoc signed Debug build (the default
   for `make build`) leaves every approval to the agent's own terminal prompt.
   `CONTRIBUTING.md` explains how to sign a development build.
-- **The approval card holds only requests whose pane you cannot see.** A
-  request from a pane you are looking at while Weir is in front goes
-  straight to the agent's own prompt there. The card holds a request whose
-  pane is out of sight, or whose pane the review tab is covering. When
-  Weir is not in front, the menu bar can answer a short shell command that
-  is not high-impact; any other request opens Weir.
-  While VoiceOver is running, a held request is not handed to the terminal
-  on its own when its pane comes into sight. Answer it on the card, or
-  choose "Answer in terminal".
+- **Claude Code shows its own prompt while Weir holds its request.** Weir
+  holds every request until it is answered on the card or handed to the
+  terminal ("Answer in terminal"), wherever its pane is. Claude Code draws
+  its own permission dialog in the pane meanwhile, and whichever is
+  answered first counts; a request answered "Yes" there keeps its card
+  until the turn ends. Codex shows no prompt until the request is handed
+  to it. When Weir is not in front, the menu bar can answer a short shell
+  command that is not high-impact; any other request opens Weir.
 - **Codex questions are answered in the terminal.** While Codex waits on a
   question, Weir shows "Needs answer" with the first question's words, but
   no Codex hook can answer it, so there is no card. A question Codex asks

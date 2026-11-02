@@ -230,6 +230,36 @@ pub unsafe extern "C" fn weir_approval_session_create_controller_v1(
     .unwrap_or(ptr::null_mut())
 }
 
+/// Withdraws every pending request of the requester run `run_id`, for when
+/// the host learns that run's connection is gone: the hook that asked has
+/// stopped, so nobody would read a decision. Returns `WEIR_APPROVAL_OK` also
+/// when there was nothing to withdraw. `run_id` is exactly 16 raw UUID bytes,
+/// the same ones its requester session was created with.
+///
+/// # Safety
+///
+/// `service` must be a live service handle. `run_id` must be readable for
+/// `run_id_len` bytes when non-null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn weir_approval_service_withdraw_requester_v1(
+    service: *const weir_approval_service_v1,
+    run_id: *const u8,
+    run_id_len: usize,
+) -> i32 {
+    ffi_boundary(|| {
+        let service = unsafe { service_ref(service) }?;
+        let run_id = unsafe { decode_uuid(run_id, run_id_len) }?;
+        service
+            .service
+            .withdraw_requester(&Principal::Requester {
+                run_id: RunId::new(run_id),
+            })
+            .map(|_| APPROVAL_OK)
+            .map_err(|_| APPROVAL_INTERNAL)
+    })
+    .unwrap_or_else(|status| status)
+}
+
 /// Releases a session handle. Passing null is a no-op.
 ///
 /// # Safety
@@ -650,6 +680,50 @@ mod tests {
                 }),
             );
             assert_eq!(waited["body"]["state"]["status"], "resolved");
+
+            weir_approval_session_free_v1(requester);
+            weir_approval_session_free_v1(controller);
+            weir_approval_service_free_v1(service);
+        }
+    }
+
+    #[test]
+    fn withdrawing_a_requester_cancels_its_pending_request() {
+        // SAFETY: Each handle is released exactly once before the test returns.
+        unsafe {
+            let service = weir_approval_service_create_v1(8);
+            let run_id = Uuid::new_v4();
+            let request_id = Uuid::new_v4();
+            let requester = requester(service, run_id);
+            let controller = weir_approval_session_create_controller_v1(service);
+            let epoch = hello(requester);
+            assert_eq!(hello(controller), epoch);
+            let submitted = exchange(requester, approval_submit(epoch, run_id, request_id));
+            assert_eq!(submitted["body"]["state"]["status"], "pending");
+
+            assert_eq!(
+                weir_approval_service_withdraw_requester_v1(
+                    service,
+                    run_id.as_bytes().as_ptr(),
+                    16
+                ),
+                APPROVAL_OK
+            );
+            let fetched = exchange(
+                controller,
+                json!({
+                    "version": 1,
+                    "message_id": Uuid::new_v4(),
+                    "service_epoch": epoch,
+                    "type": "approval.get",
+                    "body": {"run_id": run_id, "request_id": request_id}
+                }),
+            );
+            assert_eq!(fetched["body"]["state"]["status"], "canceled");
+            assert_eq!(
+                weir_approval_service_withdraw_requester_v1(service, run_id.as_bytes().as_ptr(), 3),
+                APPROVAL_INVALID_UUID
+            );
 
             weir_approval_session_free_v1(requester);
             weir_approval_session_free_v1(controller);

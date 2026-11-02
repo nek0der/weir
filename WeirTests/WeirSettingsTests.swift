@@ -69,7 +69,7 @@ struct WeirSettingsTests {
         settings.terminal.quickTabCwdMode = .fixed
         settings.terminal.quickTabCwdPath = URL(fileURLWithPath: "/tmp/weir-quicktab")
         settings.advanced.hostsAgentsInTmux = true
-        settings.advanced.holdsApprovalsWhileHidden = false
+        settings.advanced.holdsApprovals = false
         settings.advanced.reviewInstructions = "Fix these."
         settings.advanced.fileApplication = FileApplication(
             bundleIdentifier: "com.example.Editor",
@@ -216,12 +216,12 @@ struct WeirSettingsTests {
         let untouched = try JSONSerialization.jsonObject(with: JSONEncoder().encode(advanced)) as? [String: Any]
         #expect(untouched?["approvalHoldWhileHidden"] == nil)
 
-        advanced.holdsApprovalsWhileHidden = false
+        advanced.holdsApprovals = false
         let written = try JSONSerialization.jsonObject(with: JSONEncoder().encode(advanced)) as? [String: Any]
         #expect(written?["approvalHoldWhileHidden"] as? Bool == false)
 
         let legacy = try JSONDecoder().decode(AdvancedSettings.self, from: Data("{}".utf8))
-        #expect(legacy.holdsApprovalsWhileHidden)
+        #expect(legacy.holdsApprovals)
     }
 
     /// A key a newer build added survives a round trip through this one,
@@ -231,7 +231,7 @@ struct WeirSettingsTests {
         let decoded = try JSONDecoder().decode(AdvancedSettings.self, from: data)
         let written = try JSONSerialization.jsonObject(with: JSONEncoder().encode(decoded)) as? [String: Any]
 
-        #expect(decoded.holdsApprovalsWhileHidden == false)
+        #expect(decoded.holdsApprovals == false)
         #expect(written?["futureKey"] as? Int == 1)
     }
 

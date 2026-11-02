@@ -86,14 +86,9 @@ struct DemoFixtureTests {
         ))
         let key = try #require(store.ledger.entries.keys.first)
         #expect(store.opensCard(key))
-        // The window shows the reminders worktree, and the request's pane is
-        // in another: a person looking at the pane would take it to the prompt.
-        let shown = store.shownPanes(for: DemoFixture.stagedApproval, in: session)
-        #expect(shown == [DemoFixture.Slot.proration.paneID])
-        let windowsPanes = AttentionVisibility(attendedPanes: [DemoFixture.Slot.reminders.paneID], isAppActive: true)
-        #expect(!windowsPanes.allowsHandOff(toAnyOf: shown))
-        #expect(AttentionVisibility(attendedPanes: Set(shown), isAppActive: true).allowsHandOff(toAnyOf: shown))
-        store.handOffSeenRequests(attention: windowsPanes, session: session, holdsWhileHidden: true)
+        // The request is in the proration worktree's pane, which its decision
+        // bar and its sidebar row answer from.
+        #expect(store.panes(for: DemoFixture.stagedApproval, in: session).map(\.paneID) == [DemoFixture.Slot.proration.paneID])
         #expect(store.ledger.entries[key]?.state == .held)
         let deadline = try #require(store.serviceDeadlines[DemoFixture.stagedApproval.id])
         #expect(deadline.remaining(at: now) == .seconds(522))

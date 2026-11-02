@@ -56,7 +56,6 @@ struct SessionTerminalRegionTests {
 
             await settle(fixture.host) { !fixture.registry.attention.isSeen(fixture.pane) }
             #expect(!fixture.registry.attention.isSeen(fixture.pane))
-            #expect(!fixture.registry.attention.allowsHandOff(toAnyOf: [fixture.pane]))
             #expect(!fixture.registry.visibility.union.contains(fixture.pane))
         }
     }

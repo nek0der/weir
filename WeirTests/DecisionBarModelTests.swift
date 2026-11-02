@@ -369,11 +369,10 @@ struct DecisionBarModelTests {
             let changedNothing = Self.items([.unread(UnreadTurn(turnID: TurnID("t"), changes: changes))])
             #expect(Self.model(.init(items: changedNothing)).primaryAction == nil)
         }
-        // Nothing else has one here: requests are answered in the terminal
-        // or on the card, and this stop has no resume to offer (no
-        // `stopResumes`).
+        // Nothing else has one here: this stop has no resume to offer (no
+        // `stopResumes`). A request Weir holds has Answer…, which opens its
+        // card (`aRequestWeirHolds_offersAnswer_andTheTerminalInItsMore`).
         #expect(Self.model(.init(items: Self.items([.stop(.processExited)]))).primaryAction == nil)
-        #expect(Self.model(.init(items: Self.items([.approval(ApprovalFact.test())]))).primaryAction == nil)
         #expect(Self.model(.init()).primaryAction == nil)
     }
 
@@ -720,7 +719,7 @@ struct DecisionBarModelTests {
     @Test func barsWithoutButtons_haveOneFit() {
         let bars = [
             Self.model(.init()),
-            Self.model(.init(items: Self.items([.approval(ApprovalFact.test())]))),
+            Self.model(.init(items: Self.items([.approval(ApprovalFact.test(state: .timedOut))]))),
             Self.model(.init(items: Self.items([.unread(UnreadTurn(turnID: TurnID("t"), changes: .unchanged))])))
         ]
         for bar in bars {
@@ -736,5 +735,44 @@ struct DecisionBarModelTests {
         let bar = Self.model(.init(done: .init(result: .markedViewed(undo), next: nil)))
         #expect(bar.fits(locale: Self.english) == [.full, .minimal, .wordsOnly])
         #expect(bar.shape(.full, locale: Self.english).moreSections.isEmpty)
+    }
+}
+
+/// Answer… and the ⋯ hand-off, apart so the suite stays within the type length limit.
+extension DecisionBarModelTests {
+    @Test func aRequestWeirHolds_offersAnswer_andTheTerminalInItsMore() {
+        for state in [ApprovalRequestState.held, .sendFailed(.deny, error: "offline")] {
+            let fact = ApprovalFact.test(state: state)
+            let model = Self.model(.init(items: Self.items([.approval(fact)])))
+            #expect(model.isAnsweredOnCard)
+            #expect(model.primaryAction == .openCard(.approval(fact.key)))
+            #expect(model.shape(.full, locale: Self.english).moreSections.flatMap(\.self).contains(.answerInTerminal(.approval(fact.key))))
+            #expect(model.shape(.full, locale: Self.english).showsKeyHint)
+        }
+        let question = Self.items([.question(ApprovalFact.test(isQuestion: true))])
+        let questionModel = Self.model(.init(items: question))
+        #expect(questionModel.primaryAction == question.first.map { .openCard($0.id) })
+
+        // Weir never answers a Codex question: its TUI does.
+        let codexQuestion = ApprovalFact.test(isQuestion: true, provider: .codex)
+        let codexModel = Self.model(.init(items: Self.items([.question(codexQuestion)], provider: .codex)))
+        #expect(codexModel.primaryAction == nil)
+        #expect(codexModel.instruction == "Answer in the terminal")
+    }
+
+    @Test func aRequestNoLongerHeld_offersNoAnswerButton() {
+        let now = SuspendingClock().now
+        for state in [ApprovalRequestState.handedToTerminal(since: now), .timedOut, .sending(.allowOnce, since: now)] {
+            let model = Self.model(.init(items: Self.items([.approval(ApprovalFact.test(state: state))])))
+            #expect(!model.isAnsweredOnCard)
+            #expect(model.primaryAction == nil)
+            #expect(!model.shape(.full, locale: Self.english).moreSections.flatMap(\.self).contains { item in
+                if case .answerInTerminal = item {
+                    true
+                } else {
+                    false
+                }
+            })
+        }
     }
 }

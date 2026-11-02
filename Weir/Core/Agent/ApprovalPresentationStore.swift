@@ -232,14 +232,15 @@ final class ApprovalPresentationStore {
         case person
         /// Weir, after the request's turn ended without an answer.
         case release
-        /// Weir, because the request's pane came into sight.
-        case handOff
+        /// Weir, because the hidden setting that holds requests is off
+        /// (`handOverHeldRequests`).
+        case bySetting
     }
 
     /// A person's decision owns the card's failure line (`lastFailureID`). A
     /// background send does not: nobody pressed anything, so its failure must
     /// not clear a failure another decision left. A failed release leaves no
-    /// trace on the card; a failed hand-off leaves the request in
+    /// trace on the card; a failed hand-over leaves the request in
     /// `sendFailed`, open for the person to answer or hand over again.
     private func send(_ resolution: ApprovalResolution, for approval: ApprovalPresentation, origin: DecisionOrigin) {
         if origin == .person, let entry = ledger.entry(id: approval.id), !entry.state.acceptsDecision {
@@ -254,8 +255,8 @@ final class ApprovalPresentationStore {
                 lastFailureID = nil
             }
             ledger.record(.userDecided(resolution), for: approval.id, now: SuspendingClock.now)
-        case .handOff:
-            ledger.record(.paneBecameVisible, for: approval.id, now: SuspendingClock.now)
+        case .bySetting:
+            ledger.record(.handedOverBySetting, for: approval.id, now: SuspendingClock.now)
         case .release:
             break
         }
@@ -314,7 +315,7 @@ final class ApprovalPresentationStore {
         case .person:
             lastFailureID = approval.id
             ledger.record(.sendFailed(String(describing: error)), for: approval.id, now: SuspendingClock.now)
-        case .handOff:
+        case .bySetting:
             // The request stays open for the card; the person can still
             // answer or hand it over themselves.
             ledger.record(.sendFailed(String(describing: error)), for: approval.id, now: SuspendingClock.now)
@@ -323,29 +324,35 @@ final class ApprovalPresentationStore {
         }
     }
 
-    /// Hands each held request whose pane the person can see to the TUI,
-    /// where the provider's own prompt takes it. Only `held` requests go: one
+    /// Hands every held request to the TUI, where the provider's own prompt
+    /// takes it, for when the hidden setting that holds requests is off.
+    /// Otherwise Weir holds each request until the person answers it or
+    /// hands it over (Answer in terminal), or its time runs out: whether its
+    /// pane is in sight says nothing about where the person wants to answer
+    /// it, and a hand-off cannot be taken back. Only `held` requests go: one
     /// being sent, already handed over, timed out, or settled is left alone,
     /// and so is one whose send failed, which stays for the person rather
-    /// than being retried on every change. A request whose pane nobody can
-    /// see, or whose pane is unknown, is held; so is every request while
-    /// VoiceOver runs (`attention`). A request's panes count only where they
-    /// show the run that asked it (`shownPanes(for:in:)`): a pane attached
-    /// to the run's tmux session does not while another tmux pane is in
-    /// front there, even one running another agent of that session. With
-    /// `holdsWhileHidden` off, every held request goes to the TUI at once.
-    func handOffSeenRequests(
-        attention: AttentionVisibility,
-        session: WorkspaceSession,
-        holdsWhileHidden: Bool
-    ) {
-        bindRequestsToRuns(in: session)
+    /// than being retried on every change.
+    func handOverHeldRequests() {
         for approval in pending where ledger.entry(for: approval)?.state == .held && !resolvingIDs.contains(approval.id) {
-            guard !holdsWhileHidden || attention.allowsHandOff(toAnyOf: shownPanes(for: approval, in: session)) else {
-                continue
-            }
-            send(.delegate, for: approval, origin: .handOff)
+            send(.delegate, for: approval, origin: .bySetting)
         }
+    }
+
+    /// The requests Weir holds and nobody is answering, for the hand-over as
+    /// the app quits (`ApprovalControllerConnection.handOverBeforeQuit`).
+    /// Without it an agent outside the app (under tmux) would wait out the
+    /// rest of its deadline for a card nobody can open.
+    var requestsToHandOverAtQuit: [ApprovalPresentation] {
+        pending.filter { approval in
+            ledger.entry(for: approval)?.state.acceptsDecision == true && !resolvingIDs.contains(approval.id)
+        }
+    }
+
+    /// Whether the store follows a running service, rather than demo mode's
+    /// staged requests, which no service holds.
+    var followsService: Bool {
+        observerTask != nil
     }
 
     /// Releases requests the terminal already answered. The helper prints

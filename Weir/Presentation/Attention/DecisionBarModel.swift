@@ -50,7 +50,8 @@ struct DecisionBarModel: Equatable {
     /// holds; `nil` on any other bar.
     let resetNotice: UsageLimitResetNotice?
 
-    /// The button ⌘⏎ presses: "Mark as Viewed" on an unread turn that
+    /// The button ⌘⏎ presses: "Answer…" on an approval or a question Weir
+    /// holds, which opens its card, "Mark as Viewed" on an unread turn that
     /// may have changed files, "Resume Same Conversation" on a stop that can
     /// be resumed, "Notify When It Resets" on a stop at a usage limit
     /// that resets later, which resuming would only meet again, and "Close
@@ -59,6 +60,9 @@ struct DecisionBarModel: Equatable {
     /// nothing to mark.
     var primaryAction: PrimaryAction? {
         guard let itemID = content.itemID else { return nil }
+        if isAnsweredOnCard {
+            return .openCard(itemID)
+        }
         if case .stopped(.worktreeMissing, _) = content.body {
             return .closeAllTabs(itemID)
         }
@@ -256,6 +260,8 @@ struct DecisionBarModel: Equatable {
         case review
         case showPartialChanges(AttentionItemID)
         case startNewConversation(AttentionItemID)
+        /// Hands the request the bar is on to the agent's own prompt.
+        case answerInTerminal(AttentionItemID)
         case restore(RestoreEntry)
     }
 
@@ -273,6 +279,9 @@ struct DecisionBarModel: Equatable {
         }
         if let stopItem {
             shows += [.showPartialChanges(stopItem), .startNewConversation(stopItem)]
+        }
+        if isAnsweredOnCard, let itemID = content.itemID {
+            shows.append(.answerInTerminal(itemID))
         }
         let sections: [[MoreItem]] = [
             countText != nil && !showsCount ? [.showNext] : [],
@@ -292,12 +301,12 @@ struct DecisionBarModel: Equatable {
     }
 
     /// Whether a button the row shows has a short form: resuming, asking
-    /// to be notified, and "Undo Restore". "Mark as Viewed" is short as it
-    /// is.
+    /// to be notified, and "Undo Restore". "Mark as Viewed" and "Answer…"
+    /// are short as they are.
     private var hasShortLabels: Bool {
         switch primaryAction {
         case .resume, .notifyAtReset: true
-        case .markReviewed, .closeAllTabs, nil: restoreDone != nil
+        case .openCard, .markReviewed, .closeAllTabs, nil: restoreDone != nil
         }
     }
 
@@ -858,5 +867,17 @@ extension DecisionBarModel {
             return true
         }
         return runtime.badge.state == .finished && turn?.phase == .interrupted
+    }
+}
+
+extension DecisionBarModel {
+    /// Whether the bar is on an approval or a question Weir holds, which its
+    /// card answers: "Answer…" opens the card, and the ⋯ offers "Answer in
+    /// terminal" to hand it to the agent's own prompt instead.
+    var isAnsweredOnCard: Bool {
+        switch content.body {
+        case .approval(_, _, .card), .question(_, .card): true
+        default: false
+        }
     }
 }

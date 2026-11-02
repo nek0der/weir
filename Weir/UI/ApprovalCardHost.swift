@@ -286,7 +286,11 @@ private struct ApprovalCard: View {
     }
 
     private var initialFocus: ApprovalCardFocus {
-        ApprovalCardModel.initialFocus(for: model.actions, canOpenPane: onOpenPane != nil)
+        ApprovalCardModel.initialFocus(
+            for: model.actions,
+            canOpenPane: onOpenPane != nil,
+            focusesClose: card.state.focusesClose
+        )
     }
 
     var body: some View {
@@ -412,7 +416,14 @@ private struct ApprovalCard: View {
             }
             .buttonStyle(.plain)
             .approvalActionCursor()
-            .focused($focusedAction, equals: .close)
+            // A plain button takes the keyboard only with Keyboard
+            // Navigation on. A card the decision bar opens hands its focus
+            // here (`ApprovalCardState.focusesClose`), taking it from the
+            // terminal that pressed ⌘⏎: without this the keys, Escape among
+            // them, stay with the TUI (seen on macOS 26 with Keyboard
+            // Navigation off).
+            .focusable()
+            .cardFocus($focusedAction, equals: .close)
             .help(Text("Close"))
             .accessibilityLabel(Text("Close"))
             .accessibilitySortPriority(-2)

@@ -119,9 +119,8 @@ extension AgentRuntimePresentation {
     /// Makes the run as one pass projected it. `tmuxLocationsByEndpoint` is where
     /// each tmux endpoint's pane sits in every pane attached to it, from the
     /// topology probe, for this run's own tmux pane: focus-driven viewed
-    /// marks skip a tmux pane that is not its window's active one, the
-    /// approval hand-off holds the run's request there, and ⌘J selects the
-    /// pane inside tmux.
+    /// marks skip a tmux pane that is not its window's active one, and ⌘J
+    /// selects the pane inside tmux.
     init(projected runtime: AgentProjectedRuntime, tmuxLocationsByEndpoint: [String: [UUID: TmuxPaneLocation]]) {
         let panes = Set(runtime.panes)
         let resolution: AgentAttachmentResolution = switch runtime.attachment {

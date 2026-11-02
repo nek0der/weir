@@ -917,13 +917,6 @@ final class WindowRegistry {
         }
     }
 
-    /// Whether VoiceOver is running. Set by the app layer.
-    func voiceOverChanged(isRunning: Bool) {
-        if attention.isVoiceOverRunning != isRunning {
-            attention.isVoiceOverRunning = isRunning
-        }
-    }
-
     /// Records whether `window` can be seen at all. Reported by the
     /// window's occlusion observer, after AppKit has settled the change, so
     /// a window that is closing is not still counted as on screen. Not from

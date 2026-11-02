@@ -267,12 +267,13 @@ encoding.
    doing. Nothing moves or takes focus on its own.
 3. **It needs you.** An approval, a question, a stop, or a finished turn
    joins **Needs Attention**. Press ⌘J to go to the next item (⇧⌘J for the
-   previous one), or ⌥⌘J to open the list. A request from a pane you are
-   looking at goes to the agent's own prompt. A request from a pane out of
-   sight waits on the window's approval card, where you can answer it without
-   switching panes. While another app is in front, every request waits, and
-   the menu bar can answer one that is a short, low-impact shell command. Codex questions are always answered in
-   the terminal, and so is everything Antigravity asks.
+   previous one), or ⌥⌘J to open the list. Weir holds each request until you
+   answer it, wherever its pane is: **Answer…** on the bar under the pane
+   (⌘⏎), in the list, or on the sidebar row opens the approval card, and
+   **Answer in terminal** hands it to the agent's own prompt. While another
+   app is in front, the menu bar can answer a short, low-impact shell
+   command. Codex questions are always answered in the terminal, and so is
+   everything Antigravity asks.
 4. **You review.** **Review Unviewed**, **Review All Unviewed**, or ⌥⌘R opens
    a review tab in place of the terminal. Its scope menu picks one
    conversation's unviewed turns, all unviewed turns in the worktree, a

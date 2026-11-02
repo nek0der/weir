@@ -245,32 +245,6 @@ extension ApprovalPresentationStore {
         }
     }
 
-    /// The panes of `panes(for:in:)` that show the request's agent now, for
-    /// handing the request to the TUI (in tmux, a pane shows only the
-    /// tmux pane active in its window). Read for the run that asked, because
-    /// two runs of one tmux session reach the same pane and only one of them
-    /// can be in front there. A pane the request's run is not known to be
-    /// attached to (one only its session hint names) counts only when no run
-    /// of any provider is behind another tmux pane there, since we cannot
-    /// tell which of them asked. None counts while the run the request names
-    /// is not listed yet, while more than one run could have asked, or once
-    /// the run that asked has gone: what cannot be placed is held.
-    func shownPanes(for approval: ApprovalPresentation, in session: WorkspaceSession) -> [UUID] {
-        let run: AgentRuntimePresentation?
-        switch binding(of: approval) {
-        case let .run(bound): run = bound
-        case .candidates, .awaited, .gone: return []
-        case .unbound: run = self.run(for: approval, in: session)
-        }
-        let all = runtimes()
-        return panes(for: approval, in: session).map(\.paneID).filter { pane in
-            if let run, run.paneIDs.contains(pane) {
-                return run.activeAttachmentPaneIDs.contains(pane)
-            }
-            return all.allSatisfy { $0.tmuxLocations[pane]?.isActive ?? true }
-        }
-    }
-
     /// Where the turn a request was asked in stands, as the run that asked
     /// it tells it.
     enum TurnStanding: Equatable {

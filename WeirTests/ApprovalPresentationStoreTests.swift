@@ -208,7 +208,7 @@ struct ApprovalPresentationStoreTests {
         let (store, first) = Self.storeWithRequest(in: session)
         store.runtimes = { [Self.run(panes: [paneID])] }
         store.noteWaitEpisodes(in: session)
-        store.ledger.record(.paneBecameVisible, for: first.id, now: SuspendingClock.now)
+        store.ledger.record(.handedOverBySetting, for: first.id, now: SuspendingClock.now)
         store.ledger.record(.sendSucceeded, for: first.id, now: SuspendingClock.now)
 
         let second = ApprovalPresentation.test(epoch: first.epoch, sessionID: "session", toolName: "Edit")
@@ -237,7 +237,7 @@ struct ApprovalPresentationStoreTests {
         let (store, request) = Self.storeWithRequest(in: session)
         store.runtimes = { [Self.run(panes: [paneID])] }
         store.noteWaitEpisodes(in: session)
-        store.ledger.record(.paneBecameVisible, for: request.id, now: SuspendingClock.now)
+        store.ledger.record(.handedOverBySetting, for: request.id, now: SuspendingClock.now)
         store.ledger.record(.sendSucceeded, for: request.id, now: SuspendingClock.now)
 
         store.runtimes = { [Self.run(state: .running, episode: "r1", panes: [paneID])] }

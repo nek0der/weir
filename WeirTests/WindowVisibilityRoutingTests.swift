@@ -134,9 +134,7 @@ struct WindowVisibilityRoutingTests {
     @Test func appFacts_reachTheAttentionValue() {
         let registry = WindowRegistry(primaryID: WindowID())
         registry.appActivityChanged(isActive: true)
-        registry.voiceOverChanged(isRunning: true)
         #expect(registry.attention.isAppActive)
-        #expect(registry.attention.isVoiceOverRunning)
     }
 
     @Test func aWindowBackOnScreen_isSeenAgainWithoutANewReport() {

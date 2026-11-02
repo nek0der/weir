@@ -401,6 +401,30 @@ impl ApprovalService {
         }
     }
 
+    /// Withdraws every pending request of a requester whose host connection
+    /// is gone (`ApprovalBroker::cancel_run`), and wakes the controller's
+    /// subscription so the app sees them withdrawn at once. The platform host
+    /// calls this when it learns the peer went away; a controller principal
+    /// withdraws nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns a synchronization error when the broker lock is poisoned or
+    /// its sequence counter overflows.
+    pub fn withdraw_requester(&self, principal: &Principal) -> Result<usize, ServeError> {
+        if !matches!(principal, Principal::Requester { .. }) {
+            return Ok(0);
+        }
+        let canceled = self
+            .lock_broker()?
+            .cancel_run(principal, self.now_ms())
+            .map_err(|_| ServeError::Synchronization)?;
+        if !canceled.is_empty() {
+            self.changed.notify_all();
+        }
+        Ok(canceled.len())
+    }
+
     fn lock_broker(&self) -> Result<MutexGuard<'_, ApprovalBroker>, ServeError> {
         self.broker.lock().map_err(|_| ServeError::Synchronization)
     }
