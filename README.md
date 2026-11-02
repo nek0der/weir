@@ -1,6 +1,6 @@
 # Weir
 
-A native Mac window for Claude Code, Codex, and Antigravity. See which one needs you and what each turn changed.
+A native Mac window for Claude Code, Codex, Antigravity, and OpenCode. See which one needs you and what each turn changed.
 
 **[Website](https://weir.nekoder.com)** · **[Documentation](https://weir.nekoder.com/docs/)** · **[Download](https://github.com/nek0der/weir/releases/latest)**
 
@@ -25,7 +25,7 @@ Weir is not an editor, and it is not an agent. The agents keep their own termina
 
 ## Install
 
-Weir needs macOS 26 or later on Apple Silicon, Git, and Claude Code, Codex, or the Antigravity CLI (`agy`).
+Weir needs macOS 26 or later on Apple Silicon, Git, and Claude Code, Codex, the Antigravity CLI (`agy`), or OpenCode.
 
 Download the DMG from the [latest release](https://github.com/nek0der/weir/releases/latest) and drag `Weir.app` to `/Applications`. Weir updates itself through Sparkle when you choose to. To build from source, see [CONTRIBUTING.md](CONTRIBUTING.md#setup).
 
@@ -41,7 +41,7 @@ The [quick start](https://weir.nekoder.com/docs/quick-start/) has each step in f
 
 ## Privacy
 
-Weir has no accounts, analytics, or telemetry. It adds nothing to `~/.claude/` or `~/.codex/`: wrappers in its panes pass the hooks on each launch, so agents you start elsewhere are not affected. For Antigravity, it places a plugin in `~/.gemini/config/plugins/weir`. Turn snapshots stay in each repository's Git directory.
+Weir has no accounts, analytics, or telemetry. It adds nothing to `~/.claude/` or `~/.codex/`: wrappers in its panes pass the hooks on each launch, so agents you start elsewhere are not affected. For Antigravity and OpenCode, it places a plugin in `~/.gemini/config/plugins/weir` and `~/.config/opencode/plugins/weir`. Turn snapshots stay in each repository's Git directory.
 
 [Privacy and data](https://weir.nekoder.com/docs/privacy/) lists what Weir sends and writes, and [Uninstall](https://weir.nekoder.com/docs/install/#uninstall) how to remove it all.
 

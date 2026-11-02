@@ -1,0 +1,234 @@
+#!/bin/sh
+# Weir opencode shim: intercepts `opencode` invocations inside a Weir pty.
+# OpenCode runs its sessions on a background service that every terminal shares,
+# so what tells panes apart is a plugin in the interface itself. OpenCode takes
+# none on its command line that keeps the person's own settings readable, so we
+# keep the plugin in its folder, where it reports only for a launch through here.
+#
+# Locate the real opencode: WEIR_REAL_OPENCODE (an explicit override, a test's
+# stub), then the PATH without our own directory, then WEIR_FOUND_OPENCODE (the
+# one the new workspace sheet found), then the agent catalog's known locations.
+
+set -u
+
+self="$(command -v -- "$0" 2>/dev/null || printf '%s\n' "$0")"
+case "$self" in
+  /*) ;;
+  *) self="$PWD/$self" ;;
+esac
+self_dir="$(cd -- "$(dirname -- "$self")" && pwd -P)"
+runtime_common="$self_dir/../agent-shim/runtime-common.sh"
+if [ -r "$runtime_common" ]; then
+  . "$runtime_common"
+  weir_ensure_run_id
+fi
+
+filtered_path=""
+has_filtered_entry=0
+old_ifs="$IFS"
+IFS=":"
+# The added `:` keeps a trailing empty entry, which field splitting would drop. An
+# empty entry means the current folder, so one that is not us stays.
+for entry in ${PATH:-}:; do
+  [ "$entry" = "$self_dir" ] && continue
+  # A folder is spelled many ways (a link to it, a trailing slash, a relative
+  # or empty entry), and another Weir's shim would look for us in turn, so we
+  # go by what an entry holds: a shim folder's mark, or this very file under
+  # another name.
+  [ -e "${entry:-.}/weir-hook" ] && continue
+  [ "${entry:-.}/opencode" -ef "$self" ] && continue
+  if [ "$has_filtered_entry" = 0 ]; then
+    filtered_path="$entry"
+    has_filtered_entry=1
+  else
+    filtered_path="$filtered_path:$entry"
+  fi
+done
+IFS="$old_ifs"
+
+found_opencode="${WEIR_FOUND_OPENCODE:-}"
+unset WEIR_FOUND_OPENCODE
+
+real_opencode="${WEIR_REAL_OPENCODE:-}"
+found_off_path=0
+if [ -z "$real_opencode" ]; then
+  real_opencode=$(PATH="$filtered_path" command -v opencode 2>/dev/null || true)
+fi
+if [ -z "$real_opencode" ] && [ -n "$found_opencode" ] && [ -f "$found_opencode" ] && [ -x "$found_opencode" ] &&
+  [ ! "$found_opencode" -ef "$self" ] && [ ! -e "${found_opencode%/*}/weir-hook" ]; then
+  real_opencode="$found_opencode"
+  found_off_path=1
+fi
+if [ -z "$real_opencode" ] && command -v weir_find_known_agent >/dev/null 2>&1 &&
+  weir_find_known_agent "${WEIR_OPENCODE_KNOWN_LOCATIONS:-}" "$self"; then
+  real_opencode="$weir_known_agent"
+  found_off_path=1
+fi
+
+if [ -z "$real_opencode" ]; then
+  printf 'weir: opencode not found in PATH or the usual install folders (searched without %s)\n' "$self_dir" >&2
+  exit 127
+fi
+
+# Set when opencode is a script for the node beside it, found off the PATH
+# (`weir_add_agent_folder`).
+opencode_node=""
+PATH="$filtered_path"
+export PATH
+if [ "$found_off_path" = 1 ] && command -v weir_add_agent_folder >/dev/null 2>&1 &&
+  weir_add_agent_folder "$real_opencode"; then
+  opencode_node="$weir_agent_node"
+fi
+
+# Places the plugin when it is missing or its mark is lower than the one this build
+# ships. Never when it is higher: the Debug and release apps share this folder, and
+# each overwriting the other's would reload the plugin in every running pane. Only a
+# folder that carries our mark is ours to change: one named the same without it is
+# the person's, and a link is followed by no one.
+#
+# Each file goes in by rename, in place, so another `opencode` starting now finds
+# the old file or the new one, and never a gap. The mark goes last with the
+# version, and first as a word no version is, so a run cut short is ours and is
+# finished by the next launch. A failure leaves `opencode` to start, unwatched.
+weir_place_plugin() {
+  source_dir="$self_dir/../opencode-plugin"
+  [ -r "$source_dir/.weir-managed" ] || return 0
+  # A folder `OPENCODE_CONFIG_DIR` names replaces the XDG one: OpenCode then
+  # loads no plugin from the other.
+  if [ -n "${OPENCODE_CONFIG_DIR:-}" ]; then
+    target="$OPENCODE_CONFIG_DIR/plugins/weir"
+  else
+    config_home="${XDG_CONFIG_HOME:-${HOME:-}/.config}"
+    [ "$config_home" != "/.config" ] || return 0
+    target="$config_home/opencode/plugins/weir"
+  fi
+  [ -L "$target" ] && return 0
+  if [ -e "$target" ]; then
+    [ -f "$target/.weir-managed" ] && [ ! -L "$target/.weir-managed" ] || return 0
+    placed_mark=$(cat "$target/.weir-managed" 2>/dev/null)
+    shipped_mark=$(cat "$source_dir/.weir-managed" 2>/dev/null)
+    # A mark that is no number is a placement cut short, which this one finishes.
+    case "$placed_mark" in
+      "" | *[!0-9]*) ;;
+      *) [ "$placed_mark" -lt "$shipped_mark" ] 2>/dev/null || return 0 ;;
+    esac
+  else
+    mkdir -p "$target" 2>/dev/null || return 0
+    printf 'placing\n' >"$target/.weir-managed" 2>/dev/null || return 0
+  fi
+  for file in tui.js .weir-managed; do
+    staged="$target/$file.staged-$$"
+    cp "$source_dir/$file" "$staged" 2>/dev/null && mv -f "$staged" "$target/$file" 2>/dev/null || {
+      rm -f "$staged"
+      return 0
+    }
+  done
+}
+
+# Whether these arguments start the terminal interface rather than a subcommand,
+# which starts no agent of a pane's. The rule is OpenCode's: a first word that is
+# a subcommand runs it, and any other first word is the folder to start in. A
+# question about OpenCode itself starts nothing either.
+weir_starts_interface() {
+  case "${1:-}" in
+    upgrade | update | uninstall | acp | api | debug | auth | mcp | plugin | models | stats | mini | run | session | service | reload | pair | serve)
+      return 1
+      ;;
+  esac
+  for arg in "$@"; do
+    case "$arg" in
+      -h | --help | -v | --version | --completions | --completions=* | --wizard) return 1 ;;
+    esac
+  done
+  return 0
+}
+
+# Reads what the launch names for the plugin: the session it resumes, whether it
+# carries a prompt OpenCode sends by itself (an empty one it does not), which comes
+# with no key press to tell whose it is, and
+# whether it reaches a server somewhere else, whose work is not this folder's.
+weir_read_arguments() {
+  launch_session=""
+  launch_prompt=0
+  names_server=0
+  previous=""
+  for arg in "$@"; do
+    case "$previous" in
+      --session | -s) launch_session="$arg" ;;
+      --prompt) [ -z "$arg" ] || launch_prompt=1 ;;
+    esac
+    case "$arg" in
+      --session=*) launch_session="${arg#--session=}" ;;
+      -s=*) launch_session="${arg#-s=}" ;;
+      --prompt=?*) launch_prompt=1 ;;
+      --server | --server=*) names_server=1 ;;
+    esac
+    previous="$arg"
+  done
+}
+
+# Keeps this launch's `WEIR_*` for the plugin, in a file only it reads and removes,
+# then takes them out of the environment with the shims on the `PATH`. OpenCode hands
+# its interface's environment to each session it shows, and that session's commands
+# run with it, so a `claude` the agent runs would otherwise report as this pane's. A
+# failure leaves `opencode` to start, unwatched.
+# The pane's variables, read once the launch's own are exported; the scrub after it
+# takes the same list, as nothing in between changes the environment.
+weir_pane_names() {
+  [ -n "${weir_names+set}" ] || weir_names=$(env | sed -n 's/^\(WEIR_[A-Za-z0-9_]*\)=.*/\1/p')
+}
+
+weir_keep_pane_environment() {
+  pane_env_dir="$WEIR_OPENCODE_AGENT_STATES_DIR/pane-env"
+  mkdir -p "$pane_env_dir" 2>/dev/null || return 0
+  find "$pane_env_dir" -type f -mtime +1 -exec rm -f {} + 2>/dev/null
+  # Unique to this launch, and 0600 from the start.
+  pane_env_file=$(/usr/bin/mktemp "$pane_env_dir/XXXXXXXXXXXX") || return 0
+  weir_pane_names
+  (
+    for name in $weir_names; do
+      eval "printf '%s=%s\\0' \"\$name\" \"\${$name:-}\""
+    done >"$pane_env_file"
+  ) 2>/dev/null || return 0
+  kept_pane_env="$pane_env_file"
+}
+
+weir_scrub_environment() {
+  weir_pane_names
+  for name in $weir_names; do
+    unset "$name"
+  done
+  # Our folder for the pane's shell, which would re-add the shims. A person's own
+  # stays, as anywhere else.
+  case "${ZDOTDIR:-}" in
+    */claude-shim/zdotdir | */claude-shim/zdotdir/) unset ZDOTDIR ;;
+  esac
+  [ -z "$kept_pane_env" ] || export WEIR_OPENCODE_PANE_ENV="$kept_pane_env"
+}
+
+kept_pane_env=""
+
+# `$$` becomes the agent's pid at the exec, which the host's liveness sweep
+# watches.
+export WEIR_OPENCODE_PID="$$"
+
+# Tells a pane with records apart from a demo's, whose directories are blank: a
+# demo run reports nothing and changes nothing of the person's. A launch that
+# reaches another server keeps OpenCode's own doing, unwatched: its sessions'
+# folders are not this machine's to snapshot.
+if [ -n "${WEIR_OPENCODE_AGENT_STATES_DIR:-}" ] && weir_starts_interface "$@"; then
+  weir_read_arguments "$@"
+  weir_place_plugin
+  if [ "$names_server" = 0 ]; then
+    export WEIR_OPENCODE_HOOK_DIR="$self_dir"
+    export WEIR_OPENCODE_LAUNCH_SESSION="$launch_session"
+    export WEIR_OPENCODE_LAUNCH_PROMPT="$launch_prompt"
+    weir_keep_pane_environment
+  fi
+fi
+weir_scrub_environment
+
+if [ -n "$opencode_node" ]; then
+  exec "$opencode_node" "$real_opencode" "$@"
+fi
+exec "$real_opencode" "$@"

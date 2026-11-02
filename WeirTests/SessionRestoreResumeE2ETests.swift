@@ -86,6 +86,8 @@ struct SessionRestoreResumeE2ETests {
             AgentResumeCommandBuilder<CodexAgent>.initialCommand(for: tab, paneID: paneID)
         case .antigravity:
             AgentResumeCommandBuilder<AntigravityAgent>.initialCommand(for: tab, paneID: paneID)
+        case .opencode:
+            AgentResumeCommandBuilder<OpenCodeAgent>.initialCommand(for: tab, paneID: paneID)
         }
     }
 
@@ -94,7 +96,8 @@ struct SessionRestoreResumeE2ETests {
     @Test("encode → decode → restore preserves each agent's resume command", arguments: [
         (AgentKind.claude, "f47ac10b-58cc-4372-a567-0e02b2c3d479", "claude --resume f47ac10b-58cc-4372-a567-0e02b2c3d479"),
         (.codex, "01963d6b-c0e9-7c4e-9bce-e4d6f2c1c000", "codex resume 01963d6b-c0e9-7c4e-9bce-e4d6f2c1c000"),
-        (.antigravity, "2842b64f-6f5a-4d28-948c-b2156ab731f8", "agy --conversation 2842b64f-6f5a-4d28-948c-b2156ab731f8")
+        (.antigravity, "2842b64f-6f5a-4d28-948c-b2156ab731f8", "agy --conversation 2842b64f-6f5a-4d28-948c-b2156ab731f8"),
+        (.opencode, "ses_e6811df99ffec906Lvdn0geRZZ", "opencode --session ses_e6811df99ffec906Lvdn0geRZZ")
     ])
     func aResume_survivesSnapshotRoundTrip(kind: AgentKind, sessionId: String, resume: String) throws {
         try withTempDir { root in

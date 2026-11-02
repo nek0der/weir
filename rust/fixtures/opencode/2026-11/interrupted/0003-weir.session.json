@@ -1,0 +1,8 @@
+{
+  "hook_event_name": "weir.session",
+  "data": {
+    "sessionID": "ses_e68093fe9ffenF1L3aVX17gmcT"
+  },
+  "cwd": "/repo",
+  "source": "startup"
+}

@@ -7,6 +7,8 @@ sidebar:
 
 Weir has no accounts, analytics, or telemetry. The agents you run talk to their own services as they always do, under their own terms.
 
+OpenCode reaches many services and is not tied to one, so what happens to your data depends on the model it runs. OpenCode's own [free models](https://opencode.ai/docs/zen/) may use what they receive to improve the model; `OPENCODE_DISABLE_FREE_MODELS=1` hides them. **Review** pastes your repository's content into the pane's agent, which sends it to whatever model that agent runs, so look at the model in the pane's header before reviewing private code there.
+
 ## What Weir sends
 
 Weir reaches the network only in these ways:
@@ -25,6 +27,7 @@ To turn off the daily update check, use **Settings → General → Software Upda
 
 - **Agent hooks.** Weir adds nothing to `~/.claude/` or `~/.codex/`. At launch it only removes a hook trust entry that an older version added to `~/.codex/config.toml`. Its panes put a small `claude` and `codex` wrapper first on the `PATH`, which passes the hooks on each launch. Agents you start outside Weir are not affected. The `claude` wrapper merges a `--settings` of your own, and keeps links to the hook commands in a `weir-claude-shim-*` folder in your temporary directory. When you have a status line of your own in Claude Code or Antigravity, Weir's relay takes its place: the relay keeps the plan usage the agent hands it, then runs your status line on the same input. An `agy` launch with its own `--settings` keeps it as it is and shows no usage.
 - **Antigravity plugin.** `agy` takes no hooks on its command line, so the first `agy` run in a Weir pane places a plugin at `~/.gemini/config/plugins/weir`, with a `.weir-managed` file marking it as Weir's. A folder there without the mark is left alone. The plugin does nothing outside a Weir pane. To stop it, run `agy plugin disable weir`. If you remove the folder instead, the next `agy` run in a Weir pane places it again.
+- **OpenCode plugin.** The first `opencode` run in a Weir pane places a plugin at `~/.config/opencode/plugins/weir`, with a `.weir-managed` file marking it as Weir's. A folder there without the mark is left alone. The plugin does nothing outside a Weir pane. If you remove the folder, the next `opencode` run in a Weir pane places it again. It does not read or change your OpenCode settings or sign-ins. Weir takes its own variables out of OpenCode's environment, so they do not reach the commands the agent runs, and hands them to the plugin in a small file that the plugin deletes once read.
 - **Approval service.** The release registers a per-user background service, listed in **System Settings → General → Login Items & Extensions**.
 - **Turn snapshots.** They live in each repository's Git directory, as refs under `refs/weir/` and files under `weir/`.
 

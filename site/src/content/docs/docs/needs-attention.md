@@ -32,7 +32,7 @@ Weir holds each request until you answer it, wherever its pane is. You answer it
 | The worktree's sidebar row | Hover over it and choose **Answer…** |
 | The menu bar, while another app is in front | A short, low-impact shell command can be answered right there. For any other request, choose **Answer…** to open Weir |
 
-Going to the pane leaves the request with Weir, so you can still answer it on the card after you leave. Claude Code also shows its own prompt in the pane, and whichever you answer first counts. Codex shows its prompt only after you choose **Answer in terminal** or the request times out.
+Going to the pane leaves the request with Weir, so you can still answer it on the card after you leave. Claude Code and OpenCode also show their own prompts in the pane, and whichever you answer first counts. Codex shows its prompt only after you choose **Answer in terminal** or the request times out.
 
 ![The approval card: the command the agent wants to run, the time left, and Answer in terminal, Deny, and Allow once](../../../assets/captures/docs/approval-en.png)
 
@@ -44,6 +44,10 @@ Codex questions are always answered in the terminal.
 
 Antigravity has no approval card. Its approvals and questions are always answered in its own prompt, and Weir shows that it waits. A subagent's approval does not always show as a wait: `agy` shows it as Blocked, and `ctrl+k` there approves it.
 
+For OpenCode, **Allow always** and answers to its questions are only at its own prompt.
+
+Each of OpenCode's tabs is watched on its own, so a wait or a failure in a tab behind the one on screen still reaches you here. Going to it, or choosing **Answer in terminal** for its request, brings its tab forward. The pane's badge shows the most urgent of its tabs.
+
 ## After a stop
 
 When an agent stops on an API error, a usage limit, or by exiting, the bar under its pane offers:
@@ -52,6 +56,8 @@ When an agent stops on an API error, a usage limit, or by exiting, the bar under
 - **Show Partial Changes** and **Start New Conversation**, in its **⋯** menu
 
 If a usage limit stopped it, Weir can also notify you when the limit resets. Antigravity reports a limit only in the words of its error, so a limit in words Weir does not recognize stops like any other error, and one with no readable reset time offers no notification.
+
+OpenCode reaches many services and models, so a limit on one of them does not mark your other OpenCode panes. Its stop offers **Resume** rather than the notification, since changing the model may be all it takes.
 
 ## An agent that runs without asking
 

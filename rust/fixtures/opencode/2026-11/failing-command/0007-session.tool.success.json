@@ -1,0 +1,18 @@
+{
+  "hook_event_name": "session.tool.success",
+  "event_id": "evt_197f5c955001sdIwcvedGOmE3C",
+  "created": 1793550829909,
+  "seq": 10,
+  "data": {
+    "sessionID": "ses_e680a3e14ffeQ6sWTHY4TED89Z",
+    "assistantMessageID": "msg_197f5c225001JJbs12OPQu76IX",
+    "id": "call_00_wwutqebugaiwgk2shkd1nlgv",
+    "metadata": {
+      "status": "completed",
+      "truncated": false,
+      "exit": 1
+    },
+    "executed": false,
+    "name": "shell"
+  }
+}

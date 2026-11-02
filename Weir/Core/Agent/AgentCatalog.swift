@@ -81,6 +81,13 @@ enum AgentCatalog {
             executables: ["agy"],
             knownLocations: ["/opt/homebrew/bin/agy", "/usr/local/bin/agy", "~/.local/bin/agy"]
                 + managerLocations(of: "agy")
+        ),
+        AgentCatalogEntry(
+            kind: .opencode,
+            displayName: "OpenCode",
+            executables: ["opencode"],
+            knownLocations: ["/opt/homebrew/bin/opencode", "/usr/local/bin/opencode", "~/.opencode/bin/opencode", "~/.local/bin/opencode"]
+                + managerLocations(of: "opencode")
         )
     ]
 

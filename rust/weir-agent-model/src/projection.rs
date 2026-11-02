@@ -19,6 +19,7 @@
 use crate::background::BackgroundWork;
 use crate::cache::CacheWindow;
 use crate::command::{CommandOutcome, ResumeIntent};
+use crate::event::FailureKind;
 use crate::provider::{ProviderDescriptor, ProviderId};
 use crate::record::{RunRecord, RunState, WaitKind};
 use crate::session_settings::PermissionMode;
@@ -471,6 +472,19 @@ pub struct RuntimePresentation {
     /// it, so it never has to rebuild which run a record is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tmux_endpoint_key: Option<String>,
+    /// The panes this run is attached to where another of its process's sessions
+    /// is on screen instead. Such a pane does not show this run, in sight or not.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub panes_behind_shown_tab: Vec<Uuid>,
+    /// Those, and every pane of the family while its screen shows no session: where
+    /// this run is out of sight, though a header may still name it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub panes_not_in_front: Vec<Uuid>,
+    /// The process's own name for a request to bring one of its sessions forward: the
+    /// launch's run, which no other process shares, though several can run from one
+    /// pane (tmux) or show in another. Absent for a process with no tabs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_channel: Option<Uuid>,
     /// Identifies one record write. What the host echoes back after delivering
     /// a notification, so a stale delivery cannot retire a newer entry.
     pub event_token: String,
@@ -583,6 +597,13 @@ pub struct Badge {
     pub effort: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permission_mode: Option<PermissionMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_upstream: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_profile: Option<String>,
+    /// What the person has to do about the failure the run rests in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_kind: Option<FailureKind>,
 }
 
 /// A stop the projection read from the facts rather than from a hook.

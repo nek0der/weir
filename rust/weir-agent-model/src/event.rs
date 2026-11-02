@@ -132,6 +132,20 @@ impl SessionSource {
     }
 }
 
+/// A failure the person answers in a way of its own, rather than by trying the
+/// turn again. Serialized in camel case like the record and the badge that
+/// carry it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FailureKind {
+    /// Whatever serves the model wants the person to sign in. Named apart from
+    /// a plan's limit because it says nothing of the agent's other sessions: a
+    /// tool that can reach many services is signed in to each on its own.
+    SignIn,
+    /// No route to the model the session asked for.
+    ModelUnavailable,
+}
+
 /// One neutral event derived from one provider hook payload.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -254,6 +268,12 @@ pub enum AgentEvent {
         /// the field existed and from every other failure.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         usage_limit: Option<crate::UsageLimit>,
+        /// What the person has to do about the failure, when the provider says
+        /// and it is one of the few the interface words for itself. Absent
+        /// from events written before the field existed and from every other
+        /// failure, whose `error` says it in the provider's own words.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<crate::FailureKind>,
     },
     Interrupted,
     CwdChanged {

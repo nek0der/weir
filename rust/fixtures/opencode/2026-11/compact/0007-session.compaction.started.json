@@ -1,0 +1,11 @@
+{
+  "hook_event_name": "session.compaction.started",
+  "event_id": "evt_197fd9cb9002jrTBtoDEvBs910",
+  "created": 1793551342777,
+  "seq": 17,
+  "data": {
+    "sessionID": "ses_e68029d2bffe3mRCTl3dt0Sxyy",
+    "reason": "manual",
+    "inputID": "msg_197fd9ca1001F43q0Uu461UB3N"
+  }
+}

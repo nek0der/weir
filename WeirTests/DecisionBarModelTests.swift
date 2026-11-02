@@ -584,6 +584,20 @@ struct DecisionBarModelTests {
         return DecisionBarModel(content: content, resetNotice: notice, now: now, locale: locale)
     }
 
+    @Test func aLimitInTheAgentsOwnWords_endsWithOneFullStop() {
+        // As recorded in fixtures/opencode/2026-11/free-limit.
+        let words = "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
+        let item = AttentionItem.testUsageLimitStop(UsageLimit(scope: .upstream, label: words), arrivedAt: Self.beforeReset)
+        let content = DecisionBarContent.make(.init(
+            items: [item],
+            agent: .init(provider: .opencode, state: .error, detail: nil),
+            stopResumes: [item.id: .available]
+        ))
+        let bar = DecisionBarModel(content: content, resetNotice: nil, now: Self.beforeReset, locale: Self.english)
+        #expect(bar.text.hasPrefix(words + " "))
+        #expect(!bar.text.contains(".."))
+    }
+
     @Test func usageLimitStop_offersTheNoticeInPlaceOfResumingWhileTheLimitHolds() throws {
         let offered = Self.usageLimitBar(.offered)
         let itemID = try #require(offered.content.itemID)

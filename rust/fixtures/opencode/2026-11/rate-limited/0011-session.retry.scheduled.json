@@ -1,0 +1,20 @@
+{
+  "hook_event_name": "session.retry.scheduled",
+  "event_id": "evt_1980aeafd001BcFnvWrwBwW79f",
+  "created": 1793552214781,
+  "seq": 16,
+  "data": {
+    "sessionID": "ses_e67f59308ffeaUIimY3ThMzwcg",
+    "assistantMessageID": "msg_1980a6d32001bTxKkqsSy6pYPf",
+    "attempt": 7,
+    "at": 1793552225203,
+    "error": {
+      "type": "provider.rate-limit",
+      "message": "stub failure",
+      "status": 429,
+      "response": {
+        "body": "{\"error\":{\"message\":\"stub failure\",\"type\":\"stub\"}}"
+      }
+    }
+  }
+}

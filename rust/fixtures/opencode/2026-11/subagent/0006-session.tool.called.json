@@ -1,0 +1,18 @@
+{
+  "hook_event_name": "session.tool.called",
+  "event_id": "evt_198108dca001OcKvo0dwAxCnJq",
+  "created": 1793552584138,
+  "seq": 10,
+  "data": {
+    "sessionID": "ses_e67ef729dffeWm3X8J12y5AOhj",
+    "assistantMessageID": "msg_198108d9c001ax2L5vUY46QFbS",
+    "id": "call_stub_1",
+    "input": {
+      "description": "look around",
+      "prompt": "say hello",
+      "agent": "general"
+    },
+    "executed": false,
+    "name": "subagent"
+  }
+}

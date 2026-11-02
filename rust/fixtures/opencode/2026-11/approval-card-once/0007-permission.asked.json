@@ -1,0 +1,22 @@
+{
+  "hook_event_name": "permission.asked",
+  "event_id": "evt_1980e6050002Yr1NuZePyotZuw",
+  "created": 1793552441424,
+  "data": {
+    "id": "per_1980e6050001JsLJL38Zlxf0BU",
+    "sessionID": "ses_e67f1a00effe3jUQwm0dn3aMOZ",
+    "action": "shell",
+    "resources": [
+      "touch card-1.txt"
+    ],
+    "save": [
+      "touch *"
+    ],
+    "source": {
+      "type": "tool",
+      "messageID": "msg_1980e6020001hW58YBI3w6O3BS",
+      "id": "call_stub_1"
+    }
+  },
+  "tool": "shell"
+}

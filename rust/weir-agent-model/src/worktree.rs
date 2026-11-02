@@ -72,6 +72,28 @@ impl WorktreeIntent {
         Ok(Self::parse(command, string("cwd")))
     }
 
+    /// The folder of a command that is exactly `git worktree add -b <branch>
+    /// <folder>`, single spaces between, every word of plain characters, the branch
+    /// this intent's: what a payload can prove made a worktree. Quoting, a comment,
+    /// a variable, a second command, or another option could each make the words
+    /// say other than what ran, so each is no proof. The folder is compared as a
+    /// resolved path where it is used, so `..` in it is as good as any.
+    #[must_use]
+    pub fn plain_add_folder(&self) -> Option<&str> {
+        let is_plain = |word: &str| {
+            !word.is_empty()
+                && !word.starts_with('-')
+                && word
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"-_./@+=,:".contains(&byte))
+        };
+        let words: Vec<&str> = self.command.split(' ').collect();
+        let ["git", "worktree", "add", "-b", branch, folder] = words.as_slice() else {
+            return None;
+        };
+        (*branch == self.branch && is_plain(branch) && is_plain(folder)).then_some(*folder)
+    }
+
     /// Parses `command` the way the shell intercept did: the command must
     /// start with `git`, reach `worktree add` before any `|`, `;`, or `&`,
     /// and name a branch. Anything else is not an intent, because renaming a
@@ -254,6 +276,38 @@ pub fn finished_hook_output(message: &str) -> ProviderOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_plain_add_names_a_folder_a_payload_can_prove() {
+        let intent = |command: &str| WorktreeIntent::parse(command, Some("/repo")).expect("intent");
+        assert_eq!(
+            intent("git worktree add -b x ../wt/x").plain_add_folder(),
+            Some("../wt/x")
+        );
+        assert_eq!(
+            intent("git worktree add -b x /wt/x").plain_add_folder(),
+            Some("/wt/x")
+        );
+        for command in [
+            "git worktree add -b y /tmp/y # -b x",
+            "git worktree add -b x '/wt/x'",
+            "git worktree add -b x \"/wt/x\"",
+            "git worktree add -b x $HOME/x",
+            "git worktree add -b x /wt/x ; true",
+            "git worktree add -b x  /wt/x",
+            "git worktree add -B x /wt/x",
+            "git -C /other worktree add -b x /wt/x",
+            "git worktree add -f -b x /wt/x",
+            "git worktree add -b x /wt/x main",
+        ] {
+            assert_eq!(
+                WorktreeIntent::parse(command, None)
+                    .and_then(|it| it.plain_add_folder().map(str::to_owned)),
+                None,
+                "{command}"
+            );
+        }
+    }
 
     #[test]
     fn parses_branch_flags_in_every_spelling() {

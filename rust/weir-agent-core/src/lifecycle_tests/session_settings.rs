@@ -13,6 +13,7 @@ fn saying(model: Option<&str>, mode: Option<PermissionMode>) -> ApplyContext {
             is_awaiting_answer: false,
             effort: None,
             permission_mode: mode,
+            ..SessionSettings::default()
         },
         ..context()
     }
@@ -229,6 +230,7 @@ fn a_new_model_drops_the_effort_said_of_the_old_one() {
             is_awaiting_answer: false,
             effort: effort.map(str::to_owned),
             permission_mode: None,
+            ..SessionSettings::default()
         },
         ..context()
     };

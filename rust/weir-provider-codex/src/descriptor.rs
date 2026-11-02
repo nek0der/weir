@@ -41,6 +41,7 @@ pub(crate) fn descriptor() -> &'static ProviderDescriptor {
                 Capability::Resume,
                 Capability::ResumeDefersToOtherLiveSession,
                 Capability::WorktreeEvents,
+                Capability::WorktreePlacement,
                 Capability::ApprovalHook,
                 Capability::Subagents,
                 Capability::TurnSnapshot,
@@ -116,6 +117,8 @@ mod tests {
         // Codex reports no cache expiry today; its adapter fills the same
         // window once it does.
         assert!(!descriptor.has(Capability::CacheWindow));
+        assert!(descriptor.has(Capability::WorktreePlacement));
+        assert!(!descriptor.has(Capability::WorktreeFinishProven));
         assert_eq!(descriptor.state_directory, "codex-agent-states");
         assert_eq!(descriptor.session_directory, "codex-sessions");
         assert_eq!(descriptor.cwd_events_directory, None);

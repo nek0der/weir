@@ -1,0 +1,20 @@
+{
+  "hook_event_name": "session.execution.succeeded",
+  "event_id": "evt_1980744d6001MF2cSQJ9YnlY1I",
+  "created": 1793551975638,
+  "seq": 19,
+  "data": {
+    "sessionID": "ses_e67f8d6c4ffePhQBQjRPnHdr7Z"
+  },
+  "cwd": "/repo",
+  "usage": {
+    "input": 200,
+    "output": 14,
+    "reasoning": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "isPartial": false
+  },
+  "reply": "STUB",
+  "title": "STUB"
+}

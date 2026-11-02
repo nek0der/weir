@@ -1,0 +1,2 @@
+# A product's name, which is not an item for the doc comments to put in backticks.
+doc-valid-idents = ["OpenCode", ".."]

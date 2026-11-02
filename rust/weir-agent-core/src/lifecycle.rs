@@ -20,9 +20,9 @@
 
 use serde::{Deserialize, Serialize};
 use weir_agent_model::{
-    AgentEvent, BackgroundWork, CacheWindow, Capability, MAX_RECORD_TEXT_BYTES, PromptKind,
-    ProviderDescriptor, RunRecord, RunState, SessionSettings, SessionSource, Titles, TmuxEndpoint,
-    WaitKind, classify_prompt, seconds_between,
+    AgentEvent, BackgroundWork, CacheWindow, Capability, FailureKind, MAX_RECORD_TEXT_BYTES,
+    PromptKind, ProviderDescriptor, RunRecord, RunState, SessionSettings, SessionSource, Titles,
+    TmuxEndpoint, UsageLimit, WaitKind, classify_prompt, seconds_between,
 };
 
 /// Everything the record needs that comes from the hook's environment
@@ -83,6 +83,10 @@ pub enum SideWrite {
         session_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<String>,
+        /// The run the hint belongs to, when it is not the one calling: the
+        /// launch's run reports which of its siblings is on screen.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        owner_run_id: Option<String>,
     },
     /// Forget the resume hint when the session ended on the user's terms.
     /// The runtime deletes only when the stored hint names this session and
@@ -168,13 +172,28 @@ pub fn apply(
         let mut next = prev.clone();
         observe_settings(&mut next, &context.settings);
         next.run_observed_order = next.run_observed_order.max(context.run_observed_order);
-        if next.model != prev.model
-            || next.effort != prev.effort
-            || next.permission_mode != prev.permission_mode
-            || next.run_observed_order != prev.run_observed_order
-        {
+        // Only what `observe_settings` and the observed order touch can differ.
+        if next != *prev {
             next.revision = Some(prev.revision.unwrap_or(0) + 1);
             writes.run = Some(next);
+        }
+        // The session on screen is what a restore should reopen. Written every
+        // time, as a sibling's start may have taken the hint since.
+        if !context.is_tmux_hosted
+            && let (Some(session_id), Some(owner)) = (
+                context
+                    .settings
+                    .shown_session_id
+                    .as_deref()
+                    .filter(|id| is_hint_safe(id)),
+                context.settings.pane_shown_run_id.as_ref(),
+            )
+        {
+            writes.side.push(SideWrite::SessionHint {
+                session_id: session_id.to_owned(),
+                cwd: context.settings.shown_cwd.clone(),
+                owner_run_id: Some(owner.clone()),
+            });
         }
     }
     writes
@@ -356,6 +375,7 @@ fn session_transition(
                 writes.side.push(SideWrite::SessionHint {
                     session_id: session_id.to_owned(),
                     cwd: cwd.clone(),
+                    owner_run_id: None,
                 });
             }
         }
@@ -489,20 +509,11 @@ fn turn_transition(
             background_work,
             ..
         } => finish_turn(next, titles.as_ref(), cache.as_ref(), *background_work),
-        AgentEvent::Failed { error, usage_limit } => {
-            next.state = RunState::Error;
-            next.run_started_at = None;
-            next.detail = text_field(error);
-            // Set or cleared by every failure, so it always describes the
-            // error the run rests in; the badge reads it only then.
-            next.usage_limit.clone_from(usage_limit);
-            // A failed request may or may not have refreshed the cache; an
-            // unknown window is shown as nothing rather than as a guess.
-            next.cache_window = None;
-            // No stop listed what the failed turn left running, and a count
-            // an earlier stop left would describe a different turn.
-            next.background_work = None;
-        }
+        AgentEvent::Failed {
+            error,
+            usage_limit,
+            kind,
+        } => fail_run(next, error, usage_limit.as_ref(), *kind),
         AgentEvent::Interrupted => {
             next.state = RunState::Finished;
             next.run_started_at = None;
@@ -831,6 +842,9 @@ fn carried(prev: Option<&RunRecord>, context: &ApplyContext, now: &str) -> RunRe
         parent_run_id: prev
             .and_then(|record| record.parent_run_id.clone())
             .or_else(|| context.parent_run_id.clone()),
+        pane_family_run_id: prev.and_then(|record| record.pane_family_run_id.clone()),
+        pane_shown_run_id: prev.and_then(|record| record.pane_shown_run_id.clone()),
+        pane_shows_home: prev.and_then(|record| record.pane_shows_home),
         run_observed_order: prev
             .and_then(|record| record.run_observed_order)
             .max(context.run_observed_order),
@@ -857,6 +871,7 @@ fn carried(prev: Option<&RunRecord>, context: &ApplyContext, now: &str) -> RunRe
         // here only when it ends work, which clears it.
         cache_window: prev.and_then(|record| record.cache_window.clone()),
         usage_limit: prev.and_then(|record| record.usage_limit.clone()),
+        failure_kind: prev.and_then(|record| record.failure_kind),
         // Kept while the work outside a turn lasts; `apply` drops it once the
         // run is in a turn or at rest.
         outside_turn_rest: prev.and_then(|record| record.outside_turn_rest),
@@ -870,13 +885,55 @@ fn carried(prev: Option<&RunRecord>, context: &ApplyContext, now: &str) -> RunRe
         model: prev.and_then(|record| record.model.clone()),
         effort: prev.and_then(|record| record.effort.clone()),
         permission_mode: prev.and_then(|record| record.permission_mode),
+        model_upstream: prev.and_then(|record| record.model_upstream.clone()),
+        agent_profile: prev.and_then(|record| record.agent_profile.clone()),
         extra: prev.map(|record| record.extra.clone()).unwrap_or_default(),
     }
+}
+
+/// The run rests in the failure its event reports.
+fn fail_run(
+    next: &mut RunRecord,
+    error: &str,
+    usage_limit: Option<&UsageLimit>,
+    kind: Option<FailureKind>,
+) {
+    next.state = RunState::Error;
+    next.run_started_at = None;
+    next.detail = text_field(error);
+    // Set or cleared by every failure, so they always describe the error the
+    // run rests in; the badge reads them only then.
+    // The provider's words, kept to the record's text contract as `detail` is.
+    next.usage_limit = usage_limit.map(|limit| UsageLimit {
+        label: limit.label.as_deref().and_then(text_field),
+        ..limit.clone()
+    });
+    next.failure_kind = kind;
+    // A failed request may or may not have refreshed the cache; an unknown
+    // window is shown as nothing rather than as a guess.
+    next.cache_window = None;
+    // No stop listed what the failed turn left running, and a count an earlier
+    // stop left would describe a different turn.
+    next.background_work = None;
 }
 
 /// As with titles, a setting the call did not say is kept, never cleared. The
 /// effort is the exception: it belongs to the model it was said of, so a new
 /// model drops it until a call says the new one's.
+/// A setting the provider can say is back at its default, with an empty word: `said`
+/// empty clears `slot`, a word that makes a field sets it, and nothing said keeps it.
+fn observe_clearable(slot: &mut Option<String>, said: Option<&str>) {
+    match said {
+        Some("") => *slot = None,
+        Some(word) => {
+            if let Some(word) = title_field(word) {
+                *slot = Some(word);
+            }
+        }
+        None => {}
+    }
+}
+
 fn observe_settings(record: &mut RunRecord, settings: &SessionSettings) {
     if let Some(model) = settings.model.as_deref().and_then(title_field) {
         if record.model.as_ref() != Some(&model) {
@@ -887,11 +944,27 @@ fn observe_settings(record: &mut RunRecord, settings: &SessionSettings) {
     if record.model.is_none() {
         record.model = settings.answered_model.as_deref().and_then(title_field);
     }
-    if let Some(effort) = settings.effort.as_deref().and_then(title_field) {
-        record.effort = Some(effort);
+    // Empty is the provider saying the setting is back at its default, where the
+    // rest of the record has no word to show.
+    observe_clearable(&mut record.effort, settings.effort.as_deref());
+    if let Some(upstream) = settings.model_upstream.as_deref().and_then(title_field) {
+        record.model_upstream = Some(upstream);
     }
+    observe_clearable(&mut record.agent_profile, settings.agent_profile.as_deref());
     if let Some(mode) = settings.permission_mode {
         record.permission_mode = Some(mode);
+    }
+    if let Some(title) = settings.session_title.as_deref().and_then(title_field) {
+        record.provider_session_title = Some(title);
+    }
+    if let Some(family) = &settings.pane_family_run_id {
+        record.pane_family_run_id = Some(family.clone());
+    }
+    if let Some(shown) = &settings.pane_shown_run_id {
+        record.pane_shown_run_id = Some(shown.clone());
+    }
+    if let Some(home) = settings.pane_shows_home {
+        record.pane_shows_home = Some(home);
     }
 }
 

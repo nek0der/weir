@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "session.execution.started",
+  "event_id": "evt_197ee209d001hR1HEnv3i3WBPR",
+  "created": 1793550327966,
+  "seq": 2,
+  "data": {
+    "sessionID": "ses_e6811df99ffec906Lvdn0geRZZ"
+  },
+  "cwd": "/repo",
+  "prompt": "Reply with only the word ONE",
+  "prompt_kind": "user",
+  "preparation": "7f81a17d-e071-49ec-a94d-a48a8c6a06a3"
+}

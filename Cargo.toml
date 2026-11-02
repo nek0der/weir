@@ -5,6 +5,7 @@ members = [
     "rust/weir-agent-model",
     "rust/weir-agent-protocol",
     "rust/weir-provider-antigravity",
+    "rust/weir-provider-opencode",
     "rust/weir-provider-claude",
     "rust/weir-provider-codex",
     "rust/weir-rust-bridge",

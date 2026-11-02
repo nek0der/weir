@@ -412,6 +412,46 @@ struct ChangesPanelActionsTests {
         #expect(shown.splitTree.focusedLeafID == panes[0])
     }
 
+    /// A session in a tab behind the one OpenCode shows in the pane: "Show Tab" also
+    /// asks the pane for that session's tab, as ⌘J does.
+    @Test func showTab_sessionBehindAnotherTab_asksThePaneForIt() throws {
+        let fixture = ActionStoresFixture()
+        let container = ContainerID.project(fixture.project.id)
+        let tab = try #require(fixture.session.tabs(in: container).first)
+        let pane = try #require(tab.splitTree.allLeafIDs().first)
+        func run(_ id: String, isBehind: Bool) -> AgentRuntimePresentation {
+            var runtime = AgentRuntimePresentation.test(
+                kind: .opencode,
+                runID: id,
+                badge: AgentBadge(state: .idle, updatedAt: Date()),
+                paneIDs: [pane],
+                sessionID: "ses_\(id)",
+                conversation: TurnSummaryFixture.conversation(id, provider: .opencode)
+            )
+            runtime.panesBehindShownTab = isBehind ? [pane] : []
+            runtime.panesNotInFront = isBehind ? [pane] : []
+            runtime.tabChannel = pane
+            return runtime
+        }
+        fixture.attention.replaceRuntimes([run("shown", isBehind: false), run("behind", isBehind: true)], kind: .opencode)
+        let request = AgentTabFocus.requestURL(channel: pane)
+        try? FileManager.default.removeItem(at: request)
+        let behind = TurnSummaryFixture.conversation("behind", provider: .opencode)
+
+        #expect(ChangesPanelActions.offersShowTab(of: behind, window: fixture.window, stores: fixture.changes))
+        ChangesPanelActions.showTab(of: behind, window: fixture.window, stores: fixture.changes)
+
+        let body = try JSONSerialization.jsonObject(with: Data(contentsOf: request)) as? [String: Any]
+        #expect(body?["sessionId"] as? String == "ses_behind")
+        try? FileManager.default.removeItem(at: request)
+        ChangesPanelActions.showTab(
+            of: TurnSummaryFixture.conversation("shown", provider: .opencode),
+            window: fixture.window,
+            stores: fixture.changes
+        )
+        #expect(!FileManager.default.fileExists(atPath: request.path), "the session in front needs nothing")
+    }
+
     /// A conversation no pane runs any more (it ended, or its pane closed)
     /// has no tab to show, nor has one that runs only outside the session.
     @Test func showTab_endedConversation_isNotOffered() throws {

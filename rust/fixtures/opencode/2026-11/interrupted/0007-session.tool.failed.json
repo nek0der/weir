@@ -1,0 +1,20 @@
+{
+  "hook_event_name": "session.tool.failed",
+  "event_id": "evt_197f6e08c003t0OVo4BJfUsLE6",
+  "created": 1793550901388,
+  "seq": 12,
+  "data": {
+    "sessionID": "ses_e68093fe9ffenF1L3aVX17gmcT",
+    "assistantMessageID": "msg_197f6c04a0013UR4QvbXmAIcyx",
+    "id": "call_00_eauz4syy976uwugtpsjo21id",
+    "error": {
+      "type": "aborted",
+      "message": "Tool execution interrupted"
+    },
+    "metadata": {
+      "shellID": "sh_197f6c9cf0017tOLseom65yEVF"
+    },
+    "executed": false,
+    "name": "shell"
+  }
+}

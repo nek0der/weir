@@ -49,6 +49,7 @@ pub(crate) fn session_settings(
             .filter(|level| !level.is_empty())
             .map(str::to_owned),
         permission_mode: string(object, "permission_mode").and_then(PermissionMode::parse),
+        ..SessionSettings::default()
     }
 }
 
@@ -288,6 +289,7 @@ mod tests {
             is_awaiting_answer: false,
             effort: None,
             permission_mode: mode,
+            ..SessionSettings::default()
         };
         assert_eq!(case("0000-SessionStart.json"), said(Some("Opus 5.5"), None));
         assert_eq!(

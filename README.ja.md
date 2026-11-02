@@ -1,6 +1,6 @@
 # Weir
 
-Claude Code、Codex、Antigravity を並行して動かすための Mac アプリ。どれが待っているか、各ターンで何が変わったかがすぐ分かります。
+Claude Code、Codex、Antigravity、OpenCode を並行して動かすための Mac アプリ。どれが待っているか、各ターンで何が変わったかがすぐ分かります。
 
 **[Web サイト](https://weir.nekoder.com/ja/)** · **[ドキュメント](https://weir.nekoder.com/ja/docs/)** · **[ダウンロード](https://github.com/nek0der/weir/releases/latest)**
 
@@ -25,7 +25,7 @@ Weir はエディタでも、エージェントでもありません。エージ
 
 ## インストール
 
-macOS 26 以降の Apple Silicon 搭載 Mac と Git、それに Claude Code、Codex、Antigravity CLI(`agy`)のいずれかが必要です。
+macOS 26 以降の Apple Silicon 搭載 Mac と Git、それに Claude Code、Codex、Antigravity CLI(`agy`)、OpenCode のいずれかが必要です。
 
 [最新のリリース](https://github.com/nek0der/weir/releases/latest)から DMG をダウンロードし、`Weir.app` を `/Applications` にドラッグします。アップデートは Sparkle で届き、選んだときにインストールされます。ソースからビルドする場合は [CONTRIBUTING.md](CONTRIBUTING.md#setup)(英語)を見てください。
 
@@ -41,7 +41,7 @@ macOS 26 以降の Apple Silicon 搭載 Mac と Git、それに Claude Code、Co
 
 ## プライバシー
 
-Weir にアカウント、アクセス解析、テレメトリはありません。`~/.claude/` と `~/.codex/` には何も追加しません。フックは Weir のペインのラッパーが起動のたびに渡すので、ほかの場所で起動したエージェントは変わりません。Antigravity の場合は `~/.gemini/config/plugins/weir` にプラグインを置きます。ターンのスナップショットは、各リポジトリの Git ディレクトリに保存します。
+Weir にアカウント、アクセス解析、テレメトリはありません。`~/.claude/` と `~/.codex/` には何も追加しません。フックは Weir のペインのラッパーが起動のたびに渡すので、ほかの場所で起動したエージェントは変わりません。Antigravity と OpenCode の場合は `~/.gemini/config/plugins/weir` と `~/.config/opencode/plugins/weir` にプラグインを置きます。ターンのスナップショットは、各リポジトリの Git ディレクトリに保存します。
 
 Weir が送るものと書き込むものは[プライバシーとデータ](https://weir.nekoder.com/ja/docs/privacy/)に、すべて削除する方法は[アンインストール](https://weir.nekoder.com/ja/docs/install/#アンインストールする)にあります。
 

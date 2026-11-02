@@ -1,0 +1,38 @@
+{
+  "hook_event_name": "form.created",
+  "event_id": "evt_1980fc655002MV1w3aekh0V9Ny",
+  "created": 1793552533077,
+  "data": {
+    "id": "frm_1980fc6550017jC0HGETJf72wL",
+    "sessionID": "ses_e67f039fbffeSjARELW0ZUCW7l",
+    "title": "Questions",
+    "metadata": {
+      "kind": "question",
+      "tool": {
+        "messageID": "msg_1980fc62a001aPHaQJ040q7xO3",
+        "id": "call_stub_1"
+      }
+    },
+    "fields": [
+      {
+        "key": "q0",
+        "title": "Color",
+        "description": "Red or blue?",
+        "type": "string",
+        "options": [
+          {
+            "value": "Red",
+            "label": "Red",
+            "description": "warm"
+          },
+          {
+            "value": "Blue",
+            "label": "Blue",
+            "description": "cool"
+          }
+        ],
+        "custom": true
+      }
+    ]
+  }
+}

@@ -16,6 +16,14 @@
 import Dispatch
 import Foundation
 
+// First, before anything here starts a thread: a thread takes the signal mask of
+// the one that made it, and a SIGTERM that one thread still takes ends the
+// process. Only OpenCode's approval is withdrawn by one; every other run ends on
+// it as before.
+if CommandLine.arguments.dropFirst().elementsEqual(["permission-request", "opencode"]) {
+    PendingTermination.hold()
+}
+
 /// Upper bound on one wait for a decision; the request's own timeout comes
 /// from the provider crate and is shorter.
 private let approvalWaitSeconds = 580
@@ -100,16 +108,40 @@ func runLifecycleHook(provider: String, kind: RustProviderBridge.HookKind) -> Ne
     }
 }
 
+/// SIGTERM held back from the start of the process (`hold()`), so it can be read
+/// instead of ending it. OpenCode's plugin sends one when the person answers at
+/// OpenCode's own prompt, which stays up beside the card; no provider's hook is
+/// waited on there, so the request has to be withdrawn, or the card would stay
+/// until its timeout.
+private struct PendingTermination {
+    /// `sigset_t` is a bit mask on Darwin, and its macros are not imported.
+    private static let mask = sigset_t(1) << sigset_t(SIGTERM - 1)
+
+    static func hold() {
+        var blocked = mask
+        pthread_sigmask(SIG_BLOCK, &blocked, nil)
+    }
+
+    var isRequested: Bool {
+        var pending = sigset_t()
+        sigpending(&pending)
+        return pending & Self.mask != 0
+    }
+}
+
 func run(input: Data) throws -> Data? {
     guard CommandLine.arguments.count == 3, CommandLine.arguments[1] == "permission-request" else {
         throw AgentIntegrationError.invalidArguments(
-            "Usage: AgentIntegrationHookHelper permission-request [claude|codex]"
+            "Usage: AgentIntegrationHookHelper permission-request [claude|codex|opencode]"
         )
     }
     let provider = CommandLine.arguments[2]
     let completion = provider == "claude" ? AgentQuestionTurnCompletion(
         payload: input, environment: ProcessInfo.processInfo.environment
     ) : nil
+    let termination = provider == "opencode" ? PendingTermination() : nil
+    // Both are noticed between short waits for the decision.
+    let isPolled = completion != nil || termination != nil
     guard let translated = try RustProviderBridge.approvalRequest(provider: provider, payload: input),
           let request = try JSONSerialization.jsonObject(with: translated) as? [String: Any],
           let toolName = request["tool_name"] as? String,
@@ -161,7 +193,7 @@ func run(input: Data) throws -> Data? {
     let waitDeadline = ProcessInfo.processInfo.systemUptime + Double(timeoutMilliseconds) / 1000
     var response: [String: Any]
     repeat {
-        if completion?.hasCompleted() == true {
+        if completion?.hasCompleted() == true || termination?.isRequested == true {
             _ = try client.exchange(AgentIntegrationApprovalWire.cancel(
                 epoch: epoch, runID: runID, requestID: requestID
             ))
@@ -170,15 +202,15 @@ func run(input: Data) throws -> Data? {
         response = try AgentIntegrationApprovalWire.object(from: client.exchange(
             AgentIntegrationApprovalWire.wait(
                 epoch: epoch, runID: runID, requestID: requestID,
-                maximumWaitMilliseconds: completion == nil ? timeoutMilliseconds : 500
+                maximumWaitMilliseconds: isPolled ? 500 : timeoutMilliseconds
             ),
-            timeoutSeconds: completion == nil ? approvalWaitSeconds : 5
+            timeoutSeconds: isPolled ? 5 : approvalWaitSeconds
         ))
         let state = (response["body"] as? [String: Any])?["state"] as? [String: Any]
         if state?["status"] as? String != "pending" {
             break
         }
-    } while completion != nil && ProcessInfo.processInfo.systemUptime < waitDeadline
+    } while isPolled && ProcessInfo.processInfo.systemUptime < waitDeadline
     if completion?.hasCompleted() == true {
         return nil
     }

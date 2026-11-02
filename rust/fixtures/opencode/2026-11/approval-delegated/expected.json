@@ -1,0 +1,68 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "cwd": "/repo"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "ses_e67f8d6c4ffePhQBQjRPnHdr7Z",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "TOOL shell {\"command\":\"touch card-4.txt\",\"description\":\"make a file\"}",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "extension",
+      "name": "session.step.started",
+      "payload": {}
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "shell",
+      "detail": "shell: touch card-4.txt"
+    }
+  ],
+  [
+    {
+      "type": "approval_requested",
+      "detail": "shell: touch card-4.txt"
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "shell"
+    }
+  ],
+  [
+    {
+      "type": "tool_finished",
+      "tool": "shell"
+    }
+  ],
+  [
+    {
+      "type": "turn_finished",
+      "titles": {
+        "session_title": "STUB"
+      },
+      "reply": "STUB"
+    }
+  ]
+]

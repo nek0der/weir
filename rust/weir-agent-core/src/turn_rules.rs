@@ -541,7 +541,8 @@ mod tests {
             turn_step(
                 &AgentEvent::Failed {
                     error: "x".into(),
-                    usage_limit: None
+                    usage_limit: None,
+                    kind: None,
                 },
                 &records,
                 None,

@@ -243,4 +243,85 @@ struct UsageLimitTests {
         #expect(SessionRowFactText.current(model.rows[0], now: Self.start, locale: en).contains("resets"))
         #expect(SessionRowFactText.current(model.rows[0], now: Self.reset, locale: en) == "Stopped: 5-hour limit reached")
     }
+
+    // MARK: - Whom a limit holds
+
+    @Test func aLimitOnOneServiceMarksNoOtherAgent_andOffersNoWaitInPlaceOfGoingOn() {
+        let upstream = UsageLimit(resetAt: Self.reset, scope: .upstream, label: "Free usage limit reached")
+        let item = AttentionItem.testUsageLimitStop(upstream, arrivedAt: Self.start)
+        let limits = UsageLimits(items: [item])
+        #expect(!upstream.isAccountWide)
+        #expect(limits.accountWide(of: item.subject.provider ?? .claude).isEmpty)
+        #expect(UsageLimitResetNotice.of(item, in: limits, isRequested: { _ in false }, now: Self.reset.addingTimeInterval(-60)) == nil)
+    }
+
+    @Test func aClaudeModelsWeeklyLimit_keepsItsNotice() {
+        let opus = UsageLimit(resetAt: Self.reset, window: "seven_day_opus")
+        #expect(opus.scope == .model)
+        let item = AttentionItem.testUsageLimitStop(opus, provider: .claude, arrivedAt: Self.start)
+        let limits = UsageLimits(items: [item])
+        #expect(UsageLimitResetNotice.of(item, in: limits, isRequested: { _ in
+            false
+        }, now: Self.reset.addingTimeInterval(-60)) == .offered)
+    }
+
+    @Test func aScopeThisBuildDoesNotKnow_readsTheSameKept_asProjected() throws {
+        let kept = try JSONDecoder().decode(UsageLimit.self, from: Data(#"{"scope":"from-a-newer-build"}"#.utf8))
+        #expect(kept.scope == .upstream)
+    }
+
+    @Test func aLimitKeptFromBeforeScopes_readsAsItDidThen() throws {
+        let decode = { (json: String) in try JSONDecoder().decode(UsageLimit.self, from: Data(json.utf8)) }
+        #expect(try decode(#"{"window":"five_hour"}"#).scope == .account)
+        #expect(try decode(#"{"window":"seven_day_opus"}"#).scope == .model)
+        #expect(try decode(#"{"window":"seven_day_opus","scope":"account"}"#).scope == .account)
+        #expect(try decode(#"{"scope":"upstream","label":"Over"}"#).label == "Over")
+        let kept = UsageLimit(window: "five_hour", scope: .upstream, label: "Over")
+        #expect(try JSONDecoder().decode(UsageLimit.self, from: JSONEncoder().encode(kept)) == kept)
+    }
+
+    @Test func aLimitInTheAgentsOwnWords_isShownAsItIsSaid() {
+        let english = Locale(identifier: "en")
+        let limit = UsageLimit(scope: .upstream, label: "Free usage limit reached")
+        #expect(StopReasonText.usageLimit(limit, locale: english, now: Self.reset) == "Free usage limit reached")
+    }
+
+    // MARK: - Who a run is, and what stopped it
+
+    private func runtime(provider: String, badge: String = "") throws -> AgentProjectedRuntime {
+        let json = #"""
+        {"id":"r","provider":"\#(provider)","panes":[],"attachment":"attached","eventToken":"e","episodeToken":"1",
+         "badge":{"state":"error","isTmuxHosted":false,"updatedAt":"2026-10-13T06:40:00Z"\#(badge)}}
+        """#
+        return try JSONDecoder().decode(AgentProjectedRuntime.self, from: Data(json.utf8))
+    }
+
+    @Test func aRunOfAProviderThisBuildDoesNotKnow_isNotShownAsAnotherAgent() throws {
+        #expect(try AgentRuntimePresentation(projected: runtime(provider: "from-a-newer-build"), tmuxLocationsByEndpoint: [:]) == nil)
+        #expect(try AgentRuntimePresentation(projected: runtime(provider: "opencode"), tmuxLocationsByEndpoint: [:])?.kind == .opencode)
+    }
+
+    @Test func aFailureOfItsOwnKind_namesTheServiceOrModelItNeeds() throws {
+        let badge = { (kind: String) in
+            try self.runtime(provider: "opencode", badge: #","failureKind":"\#(kind)","model":"GPT-5.5","modelUpstream":"OpenRouter""#)
+                .badge.asAgentBadge
+        }
+        #expect(try badge("signIn").runtimeFailure == .signIn(upstream: "OpenRouter"))
+        #expect(try badge("modelUnavailable").runtimeFailure == .modelUnavailable(model: "GPT-5.5"))
+        #expect(try badge("from-a-newer-build").runtimeFailure == nil)
+        let english = Locale(identifier: "en")
+        #expect(StopReasonText.message(.signInRequired(upstream: "OpenRouter"), locale: english) == "Sign in to OpenRouter to go on.")
+        #expect(StopReasonText.message(.modelUnavailable(model: "GPT-5.5"), locale: english) == "Can’t use the model GPT-5.5.")
+    }
+
+    @Test func aProjectedLimit_readsItsScope_andAWordThisBuildDoesNotKnowHoldsNoOtherAgent() throws {
+        let limit = { (fields: String) in
+            try self.runtime(provider: "opencode", badge: #","usageLimit":{\#(fields)}"#).badge.asAgentBadge.usageLimit
+        }
+        #expect(try limit(#""scope":"upstream","label":"Over""#)?.scope == .upstream)
+        #expect(try limit(#""scope":"upstream","label":"Over""#)?.label == "Over")
+        #expect(try limit(#""scope":"from-a-newer-build""#)?.scope == .upstream)
+        #expect(try limit(#""window":"seven_day_opus""#)?.scope == .model)
+        #expect(try limit(#""window":"five_hour""#)?.scope == .account)
+    }
 }

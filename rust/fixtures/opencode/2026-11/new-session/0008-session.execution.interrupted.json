@@ -1,0 +1,17 @@
+{
+  "hook_event_name": "session.execution.interrupted",
+  "data": {
+    "reason": "moved",
+    "sessionID": "ses_e68016458ffeNvQDXve6etKzZ2"
+  },
+  "cwd": "/repo",
+  "usage": {
+    "input": 0,
+    "output": 0,
+    "reasoning": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "isPartial": true
+  },
+  "title": "Sleep 15 command"
+}

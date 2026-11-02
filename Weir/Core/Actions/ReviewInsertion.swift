@@ -77,6 +77,10 @@ enum ReviewInsertion {
         /// tab forward a moment, since a surface is made only for a tab on
         /// screen. Without it such a pane takes nothing.
         var startPane: @MainActor (UUID) async -> Bool = { _ in false }
+        /// Brings the session the review is about forward in a pane that shows
+        /// several, and says whether it is on screen: a paste goes to whichever one
+        /// is. A pane with one has nothing to do.
+        var showSession: @MainActor (ReviewDestination) async -> Bool = { _ in true }
     }
 
     /// Resolves, builds, delivers and records — in that order.
@@ -129,6 +133,13 @@ enum ReviewInsertion {
             instructions: target.instructions,
             locale: target.locale
         )
+        // Last, with nothing to wait on after it but this check: what it confirms is a
+        // read of the screen, which ages from here. See `ReviewSessionFocus` for the
+        // moment that is left.
+        guard await target.showSession(destination) else { throw ReviewError.sessionNotShown }
+        guard target.isSameReview(), target.originPaneID() == destination.paneID else {
+            throw ReviewError.targetUnavailable
+        }
         let settlement = ReviewPasteSettlement()
         try ReviewAgents.insert(
             prompt,

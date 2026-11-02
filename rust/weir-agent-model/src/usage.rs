@@ -23,6 +23,59 @@ pub struct UsageLimit {
     /// not given.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window: Option<String>,
+    /// Whom the limit holds. Absent means `Account`, which is what every limit
+    /// was before the field existed; the app reads a record's absent value by
+    /// its window, as those records' model limits named themselves there.
+    #[serde(
+        default,
+        skip_serializing_if = "UsageLimitScope::is_account",
+        deserialize_with = "UsageLimitScope::read"
+    )]
+    pub scope: UsageLimitScope,
+    /// The name of the limit in the provider's words, for a limit the interface
+    /// has no word for (`Free usage`), as `window` names one it has. `None` when
+    /// not given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+/// Which of the agent's work a usage limit stops.
+///
+/// A CLI with one vendor's plan behind it has one limit for all of its sessions.
+/// A CLI that reaches many services and models does not: a limit on one of them
+/// says nothing of a session on another, which goes on or could by changing
+/// model. The rules go by this, never by which provider it is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UsageLimitScope {
+    /// Every session of the agent on this account.
+    #[default]
+    Account,
+    /// The sessions going through one service the agent reaches its models by.
+    Upstream,
+    /// The sessions on one model.
+    Model,
+}
+
+impl UsageLimitScope {
+    /// A word this build does not know says the limit holds less than the account,
+    /// as every word but the default does. It reads as `Upstream`, which marks no
+    /// other agent; the app reads it the same (`UsageLimitScope` there), and the limit
+    /// itself stands.
+    fn read<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(
+            match serde_json::Value::deserialize(deserializer)?.as_str() {
+                Some("account") => Self::Account,
+                Some("model") => Self::Model,
+                _ => Self::Upstream,
+            },
+        )
+    }
+
+    #[allow(clippy::trivially_copy_pass_by_ref)] // serde passes the field by reference.
+    fn is_account(&self) -> bool {
+        *self == Self::Account
+    }
 }
 
 /// How much of a subscription plan's limits an agent's account has used, as
@@ -118,6 +171,7 @@ mod tests {
         let limit = UsageLimit {
             resets_at: Some("2026-10-13T06:40:00Z".to_owned()),
             window: Some("five_hour".to_owned()),
+            ..UsageLimit::default()
         };
         assert_eq!(
             serde_json::to_string(&limit).unwrap(),
@@ -128,6 +182,26 @@ mod tests {
             serde_json::from_str::<UsageLimit>("{}").unwrap(),
             UsageLimit::default()
         );
+    }
+
+    #[test]
+    fn a_limit_that_holds_less_than_the_account_says_so() {
+        let limit = UsageLimit {
+            scope: UsageLimitScope::Upstream,
+            label: Some("Free usage".to_owned()),
+            ..UsageLimit::default()
+        };
+        let text = serde_json::to_string(&limit).unwrap();
+        assert_eq!(text, r#"{"scope":"upstream","label":"Free usage"}"#);
+        assert_eq!(serde_json::from_str::<UsageLimit>(&text).unwrap(), limit);
+    }
+
+    #[test]
+    fn a_scope_this_build_does_not_know_keeps_the_limit_and_marks_no_other_agent() {
+        let limit: UsageLimit =
+            serde_json::from_str(r#"{"window":"w","scope":"from-a-newer-build"}"#).unwrap();
+        assert_eq!(limit.scope, UsageLimitScope::Upstream);
+        assert_eq!(limit.window.as_deref(), Some("w"));
     }
 
     #[test]

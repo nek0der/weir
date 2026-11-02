@@ -377,6 +377,7 @@ enum SessionRowFactText {
         case .agent(.claude): "Claude"
         case .agent(.codex): "Codex"
         case .agent(.antigravity): "Antigravity"
+        case .agent(.opencode): "OpenCode"
         case .shell: LocalizedStringResource("Shell").resolved(in: locale)
         }
     }
@@ -428,6 +429,7 @@ enum SessionRowFactText {
         case .agent(.claude): "Cl"
         case .agent(.codex): "Cx"
         case .agent(.antigravity): "Ag"
+        case .agent(.opencode): "Op"
         case .shell: ""
         }
     }

@@ -124,6 +124,8 @@ release that came just before the change being described.
 | `worktree-routing.json` | still version 1, two optional fields, and a third agent in `routing` | none |
 | Run records (`agent-states/`, `codex-agent-states/`) | still schema 3, seven optional fields | none |
 | Antigravity's run records and resume hints (`antigravity-agent-states/`, `antigravity-sessions/`) | new | — |
+| OpenCode's run records and resume hints (`opencode-agent-states/`, `opencode-sessions/`) | new | — |
+| Saved turn starts (`opencode-agent-states/turn-preparations/`) | new: at most one per run, gone once a turn takes it | — |
 | Turn records and counters (`<state>/turns/`) | new | — |
 | `turn-reads.json`, `viewed-lines.json` | new | — |
 | `stops.json` | new | — |
@@ -134,6 +136,7 @@ release that came just before the change being described.
 | `pane-path-<project ID>.txt` | new: the `PATH` the last shell of a pane of that project ended up with, where an agent is looked up for that project | — |
 | Codex's `~/.codex/config.toml` (the person's own) | our tables and markers are taken out | none |
 | Antigravity's plugin (`~/.gemini/config/plugins/weir`) | new | — |
+| OpenCode's plugin (`~/.config/opencode/plugins/weir`) | new | — |
 | Refs and files in each repository's Git directory | new, and one no longer written | — |
 
 ### `state.json`: version 5 to 6
@@ -393,7 +396,7 @@ Some keys of version 6 are still written but no longer read:
     so dropping them needs no version bump. They then move to the list
     above, as keys passed over and not written again.
 
-A saved `antigravity` agent adds no version either. The build before opens a
+A saved `antigravity` or `opencode` agent adds no version either. The build before opens a
 file that names it and loses only what belongs to that agent:
 
 - A tab's `agentSessions` and `agentBadges` skip the provider they do not know
@@ -403,7 +406,7 @@ file that names it and loses only what belongs to that agent:
   drops it. An entry of `conversationTabNames` of that agent is passed over,
   and the next save drops it too.
 - `settings.json` keeps `newSession.lastOpen` and a project's `open` as
-  strings. A value of `antigravity` reads as no choice there, and is written
+  strings. A value of `antigravity` or `opencode` reads as no choice there, and is written
   back only until the sheet records another.
 
 The previous release reads version 5 only. A version 6 file fails to decode
@@ -1025,6 +1028,31 @@ is outside Weir, and the plugin's hook only gives `agy` the default reply.
 `agy plugin disable weir` stops it. So does removing the folder, until the next
 `agy` run in a pane of this release.
 
+### OpenCode's plugin
+
+Not in the Application Support folder: only the interface in a pane knows whose a
+session on OpenCode's shared service is, so the shim of a Weir pane places a plugin at
+`~/.config/opencode/plugins/weir`, under `XDG_CONFIG_HOME` when that is set, or under
+`OPENCODE_CONFIG_DIR` when the person sets it
+(`Weir/Resources/opencode-shim/opencode`), marked by a `.weir-managed` file inside it.
+The shim places it again when the mark is lower than the one this build ships, and leaves
+alone a folder without the mark. Weir takes no copy, as every file in the folder is its
+own.
+
+The plugin stays when you go back. An earlier build places nothing and does not run this
+shim, so `WEIR_OPENCODE_HOOK_DIR` is unset in its panes, as it is outside Weir, and the
+plugin does nothing.
+
+### New fields on a run record and a stop
+
+Run records gain `modelUpstream`, `agentProfile`, and `failureKind`, all optional and read
+leniently, for every provider but only OpenCode writes them. A `usageLimit` in a record or
+in `stops.json` gains `scope` and `label`. A limit without `scope` reads as what it was,
+by its `window`: the weekly limits of one Claude model hold that model, and any other holds
+the account. `stops.json` gains the reasons `signInRequired` and `modelUnavailable`. The
+build before passes unknown record fields through and reads an unknown stop reason as an
+entry it cannot use, as it does for an Antigravity stop.
+
 ### Git directories
 
 In each repository Weir works in:
@@ -1050,9 +1078,11 @@ In each repository Weir works in:
     the reason (`keptAside:<place>`). They are still read, and are written
     the new way when next written. No release wrote a journal, so no
     released build reads the new form.
-- `<git-dir>/weir/turn-<pane>.index` and `turn-<pane>.end.index` are the
-  private indexes the snapshots are taken through; the real index is never
-  touched. The hook removes them when the session ends.
+- `<git-dir>/weir/turn-<pane>.<pid>.index` and `turn-<pane>.<pid>.end.index` are the
+  private indexes the snapshots are taken through, each gone when its capture ends;
+  the real index is never touched. The next capture in the pane removes what a killed one
+  left, and the shared `turn-<pane>.index` and `turn-<pane>.end.index` of earlier builds.
+  So does the hook when the session ends.
 - `refs/weir/turn/<pane>`, which the previous release moved at every prompt
   for its "This turn" review, is no longer written. When a session ends, the
   hook still removes it, along with the `turn-<pane>.read.index` that review

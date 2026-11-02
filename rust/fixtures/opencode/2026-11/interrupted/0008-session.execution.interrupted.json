@@ -1,0 +1,20 @@
+{
+  "hook_event_name": "session.execution.interrupted",
+  "event_id": "evt_197f6e0a8002622tISDmIsVOSI",
+  "created": 1793550901416,
+  "seq": 14,
+  "data": {
+    "sessionID": "ses_e68093fe9ffenF1L3aVX17gmcT",
+    "reason": "user"
+  },
+  "cwd": "/repo",
+  "usage": {
+    "input": 90,
+    "output": 57,
+    "reasoning": 0,
+    "cacheRead": 8320,
+    "cacheWrite": 0,
+    "isPartial": false
+  },
+  "title": "Shell sleep 20 command"
+}

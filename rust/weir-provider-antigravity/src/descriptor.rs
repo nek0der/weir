@@ -17,6 +17,7 @@ pub(crate) fn descriptor() -> &'static ProviderDescriptor {
                 Capability::Resume,
                 Capability::ResumeDefersToOtherLiveSession,
                 Capability::WorktreeEvents,
+                Capability::WorktreePlacement,
                 Capability::Subagents,
                 Capability::TurnSnapshot,
                 // `agy` sends no hook for Esc, Ctrl+C, or a "No" at its own

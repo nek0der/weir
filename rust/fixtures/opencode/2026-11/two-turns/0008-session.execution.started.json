@@ -1,0 +1,13 @@
+{
+  "hook_event_name": "session.execution.started",
+  "event_id": "evt_197ee7f530013Oz67v25LwG2DL",
+  "created": 1793550352211,
+  "seq": 15,
+  "data": {
+    "sessionID": "ses_e6811df99ffec906Lvdn0geRZZ"
+  },
+  "cwd": "/repo",
+  "prompt": "Run the shell command echo TWO and then reply DONE",
+  "prompt_kind": "user",
+  "preparation": "068ab87a-678a-41a2-9594-d1fe16872afa"
+}

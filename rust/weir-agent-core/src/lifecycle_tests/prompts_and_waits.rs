@@ -68,7 +68,8 @@ fn session_start_resets_the_run_and_remembers_the_session() {
         writes.side,
         vec![SideWrite::SessionHint {
             session_id: "session-1".into(),
-            cwd: Some("/repo".into())
+            cwd: Some("/repo".into()),
+            owner_run_id: None,
         }]
     );
     assert_eq!(writes.snapshot, None);
@@ -276,6 +277,7 @@ fn a_permission_prompt_takes_only_a_tool_events_words() {
             AgentEvent::Failed {
                 error: "rate_limit".into(),
                 usage_limit: None,
+                kind: None,
             },
             AgentEvent::ApprovalRequested {
                 detail: Some("Claude needs your permission to use Bash".into()),
@@ -317,7 +319,7 @@ fn a_turn_carries_prompts_and_ends_without_erasing_them() {
     assert_eq!(
         snapshots,
         vec![TurnSnapshotOp::Capture {
-            cwd: Some("/repo".into())
+            cwd: Some("/repo".into()),
         }]
     );
 
@@ -359,6 +361,7 @@ fn a_turn_carries_prompts_and_ends_without_erasing_them() {
         &AgentEvent::Failed {
             error: "server_error".into(),
             usage_limit: None,
+            kind: None,
         },
         &context(),
         &claude(),
@@ -446,10 +449,12 @@ fn a_failure_sets_the_usage_limit_and_the_next_failure_replaces_it() {
     let limit = weir_agent_model::UsageLimit {
         resets_at: Some("2026-09-14T15:00:00Z".to_owned()),
         window: Some("five_hour".to_owned()),
+        ..weir_agent_model::UsageLimit::default()
     };
     let limited = AgentEvent::Failed {
         error: "rate_limit".into(),
         usage_limit: Some(limit.clone()),
+        kind: None,
     };
     let (record, _, _) = run(&claude(), &[started(None), prompt("go"), limited.clone()]);
     assert_eq!(record.state, RunState::Error);
@@ -460,6 +465,7 @@ fn a_failure_sets_the_usage_limit_and_the_next_failure_replaces_it() {
     let other = AgentEvent::Failed {
         error: "server_error".into(),
         usage_limit: None,
+        kind: None,
     };
     let (record, _, _) = run(&claude(), &[started(None), prompt("go"), limited, other]);
     assert_eq!(record.usage_limit, None);
@@ -488,6 +494,7 @@ fn every_event_that_starts_or_ends_work_clears_the_cache_window() {
         AgentEvent::Failed {
             error: "server_error".into(),
             usage_limit: None,
+            kind: None,
         },
         AgentEvent::Interrupted,
     ];
@@ -540,7 +547,7 @@ fn session_end_keeps_prompts_drops_the_hint_and_removes_the_snapshot() {
     assert_eq!(
         writes.snapshot,
         Some(TurnSnapshotOp::Remove {
-            cwd: Some("/repo".into())
+            cwd: Some("/repo".into()),
         })
     );
     assert_eq!(
@@ -739,7 +746,7 @@ fn side_only_events_write_no_record() {
         writes.side,
         vec![SideWrite::CwdEvent {
             new_cwd: "/repo/.git".into(),
-            old_cwd: Some("/repo".into())
+            old_cwd: Some("/repo".into()),
         }]
     );
     assert_eq!(
@@ -812,6 +819,7 @@ fn detail_belongs_to_one_event_only() {
             AgentEvent::Failed {
                 error: "server_error".into(),
                 usage_limit: None,
+                kind: None,
             },
             prompt("second"),
         ],

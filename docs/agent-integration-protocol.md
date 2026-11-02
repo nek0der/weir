@@ -334,7 +334,7 @@ and the application share their shape, which `weir-agent-model`
 (`turn.rs`, `TurnRecord`) owns.
 
 A provider whose descriptor has the `turn_snapshot` capability (Claude Code,
-Codex, and Antigravity today) records turns. Its hook events map to provider-neutral
+Codex, Antigravity, and OpenCode today) records turns. Its hook events map to provider-neutral
 events, and those decide what is written (`turn_step` in
 `weir-agent-core`):
 
@@ -368,6 +368,34 @@ approval capability and its own prompt asks. Its hook always exits 0 with valid
 JSON, since `agy` fails the tool on any other result. A `git worktree add` aimed
 at another folder gets a `deny` whose reason gives the command to run instead
 (`ProviderAdapter::worktree_reroute_output`).
+
+OpenCode (2.2.5) reports through a plugin in the pane's terminal interface, as its
+sessions run on a shared service where no hook knows the pane. The plugin runs
+`weir-hook` for each event of a session this pane sent input to, in order, with
+OpenCode's event as the payload's `data`.
+
+| Plugin's report | Event | Effect |
+|---|---|---|
+| `weir.prepare`, at the Enter that sends an input | none (`ProviderAdapter::turn_preparation`) | saves the turn's start under a generation, and writes no record |
+| `weir.launch`, as the interface starts | `SessionStarted`, `resume` with `--session` and `startup` otherwise | a run rests from the launch |
+| `weir.session`, when the pane moves to a session it sent input to | `SessionStarted` | names the session on the record and the resume hint |
+| `session.execution.started` | `PromptSubmitted` | begins a turn from the start its `preparation` names, or with none; an input only for `/compact` begins none |
+| `session.tool.called` | `ToolStarted` | names the tool and its command or file |
+| `session.tool.success`, `session.tool.failed` | `ToolFinished` | records a check from `metadata.exit`, as a command that fails is a tool that worked |
+| `permission.asked` | `ApprovalRequested` | the run waits, and the plugin asks the helper for the card |
+| `form.created` | `WaitingForInput` | the run waits on a question, answered at OpenCode's prompt |
+| `permission.replied`, `form.replied`, `form.cancelled`, when the last wait is answered | `ToolStarted` | back to work; a refusal is left to the end of the execution |
+| `session.compaction.started`, `.ended`, `.failed` | `Compacting`, `CompactionFinished` | the plugin also reports `.failed` for a compaction-only execution that closes midway, as Esc publishes none |
+| `session.retry.scheduled` | `ToolStarted` | work going on, with the error as its detail: the service tries again by itself |
+| `session.execution.succeeded` | `TurnFinished` | ends the turn with its reply and what its steps used |
+| `session.execution.failed` | `Failed` | with a limit or a kind read from `error.type` |
+| `session.execution.interrupted` | `Interrupted` | ends the turn; also what the plugin reports for one it left behind, or found ended with no event |
+| `session.step.started`, when its settings change | extension | the model, its service, effort, and role (`session_settings`) |
+
+The plugin asks the helper with `permission-request opencode`, and replies
+`once` or `reject` through OpenCode's client. No answer leaves the person to OpenCode's
+own prompt, which stays up throughout; an answer there ends the helper, which withdraws
+the card.
 
 Codex begins some turns itself, with no `UserPromptSubmit`: those its `/goal`
 starts and continues. Every hook inside a Codex turn names it (`turn_id` on

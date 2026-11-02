@@ -282,6 +282,9 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
         for (k, v) in AntigravityShimLocator.environment(writesRecords: session.writesUserFiles) {
             env[k] = v
         }
+        for (k, v) in OpenCodeShimLocator.environment(writesRecords: session.writesUserFiles) {
+            env[k] = v
+        }
         let launch = Self.launch(session: session, paneID: paneID)
         // The first instruction's file and the agent's executable, which
         // only a staged launch has: a restored pane gets neither.
@@ -543,7 +546,10 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
         if let codex = CodexResumeCommandBuilder.resume(for: tab, paneID: paneID) {
             return codex
         }
-        return AgentResumeCommandBuilder<AntigravityAgent>.resume(for: tab, paneID: paneID)
+        if let antigravity = AgentResumeCommandBuilder<AntigravityAgent>.resume(for: tab, paneID: paneID) {
+            return antigravity
+        }
+        return AgentResumeCommandBuilder<OpenCodeAgent>.resume(for: tab, paneID: paneID)
     }
 
     /// Stage the saved scrollback path for replay and clear it from the

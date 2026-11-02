@@ -1,0 +1,11 @@
+{
+  "hook_event_name": "permission.replied",
+  "event_id": "evt_1980e6489001yDhNv277zswOUP",
+  "created": 1793552442505,
+  "data": {
+    "sessionID": "ses_e67f1a00effe3jUQwm0dn3aMOZ",
+    "requestID": "per_1980e6050001JsLJL38Zlxf0BU",
+    "reply": "once"
+  },
+  "tool": "shell"
+}

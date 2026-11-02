@@ -1,0 +1,20 @@
+{
+  "hook_event_name": "session.execution.succeeded",
+  "event_id": "evt_197f5cf9f001zycVFw9UTifl6k",
+  "created": 1793550831519,
+  "seq": 19,
+  "data": {
+    "sessionID": "ses_e680a3e14ffeQ6sWTHY4TED89Z"
+  },
+  "cwd": "/repo",
+  "usage": {
+    "input": 249,
+    "output": 40,
+    "reasoning": 0,
+    "cacheRead": 16640,
+    "cacheWrite": 0,
+    "isPartial": false
+  },
+  "reply": "DONE",
+  "title": "Run false without retry"
+}

@@ -55,6 +55,8 @@ is used up. A click outside the panel or Escape closes it.
   for Claude Code: the weekly Gemini limit, as of its last reply in a Weir
   pane, and only with a status line of your own. A launch that passes its own
   `--settings` shows no usage.
+- **OpenCode** has no section: its limits belong to whoever serves the model
+  rather than to OpenCode.
 
 ### Sidebar
 
@@ -138,7 +140,10 @@ default, and the tokens its conversation's kept turns have used.
 When the agent runs every action without asking (Claude Code's bypass mode, or Codex with approvals
 set to never), the header says **Runs without asking** beside a warning
 sign. Antigravity does not report its permission mode, so its header shows
-neither the mode nor this warning. As the pane narrows, the folder goes first, then the tokens, then the
+neither the mode nor this warning. OpenCode's header names the role you chose for the
+agent, if any, the model, and the service it goes through, whichever model it runs: the
+badge stays `Op`. A long model name is cut in the middle, and the hover text has it
+whole. As the pane narrows, the folder goes first, then the tokens with OpenCode's service, then the
 model, the effort, and the mode, then the name. The warning stays as its sign.
 
 When tmux shows several agents in one terminal, the header gives priority
@@ -259,8 +264,8 @@ encoding.
 
 1. **Start.** **New Worktree** (⌘N) makes a worktree on a new or existing
    branch, fetching a remote base first and copying in the ignored files the
-   project names, such as `.env`, then opens Claude Code, Codex, Antigravity, a
-   shell, or nothing in it. The sheet only makes the worktree; you give the agent its
+   project names, such as `.env`, then opens Claude Code, Codex, Antigravity,
+   OpenCode, a shell, or nothing in it. The sheet only makes the worktree; you give the agent its
    first instruction in its own prompt. **Create** (⌘⏎) makes it; ⌥⌘N makes
    one at once with the last choices, without the sheet.
 2. **It works.** The sidebar row and the decision bar show what the agent is
@@ -273,7 +278,9 @@ encoding.
    **Answer in terminal** hands it to the agent's own prompt. While another
    app is in front, the menu bar can answer a short, low-impact shell
    command. Codex questions are always answered in the terminal, and so is
-   everything Antigravity asks.
+   everything Antigravity asks. OpenCode's questions are answered in the terminal
+   too, and its own prompt stays up while Weir holds an approval: answer at either
+   one.
 4. **You review.** **Review Unviewed**, **Review All Unviewed**, or ⌥⌘R opens
    a review tab in place of the terminal. Its scope menu picks one
    conversation's unviewed turns, all unviewed turns in the worktree, a
@@ -299,6 +306,8 @@ encoding.
   [CONTRIBUTING.md](../CONTRIBUTING.md#native-approvals-in-a-debug-build).
   Antigravity always asks in its own prompt, in any build, and Weir shows
   that it waits; [Known limitations](known-limitations.md#antigravity) says why.
+  [OpenCode](known-limitations.md#opencode) uses the card too, with its own prompt up
+  beside it.
 - **Worktrees.** Create, switch, and delete worktrees from **New Worktree**,
   the worktree menu, and the sidebar row. When an agent `cd`s into another
   worktree, Weir offers to move the tab there.

@@ -1,5 +1,5 @@
 // AddTabMenu.swift
-// Weir — the pane strip's "+" menu: a Claude, Codex, Antigravity, or shell tab in this session.
+// Weir — the pane strip's "+" menu: a Claude, Codex, Antigravity, OpenCode, or shell tab in this session.
 
 import SwiftUI
 import WeirDomain
@@ -15,6 +15,7 @@ struct AddTabMenu: View {
         case claude
         case codex
         case antigravity
+        case opencode
         case shell
 
         /// The agent the tab runs; `nil` for a shell.
@@ -23,6 +24,7 @@ struct AddTabMenu: View {
             case .claude: .claude
             case .codex: .codex
             case .antigravity: .antigravity
+            case .opencode: .opencode
             case .shell: nil
             }
         }

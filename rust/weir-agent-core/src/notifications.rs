@@ -313,9 +313,10 @@ fn release(
             presents_banner: runtime.badge.state != RunState::Error,
             // This run's own tmux pane: another run of the same tmux session
             // may be in front in that pane, or behind it.
-            suppress_when_pane_focused: input
-                .presence
-                .shows(runtime.tmux_endpoint_key.as_deref(), &pane),
+            suppress_when_pane_focused: !runtime.panes_not_in_front.contains(&pane)
+                && input
+                    .presence
+                    .shows(runtime.tmux_endpoint_key.as_deref(), &pane),
             episode_token: runtime.episode_token.clone(),
             event_token: runtime.event_token.clone(),
             state: runtime.badge.state,
@@ -432,6 +433,9 @@ mod tests {
 
     fn runtime(state: RunState, event_token: &str, episode_token: &str) -> RuntimePresentation {
         RuntimePresentation {
+            panes_behind_shown_tab: Vec::new(),
+            panes_not_in_front: Vec::new(),
+            tab_channel: None,
             id: format!("claude:{RUN}"),
             provider: ProviderId::new("claude").expect("provider id"),
             run_id: Some(RUN.to_owned()),
@@ -464,6 +468,9 @@ mod tests {
                 model: None,
                 effort: None,
                 permission_mode: None,
+                model_upstream: None,
+                agent_profile: None,
+                failure_kind: None,
             },
             panes: vec![pane()],
             attachment: AttachmentResolution::Attached,

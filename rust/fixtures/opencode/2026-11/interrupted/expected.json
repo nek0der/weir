@@ -1,0 +1,52 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "cwd": "/repo"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "ses_e68093fe9ffenF1L3aVX17gmcT",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "Run the shell command sleep 20 and then reply DONE",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "extension",
+      "name": "session.step.started",
+      "payload": {}
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "shell",
+      "detail": "shell: sleep 20"
+    }
+  ],
+  [
+    {
+      "type": "tool_finished",
+      "tool": "shell"
+    }
+  ],
+  [
+    {
+      "type": "interrupted"
+    }
+  ]
+]

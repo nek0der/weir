@@ -312,6 +312,7 @@ fn turns_failures_interrupts_and_sessions_clear_it() {
     let failure = AgentEvent::Failed {
         error: "server_error".into(),
         usage_limit: None,
+        kind: None,
     };
     let ended = AgentEvent::SessionEnded {
         reason: Some("other".into()),

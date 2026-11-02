@@ -36,6 +36,12 @@ enum AgentProviderRegistry {
         descriptors[kind.rawValue]?.displayName ?? kind.rawValue
     }
 
+    /// Whether the provider's descriptor declares `capability` (its Rust name,
+    /// `worktree_placement`). False for an unknown provider.
+    static func has(_ capability: String, _ kind: AgentKind) -> Bool {
+        descriptors[kind.rawValue]?.capabilities.contains(capability) == true
+    }
+
     /// The executable names a provider runs as, as its descriptor declares.
     /// Empty for an unknown provider, so nothing matches it.
     static func processNames(for kind: AgentKind) -> [String] {

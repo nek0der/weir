@@ -71,11 +71,44 @@ pub struct SessionSettings {
     pub is_awaiting_answer: bool,
     /// How hard the model reasons, in the provider's own word for it
     /// (`medium`, `xhigh`), which is the word its interface shows.
+    ///
+    /// Empty says the model is back at its default, for a provider that can
+    /// change this during a session without changing the model; `None` says
+    /// nothing, as for every other setting.
     pub effort: Option<String>,
     pub permission_mode: Option<PermissionMode>,
+    /// Whom the provider goes through for the model, in words for a person to
+    /// read (`OpenRouter`), for a CLI that is not tied to one vendor: one model
+    /// name can have many routes, each with its own bill and handling of data.
+    pub model_upstream: Option<String>,
+    /// The role the session's agent has, in the provider's word for it, when
+    /// it is one a person chose. It is not a `PermissionMode`: nothing says the
+    /// role limits what the agent may do. Empty says the session is back at the
+    /// provider's ordinary role.
+    pub agent_profile: Option<String>,
+    /// The session's name, for a provider that can say it apart from a turn.
+    pub session_title: Option<String>,
+    /// The launch's run this run's session shares a pane with
+    /// (`RunRecord::pane_family_run_id`).
+    pub pane_family_run_id: Option<String>,
+    /// The run on screen now (`RunRecord::pane_shown_run_id`).
+    pub pane_shown_run_id: Option<String>,
+    /// Whether the screen shows no session (`RunRecord::pane_shows_home`).
+    pub pane_shows_home: Option<bool>,
+    /// The session of `pane_shown_run_id` and where it works, for the pane's one
+    /// resume hint, which follows what is on screen.
+    pub shown_session_id: Option<String>,
+    pub shown_cwd: Option<String>,
 }
 
 impl SessionSettings {
+    /// Whether the call says what a pane has on screen, which a person acts on: its
+    /// write waits longer for a busy record, and one that is lost says so.
+    #[must_use]
+    pub fn reports_screen(&self) -> bool {
+        self.pane_shown_run_id.is_some() || self.pane_shows_home.is_some()
+    }
+
     /// Whether the call said nothing of any of them.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -83,6 +116,12 @@ impl SessionSettings {
             && self.answered_model.is_none()
             && self.effort.is_none()
             && self.permission_mode.is_none()
+            && self.model_upstream.is_none()
+            && self.agent_profile.is_none()
+            && self.session_title.is_none()
+            && self.pane_family_run_id.is_none()
+            && self.pane_shown_run_id.is_none()
+            && self.pane_shows_home.is_none()
     }
 }
 

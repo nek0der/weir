@@ -1,0 +1,17 @@
+{
+  "hook_event_name": "session.tool.called",
+  "event_id": "evt_1980e604d0011CwWSDdw7A12G5",
+  "created": 1793552441421,
+  "seq": 10,
+  "data": {
+    "sessionID": "ses_e67f1a00effe3jUQwm0dn3aMOZ",
+    "assistantMessageID": "msg_1980e6020001hW58YBI3w6O3BS",
+    "id": "call_stub_1",
+    "input": {
+      "command": "touch card-1.txt",
+      "description": "make a file"
+    },
+    "executed": false,
+    "name": "shell"
+  }
+}

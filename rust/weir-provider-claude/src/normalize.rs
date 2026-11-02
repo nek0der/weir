@@ -104,6 +104,7 @@ pub(crate) fn normalize(input: RawHookInput<'_>) -> Result<Vec<AgentEvent>, Norm
                     None
                 },
                 error: error.to_owned(),
+                kind: None,
             }
         }
         "CwdChanged" => AgentEvent::CwdChanged {
@@ -965,6 +966,7 @@ mod tests {
             vec![AgentEvent::Failed {
                 error: "server_error".into(),
                 usage_limit: None,
+                kind: None,
             }]
         );
         let payload = r#"{"hook_event_name":"StopFailure"}"#;
@@ -973,6 +975,7 @@ mod tests {
             vec![AgentEvent::Failed {
                 error: "error".into(),
                 usage_limit: None,
+                kind: None,
             }]
         );
     }
@@ -1002,7 +1005,9 @@ mod tests {
                 usage_limit: Some(UsageLimit {
                     resets_at: Some("2026-10-07T06:00:00Z".into()),
                     window: Some("five_hour".into()),
+                    ..UsageLimit::default()
                 }),
+                kind: None,
             }]
         );
     }
@@ -1015,6 +1020,7 @@ mod tests {
             vec![AgentEvent::Failed {
                 error: "rate_limit".into(),
                 usage_limit: None,
+                kind: None,
             }]
         );
         let allowed = r#"{"type":"user","message":{"content":"go"}}
@@ -1027,6 +1033,7 @@ mod tests {
             vec![AgentEvent::Failed {
                 error: "rate_limit".into(),
                 usage_limit: None,
+                kind: None,
             }]
         );
     }

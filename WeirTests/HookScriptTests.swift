@@ -73,7 +73,10 @@ struct HookScriptTests {
                     // A pane ref and a read index left in the repository,
                     // which SessionEnd removes along with the private index.
                     #expect(try gitExitStatus(["update-ref", paneRef, baseTree], in: repo.url) == 0)
-                    #expect(FileManager.default.fileExists(atPath: privateIndexURL.path))
+                    // A capture's own scratch index goes with it; the shared one is what an
+                    // earlier build left.
+                    #expect(!FileManager.default.fileExists(atPath: privateIndexURL.path))
+                    try Data().write(to: privateIndexURL)
                     try Data().write(to: readIndexURL)
                 } else if eventIndex == 1 {
                     #expect(record?["turnBaseTree"] as? String == baseTree)

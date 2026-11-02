@@ -692,7 +692,8 @@ struct DecisionBarModel: Equatable {
     /// ends without a full stop ("… · resets 6:36 PM"), so its next sentence
     /// is set apart with one; every other reason ends with its own.
     private static func joined(_ why: String, _ more: String, after reason: StopReason, locale: Locale) -> String {
-        if case .usageLimit = reason {
+        // A limit in the agent's own words may end with its own full stop.
+        if case .usageLimit = reason, why.last.map({ !".!?。！？".contains($0) }) ?? true {
             return LocalizedStringResource(
                 "decisionBar.usageLimitAndMore",
                 defaultValue: "\(why). \(more)",

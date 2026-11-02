@@ -1,0 +1,18 @@
+{
+  "hook_event_name": "session.tool.success",
+  "event_id": "evt_197ee8364001l6JMSpIqqnPYbx",
+  "created": 1793550353252,
+  "seq": 22,
+  "data": {
+    "sessionID": "ses_e6811df99ffec906Lvdn0geRZZ",
+    "assistantMessageID": "msg_197ee7f59001Hhez7hK4aNEXcO",
+    "id": "chatcmpl-tool-b53b64f7648f740e",
+    "metadata": {
+      "status": "completed",
+      "truncated": false,
+      "exit": 0
+    },
+    "executed": false,
+    "name": "shell"
+  }
+}

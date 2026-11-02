@@ -1,0 +1,19 @@
+{
+  "hook_event_name": "session.step.started",
+  "event_id": "evt_197fed2d4001pcVdZ063quqiTV",
+  "created": 1793551422164,
+  "seq": 5,
+  "data": {
+    "sessionID": "ses_e680131d1ffeFQvRzeIc51dMIq",
+    "agent": "build",
+    "model": {
+      "id": "big-pickle",
+      "providerID": "opencode",
+      "variant": "default"
+    }
+  },
+  "model_info": {
+    "name": "Big Pickle",
+    "provider_name": "OpenCode"
+  }
+}

@@ -5,6 +5,7 @@ use weir_agent_model::{Focus, PaneLocation, ProjectionState, ProviderAdapter, Ta
 
 mod reported_waits;
 mod run_records;
+mod sibling_runs;
 mod sight;
 mod stopped_turns;
 mod turn_records;

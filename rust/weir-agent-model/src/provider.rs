@@ -95,6 +95,15 @@ pub enum Capability {
     CwdEvents,
     /// The provider reports worktree creation.
     WorktreeEvents,
+    /// Weir can stop the agent's `git worktree add` before it runs and send it to
+    /// the project's placement (`ProviderAdapter::worktree_intent`): the agent has a
+    /// hook before its tools that can change or refuse one.
+    WorktreePlacement,
+    /// A `git worktree add` the agent already ran can be proven by its payload
+    /// alone (`ProviderAdapter::worktree_finish_is_proven`), for an agent that has no
+    /// hook before its tools: the project's setup runs when it lands at the
+    /// placement.
+    WorktreeFinishProven,
     /// Approval is answered by a hook process.
     ApprovalHook,
     /// Approval is requested over a connection.
@@ -123,6 +132,11 @@ pub enum Capability {
     /// stood for a while, as the agent sends one for a moment at every start,
     /// signed in or not.
     ProgramStatusAuthSettles,
+    /// A turn's start is saved by a call of its own before the input is sent
+    /// (`ProviderAdapter::turn_preparation`), since the event that says the turn
+    /// began reaches us after the agent may have started on it. A turn no such
+    /// call came before has no start, rather than a late one taken for its start.
+    TurnBeginPrepared,
 }
 
 /// What the platform needs to know about a provider without linking its

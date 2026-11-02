@@ -33,6 +33,7 @@ pub(crate) fn usage_limit(error: &str, now: SystemTime) -> Option<UsageLimit> {
             .and_then(|delay| now.checked_add(delay))
             .map(format_utc_seconds),
         window: None,
+        ..UsageLimit::default()
     })
 }
 

@@ -91,7 +91,7 @@ extension AttentionState {
     /// runs rather than the store (the pane strip).
     nonisolated static func headerRuntime(inPane paneID: UUID, among runtimes: [AgentRuntimePresentation]) -> AgentRuntimePresentation? {
         runtimes
-            .filter { $0.paneIDs.contains(paneID) && $0.badge.state != .unknown }
+            .filter { $0.paneIDs.contains(paneID) && $0.badge.state != .unknown && !$0.panesBehindShownTab.contains(paneID) }
             .max { $0.badge.updatedAt < $1.badge.updatedAt }
     }
 

@@ -1,0 +1,68 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "cwd": "/repo"
+    }
+  ],
+  [],
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "ses_e67f039fbffeSjARELW0ZUCW7l",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "prompt_submitted",
+      "prompt": "TOOL question {\"questions\":[{\"question\":\"Red or blue?\",\"header\":\"Color\",\"options\":[{\"label\":\"Red\",\"description\":\"warm\"},{\"label\":\"Blue\",\"description\":\"cool\"}]}]}",
+      "cwd": "/repo"
+    }
+  ],
+  [
+    {
+      "type": "extension",
+      "name": "session.step.started",
+      "payload": {}
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "question",
+      "detail": "question"
+    }
+  ],
+  [
+    {
+      "type": "waiting_for_input",
+      "detail": "Red or blue?"
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "question"
+    }
+  ],
+  [
+    {
+      "type": "tool_finished",
+      "tool": "question"
+    }
+  ],
+  [
+    {
+      "type": "turn_finished",
+      "titles": {
+        "session_title": "STUB"
+      },
+      "reply": "STUB"
+    }
+  ]
+]

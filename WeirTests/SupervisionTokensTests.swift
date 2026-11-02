@@ -186,18 +186,23 @@ struct SupervisionTokensTests {
         Pair("Claude badge's edge on window", Tokens.claudeEdge, Tokens.window),
         Pair("Codex badge's edge on window", Tokens.codexEdge, Tokens.window),
         Pair("Antigravity badge's blue on window", Tokens.antigravity, Tokens.window),
+        Pair("OpenCode badge's edge on window", Tokens.opencodeEdge, Tokens.window),
         Pair("Claude badge's edge on sidebar", Tokens.claudeEdge, Tokens.sidebar),
         Pair("Codex badge's edge on sidebar", Tokens.codexEdge, Tokens.sidebar),
         Pair("Antigravity badge's blue on sidebar", Tokens.antigravity, Tokens.sidebar),
+        Pair("OpenCode badge's edge on sidebar", Tokens.opencodeEdge, Tokens.sidebar),
         Pair("Claude badge's edge on selection", Tokens.claudeEdge, Tokens.selection),
         Pair("Codex badge's edge on selection", Tokens.codexEdge, Tokens.selection),
         Pair("Antigravity badge's blue on selection", Tokens.antigravity, Tokens.selection),
+        Pair("OpenCode badge's edge on selection", Tokens.opencodeEdge, Tokens.selection),
         Pair("Claude badge's edge on hover", Tokens.claudeEdge, Tokens.hover),
         Pair("Codex badge's edge on hover", Tokens.codexEdge, Tokens.hover),
         Pair("Antigravity badge's blue on hover", Tokens.antigravity, Tokens.hover),
+        Pair("OpenCode badge's edge on hover", Tokens.opencodeEdge, Tokens.hover),
         Pair("Claude badge's edge on popover", Tokens.claudeEdge, Tokens.popover),
         Pair("Codex badge's edge on popover", Tokens.codexEdge, Tokens.popover),
         Pair("Antigravity badge's blue on popover", Tokens.antigravity, Tokens.popover),
+        Pair("OpenCode badge's edge on popover", Tokens.opencodeEdge, Tokens.popover),
         Pair("unread blue mark on popover", Tokens.unread, Tokens.popover),
         Pair("stopped disc on popover", Tokens.stopped, Tokens.popover),
         Pair("needs-input disc's edge on popover", Tokens.waitingGlyphEdge, Tokens.popover)
@@ -345,6 +350,7 @@ struct SupervisionTokensTests {
         #expect(Tokens.claude.value(isDark: isDark) == SRGB(0xD97757))
         #expect(Tokens.codex.value(isDark: isDark) == SRGB(0x5D60FF))
         #expect(Tokens.antigravity.value(isDark: isDark) == SRGB(0x2B7BEF))
+        #expect(Tokens.opencode.value(isDark: isDark) == SRGB(0x211E1E))
         #expect(Tokens.badgeForeground.value(isDark: isDark) == PrimaryButtonRule.lightLabel)
     }
 

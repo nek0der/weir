@@ -1,0 +1,19 @@
+{
+  "hook_event_name": "session.tool.failed",
+  "event_id": "evt_1980f1525002Se75Ro646KkKRd",
+  "created": 1793552487717,
+  "seq": 12,
+  "data": {
+    "sessionID": "ses_e67f0ef66ffePnwM4YyVsOk1XX",
+    "assistantMessageID": "msg_1980f10c2001AgNGMy74m32Tnh",
+    "id": "call_stub_1",
+    "error": {
+      "type": "permission.rejected",
+      "message": "not now"
+    },
+    "executed": false,
+    "name": "shell"
+  },
+  "command": "touch card-2.txt",
+  "cwd": "/repo"
+}

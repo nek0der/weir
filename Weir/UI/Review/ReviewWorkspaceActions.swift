@@ -327,7 +327,8 @@ extension ReviewWorkspaceView {
                         instructions: settingsStore.settings.advanced.reviewInstructions,
                         locale: settingsStore.appLocale,
                         isSameReview: { reviewPresentation.opening == opening },
-                        startPane: { paneID in await reviewTabHandler?.startPane(paneID) ?? false }
+                        startPane: { paneID in await reviewTabHandler?.startPane(paneID) ?? false },
+                        showSession: { destination in await reviewTabHandler?.showSession(destination) ?? true }
                     )
                 )
                 // Reached only once the paste landed (`ReviewInsertion.run`

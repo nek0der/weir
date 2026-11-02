@@ -1,0 +1,27 @@
+{
+  "hook_event_name": "session.execution.failed",
+  "event_id": "evt_1980daff6001pGCh2PCDMgDSt0",
+  "created": 1793552396278,
+  "seq": 7,
+  "data": {
+    "sessionID": "ses_e67f2527fffeYJHvlFsQJXrau0",
+    "error": {
+      "type": "provider.free-limit",
+      "message": "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.",
+      "status": 429,
+      "response": {
+        "body": "{\"type\":\"error\",\"error\":{\"type\":\"FreeUsageLimitError\",\"message\":\"Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go\"}}"
+      },
+      "retryAfterMs": 25302000
+    }
+  },
+  "cwd": "/repo",
+  "usage": {
+    "input": 0,
+    "output": 0,
+    "reasoning": 0,
+    "cacheRead": 0,
+    "cacheWrite": 0,
+    "isPartial": false
+  }
+}

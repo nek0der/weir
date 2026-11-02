@@ -1,0 +1,18 @@
+{
+  "hook_event_name": "session.tool.success",
+  "event_id": "evt_198108df4001YXo8M780rVu778",
+  "created": 1793552584180,
+  "seq": 12,
+  "data": {
+    "sessionID": "ses_e67ef729dffeWm3X8J12y5AOhj",
+    "assistantMessageID": "msg_198108d9c001ax2L5vUY46QFbS",
+    "id": "call_stub_1",
+    "metadata": {
+      "sessionID": "ses_e67ef7233ffe1bixzlTTkNuM4a",
+      "status": "completed",
+      "truncated": false
+    },
+    "executed": false,
+    "name": "subagent"
+  }
+}

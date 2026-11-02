@@ -177,6 +177,7 @@ fn stop_events(object: &Map<String, Value>, input: RawHookInput<'_>) -> Vec<Agen
         return vec![AgentEvent::Failed {
             error: error.to_owned(),
             usage_limit: usage::usage_limit(error, SystemTime::now()),
+            kind: None,
         }];
     }
     // A turn the agent began by itself after `/compact` keeps that input, and
