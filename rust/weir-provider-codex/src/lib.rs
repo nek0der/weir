@@ -21,8 +21,8 @@ use weir_agent_model::{
     AgentEvent, ApprovalDecision, ApprovalRequest, FailureReport, FailureWatch, HookContext,
     InstallRecipe, ListDirectory, MAX_HOOK_INPUT_BYTES, NormalizeError, PlanUsageAnswer,
     ProviderAdapter, ProviderDescriptor, ProviderOutput, RawHookInput, RunRecord, SessionSettings,
-    Titles, TurnReading, TurnUsage, UnpromptedPrompt, WorktreeIntent, parse_object,
-    transcript_path_for_events,
+    Titles, TurnReading, TurnUsage, UnpromptedPrompt, WorktreeIntent, finished_hook_output,
+    parse_object, rerouted_hook_output, transcript_path_for_events,
 };
 
 /// The Codex CLI provider.
@@ -81,6 +81,28 @@ impl ProviderAdapter for CodexAdapter {
         input: RawHookInput<'_>,
     ) -> Result<Option<WorktreeIntent>, NormalizeError> {
         WorktreeIntent::from_hook_payload(input.bytes, "Bash")
+    }
+
+    fn worktree_finished(
+        &self,
+        input: RawHookInput<'_>,
+    ) -> Result<Option<WorktreeIntent>, NormalizeError> {
+        WorktreeIntent::from_finished_hook_payload(input.bytes, "Bash")
+    }
+
+    /// Codex takes a new input only with `allow`, and warns and runs the old
+    /// command without it. As of 0.166 that `allow` skips neither its approval
+    /// prompt nor its sandbox.
+    fn worktree_reroute_output(
+        &self,
+        input: RawHookInput<'_>,
+        command: &str,
+    ) -> Option<ProviderOutput> {
+        rerouted_hook_output(input.bytes, command, Some("allow"))
+    }
+
+    fn worktree_created_output(&self, message: &str) -> Option<ProviderOutput> {
+        Some(finished_hook_output(message))
     }
 
     fn transcript_path(&self, input: RawHookInput<'_>) -> Result<Option<String>, NormalizeError> {

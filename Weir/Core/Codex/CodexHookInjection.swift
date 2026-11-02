@@ -174,7 +174,7 @@ enum CodexHookInjection {
                     matcher: nil
                 )
             ]
-            if event.jsonKey == "PreToolUse", let worktreeCommand {
+            if event.jsonKey == "PreToolUse" || event.jsonKey == "PostToolUse", let worktreeCommand {
                 out.append(
                     Handler(
                         event: event,

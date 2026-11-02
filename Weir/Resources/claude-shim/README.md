@@ -27,9 +27,11 @@ across app restarts, badge agent state, and re-route
   helper, the wrapper prints why on stderr, logs it, and exits 1. Claude
   Code shows that and carries on, and nothing else records the run.
 - `weir-pretool-worktree-hook` — the same wrapper shape as `weir-hook`
-  (`hook claude worktree` in the helper). It intercepts a `PreToolUse` Bash
-  call that would create a git worktree and re-runs it under the active
-  Project's placement rules.
+  (`hook claude worktree` in the helper). On `PreToolUse` it changes the folder
+  in a Bash call that would create a git worktree to the one the active
+  Project's placement rules say, and Claude Code's own permission checks then
+  decide on that command. On `PostToolUse` it runs the bootstrap once Git lists
+  the worktree there, and tells the model the folder.
 - `settings.template.json` — the hook block the `claude` shim fills in and
   passes as `--settings`. Not in this directory in the source tree: it
   belongs to the provider crate that owns its shape, and the build copies it
@@ -129,9 +131,8 @@ instruction stays off tmux's command line, which tmux limits to about
 `weir-hook` exits `0` on any failure the helper runs into, because a
 broken hook must never stop the user from running Claude. The one exception
 is a missing helper, which exits `1` (see [Files](#files) above); Claude shows
-that and carries on. Apart from that, only a successful intercept by
-`weir-pretool-worktree-hook` exits non-zero. Set `WEIR_HOOK_LOG=<path>`
-to capture the helper's diagnostics.
+that and carries on. Set `WEIR_HOOK_LOG=<path>` to capture the helper's
+diagnostics.
 
 The `claude` shim falls back to executing the real `claude` with no
 overrides if `weir-hook` or the bundled `settings.template.json` is

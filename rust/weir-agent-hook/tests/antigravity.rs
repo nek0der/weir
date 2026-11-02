@@ -8,7 +8,7 @@ mod support;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
-use support::{PANE, RUN};
+use support::{PANE, RUN, git};
 use weir_agent_hook::{
     HookEnv, HookOutcome, HookRuntime, NoSnapshots, run_hook, run_worktree_hook,
 };
@@ -399,10 +399,43 @@ fn a_worktree_it_routes_cancels_the_call_with_a_deny_and_exit_zero() {
     };
     let reply: Value = serde_json::from_slice(&stdout).expect("json");
     assert_eq!(reply["decision"], "deny");
+    let folder = repo.root.join("repo-demo");
+    let command = format!("git worktree add -b demo {}", folder.display());
     assert!(
-        reply["reason"]
-            .as_str()
-            .expect("reason")
-            .contains("repo-demo")
+        reply["reason"].as_str().expect("reason").contains(&command),
+        "the model is told what to run"
+    );
+    assert!(
+        !folder.exists(),
+        "nothing is made before `agy`'s own policy"
+    );
+
+    // The model's next call names the folder, and goes to `agy`'s policy as is.
+    let call = |event: &str| {
+        format!(
+            r#"{{"hook_event_name":"{event}","lastUserInput":"x","workspacePaths":["{}"],"toolCall":{{"name":"run_command","args":{{"CommandLine":"{command}"}}}}}}"#,
+            repo.path.display()
+        )
+    };
+    let runtime = HookRuntime::new(&env, &NoSnapshots);
+    assert_eq!(
+        run_worktree_hook(PROVIDER, call("PreToolUse").as_bytes(), &runtime),
+        HookOutcome::Applied
+    );
+    git(
+        &repo.path,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "demo",
+            folder.to_str().expect("path"),
+        ],
+    );
+    let finished = run_worktree_hook(PROVIDER, call("PostToolUse").as_bytes(), &runtime);
+    assert_eq!(finished.exit_code(), 0);
+    assert!(
+        matches!(finished, HookOutcome::Intercepted { stdout: None, .. }),
+        "{finished:?}"
     );
 }

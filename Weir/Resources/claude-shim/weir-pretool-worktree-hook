@@ -1,6 +1,6 @@
 #!/bin/sh
-# Weir claude worktree intercept — the second PreToolUse hook the provider
-# calls for its shell tool. Like `weir-hook`, it execs the Hook Helper's
+# Weir claude worktree route — the second PreToolUse and PostToolUse hook the
+# provider calls for its shell tool. Like `weir-hook`, it execs the Hook Helper's
 # `hook claude worktree` subcommand, and says so when the helper is missing.
 
 set -u

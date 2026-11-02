@@ -37,7 +37,10 @@ pub use stopped_turns::{StoppedTurnEnd, StoppedTurnRequest, end_stopped_turn};
 pub use turn_gc::{TurnDeletion, delete_turns, delete_turns_waiting};
 pub use weir_agent_model::TURNS_DIRECTORY;
 pub use weir_agent_model::format_utc_seconds;
-pub use worktree::{InterceptResult, WORKTREE_ROUTING_FILE};
+pub use worktree::{
+    CreatedWorktree, InterceptResult, WORKTREE_ROUTING_FILE, finish as finish_worktree,
+    plan as plan_worktree,
+};
 
 use serde_json::json;
 use std::collections::HashMap;
@@ -85,9 +88,9 @@ pub enum HookOutcome {
     Rejected(String),
     /// The provider id is not registered in this build.
     UnknownProvider,
-    /// The tool call was intercepted (a worktree was created on the agent's
-    /// behalf); the helper prints `message` to stderr, `stdout` to stdout when
-    /// the provider cancels a call that way, and exits with `code`.
+    /// The worktree route has something to tell the provider: a command to run
+    /// in place of the agent's, or a worktree it set up. The helper prints
+    /// `message` to stderr, `stdout` to stdout, and exits with `code`.
     Intercepted {
         code: i32,
         message: String,
@@ -1360,49 +1363,9 @@ fn perform_side_write(
     }
 }
 
-/// Runs the worktree intercept directly on a parsed intent; `state_dir` is
-/// the provider's agent-state directory. Diagnostics are dropped: the
-/// worktree exists either way, and a missing event only costs the sidebar
-/// its automatic refresh.
-#[must_use]
-pub fn run_worktree_intercept(
-    intent: &weir_agent_model::WorktreeIntent,
-    provider_id: &str,
-    state_dir: &Path,
-) -> InterceptResult {
-    intercept_and_record(intent, provider_id, state_dir, &HookLog::disabled())
-}
-
-/// The intercept plus the event the Swift host refreshes the sidebar from,
-/// so both entry points record a creation the same way.
-fn intercept_and_record(
-    intent: &weir_agent_model::WorktreeIntent,
-    provider_id: &str,
-    state_dir: &Path,
-    log: &HookLog,
-) -> InterceptResult {
-    let result = worktree::run(intent, provider_id, state_dir);
-    if let InterceptResult::Created {
-        repo_root,
-        path,
-        branch,
-        ..
-    } = &result
-        && let Err(error) = records::write_worktree_event(
-            state_dir,
-            &repo_root.to_string_lossy(),
-            &path.to_string_lossy(),
-            branch,
-        )
-    {
-        log.line(&format!("write worktree event: {error}"));
-    }
-    result
-}
-
-/// Runs the worktree intercept for `provider` on the tool payload `stdin`.
-/// This is the second hook the providers call on `PreToolUse` for their
-/// shell tool; it writes no run record.
+/// Runs the worktree route for `provider` on the tool payload `stdin`. These
+/// are the second hooks the providers call on `PreToolUse` and `PostToolUse` for
+/// their shell tool; they write no run record.
 #[must_use]
 pub fn run_worktree_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>) -> HookOutcome {
     let log = HookLog::from_env(runtime.env);
@@ -1412,40 +1375,61 @@ pub fn run_worktree_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>
     let Some(directories) = runtime.env.directories(&adapter.install_recipe()) else {
         return HookOutcome::NotInWeir;
     };
-    let intent = match adapter.worktree_intent(RawHookInput {
+    let input = RawHookInput {
         bytes: stdin,
         transcript: None,
-    }) {
+    };
+    let provider_id = adapter.descriptor().id.as_str();
+    let finished = match adapter.worktree_finished(input) {
+        Ok(finished) => finished,
+        Err(error) => return rejected_worktree_payload(&log, &error),
+    };
+    if let Some(intent) = finished {
+        let Some(created) = worktree::finish(&intent, provider_id, &directories.state) else {
+            return HookOutcome::Applied;
+        };
+        if let Err(error) = records::write_worktree_event(
+            &directories.state,
+            &created.repo_root.to_string_lossy(),
+            &created.path.to_string_lossy(),
+            &created.branch,
+        ) {
+            log.line(&format!("write worktree event: {error}"));
+        }
+        return HookOutcome::Intercepted {
+            code: 0,
+            stdout: adapter
+                .worktree_created_output(&created.message)
+                .and_then(|output| output.stdout),
+            message: created.message,
+        };
+    }
+    let intent = match adapter.worktree_intent(input) {
         Ok(Some(intent)) => intent,
         Ok(None) => return HookOutcome::Applied,
-        Err(error) => {
-            log.line(&format!("payload rejected: {error}"));
-            return HookOutcome::Rejected(error.to_string());
-        }
+        Err(error) => return rejected_worktree_payload(&log, &error),
     };
-    match intercept_and_record(
-        &intent,
-        adapter.descriptor().id.as_str(),
-        &directories.state,
-        &log,
-    ) {
+    match worktree::plan(&intent, provider_id, &directories.state) {
         InterceptResult::Passthrough => HookOutcome::Applied,
-        // Exit status 2 is the hook convention Claude and Codex share: the
-        // tool call is canceled and stderr is shown to the model. A provider
-        // that reads it as a failure says how it cancels a call instead.
-        InterceptResult::Created { message, .. } => match adapter.worktree_block_output(&message) {
-            Some(output) => HookOutcome::Intercepted {
-                code: 0,
-                message,
-                stdout: output.stdout,
-            },
-            None => HookOutcome::Intercepted {
-                code: 2,
-                message,
-                stdout: None,
-            },
-        },
+        InterceptResult::Reroute { path, command } => {
+            match adapter.worktree_reroute_output(input, &command) {
+                Some(output) => HookOutcome::Intercepted {
+                    code: 0,
+                    message: format!("Weir routes this worktree to {}.", path.display()),
+                    stdout: output.stdout,
+                },
+                None => HookOutcome::Applied,
+            }
+        }
     }
+}
+
+fn rejected_worktree_payload(
+    log: &HookLog,
+    error: &weir_agent_model::NormalizeError,
+) -> HookOutcome {
+    log.line(&format!("payload rejected: {error}"));
+    HookOutcome::Rejected(error.to_string())
 }
 
 /// The endpoint the record carries for a tmux-hosted agent.

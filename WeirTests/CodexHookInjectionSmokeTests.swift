@@ -219,8 +219,9 @@ struct CodexHookInjectionSmokeTests {
                 actual == expected,
                 "codex: \(installedCodex?.executable ?? "missing"); missing: \(missing); unexpected: \(unexpected)"
             )
-            // One more than the events: PreToolUse's matched worktree group.
-            #expect(ours.count == expected.count + 1)
+            // Two more than the events: the matched worktree groups of
+            // PreToolUse and PostToolUse.
+            #expect(ours.count == expected.count + 2)
             #expect(
                 ours.allSatisfy { $0.trustStatus == "trusted" },
                 "untrusted: \(ours.filter { $0.trustStatus != "trusted" }.map(\.eventName))"

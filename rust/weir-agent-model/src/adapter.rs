@@ -390,11 +390,24 @@ pub trait ProviderAdapter: Send + Sync {
         None
     }
 
-    /// How the provider cancels a tool call whose worktree the runtime
-    /// created, when exit status 2 does not. `agy` reads any non-zero status
-    /// as a failure and its model retries the call. `None` keeps exit status
-    /// 2 and stderr.
-    fn worktree_block_output(&self, message: &str) -> Option<crate::ProviderOutput> {
+    /// The `PreToolUse` reply that has the shell tool run `command` in place
+    /// of the `git worktree add` in `input`, and leaves the decision on it to
+    /// the provider's own permission checks: the person's prompt, deny rules,
+    /// and sandbox. Nothing is created before they have had their say. `None`
+    /// lets the agent's command run as written.
+    fn worktree_reroute_output(
+        &self,
+        input: RawHookInput<'_>,
+        command: &str,
+    ) -> Option<crate::ProviderOutput> {
+        let _ = (input, command);
+        None
+    }
+
+    /// The `PostToolUse` reply that tells the model where the worktree it
+    /// asked for went, for a provider whose model did not write that folder
+    /// itself. `None` says nothing.
+    fn worktree_created_output(&self, message: &str) -> Option<crate::ProviderOutput> {
         let _ = message;
         None
     }
@@ -410,6 +423,23 @@ pub trait ProviderAdapter: Send + Sync {
     /// Returns `NormalizeError` only for input that is too large or is not a
     /// JSON object.
     fn worktree_intent(
+        &self,
+        input: RawHookInput<'_>,
+    ) -> Result<Option<WorktreeIntent>, NormalizeError> {
+        let _ = input;
+        Ok(None)
+    }
+
+    /// Reads a `git worktree add` the shell tool has run out of a tool
+    /// payload, so the hook runtime can finish setting up a worktree that
+    /// reached the place the project says. Providers that do not reroute keep
+    /// the default.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NormalizeError` only for input that is too large or is not a
+    /// JSON object.
+    fn worktree_finished(
         &self,
         input: RawHookInput<'_>,
     ) -> Result<Option<WorktreeIntent>, NormalizeError> {

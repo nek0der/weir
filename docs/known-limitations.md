@@ -141,6 +141,20 @@ as they are fixed or confirmed.
 
 ## New worktrees
 
+- **A `git worktree add` an agent runs goes to the project's folder only when
+  the command is plain.** Weir changes the folder in the command before the
+  agent's own permission checks, so a command with more after it (`&& cd ...`),
+  quoting, or an option Weir does not know runs as written, in the folder the
+  agent named. So does one whose branch gets a folder that already holds something,
+  such as another branch whose name gives the same folder. Its setup steps run after the command. If the turn stops before the
+  agent reports the command finished, or it reports that before Git has listed
+  the worktree, as a command moved to the background can, the worktree goes
+  without them. With Codex, the agent's next try within the hour runs them, unless
+  Weir had already waited five minutes for the checkout. That next try also runs
+  them a second time if you refused the command and then made the same worktree
+  from the new worktree sheet. They can start before a slow `post-checkout` hook of
+  your own has finished, when the command was moved to the background, and in an
+  empty folder after `--no-checkout`.
 - **The new worktree sheet takes no first prompt.** A tab that an earlier
   build opened in the background with one, and that has not been shown
   since, still hands the prompt to its agent the first time it is shown. If
@@ -288,8 +302,10 @@ These describe the Antigravity CLI (`agy`) 1.4.12.
 - **Its hook always succeeds, whatever happens in Weir.** `agy` fails the tool
   on anything but exit status 0 with valid JSON, against its documentation, and
   its model retries the call. So a Weir problem shows as a run that reports
-  nothing, never as a failing tool, and a `git worktree add` Weir takes over
-  reaches the agent as a refusal with a reason.
+  nothing, never as a failing tool. A `git worktree add` aimed at another
+  folder reaches the agent as a refusal that gives the command to run instead,
+  so it costs a model request, and a model that does not follow it makes no
+  worktree.
 - **A stop is read from `agy`'s status report.** Esc, Ctrl+C, and "No" at its
   prompt send no hook, so the turn ends when `agy` reports itself idle, and
   "No" reads as interrupted, not as declined. A command refused with "No" is

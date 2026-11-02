@@ -72,7 +72,7 @@ def main(argv):
     for label, key, timeout in SUBSCRIBED_EVENTS:
         command = (approval or lifecycle) if key == "PermissionRequest" else lifecycle
         groups = [(command, None)]
-        if key == "PreToolUse" and worktree:
+        if key in ("PreToolUse", "PostToolUse") and worktree:
             groups.append((worktree, WORKTREE_MATCHER))
         rendered = []
         for index, (group_command, matcher) in enumerate(groups):
