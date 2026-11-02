@@ -161,15 +161,14 @@ struct KeyboardShortcutCatalogTests {
         #expect(KeyboardShortcutCatalog.filter(sections(), query: "zzzzqqqq").isEmpty)
     }
 
-    @Test func newWindow_hasNoDefaultKeys_andIsAFileMenuItem() {
+    @Test func newWindow_hasControlCommandN_andIsAFileMenuItem() {
         // ⌘N is New Worktree… and ⇧⌘N the notification history.
-        #expect(WeirShortcutAction.newWindow.defaultShortcut == nil)
+        #expect(WeirShortcutAction.newWindow.defaultShortcut == StoredShortcut(key: "n", modifiers: [.command, .control]))
         #expect(WeirShortcutAction.newWindow.category == .file)
         #expect(WeirShortcutAction.newWindow.ghosttyAction == nil)
-        #expect(!entries(sections()).contains { $0.id == "action.newWindow" })
-        // Bound by the person, the sheet lists it.
-        var keyboard = KeyboardSettings()
-        keyboard.overrides[WeirShortcutAction.newWindow.rawValue] = StoredShortcut(key: "n", modifiers: [.command, .control, .option])
-        #expect(entries(sections(keyboard: keyboard)).contains { $0.id == "action.newWindow" })
+        #expect(entries(sections()).contains { $0.id == "action.newWindow" })
+        // No other action's default shares the keys.
+        let others = WeirShortcutAction.allCases.filter { $0 != .newWindow }.compactMap(\.defaultShortcut)
+        #expect(!others.contains(StoredShortcut(key: "n", modifiers: [.command, .control])))
     }
 }

@@ -79,7 +79,7 @@ struct SupervisionWindowView: View {
                     // drawn once, in the overlay below, so moving between
                     // beside and over keeps its scroll, its focus, and a
                     // drag of its divider.
-                    if selection.isChangesPanelPresented, panelLayout != .overlay {
+                    if selection.showsChangesPanel, panelLayout != .overlay {
                         Color.clear
                             .frame(width: panelWidth)
                             .accessibilityHidden(true)
@@ -93,7 +93,7 @@ struct SupervisionWindowView: View {
                     }
                 }
                 .overlay(alignment: .topTrailing) {
-                    if selection.isChangesPanelPresented {
+                    if selection.showsChangesPanel {
                         placedPanel
                             // One piece as it slides in: a `ViewThatFits`
                             // (the head, a card's moves) picks its child after the panel was
@@ -123,7 +123,7 @@ struct SupervisionWindowView: View {
             // button, its ×, the menu, ⌥⌘I), it slides the same way.
             .animation(
                 ChangesPanelMotion.animation(isFloating: window.changesPanelLayout == .overlay, reduceMotion: reduceMotion),
-                value: selection.isChangesPanelPresented
+                value: selection.showsChangesPanel
             )
             .animation(reduceMotion ? nil : WeirMotion.sidebarToggle, value: panelLayout)
             // The history hangs from the rail's button; with the rail
@@ -256,7 +256,7 @@ struct SupervisionWindowView: View {
     /// How the panel shares the window now: beside while it is open and
     /// the terminal keeps its columns (`ChangesPanelLayoutRule`).
     private var panelLayout: ChangesPanelLayout {
-        selection.isChangesPanelPresented ? window.changesPanelLayout : .beside
+        selection.showsChangesPanel ? window.changesPanelLayout : .beside
     }
 
     /// Whether the sidebar is on screen (`ProjectWindowState.isSidebarShown`).
@@ -690,7 +690,7 @@ private struct ChangesPanelLayoutFollower: View {
 
     /// Whether the open panel has folded the sidebar.
     private var isSidebarFolded: Bool {
-        window.isSidebarFoldedForChanges(isPresented: window.selection.isChangesPanelPresented)
+        window.isSidebarFoldedForChanges(isPresented: window.selection.showsChangesPanel)
     }
 
     var body: some View {

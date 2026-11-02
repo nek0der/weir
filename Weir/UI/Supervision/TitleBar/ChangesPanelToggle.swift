@@ -24,7 +24,7 @@ struct ChangesPanelToggle: View {
             systemImage: "plus.forwardslash.minus",
             name: "Changes",
             shortcut: shortcut,
-            isSelected: window.selection.isChangesPanelPresented,
+            isSelected: window.selection.showsChangesPanel,
             badge: .counting(unviewed),
             hint: ChangesPanelText.toggleHint(shortcut: shortcut, unviewed: unviewed, agents: facts.agents, locale: locale),
             value: unviewed > 0 ? ConversationText.unviewedTurns(unviewed, locale: locale) : nil

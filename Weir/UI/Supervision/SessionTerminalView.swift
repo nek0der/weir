@@ -198,7 +198,7 @@ struct EmptySessionHints: View {
         // and keeps the hover fill of neighbors from touching.
         VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(hints.enumerated()), id: \.offset) { _, hint in
-                EmptySessionHintRow(hint: hint)
+                EmptyHintRow(hint: hint)
             }
         }
         // At most this wide, so a name stays near its key; narrower in a
@@ -211,8 +211,15 @@ struct EmptySessionHints: View {
     }
 }
 
-private struct EmptySessionHintRow: View {
+/// A command of an empty area: its name, its key, and the fill a hover or
+/// the keyboard's selection gives it. The empty session area's rows
+/// (`EmptySessionHints`), and the commands under a window's projects while
+/// it shows none (`EmptyWindowView`), so the two empty areas read as one
+/// kind of list.
+struct EmptyHintRow: View {
     let hint: EmptySessionHints.Hint
+    /// The keyboard's selection is on the row (`EmptyWindowView`).
+    var isSelected = false
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var isHovering = false
     /// The type follows Dynamic Type from its steps, as the empty states'
@@ -240,7 +247,7 @@ private struct EmptySessionHintRow: View {
             .padding(.vertical, Layout.spaceXS)
             .contentShape(Rectangle())
             .dropdownRowBackground(
-                isSelected: false,
+                isSelected: isSelected,
                 isHovering: isHovering && hint.isEnabled,
                 cornerRadius: Layout.smallControlCornerRadius
             )
@@ -250,6 +257,9 @@ private struct EmptySessionHintRow: View {
         .onHover { isHovering = $0 }
         // "New Tab, ⌘T": the name, then the key, as one element.
         .accessibilityLabel(Text(hint.title))
+        // The keyboard's selection, said as the project rows beside it say
+        // theirs (`EmptyWindowView`).
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityShortcut(hint.keys)
     }
 

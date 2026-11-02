@@ -486,7 +486,14 @@ extension WorkspaceSession {
         // primary's (`restoreWindows`). With no other tab, it opens on the
         // scratch tabs.
         let laterProjects = Set(records.dropFirst().compactMap(\.projectID).filter { project($0) != nil })
-        if let id = savedTabID, let tab = tabs.first(where: { $0.id == id }) {
+        // A window that showed nothing comes back showing nothing. With no
+        // tab at all it comes back on the scratch tabs instead, where the
+        // launch opens its first tab (`openLaunchTabIfNone`).
+        primarySelection.isChoosingProject = primary?.isChoosingProject == true && !tabs.isEmpty
+        if primarySelection.isChoosingProject {
+            primarySelection.activeContainerID = .loose
+            primarySelection.activeTabID = nil
+        } else if let id = savedTabID, let tab = tabs.first(where: { $0.id == id }) {
             primarySelection.activeTabID = id
             // Prefer the saved container if it still exists AND agrees
             // with the tab; otherwise mirror the tab's container.

@@ -474,9 +474,11 @@ enum WeirLayout {
         /// glyph is drawn at, so its "!" and "?" are checked at it.
         static let stateGlyphCompactSize: CGFloat = 11
         /// The commands a workspace with no tab lists in its terminal's
-        /// place (`EmptySessionHints`): at most this wide, so a name stays
-        /// near its keys.
-        static let emptySessionHintsWidth: CGFloat = 280
+        /// place (`EmptySessionHints`), and a window with no project's
+        /// list (`EmptyWindowView`): at most this wide, so a name stays
+        /// near its keys, and wide enough that a project's name keeps room
+        /// beside "Needs Attention · 3".
+        static let emptySessionHintsWidth: CGFloat = 320
 
         // MARK: Session header
 

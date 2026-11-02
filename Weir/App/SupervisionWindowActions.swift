@@ -263,17 +263,24 @@ enum SupervisionWindowActions {
     }
 
     /// Folders handed to Weir from outside it: Finder's Open With, `open
-    /// -a`, a drop on the Dock icon (`WeirAppDelegate`). The first opens
-    /// as ⌘O opens one, in the window the person was last in
-    /// (`openProject`); each other in a window of its own, or the window
-    /// that shows it already comes forward (`WindowRegistry.openInNewWindow`),
-    /// so a drop of several folders leaves none of them only in project ▾.
-    /// What is not a folder names no project, and is left alone; nor is a
-    /// package (an app, an Xcode project), which ⌘O cannot choose either.
+    /// -a`, a drop on the Dock icon (`WeirAppDelegate`). Each opens as
+    /// another project's row opens with ⌘ (`ProjectOpening`): the window
+    /// that shows it already comes forward, else it opens in a new window,
+    /// so a folder from outside never takes the place of the project a
+    /// window was showing. The one exception is a window that shows
+    /// nothing, the one the person was last in (or, with every window
+    /// closed, the one hidden), which the folder fills, as choosing a
+    /// project there would. With every window closed on a project, the new
+    /// window opens and the hidden one closes, as New Window does
+    /// (`WindowRegistry.openInNewWindow`). What is not a folder names no
+    /// project, and is left alone; nor is a package (an app, an Xcode
+    /// project), which ⌘O cannot choose either.
     ///
-    /// The window switched in place comes to the front, which ⌘O does not
-    /// need: the folder came from another app, or Settings has the
-    /// keyboard, so the window it switches may be behind them.
+    /// The window each folder lands in comes to the front, which ⌘O does
+    /// not need: the folder came from another app, or Settings has the
+    /// keyboard, so that window may be behind them. The window last used is
+    /// read again once each folder is resolved, so an empty window the
+    /// person has filled meanwhile is not taken.
     static func openFolders(
         _ urls: [URL],
         session: WorkspaceSession,
@@ -282,25 +289,28 @@ enum SupervisionWindowActions {
         resolveMainCheckout: (URL) async -> URL = GitProcess.resolveMainCheckout(of:)
     ) async {
         let folders = urls.filter(isFolder)
-        guard let first = folders.first else {
+        guard !folders.isEmpty else {
             log.notice("nothing opened from outside: no folder among \(urls.count, privacy: .public) items")
             return
         }
-        if let shown = await openProject(
-            at: first,
-            from: registry.backgroundCommandTarget,
-            session: session,
-            registry: registry,
-            frecency: frecency,
-            resolveMainCheckout: resolveMainCheckout
-        ) {
-            registry.show(shown.id)
-        }
-        for url in folders.dropFirst() {
+        for url in folders {
             let project = await session.addProject(at: url, resolveMainCheckout: resolveMainCheckout)
-            if registry.openInNewWindow(project: project.id, in: session, from: registry.backgroundCommandTarget) != nil {
-                frecency?.record(ProjectMenuModel.frecencyKey(project.id))
+            let asked = registry.backgroundCommandTarget
+            let fillsEmptyWindow = asked.selection.isChoosingProject
+                && registry.window(showingProject: project.id, in: session) == nil
+            let shown = fillsEmptyWindow
+                ? registry.show(project: project.id, in: session, from: asked, intent: .person)
+                : registry.openInNewWindow(project: project.id, in: session, from: asked)
+            guard let shown else { continue }
+            // A window opened, or another brought forward, is in front
+            // already; the window asked from, filled in place or showing
+            // the folder already, may be behind the app the folder came
+            // from. Shown once only, so a new window keeps the place it was
+            // given beside the window it was opened from.
+            if shown === asked {
+                registry.show(shown.id)
             }
+            frecency?.record(ProjectMenuModel.frecencyKey(project.id))
         }
     }
 
@@ -338,8 +348,8 @@ enum SupervisionWindowActions {
         )
     }
 
-    /// File → New Window, the palette, and the Dock menu: a
-    /// window that shows nothing yet, or the hidden one.
+    /// File → New Window, the palette, and the Dock menu: a new
+    /// window that shows nothing yet (`WindowRegistry.openEmptyWindow`).
     static func newWindow(from window: ProjectWindowState?, session: WorkspaceSession, registry: WindowRegistry) {
         registry.openEmptyWindow(in: session, from: window)
     }
@@ -424,7 +434,7 @@ enum SupervisionWindowActions {
     static func toggleSidebar(in session: WorkspaceSession, window: ProjectWindowState) {
         // Written only while the window has its selection.
         guard let selection = session.selections[window.id] else { return }
-        if selection.sidebarHidden || window.isSidebarFoldedForChanges(isPresented: selection.isChangesPanelPresented) {
+        if selection.sidebarHidden || window.isSidebarFoldedForChanges(isPresented: selection.showsChangesPanel) {
             showSidebar(in: session, window: window)
         } else {
             selection.sidebarHidden = true
@@ -437,7 +447,7 @@ enum SupervisionWindowActions {
         if let selection = session.selections[window.id], selection.sidebarHidden {
             selection.sidebarHidden = false
         }
-        if window.selection.isChangesPanelPresented {
+        if window.selection.showsChangesPanel {
             window.isSidebarKeptOverPanel = true
         }
     }

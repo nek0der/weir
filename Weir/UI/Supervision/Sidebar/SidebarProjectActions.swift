@@ -36,6 +36,9 @@ struct SidebarProjectActions {
     /// Brings forward the window that shows the project; `nil` for a
     /// project no other window shows.
     var bringOtherWindowForward: (() -> Void)?
+    /// Opens the project in a new window, as ⌘-click on the header does;
+    /// `nil` for a project a window shows (`ProjectOpening.offersNewWindow`).
+    var openInNewWindow: (() -> Void)?
 }
 
 /// The words of the header's entries. The moves are keyed apart from the
@@ -88,8 +91,8 @@ enum SidebarProjectActionText {
 
 /// The header's right-click menu, in the order of the design: the new
 /// worktree, the moves, the folds, the operations on all of its worktrees,
-/// then the project's own entries, the one that takes the project away
-/// last.
+/// then the project's own entries (a new window, its settings, Finder),
+/// the one that takes the project away last.
 struct SidebarProjectActionsMenu: View {
     let header: SidebarProjectHeader
     let actions: SidebarProjectActions
@@ -159,6 +162,12 @@ struct SidebarProjectActionsMenu: View {
             .tint(Color.primary)
         }
         Divider()
+        if let openInNewWindow = actions.openInNewWindow {
+            Button(action: openInNewWindow) {
+                Label { Text(NewWindowText.actionName) } icon: { Image(systemName: WeirShortcutAction.newWindow.iconName) }
+            }
+            .tint(Color.primary)
+        }
         Button(action: actions.openSettings) {
             Label { Text(SidebarProjectActionText.settings) } icon: { Image(systemName: "gearshape") }
         }

@@ -1,12 +1,13 @@
 // NewWindowDockMenu.swift
-// Weir — the Dock icon's New Window, the way back once every window is closed.
+// Weir — the Dock icon's New Window, which opens a window as the File menu's does.
 
 import AppKit
 
-/// The Dock menu's "New Window": with every window closed, the
-/// one left hidden comes back; otherwise a window that shows nothing
-/// opens (`WindowRegistry.openEmptyWindow`). macOS lists the windows
-/// shown above it itself, and leaves out a hidden one.
+/// The Dock menu's "New Window": a window that shows nothing, however
+/// many are shown or hidden (`WindowRegistry.openEmptyWindow`), as the
+/// File menu's. A click on the Dock icon itself is the way back to the
+/// window hidden as the last one closed. macOS lists the windows shown
+/// above it itself, and leaves out a hidden one.
 ///
 /// The Dock sends the item's action to its target as the item is chosen
 /// (`NSApplicationDelegate.applicationDockMenu(_:)`), so the target is
