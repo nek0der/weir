@@ -47,6 +47,7 @@ struct PaneSwapDropOverlay: View {
     /// macOS system one.
     @Environment(\.weirAccent) private var accent
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(PanePlacementStore.self) private var placements
 
     /// Edge zones take 25% of the matching axis. Matches the standard
     /// pane-rearrangement UX seen across tiling terminals / editors.
@@ -83,18 +84,11 @@ struct PaneSwapDropOverlay: View {
                             // The hit grid above keeps the pane's full
                             // extent so a drop near its edge still lands;
                             // only the drawn mark steps in. The pane's
-                            // place on the surface, read with its size in
-                            // one go, says which of its corners are the
-                            // surface's.
-                            highlight(
-                                for: zone,
-                                fit: SurfaceFrameFit.fit(
-                                    size: geo.size,
-                                    surfaceBounds: geo.bounds(of: .named(SupervisionWindowView.surfaceSpace))
-                                )
-                            )
-                            .allowsHitTesting(false)
-                            .transition(.opacity)
+                            // place on the surface says which of its
+                            // corners are the surface's.
+                            highlight(for: zone, fit: placements.placements[targetPaneID]?.fit ?? .none)
+                                .allowsHitTesting(false)
+                                .transition(.opacity)
                         }
                     }
                     // The highlight follows the pointer; under Reduce Motion

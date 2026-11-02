@@ -17,43 +17,32 @@ struct PaneConversationFrame: View {
     @Environment(\.conversationIdentities) private var conversationIdentities
     @Environment(\.locale) private var locale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// Which of the pane's edges and corners are the surface's.
-    @State private var fit = SurfaceFrameFit.none
 
     private typealias Layout = WeirLayout.Supervision
 
-    /// The color to frame the pane in, `nil` for none. The pane's conversation
-    /// is read only under a card's hover, so the pointer elsewhere costs nothing.
-    private var identity: Int? {
+    /// The color to frame a pane in, `nil` for none: this pane, or one past a
+    /// divider, by one rule, so a seam joins only the frames that are drawn.
+    /// The pane's conversation is read only under a card's hover, so the
+    /// pointer elsewhere costs nothing.
+    private func identity(of pane: UUID) -> Int? {
         guard let hover = window.conversationHover.hovered, hover.source == .card else { return nil }
-        let conversation = attention.paneHeaderLabel(paneID: paneID, in: session, locale: locale).conversation
+        let conversation = attention.paneHeaderLabel(paneID: pane, in: session, locale: locale).conversation
         guard ConversationHoverRule.framesPane(of: conversation, hover: hover),
               let conversation,
-              let tab = session.tab(containing: paneID)
+              let tab = session.tab(containing: pane)
         else { return nil }
         return conversationIdentities?.identities(in: tab.container)[conversation]
     }
 
     var body: some View {
-        let identity = identity
-        ZStack {
-            if let identity {
-                PaneFrameStroke(
-                    paneID: paneID,
-                    fit: fit,
-                    color: ConversationIdentityBar.color(identity),
-                    lineWidth: Layout.conversationHoverOutlineWidth
-                )
-            }
-        }
-        // The pane's whole face, frame or not, so its place is known before
-        // the frame first shows.
+        let identity = identity(of: paneID)
+        PaneFrameStroke(
+            paneID: paneID,
+            color: identity.map(ConversationIdentityBar.color),
+            lineWidth: Layout.conversationHoverOutlineWidth,
+            isFramed: { self.identity(of: $0) != nil }
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onGeometryChange(for: SurfaceFrameFit.self) { proxy in
-            SurfaceFrameFit.fit(size: proxy.size, surfaceBounds: proxy.bounds(of: .named(SupervisionWindowView.surfaceSpace)))
-        } action: { newFit in
-            fit = newFit
-        }
         .animation(reduceMotion ? nil : WeirMotion.conversationHover, value: identity)
         .allowsHitTesting(false)
         .accessibilityHidden(true)

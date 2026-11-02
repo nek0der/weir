@@ -28,6 +28,13 @@ struct SplitSeamGeometry: Equatable {
     /// seam drawn inside it, on the pixel grid at every display scale.
     static let hitOverhang: CGFloat = 3
 
+    /// How wide the seam is at `displayScale`: one device pixel. A frame that
+    /// reaches over the seam onto the pane beyond reaches this far, so it
+    /// lies on that pane's frame rather than past it.
+    static func seamWidth(displayScale: CGFloat) -> CGFloat {
+        1 / max(displayScale, 1)
+    }
+
     /// `firstMinimum` and `secondMinimum` are the two sides' floors along
     /// the split's axis, the ones `PaneSplit.resolvedRatio` resolved `ratio`
     /// against.
@@ -40,7 +47,7 @@ struct SplitSeamGeometry: Equatable {
         secondMinimum: CGFloat = 0
     ) {
         let scale = max(displayScale, 1)
-        let pixel = 1 / scale
+        let pixel = Self.seamWidth(displayScale: displayScale)
         let extent = direction == .horizontal ? size.width : size.height
         let rawFirst = CGFloat(ratio) * extent - pixel / 2
         var firstExtent = (rawFirst * scale).rounded() / scale
@@ -72,13 +79,31 @@ struct SplitSeamGeometry: Equatable {
     }
 }
 
-/// The seam between two panes and the band over it that resizes them: a
-/// drag moves the seam, a double click equalizes the split.
-///
-/// At rest only the seam shows, in the color of the rule under a pane
-/// header, so the two read as one kind of line. The seam lies between the
-/// panes and a header's rule inside its pane, so where they meet they touch
-/// end to end and never draw over each other. Under the pointer the whole
+/// The hairline between two panes, in the color of the rule under a pane
+/// header, so the two read as one kind of line. It lies between the panes
+/// and a header's rule inside its pane, so where they meet they touch end
+/// to end and never draw over each other. It is drawn under the panes, not
+/// with the band over them: a pane's frame crosses it where the frame runs
+/// on into the pane beyond (`PaneFrameBand`). Under the pointer it gives
+/// way to the band's tint.
+struct SplitSeamLine: View {
+    let geometry: SplitSeamGeometry
+    let isHidden: Bool
+
+    var body: some View {
+        let seam = geometry.seam
+        WeirColor.paneHeaderDivider
+            .frame(width: seam.width, height: seam.height)
+            .opacity(isHidden ? 0 : 1)
+            .position(x: seam.midX, y: seam.midY)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+/// The band over the seam between two panes that resizes them: a drag
+/// moves the seam, a double click equalizes the split. At rest it is clear
+/// and only the seam shows (`SplitSeamLine`); under the pointer the whole
 /// band takes the accent's tint.
 ///
 /// The band lies over the edges of both panes' terminals, which are AppKit
@@ -100,49 +125,42 @@ struct SplitSeamGeometry: Equatable {
 struct SplitDividerView: View {
     let direction: SplitDirection
     let geometry: SplitSeamGeometry
+    /// Held by the split, which hides the seam under the tint.
+    @Binding var isHovering: Bool
     /// The pointer's place in the split's coordinates while it drags.
     let onDrag: (CGPoint) -> Void
     let onEqualize: () -> Void
 
-    @State private var isHovering: Bool = false
     @Environment(\.weirAccent) private var accent
 
     var body: some View {
         let hitArea = geometry.hitArea
-        let seam = geometry.seam
-        ZStack(alignment: .topLeading) {
-            Rectangle()
-                .fill(isHovering ? accent.opacity(0.35) : Color.clear)
-            if !isHovering {
-                WeirColor.paneHeaderDivider
-                    .frame(width: seam.width, height: seam.height)
-                    .offset(x: seam.minX - hitArea.minX, y: seam.minY - hitArea.minY)
-            }
-        }
-        .frame(width: hitArea.width, height: hitArea.height, alignment: .topLeading)
-        .contentShape(Rectangle())
-        .pointerStyle(direction == .horizontal ? .columnResize : .rowResize)
-        .onHover { isHovering = $0 }
-        .help("Double-click to equalize")
-        .position(x: hitArea.midX, y: hitArea.midY)
-        // Attached after `position`, which fills the split, so the drag's
-        // location is in the split's coordinates; the hit shape stays the
-        // band's.
-        .gesture(
-            DragGesture(minimumDistance: 1)
-                .onChanged { onDrag($0.location) }
-        )
-        // Tap classification runs before `DragGesture` accumulates the
-        // 1px slop it needs to fire `onChanged`, so a clean double-
-        // click reaches us even though the drag modifier is attached
-        // above. `simultaneousGesture` avoids the priority struggle
-        // that an `.onTapGesture(count: 2)` modifier would force.
-        .simultaneousGesture(
-            TapGesture(count: 2).onEnded { onEqualize() }
-        )
-        // Only a pointer can drag or double-click it; VoiceOver and
-        // the keyboard size panes with the menu's Equalize Splits, so
-        // an element with nothing to do would only be one more stop.
-        .accessibilityHidden(true)
+        Rectangle()
+            .fill(isHovering ? accent.opacity(0.35) : Color.clear)
+            .frame(width: hitArea.width, height: hitArea.height)
+            .contentShape(Rectangle())
+            .pointerStyle(direction == .horizontal ? .columnResize : .rowResize)
+            .onHover { isHovering = $0 }
+            .help("Double-click to equalize")
+            .position(x: hitArea.midX, y: hitArea.midY)
+            // Attached after `position`, which fills the split, so the drag's
+            // location is in the split's coordinates; the hit shape stays the
+            // band's.
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { onDrag($0.location) }
+            )
+            // Tap classification runs before `DragGesture` accumulates the
+            // 1px slop it needs to fire `onChanged`, so a clean double-
+            // click reaches us even though the drag modifier is attached
+            // above. `simultaneousGesture` avoids the priority struggle
+            // that an `.onTapGesture(count: 2)` modifier would force.
+            .simultaneousGesture(
+                TapGesture(count: 2).onEnded { onEqualize() }
+            )
+            // Only a pointer can drag or double-click it; VoiceOver and
+            // the keyboard size panes with the menu's Equalize Splits, so
+            // an element with nothing to do would only be one more stop.
+            .accessibilityHidden(true)
     }
 }

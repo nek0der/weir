@@ -14,6 +14,8 @@ struct PaneAreaView: View {
     /// `MainWindowContent` puts the window in the environment.
     @Environment(ProjectWindowState.self) private var window
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Where the drawn panes stand, for what is drawn around them.
+    @State private var placements = PanePlacementStore()
     let ghosttyApp: GhosttyApp
 
     private var renderableTab: Tab? {
@@ -25,6 +27,16 @@ struct PaneAreaView: View {
     /// taking them (`WorkspaceSession.isScratchElsewhere(in:)`).
     private var isScratchElsewhere: Bool {
         session.isScratchElsewhere(in: window.id)
+    }
+
+    /// The panes `splitTerminals` draws: the zoomed one alone, or every
+    /// leaf.
+    private var drawnPaneIDs: Set<UUID> {
+        guard let tree = renderableTab?.splitTree else { return [] }
+        if let zoomID = renderableTab?.zoomedLeafID, tree.contains(leafID: zoomID) {
+            return [zoomID]
+        }
+        return Set(tree.allLeafIDs())
     }
 
     var body: some View {
@@ -50,6 +62,10 @@ struct PaneAreaView: View {
             if window.review?.isShown != true {
                 terminals
             }
+        }
+        .environment(placements)
+        .onChange(of: drawnPaneIDs, initial: true) { _, paneIDs in
+            placements.retain(only: paneIDs)
         }
     }
 
