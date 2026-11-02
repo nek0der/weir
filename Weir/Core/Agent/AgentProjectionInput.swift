@@ -46,6 +46,9 @@ struct AgentProjectionInput: Encodable {
     /// What each pane's program last reported about itself over OSC 7501,
     /// keyed by pane (`PaneProgramStatusStore`).
     var programStatus: [String: AgentProjectionProgramStatus] = [:]
+    /// The panes whose command returned to the shell since this launch
+    /// began (`PaneProgramStatusStore.panesBackAtShell`).
+    var panesBackAtShell: [UUID] = []
     var acknowledged: [AgentCommandOutcome] = []
     var isBootstrap = false
     /// What the turn retention sweep needs; absent until the host

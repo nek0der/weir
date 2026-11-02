@@ -22,12 +22,11 @@ extension Tab {
     ///
     /// A run whose state is unknown counts, as it does on the sidebar's row
     /// (`SessionRowFact`) and in the decision bar: it is a run restored at
-    /// launch whose agent has not reported since (a `codex resume` reports
-    /// nothing before its first prompt), not one that is gone. A run that
-    /// is gone leaves `agentBadges` when the projection retires it, which
-    /// is what turns the pane back into a plain terminal once its job in
-    /// front is the shell again. Only its state is left off the badge
-    /// (`PaneStripModel.tabGlyph`).
+    /// launch whose agent has not reported since, not one that is gone. A
+    /// run that is gone leaves `agentBadges` when the projection retires it
+    /// or takes it off the pane, which is what turns the pane back into a
+    /// plain terminal once its job in front is the shell again. Only its
+    /// state is left off the badge (`PaneStripModel.tabGlyph`).
     func agentKind(inPane paneID: UUID) -> AgentKind? {
         let placed = AgentKind.allCases.compactMap { kind in
             agentBadges[kind]?[paneID].map { (kind: kind, badge: $0) }

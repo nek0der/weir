@@ -29,7 +29,9 @@ struct PaneStripAgentBadgeTests {
         session: WorkspaceSession,
         container: ContainerID = .loose,
         isAlive: Bool = true,
-        passes: Int = 1
+        passes: Int = 1,
+        programStatus: [String: AgentProjectionProgramStatus] = [:],
+        panesBackAtShell: Set<UUID> = []
     ) throws -> Pass {
         try withTempDir { root in
             let state = root.appendingPathComponent("agent-states", isDirectory: true)
@@ -46,6 +48,8 @@ struct PaneStripAgentBadgeTests {
                 sessions: sessions,
                 processStatus: { _ in isAlive ? .alive : .dead }
             )
+            adapter.programStatus = { programStatus }
+            adapter.panesBackAtShell = { panesBackAtShell }
             let attention = AttentionState()
             adapter.bootstrap(into: session, attention: attention)
             for _ in 1..<passes {
@@ -139,6 +143,59 @@ struct PaneStripAgentBadgeTests {
         #expect(result.attention.allRuntimes.contains { $0.paneIDs.contains(pane) && $0.kind == agent })
         #expect(item.agents.first?.kind == agent)
         #expect(item.stateGlyph == nil, "an unknown state shows no glyph on the badge")
+    }
+
+    /// What Codex reports as it comes back at its prompt, after `restoredRecord`'s attempt.
+    private static func codexIdle(in pane: UUID) -> [String: AgentProjectionProgramStatus] {
+        let at = "2026-10-20T06:30:05Z"
+        return [pane.uuidString: AgentProjectionProgramStatus(app: "codex", state: "idle", kind: nil, observedAt: at, stateSince: at)]
+    }
+
+    /// `codex resume` runs no hook before its first prompt, and its status
+    /// report is what says it is back: the pane then speaks for its
+    /// conversation, which the tab's colors, its hover, and "Show Tab" read.
+    @Test func aRestoredRun_whoseAgentReports_isThePanesConversation() throws {
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        let run = "1E9FFA50-B32F-46C4-BCED-C789AFACE803"
+        let record = Self.restoredRecord(run: run, pane: pane, lastHookEvent: "turn_finished")
+
+        let silent = try pass(provider: "codex", records: [run: record], session: session)
+        #expect(silent.attention.headerRuntime(inPane: pane) == nil, "a resume that failed reports nothing")
+
+        let reporting = try pass(provider: "codex", records: [run: record], session: session, programStatus: Self.codexIdle(in: pane))
+        let header = try #require(reporting.attention.headerRuntime(inPane: pane))
+        #expect(header.badge.state == .idle)
+        let conversation = try #require(header.conversation)
+        let tabs = ConversationTabs(tabs: session.tabs, runtimes: reporting.attention.allRuntimes)
+        #expect(tabs.place(of: conversation)?.paneID == pane)
+        #expect(tabs.conversations(of: tab.id)?.titled == conversation)
+    }
+
+    /// A `SessionEnd` written after the restore's mark makes the pane a shell
+    /// again, even with the agent's report still standing.
+    @Test func aRestoredRun_whoseSessionEnded_isNoConversation() throws {
+        let (session, _, pane) = WorkspaceSessionFixture.withLooseTab()
+        let run = "1E9FFA50-B32F-46C4-BCED-C789AFACE803"
+        let record = Self.restoredRecord(run: run, pane: pane, lastHookEvent: "session_ended")
+            .replacingOccurrences(
+                of: "\"updatedAt\":\"2026-10-19T14:29:36Z\"",
+                with: "\"updatedAt\":\"2026-10-20T06:30:04Z\",\"pid\":\"4242\""
+            )
+        let result = try pass(provider: "codex", records: [run: record], session: session, programStatus: Self.codexIdle(in: pane))
+        #expect(result.attention.headerRuntime(inPane: pane) == nil)
+    }
+
+    /// Quit or killed before its first prompt, an agent leaves its record
+    /// unwritten, with no pid to sweep: the shell's prompt coming back is
+    /// what turns the tab into a plain terminal again.
+    @Test func aRestoredRun_whosePaneIsBackAtTheShell_leavesTheTab() throws {
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        let run = "1E9FFA50-B32F-46C4-BCED-C789AFACE803"
+        let record = Self.restoredRecord(run: run, pane: pane, lastHookEvent: "turn_finished")
+        let result = try pass(provider: "codex", records: [run: record], session: session, panesBackAtShell: [pane])
+        let item = try #require(result.strip.item(for: tab))
+        #expect(item.agents.isEmpty)
+        #expect(result.attention.headerRuntime(inPane: pane) == nil)
     }
 
     // MARK: - An agent that is gone
