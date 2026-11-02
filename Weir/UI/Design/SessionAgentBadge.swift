@@ -6,8 +6,9 @@ import WeirDomain
 
 /// One agent, wherever one is named by a mark: a tab, a pane's header, a
 /// card, or a row (`AgentBadgeStrip` for a place with several):
-/// "Cl", "Cx", "Ag", and "Op" in white on Claude's, Codex's, Antigravity's, and
-/// OpenCode's brand colors. OpenCode's stays "Op" whichever model it runs: the
+/// "Cl", "Ag", and "Op" in white on Claude's, Antigravity's, and OpenCode's
+/// brand colors, and "Cx" in black on white, as Codex's icon draws its
+/// mark. OpenCode's stays "Op" whichever model it runs: the
 /// badge names the agent, and the header names the model. A session
 /// with only a shell has none: its state glyph is the terminal's mark
 /// already, and a boxed word beside it would only say it again. The letters
@@ -52,7 +53,7 @@ struct SessionAgentBadge: View {
         if case let .agent(kind) = badge {
             Text(verbatim: text)
                 .font(.supervision(size.fontSize, weight: .bold, design: .monospaced))
-                .foregroundStyle(SupervisionTokens.badgeForeground.color)
+                .foregroundStyle(isFaint ? SupervisionTokens.badgeForeground.color : Self.foreground(kind))
                 .frame(width: WeirLayout.Supervision.agentBadgeSize, height: WeirLayout.Supervision.agentBadgeSize)
                 .background {
                     let shape = RoundedRectangle(cornerRadius: WeirLayout.Supervision.agentBadgeCornerRadius, style: .continuous)
@@ -67,6 +68,16 @@ struct SessionAgentBadge: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text(verbatim: spokenName ?? ""))
                 .accessibilityHidden(spokenName == nil)
+        }
+    }
+
+    /// The letters, in the color the brand's mark has on its fill. A closed
+    /// badge's are white on `closedMark` whatever the agent, so every gone
+    /// source looks alike and only the letters still name it.
+    private static func foreground(_ kind: AgentKind) -> Color {
+        switch kind {
+        case .codex: SupervisionTokens.codexBadgeForeground.color
+        case .claude, .antigravity, .opencode: SupervisionTokens.badgeForeground.color
         }
     }
 
