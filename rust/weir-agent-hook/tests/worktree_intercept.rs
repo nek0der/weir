@@ -520,8 +520,20 @@ fn the_bootstrap_waits_for_the_checkout() {
         git(&repo.path, &["config", "filter.held.clean", "cat"]);
         fs::write(repo.path.join(".gitattributes"), "*.held filter=held\n").expect("attributes");
         fs::write(repo.path.join("a.held"), "a").expect("file");
-        git(&repo.path, &["add", "."]);
-        git(&repo.path, &["commit", "-qm", "held file"]);
+        git(&repo.path, &["add", "."]).expect("add");
+        git(
+            &repo.path,
+            &[
+                "-c",
+                "user.name=fixture",
+                "-c",
+                "user.email=fixture@example.com",
+                "commit",
+                "-qm",
+                "held file",
+            ],
+        )
+        .expect("commit");
         let (path, command) = rerouted(
             &repo,
             &states,
