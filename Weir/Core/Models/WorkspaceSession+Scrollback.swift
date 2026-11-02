@@ -15,7 +15,8 @@
 //     onto the SurfaceView and immediately cleared from the model so
 //     a later split / re-mount can't double-replay.
 //   * `ScrollbackFiles.prune` deletes any file not referenced by a live
-//     tab so the directory doesn't grow unboundedly across months.
+//     tab so the directory doesn't grow unboundedly across months, except
+//     in a run whose state.json was set aside (`keepsUnreferencedFiles`).
 
 import Foundation
 
@@ -63,6 +64,9 @@ extension WorkspaceSession {
                 liveFiles.insert(path)
             }
         }
+        // The files of a state.json set aside this launch are not this
+        // session's; the next launch that reads a state.json prunes them.
+        guard !keepsUnreferencedFiles else { return }
         files.prune(keeping: liveFiles)
     }
 }

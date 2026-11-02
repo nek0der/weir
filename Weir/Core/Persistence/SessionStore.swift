@@ -5,8 +5,9 @@
 // folder for the XCTest host). Tests should inject a `WithTempDir` URL via
 // `init(directory:)` rather than rely on the default.
 //
-// We debounce writes with a small leading-edge timer so a burst of
-// changes (e.g. resizing the sidebar) doesn't slam the file system.
+// We debounce writes so a burst of changes (e.g. resizing the sidebar)
+// doesn't slam the file system: a write runs once the changes stop, or a
+// few seconds into a burst that does not stop (`DebouncedSave`).
 
 import Foundation
 import OSLog
@@ -234,9 +235,10 @@ final class SessionStore {
     }
 
     /// Debounced save. Coalesces a burst of mutations into a single
-    /// write 400ms after the last call. The snapshot value crosses
-    /// onto the background queue inside the work item — `SessionSnapshot`
-    /// is value-typed (Sendable) so the capture is safe.
+    /// write 400ms after the last call, or 3s after the first. The
+    /// snapshot value crosses onto the background queue inside the work
+    /// item — `SessionSnapshot` is value-typed (Sendable) so the capture
+    /// is safe.
     func scheduleSave(_ snapshot: SessionSnapshot) {
         // A demo run shows `DemoFixture`; writing it would replace the
         // person's state.json with the fixture.

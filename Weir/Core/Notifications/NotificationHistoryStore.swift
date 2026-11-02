@@ -191,7 +191,8 @@ final class NotificationHistoryStore {
     }
 
     private func scheduleSave() {
-        saveDebounce.cancel()
+        // Not canceled first: `schedule` replaces the pending save and keeps
+        // the burst's deadline, which a cancel would start over each time.
         guard writesFiles, !isSavingSuspended else { return }
         let snapshot = entries
         let url = fileURL

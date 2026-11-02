@@ -450,4 +450,32 @@ struct SessionStoreTests {
             #expect(!files.contains { $0.contains(".pre-v") || $0.contains(".migration.json") })
         }
     }
+
+    /// A newer build may add a run state; going back a build must not
+    /// cost every project, tab, and window for it.
+    @Test func aRunStateThisBuildDoesNotKnow_readsAsUnknown_andTheSessionLoads() throws {
+        try withTempDir { dir in
+            let session = WorkspaceSession()
+            let tab = session.openTab(container: .loose)
+            let pane = try #require(tab.splitTree.allLeafIDs().first)
+            _ = session.update(tab.id) { $0.agentBadges[.claude] = [pane: AgentBadge(state: .running, updatedAt: Date())] }
+            let encoded = try PersistenceCoders.makeEncoder().encode(session.makeSnapshot())
+            let text = try #require(String(data: encoded, encoding: .utf8))
+            #expect(text.contains(#""state":"running""#) || text.contains(#""state" : "running""#))
+            let future = text
+                .replacingOccurrences(of: #""state":"running""#, with: #""state":"waiting""#)
+                .replacingOccurrences(of: #""state" : "running""#, with: #""state" : "waiting""#)
+            try Data(future.utf8).write(to: dir.appendingPathComponent("state.json"))
+
+            let store = SessionStore(directory: dir)
+            guard case let .loaded(snapshot) = store.load() else {
+                Issue.record("expected the session to load")
+                return
+            }
+
+            #expect(snapshot.tabs.map(\.id) == [tab.id])
+            #expect(snapshot.tabs.first?.agentBadges[.claude]?[pane]?.state == .unknown)
+            #expect(try !Self.files(in: dir).contains { $0.hasPrefix("state.json.bak-") })
+        }
+    }
 }

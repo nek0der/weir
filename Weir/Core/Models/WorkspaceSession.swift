@@ -536,6 +536,13 @@ final class WorkspaceSession {
     /// without one (a test, a preview) saves no scrollback and replays none,
     /// rather than reaching for the app's own folder.
     @ObservationIgnored var scrollbackFiles: ScrollbackFiles?
+    /// Whether this run keeps the files no tab names (scrollback, staged
+    /// first instructions) rather than delete them, as the app decided
+    /// once at launch. True when the session in memory is not the one the
+    /// files belong to: state.json was set aside, or could not be and
+    /// saving stopped. The set-aside file still names them, and renaming it
+    /// back brings its panes' scrollback back only if they are still there.
+    @ObservationIgnored var keepsUnreferencedFiles = false
 
     /// paneID → tabID reverse index used by `tab(containing:)` and the
     /// per-pane state mutators it funnels through. Without it, every

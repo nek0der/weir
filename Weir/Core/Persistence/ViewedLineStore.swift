@@ -111,7 +111,8 @@ final class ViewedLineStore {
     @ObservationIgnored private let writesFiles: Bool
     /// False after finding a newer build's file. Its lines count here when
     /// they can be read, but rewriting it in this version's shape could drop
-    /// what it added.
+    /// what it added. False too after a file that could not be read could
+    /// not be moved aside: writing would replace the only copy.
     @ObservationIgnored private var isWritable = true
     /// `nil` when the refs are not written (demo mode, most tests).
     @ObservationIgnored private let refs: (any ViewedLineRefWriting)?
@@ -376,8 +377,8 @@ final class ViewedLineStore {
     /// deleted turn leaves no other record of when it ran. True once the
     /// file holds them, or at once for a store that writes no files (it
     /// keeps them in memory only); false when the file could not be
-    /// written, or belongs to a newer build, so the queue keeps them for
-    /// the next launch.
+    /// written, belongs to a newer build, or could neither be read nor be
+    /// moved aside, so the queue keeps them for the next launch.
     func noteDeletedTurns(_ spans: [String: [DateInterval]]) async -> Bool {
         var merged = deletedTurns
         for (root, intervals) in spans {
@@ -490,7 +491,17 @@ final class ViewedLineStore {
     // MARK: - Persistence
 
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL) else { return }
+        // No file yet is the first launch; a file that is there but cannot
+        // be read is kept like one that does not decode.
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            log.error("viewed lines unreadable: \(String(describing: error), privacy: .private)")
+            setAside(reason: "read-failed")
+            return
+        }
         do {
             if case .newer = try Self.migrator.migrate(data) {
                 isWritable = false
@@ -514,8 +525,23 @@ final class ViewedLineStore {
             pruneRestoreMoves()
         } catch {
             // Unreadable lines put turns back to not viewed, which costs a
-            // second look, never a turn shown as viewed that was not.
+            // second look, never a turn shown as viewed that was not. A
+            // newer build's file is already kept from being rewritten.
             log.error("viewed lines unreadable: \(String(describing: error), privacy: .private)")
+            if isWritable {
+                setAside(reason: "decode-failed")
+            }
+        }
+    }
+
+    /// The file also holds what is not a reading: the deleted turns' spans
+    /// and the moves Undo Restore takes back. The next change would write
+    /// over them with this launch's alone, so the file is moved aside
+    /// first, or saving stops when it cannot be moved.
+    private func setAside(reason: String) {
+        if SecureFileWrite.setAside(fileURL, reason: reason) == .keptInPlace {
+            log.error("viewed-lines.json stays in place; saving is suspended for this launch")
+            isWritable = false
         }
     }
 

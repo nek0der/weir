@@ -100,4 +100,50 @@ struct FrecencyStoreTests {
             #expect(store.entries["tab.live"]?.count == 1)
         }
     }
+
+    // MARK: - A file that cannot be read
+
+    @Test func aRankingThatDoesNotDecode_isMovedAside_notSavedOver() throws {
+        try withTempDir { dir in
+            let garbled = Data(#"{ "broken": "#.utf8)
+            try garbled.write(to: dir.appendingPathComponent("frecency.json"))
+
+            let store = FrecencyStore(directory: dir)
+            store.record("new")
+            store.flushSynchronously()
+
+            let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            let kept = try #require(names.first { $0.hasPrefix("frecency.json.bak-decode-failed-") })
+            #expect(try Data(contentsOf: dir.appendingPathComponent(kept)) == garbled)
+            #expect(FrecencyStore(directory: dir).score(for: "new") > 0)
+        }
+    }
+
+    @Test func anUnreadableRanking_thatCannotBeMovedAside_isNeverSavedOver() throws {
+        try withTempDir { dir in
+            let file = dir.appendingPathComponent("frecency.json")
+            let garbled = Data(#"{ "broken": "#.utf8)
+            try garbled.write(to: file)
+            try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+            let store = FrecencyStore(directory: dir)
+            store.record("new")
+            store.flushSynchronously()
+
+            #expect(try Data(contentsOf: file) == garbled)
+        }
+    }
+
+    @Test func flush_withNothingRecorded_leavesTheFileAsItWas() throws {
+        try withTempDir { dir in
+            let file = dir.appendingPathComponent("frecency.json")
+            let written = Data(#"{"tab.a":{"count":1,"lastUsed":"2026-11-01T00:00:00Z"}}"#.utf8)
+            try written.write(to: file)
+
+            FrecencyStore(directory: dir).flushSynchronously()
+
+            #expect(try Data(contentsOf: file) == written)
+        }
+    }
 }

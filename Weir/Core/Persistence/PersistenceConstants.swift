@@ -29,6 +29,12 @@ enum PersistenceTiming {
     static var coalescing: Duration {
         .milliseconds(coalescingMs)
     }
+
+    /// The longest a coalesced write waits after the first change of a
+    /// burst whose changes do not stop (`DebouncedSave`): long enough to
+    /// still batch a busy run of changes, short enough that a crash loses
+    /// only the last few seconds of them.
+    static let coalescingMaxWait: Duration = .seconds(3)
 }
 
 // MARK: - JSON coder factory
