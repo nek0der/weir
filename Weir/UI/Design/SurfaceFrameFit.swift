@@ -19,26 +19,6 @@ struct SurfaceFrameFit: Equatable, Sendable {
     /// Off a surface, or before it is measured: square, on the view's edge.
     static let none = Self(insets: EdgeInsets(), radii: RectangleCornerRadii())
 
-    /// The fit for a view of `size` from one reading of its geometry:
-    /// `surfaceBounds` is the surface's rectangle in the view's own
-    /// coordinates (`GeometryProxy.bounds(of:)`), `nil` off a surface. Read
-    /// together, the view's place and the surface's size never come from
-    /// two different moments of a resize.
-    static func fit(
-        size: CGSize,
-        surfaceBounds: CGRect?,
-        border: CGFloat = WeirLayout.Supervision.surfaceBorderWidth,
-        cornerRadius: CGFloat = WeirLayout.Supervision.surfaceCornerRadius
-    ) -> Self {
-        guard let surfaceBounds else { return none }
-        return fit(
-            frame: CGRect(origin: CGPoint(x: -surfaceBounds.minX, y: -surfaceBounds.minY), size: size),
-            surface: surfaceBounds.size,
-            border: border,
-            cornerRadius: cornerRadius
-        )
-    }
-
     /// The fit for a view at `frame` on a surface of `surface`'s size, both
     /// in the surface's coordinates.
     static func fit(
@@ -67,20 +47,6 @@ struct SurfaceFrameFit: Equatable, Sendable {
                 topTrailing: touchesTopEdge && touchesTrailingEdge ? radius : 0
             )
         )
-    }
-
-    /// The same fit reaching `distance` past the view's top or leading edge,
-    /// over the seam to the pane there, so two frames meeting at a seam draw
-    /// one line rather than two with the divider between.
-    func reachingAcross(top: Bool, leading: Bool, by distance: CGFloat) -> Self {
-        var fit = self
-        if top {
-            fit.insets.top = -distance
-        }
-        if leading {
-            fit.insets.leading = -distance
-        }
-        return fit
     }
 
     /// The same fit stepped `inset` further in on every edge: from the

@@ -22,6 +22,7 @@ struct PaneContainerView: View {
     @Environment(WorkspaceSession.self) private var session
     @Environment(SettingsStore.self) private var settingsStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(PanePlacementStore.self) private var placements
 
     /// `1.0` when this leaf is focused, sits in a single-pane tab, or
     /// is the zoomed leaf; otherwise the user-picked
@@ -83,6 +84,18 @@ struct PaneContainerView: View {
         // brief, and it has to say which pane the card is about.
         .overlay {
             PaneConversationFrame(paneID: paneID)
+        }
+        // Measured here, once, for every frame and mark drawn around the
+        // pane, and for the frames of the panes beside it. The pane's id is
+        // part of the reading: a view kept for another pane at the same place
+        // (the zoomed slot, from one tab to the next) still writes it.
+        .onGeometryChange(for: PaneMeasure.self) { proxy in
+            PaneMeasure(
+                paneID: paneID,
+                placement: PanePlacement(size: proxy.size, surfaceBounds: proxy.bounds(of: .named(SupervisionWindowView.surfaceSpace)))
+            )
+        } action: { measure in
+            placements.set(measure.placement, for: measure.paneID)
         }
     }
 
@@ -191,4 +204,11 @@ private struct PaneDecisionBar: View {
             .opacity(opacity)
             .animation(WeirMotion.paneDim, value: opacity)
     }
+}
+
+/// A pane's placement as `PaneContainerView` reads it, with the pane it is
+/// for.
+private struct PaneMeasure: Equatable {
+    let paneID: UUID
+    let placement: PanePlacement?
 }

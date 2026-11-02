@@ -36,6 +36,9 @@ struct SplitContainerView: View {
     let minPaneSize: PaneMinimumSize
     /// The pixel grid the seam between two panes is laid on.
     @Environment(\.displayScale) private var displayScale
+    /// Whether the pointer is on this split's band, which tints it and hides
+    /// the seam under it.
+    @State private var isDividerHovering = false
 
     var body: some View {
         switch node {
@@ -86,6 +89,10 @@ struct SplitContainerView: View {
         )
 
         ZStack(alignment: .topLeading) {
+            // First, under the panes, so a frame running across the seam
+            // stands over it.
+            SplitSeamLine(geometry: geometry, isHidden: isDividerHovering)
+
             SplitContainerView(
                 node: data.first,
                 onLeafFocus: onLeafFocus,
@@ -115,6 +122,7 @@ struct SplitContainerView: View {
             SplitDividerView(
                 direction: data.direction,
                 geometry: geometry,
+                isHovering: $isDividerHovering,
                 onDrag: { location in resize(data: data, size: size, to: location) },
                 onEqualize: { onEqualize(data.path) }
             )
