@@ -54,6 +54,9 @@ extension AppState {
         agentProjection.programStatus = { [programStatus] in
             programStatus.projectionInput
         }
+        agentProjection.panesBackAtShell = { [programStatus] in
+            programStatus.panesBackAtShell
+        }
     }
 
     /// Tells the toast center which window a toast with no window of its

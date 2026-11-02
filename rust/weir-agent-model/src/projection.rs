@@ -288,6 +288,11 @@ pub struct ProjectionInput {
     /// pane whose program cleared its record, or never sent one, is absent.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub program_status: BTreeMap<Uuid, ProgramStatus>,
+    /// The open panes whose command has returned to the shell since this
+    /// launch began: all that says a run restored at this launch has stopped,
+    /// when it has no pid and no hook has written its record.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub panes_back_at_shell: BTreeSet<Uuid>,
     /// What became of the previous pass's commands.
     #[serde(default)]
     pub acknowledged: Vec<CommandOutcome>,

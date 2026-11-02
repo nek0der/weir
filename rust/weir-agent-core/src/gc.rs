@@ -102,7 +102,15 @@ pub(crate) fn retiring<'a>(
         .filter(|(storage_id, run)| {
             // A restore has already claimed this run. Retiring it now would
             // take away the record the restore is about to rebuild from.
-            !claimed.contains(storage_id.as_str()) && is_removable(&run.record, input)
+            !claimed.contains(storage_id.as_str())
+                && (is_removable(&run.record, input)
+                    || crate::session_lifecycle::ended_since_its_resume(
+                        &run.record,
+                        accepted
+                            .values()
+                            .filter(|other| other.provider == run.provider)
+                            .map(|other| &other.record),
+                    ))
         })
         .map(|(storage_id, _)| storage_id.as_str())
         .collect()

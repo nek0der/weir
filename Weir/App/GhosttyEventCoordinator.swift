@@ -311,7 +311,7 @@ final class GhosttyEventCoordinator {
         // The program that reported a status is gone once its command is
         // back at the shell, cleared or not: one killed or crashed sends no
         // clear, and its status would keep the shell's titles off the tab.
-        programStatus?.forget(paneID)
+        programStatus?.commandReturnedToShell(in: paneID)
         onCommandFinished(paneID, exit, durationNs)
 
         let config = CommandFinishConfig.default

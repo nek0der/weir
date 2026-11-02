@@ -34,7 +34,7 @@ use std::collections::BTreeMap;
 use uuid::Uuid;
 use weir_agent_model::{
     Capability, Command, CommandOp, LifecycleInput, Patch, PidStatus, Precondition, RecordFile,
-    RecordPatch, ResumeIntent, RunRecord, RunState, Target, seconds_between,
+    RecordPatch, ResumeIntent, RunRecord, RunState, Target, parse_utc_seconds, seconds_between,
 };
 use weir_agent_model::{ProviderId, RESUME_WINDOW_SECS};
 
@@ -64,10 +64,21 @@ pub fn on_launch(input: &LifecycleInput, now: &str) -> Vec<Command> {
         .map(|intent| (intent.run_id.as_str(), intent))
         .collect();
 
-    runs(input)
-        .into_iter()
+    let all = runs(input);
+    all.iter()
         .filter(|run| shows_evidence_of_death(&run.record, input))
         .filter_map(|run| {
+            // The person ended the conversation since the last restore, and
+            // no pass saw it before Weir went away: restoring would move the
+            // attempt past that end and resume what they left.
+            if ended_since_its_resume(
+                &run.record,
+                all.iter()
+                    .filter(|other| other.provider == run.provider)
+                    .map(|other| &other.record),
+            ) {
+                return Some(retire(run));
+            }
             if run.record.has_prompt == Some(false) {
                 // A session started anew that never received a prompt has
                 // no transcript: nothing was said in it, and nothing on disk
@@ -75,12 +86,12 @@ pub fn on_launch(input: &LifecycleInput, now: &str) -> Vec<Command> {
                 // stop over nothing, so the run retires quietly and
                 // the pane opens as a plain shell. An older record that does
                 // not say goes on to the checks below.
-                return Some(retire(&run));
+                return Some(retire(run));
             }
             if let Some(intent) = intents.get(run.storage_id.as_str())
-                && claims(intent, &run, &hints, now)
+                && claims(intent, run, &hints, now)
             {
-                return Some(restore(&run, now).then(Command::new(
+                return Some(restore(run, now).then(Command::new(
                     CommandOp::Delete,
                     Target::ResumeIntent {
                         run_id: run.storage_id.clone(),
@@ -92,17 +103,17 @@ pub fn on_launch(input: &LifecycleInput, now: &str) -> Vec<Command> {
                 // Best effort. If the write fails the marker stays and the
                 // next launch retries exactly this, which is better than
                 // abandoning the rest of the sweep over one row.
-                return Some(restore(&run, now).continuing());
+                return Some(restore(run, now).continuing());
             }
-            if awaits_its_resume(&run, &hints) {
+            if awaits_its_resume(run, &hints) {
                 // The previous launch's resume did not bring the run back,
                 // and the pane still holds the conversation's place as a
                 // stop. Retiring it here would end that stop by
                 // relaunch alone; typing the resume again keeps it the
                 // person's to end.
-                return Some(restore(&run, now).continuing());
+                return Some(restore(run, now).continuing());
             }
-            if died_at_work_unseen(&run, input) {
+            if died_at_work_unseen(run, input) {
                 // Died in the moments between the last sweep and the quit,
                 // so no pass has shown it as stopped yet. Retiring it here
                 // would end a stop before it was ever listed; left to
@@ -125,7 +136,7 @@ pub fn on_launch(input: &LifecycleInput, now: &str) -> Vec<Command> {
             // back. The same reading for every provider: a hint that survived
             // its process is not evidence of a crash, because a provider's
             // session-end report can be lost the same way the process was.
-            Some(retire(&run))
+            Some(retire(run))
         })
         .collect()
 }
@@ -310,24 +321,65 @@ fn was_killed_recently(record: &RunRecord, now: &str) -> bool {
         .is_some_and(|age| age < RESUME_WINDOW_SECS)
 }
 
-/// Whether the run's last restore never came back: the record still carries
-/// the mark that restore left, nothing has written to it since (the pid the
-/// restore cleared is still clear, and `updated_at` is not after the mark —
-/// a restore sets the mark without touching `updated_at`, and every hook
-/// event sets both the pid and `updated_at`), and the pane's hint still names
-/// this run as its conversation. A hint another run has taken over, or a
-/// record from before run ids, claims nothing; nor does a pane that was
-/// closed, whose hint the next pass swept with the pane store (`gc::sweep`
-/// keeps only the panes a tab holds).
-fn awaits_its_resume(run: &Run, hints: &BTreeMap<(ProviderId, Uuid), Hint>) -> bool {
-    let record = &run.record;
+/// Whether nothing has written to a restored record since its restore: the
+/// pid the restore cleared is still clear, and `updated_at` is not after the
+/// mark. A restore sets the mark without touching `updated_at`, and every hook
+/// event sets both the pid and `updated_at`. `codex resume` writes nothing
+/// before its first prompt, so a resume that took, one that failed, and one
+/// that has since ended all read this way: the agent's own status report and
+/// the pane's return to the shell tell them apart
+/// (`projection::resumed_agent_reports`, `projection::resume_left_the_pane`).
+pub(crate) fn awaits_first_report(record: &RunRecord) -> bool {
     let Some(attempted) = record.resume_attempted_at.as_deref() else {
         return false;
     };
-    if record.pid.is_some() {
+    record.pid.is_none()
+        && seconds_between(attempted, &record.updated_at).is_some_and(|age| age == 0)
+}
+
+/// Whether a run restored at launch has ended, as told by another run's
+/// record among `others`, which are of the same provider. The shim gives every
+/// launch its own run, so a resume ended before its first prompt writes its
+/// `SessionEnd` to a new record and never to the one it came from, whose hint
+/// would have every later launch resume a conversation the person left. The
+/// two meet on the pane and the session; the end must be no older than this
+/// resume's attempt, as an older one belongs to an earlier resume.
+pub(crate) fn ended_since_its_resume<'a>(
+    record: &RunRecord,
+    mut others: impl Iterator<Item = &'a RunRecord>,
+) -> bool {
+    if record.state != RunState::Unknown
+        || record.session_id.is_none()
+        || !awaits_first_report(record)
+    {
         return false;
     }
-    if seconds_between(attempted, &record.updated_at).is_none_or(|age| age > 0) {
+    let Some(attempted) = record
+        .resume_attempted_at
+        .as_deref()
+        .and_then(parse_utc_seconds)
+    else {
+        return false;
+    };
+    others.any(|ended| {
+        ended.run_id != record.run_id
+            && ended.pane_id == record.pane_id
+            && ended.session_id == record.session_id
+            && ended.state == RunState::Unknown
+            && ended.last_hook_event.as_deref() == Some("session_ended")
+            && parse_utc_seconds(&ended.updated_at).is_some_and(|at| at >= attempted)
+    })
+}
+
+/// Whether the run's last restore never came back: nothing has written to the
+/// record since (`awaits_first_report`), and the pane's hint still names this
+/// run as its conversation. A hint another run has taken over, or a record
+/// from before run ids, claims nothing; nor does a pane that was closed, whose
+/// hint the next pass swept with the pane store (`gc::sweep` keeps only the
+/// panes a tab holds).
+fn awaits_its_resume(run: &Run, hints: &BTreeMap<(ProviderId, Uuid), Hint>) -> bool {
+    let record = &run.record;
+    if !awaits_first_report(record) {
         return false;
     }
     let Some(run_id) = record.run_id.as_deref() else {
@@ -654,6 +706,65 @@ mod tests {
                "state":"unknown","updatedAt":"{updated_at}",
                "resumeAttemptedAt":"2026-09-14T12:00:30Z"{extra}}}"#
         )
+    }
+
+    const ENDED_RUN: &str = "22222222-2222-4222-8222-222222222222";
+
+    /// `input` with a second record: the run a resume wrote its `SessionEnd`
+    /// to, for the session and at the time given.
+    fn with_ended_resume(mut input: LifecycleInput, session: &str, at: &str) -> LifecycleInput {
+        let mut ended = input.records[0].clone();
+        ended.name = ENDED_RUN.to_owned();
+        ended.content = Some(format!(
+            r#"{{"schemaVersion":3,"paneId":"{PANE}","runId":"{}","revision":1,
+               "state":"unknown","updatedAt":"{at}","lastHookEvent":"session_ended",
+               "sessionId":"{session}"}}"#,
+            ended.name
+        ));
+        input.records.push(ended);
+        input
+    }
+
+    #[test]
+    fn a_resume_ended_before_the_last_quit_is_not_tried_again() {
+        let restored = || {
+            let mut input = base(
+                "claude",
+                true,
+                restored_record_json("2026-09-14T12:00:00Z", r#","sessionId":"S""#),
+                PidStatus::Unknown,
+            );
+            input.pid_status.clear();
+            input
+        };
+        let retires_it = |input: &LifecycleInput| {
+            on_launch(input, NOW).iter().any(|command| {
+                command
+                    .then
+                    .iter()
+                    .chain(std::iter::once(command))
+                    .any(|it| {
+                        matches!(it.op, CommandOp::Retire)
+                            && matches!(&it.target, Target::Record { storage_id, .. } if storage_id != ENDED_RUN)
+                    })
+            })
+        };
+        assert!(retires_it(&with_ended_resume(
+            restored(),
+            "S",
+            "2026-09-14T12:00:40Z"
+        )));
+        // Another conversation's end, and an earlier resume's, say nothing.
+        assert!(!retires_it(&with_ended_resume(
+            restored(),
+            "OTHER",
+            "2026-09-14T12:00:40Z"
+        )));
+        assert!(!retires_it(&with_ended_resume(
+            restored(),
+            "S",
+            "2026-09-14T12:00:10Z"
+        )));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 // PaneProgramStatusStore.swift
-// Weir — what each pane's program last reported about itself over OSC 7501.
+// Weir — what each pane's program last reported about itself over OSC 7501, and which panes are back at their shell.
 
 import Foundation
 
@@ -31,7 +31,9 @@ struct ProgramStatusReport: Equatable {
 
 /// The latest report each pane's program made about itself, which the agent
 /// projection reads (`AgentProjectionInput.programStatus`), and the titles an
-/// agent that reports its status writes, which the tab leaves off.
+/// agent that reports its status writes, which the tab leaves off. It also
+/// keeps which panes' commands have returned to the shell, the event that ends
+/// a report.
 ///
 /// Only the report about the program as a whole is kept: the records a
 /// program keeps for parts of its work say nothing about the run in the pane.
@@ -48,6 +50,10 @@ final class PaneProgramStatusStore {
     }
 
     private(set) var statuses: [UUID: Status] = [:]
+    /// The open panes whose command returned to the shell since this launch
+    /// began. A run restored at launch that never reported has only this to
+    /// say it is gone (`resume_left_the_pane` in the projection).
+    private(set) var panesBackAtShell: Set<UUID> = []
     /// The `app` names of the agents Weir supervises
     /// (`AgentProviderDescriptor.programStatusApp`). Their titles are left
     /// off, since the projection names an agent's tab.
@@ -114,9 +120,23 @@ final class PaneProgramStatusStore {
         return false
     }
 
+    /// A pane's command returned to the shell: what its program reported is
+    /// over, cleared or not, as one killed or crashed sends no clear.
+    func commandReturnedToShell(in pane: UUID) {
+        // Read before `forget`, which takes the pane out: only the first
+        // return says anything new, and every shell command ends in one.
+        let isFirstReturn = !panesBackAtShell.contains(pane)
+        forget(pane)
+        panesBackAtShell.insert(pane)
+        if isFirstReturn {
+            onChange?()
+        }
+    }
+
     /// Forgets what a pane's program reported, once its surface closed or its
     /// command returned to the shell.
     func forget(_ pane: UUID) {
+        panesBackAtShell.remove(pane)
         panesAgentLeft.remove(pane)
         guard let removed = statuses.removeValue(forKey: pane) else { return }
         if agentApps.contains(removed.app) {

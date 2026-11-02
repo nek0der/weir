@@ -7,7 +7,7 @@
 //! read the diff before committing it: what review covers is the committed
 //! file, not the run that produced it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use weir_agent_core::project;
@@ -166,6 +166,7 @@ fn build_input(case: &Path) -> (ProjectionInput, Instants) {
         seen_panes: hand.seen_panes,
         // No case reports a program's status.
         program_status: BTreeMap::new(),
+        panes_back_at_shell: BTreeSet::default(),
         acknowledged: Vec::new(),
         is_bootstrap: hand.is_bootstrap,
         // No case protects turns yet, so none sweeps them.

@@ -257,7 +257,11 @@ fn build_runtimes(
                 &run.provider,
                 run.record.run_id.as_deref().unwrap_or(&run.record.pane_id),
             );
-            let (panes, attachment) = panes_for(&run.record, input);
+            let (panes, attachment) = if resume_left_the_pane(run, input) {
+                (Vec::new(), AttachmentResolution::Detached)
+            } else {
+                panes_for(&run.record, input)
+            };
             let event_token = event_token(&run.record);
             let episode_token = episode_token(state, &id, &run.record);
             let conversation = conversation_of(
@@ -275,6 +279,11 @@ fn build_runtimes(
                 reported_wait_badge(badge, kind)
             } else if reported_failure(run, input, is_pane_agent) {
                 reported_failure_badge(badge)
+            } else if resumed_agent_reports(run, input) {
+                Badge {
+                    state: RunState::Idle,
+                    ..badge
+                }
             } else {
                 badge
             };
@@ -673,15 +682,70 @@ fn current_program_status<'a>(
     if !is_pane_agent {
         return None;
     }
+    let status = pane_program_status(run, input)?;
+    let reported = parse_utc_seconds(&status.observed_at)?;
+    let changed = parse_utc_seconds(&run.record.updated_at)?;
+    (reported >= changed).then_some(status)
+}
+
+/// The latest report from the run's own pane, when it is under the name the
+/// provider gives its agent.
+fn pane_program_status<'a>(
+    run: &AcceptedRun,
+    input: &'a ProjectionInput,
+) -> Option<&'a ProgramStatus> {
     let app = input
         .providers
         .get(&run.provider)
         .and_then(|descriptor| descriptor.program_status_app.as_deref())?;
     let pane = Uuid::parse_str(&run.record.pane_id).ok()?;
-    let status = input.program_status.get(&pane)?;
-    let reported = parse_utc_seconds(&status.observed_at)?;
-    let changed = parse_utc_seconds(&run.record.updated_at)?;
-    (status.app == app && reported >= changed).then_some(status)
+    input
+        .program_status
+        .get(&pane)
+        .filter(|status| status.app == app)
+}
+
+/// Whether a run restored at launch is back, though no hook has said so: its
+/// agent reports its status from the pane, and no hook has written the record
+/// since the restore (`session_lifecycle::awaits_first_report`). `codex resume`
+/// runs no hook before its first prompt, and it waits at that prompt, so the
+/// badge rests. The record's `Unknown` stays what it was: a resume that failed
+/// reports nothing, and the store forgets a report when the pane's command
+/// returns to the shell, so an agent that has ended reads as no agent again
+/// (`resume_left_the_pane`).
+fn resumed_agent_reports(run: &AcceptedRun, input: &ProjectionInput) -> bool {
+    let record = &run.record;
+    if record.state != RunState::Unknown || !crate::session_lifecycle::awaits_first_report(record) {
+        return false;
+    }
+    let Some(status) = pane_program_status(run, input) else {
+        return false;
+    };
+    let reported = parse_utc_seconds(&status.observed_at);
+    let attempted = record
+        .resume_attempted_at
+        .as_deref()
+        .and_then(parse_utc_seconds);
+    reported.is_some() && reported >= attempted
+}
+
+/// Whether a run restored at launch has left its pane without a word: the
+/// pane's command returned to the shell, no hook has written the record since
+/// the restore, and nothing reports from the pane now. An agent killed before
+/// its first prompt, or a resume that failed, ends this way with its record
+/// unwritten and no pid for a sweep to ask about. The record stays, so the next
+/// launch still tries the resume (`session_lifecycle::awaits_its_resume`). A
+/// tmux run outlives the client that returned to the shell, so it is left
+/// alone.
+fn resume_left_the_pane(run: &AcceptedRun, input: &ProjectionInput) -> bool {
+    let record = &run.record;
+    record.state == RunState::Unknown
+        && record.is_tmux_hosted != Some(true)
+        && record.tmux_socket_path.is_none()
+        && crate::session_lifecycle::awaits_first_report(record)
+        && pane_program_status(run, input).is_none()
+        && Uuid::parse_str(&record.pane_id)
+            .is_ok_and(|pane| input.panes_back_at_shell.contains(&pane))
 }
 
 /// The storage ids of the runs that are their pane's agent now, one per pane

@@ -600,3 +600,181 @@ fn an_error_report_leaves_the_words_of_a_failure_a_hook_announced() {
     assert_eq!(badge.state, RunState::Error);
     assert_eq!(badge.detail.as_deref(), Some("quota exhausted"));
 }
+
+/// A record as a restore leaves it, as `finished_input`'s file is named.
+fn restored_input(attempted: &str) -> ProjectionInput {
+    let mut input = finished_input(Vec::new());
+    let content = record(Some(5), "2026-09-14T12:03:00Z", "unknown").replace(
+        r#""state":"unknown""#,
+        &format!(r#""state":"unknown","resumeAttemptedAt":"{attempted}""#),
+    );
+    input.records = vec![file(Some(content))];
+    input
+}
+
+/// `codex resume` runs no hook before its first prompt, yet its status report
+/// says it is there: the run rests at that prompt, with no news of it, and
+/// the record it read is left as it was.
+#[test]
+fn a_restored_run_whose_agent_reports_rests_with_no_news() {
+    let input = reporting(
+        restored_input("2026-09-14T12:05:00Z"),
+        ProgramState::Idle,
+        None,
+        "2026-09-14T12:05:03Z",
+    );
+    let (_, projection, commands) = pass(&ProjectionState::default(), &input);
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Idle);
+    assert!(!notifies(&commands));
+}
+
+/// A resume that failed leaves the shell in front, which reports nothing.
+#[test]
+fn a_restored_run_with_no_report_stays_unknown() {
+    let (_, projection, _) = pass(
+        &ProjectionState::default(),
+        &restored_input("2026-09-14T12:05:00Z"),
+    );
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Unknown);
+}
+
+/// A report from before the restore says nothing of the resume.
+#[test]
+fn a_report_from_before_the_restore_is_no_evidence_of_the_resume() {
+    let input = reporting(
+        restored_input("2026-09-14T12:05:00Z"),
+        ProgramState::Idle,
+        None,
+        "2026-09-14T12:04:59Z",
+    );
+    let (_, projection, _) = pass(&ProjectionState::default(), &input);
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Unknown);
+}
+
+/// A hook that wrote the record after the restore (`SessionEnd`, say) makes
+/// it newer than the mark, and a report still standing does not bring it back.
+#[test]
+fn a_restored_run_whose_session_ended_stays_unknown_despite_a_report() {
+    let mut input = restored_input("2026-09-14T12:02:00Z");
+    input.records = vec![file(Some(
+        record(Some(5), "2026-09-14T12:03:00Z", "unknown").replace(
+            r#""state":"unknown""#,
+            r#""state":"unknown","resumeAttemptedAt":"2026-09-14T12:02:00Z""#,
+        ),
+    ))];
+    let input = reporting(input, ProgramState::Idle, None, "2026-09-14T12:03:10Z");
+    let (_, projection, _) = pass(&ProjectionState::default(), &input);
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Unknown);
+}
+
+/// An agent killed before its first prompt sends no hook: its pane's command
+/// returning to the shell is what takes the run off the pane. The record is
+/// kept for the next launch's resume.
+#[test]
+fn a_restored_run_leaves_its_pane_when_the_command_returns_to_the_shell() {
+    let mut input = restored_input("2026-09-14T12:05:00Z");
+    input
+        .panes_back_at_shell
+        .insert(PANE.parse().expect("pane"));
+    let (_, projection, commands) = pass(&ProjectionState::default(), &input);
+    assert!(projection.runtimes[0].panes.is_empty());
+    assert!(!commands.iter().any(|it| matches!(it.op, CommandOp::Retire)));
+}
+
+/// `codex resume` typed again in that pane reports: the run is back.
+#[test]
+fn a_restored_run_returns_to_its_pane_when_its_agent_reports_again() {
+    let mut input = restored_input("2026-09-14T12:05:00Z");
+    input
+        .panes_back_at_shell
+        .insert(PANE.parse().expect("pane"));
+    let input = reporting(input, ProgramState::Idle, None, "2026-09-14T12:06:00Z");
+    let (_, projection, _) = pass(&ProjectionState::default(), &input);
+    assert_eq!(projection.runtimes[0].panes.len(), 1);
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Idle);
+}
+
+/// A tmux client returning to the shell leaves the run alive in tmux.
+#[test]
+fn a_restored_tmux_run_keeps_its_place_when_the_client_returns_to_the_shell() {
+    let mut input = restored_input("2026-09-14T12:05:00Z");
+    let content = input.records[0].content.clone().expect("record").replace(
+        r#""state":"unknown""#,
+        r#""state":"unknown","isTmuxHosted":true"#,
+    );
+    input.records = vec![file(Some(content))];
+    input
+        .panes_back_at_shell
+        .insert(PANE.parse().expect("pane"));
+    let (_, projection, _) = pass(&ProjectionState::default(), &input);
+    assert_ne!(
+        projection.runtimes[0].attachment,
+        AttachmentResolution::Detached
+    );
+}
+
+/// Records of a resume that ended before its first prompt: the run it came
+/// from, as a restore left it, and the new run its `SessionEnd` wrote.
+fn resume_ended_input(ended_at: &str, ended_session: &str) -> ProjectionInput {
+    const ENDED: &str = "22222222-2222-4222-8222-222222222222";
+    let mut input = restored_input("2026-09-14T12:05:00Z");
+    let session = r#""state":"unknown","sessionId":"s1""#;
+    let restored = input.records[0]
+        .content
+        .clone()
+        .expect("record")
+        .replace(r#""state":"unknown""#, session);
+    let ended = format!(
+        r#"{{"schemaVersion":3,"paneId":"{PANE}","runId":"{ENDED}","revision":1,"state":"unknown","updatedAt":"{ended_at}","lastHookEvent":"session_ended","sessionId":"{ended_session}","pid":"77"}}"#
+    );
+    input.records = vec![
+        file(Some(restored)),
+        RecordFile {
+            provider: claude(),
+            name: ENDED.to_owned(),
+            content: Some(ended),
+        },
+    ];
+    input.pid_status.insert("77".to_owned(), PidStatus::Alive);
+    input
+}
+
+fn retires_restored_run(commands: &[Command]) -> bool {
+    commands
+        .iter()
+        .flat_map(|command| std::iter::once(command).chain(command.then.iter()))
+        .any(|command| {
+            matches!(command.op, CommandOp::Retire)
+                && matches!(&command.target, Target::Record { storage_id, .. } if storage_id == RUN)
+        })
+}
+
+/// `/quit` before the first prompt: the conversation ended, so the run it was
+/// resumed from goes, with its hint, and no later launch resumes it.
+#[test]
+fn a_restored_run_is_retired_when_its_resume_reports_the_session_ended() {
+    let input = resume_ended_input("2026-09-14T12:05:30Z", "s1");
+    let (_, _, commands) = pass(&ProjectionState::default(), &input);
+    assert!(retires_restored_run(&commands));
+    assert!(
+        commands
+            .iter()
+            .any(|it| matches!(it.target, Target::SessionHint { .. }))
+    );
+}
+
+/// An end of another conversation in the pane says nothing of this one.
+#[test]
+fn another_conversations_end_leaves_a_restored_run() {
+    let input = resume_ended_input("2026-09-14T12:05:30Z", "s2");
+    let (_, _, commands) = pass(&ProjectionState::default(), &input);
+    assert!(!retires_restored_run(&commands));
+}
+
+/// An end from before this launch's attempt is an earlier resume's.
+#[test]
+fn an_end_from_before_the_attempt_leaves_a_restored_run() {
+    let input = resume_ended_input("2026-09-14T12:04:30Z", "s1");
+    let (_, _, commands) = pass(&ProjectionState::default(), &input);
+    assert!(!retires_restored_run(&commands));
+}

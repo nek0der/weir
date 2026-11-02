@@ -152,4 +152,30 @@ struct PaneProgramStatusStoreTests {
         #expect(!scene.store.silencesTitle("", from: Self.pane))
         #expect(scene.changes == 2)
     }
+
+    /// Every shell command ends in a return, so only the first asks for a
+    /// pass, while each still ends what the program reported.
+    @Test func aPanesReturnToTheShell_requestsOnePass_andEndsTheReport() {
+        let scene = Scene()
+        scene.store.commandReturnedToShell(in: Self.pane)
+        #expect(scene.store.panesBackAtShell == [Self.pane])
+        #expect(scene.changes == 1)
+
+        scene.store.commandReturnedToShell(in: Self.pane)
+        #expect(scene.changes == 1)
+
+        scene.report(.idle)
+        #expect(scene.changes == 2)
+        scene.store.commandReturnedToShell(in: Self.pane)
+        #expect(scene.store.statuses.isEmpty)
+        #expect(scene.store.panesBackAtShell == [Self.pane])
+        #expect(scene.changes == 3)
+    }
+
+    @Test func aClosedPane_isNoLongerBackAtTheShell() {
+        let scene = Scene()
+        scene.store.commandReturnedToShell(in: Self.pane)
+        scene.store.forget(Self.pane)
+        #expect(scene.store.panesBackAtShell.isEmpty)
+    }
 }

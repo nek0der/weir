@@ -79,7 +79,10 @@ extension AttentionState {
     /// whose state is known, the most recently updated when the pane shows
     /// several (a tmux session can carry more than one run). An unknown
     /// state does not count, matching the tab row's agent glyph, so a pane
-    /// reads as a shell again once its agent is gone.
+    /// reads as a shell again once its agent is gone. A run restored at
+    /// launch is not unknown once its agent reports its status from the
+    /// pane, which `codex resume` does long before its first hook; the
+    /// projection rests its badge then.
     func headerRuntime(inPane paneID: UUID) -> AgentRuntimePresentation? {
         Self.headerRuntime(inPane: paneID, among: allRuntimes)
     }

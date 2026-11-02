@@ -361,6 +361,12 @@ fn session_transition(
         }
         AgentEvent::SessionEnded { reason, session_id } => {
             next.state = RunState::Unknown;
+            // A resume that ends before its first prompt writes only this
+            // record, and the session id is what ties it to the run it came
+            // from (`session_lifecycle::ended_since_its_resume`).
+            if next.session_id.is_none() {
+                next.session_id.clone_from(session_id);
+            }
             next.run_started_at = None;
             next.cache_window = None;
             next.background_work = None;

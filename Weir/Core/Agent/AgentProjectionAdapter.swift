@@ -570,6 +570,7 @@ final class AgentProjectionAdapter {
         input.focus = focus(in: session)
         input.seenPanes = seenPanes().sorted { $0.uuidString < $1.uuidString }
         input.programStatus = programStatus()
+        input.panesBackAtShell = panesBackAtShell().sorted { $0.uuidString < $1.uuidString }
         input.turnSweep = protection.map { AgentProjectionTurnSweep(limits: turnRetention, protection: $0) }
         return input
     }
@@ -892,6 +893,9 @@ final class AgentProjectionAdapter {
     /// (`PaneProgramStatusStore`). Set by the host, which receives the
     /// terminal's reports; the default has none.
     var programStatus: @MainActor () -> [String: AgentProjectionProgramStatus] = { [:] }
+    /// The panes whose command returned to the shell since this launch
+    /// began (`PaneProgramStatusStore`). Set by the host; the default has none.
+    var panesBackAtShell: @MainActor () -> Set<UUID> = { [] }
     /// Set by the host to react once the panes reflect a new projection.
     /// Approval presentation uses it to release requests the terminal
     /// already answered.
