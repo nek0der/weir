@@ -13,6 +13,23 @@ import Testing
 @MainActor
 @Suite("TabActions")
 struct TabActionsTests {
+    @Test func reopenClosedTab_toldOfThePanesNewIDs_beforeTheTabIsInTheSession() throws {
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        session.recordClosedTab(tab)
+        session.closeTab(tab.id)
+        var told: [UUID: UUID] = [:]
+        var tabCountWhenTold: Int?
+        session.onTabReopening = { closed, paneIDs in
+            #expect(closed.id == tab.id)
+            told = paneIDs
+            tabCountWhenTold = session.tabs.count
+        }
+        let before = session.tabs.count
+        TabActions.reopenClosedTab(session)
+        #expect(tabCountWhenTold == before)
+        let new = try #require(told[pane])
+        #expect(session.tabs.contains { $0.splitTree.allLeafIDs().contains(new) })
+    }
 
     // MARK: - Reopen closed tab
 

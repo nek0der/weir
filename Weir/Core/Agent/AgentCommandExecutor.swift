@@ -133,6 +133,100 @@ struct AgentCommandExecutor {
         }
     }
 
+    /// Gives `run`'s conversation back to a reopened pane: its record, moved
+    /// out of `retired` if a pass retired it when the tab closed, now names
+    /// `newPane` and carries a restore's mark, and the pane's hint names the
+    /// run. A reopened pane is then what a restored pane is at launch, for
+    /// every rule that reads one. Without this the resume it types has no
+    /// record, so the pane names no conversation before the agent's first
+    /// hook, and a relaunch before then loses the conversation. Returns
+    /// whether the record and the hint were written; with no record of the
+    /// session to be found, the pane stays as it would have been.
+    @discardableResult
+    func reviveRun(
+        provider: String,
+        session: AgentSessionInfo,
+        fromPane oldPane: UUID,
+        toPane newPane: UUID,
+        now: Date = Date()
+    ) -> Bool {
+        guard let owner = directories[provider],
+              let suffix = owner.runRecordSuffix,
+              let hintURL = owner.paneStoreURL(.sessions, pane: newPane),
+              let found = revivableRecord(in: owner, suffix: suffix, session: session.sessionId, pane: oldPane)
+        else { return false }
+        let target = owner.state.appendingPathComponent(found.storageID + suffix)
+        let stamp = AgentDateParsing.formatISO8601(now)
+        do {
+            let outcome = try AgentFileLock.withLock(for: target) {
+                var record = found.record
+                record["paneId"] = newPane.uuidString
+                record["state"] = "unknown"
+                record["resumeAttemptedAt"] = stamp
+                record.removeValue(forKey: "pid")
+                record.removeValue(forKey: "killedByWeirAt")
+                let written = writeJSON(record, to: target)
+                if written == .applied, found.url != target {
+                    try SecureFileWrite.removeItem(at: found.url)
+                }
+                return written
+            }
+            guard outcome == .applied else { return false }
+            // The shape the hook writes a hint in (`SideWrite::SessionHint`).
+            var hint: [String: Any] = [
+                "lastHookEvent": "session_started",
+                "paneId": newPane.uuidString,
+                "schemaVersion": 1,
+                "sessionId": session.sessionId,
+                "updatedAt": stamp
+            ]
+            hint["runId"] = found.record["runId"]
+            hint["cwd"] = session.cwd
+            return try AgentFileLock.withLock(for: hintURL) { writeJSON(hint, to: hintURL) } == .applied
+        } catch {
+            log.error("revive run failed: \(error.localizedDescription, privacy: .private)")
+            return false
+        }
+    }
+
+    /// A record that can be given back to a reopened pane, and where it is.
+    private struct RevivableRecord {
+        let url: URL
+        let storageID: String
+        let record: [String: Any]
+    }
+
+    /// The record of `session` in `pane`: the one still live, as a quick
+    /// reopen can come before the pass that retires it, else the latest
+    /// retired. Its storage id is its file's name up to the first dot, which
+    /// `retiredRecordName` keeps.
+    private func revivableRecord(
+        in owner: AgentDirectories,
+        suffix: String,
+        session: String,
+        pane: UUID
+    ) -> RevivableRecord? {
+        /// A directory that cannot be listed has no record to offer.
+        func records(in directory: URL) -> [URL] {
+            let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+            return names.filter { $0.hasSuffix(suffix) }.map(directory.appendingPathComponent)
+        }
+        let retired = records(in: owner.retired).sorted { newer, older in
+            let newerAt = owner.retiredAt(ofRetiredFileNamed: newer.lastPathComponent) ?? 0
+            let olderAt = owner.retiredAt(ofRetiredFileNamed: older.lastPathComponent) ?? 0
+            return newerAt > olderAt
+        }
+        for url in records(in: owner.state) + retired {
+            guard let record = readJSON(url),
+                  record["sessionId"] as? String == session,
+                  (record["paneId"] as? String).flatMap(UUID.init(uuidString:)) == pane,
+                  let storageID = url.lastPathComponent.split(separator: ".").first
+            else { continue }
+            return RevivableRecord(url: url, storageID: String(storageID), record: record)
+        }
+        return nil
+    }
+
     /// Drops `pane`'s hint for `provider` when it still names `sessionID`,
     /// under the lock the hook writes it under; a hint a newer session has
     /// written since is left. The one change no rule asks for: only the

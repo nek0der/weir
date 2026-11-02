@@ -35,12 +35,20 @@ extension AppState {
         }
         connectWindowOverlays()
         connectProgramStatus()
+        connectTabReopening()
         startApprovalHandOff()
         startAttentionQueue()
         startNotificationRouting()
         // Before the first reading of the journals, so none goes unheard.
         connectRestoreMoves()
         recoverRestores()
+    }
+
+    /// Gives a reopened tab's panes their runs back before it is shown.
+    func connectTabReopening() {
+        session.onTabReopening = { [weak agentProjection] closed, paneIDs in
+            agentProjection?.reviveRuns(of: closed, paneIDs: paneIDs)
+        }
     }
 
     /// Hands the agents' OSC 7501 reports to the projection: which program

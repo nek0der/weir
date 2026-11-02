@@ -214,8 +214,8 @@ enum TabActions {
             container: closed.tab.container,
             // Carry every provider's per-pane resume hints across
             // the pane id remap so an in-session ⌘⇧T can still try a
-            // resume on the revived leaf (best-effort — the disk
-            // record was already dropped at close time).
+            // resume on the revived leaf (`onTabReopening` brings the disk
+            // record back).
             agentSessions: closed.tab.agentSessions.mapValues { remapKeys($0, using: idMap) },
             tmuxBindings: remapKeys(closed.tab.tmuxBindings, using: idMap)
         )
@@ -231,15 +231,15 @@ enum TabActions {
         revived.initialPromptFiles = remapKeys(closed.tab.initialPromptFiles, using: idMap)
         revived.initialAgentExecutables = remapKeys(closed.tab.initialAgentExecutables, using: idMap)
         // The projection answered which of those hints may resume while the
-        // pane was open. The hint file went with the pane, so the next pass
-        // cannot answer again; carrying the answer here gives the revived
-        // pane its chance to resume, on the same best-effort terms as the
-        // hints above (a pass that lands before the mount clears it).
+        // pane was open. The hint file went with the pane; carrying the answer
+        // here keeps it for the revived pane until its hint is back
+        // (`onTabReopening`).
         revived.agentResumeCandidates = remapKeys(closed.tab.agentResumeCandidates, using: idMap)
         // The conversation that named the tab's row names it again, in its
         // pane under the pane's new id, so a later move takes it along.
         revived.conversationName = closed.tab.conversationName?.remapped(idMap)
 
+        session.onTabReopening?(closed.tab, idMap)
         session.tabs.append(revived)
         session.setActiveTab(revived.id, in: window, intent: intent)
     }
