@@ -94,9 +94,7 @@ struct KeyboardPane: View {
                         selectedSectionRaw = SettingsSection.quickTerminal.rawValue
                     } label: {
                         HStack(spacing: 4) {
-                            Text(display: store.settings.quickTerminal.hotKey.map { .verbatim($0.displayString) } ?? .localized("Unbound"))
-                                .font(.system(.body, design: .default).monospacedDigit())
-                                .lineLimit(1)
+                            SettingsRecorderLabel(shortcut: store.settings.quickTerminal.hotKey, isRecording: false)
                                 .frame(maxWidth: .infinity, alignment: .center)
                             Image(systemName: "chevron.forward")
                                 .font(.caption)
@@ -368,9 +366,7 @@ private struct ShortcutRecorder: View {
                 startRecording()
             }
         } label: {
-            Text(display: label)
-                .font(.system(.body, design: .default).monospacedDigit())
-                .lineLimit(1)
+            SettingsRecorderLabel(shortcut: displayedShortcut, isRecording: isRecording)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .settingsRecorderPill(isRecording: isRecording)
         }
@@ -429,10 +425,7 @@ private struct ShortcutRecorder: View {
     }
 
     private var label: DisplayText {
-        if isRecording {
-            return .localized("Press a key…")
-        }
-        return displayedShortcut.map { .verbatim($0.displayString) } ?? .localized("Unbound")
+        SettingsRecorderLabel.text(shortcut: displayedShortcut, isRecording: isRecording)
     }
 
     // MARK: - Monitor lifecycle

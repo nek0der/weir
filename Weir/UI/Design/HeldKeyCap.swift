@@ -104,18 +104,20 @@ private struct HeldKeyCap: ViewModifier {
 /// terminal showing through a see-through ground, for the moment ⌘ is held.
 /// `SupervisionKeycap`'s face is the ground's own color, made for a key at
 /// rest beside a name, and on these it left only a faint edge.
+///
+/// One key, so a square: the hairline margin lets `KeyComboText`'s cell (as
+/// wide as W) fit inside the cap's height, and every letter stands in the
+/// same square. With the combination caps' margin each one was a wider
+/// oblong. A key of several letters (F12) still widens it.
 private struct HeldKeyCapFace: View {
     let key: String
 
     private typealias Layout = WeirLayout.Supervision
 
     var body: some View {
-        Text(verbatim: key)
-            .font(.system(size: WeirFont.Supervision.Size.caption.rawValue, weight: .medium))
+        KeyComboText(key, size: .caption)
             .foregroundStyle(SupervisionTokens.window.color)
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, Layout.keycapHorizontalPadding)
+            .padding(.horizontal, Layout.spaceHairline)
             .frame(minWidth: Layout.keycapHeight, minHeight: Layout.keycapHeight)
             .background(
                 SupervisionTokens.text.color,

@@ -11,8 +11,7 @@ struct Keycap: View {
     /// The chip is drawn in the window's tokens: `selection` for the chip
     /// and the muted token, which reads on it at 4.5:1.
     var body: some View {
-        Text(symbol)
-            .font(.supervision(.caption, weight: .medium, design: .rounded))
+        KeyComboText(symbol, size: .caption)
             .foregroundStyle(SupervisionTokens.muted.color)
             .frame(minWidth: 20, minHeight: 20)
             .padding(.horizontal, symbol.count > 1 ? 4 : 0)

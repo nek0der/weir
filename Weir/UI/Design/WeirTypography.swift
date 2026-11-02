@@ -10,6 +10,8 @@ import SwiftUI
 /// - Monospace is for what the terminal and Git name: commands, terminal
 ///   lines, branch names and paths (`Font.supervisionCode`), and numbers
 ///   that stand in a column.
+/// - A key combination standing by itself is written by `KeyComboText`,
+///   which sets each key in a cell so equal combinations are equally wide.
 /// - Every size is a step of `WeirFont.Supervision.Size`; no view writes
 ///   a point size of its own. The empty states (`SupervisionEmptyState`)
 ///   and the empty session area's hints (`EmptySessionHintRow`, with their

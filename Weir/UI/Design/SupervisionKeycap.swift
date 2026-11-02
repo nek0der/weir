@@ -58,11 +58,8 @@ struct SupervisionKeycap: View {
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: WeirLayout.Supervision.keycapCornerRadius, style: .continuous)
-        Text(verbatim: keys)
-            .font(.system(size: fontSize, weight: style == .quiet ? .regular : .medium))
+        KeyComboText(keys, size: fontSize, weight: style == .quiet ? .regular : .medium)
             .foregroundStyle(color.color)
-            .lineLimit(1)
-            .fixedSize()
             .padding(.horizontal, WeirLayout.Supervision.keycapHorizontalPadding)
             .frame(height: height)
             // The face, as see-through as the ground the cap stands on.

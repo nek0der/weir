@@ -93,8 +93,7 @@ struct PrimaryKeyHintLabel: View {
         HStack(spacing: WeirLayout.Supervision.spaceSnug) {
             title
             if showsHint {
-                Text(verbatim: "⌘⏎")
-                    .font(.supervision(.detail, weight: .medium))
+                KeyComboText("⌘⏎", size: .detail)
                     .opacity(SupervisionTokens.keyHintOpacity)
                     .accessibilityHidden(true)
             }

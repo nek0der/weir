@@ -184,9 +184,7 @@ private struct QuickTerminalHotKeyRecorder: View {
                 startRecording()
             }
         } label: {
-            Text(display: label)
-                .font(.system(.body, design: .default).monospacedDigit())
-                .lineLimit(1)
+            SettingsRecorderLabel(shortcut: quickTerminal.hotKey, isRecording: isRecording)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .settingsRecorderPill(isRecording: isRecording)
         }
@@ -207,10 +205,7 @@ private struct QuickTerminalHotKeyRecorder: View {
     }
 
     private var label: DisplayText {
-        if isRecording {
-            return .localized("Press a key…")
-        }
-        return quickTerminal.hotKey.map { .verbatim($0.displayString) } ?? .localized("Unbound")
+        SettingsRecorderLabel.text(shortcut: quickTerminal.hotKey, isRecording: isRecording)
     }
 
     private func startRecording() {
