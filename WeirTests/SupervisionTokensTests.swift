@@ -53,9 +53,9 @@ struct SupervisionTokensTests {
         Pair("red text on red fill: Stopped tag, exit mark", Tokens.stoppedText, Tokens.stoppedFill),
         // A toast is an inverted surface, drawn in the text color.
         Pair("toast link on a toast", Tokens.toastLink, Tokens.text),
-        // Codex's badge letters reach the text ratio as well; Claude's are
-        // held to the marks' (below).
-        Pair("Codex badge letters", Tokens.badgeForeground, Tokens.codex),
+        // Codex's black letters on its white reach the text ratio as well;
+        // Claude's are held to the marks' (below).
+        Pair("Codex badge letters", Tokens.codexBadgeForeground, Tokens.codex),
         Pair("muted on a terminal's lines", Tokens.muted, Tokens.terminal),
         Pair("muted on hover, and on a discarded hunk header", Tokens.muted, Tokens.hover),
         // The review tab's stacked diff: a file's header and a hunk's, and
@@ -344,23 +344,24 @@ struct SupervisionTokensTests {
     }
 
     /// The badges wear the brands' colors, the same in light and dark, with
-    /// white letters on both.
+    /// white letters on all but Codex's, whose mark is black on white.
     @Test(arguments: [false, true])
-    func anAgentBadge_wearsItsBrandColorWithWhiteLetters(isDark: Bool) {
+    func anAgentBadge_wearsItsBrandColorAndItsMarksLetters(isDark: Bool) {
         #expect(Tokens.claude.value(isDark: isDark) == SRGB(0xD97757))
-        #expect(Tokens.codex.value(isDark: isDark) == SRGB(0x5D60FF))
+        #expect(Tokens.codex.value(isDark: isDark) == SRGB(0xFFFFFF))
+        #expect(Tokens.codexBadgeForeground.value(isDark: isDark) == SRGB(0x000000))
         #expect(Tokens.antigravity.value(isDark: isDark) == SRGB(0x2B7BEF))
         #expect(Tokens.opencode.value(isDark: isDark) == SRGB(0x211E1E))
         #expect(Tokens.badgeForeground.value(isDark: isDark) == PrimaryButtonRule.lightLabel)
     }
 
     /// An edge draws only where its fill stands under 3:1 off a surface:
-    /// Claude's in light, Codex's in dark. Elsewhere it is the fill.
+    /// Claude's and Codex's in light. Elsewhere it is the fill.
     @Test func aBadgesEdge_isTheFillWhereTheFillStandsOff() {
         #expect(Tokens.claudeEdge.dark == Tokens.claude.dark)
-        #expect(Tokens.codexEdge.light == Tokens.codex.light)
+        #expect(Tokens.codexEdge.dark == Tokens.codex.dark)
         #expect(Tokens.claudeEdge.light != Tokens.claude.light)
-        #expect(Tokens.codexEdge.dark != Tokens.codex.dark)
+        #expect(Tokens.codexEdge.light != Tokens.codex.light)
     }
 
     /// The written-out edges are the selection rule's, so a change to the
@@ -368,9 +369,9 @@ struct SupervisionTokensTests {
     /// a channel the written-out hex has.
     @Test func aBadgesEdge_isTheSelectionRulesEdge() {
         let claude = SelectionEdgeRule.color(Tokens.claude.value(isDark: false), on: Tokens.selection.value(isDark: false))
-        let codex = SelectionEdgeRule.color(Tokens.codex.value(isDark: true), on: Tokens.selection.value(isDark: true))
+        let codex = SelectionEdgeRule.color(Tokens.codex.value(isDark: false), on: Tokens.selection.value(isDark: false))
         #expect(Tokens.claudeEdge.value(isDark: false).hexBytes == claude.hexBytes)
-        #expect(Tokens.codexEdge.value(isDark: true).hexBytes == codex.hexBytes)
+        #expect(Tokens.codexEdge.value(isDark: false).hexBytes == codex.hexBytes)
     }
 
     @Test(arguments: [false, true])
