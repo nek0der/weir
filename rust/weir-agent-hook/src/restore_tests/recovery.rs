@@ -153,6 +153,7 @@ fn an_interrupted_restore_is_recovered_after_gc() {
     repo.write("other.txt", "outside\n");
     let crash = || panic!("crash after the writes");
     let seams = Seams {
+        before_lock: &nothing,
         after_journal: &nothing,
         after_write: &crash,
         in_write: &nothing_at,
@@ -477,4 +478,171 @@ fn journals_are_ordered_by_when_each_ran() {
             .collect::<Vec<_>>(),
         [earlier.op_id.as_str(), later.op_id.as_str()]
     );
+}
+
+/// The op ids `recover` lists at `now`.
+fn listed(repo: &Repo, now: &str) -> Vec<String> {
+    recover(&repo.path, now)
+        .unwrap()
+        .journals
+        .into_iter()
+        .map(|journal| journal.op_id)
+        .collect()
+}
+
+/// A copy of `restored` under a new id, last written `at`.
+fn written_at(repo: &Repo, restored: &RestoreJournal, at: &str) -> RestoreJournal {
+    let mut copy = restored.clone();
+    copy.op_id = new_op_id();
+    at.clone_into(&mut copy.at);
+    assert!(repo.worktree().write_journal(&copy).is_ok());
+    copy
+}
+
+/// A restore past its lifetime goes, refs and all, once a commit has moved
+/// HEAD and its undo can no longer apply; a younger one stays. While HEAD
+/// is back where the restore left it, the old one stays too, and its undo
+/// still runs.
+#[test]
+fn an_old_restore_goes_once_a_commit_refuses_its_undo() {
+    let repo = Repo::new("prune-head");
+    let turn = busy_turn(&repo);
+    let restored = finished(repo.restore(&turn));
+    let old = written_at(&repo, &restored, "2026-01-01T00:00:00Z");
+    let head = repo.git(&["rev-parse", "HEAD"]);
+
+    // Moved and back: nothing refuses the undo, so nothing goes.
+    repo.commit("later");
+    repo.git(&["reset", "-q", "--soft", &head]);
+    assert_eq!(listed(&repo, NOW).len(), 2);
+    assert!(is_pinned(&repo, &restore_undo_ref(&old.op_id)));
+
+    repo.commit("later");
+    assert_eq!(listed(&repo, NOW), std::slice::from_ref(&restored.op_id));
+    assert_eq!(held(&repo, &old.op_id), (Vec::new(), false));
+    assert!(is_pinned(&repo, &restore_undo_ref(&restored.op_id)));
+
+    // Back again: the younger one's undo applies.
+    repo.git(&["reset", "-q", "--soft", &head]);
+    assert_eq!(
+        finished(repo.undo(&restored.op_id)).stage,
+        RestoreStage::Applied
+    );
+}
+
+/// A checkout of another branch refuses the undo as a commit does.
+#[test]
+fn an_old_restore_goes_once_a_checkout_refuses_its_undo() {
+    let repo = Repo::new("prune-branch");
+    let turn = busy_turn(&repo);
+    let restored = finished(repo.restore(&turn));
+    let mut old = restored.clone();
+    old.at = "2026-01-01T00:00:00Z".to_owned();
+    assert!(repo.worktree().write_journal(&old).is_ok());
+
+    repo.git(&["checkout", "-q", "-b", "other"]);
+    assert!(listed(&repo, NOW).is_empty());
+    assert_eq!(held(&repo, &old.op_id), (Vec::new(), false));
+}
+
+/// An old restore its undo can still apply to stays, whatever its age, and
+/// so does one that names a save it kept aside while the save is there,
+/// whatever moved since.
+#[test]
+fn an_old_restore_its_undo_can_apply_to_or_with_a_save_aside_stays() {
+    let repo = Repo::new("prune-stays");
+    let turn = busy_turn(&repo);
+    let restored = finished(repo.restore(&turn));
+    let years_later = "2036-01-01T00:00:00Z";
+    assert_eq!(
+        listed(&repo, years_later),
+        std::slice::from_ref(&restored.op_id)
+    );
+
+    let mut aside = restored.clone();
+    aside.op_id = new_op_id();
+    aside.at = "2026-01-01T00:00:00Z".to_owned();
+    repo.write(".weir-kept/a.txt", "theirs\n");
+    aside.stage = RestoreStage::PartiallyApplied {
+        reason: StageReason::KeptAside,
+        current_tree: aside.expected_after_tree.clone(),
+        kept: Vec::new(),
+        failed: vec![FailedPath {
+            path: "a.txt".to_owned(),
+            reason: FailedReason::KeptAside {
+                at: ".weir-kept/a.txt".to_owned(),
+            },
+            detail: None,
+        }],
+    };
+    assert!(repo.worktree().write_journal(&aside).is_ok());
+    repo.commit("later");
+
+    let journals = listed(&repo, years_later);
+    assert!(journals.contains(&aside.op_id));
+    assert!(!journals.contains(&restored.op_id));
+
+    // The save is gone: nothing keeps the record past its lifetime.
+    fs::remove_dir_all(repo.path.join(".weir-kept")).unwrap();
+    assert!(listed(&repo, years_later).is_empty());
+}
+
+/// What a restore settled before it began is told by the next reading,
+/// once: the app hears of a settled operation only from a reading.
+#[test]
+fn what_an_operation_settled_first_is_told_by_the_next_reading_once() {
+    let repo = Repo::new("untold");
+    let turn = busy_turn(&repo);
+    let restored = finished(repo.restore(&turn));
+    let mut cut_short = restored.clone();
+    cut_short.op_id = new_op_id();
+    cut_short.stage = RestoreStage::Planned;
+    assert!(repo.worktree().write_journal(&cut_short).is_ok());
+
+    // The undo settles it first, under the lock, and tells nobody.
+    assert_eq!(
+        finished(repo.undo(&restored.op_id)).stage,
+        RestoreStage::Applied
+    );
+    assert!(
+        !repo
+            .worktree()
+            .journal(&cut_short.op_id)
+            .unwrap()
+            .unwrap()
+            .stage
+            .is_interrupted()
+    );
+
+    assert_eq!(recover(&repo.path, NOW).unwrap().settled, [cut_short.op_id]);
+    assert!(recover(&repo.path, NOW).unwrap().settled.is_empty());
+}
+
+/// While a hook holds the lock, a reading tells nothing it cannot take
+/// back from the list: the next one tells it.
+#[test]
+fn what_an_operation_settled_waits_while_a_hook_holds_the_lock() {
+    let repo = Repo::new("untold-locked");
+    let turn = busy_turn(&repo);
+    let restored = finished(repo.restore(&turn));
+    let mut cut_short = restored.clone();
+    cut_short.op_id = new_op_id();
+    cut_short.stage = RestoreStage::Planned;
+    assert!(repo.worktree().write_journal(&cut_short).is_ok());
+    assert_eq!(
+        finished(repo.undo(&restored.op_id)).stage,
+        RestoreStage::Applied
+    );
+
+    let paths = crate::worktree_lock::WorktreeLockPaths::new(&repo.worktree().git_dir);
+    let held = crate::worktree_lock::acquire_shared_quietly(
+        &paths,
+        Duration::from_millis(100),
+        Duration::from_millis(5),
+    );
+    assert!(matches!(held, crate::worktree_lock::Shared::Held(_)));
+    assert!(recover(&repo.path, NOW).unwrap().settled.is_empty());
+    drop(held);
+
+    assert_eq!(recover(&repo.path, NOW).unwrap().settled, [cut_short.op_id]);
 }

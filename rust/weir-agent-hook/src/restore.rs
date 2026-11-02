@@ -3,7 +3,10 @@
 //! files are written from one.
 //!
 //! A restore runs under the worktree lock, held exclusively
-//! (`worktree_lock`), and reads again what the app checked before asking:
+//! (`worktree_lock`). The turn records and the files each turn made are
+//! read before it (`made`), and only what changed since is read again
+//! under it, as a hook waits for the lock. It reads again what the app
+//! checked before asking:
 //! the turn, every agent's run record, HEAD, the branch, and whether a merge,
 //! a rebase, or a conflict is under way. It then works out the paths it will
 //! write (the planned paths), computes every tree it depends on, and writes
@@ -33,7 +36,8 @@ use crate::git::{GitScope, GitSnapshots, is_object_id, path_from_bytes};
 use crate::process::start_epoch;
 use crate::records::{ensure_user_only_directory, read_record};
 use crate::worktree_lock::{ExclusiveError, ExclusiveLock, WorktreeLockPaths};
-use journal::{is_expired, is_whole};
+use journal::{Current, is_expired, is_whole};
+use made::MadeByTurns;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -48,6 +52,8 @@ use write::Moment;
 mod apply;
 #[path = "restore_journal.rs"]
 mod journal;
+#[path = "restore_made.rs"]
+mod made;
 #[path = "restore_pins.rs"]
 mod pins;
 #[path = "restore_write.rs"]
@@ -179,11 +185,13 @@ pub fn restore_turn(request: &RestoreRequest, now: &str) -> RestoreOutcome {
     outcome(restore_turn_inner(request, now, &NO_SEAMS))
 }
 
-/// Where the tests step in: once the journal is written, before the first
-/// path (a hook asking the restore to stop); within each path's write
-/// (`in_write`); once every path is written, before the planned paths are
-/// read again (another writer); and in the rollback's writes.
+/// Where the tests step in: once the turns are read, before the lock (a
+/// turn that begins or ends meanwhile); once the journal is written, before
+/// the first path (a hook asking the restore to stop); within each path's
+/// write (`in_write`); once every path is written, before the planned paths
+/// are read again (another writer); and in the rollback's writes.
 struct Seams<'a> {
+    before_lock: &'a dyn Fn(),
     after_journal: &'a dyn Fn(),
     after_write: &'a dyn Fn(),
     in_write: &'a dyn Fn(Moment),
@@ -195,6 +203,7 @@ fn nothing() {}
 fn nothing_at(_: Moment) {}
 
 const NO_SEAMS: Seams<'static> = Seams {
+    before_lock: &nothing,
     after_journal: &nothing,
     after_write: &nothing,
     in_write: &nothing_at,
@@ -207,8 +216,19 @@ fn restore_turn_inner(
     seams: &Seams<'_>,
 ) -> Result<RestoreJournal, Refusal> {
     let worktree = Worktree::open(&request.root)?;
+    // Before the lock, which a hook waits for at the start of a turn: the
+    // turns since may be thousands of records, each turn's trees to diff.
+    // Under the lock only what was written in between is read again.
+    let mut made_by_turns = MadeByTurns::read(
+        &request.state_directories,
+        &worktree,
+        find_turn(&request.state_directories, &request.turn_id)
+            .ok()
+            .as_ref(),
+    );
+    (seams.before_lock)();
     let lock = worktree.lock()?;
-    let _ = worktree.settle_interrupted(now);
+    worktree.settle_before_operation(now);
     let turn = find_turn(&request.state_directories, &request.turn_id)?;
     let SnapshotStatus::Captured {
         tree: target_tree,
@@ -247,7 +267,7 @@ fn restore_turn_inner(
     let made = if untracked.is_empty() {
         HashSet::new()
     } else {
-        made_by_turns_since(&request.state_directories, &worktree, &turn)
+        made_by_turns.since(&request.state_directories, &worktree, &turn)
     };
     changes.retain(|change| {
         change.kind != PathChangeKind::Delete
@@ -289,7 +309,7 @@ pub fn undo_restore(request: &UndoRequest, now: &str) -> RestoreOutcome {
 fn undo_restore_inner(request: &UndoRequest, now: &str) -> Result<RestoreJournal, Refusal> {
     let worktree = Worktree::open(&request.root)?;
     let lock = worktree.lock()?;
-    let _ = worktree.settle_interrupted(now);
+    worktree.settle_before_operation(now);
     let restored = worktree
         .journal(&request.op_id)
         .map_err(|error| Refusal::JournalUnreadable {
@@ -392,8 +412,10 @@ pub struct Recovery {
     /// Every journal of the worktree that could be read, oldest first, for
     /// the records.
     pub journals: Vec<RestoreJournal>,
-    /// The operations this call settled: a crash had cut them short, and
-    /// the person is told once, by the call that found them.
+    /// The operations this call settled, and those a restore, a discard,
+    /// or an undo settled before it began since the last call that told
+    /// them: a crash had cut them short, and the person is told once, by
+    /// the reading that names them.
     pub settled: Vec<String>,
     /// Whether `journals` leaves some out: the directory of journals, or a
     /// journal in it, is there but could not be read. Never read as "no
@@ -410,10 +432,11 @@ pub struct Recovery {
 /// Journals that are there but cannot be read keep none of the others from
 /// this: each is settled or dropped on its own, and the call says the list
 /// is incomplete (`Recovery::is_incomplete`) rather than give it as whole.
-/// The ones it could not read stay as they are on disk, refs and all. This
-/// call can tell what it settled, so it settles; a call that could not
-/// tell it settles nothing, as the app hears of a settled operation only
-/// from the call that settled it.
+/// The ones it could not read stay as they are on disk, refs and all. The
+/// app hears of a settled operation only from a reading, so this call
+/// names what it settled, and what a restore, a discard, or an undo
+/// settled before it began (`settle_before_operation`), which those
+/// operations cannot tell.
 ///
 /// # Errors
 ///
@@ -437,15 +460,18 @@ pub fn recover(root: &Path, now: &str) -> Result<Recovery, RecoverError> {
                 })
             })
     };
+    let current = Current::new(&worktree);
     let needs_lock = journals.iter().any(|journal| {
         journal.is_writable()
             && (journal.stage.is_interrupted()
-                || is_expired(journal, now)
+                || is_expired(journal, now, &current)
                 || unmarked_undo(journal))
-    }) || !worktree.leftover_refs().is_empty();
+    }) || !worktree.leftover_refs().is_empty()
+        || worktree.untold_path().exists();
     let mut settled = Vec::new();
     if needs_lock && let Ok(_lock) = worktree.lock() {
-        settled = worktree.settle_interrupted(now);
+        settled = worktree.take_untold();
+        settled.extend(worktree.settle_interrupted(now));
         worktree.prune(now);
     }
     // Read again for what settling and pruning wrote; whether the list is
@@ -681,17 +707,22 @@ impl Worktree {
                 let Some(record) = read_record(&entry.path()) else {
                     continue;
                 };
-                let is_active = record.state.is_at_work();
-                let is_here = [&record.worktree_root, &record.turn_root]
-                    .into_iter()
-                    .flatten()
-                    .any(|root| same_path(Path::new(root), &self.root));
-                let is_gone = record
-                    .pid
-                    .as_deref()
-                    .and_then(|pid| pid.parse::<u32>().ok())
-                    .is_some_and(|pid| start_epoch(pid).is_none());
-                if is_active && is_here && !is_gone {
+                // In this order, cheapest first: whether the process is
+                // gone runs `ps`, which only a run at work here needs.
+                let is_here = || {
+                    [&record.worktree_root, &record.turn_root]
+                        .into_iter()
+                        .flatten()
+                        .any(|root| same_path(Path::new(root), &self.root))
+                };
+                let is_gone = || {
+                    record
+                        .pid
+                        .as_deref()
+                        .and_then(|pid| pid.parse::<u32>().ok())
+                        .is_some_and(|pid| start_epoch(pid).is_none())
+                };
+                if record.state.is_at_work() && is_here() && !is_gone() {
                     return Err(Refusal::AgentActive {
                         provider: provider.clone(),
                     });
@@ -1238,20 +1269,6 @@ fn same_path(first: &Path, second: &Path) -> bool {
         )
 }
 
-/// Every turn record of the state directories.
-fn turns(directories: &[StateDirectory]) -> Vec<TurnRecord> {
-    directories
-        .iter()
-        .filter_map(|state| fs::read_dir(state.directory.join(TURNS_DIRECTORY)).ok())
-        .flat_map(Iterator::flatten)
-        .filter_map(|entry| {
-            fs::read(entry.path())
-                .ok()
-                .and_then(|bytes| TurnRecord::decode(&bytes).ok())
-        })
-        .collect()
-}
-
 /// The turn `turn_id`, from whichever provider's turns directory has it.
 fn find_turn(directories: &[StateDirectory], turn_id: &str) -> Result<TurnRecord, Refusal> {
     if !crate::turn::is_turn_id(turn_id) {
@@ -1270,51 +1287,6 @@ fn find_turn(directories: &[StateDirectory], turn_id: &str) -> Result<TurnRecord
                 .filter(|turn| turn.turn_id == turn_id)
         })
         .ok_or(Refusal::TurnNotFound)
-}
-
-/// The paths turns of this worktree made, from `since` on: absent from a
-/// turn's start and present at its end. A file made by hand between turns
-/// is in no such list, though a later turn's start holds it.
-fn made_by_turns_since(
-    directories: &[StateDirectory],
-    worktree: &Worktree,
-    since: &TurnRecord,
-) -> HashSet<Vec<u8>> {
-    let mut made = HashSet::new();
-    for turn in turns(directories) {
-        // Within a conversation the number orders turns that started in
-        // the same second; across conversations only the time can.
-        let is_earlier = if turn.conversation == since.conversation {
-            turn.display_number < since.display_number
-        } else {
-            turn.started_at < since.started_at
-        };
-        if is_earlier {
-            continue;
-        }
-        let (
-            SnapshotStatus::Captured {
-                tree: begin,
-                root: begin_root,
-            },
-            SnapshotStatus::Captured { tree: end, .. },
-        ) = (&turn.begin, &turn.end)
-        else {
-            continue;
-        };
-        if !same_path(Path::new(begin_root), &worktree.root) {
-            continue;
-        }
-        if let Some(changes) = worktree.changes(begin, end) {
-            made.extend(
-                changes
-                    .into_iter()
-                    .filter(|change| change.kind == PathChangeKind::Add)
-                    .map(|change| change.raw),
-            );
-        }
-    }
-    made
 }
 
 #[path = "restore_discard.rs"]

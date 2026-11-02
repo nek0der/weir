@@ -286,20 +286,19 @@ final class ViewedLineStore {
     /// operation, which "Undo Restore" takes back. Kept with the lines
     /// so an undo after a relaunch puts them back too; each is taken once.
     ///
-    /// They live exactly as long as the restore's journal can be undone,
-    /// which has no time limit (`may_expire` in `weir-agent-hook`): a
-    /// lifetime of their own, a clock or a count, would let "Undo Restore"
-    /// put the code back and leave its turns read as viewed. So no clock
-    /// drops them, and the line's history keeps them past its limit
+    /// They live exactly as long as the restore's journal can be undone
+    /// (`may_expire` in `weir-agent-hook`), which has no time limit while the
+    /// undo can apply: a lifetime of their own, a clock or a count, would let
+    /// "Undo Restore" put the code back and leave its turns read as viewed. So
+    /// no clock drops them, and the line's history keeps them past its limit
     /// (`ViewedLine.trimHistory(keeping:)`), a restore superseded by a later
     /// turn too, as its journal stays. They go when a whole reading of the
-    /// journals says the restore can no longer be undone, and are taken
-    /// back when it says it was (`settleRestoreMoves`). They also go when
-    /// their line can no longer take them back: taken back on their own
-    /// ("Unmark as Viewed"), or gone with the line (`pruneRestoreMoves`).
-    /// Before the undo, a move under later moves of its line stays: the
-    /// later ones stand, and once they are unmarked the restore's is the
-    /// latest again.
+    /// journals says the restore can no longer be undone, and are taken back
+    /// when it says it was (`settleRestoreMoves`). They also go when their line
+    /// can no longer take them back: taken back on their own ("Unmark as
+    /// Viewed"), or gone with the line (`pruneRestoreMoves`). Before the undo,
+    /// a move under later moves of its line stays: the later ones stand, and
+    /// once they are unmarked the restore's is the latest again.
     func noteRestoreMoves(_ moves: [ViewedLineUndo], of opID: String, in root: String) {
         restoreMoves[opID] = moves.isEmpty ? nil : RestoreMoves(opID: opID, root: root, at: now(), moves: moves)
         scheduleSave()

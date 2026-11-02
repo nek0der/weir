@@ -201,7 +201,7 @@ impl GitSnapshots {
     /// file rather than a pipe: this runs inside the app as well, where a
     /// write to a pipe git already closed would raise `SIGPIPE`, which the
     /// app does not ignore.
-    fn run_with_input(cwd: &Path, args: &[&str], input: &[u8]) -> Option<Vec<u8>> {
+    pub(crate) fn run_with_input(cwd: &Path, args: &[&str], input: &[u8]) -> Option<Vec<u8>> {
         Self::run_with_input_index(cwd, args, input, None)
     }
 

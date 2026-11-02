@@ -389,7 +389,10 @@ impl From<StageReason> for String {
 pub enum RestoreStage {
     /// The trees are computed and nothing is written yet.
     Planned,
-    /// Writing; `done` are the paths written so far.
+    /// Writing; `done` are the paths written so far. Only earlier builds
+    /// wrote it: a journal now stays `Planned` until `Verifying`, as
+    /// recovery reads the paths, never `done`. Still read, as a crash of
+    /// one of those builds can leave it.
     Writing { done: Vec<String> },
     /// Everything planned is written, and the working tree is being compared
     /// with `expected_after_tree`.

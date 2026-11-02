@@ -302,6 +302,35 @@ struct RestoreCoordinatorTests {
         #expect(report.interrupted.map(\.operation) == [.discard])
     }
 
+    /// A restore a crash cut short that an undo settled before it began is
+    /// told by the reading after the undo, as the launch tells one; a
+    /// reading that names none tells nothing.
+    @Test func whatAnOperationSettledFirst_isToldByTheReadingAfterIt() async throws {
+        let restore = try Self.decodedJournal(root: "/repo", opID: "R", stage: #"{"kind":"applied"}"#, operation: "restore")
+        let cutShort = try Self.decodedJournal(root: "/repo", opID: "C", stage: Self.cutShort, operation: "restore")
+        let readings = Recorded([
+            RestoreRecovery(journals: [restore, cutShort], settled: ["C"]),
+            RestoreRecovery(journals: [restore, cutShort], settled: [])
+        ])
+        let coordinator = RestoreCoordinator(stateDirectories: [], bridge: .init(
+            restore: { _, _, _, _ in .refused(.unknown) },
+            undo: { _, _, _ in .refused(.unknown) },
+            recover: { _ in
+                var next: RestoreRecovery?
+                readings.update { next = $0.isEmpty ? nil : $0.removeFirst() }
+                guard let next else { throw WeirRestoreBridgeError.rust(-1) }
+                return next
+            }
+        ))
+        var told: [RestoreCoordinator.RecoveryReport] = []
+        coordinator.onSettled = { told.append($0) }
+
+        _ = await coordinator.undo(restore)
+        _ = await coordinator.undo(restore)
+
+        #expect(told.map { $0.interrupted.map(\.opID) } == [["C"]])
+    }
+
     /// A discard that ended as the app quit is told too, with the saves
     /// recovery kept aside: its review, and the hunk's undo, went with the
     /// app. A restore that ended so has its record, and is not.

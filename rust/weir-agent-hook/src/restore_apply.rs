@@ -95,7 +95,7 @@ impl Worktree {
             return Err(error.refusal());
         }
         (seams.after_journal)();
-        let settled = match self.write(&journal, &plan.changes, lock, now, seams.in_write) {
+        let settled = match self.write(&journal, &plan.changes, lock, seams.in_write) {
             Written::Stopped(interruption, kept) => self.settle_partial(
                 &journal,
                 match interruption {
@@ -154,12 +154,17 @@ impl Worktree {
     /// group is written and written only while it still holds what the plan
     /// read there (`Writer`): another writer's save since is left alone, or
     /// kept aside, and the check afterwards finds it.
+    ///
+    /// The journal stays `Planned` throughout: recovery settles a write
+    /// cut short by what the planned paths hold, never by a list of what
+    /// was written, so none is kept. Rewriting it after each batch, with
+    /// every path so far, grew with the square of the paths, under the
+    /// lock a hook waits for.
     pub(super) fn write(
         &self,
         journal: &RestoreJournal,
         changes: &[Change],
         lock: &ExclusiveLock,
-        now: &str,
         between: &dyn Fn(Moment),
     ) -> Written {
         let Some(mut writer) = Writer::new(self, &journal.op_id, &journal.target_tree, "target")
@@ -167,23 +172,7 @@ impl Worktree {
         else {
             return Written::Failed(failed_all(changes, "read-tree"));
         };
-        let mut progress = journal.clone();
-        let batches = Self::write_batches(
-            &mut writer,
-            &journal.before_tree,
-            changes,
-            lock,
-            &mut |done| {
-                progress.stage = RestoreStage::Writing {
-                    done: done.to_vec(),
-                };
-                now.clone_into(&mut progress.at);
-                // Progress only: not written, the journal stays at the
-                // stage before, and recovery settles it by what the paths
-                // hold, never by `done`.
-                let _ = self.write_progress(&progress);
-            },
-        );
+        let batches = Self::write_batches(&mut writer, &journal.before_tree, changes, lock);
         let mut failed = batches.failed;
         failed.extend(writer.finish());
         match batches.stopped {
@@ -200,13 +189,12 @@ impl Worktree {
     /// the rollback alike: a path another writer changed meanwhile is left
     /// for the check afterwards, as is one whose save was kept aside (the
     /// writer's `finish` names those), and one whose write failed is in
-    /// `failed` with how. `after_batch` sees the paths written so far.
+    /// `failed` with how.
     fn write_batches(
         writer: &mut Writer<'_>,
         expected: &str,
         changes: &[Change],
         lock: &ExclusiveLock,
-        after_batch: &mut dyn FnMut(&[String]),
     ) -> BatchesWritten {
         let mut written = BatchesWritten::default();
         let mut batches = Batches::new(changes);
@@ -218,8 +206,7 @@ impl Worktree {
             let started = Instant::now();
             for (change, result) in writer.write(expected, batch) {
                 match result {
-                    Ok(()) => written.done.push(change.display),
-                    Err(Unwritten::ChangedWhileWriting | Unwritten::KeptAside(_)) => {}
+                    Ok(()) | Err(Unwritten::ChangedWhileWriting | Unwritten::KeptAside(_)) => {}
                     Err(Unwritten::Failed(detail)) => written.failed.push(FailedPath {
                         path: change.display,
                         reason: FailedReason::WriteFailed,
@@ -228,7 +215,6 @@ impl Worktree {
                 }
             }
             batches.took(started.elapsed());
-            after_batch(&written.done);
         }
         written
     }
@@ -312,13 +298,7 @@ impl Worktree {
             .map(|writer| writer.with_between(in_rollback))
         {
             Some(mut writer) => {
-                let batches = Self::write_batches(
-                    &mut writer,
-                    &journal.target_tree,
-                    &back,
-                    lock,
-                    &mut |_| {},
-                );
+                let batches = Self::write_batches(&mut writer, &journal.target_tree, &back, lock);
                 is_stopped = batches.stopped.is_some();
                 failed.extend(batches.failed);
                 failed.extend(writer.finish());
@@ -436,8 +416,6 @@ impl Worktree {
 /// What `write_batches` came to.
 #[derive(Default)]
 pub(super) struct BatchesWritten {
-    /// The paths written, in order.
-    done: Vec<String>,
     /// The paths whose write failed, with how.
     failed: Vec<FailedPath>,
     /// The hook's ask that stopped the writing, if one did.

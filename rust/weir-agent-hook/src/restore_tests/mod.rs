@@ -233,6 +233,7 @@ fn place_waiting_marker(repo: &Repo) {
 /// no lock.
 fn restore_meeting(repo: &Repo, turn: &str, edit: impl Fn(&Repo)) -> RestoreJournal {
     let seams = Seams {
+        before_lock: &nothing,
         after_journal: &nothing,
         after_write: &|| edit(repo),
         in_write: &nothing_at,

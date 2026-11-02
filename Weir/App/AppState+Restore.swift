@@ -95,9 +95,14 @@ extension AppState {
     /// once of each found stopped partway, with Undo to take back what it
     /// wrote. The projects' worktrees are read at once; the folders only the
     /// turns name, once the first projection pass has reported them, which
-    /// a failing pass would never do.
+    /// a failing pass would never do. What a restore, a discard, or an undo
+    /// later settles first is told the same way, by the reading after it.
     func recoverRestores() {
         guard writesUserFiles else { return }
+        // What an operation settled first is told as the launch's finds are.
+        restores.onSettled = { [weak self] report in
+            self?.announce(report)
+        }
         let projectRoots = Self.launchRestoreRoots(projects: projectRestoreRoots, pending: restores.pendingStopRoots)
         recoverRestores(at: projectRoots)
         agentProjection.turnHistory.whenLoaded { [weak self] in

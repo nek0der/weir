@@ -114,7 +114,7 @@ fn discard_inner(request: &DiscardRequest, now: &str) -> Result<Discarded, Refus
     }
     let worktree = Worktree::open(&request.root)?;
     let lock = worktree.lock()?;
-    let _ = worktree.settle_interrupted(now);
+    worktree.settle_before_operation(now);
     worktree.check_agents(&request.state_directories)?;
     worktree.check_no_merge()?;
     let context = worktree.context();

@@ -86,6 +86,10 @@ as they are fixed or confirmed.
 - **Restore and Discard do not lock out other programs.** Weir checks the
   files before and after, and stops if an agent or an editor changed them.
   Another program can still write in between.
+- **Undo Restore lasts while the undo can apply.** After a commit, a reset,
+  or a checkout moves HEAD or the branch from where a restore left it, the
+  undo is refused, and the restore's record goes 30 days after the
+  restore. Moving HEAD back before then makes the undo apply again.
 - **A pane with turn snapshots turned off** (`WEIR_TURN_SNAPSHOT=0` in its
   environment, which stops Weir from recording what each turn changed)
   takes no lock, so its agent can start a turn while another pane of the

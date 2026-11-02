@@ -181,6 +181,7 @@ fn a_save_kept_aside_in_the_rollback_leaves_the_restore_partial() {
         }
     };
     let seams = Seams {
+        before_lock: &nothing,
         after_journal: &nothing,
         after_write: &|| repo.write("a.txt", "editor\n"),
         in_write: &nothing_at,
@@ -220,6 +221,7 @@ fn a_save_found_while_writing_takes_the_restore_back_whole() {
         }
     };
     let seams = Seams {
+        before_lock: &nothing,
         after_journal: &nothing,
         after_write: &nothing,
         in_write: &save,
@@ -298,6 +300,7 @@ fn a_save_a_filter_reads_as_the_same_is_kept_aside() {
         repo.write("keep.txt", "keep\nchanged\n");
     });
     let seams = Seams {
+        before_lock: &nothing,
         after_journal: &nothing,
         after_write: &|| {
             // Read by git as the restore's own file, and it is not.
@@ -347,6 +350,7 @@ fn a_save_kept_aside_is_named_by_the_undo_too() {
         }
     };
     let seams = Seams {
+        before_lock: &nothing,
         after_journal: &nothing,
         after_write: &nothing,
         in_write: &late,
