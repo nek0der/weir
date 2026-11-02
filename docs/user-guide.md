@@ -213,9 +213,9 @@ and a **Conversation** filter.
   the conversations its badge stands for, up to three. A conversation keeps
   its color while it runs or has turns to read, so a pane, a tab, and their
   cards can be matched at a glance. Rest the pointer on a tab and the cards
-  of every conversation it runs are outlined in their colors while the others
+  of every conversation it runs are tinted in their colors while the others
   fade, or on a pane's header for that pane's alone; point at a card and its
-  pane is outlined, or its tab while the pane is behind another tab. A worktree with one such
+  pane is outlined, or its tab tinted while the pane is behind another tab. A worktree with one such
   conversation, and a scratch tab, show no bar. A file tag still shows the
   number ("#2") when the conversation's name carries one.
 - An unviewed turn's number ("T7") stands in a blue pill; a viewed turn's
@@ -243,7 +243,7 @@ and a **Conversation** filter.
   you switch worktrees, change the grouping, or reopen the panel. Its cards
   leave out the badge, which the heading carries. A card's moves reach its
   own conversation's line only, and **Unmark as Viewed** under a section
-  takes back that conversation's line alone. Pointing at a heading outlines
+  takes back that conversation's line alone. Pointing at a heading tints
   the conversation's tab, as a card does.
 - **Review All Unviewed** opens the review.
 - **Commit & PR** at the bottom shows what is not yet in the base branch or

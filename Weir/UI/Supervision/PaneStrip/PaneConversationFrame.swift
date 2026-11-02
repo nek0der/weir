@@ -4,7 +4,7 @@
 import SwiftUI
 
 /// Says which pane a hovered card belongs to, in the conversation's color
-/// (`ConversationHoverRule`); a tab not selected says so with an outline
+/// (`ConversationHoverRule`); a tab not selected says so with a tint
 /// instead, its panes being out of sight. Where the
 /// pane meets the edges of the session's surface, it follows the surface's
 /// rounded corners, as the attention frame does (`SurfaceFrameFit`). Its own

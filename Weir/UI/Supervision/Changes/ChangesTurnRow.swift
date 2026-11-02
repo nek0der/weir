@@ -111,7 +111,7 @@ struct ChangesTurnRow: View {
                 )
                 .accessibilityHidden(true)
         }
-        // Dimmed or outlined while a tab's conversation is under the
+        // Dimmed or tinted while a tab's conversation is under the
         // pointer, before the ring is drawn over it; and the card marks its
         // conversation's tab while the pointer is on it. A card with no
         // color (a worktree of one conversation) marks no tab.
@@ -119,7 +119,7 @@ struct ChangesTurnRow: View {
             row.turn.conversation,
             surface: .card(row.id),
             identity: row.conversation?.identity,
-            mark: .card(isRinged: isRinged)
+            mark: .card
         ) { isHovering = $0 }
         .overlay {
             if isRinged {

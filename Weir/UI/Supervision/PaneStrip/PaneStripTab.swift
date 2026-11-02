@@ -94,7 +94,7 @@ struct PaneStripTab: View {
         .contentShape(Rectangle())
         // The tab marks the cards of every conversation it runs while the
         // pointer rests on it, and, while its panes are out of sight, is
-        // outlined while a card of any of them is under the pointer.
+        // tinted while a card of any of them is under the pointer.
         .conversationHover(tab: item.id, running: item.runningIdentities, isSelected: item.isActive) { isHovering = $0 }
         .onChange(of: isEditing) { _, isEditing in
             onEditingChanged(isEditing)

@@ -114,7 +114,7 @@ struct ChangesSectionHeading: View {
             }
         }
         // Faded with the section's cards behind another conversation's
-        // tab, never outlined, as only a card is; it marks its tab as a
+        // tab, never tinted, as only a card is; it marks its tab as a
         // card does.
         .conversationHover(
             choice.conversation,

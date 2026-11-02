@@ -678,12 +678,19 @@ enum WeirLayout {
         /// Between the bar and the badge after it, the same wherever the
         /// two stand.
         static let conversationIdentityBarSpacing = spaceXS
-        /// The outline a conversation's tab and turn cards take in its
-        /// identity color while the other surface (a card, or the tab) is
-        /// under the pointer
-        /// (`ConversationHoverRule`): as wide as the review's ring, so the
-        /// two read as the same kind of mark.
+        /// The outline a conversation's pane takes in its identity color
+        /// while one of its cards is under the pointer, and under Increase
+        /// Contrast its tab and cards too (`ConversationHoverRule`): as wide
+        /// as the review's ring, so the two read as the same kind of mark.
         static let conversationHoverOutlineWidth: CGFloat = 1.5
+        /// The tint of a conversation's tab and cards while the other
+        /// surface is under the pointer (`ConversationHoverRule`): enough to
+        /// pick them out, faint enough that a list of cards stays quiet.
+        static let conversationHoverTintOpacityDark: Double = 0.08
+        /// Higher than in dark: on white the same share stands about half
+        /// as far off the surface. Muted text still reads at 4.79:1 or more
+        /// on it, in the palette's darkest color.
+        static let conversationHoverTintOpacityLight: Double = 0.12
         /// The other conversations' cards while a tab is under the pointer:
         /// faded enough to step back, still read at a glance.
         static let conversationHoverDimmedOpacity: Double = 0.6

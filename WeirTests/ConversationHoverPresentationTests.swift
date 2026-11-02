@@ -52,7 +52,7 @@ struct ConversationHoverPresentationTests {
     }
 
     /// Card A to card B of one conversation, B's enter delivered before
-    /// A's leave: B's hover stays, and with it the tab's outline.
+    /// A's leave: B's hover stays, and with it the tab's tint.
     @Test func leave_sameConversationOtherCard_keepsHovered() {
         let presentation = makePresentation()
         presentation.enter([first], from: cardA)
