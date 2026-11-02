@@ -119,20 +119,26 @@ impl HookOutcome {
     }
 }
 
+/// Every provider this build has, in id order.
+///
+/// The one list of providers on this side of the boundary: the lookup, the
+/// descriptors, and the recipes are all read from it, so a provider added here
+/// is added to every one of them, and one left out is missing from all three
+/// rather than from one.
+static ADAPTERS: [&dyn ProviderAdapter; 4] = [
+    &AntigravityAdapter,
+    &ClaudeAdapter,
+    &CodexAdapter,
+    &OpenCodeAdapter,
+];
+
 /// Resolves a provider adapter by id.
 #[must_use]
 pub fn adapter_for(id: &str) -> Option<&'static dyn ProviderAdapter> {
-    static ANTIGRAVITY: AntigravityAdapter = AntigravityAdapter;
-    static CLAUDE: ClaudeAdapter = ClaudeAdapter;
-    static CODEX: CodexAdapter = CodexAdapter;
-    static OPENCODE: OpenCodeAdapter = OpenCodeAdapter;
-    match id {
-        weir_provider_antigravity::PROVIDER_ID => Some(&ANTIGRAVITY),
-        weir_provider_claude::PROVIDER_ID => Some(&CLAUDE),
-        weir_provider_codex::PROVIDER_ID => Some(&CODEX),
-        weir_provider_opencode::PROVIDER_ID => Some(&OPENCODE),
-        _ => None,
-    }
+    ADAPTERS
+        .iter()
+        .copied()
+        .find(|adapter| adapter.descriptor().id.as_str() == id)
 }
 
 /// Every provider this build has, in id order.
@@ -142,15 +148,10 @@ pub fn adapter_for(id: &str) -> Option<&'static dyn ProviderAdapter> {
 /// its own that could disagree with this one.
 #[must_use]
 pub fn installed_providers() -> Vec<&'static ProviderDescriptor> {
-    [
-        weir_provider_antigravity::PROVIDER_ID,
-        weir_provider_claude::PROVIDER_ID,
-        weir_provider_codex::PROVIDER_ID,
-        weir_provider_opencode::PROVIDER_ID,
-    ]
-    .into_iter()
-    .filter_map(|id| adapter_for(id).map(ProviderAdapter::descriptor))
-    .collect()
+    ADAPTERS
+        .iter()
+        .map(|adapter| adapter.descriptor())
+        .collect()
 }
 
 /// What each installed provider needs the platform to set up, by provider id.
@@ -160,17 +161,10 @@ pub fn installed_providers() -> Vec<&'static ProviderDescriptor> {
 /// name, and a wrong name stops the agent reporting without an error anywhere.
 #[must_use]
 pub fn installed_recipes() -> Vec<(&'static ProviderId, InstallRecipe)> {
-    [
-        weir_provider_antigravity::PROVIDER_ID,
-        weir_provider_claude::PROVIDER_ID,
-        weir_provider_codex::PROVIDER_ID,
-        weir_provider_opencode::PROVIDER_ID,
-    ]
-    .into_iter()
-    .filter_map(|id| {
-        adapter_for(id).map(|adapter| (&adapter.descriptor().id, adapter.install_recipe()))
-    })
-    .collect()
+    ADAPTERS
+        .iter()
+        .map(|adapter| (&adapter.descriptor().id, adapter.install_recipe()))
+        .collect()
 }
 
 /// Everything one hook call needs besides the payload.
@@ -2000,5 +1994,74 @@ mod start_tests {
             "the hook's own event applies"
         );
         let _ = std::fs::remove_dir_all(&directory);
+    }
+}
+
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    fn registry_ids() -> Vec<&'static str> {
+        installed_providers()
+            .iter()
+            .map(|descriptor| descriptor.id.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn registry_ids_are_unique_and_sorted() {
+        let ids = registry_ids();
+        let mut sorted = ids.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(ids, sorted);
+    }
+
+    #[test]
+    fn registry_lists_every_provider_crate_under_its_own_id() {
+        let ids = registry_ids();
+        assert_eq!(
+            ids,
+            [
+                weir_provider_antigravity::PROVIDER_ID,
+                weir_provider_claude::PROVIDER_ID,
+                weir_provider_codex::PROVIDER_ID,
+                weir_provider_opencode::PROVIDER_ID,
+            ]
+        );
+        for id in ids {
+            let adapter = adapter_for(id).expect("a listed provider resolves");
+            assert_eq!(adapter.descriptor().id.as_str(), id);
+        }
+        assert!(adapter_for("unknown").is_none());
+        assert!(adapter_for("").is_none());
+    }
+
+    /// The capabilities the helper and the approval card read in place of a
+    /// provider id each sit on the one provider whose id they replaced, so
+    /// every answer is the one the id gave.
+    #[test]
+    fn approval_capabilities_sit_on_the_providers_the_ids_named() {
+        use weir_agent_model::Capability;
+        let with = |capability: Capability| -> Vec<&str> {
+            installed_providers()
+                .into_iter()
+                .filter(|descriptor| descriptor.has(capability))
+                .map(|descriptor| descriptor.id.as_str())
+                .collect()
+        };
+        assert_eq!(with(Capability::QuestionEndsWithTurn), ["claude"]);
+        assert_eq!(with(Capability::QuestionAnsweredByAgent), ["codex"]);
+        assert_eq!(with(Capability::ApprovalHookRecordsLifecycle), ["codex"]);
+        assert_eq!(with(Capability::ApprovalWithdrawnBySignal), ["opencode"]);
+    }
+
+    #[test]
+    fn recipes_follow_the_registry_order() {
+        let recipe_ids: Vec<&str> = installed_recipes()
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .collect();
+        assert_eq!(recipe_ids, registry_ids());
     }
 }

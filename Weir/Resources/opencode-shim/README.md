@@ -76,7 +76,7 @@ only the name, finds no file, and does nothing. One the plugin never read is swe
 ## Environment contract
 
 Set by Weir before spawning the pty, except the rows that say the shim sets them.
-`PaneShellEnvironment` and `OpenCodeShimLocator` are the source of truth for the values
+`PaneShellEnvironment` and `AgentShimLocator` are the source of truth for the values
 Weir sets.
 
 | Variable | Meaning |

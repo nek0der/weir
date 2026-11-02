@@ -1,17 +1,9 @@
-// AgentSpec.swift
-// Weir — the per-provider identity and resume command the Swift side
-// still needs, plus the badge / session structs the interface holds.
+// AgentBadge.swift
+// Weir — the badge and session structs the interface holds for each pane's agent.
 //
 // The lifecycle rules live in Rust behind `AgentProjectionAdapter`, so
-// nothing here reads or reasons about an on-disk record. What is left is
-// what only this side can answer: which `AgentKind` a provider is, what to
-// call it in a log line, and the shell command that resumes one of its
-// sessions in a freshly spawned pty.
-//
-// Naming: `AgentKind` (in `Weir/Core/Models/`) is the runtime tag used by
-// notifications and the interface. `AgentSpec` is the type-level protocol
-// `AgentResumeCommandBuilder` is generic over; each conformer exposes its
-// matching `AgentKind` case via `kind`.
+// nothing here reads or reasons about an on-disk record: the projection
+// rewrites these structs on every pass.
 
 import Foundation
 import WeirDomain
@@ -250,60 +242,4 @@ struct AgentSessionInfo: Codable, Equatable {
     /// (or empty after normalization) means "no usable cwd recorded"
     /// — callers fall back to the surface's cwd.
     var cwd: String?
-}
-
-// MARK: - AgentSpec protocol
-
-/// Type-level identity for an agent flavor (Claude, Codex, and future
-/// agents). `AgentResumeCommandBuilder` is generic over it so the resume
-/// path has one implementation rather than one per provider.
-protocol AgentSpec {
-    /// Runtime tag for this flavor, shared with the rest of the app.
-    /// Composes with the type-level `AgentSpec` so a generic that only has
-    /// the type can still index the per-provider maps on `Tab` by the runtime
-    /// `AgentKind` case.
-    static var kind: AgentKind { get }
-
-    /// The arguments that resume a session of this flavor (`claude
-    /// --resume <id>`, `codex resume <id>`), which "Resume Same
-    /// Conversation" and the resume at app launch both type into the
-    /// pane's shell: the session's resume alone, with no fresh start
-    /// after it and its errors left on screen, so a failure is the person's
-    /// to read rather than a new conversation in its place. The id is
-    /// checked by `AgentKind.strictResumeCommand`.
-    static func strictResumeArguments(sessionId: String) -> String
-}
-
-extension AgentKind {
-    /// The agent started anew, in `cwd` when one is given: the command a
-    /// stop's "Start New Conversation" types. Refused, as the resume
-    /// is, for a folder with a control character in its name.
-    func newConversationCommand(cwd: String?) -> String? {
-        if let cwd, cwd.unicodeScalars.contains(where: \.isTypedControl) {
-            return nil
-        }
-        guard let cwd, !cwd.isEmpty else { return launchCommand }
-        return "cd \(ShellQuote.single(cwd)) && \(launchCommand)"
-    }
-
-    /// The strict resume of this flavor, in `cwd` when one is known: the
-    /// folder the conversation was in, which Claude requires and Codex
-    /// would otherwise resume somewhere else. `&&`, so a folder that is
-    /// gone starts nothing. `nil` for an id that is not a session's, or a
-    /// folder with a control character in its name, which the typed
-    /// command would carry to the line editor as a key.
-    func strictResumeCommand(sessionId: String, cwd: String? = nil) -> String? {
-        guard AgentSessionIDValidator.isStrictlyValid(sessionId) else { return nil }
-        if let cwd, cwd.unicodeScalars.contains(where: \.isTypedControl) {
-            return nil
-        }
-        let resume = switch self {
-        case .claude: ClaudeAgent.strictResumeArguments(sessionId: sessionId)
-        case .codex: CodexAgent.strictResumeArguments(sessionId: sessionId)
-        case .antigravity: AntigravityAgent.strictResumeArguments(sessionId: sessionId)
-        case .opencode: OpenCodeAgent.strictResumeArguments(sessionId: sessionId)
-        }
-        guard let cwd, !cwd.isEmpty else { return resume }
-        return "cd \(ShellQuote.single(cwd)) && \(resume)"
-    }
 }

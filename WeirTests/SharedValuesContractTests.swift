@@ -15,6 +15,7 @@ import Testing
 struct SharedValuesContractTests {
     struct SharedValues: Decodable {
         let maximumDecisionBytes: Int
+        let maximumHookInputBytes: Int
         let maximumProjectionInputBytes: Int
         let worktreeRoutingFileName: String
         let paneIdentifierVariable: String
@@ -46,6 +47,7 @@ struct SharedValuesContractTests {
     @Test func theLimits_areTheOnesTheBrokerAndTheBridgeEnforce() throws {
         let shared = try Self.sharedValues()
         #expect(ApprovalResolution.maximumEncodedBytes == shared.maximumDecisionBytes)
+        #expect(AgentIntegrationConfiguration.maximumHookInputBytes == shared.maximumHookInputBytes)
         #expect(AgentProjectionAdapter.inputLimitBytes == shared.maximumProjectionInputBytes)
     }
 

@@ -1,8 +1,8 @@
 // PaneShellEnvironment.swift
 // Weir — the environment every pty inherits, whichever agent (if any)
-// ends up running in it. Split out of `ClaudeShimLocator`, which named one
-// agent while assembling the environment for every pane; the agent-specific
-// halves stay with their own types and compose over this one.
+// ends up running in it. Split out of what was Claude's shim locator, which
+// named one agent while assembling the environment for every pane; each
+// agent's half stays with `AgentShimLocator` and composes over this one.
 
 import Foundation
 
@@ -12,6 +12,11 @@ enum PaneShellEnvironment {
     /// hook). The two sides check the name against
     /// `rust/fixtures/contract/shared-values.json`.
     static let paneIDVariable = "WEIR_PANE_ID"
+
+    /// The variable that lists every shim directory, colon-separated, in the
+    /// order they lead the `PATH`. `zdotdir/.zshrc` puts each back at the
+    /// front in that order, so it needs no list of agents of its own.
+    static let shimDirectoriesVariable = "WEIR_SHIM_DIRS"
 
     /// The tmux a hosted agent runs under: which binary, and the socket
     /// name that keeps our server apart from the user's own and from
@@ -44,6 +49,7 @@ enum PaneShellEnvironment {
         if !shimDirectories.isEmpty {
             env["PATH"] = (shimDirectories.map(\.path) + [basePath])
                 .joined(separator: ":")
+            env[shimDirectoriesVariable] = shimDirectories.map(\.path).joined(separator: ":")
         }
         if let zdotdir {
             env["ZDOTDIR"] = zdotdir.path
@@ -86,13 +92,8 @@ enum PaneShellEnvironment {
     ) -> [String: String] {
         variables(
             paneID: paneID,
-            shimDirectories: [
-                ClaudeShimLocator.shimDirectoryURL,
-                CodexShimLocator.shimDirectoryURL,
-                AntigravityShimLocator.shimDirectoryURL,
-                OpenCodeShimLocator.shimDirectoryURL
-            ].compactMap(\.self),
-            zdotdir: ClaudeShimLocator.zdotdirURL,
+            shimDirectories: AgentShimLocator.shimDirectoryURLs,
+            zdotdir: AgentShimLocator.zdotdirURL,
             basePath: ProcessInfo.processInfo.environment["PATH"] ?? fallbackPath,
             // Resolved through the same locator the reattach probe uses,
             // so the session a shim creates is one the probe can find.

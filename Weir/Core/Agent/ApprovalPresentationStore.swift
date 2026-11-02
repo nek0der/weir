@@ -39,17 +39,31 @@ struct ApprovalPresentation: Identifiable, Equatable, Sendable {
     var agentRunID: UUID?
 
     /// Whether Weir can answer this request at all. It never holds a
-    /// Codex question, which the TUI answers.
+    /// question of a provider whose own prompt answers it (Codex's TUI).
     var supportsNativeAnswer: Bool {
-        !(provider == .codex && isQuestion)
+        supportsNativeAnswer(has: AgentProviderRegistry.has)
+    }
+
+    /// `supportsNativeAnswer`, with the descriptors given, so a test can
+    /// state the table it keeps.
+    func supportsNativeAnswer(has: (String, AgentKind) -> Bool) -> Bool {
+        !(isQuestion && has(ProviderCapabilityName.questionAnsweredByAgent, provider))
     }
 
     var isQuestion: Bool {
         !questions.isEmpty
     }
 
+    /// Whether the request is a question its turn's end releases, as the
+    /// helper of a provider with that capability marks it in the operation id.
     var hasQuestionTurnCompletion: Bool {
-        provider == .claude && operationID?.hasPrefix(AgentQuestionTurnCompletion.operationIDPrefix) == true
+        hasQuestionTurnCompletion(has: AgentProviderRegistry.has)
+    }
+
+    /// `hasQuestionTurnCompletion`, with the descriptors given.
+    func hasQuestionTurnCompletion(has: (String, AgentKind) -> Bool) -> Bool {
+        has(ProviderCapabilityName.questionEndsWithTurn, provider)
+            && operationID?.hasPrefix(AgentQuestionTurnCompletion.operationIDPrefix) == true
     }
 
     var id: String {

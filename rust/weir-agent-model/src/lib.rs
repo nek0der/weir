@@ -37,7 +37,8 @@ pub use adapter::{
     transcript_path_for_events,
 };
 pub use approval::{
-    ApprovalDecision, ApprovalQuestion, ApprovalQuestionOption, ApprovalRequest, ProviderOutput,
+    APPROVAL_TIMEOUT_MS, ApprovalDecision, ApprovalQuestion, ApprovalQuestionOption,
+    ApprovalRequest, ProviderOutput,
 };
 pub use background::BackgroundWork;
 pub use cache::{CachePrecision, CacheWindow};

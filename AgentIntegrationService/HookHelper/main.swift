@@ -6,8 +6,9 @@
 // opens the approval service and waits for a decision. `hook <provider>
 // [worktree]` runs the Rust hook runtime in-process without opening an XPC
 // connection, so lifecycle hooks remain independent of approval-service
-// availability. `question-turn-ended` records a Claude turn end without XPC
-// so a terminal answer remains observable across controller startup delays.
+// availability. `question-turn-ended [provider]` records a turn end without
+// XPC so a terminal answer remains observable across controller startup
+// delays; the provider defaults to Claude, whose settings call it bare.
 // `watch-codex-failures <codex pid> <offset> <session> <rollout>` runs the watcher a Codex
 // session start leaves (`CodexTurnFailureWatch`).
 // `statusline <provider> [settings <relay command>]` is Claude Code's status
@@ -18,9 +19,18 @@ import Foundation
 
 // First, before anything here starts a thread: a thread takes the signal mask of
 // the one that made it, and a SIGTERM that one thread still takes ends the
-// process. Only OpenCode's approval is withdrawn by one; every other run ends on
-// it as before.
-if CommandLine.arguments.dropFirst().elementsEqual(["permission-request", "opencode"]) {
+// process. Only a provider whose approval is withdrawn by one holds it; every
+// other run ends on it as before. Reading the capability is a call into the
+// Rust registry and a JSON parse on this thread, which start no thread. When
+// that read fails, nothing is held: a SIGTERM ends this helper as it ends any
+// other run, rather than withdrawing the request. We accept that
+// rather than name a provider here, as the registry is compiled in and the
+// request's own translation goes through the same one, so a read that fails
+// leaves no request to withdraw in practice.
+if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "permission-request",
+   RustProviderBridge.capabilities(provider: CommandLine.arguments[2])
+   .contains(ProviderCapabilityName.approvalWithdrawnBySignal)
+{
     PendingTermination.hold()
 }
 
@@ -56,7 +66,7 @@ private func createLog(at path: String) -> FileHandle? {
 
 func readBoundedStandardInput() throws -> Data {
     var input = Data()
-    let limit = AgentIntegrationConfiguration.maximumXPCRequestBytes
+    let limit = AgentIntegrationConfiguration.maximumHookInputBytes
     while input.count <= limit {
         let remaining = limit + 1 - input.count
         guard let chunk = try FileHandle.standardInput.read(
@@ -94,7 +104,7 @@ func runLifecycleHook(provider: String, kind: RustProviderBridge.HookKind) -> Ne
         if let stdout = outcome.stdout {
             FileHandle.standardOutput.write(Data(stdout.utf8))
         }
-        if provider == "codex", kind == .lifecycle, outcome.outcome == "applied" {
+        if provider == "codex", kind == .lifecycle, outcome.outcome == .applied {
             CodexTurnFailureWatch.start(
                 after: input,
                 environment: ProcessInfo.processInfo.environment,
@@ -132,14 +142,19 @@ private struct PendingTermination {
 func run(input: Data) throws -> Data? {
     guard CommandLine.arguments.count == 3, CommandLine.arguments[1] == "permission-request" else {
         throw AgentIntegrationError.invalidArguments(
-            "Usage: AgentIntegrationHookHelper permission-request [claude|codex|opencode]"
+            "Usage: AgentIntegrationHookHelper permission-request <provider>"
         )
     }
     let provider = CommandLine.arguments[2]
-    let completion = provider == "claude" ? AgentQuestionTurnCompletion(
-        payload: input, environment: ProcessInfo.processInfo.environment
-    ) : nil
-    let termination = provider == "opencode" ? PendingTermination() : nil
+    let capabilities = RustProviderBridge.capabilities(provider: provider)
+    let completion = capabilities.contains(ProviderCapabilityName.questionEndsWithTurn)
+        ? AgentQuestionTurnCompletion(
+            provider: provider, payload: input, environment: ProcessInfo.processInfo.environment
+        )
+        : nil
+    let termination = capabilities.contains(ProviderCapabilityName.approvalWithdrawnBySignal)
+        ? PendingTermination()
+        : nil
     // Both are noticed between short waits for the decision.
     let isPolled = completion != nil || termination != nil
     guard let translated = try RustProviderBridge.approvalRequest(provider: provider, payload: input),
@@ -233,12 +248,15 @@ func run(input: Data) throws -> Data? {
     )
 }
 
-func publishCodexLifecycleFallback(input: Data) {
-    guard CommandLine.arguments.last == "codex" else { return }
-    // Codex calls this helper instead of `weir-hook` for a permission
-    // request, so the lifecycle record is written here, in-process.
+func publishLifecycleFallback(input: Data) {
+    guard let provider = CommandLine.arguments.last,
+          RustProviderBridge.capabilities(provider: provider)
+          .contains(ProviderCapabilityName.approvalHookRecordsLifecycle)
+    else { return }
+    // Such a provider calls this helper instead of `weir-hook` for a
+    // permission request, so the lifecycle record is written here, in-process.
     _ = try? RustProviderBridge.runHook(
-        provider: "codex",
+        provider: provider,
         kind: .lifecycle,
         payload: input,
         environment: ProcessInfo.processInfo.environment
@@ -272,8 +290,13 @@ if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "hook" {
 var input: Data?
 do {
     let boundedInput = try readBoundedStandardInput()
-    if CommandLine.arguments.count == 2, CommandLine.arguments[1] == "question-turn-ended" {
-        try AgentQuestionTurnCompletion.record(payload: boundedInput, environment: ProcessInfo.processInfo.environment)
+    if (2...3).contains(CommandLine.arguments.count), CommandLine.arguments[1] == "question-turn-ended" {
+        // Claude's settings name no provider; it was the only one when
+        // they were written.
+        let provider = CommandLine.arguments.count == 3 ? CommandLine.arguments[2] : "claude"
+        try AgentQuestionTurnCompletion.record(
+            provider: provider, payload: boundedInput, environment: ProcessInfo.processInfo.environment
+        )
         exit(0)
     }
     input = boundedInput
@@ -281,13 +304,13 @@ do {
         FileHandle.standardOutput.write(output)
         FileHandle.standardOutput.write(Data("\n".utf8))
     } else {
-        publishCodexLifecycleFallback(input: boundedInput)
+        publishLifecycleFallback(input: boundedInput)
     }
 } catch {
     // No output delegates to the provider's native permission flow. Never
     // convert an integration or decoding failure into an approval decision.
     logHookDiagnostic("Weir approval helper: \(error)")
     if let input {
-        publishCodexLifecycleFallback(input: input)
+        publishLifecycleFallback(input: input)
     }
 }

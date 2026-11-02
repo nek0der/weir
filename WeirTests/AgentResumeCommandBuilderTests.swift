@@ -90,6 +90,23 @@ struct AgentResumeCommandBuilderTests {
         #expect(Self.initialCommand(.codex, for: tab, paneID: paneID) == Self.resume(.codex, Self.sessionID))
     }
 
+    /// The restored pane's resume walks the agents in the order the chain
+    /// named them by hand before it walked `AgentKind`: Claude, Codex,
+    /// Antigravity, OpenCode. With every one named, each in turn wins once
+    /// those before it are taken away.
+    @Test("a pane with several named resumes takes them in the chain's old order")
+    func firstResume_keepsTheChainsOrder() {
+        let order: [AgentKind] = [.claude, .codex, .antigravity, .opencode]
+        #expect(Set(order) == Set(AgentKind.allCases), "a new agent takes its place in this order")
+        let (staged, paneID) = AgentResumeFixture.tab(Set(order))
+        var tab = staged
+        for kind in order {
+            #expect(AgentResumeCommandBuilder.firstResume(for: tab, paneID: paneID)?.provider == kind)
+            tab.agentResumeCandidates[paneID]?.remove(kind)
+        }
+        #expect(AgentResumeCommandBuilder.firstResume(for: tab, paneID: paneID) == nil)
+    }
+
     /// Before the first pass has answered, or after the rules withheld the
     /// pane, a remembered session alone is not permission to start an agent.
     @Test("a remembered session the projection did not name does not resume", arguments: AgentKind.allCases)
@@ -179,29 +196,14 @@ struct AgentResumeCommandBuilderTests {
     }
 
     private static func resumeCommand(_ kind: AgentKind, sessionId: String, cwd: String?) -> String? {
-        switch kind {
-        case .claude: ClaudeResumeCommandBuilder.resumeCommand(sessionId: sessionId, cwd: cwd)
-        case .codex: CodexResumeCommandBuilder.resumeCommand(sessionId: sessionId, cwd: cwd)
-        case .antigravity: AgentResumeCommandBuilder<AntigravityAgent>.resumeCommand(sessionId: sessionId, cwd: cwd)
-        case .opencode: AgentResumeCommandBuilder<OpenCodeAgent>.resumeCommand(sessionId: sessionId, cwd: cwd)
-        }
+        AgentResumeCommandBuilder.resumeCommand(kind, sessionId: sessionId, cwd: cwd)
     }
 
     private static func resume(_ kind: AgentKind, for tab: Tab, paneID: UUID) -> AgentResume? {
-        switch kind {
-        case .claude: ClaudeResumeCommandBuilder.resume(for: tab, paneID: paneID)
-        case .codex: CodexResumeCommandBuilder.resume(for: tab, paneID: paneID)
-        case .antigravity: AgentResumeCommandBuilder<AntigravityAgent>.resume(for: tab, paneID: paneID)
-        case .opencode: AgentResumeCommandBuilder<OpenCodeAgent>.resume(for: tab, paneID: paneID)
-        }
+        AgentResumeCommandBuilder.resume(kind, for: tab, paneID: paneID)
     }
 
     private static func initialCommand(_ kind: AgentKind, for tab: Tab, paneID: UUID) -> String? {
-        switch kind {
-        case .claude: ClaudeResumeCommandBuilder.initialCommand(for: tab, paneID: paneID)
-        case .codex: CodexResumeCommandBuilder.initialCommand(for: tab, paneID: paneID)
-        case .antigravity: AgentResumeCommandBuilder<AntigravityAgent>.initialCommand(for: tab, paneID: paneID)
-        case .opencode: AgentResumeCommandBuilder<OpenCodeAgent>.initialCommand(for: tab, paneID: paneID)
-        }
+        AgentResumeCommandBuilder.initialCommand(kind, for: tab, paneID: paneID)
     }
 }

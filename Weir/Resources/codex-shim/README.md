@@ -39,7 +39,7 @@ them out again.
 ## Environment contract
 
 Set by Weir before spawning the pty, except the rows that say the shim
-sets them. `PaneShellEnvironment`, `CodexShimLocator`, and
+sets them. `PaneShellEnvironment`, `AgentShimLocator`, and
 `CodexHookInstaller.environment(writesRecords:)` are the source of truth for
 the values Weir sets. The exceptions are `WEIR_INITIAL_PROMPT_FILE` and
 `WEIR_FOUND_CODEX`, which only a pane with a staged launch gets

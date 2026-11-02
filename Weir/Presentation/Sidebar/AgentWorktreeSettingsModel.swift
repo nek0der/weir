@@ -17,14 +17,15 @@ struct AgentWorktreeSettingsModel: Equatable {
     /// the placement.
     let provenAfterward: [AgentKind]
 
-    static let placementCapability = "worktree_placement"
-    static let provenCapability = "worktree_finish_proven"
-
     init(kinds: [AgentKind] = AgentKind.allCases, has: (String, AgentKind) -> Bool = AgentProviderRegistry.has) {
-        let known = kinds.filter { has(Self.placementCapability, $0) || has(Self.provenCapability, $0) || has("worktree_events", $0) }
-        routed = known.filter { has(Self.placementCapability, $0) }
-        unrouted = known.filter { !has(Self.placementCapability, $0) }
-        provenAfterward = unrouted.filter { has(Self.provenCapability, $0) }
+        let placement = ProviderCapabilityName.worktreePlacement
+        let proven = ProviderCapabilityName.worktreeFinishProven
+        let known = kinds.filter {
+            has(placement, $0) || has(proven, $0) || has(ProviderCapabilityName.worktreeEvents, $0)
+        }
+        routed = known.filter { has(placement, $0) }
+        unrouted = known.filter { !has(placement, $0) }
+        provenAfterward = unrouted.filter { has(proven, $0) }
     }
 
     /// The paragraph under the footer, `nil` when it has nothing to say. `name` is

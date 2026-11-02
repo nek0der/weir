@@ -27,21 +27,21 @@ struct AgentQuestionTurnCompletionTests {
         try withTempDir { directory in
             let environment = environment(directory)
             let first = try #require(AgentQuestionTurnCompletion(
-                payload: payload("PermissionRequest"), environment: environment,
+                provider: "claude", payload: payload("PermissionRequest"), environment: environment,
                 requestedAt: 10, bootSessionID: "boot"
             ))
             let second = try #require(AgentQuestionTurnCompletion(
-                payload: payload("PermissionRequest"), environment: environment,
+                provider: "claude", payload: payload("PermissionRequest"), environment: environment,
                 requestedAt: 20, bootSessionID: "boot"
             ))
             try AgentQuestionTurnCompletion.record(
-                payload: payload("PostToolUse"), environment: environment,
+                provider: "claude", payload: payload("PostToolUse"), environment: environment,
                 completedAt: 30, bootSessionID: "boot"
             )
             #expect(!first.hasCompleted())
             #expect(!second.hasCompleted())
             try AgentQuestionTurnCompletion.record(
-                payload: payload("Stop"), environment: environment,
+                provider: "claude", payload: payload("Stop"), environment: environment,
                 completedAt: 40, bootSessionID: "boot"
             )
             #expect(first.hasCompleted())
@@ -53,16 +53,16 @@ struct AgentQuestionTurnCompletionTests {
         try withTempDir { directory in
             let environment = environment(directory)
             try AgentQuestionTurnCompletion.record(
-                payload: payload("Stop"), environment: environment,
+                provider: "claude", payload: payload("Stop"), environment: environment,
                 completedAt: 10, bootSessionID: "boot"
             )
             let monitor = try #require(AgentQuestionTurnCompletion(
-                payload: payload("PermissionRequest"), environment: environment,
+                provider: "claude", payload: payload("PermissionRequest"), environment: environment,
                 requestedAt: 20, bootSessionID: "boot"
             ))
             #expect(!monitor.hasCompleted())
             try AgentQuestionTurnCompletion.record(
-                payload: payload("StopFailure"), environment: environment,
+                provider: "claude", payload: payload("StopFailure"), environment: environment,
                 completedAt: 30, bootSessionID: "boot"
             )
             #expect(monitor.hasCompleted())
@@ -73,11 +73,11 @@ struct AgentQuestionTurnCompletionTests {
         try withTempDir { directory in
             let environment = environment(directory)
             try AgentQuestionTurnCompletion.record(
-                payload: payload("Stop"), environment: environment,
+                provider: "claude", payload: payload("Stop"), environment: environment,
                 completedAt: 20, bootSessionID: "boot"
             )
             let monitor = try #require(AgentQuestionTurnCompletion(
-                payload: payload("PermissionRequest"), environment: environment,
+                provider: "claude", payload: payload("PermissionRequest"), environment: environment,
                 requestedAt: 10, bootSessionID: "boot"
             ))
             #expect(monitor.hasCompleted())
@@ -87,9 +87,9 @@ struct AgentQuestionTurnCompletionTests {
     @Test func defaultStartTimePrecedesInitializationDelay() throws {
         try withTempDir { directory in
             let environment = environment(directory)
-            try AgentQuestionTurnCompletion.record(payload: payload("Stop"), environment: environment)
+            try AgentQuestionTurnCompletion.record(provider: "claude", payload: payload("Stop"), environment: environment)
             let monitor = try #require(AgentQuestionTurnCompletion(
-                payload: payload("PermissionRequest"), environment: environment
+                provider: "claude", payload: payload("PermissionRequest"), environment: environment
             ))
             #expect(monitor.hasCompleted())
         }
@@ -99,7 +99,7 @@ struct AgentQuestionTurnCompletionTests {
         try withTempDir { directory in
             let environment = environment(directory)
             let monitor = try #require(AgentQuestionTurnCompletion(
-                payload: payload("PermissionRequest"), environment: environment,
+                provider: "claude", payload: payload("PermissionRequest"), environment: environment,
                 requestedAt: 10, bootSessionID: "boot"
             ))
             for event in try [
@@ -108,7 +108,7 @@ struct AgentQuestionTurnCompletionTests {
                 payload("Stop", agentID: "subagent")
             ] {
                 try AgentQuestionTurnCompletion.record(
-                    payload: event, environment: environment, completedAt: 20, bootSessionID: "boot"
+                    provider: "claude", payload: event, environment: environment, completedAt: 20, bootSessionID: "boot"
                 )
             }
             #expect(!monitor.hasCompleted())
@@ -119,25 +119,26 @@ struct AgentQuestionTurnCompletionTests {
         try withTempDir { directory in
             let environment = environment(directory)
             let monitor = try #require(AgentQuestionTurnCompletion(
-                payload: payload("PermissionRequest", agentID: "child"), environment: environment,
+                provider: "claude", payload: payload("PermissionRequest", agentID: "child"), environment: environment,
                 requestedAt: 10, bootSessionID: "boot"
             ))
             try AgentQuestionTurnCompletion.record(
-                payload: payload("Stop"), environment: environment, completedAt: 20, bootSessionID: "boot"
+                provider: "claude", payload: payload("Stop"), environment: environment, completedAt: 20, bootSessionID: "boot"
             )
             #expect(!monitor.hasCompleted())
             try AgentQuestionTurnCompletion.record(
-                payload: payload("SubagentStop", agentID: "another"), environment: environment,
+                provider: "claude", payload: payload("SubagentStop", agentID: "another"), environment: environment,
                 completedAt: 30, bootSessionID: "boot"
             )
             #expect(!monitor.hasCompleted())
             try AgentQuestionTurnCompletion.record(
-                payload: payload("SubagentStop", session: "another", agentID: "child"), environment: environment,
+                provider: "claude", payload: payload("SubagentStop", session: "another", agentID: "child"), environment: environment,
                 completedAt: 40, bootSessionID: "boot"
             )
             #expect(!monitor.hasCompleted())
             try AgentQuestionTurnCompletion.record(
-                payload: payload("SubagentStop", prompt: "next-root-prompt", agentID: "child"), environment: environment,
+                provider: "claude", payload: payload("SubagentStop", prompt: "next-root-prompt", agentID: "child"),
+                environment: environment,
                 completedAt: 50, bootSessionID: "boot"
             )
             #expect(monitor.hasCompleted())
@@ -148,12 +149,12 @@ struct AgentQuestionTurnCompletionTests {
         try withTempDir { directory in
             let environment = environment(directory)
             let monitor = try #require(AgentQuestionTurnCompletion(
-                payload: payload("PermissionRequest"), environment: environment,
+                provider: "claude", payload: payload("PermissionRequest"), environment: environment,
                 requestedAt: 20, bootSessionID: "boot"
             ))
             for completedAt: UInt64 in [30, 10] {
                 try AgentQuestionTurnCompletion.record(
-                    payload: payload("Stop"), environment: environment,
+                    provider: "claude", payload: payload("Stop"), environment: environment,
                     completedAt: completedAt, bootSessionID: "boot"
                 )
             }
@@ -165,11 +166,11 @@ struct AgentQuestionTurnCompletionTests {
         try withTempDir { directory in
             let environment = environment(directory)
             try AgentQuestionTurnCompletion.record(
-                payload: payload("Stop"), environment: environment,
+                provider: "claude", payload: payload("Stop"), environment: environment,
                 completedAt: 100, bootSessionID: "old-boot"
             )
             let monitor = try #require(AgentQuestionTurnCompletion(
-                payload: payload("PermissionRequest"), environment: environment,
+                provider: "claude", payload: payload("PermissionRequest"), environment: environment,
                 requestedAt: 10, bootSessionID: "new-boot"
             ))
             #expect(!monitor.hasCompleted())
@@ -180,11 +181,11 @@ struct AgentQuestionTurnCompletionTests {
         try withTempDir { directory in
             let environment = environment(directory)
             try AgentQuestionTurnCompletion.record(
-                payload: payload("Stop", prompt: "old"), environment: environment,
+                provider: "claude", payload: payload("Stop", prompt: "old"), environment: environment,
                 completedAt: 1, bootSessionID: "boot"
             )
             let old = try #require(AgentQuestionTurnCompletion(
-                payload: payload("PermissionRequest", prompt: "old"), environment: environment,
+                provider: "claude", payload: payload("PermissionRequest", prompt: "old"), environment: environment,
                 requestedAt: 0, bootSessionID: "boot"
             ))
             #expect(old.hasCompleted())
@@ -192,7 +193,7 @@ struct AgentQuestionTurnCompletionTests {
             #expect(mach_timebase_info(&timebase) == KERN_SUCCESS)
             let day = UInt64(86401 * 1_000_000_000 * Double(timebase.denom) / Double(timebase.numer))
             try AgentQuestionTurnCompletion.record(
-                payload: payload("Stop"), environment: environment,
+                provider: "claude", payload: payload("Stop"), environment: environment,
                 completedAt: day + 1, bootSessionID: "boot"
             )
             let receipts = try FileManager.default.contentsOfDirectory(
@@ -208,9 +209,9 @@ struct AgentQuestionTurnCompletionTests {
     }
 
     @Test func missingIdentityOrStateDirectoryDoesNotEnableMonitoring() throws {
-        #expect(try AgentQuestionTurnCompletion(payload: payload("PermissionRequest"), environment: [:]) == nil)
+        #expect(try AgentQuestionTurnCompletion(provider: "claude", payload: payload("PermissionRequest"), environment: [:]) == nil)
         #expect(try AgentQuestionTurnCompletion(
-            payload: payload("PermissionRequest", prompt: ""), environment: ["WEIR_AGENT_STATES_DIR": "/unused"]
+            provider: "claude", payload: payload("PermissionRequest", prompt: ""), environment: ["WEIR_AGENT_STATES_DIR": "/unused"]
         ) == nil)
     }
 }

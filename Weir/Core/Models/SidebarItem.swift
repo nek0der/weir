@@ -78,33 +78,40 @@ struct Project: Codable, Equatable, Identifiable {
     /// Items are `BootstrapItem` so a future field addition (retries,
     /// per-step env, …) lands without breaking older `state.json`.
     var bootstrap: [BootstrapItem]
-    /// Whether Claude's `git worktree add` invocations get routed
-    /// through this project's `worktreePlacement` + `bootstrap`. When
-    /// false the PreToolUse hook passes through and Claude creates the
-    /// worktree at its own default path. Defaults to `true` so a fresh
-    /// Weir install hits the wedge ("worktrees follow one set of
-    /// rules") out of the box; users who want Claude's defaults
-    /// untouched can flip this off per-project.
-    var routeClaudeWorktrees: Bool
-    /// Same opt-out for Codex CLI's `git worktree add`. Symmetric with
-    /// `routeClaudeWorktrees` — each agent gets its own toggle so a
-    /// user can route one CLI but not the other (e.g. trust Claude
-    /// with the bootstrap chain while Codex still goes to its
-    /// default).
-    var routeCodexWorktrees: Bool
-    /// The same opt-out for the Antigravity CLI's `git worktree add`.
-    var routeAntigravityWorktrees: Bool
+    /// The agents whose `git worktree add` the person keeps out of this
+    /// project's `worktreePlacement` + `bootstrap`, by provider id: an agent
+    /// absent here is routed, and only an explicit `false` opts it out, as
+    /// in the routing file the hook reads (`WorktreeRouting`). Routing is on
+    /// by default so a fresh install hits the wedge ("worktrees follow one
+    /// set of rules") out of the box; each agent has its own toggle so a
+    /// person can route one CLI but not another. Kept by id rather than as
+    /// `AgentKind`, so an agent a newer build added keeps its value through
+    /// a save by this one.
+    private(set) var worktreeRouting: [String: Bool]
 
-    /// Whether `kind`'s `git worktree add` goes to the placement: the stored field
-    /// of that kind, which `state.json` and the routing file keep under their own
-    /// names. On for a kind with no field, which has no toggle either.
+    /// The agents whose routing `state.json` has also kept under a key of
+    /// their own since before the map, with that key. They are still
+    /// written, so a build from before the map reads a person's `false`
+    /// rather than routing again by default, and read back over the map,
+    /// because such a build changes the key and carries the map through
+    /// unchanged (`unknownFields`).
+    private static let legacyRoutingKeys: [(kind: AgentKind, key: CodingKeys)] = [
+        (.claude, .routeClaudeWorktrees),
+        (.codex, .routeCodexWorktrees),
+        (.antigravity, .routeAntigravityWorktrees)
+    ]
+
+    /// Whether `kind`'s `git worktree add` goes to the placement. On for an
+    /// agent the person never turned off, and for one with no toggle.
     func routesWorktrees(for kind: AgentKind) -> Bool {
-        switch kind {
-        case .claude: routeClaudeWorktrees
-        case .codex: routeCodexWorktrees
-        case .antigravity: routeAntigravityWorktrees
-        case .opencode: true
-        }
+        worktreeRouting[kind.rawValue] ?? true
+    }
+
+    /// Turns `kind`'s routing on or off. Only an opt-out is kept, so a
+    /// project whose agents are all routed reads the same however it got
+    /// there.
+    mutating func setRoutesWorktrees(_ enabled: Bool, for kind: AgentKind) {
+        worktreeRouting[kind.rawValue] = enabled ? nil : false
     }
 
     /// The commands that count as a turn's check, as patterns whose last
@@ -138,7 +145,7 @@ struct Project: Codable, Equatable, Identifiable {
     private enum CodingKeys: String, CodingKey, CaseIterable {
         case id, name, rootURL, worktrees, paletteIndex, lastActiveTabID, worktreePlacement
         case mainBranchName, mainHeadSHA, bootstrap, routeClaudeWorktrees, routeCodexWorktrees
-        case routeAntigravityWorktrees
+        case routeAntigravityWorktrees, worktreeRouting
         case checkCommands, ignoredFilesToCopy, rootDisplayName, isExpanded
     }
 
@@ -155,9 +162,7 @@ struct Project: Codable, Equatable, Identifiable {
         mainBranchName: String? = nil,
         mainHeadSHA: String? = nil,
         bootstrap: [BootstrapItem] = [],
-        routeClaudeWorktrees: Bool = true,
-        routeCodexWorktrees: Bool = true,
-        routeAntigravityWorktrees: Bool = true,
+        worktreeRouting: [AgentKind: Bool] = [:],
         checkCommands: [String]? = nil
     ) {
         self.id = id
@@ -170,10 +175,11 @@ struct Project: Codable, Equatable, Identifiable {
         self.mainBranchName = mainBranchName
         self.mainHeadSHA = mainHeadSHA
         self.bootstrap = bootstrap
-        self.routeClaudeWorktrees = routeClaudeWorktrees
-        self.routeCodexWorktrees = routeCodexWorktrees
-        self.routeAntigravityWorktrees = routeAntigravityWorktrees
+        self.worktreeRouting = [:]
         self.checkCommands = checkCommands
+        for (kind, enabled) in worktreeRouting {
+            setRoutesWorktrees(enabled, for: kind)
+        }
     }
 
     /// Hand-rolled decoder so a `state.json` written before `bootstrap`
@@ -203,18 +209,23 @@ struct Project: Codable, Equatable, Identifiable {
         self.mainBranchName = try c.decodeIfPresent(String.self, forKey: .mainBranchName)
         self.mainHeadSHA = try c.decodeIfPresent(String.self, forKey: .mainHeadSHA)
         self.bootstrap = try c.decodeIfPresent([BootstrapItem].self, forKey: .bootstrap) ?? []
-        // Default `true` keeps the wedge active for existing state.json
-        // files that predate this field — same opinionation the
-        // initializer uses.
-        self.routeClaudeWorktrees = try c.decodeIfPresent(
-            Bool.self, forKey: .routeClaudeWorktrees
-        ) ?? true
-        self.routeCodexWorktrees = try c.decodeIfPresent(
-            Bool.self, forKey: .routeCodexWorktrees
-        ) ?? true
-        self.routeAntigravityWorktrees = try c.decodeIfPresent(
-            Bool.self, forKey: .routeAntigravityWorktrees
-        ) ?? true
+        // The map first, then each legacy key over it (`legacyRoutingKeys`
+        // says why). A key or an entry that is absent leaves the agent
+        // routed, which keeps the wedge on for a state.json that predates
+        // either, the same default the initializer uses.
+        // A map of another shape costs the opt-outs only it held, not the
+        // project: `try?` reads it as none.
+        var routing: [String: Bool] = [:]
+        let stored = (try? c.decodeIfPresent([String: Bool].self, forKey: .worktreeRouting)) ?? [:]
+        for (provider, enabled) in stored where !enabled {
+            routing[provider] = false
+        }
+        for (kind, key) in Self.legacyRoutingKeys {
+            if let enabled = try c.decodeIfPresent(Bool.self, forKey: key) {
+                routing[kind.rawValue] = enabled ? nil : false
+            }
+        }
+        self.worktreeRouting = routing
         // Absent in every state.json written before checks existed, which
         // reads as the defaults.
         self.checkCommands = try c.decodeIfPresent([String].self, forKey: .checkCommands)
@@ -239,9 +250,10 @@ struct Project: Codable, Equatable, Identifiable {
         try c.encodeIfPresent(mainBranchName, forKey: .mainBranchName)
         try c.encodeIfPresent(mainHeadSHA, forKey: .mainHeadSHA)
         try c.encode(bootstrap, forKey: .bootstrap)
-        try c.encode(routeClaudeWorktrees, forKey: .routeClaudeWorktrees)
-        try c.encode(routeCodexWorktrees, forKey: .routeCodexWorktrees)
-        try c.encode(routeAntigravityWorktrees, forKey: .routeAntigravityWorktrees)
+        for (kind, key) in Self.legacyRoutingKeys {
+            try c.encode(routesWorktrees(for: kind), forKey: key)
+        }
+        try c.encode(worktreeRouting, forKey: .worktreeRouting)
         try c.encodeIfPresent(checkCommands, forKey: .checkCommands)
         try c.encodeIfPresent(ignoredFilesToCopy, forKey: .ignoredFilesToCopy)
         try c.encodeIfPresent(rootDisplayName, forKey: .rootDisplayName)

@@ -1,5 +1,5 @@
 // AgentResumeCommandBuilder.swift
-// Weir — generic resume-command composer for any `AgentSpec` flavor.
+// Weir — the commands that start or resume an agent in a pane, for any `AgentKind`.
 
 import Foundation
 import WeirDomain
@@ -14,14 +14,14 @@ struct AgentResume: Equatable, Sendable {
     let command: String
 }
 
-enum AgentResumeCommandBuilder<S: AgentSpec> {
+enum AgentResumeCommandBuilder {
     /// Decide whether `paneID` inside `tab` should auto-launch a
-    /// resumed agent session at surface-mount time. Returns the shell
+    /// resumed `kind` session at surface-mount time. Returns the shell
     /// command to feed into `SurfaceView.initialCommand`, or `nil` if
     /// no auto-resume should fire.
     ///
     /// Conditions for a non-nil return:
-    /// 1. `tab.agentSessions[S.kind][paneID]` is set with a
+    /// 1. `tab.agentSessions[kind][paneID]` is set with a
     ///    non-empty `sessionId`. Each split-leaf carries its own
     ///    session so two panes running the same agent concurrently
     ///    each resume independently.
@@ -32,16 +32,16 @@ enum AgentResumeCommandBuilder<S: AgentSpec> {
     ///    `tab.agentResumeCandidates[paneID]`. Which provider yields when
     ///    two have a hint for one pane is a rule, and the rules live on the
     ///    other side of the boundary; this side only reads the answer.
-    static func initialCommand(for tab: Tab, paneID: UUID) -> String? {
-        resume(for: tab, paneID: paneID)?.command
+    static func initialCommand(_ kind: AgentKind, for tab: Tab, paneID: UUID) -> String? {
+        resume(kind, for: tab, paneID: paneID)?.command
     }
 
     /// `initialCommand`, with the session it resumes.
-    static func resume(for tab: Tab, paneID: UUID) -> AgentResume? {
+    static func resume(_ kind: AgentKind, for tab: Tab, paneID: UUID) -> AgentResume? {
         // An unresolved tmux restore hint is not permission to create a
         // duplicate native invocation while its original runtime survives.
         guard tab.tmuxBindings[paneID] == nil else { return nil }
-        guard let info = tab.agentSessions[S.kind]?[paneID],
+        guard let info = tab.agentSessions[kind]?[paneID],
               !info.sessionId.isEmpty
         else {
             return nil
@@ -49,10 +49,23 @@ enum AgentResumeCommandBuilder<S: AgentSpec> {
         if let existing = tab.initialCommands[paneID], !existing.isEmpty {
             return nil
         }
-        guard tab.agentResumeCandidates[paneID]?.contains(S.kind) == true,
-              let command = resumeCommand(sessionId: info.sessionId, cwd: info.cwd)
+        guard tab.agentResumeCandidates[paneID]?.contains(kind) == true,
+              let command = resumeCommand(kind, sessionId: info.sessionId, cwd: info.cwd)
         else { return nil }
-        return AgentResume(provider: S.kind, sessionID: info.sessionId, cwd: info.cwd, command: command)
+        return AgentResume(provider: kind, sessionID: info.sessionId, cwd: info.cwd, command: command)
+    }
+
+    /// The resume `paneID` runs: that of the first agent in `AgentKind`'s
+    /// order that has one. We walk the cases rather than name them, so an
+    /// agent added there is resumed too; the order is the one the chain
+    /// always tried them in, Claude first.
+    static func firstResume(for tab: Tab, paneID: UUID) -> AgentResume? {
+        for kind in AgentKind.allCases {
+            if let resume = resume(kind, for: tab, paneID: paneID) {
+                return resume
+            }
+        }
+        return nil
     }
 
     /// The strict resume (`AgentKind.strictResumeCommand`), as "Resume
@@ -64,7 +77,36 @@ enum AgentResumeCommandBuilder<S: AgentSpec> {
     /// trusted) or a folder with a control character in its name, which the
     /// typed command would carry to the line editor as a key: no resume
     /// then, rather than one somewhere else.
-    static func resumeCommand(sessionId: String, cwd: String? = nil) -> String? {
-        S.kind.strictResumeCommand(sessionId: sessionId, cwd: cwd)
+    static func resumeCommand(_ kind: AgentKind, sessionId: String, cwd: String? = nil) -> String? {
+        kind.strictResumeCommand(sessionId: sessionId, cwd: cwd)
+    }
+}
+
+extension AgentKind {
+    /// The agent started anew, in `cwd` when one is given: the command a
+    /// stop's "Start New Conversation" types. Refused, as the resume
+    /// is, for a folder with a control character in its name.
+    func newConversationCommand(cwd: String?) -> String? {
+        if let cwd, cwd.unicodeScalars.contains(where: \.isTypedControl) {
+            return nil
+        }
+        guard let cwd, !cwd.isEmpty else { return launchCommand }
+        return "cd \(ShellQuote.single(cwd)) && \(launchCommand)"
+    }
+
+    /// The strict resume of this agent, in `cwd` when one is known: the
+    /// folder the conversation was in, which Claude requires and Codex
+    /// would otherwise resume somewhere else. `&&`, so a folder that is
+    /// gone starts nothing. `nil` for an id that is not a session's, or a
+    /// folder with a control character in its name, which the typed
+    /// command would carry to the line editor as a key.
+    func strictResumeCommand(sessionId: String, cwd: String? = nil) -> String? {
+        guard AgentSessionIDValidator.isStrictlyValid(sessionId) else { return nil }
+        if let cwd, cwd.unicodeScalars.contains(where: \.isTypedControl) {
+            return nil
+        }
+        let resume = strictResumeArguments(sessionId: sessionId)
+        guard let cwd, !cwd.isEmpty else { return resume }
+        return "cd \(ShellQuote.single(cwd)) && \(resume)"
     }
 }

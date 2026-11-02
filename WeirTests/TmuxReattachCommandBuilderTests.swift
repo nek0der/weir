@@ -157,9 +157,9 @@ struct TmuxReattachCommandBuilderTests {
             serverPID: "42", serverStartedAt: "100", isProvisional: true
         ))
         AgentResumeFixture.stage([.codex], on: &tab, paneID: pane, cwd: "/tmp")
-        #expect(CodexResumeCommandBuilder.initialCommand(for: tab, paneID: pane) == nil)
+        #expect(AgentResumeCommandBuilder.initialCommand(.codex, for: tab, paneID: pane) == nil)
         #expect(TmuxReattachCommandBuilder.initialCommand(for: tab, paneID: pane) != nil)
         tab.tmuxBindings[pane] = nil
-        #expect(CodexResumeCommandBuilder.initialCommand(for: tab, paneID: pane) != nil)
+        #expect(AgentResumeCommandBuilder.initialCommand(.codex, for: tab, paneID: pane) != nil)
     }
 }

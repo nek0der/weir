@@ -9,6 +9,7 @@
 import Foundation
 import Testing
 @testable import Weir
+@testable import WeirDomain
 
 @MainActor
 @Suite("WorktreeRouting")
@@ -32,8 +33,7 @@ struct WorktreeRoutingTests {
             worktrees: [],
             worktreePlacement: placement,
             bootstrap: bootstrap,
-            routeClaudeWorktrees: claude,
-            routeCodexWorktrees: codex
+            worktreeRouting: [.claude: claude, .codex: codex]
         )
     }
 

@@ -23,13 +23,9 @@ enum ReviewAgents {
         // hint a restored pane keeps: that names an agent that may not have
         // started yet, or one another agent has replaced in front.
         let kind = tab.agentKind(inPane: paneID)
-        let agent: String? = switch kind {
-        case .claude: "Claude Code"
-        case .codex: "Codex"
-        case .antigravity: "Antigravity"
-        case .opencode: "OpenCode"
-        case nil: nil
-        }
+        // The provider's own full name ("Claude Code"), as its descriptor
+        // gives it, where the menus' shorter one would not say which CLI.
+        let agent = kind.map { AgentProviderRegistry.displayName(for: $0) }
         // A tab hosting a plain shell carries the command it was started with
         // as its title, which for a tmux-hosted pane is a line of `attach -t`
         // arguments. The directory it works in says more in less room.

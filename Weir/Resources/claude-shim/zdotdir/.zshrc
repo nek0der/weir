@@ -1,9 +1,9 @@
-# Weir claude-shim zdotdir/.zshrc
+# Weir zdotdir/.zshrc, kept in claude-shim/ where it began
 # Forward to the user's real ~/.zshrc so all their interactive shell
-# customisation (aliases, plugins, prompt) loads normally, then put
-# the Weir claude shim back at the front of PATH. Without this,
+# customization (aliases, plugins, prompt) loads normally, then put
+# every Weir agent shim back at the front of PATH. Without this,
 # `.zshrc` lines like `export PATH="/opt/homebrew/bin:$PATH"` push
-# the shim past `/opt/homebrew/bin/claude` and our hook never fires.
+# a shim past `/opt/homebrew/bin/claude` and that agent's hook never fires.
 
 if [[ -f "$HOME/.zshrc" ]]; then
   source "$HOME/.zshrc"
@@ -26,17 +26,27 @@ if [[ "$HISTFILE" == "$ZDOTDIR/.zsh_history" ]]; then
 fi
 
 # Re-prepend the shims. `typeset -aU` keeps PATH unique-on-the-fly so
-# repeated tabs / sourcing won't grow it unbounded. Both agents need this:
+# repeated tabs / sourcing won't grow it unbounded. Every agent needs this:
 # whichever directory the user's own PATH edits push down stops
 # intercepting, and the hooks for that agent silently never load.
+# WEIR_SHIM_DIRS lists them in the app's order, so an agent added there is
+# re-prepended here without a change to this file. The four names after it
+# are for a shell whose environment an earlier build set, such as one in a
+# tmux session on a server that build started, which has no list (or an
+# empty one); they stop at the agents that build had.
 typeset -aU path
-for _weir_shim in "${WEIR_SHIM_DIR:-}" "${WEIR_CODEX_SHIM_DIR:-}" "${WEIR_ANTIGRAVITY_SHIM_DIR:-}" "${WEIR_OPENCODE_SHIM_DIR:-}"; do
+if [[ -n "${WEIR_SHIM_DIRS:-}" ]]; then
+  _weir_shims=("${(@s.:.)WEIR_SHIM_DIRS}")
+else
+  _weir_shims=("${WEIR_SHIM_DIR:-}" "${WEIR_CODEX_SHIM_DIR:-}" "${WEIR_ANTIGRAVITY_SHIM_DIR:-}" "${WEIR_OPENCODE_SHIM_DIR:-}")
+fi
+for _weir_shim in "${_weir_shims[@]}"; do
   if [[ -n "$_weir_shim" && -d "$_weir_shim" ]]; then
     path=("$_weir_shim" $path)
     export PATH
   fi
 done
-builtin unset _weir_shim
+builtin unset _weir_shim _weir_shims
 
 # Record the PATH this shell ended up with, after the user's .zshrc has
 # turned on whatever version manager (nvm, mise, asdf, volta, ...) adds to

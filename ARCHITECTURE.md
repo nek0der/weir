@@ -52,9 +52,11 @@ boundaries** (the layers are described below). The libghostty boundary lives
 in `FFI/`. The Rust boundary lives behind `Core/Rust/WeirRustBridge.swift`
 and the C header in `rust/weir-rust-bridge/include/`. Rust stays independent
 of Swift and Apple frameworks. UI may consume Core models but never reaches
-into their private state. Core keeps AppKit and SwiftUI out. The agent
-folders, `Core/Claude`, `Core/Codex`, `Core/Antigravity`, and `Core/OpenCode`, never refer to
-each other in code. Each is independent, and the first two are shaped alike.
+into their private state. Core keeps AppKit and SwiftUI out. What every
+agent shares, its shim (`AgentShimLocator`) and its resume command
+(`AgentResumeCommandBuilder`), lives once in `Core/Agent` and takes an
+`AgentKind`. `Core/Codex` holds only what Codex alone needs: its hook
+installer and the trust its hooks need in `config.toml`.
 
 The bridge-wide ABI number is a compatibility version, not a release or API
 revision. Adding a new exported symbol keeps the current number. Increment it
@@ -775,16 +777,47 @@ build that reads a newer file degrades cleanly.
   `Commands` type of its menu (`App/TabCommands.swift`,
   `App/SupervisionCommands.swift`, …, listed in `WeirApp`'s `.commands`),
   and a case in `TabActions.dispatch<Category>Action`.
-- **New agent CLI** — add a provider crate at
-  `rust/weir-provider-<agent>/` (descriptor, install recipe, `normalize`),
-  recorded fixtures under `rust/fixtures/<agent>/`, and an adapter entry in the
-  hook's provider registry. The application projection (`project`, `on_launch`,
-  `on_terminate`) runs in Rust and branches on capabilities, so the rules need
-  no change unless the agent behaves in a way no capability describes yet, as
-  Antigravity did (ADR 0004, "Adding Antigravity"). The Swift side still keys the interface by `AgentKind`: add a
-  case there, an `AgentSpec` conformer in `Core/Agent/<Agent>Agent.swift` for
-  the resume command, a shim under `Resources/<agent>-shim/` with its
-  installer, and the provider's display strings in `Localizable.xcstrings`.
+- **New agent CLI** — each step names a place that lists every agent, and a
+  test fails until the new one is there.
+  1. Rust: a provider crate at `rust/weir-provider-<agent>/` (descriptor with
+     its capabilities, install recipe, `normalize`), recorded fixtures under
+     `rust/fixtures/<agent>/`, and one entry in `ADAPTERS` in
+     `rust/weir-agent-hook/src/lib.rs`, which the lookup, the descriptors, and
+     the recipes the app asks for all read. The rules (`project`,
+     `on_launch`, `on_terminate`) branch on capabilities, so they need no
+     change unless the agent behaves in a way no capability describes yet, as
+     Antigravity and OpenCode did (ADR 0004).
+  2. Swift: a case in `AgentKind` (`Core/Domain/AgentKind.swift`). The
+     compiler then asks for its launch command and its resume arguments
+     there, its badge and menu `switch`es, and the shim's record export in
+     `AgentShimLocator`. Its entry in `AgentCatalog.entries`, in `AgentKind`'s
+     order, gives the new worktree sheet its name and where it installs.
+  3. The shim: `Weir/Resources/<id>-shim/` with the agent's launch command and
+     a `weir-hook` copied from another shim (it takes its provider from the
+     folder's name), listed in `project.yml` beside the others. The pane's
+     `PATH`, `WEIR_SHIM_DIRS`, and the restored pane's resume walk
+     `AgentKind.allCases`, so they take it without a change.
+  4. Approvals: a provider that asks through the Hook Helper declares
+     `approval_hook` and whichever of `question_answered_by_agent`,
+     `question_ends_with_turn`, `approval_hook_records_lifecycle`, and
+     `approval_withdrawn_by_signal` describe it; the approval path in the
+     helper and the card name no provider. The id branches that remain
+     elsewhere are listed in ADR 0004, "Capabilities".
+  5. Worktrees: `worktree_placement` gives the agent a toggle in project
+     settings and a key in the routing file, and `worktree_finish_proven`
+     gives a worktree the agent added itself the setup once it lands at the
+     placement; the project keeps the toggle by provider id
+     (`Project.worktreeRouting`).
+  6. Words: the agent's product names are its descriptor's `display_name`
+     and its catalog entry's; anything user-facing beyond them goes through
+     `Localizable.xcstrings` in en and ja. The documents that name every
+     agent need it too: `README.md` and `README.ja.md`, ADR 0004's
+     capability table and a section on adding it, the shim's own `README.md`,
+     `docs/user-guide.md`, `docs/known-limitations.md`,
+     `docs/agent-integration-protocol.md`, `docs/data-migration.md` for
+     anything it stores, and the site: `site/src/site.ts` and the pages under
+     `site/src/content/docs/` in every language.
+
   Directory names and environment variable names come from the descriptor and
   recipe through `AgentProviderRegistry`; nothing in Swift should spell them.
 

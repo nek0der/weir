@@ -7,13 +7,14 @@ use crate::projection::MAX_PROJECTION_INPUT_BYTES;
 use serde::Deserialize;
 use std::path::Path;
 use weir_agent_hook::{PANE_ID_VARIABLE, WORKTREE_ROUTING_FILE};
-use weir_agent_model::RunState;
+use weir_agent_model::{MAX_HOOK_INPUT_BYTES, RunState};
 use weir_agent_protocol::MAXIMUM_DECISION_BYTES;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SharedValues {
     maximum_decision_bytes: usize,
+    maximum_hook_input_bytes: usize,
     maximum_projection_input_bytes: usize,
     worktree_routing_file_name: String,
     pane_identifier_variable: String,
@@ -32,6 +33,8 @@ fn shared_values() -> SharedValues {
 fn the_limits_are_the_ones_the_app_checks_against() {
     let shared = shared_values();
     assert_eq!(MAXIMUM_DECISION_BYTES, shared.maximum_decision_bytes);
+    // The Hook Helper reads no more of a payload than the adapters accept.
+    assert_eq!(MAX_HOOK_INPUT_BYTES, shared.maximum_hook_input_bytes);
     assert_eq!(
         MAX_PROJECTION_INPUT_BYTES,
         shared.maximum_projection_input_bytes

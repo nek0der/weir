@@ -80,21 +80,47 @@ struct AgentWorktreeSettingsModelTests {
         }
     }
 
+    /// Turning every agent off reaches the agents that had a setter of their
+    /// own before there was one for all (Claude, Codex, Antigravity) and no
+    /// other: OpenCode had none, so it stays routed.
     @MainActor
-    @Test func eachToggleReadsAndWritesTheFieldItsAgentAlwaysHad() throws {
+    @Test func eachToggleTurnsOffOnlyAnAgentThatHadOne() throws {
         let session = WorkspaceSession()
         let project = Project(name: "p", rootURL: URL(fileURLWithPath: "/tmp/weir-project"))
         session.projects.append(project)
-        for kind in [AgentKind.claude, AgentKind.codex, AgentKind.antigravity] {
+        for kind in AgentKind.allCases {
             session.setProjectRoutesWorktrees(project.id, for: kind, to: false)
         }
         let saved = try #require(session.projects.first { $0.id == project.id })
-        #expect(!saved.routeClaudeWorktrees && !saved.routeCodexWorktrees && !saved.routeAntigravityWorktrees)
-        #expect(!saved.routesWorktrees(for: AgentKind.codex))
-        #expect(saved.routesWorktrees(for: AgentKind.opencode), "no field, no toggle, never off")
+        let expected: [AgentKind: Bool] = [.claude: false, .codex: false, .antigravity: false, .opencode: true]
+        #expect(Set(expected.keys) == Set(AgentKind.allCases), "a new agent says whether it had a toggle")
+        for kind in AgentKind.allCases {
+            #expect(saved.routesWorktrees(for: kind) == expected[kind], "\(kind)")
+        }
         // The saved keys are the ones a project written before this reads back.
         let decoded = try JSONDecoder().decode(Project.self, from: JSONEncoder().encode(saved))
-        #expect(!decoded.routesWorktrees(for: AgentKind.claude))
-        #expect(!decoded.routesWorktrees(for: AgentKind.antigravity))
+        for kind in AgentKind.allCases {
+            #expect(decoded.routesWorktrees(for: kind) == expected[kind], "\(kind)")
+        }
+
+        for kind in AgentKind.allCases {
+            session.setProjectRoutesWorktrees(project.id, for: kind, to: true)
+        }
+        let restored = try #require(session.projects.first { $0.id == project.id })
+        #expect(restored == project, "turned back on, the project reads as it began")
+    }
+
+    /// The toggle follows the capability, not a list of agents: an agent
+    /// with it can be turned off, and one without it cannot.
+    @MainActor
+    @Test func theToggleFollowsThePlacementCapability() throws {
+        let session = WorkspaceSession()
+        let project = Project(name: "p", rootURL: URL(fileURLWithPath: "/tmp/weir-project"))
+        session.projects.append(project)
+        session.setProjectRoutesWorktrees(project.id, for: .opencode, to: false, hasPlacement: { $0 == .opencode })
+        session.setProjectRoutesWorktrees(project.id, for: .claude, to: false, hasPlacement: { $0 == .opencode })
+        let saved = try #require(session.projects.first { $0.id == project.id })
+        #expect(!saved.routesWorktrees(for: .opencode))
+        #expect(saved.routesWorktrees(for: .claude))
     }
 }

@@ -63,7 +63,10 @@ fn provider(name: &str) -> ProviderId {
 
 /// The registry the application passes in, built from the provider crates
 /// themselves, so the goldens record what the app shows rather than what a
-/// copy of the descriptors would.
+/// copy of the descriptors would. Only the two providers the cases have
+/// records of: every pass also cleans each provider's directories, so with
+/// the others in, every golden would gain their cleanup commands and say
+/// nothing more about the cases.
 fn descriptors() -> BTreeMap<ProviderId, ProviderDescriptor> {
     [
         ClaudeAdapter.descriptor().clone(),

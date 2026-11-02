@@ -7,6 +7,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
+/// How long the hook helper waits for a decision. It stays below the
+/// 600-second hook timeout of Claude Code and Codex so the helper answers
+/// before the provider gives up on it. OpenCode sets no limit on its plugin,
+/// and takes the same value so a card waits as long whichever agent asked.
+pub const APPROVAL_TIMEOUT_MS: u64 = 570_000;
+
 /// One selectable answer to an `ApprovalQuestion`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalQuestionOption {

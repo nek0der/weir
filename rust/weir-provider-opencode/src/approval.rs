@@ -7,13 +7,9 @@
 
 use serde_json::{Value, json};
 use weir_agent_model::{
-    ApprovalDecision, ApprovalRequest, MAX_HOOK_INPUT_BYTES, NormalizeError, ProviderId,
-    ProviderOutput, parse_object,
+    APPROVAL_TIMEOUT_MS, ApprovalDecision, ApprovalRequest, MAX_HOOK_INPUT_BYTES, NormalizeError,
+    ProviderId, ProviderOutput, parse_object,
 };
-
-/// How long the helper waits for a decision. OpenCode sets no limit on the plugin,
-/// so this is the same as the agents' whose hook has one (Codex's).
-pub const APPROVAL_TIMEOUT_MS: u64 = 570_000;
 
 pub(crate) fn approval_request(bytes: &[u8]) -> Result<Option<ApprovalRequest>, NormalizeError> {
     let object = parse_object(bytes, MAX_HOOK_INPUT_BYTES)?;
