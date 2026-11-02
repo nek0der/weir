@@ -26,7 +26,7 @@ struct ProjectMenuModel: Equatable {
         /// tooltip and its VoiceOver action say, so neither offers it on a
         /// row whose window would only come forward.
         var opensInNewWindow: Bool {
-            !isCurrent && !isInOtherWindow
+            ProjectOpening.offersNewWindow(isShownHere: isCurrent, isShownElsewhere: isInOtherWindow)
         }
     }
 

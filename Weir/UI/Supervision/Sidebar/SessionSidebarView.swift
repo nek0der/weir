@@ -288,7 +288,10 @@ struct SessionSidebarView: View {
                 }
             },
             closeProject: { [window] in window.commands.send(.closeProject(id)) },
-            bringOtherWindowForward: other.map { other in { windowRegistry.raise(other.id, in: session) } }
+            bringOtherWindowForward: other.map { other in { windowRegistry.raise(other.id, in: session) } },
+            openInNewWindow: ProjectOpening.offersNewWindow(isShownHere: header.isCurrent, isShownElsewhere: other != nil)
+                ? { [window] in windowRegistry.openInNewWindow(project: id, in: session, from: window) }
+                : nil
         )
     }
 
@@ -296,6 +299,7 @@ struct SessionSidebarView: View {
     private func sessionRow(_ row: SessionSidebarModel.Row, in project: Project?, others: [UUID: WindowID], now: Date) -> some View {
         let tabs = session.tabs(in: row.id)
         let info = prStatusStore.info(for: row.id)
+        let rowActions = actions(for: row, in: project, hasTabs: !tabs.isEmpty, others: others)
         SessionRowView(
             row: row,
             projectName: project?.name,
@@ -306,11 +310,19 @@ struct SessionSidebarView: View {
             drag: row.id.worktreeID.map { SessionRowView.Drag(id: $0.uuidString, dragState: dragState) },
             isKeyboardSelected: isFocused && keyboardLine == .row(row.id),
             now: now,
-            actions: actions(for: row, in: project, hasTabs: !tabs.isEmpty, others: others),
+            actions: rowActions,
             onAnswer: answerAction(row, others: others),
             // Another project's row switches the window to it in place, or
-            // brings forward the window that shows it.
-            onActivate: { session.setActiveContainer(row.id, in: window.id, intent: .person) },
+            // brings forward the window that shows it. With ⌘, a row of a
+            // project no window shows opens in a new window, as its menu's
+            // Open in New Window does (`ProjectOpening`).
+            onActivate: { holdsCommand in
+                if holdsCommand, let openInNewWindow = rowActions.openInNewWindow {
+                    openInNewWindow()
+                } else {
+                    session.setActiveContainer(row.id, in: window.id, intent: .person)
+                }
+            },
             // Renamed where the project is shown, as the menu's Rename is:
             // a double-click here would bring that window forward on its
             // first click and edit the name behind it on its second.
@@ -681,6 +693,10 @@ struct SessionSidebarView: View {
             refreshPRStatus: prStatusStore.info(for: row.id).flatMap { _ in
                 prStatusSyncer.map { syncer in { syncer.refreshNow(container: row.id) } }
             },
+            openInNewWindow: ProjectOpening.offersNewWindow(
+                isShownHere: window.selection.shownProjectID == project.id,
+                isShownElsewhere: other != nil
+            ) ? { [window] in windowRegistry.openInNewWindow(row: row.id, in: session, from: window) } : nil,
             revealInFinder: row.isMissing ? nil : { NSWorkspace.shared.activateFileViewerSelecting([folder]) },
             openChangesPanel: row.isMissing ? nil : { [windowActions] in
                 windowActions?.openChangesPanel(row.id)

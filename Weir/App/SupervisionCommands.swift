@@ -26,7 +26,7 @@ struct SupervisionCommands: Commands {
         CommandGroup(after: .newItem) {
             MainWindowCommandItems(state.quickTerminal) {
                 // With no main window key too: with every window closed,
-                // it brings back the hidden one.
+                // it still opens a new one.
                 Button("New Window", systemImage: WeirShortcutAction.newWindow.iconName) {
                     SupervisionWindowActions.newWindow(from: window, session: state.session, registry: state.windowRegistry)
                 }
@@ -69,14 +69,15 @@ struct SupervisionCommands: Commands {
         CommandGroup(after: .sidebar) {
             MainWindowCommandItems(state.quickTerminal) {
                 Button(
-                    window?.selection.isChangesPanelPresented == true ? "Hide Changes" : "Show Changes",
+                    window?.selection.showsChangesPanel == true ? "Hide Changes" : "Show Changes",
                     systemImage: WeirShortcutAction.toggleChangesPanel.iconName
                 ) {
                     guard let window else { return }
                     ChangesPanelActions.toggle(window, session: state.session)
                 }
                 .weirShortcut(.toggleChangesPanel, in: state.settingsStore)
-                .disabled(window == nil)
+                // A window that shows nothing has no panel to show.
+                .disabled(window == nil || window?.selection.isChoosingProject == true)
                 Button("All Projects", systemImage: WeirShortcutAction.allProjects.iconName) {
                     guard let window else { return }
                     window.commands.send(.toggleAllProjects)

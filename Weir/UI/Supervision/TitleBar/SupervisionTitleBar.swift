@@ -41,7 +41,11 @@ struct SupervisionTitleBar: View {
             ToolbarPaletteField()
             HStack(spacing: WeirLayout.Supervision.titleBarSpacing) {
                 NeedsAttentionButton()
-                ChangesPanelToggle(stores: state.changesPanelStores)
+                // A window that shows nothing has no turns to list, and no
+                // panel to open (`WindowSelection.showsChangesPanel`).
+                if !window.selection.isChoosingProject {
+                    ChangesPanelToggle(stores: state.changesPanelStores)
+                }
             }
         }
         .frame(height: WeirLayout.Supervision.titleBarHeight)

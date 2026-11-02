@@ -43,6 +43,7 @@ Press <kbd>⌘/</kbd> in Weir to see the full list with your own bindings. To ch
 
 | Key | Action |
 |---|---|
+| <kbd>⌃⌘N</kbd> | New Window, which lists every project to open |
 | <kbd>⇧⌘P</kbd> | Command Palette |
 | <kbd>⌘P</kbd> | Quick Open |
 | <kbd>⌥⌘O</kbd> | All Projects |

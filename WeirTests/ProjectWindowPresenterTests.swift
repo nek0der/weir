@@ -100,6 +100,27 @@ struct ProjectWindowPresenterTests {
         }
     }
 
+    /// A window opened from another takes its size, not the size a window
+    /// opens at.
+    @Test func aWindowOpenedFromAnother_takesItsSize() throws {
+        let fixture = Fixture(initialContentSize: NSSize(width: 400, height: 300))
+        let registry = fixture.registry
+        let primaryWindow = try fixture.showPrimaryOnItsOwnProject()
+        var opened: ProjectWindowState?
+        defer {
+            if let opened {
+                registry.hide(opened.id)
+            }
+            registry.hide(registry.primary.id)
+        }
+        primaryWindow.setFrame(NSRect(origin: primaryWindow.frame.origin, size: NSSize(width: 520, height: 410)), display: false)
+
+        let (state, window) = try fixture.openInNewWindow(fixture.addProject("sized"), from: registry.primary)
+        opened = state
+
+        #expect(window.frame.size == primaryWindow.frame.size)
+    }
+
     @Test func theCascade_stepsFromTheLastWindowPlaced_andWrapsAtTheScreensEdge() {
         let visible = CGRect(x: 0, y: 0, width: 1000, height: 800)
         let step = CGSize(width: 20, height: 22)

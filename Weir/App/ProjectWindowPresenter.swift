@@ -212,13 +212,23 @@ final class ProjectWindowPresenter: ProjectWindowPresenting {
     /// staggers a new document window, so the title bars all show: one
     /// step past the window opened from it last, if any, else past the
     /// window itself (`cascadeTopLeft(after:from:step:size:inside:)`). It
-    /// stays inside that window's screen. Otherwise it is centered.
+    /// takes that window's size, as it takes its sidebar and changes panel
+    /// (`WorkspaceSession.addWindow(showing:layoutFrom:)`), so a window
+    /// sized for a small screen opens another that fits beside it; from a
+    /// window in full screen, whose frame is the screen's, it keeps the
+    /// size it opens at. It stays inside that window's screen. Otherwise
+    /// it is centered.
     private func place(_ window: NSWindow, openedFrom origin: WindowID?) {
         guard let origin, let originWindow = controllers[origin]?.window,
               let visible = originWindow.screen?.visibleFrame
         else {
             window.center()
             return
+        }
+        // The frame's size rather than the content's: the two windows are
+        // made alike, so the same frame holds the same content.
+        if !originWindow.styleMask.contains(.fullScreen) {
+            window.setFrame(NSRect(origin: window.frame.origin, size: originWindow.frame.size), display: false)
         }
         // AppKit's own step: set on the origin's top-left, the window
         // answers the point one step down and right of it.

@@ -49,6 +49,13 @@ struct WindowRecord: Codable, Equatable, Sendable {
     var isHidden = false
     /// The window the person was last in, shown last so it is in front.
     var isFront = false
+    /// The window showed nothing (`WindowSelection.isChoosingProject`), and
+    /// comes back showing nothing. Its record is also on the scratch tabs
+    /// (`WorkspaceSession.windowRecords`), so a build before, which reads
+    /// past this, brings the primary back there, as it always did; a later
+    /// window that showed nothing names no project, and that build does
+    /// not make it again, as it never saved one.
+    var isChoosingProject = false
     /// Stands in for a primary's record that did not read (`unread`): the
     /// defaults, holding the primary's place, and put back as no record
     /// at all (`WorkspaceSession.restore(from:)`), not as one saved on the
@@ -95,6 +102,7 @@ struct WindowRecord: Codable, Equatable, Sendable {
         sidebar = selection.sidebarArrangement == SidebarArrangement() ? nil : selection.sidebarArrangement
         self.isHidden = isHidden
         self.isFront = isFront
+        isChoosingProject = selection.isChoosingProject
     }
 
     init(from decoder: any Decoder) throws {
@@ -118,6 +126,7 @@ struct WindowRecord: Codable, Equatable, Sendable {
         sidebar = try? c.decodeIfPresent(SidebarArrangement.self, forKey: .sidebar)
         isHidden = try c.decodeIfPresent(Bool.self, forKey: .isHidden) ?? false
         isFront = try c.decodeIfPresent(Bool.self, forKey: .isFront) ?? false
+        isChoosingProject = try c.decodeIfPresent(Bool.self, forKey: .isChoosingProject) ?? false
     }
 
     /// Lays `selection` out as the window was. What it showed is put back
@@ -141,6 +150,7 @@ struct WindowRecord: Codable, Equatable, Sendable {
         case isChangesPanelPresented, changesPanelWidth, changesPanelGrouping
         case sidebar
         case isHidden, isFront
+        case isChoosingProject
     }
 }
 

@@ -23,9 +23,10 @@ extension WeirLayout.Supervision {
     /// A failed setup step's log in the worktree's launch bar, scrolled
     /// within this height once it is longer (`SessionLaunchBar`).
     static let launchLogMaxHeight: CGFloat = 140
-    /// The empty window's column of projects and its open button
-    /// (`EmptyWindowView`).
-    static let emptyWindowColumnWidth: CGFloat = 360
+    /// The most the empty window's projects take before they scroll
+    /// (`EmptyWindowView`); its column is the empty session area's
+    /// (`emptySessionHintsWidth`).
+    static let emptyWindowListMaxHeight: CGFloat = 360
     /// The approval card's tool input: its well's inset around the lines
     /// (top and bottom together), and the most it grows before it scrolls.
     static let approvalDetailsVerticalInsets: CGFloat = 12

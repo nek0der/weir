@@ -35,7 +35,7 @@ extension ProjectWindowState {
         let isSplit = (pane?.fraction ?? 1) < 1
         let input = ChangesPanelLayoutRule.Input(
             sharedWidth: changesPanelSharedWidth,
-            isPresented: selection.isChangesPanelPresented,
+            isPresented: selection.showsChangesPanel,
             current: changesPanelLayout,
             sidebarWidth: selection.sidebarHidden ? nil : sidebarDrawnWidth,
             isSidebarKept: isSidebarKeptOverPanel,

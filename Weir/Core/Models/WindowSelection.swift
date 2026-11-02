@@ -60,9 +60,9 @@ final class WindowSelection {
     /// stands on the scratch tabs with no tab, draws no scratch tab, and
     /// offers the projects to open instead, until the person chooses a
     /// project (`WorkspaceSession.showProject(_:in:intent:reason:)`) or the
-    /// scratch tabs (`WorkspaceSession.claimScratch(for:)`). Only while the app
-    /// runs: never saved, so a window that showed nothing comes back on
-    /// the scratch tabs.
+    /// scratch tabs (`WorkspaceSession.claimScratch(for:)`). Saved with the
+    /// window (`WindowRecord.isChoosingProject`), so it comes back showing
+    /// nothing, as it was left.
     var isChoosingProject = false
 
     /// Back/forward history of (container, tab) pairs this window has
@@ -92,7 +92,17 @@ final class WindowSelection {
 
     /// Whether the changes panel is open beside the session. Closed
     /// by default and never opened on its own; persisted with the window.
+    /// The person's choice: what the window draws is `showsChangesPanel`.
     var isChangesPanelPresented = false
+
+    /// Whether the changes panel is on screen: open, in a window that shows
+    /// a project or the scratch tabs. A window that shows nothing has no
+    /// turns to list, so the panel waits, still open, for the project the
+    /// person chooses there (`isChoosingProject`), and takes no room meanwhile.
+    var showsChangesPanel: Bool {
+        isChangesPanelPresented && !isChoosingProject
+    }
+
     /// The changes panel's width as the person last dragged it, `nil` for
     /// the default.
     var changesPanelWidth: CGFloat?

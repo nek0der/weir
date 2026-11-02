@@ -175,8 +175,16 @@ struct SidebarProjectHeaderView: View {
             isKeyboardSelected: isKeyboardSelected
         ))
         // Below the ＋ and the Other Window mark, which take their own
-        // clicks rather than also folding the header.
-        .onTapGesture { onToggle(Self.isOptionClick) }
+        // clicks rather than also folding the header. A ⌘-click opens a
+        // project no window shows in a new window, as its menu's Open in
+        // New Window does; on any other project it folds, as a click does.
+        .onTapGesture {
+            if NewWindowModifier.isCommandClick, let openInNewWindow = actions.openInNewWindow {
+                openInNewWindow()
+            } else {
+                onToggle(Self.isOptionClick)
+            }
+        }
         .onHover { isHovering = $0 }
         .contextMenu { SidebarProjectActionsMenu(header: header, actions: actions) }
         .accessibilityElement(children: .ignore)
@@ -206,6 +214,9 @@ struct SidebarProjectHeaderView: View {
             }
             if let bringOtherWindowForward = actions.bringOtherWindowForward {
                 Button(action: bringOtherWindowForward) { Text(SidebarProjectActionText.bringForward) }
+            }
+            if let openInNewWindow = actions.openInNewWindow {
+                Button(action: openInNewWindow) { Text(NewWindowText.actionName) }
             }
         }
     }

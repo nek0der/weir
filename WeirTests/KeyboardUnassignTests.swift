@@ -40,7 +40,7 @@ struct KeyboardUnassignTests {
         #expect(keyboard.shortcut(for: .newWorktree) == nil)
     }
 
-    @Test func unassigningAnActionWithoutADefault_onlyDropsItsBinding() {
+    @Test func unassigningARebindedAction_dropsItsBinding_andLeavesItsDefaultToRestore() {
         var keyboard = KeyboardSettings()
         keyboard.setOverride(Self.optionCommandN, for: .newWindow)
         keyboard.unassign(.newWindow)
@@ -48,7 +48,9 @@ struct KeyboardUnassignTests {
 
         #expect(keyboard.shortcut(for: .newWindow) == nil)
         #expect(keyboard.unbound.isEmpty)
-        #expect(!keyboard.canRestoreDefault(.newWindow))
+        #expect(keyboard.canRestoreDefault(.newWindow))
+        keyboard.restoreDefault(for: .newWindow)
+        #expect(keyboard.shortcut(for: .newWindow) == WeirShortcutAction.newWindow.defaultShortcut)
     }
 
     @Test func anUnassignedDefault_staysOff_whenItsKeysAreTakenAndFreedAgain() {

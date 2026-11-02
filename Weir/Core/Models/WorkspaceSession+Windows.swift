@@ -129,32 +129,24 @@ extension WorkspaceSession {
     /// project is saved as the project's view instead
     /// (`savedProjectViews`), as it would be had the window closed.
     ///
-    /// A window that shows nothing is not written either
-    /// (`WindowSelection.isChoosingProject`): it lasts only while the app
-    /// runs. With nothing else to write, one of them is, as on the scratch
-    /// tabs (`windowRecords`), so the next launch still has a window where
-    /// the person left one, on the scratch tabs, as a launch with no saved
-    /// window opens.
+    /// A window that shows nothing is written as any other
+    /// (`WindowSelection.isChoosingProject`), and comes back showing
+    /// nothing (`restoreWindows`).
     var savedWindowIDs: [WindowID] {
         let all = windowIDs
-        let ids = all.filter { selection($0)?.isChoosingProject == false }
-        let shown = ids.filter { !hiddenWindowIDs.contains($0) }
+        let shown = all.filter { !hiddenWindowIDs.contains($0) }
         guard shown.isEmpty else { return shown }
         let front = lastFrontWindowID
-        if ids.contains(front) {
-            return [front]
-        }
-        if let first = ids.first {
-            return [first]
-        }
         return all.contains(front) ? [front] : Array(all.prefix(1))
     }
 
     /// Every window a save writes (`savedWindowIDs`), as it is saved. A
-    /// window that shows nothing is written on the scratch tabs, on the tab
-    /// choosing that row would open (`tabOpened(choosing:)`), or on the
-    /// empty row when there is no scratch tab: what it comes back to
-    /// (`restore(from:)`).
+    /// window that shows nothing says so (`WindowRecord.isChoosingProject`),
+    /// and is written on the scratch tabs too, on the tab choosing that row
+    /// would open (`tabOpened(choosing:)`), or on the empty row when there
+    /// is no scratch tab: what a build before, which reads past the flag,
+    /// brings the primary back to (it drops a later one), and this one when
+    /// the session has no tab at all (`restore(from:)`).
     func windowRecords() -> [WindowRecord] {
         let front = lastFrontWindowID
         return savedWindowIDs.compactMap { id in
@@ -197,9 +189,14 @@ extension WorkspaceSession {
             // The projects in the order, and folded as, the window the
             // person opened it from lists them; that window's own project
             // is another window's from here, which a header lists folded
-            // (one not met yet folds by the default rule anyway).
+            // (one not met yet folds by the default rule anyway). A hidden
+            // window's project is not: that window closes as the new one
+            // opens (`WindowRegistry.openEmptyWindow`), and its project is
+            // then no window's.
             selection.sidebarArrangement = template.sidebarArrangement
-            if let shown = template.shownProjectID, shown != projectID, template.sidebarArrangement.knows(shown) {
+            if let shown = template.shownProjectID, shown != projectID, template.sidebarArrangement.knows(shown),
+               !hiddenWindowIDs.contains(origin)
+            {
                 selection.sidebarArrangement.setCollapsed(true, shown)
             }
         }
@@ -219,7 +216,8 @@ extension WorkspaceSession {
     /// restored selection is in, and the record's only while that selection
     /// is in none, so the two cannot name different projects.
     ///
-    /// A later window whose project is gone, or already shown by an
+    /// A later window that showed nothing comes back so. A later window
+    /// whose project is gone, or already shown by an
     /// earlier window, is not made again: it would have nothing to show,
     /// or be a second window for its project. One whose tab is
     /// gone, or is in another project, goes back to its project
@@ -241,12 +239,24 @@ extension WorkspaceSession {
         // move this window off its scratch tab. With none left, it names
         // none.
         let laterProjects = Set(records.dropFirst().compactMap(\.projectID))
-        primarySelection.projectID = primarySelection.activeContainerID.projectID
+        // A primary that showed nothing, put back so (`restore(from:)`),
+        // takes no project.
+        primarySelection.projectID = primarySelection.isChoosingProject ? nil : primarySelection.activeContainerID.projectID
             ?? first.projectID.flatMap { project($0)?.id }
             ?? projects.first { !laterProjects.contains($0.id) && !viewedProjects.contains($0.id) }?.id
         var shownProjects = Set(primarySelection.shownProjectID.map { [$0] } ?? [])
         var restored: [(id: WindowID, record: WindowRecord)] = [(primaryWindowID, first)]
         for record in records.dropFirst() {
+            // A window that showed nothing comes back showing nothing, laid
+            // out as it was.
+            if record.isChoosingProject {
+                let selection = WindowSelection(sidebarWidth: CGFloat(record.sidebarWidth))
+                record.applyLayout(to: selection)
+                selection.isChoosingProject = true
+                addSelection(selection)
+                restored.append((selection.windowID, record))
+                continue
+            }
             guard let projectID = record.projectID, project(projectID) != nil,
                   !shownProjects.contains(projectID)
             else { continue }
