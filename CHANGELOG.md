@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.1.16](https://github.com/nek0der/weir/compare/v0.1.15...v0.1.16) (2026-11-02)
+
+
+### Features
+
+* **agent:** support the Antigravity CLI ([#247](https://github.com/nek0der/weir/issues/247)) ([88ed5d4](https://github.com/nek0der/weir/commit/88ed5d457a1d8669ff7df9a24232443bd62235ff))
+* **keyboard:** show each control's key while Command is held, and tidy the default keys ([#236](https://github.com/nek0der/weir/issues/236)) ([0df0223](https://github.com/nek0der/weir/commit/0df0223d6d679bfe5acaae7e740dde0e3a9b248e))
+
+
+### Bug Fixes
+
+* **agent:** stop a shim running itself when the PATH names it another way ([#248](https://github.com/nek0der/weir/issues/248)) ([e82af5d](https://github.com/nek0der/weir/commit/e82af5db8eadc3c06759df2183efc21576452548))
+* **agent:** stop making a routed worktree before the agent's permission checks ([#253](https://github.com/nek0der/weir/issues/253)) ([b3e7188](https://github.com/nek0der/weir/commit/b3e71889a545948ecc1dd77a1db3e0a069f9b51c))
+* **keyboard:** give the pane the keyboard back when Esc closes the palette or search ([#244](https://github.com/nek0der/weir/issues/244)) ([61beaa3](https://github.com/nek0der/weir/commit/61beaa31cce76e22fc124538aaf795bd2fda58cc))
+* **settings:** pick up a save in place, and keep a file that stops decoding ([#239](https://github.com/nek0der/weir/issues/239)) ([eb39b62](https://github.com/nek0der/weir/commit/eb39b6276aaa724d8de7db221eb162eea36df8e4))
+* **supervision:** give each conversation one row in the review's scope menu, and stop long lines widening menus ([#238](https://github.com/nek0der/weir/issues/238)) ([f4604af](https://github.com/nek0der/weir/commit/f4604af2b8d2eb6a0808a2fc304a6146fd133411))
+* **supervision:** give the floating panels one margin, and keep the rail's panels within the surfaces ([#245](https://github.com/nek0der/weir/issues/245)) ([7648da7](https://github.com/nek0der/weir/commit/7648da7ca1dbfbd4e4b518b1e098363d26a7c29d))
+* **supervision:** keep the title bar's names and field readable when names are long or the window is narrow ([#241](https://github.com/nek0der/weir/issues/241)) ([771553f](https://github.com/nek0der/weir/commit/771553f3341481dc8242decf3f70ab7c1d29c60d))
+* **supervision:** line the approval card up with the surfaces, and drop its arrow ([#243](https://github.com/nek0der/weir/issues/243)) ([d79cbd6](https://github.com/nek0der/weir/commit/d79cbd6845800fef354052bab74a73072a23bfc8))
+* **supervision:** stand the approval card beside the Needs Attention list, and give the review's bars room ([#237](https://github.com/nek0der/weir/issues/237)) ([d694b53](https://github.com/nek0der/weir/commit/d694b531d1fa3d61e5586241c7dd74d87cc66bad))
+* **supervision:** stop a waiting pane showing its mark twice, and Answer touching a row's badges ([#233](https://github.com/nek0der/weir/issues/233)) ([afa7b63](https://github.com/nek0der/weir/commit/afa7b63d55cae2fad04d982582962b943525b34c))
+
+
+### Refactors
+
+* **core:** stop Core importing AppKit and SwiftUI ([#250](https://github.com/nek0der/weir/issues/250)) ([19e762b](https://github.com/nek0der/weir/commit/19e762b05bebd345ad631353e8cca77ff25e357a))
+* **core:** stop Core naming the UI type SurfaceView ([#242](https://github.com/nek0der/weir/issues/242)) ([aae0688](https://github.com/nek0der/weir/commit/aae06889b99b021d7b20a9ce0baf633673521e9d))
+* **supervision:** hand the menu bar, All Projects, and changes panel actions only the stores they use ([#252](https://github.com/nek0der/weir/issues/252)) ([ec5d074](https://github.com/nek0der/weir/commit/ec5d074c05a303df78fe124d214cd07ce40bced9))
+* **supervision:** move the restore and window actions from UI to App ([#251](https://github.com/nek0der/weir/issues/251)) ([089f501](https://github.com/nek0der/weir/commit/089f501e15b611bf299486947b89d52fc830d9b4))
+
+
+### Documentation
+
+* **readme:** rewrite the README around the site, and add a Japanese version ([#249](https://github.com/nek0der/weir/issues/249)) ([46ff1ba](https://github.com/nek0der/weir/commit/46ff1ba137dc583bcf32cb88a26c04a7e7a75fb2))
+* **site:** write the documents in English and Japanese ([#235](https://github.com/nek0der/weir/issues/235)) ([fce2a55](https://github.com/nek0der/weir/commit/fce2a55b99262b76ca7add01bf1b23c8aa4ec7b8))
+
 ## [0.1.15](https://github.com/nek0der/weir/compare/v0.1.14...v0.1.15) (2026-10-31)
 
 
