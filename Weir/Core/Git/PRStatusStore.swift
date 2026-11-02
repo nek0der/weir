@@ -61,11 +61,10 @@ final class PRStatusStore {
     /// with the rows it is willing to fetch for, so hiding a worktree,
     /// closing a project, or a worktree going missing on disk drops
     /// its entry instead of stranding one nothing will ever update
-    /// again. Beyond the unbounded growth,
-    /// a stranded entry is read: `PRStatusSyncer.currentInterval` scans
-    /// every value, so one hidden row whose last known state had checks
-    /// running would hold the whole syncer at the active cadence for
-    /// the rest of the session.
+    /// again. Beyond the unbounded growth, a stranded entry would be read
+    /// again if its row came back: the row would show that state however
+    /// old it was, and `PRStatusSyncer.isDue` would time the row's next
+    /// lookup from it.
     func prune(keeping live: Set<ContainerID>) {
         let stale = Set(perContainer.keys).union(forges.keys).filter { !live.contains($0) }
         guard !stale.isEmpty else { return }

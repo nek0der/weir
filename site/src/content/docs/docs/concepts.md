@@ -39,4 +39,4 @@ One block of changed lines in a diff, with the unchanged lines around it. You ca
 
 ## Scratch
 
-Terminals that belong to no project. Press <kbd>⌥⌘S</kbd> to open them.
+Terminals that belong to no project. Press <kbd>⇧⌘S</kbd> to open them.

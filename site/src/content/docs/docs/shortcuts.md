@@ -12,10 +12,10 @@ Press <kbd>⌘/</kbd> in Weir to see the full list with your own bindings. To ch
 | Key | Action |
 |---|---|
 | <kbd>⌘J</kbd> / <kbd>⇧⌘J</kbd> | Next / previous item that needs you |
-| <kbd>⌃⌘J</kbd> | Show Needs Attention |
+| <kbd>⌥⌘J</kbd> | Show Needs Attention |
 | <kbd>⌘⏎</kbd> | The bar's main action, such as Answer…, Mark as Viewed, or Resume |
 | <kbd>⌥⌘R</kbd> | Review |
-| <kbd>⌥⌘J</kbd> | Review Latest Turn |
+| <kbd>⌥⌘L</kbd> | Review Latest Turn |
 | <kbd>⌥⌘I</kbd> | Changes panel |
 
 ## Worktrees and tabs
@@ -30,6 +30,8 @@ Press <kbd>⌘/</kbd> in Weir to see the full list with your own bindings. To ch
 | <kbd>⇧⌘]</kbd> / <kbd>⇧⌘[</kbd> | Next / previous tab |
 | <kbd>⌘1</kbd>…<kbd>⌘9</kbd> | Go to tab N |
 | <kbd>⇧⌘A</kbd> | Show Open Tabs |
+| <kbd>⌥⌘P</kbd> / <kbd>⌥⌘B</kbd> | Show the project / worktree menu |
+| <kbd>⌥⌘[</kbd> / <kbd>⌥⌘]</kbd> | Go back / forward |
 
 ## Closing
 
@@ -46,8 +48,9 @@ Press <kbd>⌘/</kbd> in Weir to see the full list with your own bindings. To ch
 | <kbd>⌃⌘N</kbd> | New Window, which lists every project to open |
 | <kbd>⇧⌘P</kbd> | Command Palette |
 | <kbd>⌘P</kbd> | Quick Open |
-| <kbd>⌥⌘O</kbd> | All Projects |
-| <kbd>⌥⌘S</kbd> | Scratch |
+| <kbd>⇧⌘O</kbd> | All Projects |
+| <kbd>⇧⌘S</kbd> | Scratch |
+| <kbd>⇧⌘U</kbd> | Plan Usage |
 | <kbd>⇧⌘N</kbd> | Notification History |
 | <kbd>⌘,</kbd> | Settings |
 | <kbd>⌘/</kbd> | Keyboard Shortcuts |

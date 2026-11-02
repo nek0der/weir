@@ -481,8 +481,10 @@ These describe OpenCode 2.2.5.
 These need a signed approval service, sleep, or physical input that the
 automated checks cannot provide. They still have to be checked by hand:
 
-- that Claude Code and Codex draw no prompt of their own while Weir holds
-  an approval, and draw it at once when the pane is opened;
+- that each agent's own prompt, after an update, still behaves as described
+  under "Claude Code shows its own prompt while Weir holds its request"
+  above (last checked with Claude Code 2.1.316, Codex 0.166, and OpenCode
+  2.2.5);
 - the warning shown when the held approvals near their limit of 128;
 - the time left after the Mac sleeps and wakes;
 - whether locking the screen or switching users stops a pane from counting as

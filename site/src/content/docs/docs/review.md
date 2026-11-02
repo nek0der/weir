@@ -12,7 +12,7 @@ Each of these opens a review tab in place of the terminal:
 - **Review Unviewed** on the bar under the agent's pane
 - **Review All Unviewed** in the Changes panel (<kbd>⌥⌘I</kbd>)
 - <kbd>⌥⌘R</kbd>
-- <kbd>⌥⌘J</kbd>, for the focused agent's latest turn
+- <kbd>⌥⌘L</kbd>, for the focused agent's latest turn
 
 Use the scope menu to choose what the review shows: one conversation's unviewed turns, all unviewed turns in the worktree, a single turn, the uncommitted changes, or the branch against its base.
 

@@ -33,9 +33,10 @@ enum SecureFileWrite {
     }
 
     /// Atomic write with `0600` permissions. We can't pass attributes
-    /// through `Data.write(to:options:.atomic)`, so we write into a
-    /// sibling tmp file ourselves, `chmod` it, then `rename` over the
-    /// target — the same dance `Data.write(.atomic)` does internally,
+    /// through `Data.write(to:options:.atomic)`, so we create a sibling
+    /// tmp file ourselves with mode `0600`, flush it to disk, then
+    /// replace the target with it (`replaceItemAt`, a rename on one
+    /// volume) — the same dance `Data.write(.atomic)` does internally,
     /// minus the leak of default permissions.
     static func writeAtomic(_ data: Data, to url: URL) throws {
         try TestWriteGuard.check(url)

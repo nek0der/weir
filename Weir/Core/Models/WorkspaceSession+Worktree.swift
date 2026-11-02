@@ -519,7 +519,7 @@ extension WorkspaceSession {
         // call below uses the same id we hand to GitSync. Note: the
         // `withWorktreeMutationGated` wrapper around the `git` call is
         // a defense-in-depth signal only — GitSync's `inFlight` check
-        // (`GitSyncCoordinator.reconcileWorktrees`) only fires for ids
+        // (`GitSyncCoordinator.buildReconciledList`) only fires for ids
         // that already live in `session.projects[*].worktrees`, and
         // `pendingID` is not appended until `attachGitWorktree` below.
         // The actual race protection is the synchronous attach-after-

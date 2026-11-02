@@ -3,6 +3,9 @@
 - Status: Accepted.
 - Date: 2026-09-13.
 - Amends: ADR 0001 by assigning portable domain and protocol ownership.
+- Note: the Hook CLI named `weir-agent` below shipped as the signed Hook
+  Helper's `hook <provider> [worktree]` command, which the bundled `weir-hook`
+  wrappers exec (`ARCHITECTURE.md`). The decision is unchanged.
 
 ## Context
 
