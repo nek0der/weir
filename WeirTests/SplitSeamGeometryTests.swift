@@ -32,6 +32,8 @@ struct SplitSeamGeometryTests {
                     : (geometry.seam.minY, geometry.seam.height, geometry.hitArea.minY, geometry.hitArea.height)
                 #expect(seamStart == firstEnd)
                 #expect(seamWidth == 1 / scale)
+                // What a pane's frame reaches over to lie on the frame beyond.
+                #expect(seamWidth == SplitSeamGeometry.seamWidth(displayScale: scale))
                 // The band reaches as far over each pane, centered on the seam.
                 #expect(abs(hitStart - (seamStart - SplitSeamGeometry.hitOverhang)) < 0.0001)
                 #expect(abs(hitWidth - (seamWidth + 2 * SplitSeamGeometry.hitOverhang)) < 0.0001)
@@ -118,6 +120,7 @@ private struct BandOverAppKit: View {
             SplitDividerView(
                 direction: .horizontal,
                 geometry: SplitSeamGeometry(size: size, ratio: 0.5, direction: .horizontal, displayScale: displayScale),
+                isHovering: .constant(false),
                 onDrag: { _ in },
                 onEqualize: {}
             )

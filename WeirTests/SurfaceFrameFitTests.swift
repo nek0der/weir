@@ -20,15 +20,6 @@ struct SurfaceFrameFitTests {
         #expect(fit.radii == RectangleCornerRadii(topLeading: 9, bottomLeading: 9, bottomTrailing: 9, topTrailing: 9))
     }
 
-    @Test func reachingAcross_movesOnlyTheSeamEdges() {
-        let base = fit(CGRect(x: 0, y: 66, width: 400, height: 534))
-        let reached = base.reachingAcross(top: true, leading: false, by: 2.5)
-        #expect(reached.insets == EdgeInsets(top: -2.5, leading: 1, bottom: 1, trailing: 0))
-        #expect(reached.radii == base.radii)
-        #expect(base.reachingAcross(top: false, leading: false, by: 2.5) == base)
-        #expect(base.reachingAcross(top: false, leading: true, by: 2.5).insets == EdgeInsets(top: 0, leading: -2.5, bottom: 1, trailing: 0))
-    }
-
     @Test func aBottomLeftPane_meetsOnlyTheLeftAndBottomEdges() {
         // Under the header and the strip, left of a split at 400.
         let fit = fit(CGRect(x: 0, y: 66, width: 400, height: 534))
@@ -54,12 +45,12 @@ struct SurfaceFrameFitTests {
         // The surface's bounds seen from a pane at (401, 66): it starts up
         // and to the left of the pane's origin.
         let bounds = CGRect(x: -401, y: -66, width: 800, height: 600)
-        let fit = SurfaceFrameFit.fit(size: CGSize(width: 399, height: 534), surfaceBounds: bounds, border: 1, cornerRadius: 10)
-        #expect(fit == self.fit(CGRect(x: 401, y: 66, width: 399, height: 534)))
+        let placement = PanePlacement(size: CGSize(width: 399, height: 534), surfaceBounds: bounds)
+        #expect(placement == PanePlacement(frame: CGRect(x: 401, y: 66, width: 399, height: 534), surface: surface))
     }
 
     @Test func offASurface_theFrameIsSquareOnThePanesEdge() {
-        #expect(SurfaceFrameFit.fit(size: surface, surfaceBounds: nil) == .none)
+        #expect(PanePlacement(size: surface, surfaceBounds: nil) == nil)
         #expect(SurfaceFrameFit.fit(frame: CGRect(origin: .zero, size: surface), surface: .zero) == .none)
     }
 

@@ -18,33 +18,19 @@ struct PaneAttentionFrame: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isDimmed = false
     @State private var blink: Task<Void, Never>?
-    /// Which of the pane's edges and corners are the surface's, read from
-    /// the pane's place on it.
-    @State private var fit = SurfaceFrameFit.none
 
     var body: some View {
-        let attention = PaneAttention.of(attentionQueue.queue.items(inPane: paneID))
-        ZStack {
-            if let attention {
-                PaneFrameStroke(
-                    paneID: paneID,
-                    fit: fit,
-                    color: attention.isWaiting ? SupervisionTokens.waiting.color : SupervisionTokens.stopped.color,
-                    lineWidth: WeirLayout.Supervision.paneAttentionFrameWidth
-                )
-                .opacity(isDimmed ? 0.2 : 1)
-            }
-        }
-        // The pane's whole face, frame or not, so its place is known before
-        // the frame first shows.
+        let attention = attention(of: paneID)
+        PaneFrameStroke(
+            paneID: paneID,
+            color: attention.map { $0.isWaiting ? SupervisionTokens.waiting.color : SupervisionTokens.stopped.color },
+            lineWidth: WeirLayout.Supervision.paneAttentionFrameWidth,
+            isFramed: { self.attention(of: $0) != nil }
+        )
+        .opacity(isDimmed ? 0.2 : 1)
+        // The pane's whole face, frame or not, so it appears with the pane
+        // and its first frame blinks.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // The pane's place and the surface's size in one reading, so a
-        // resize never pairs one moment's place with another's size.
-        .onGeometryChange(for: SurfaceFrameFit.self) { proxy in
-            SurfaceFrameFit.fit(size: proxy.size, surfaceBounds: proxy.bounds(of: .named(SupervisionWindowView.surfaceSpace)))
-        } action: { newFit in
-            fit = newFit
-        }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .onAppear {
@@ -60,6 +46,12 @@ struct PaneAttentionFrame: View {
             }
         }
         .onDisappear { blink?.cancel() }
+    }
+
+    /// What frames a pane, this one or one past a divider: one rule for both,
+    /// so a seam joins only the frames that are drawn.
+    private func attention(of pane: UUID) -> PaneAttention? {
+        PaneAttention.of(attentionQueue.queue.items(inPane: pane))
     }
 
     private func blinkOnce() {
