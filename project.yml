@@ -458,6 +458,10 @@ targets:
           PRODUCT_NAME: "Weir Dev"
           ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon-Dev
           EXCLUDED_SOURCE_FILE_NAMES: com.nekoder.weir.agent-integration-service.plist
+          # The agent verification channel (`Weir/Automation`, ADR 0005)
+          # compiles only here, so a Release binary has no listener to turn
+          # on. `scripts/check-release-archive.sh` checks that it is absent.
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) WEIR_AUTOMATION
         Release:
           EXCLUDED_SOURCE_FILE_NAMES: com.nekoder.weir.agent-integration-service.dev.plist
     dependencies:
@@ -545,6 +549,9 @@ targets:
       configs:
         Debug:
           TEST_HOST: $(BUILT_PRODUCTS_DIR)/Weir Dev.app/Contents/MacOS/Weir Dev
+          # The tests of the verification channel compile under the same
+          # condition as the channel.
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) WEIR_AUTOMATION
         Release:
           TEST_HOST: $(BUILT_PRODUCTS_DIR)/Weir.app/Contents/MacOS/Weir
     dependencies:
