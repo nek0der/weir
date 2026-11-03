@@ -89,6 +89,7 @@ Weir sets.
 | `WEIR_OPENCODE_HOOK_DIR` | Set by the shim, in that file: this directory, which tells the plugin the launch is ours |
 | `WEIR_OPENCODE_LAUNCH_SESSION` | Set by the shim: the session `--session` names, so the run rests with it from the launch |
 | `WEIR_OPENCODE_LAUNCH_PROMPT` | Set by the shim: `1` when `--prompt` sends an input with no key press to tell whose it is |
+| `WEIR_OPENCODE_LAUNCH_PREPARATION` | Set by the shim when `--prompt` carries an input: the generation of the turn start it saved before OpenCode ran, since no Enter comes for the plugin to save one. Absent when the save failed or took over ten seconds |
 | `WEIR_OPENCODE_PID` | Set by the shim: its own PID, which becomes the agent's at the exec |
 | `WEIR_REAL_OPENCODE` | Optional override path to the real `opencode`, taken before any search (a test's stub) |
 | `WEIR_FOUND_OPENCODE` | The `opencode` the new worktree sheet found, as `WEIR_FOUND_CODEX` in [`codex-shim/README.md`](../codex-shim/README.md) |
@@ -117,5 +118,6 @@ host's pid sweep watches the process it can see.
 
 Nothing the plugin does may reach OpenCode as an exception. It does nothing when the
 interface lacks part of the API it needs, every report is caught, and Enter sends the
-input whatever became of the save before it. The `opencode` shim exits `127` with a
+input whatever became of the save before it. The shim likewise starts `opencode` within ten
+seconds, whatever became of a `--prompt` input's save. It exits `127` with a
 diagnostic when it cannot find a real `opencode` to hand over to.

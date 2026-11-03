@@ -145,24 +145,52 @@ weir_starts_interface() {
 
 # Reads what the launch names for the plugin: the session it resumes, whether it
 # carries a prompt OpenCode sends by itself (an empty one it does not), which comes
-# with no key press to tell whose it is, and
-# whether it reaches a server somewhere else, whose work is not this folder's.
+# with no key press to tell whose it is,
+# whether it reaches a server somewhere else, whose work is not this folder's, and
+# the folder the interface starts in. That folder is OpenCode's one positional
+# argument, which may come before or after the options (`opencode --help` at v2.2.5),
+# so it is the first word that is no option and no option's value: `--session`, `-s`,
+# `--prompt`, `--server`, and `--log-level` take one, and a boolean flag takes a
+# `true` or `false` after it.
 weir_read_arguments() {
   launch_session=""
   launch_prompt=0
   names_server=0
+  launch_directory=""
   previous=""
+  is_after_options=0
   for arg in "$@"; do
-    case "$previous" in
-      --session | -s) launch_session="$arg" ;;
-      --prompt) [ -z "$arg" ] || launch_prompt=1 ;;
-    esac
-    case "$arg" in
-      --session=*) launch_session="${arg#--session=}" ;;
-      -s=*) launch_session="${arg#-s=}" ;;
-      --prompt=?*) launch_prompt=1 ;;
-      --server | --server=*) names_server=1 ;;
-    esac
+    is_value=0
+    if [ "$is_after_options" = 0 ]; then
+      case "$previous" in
+        --session | -s) launch_session="$arg" is_value=1 ;;
+        --prompt)
+          [ -z "$arg" ] || launch_prompt=1
+          is_value=1
+          ;;
+        --server | --log-level) is_value=1 ;;
+        --auto | --continue | -c | --standalone | --print-logs)
+          case "$arg" in true | false) is_value=1 ;; esac
+          ;;
+      esac
+    fi
+    if [ "$is_value" = 0 ] && [ "$is_after_options" = 0 ]; then
+      case "$arg" in
+        --session=*) launch_session="${arg#--session=}" ;;
+        -s=*) launch_session="${arg#-s=}" ;;
+        --prompt=?*) launch_prompt=1 ;;
+        --server | --server=*) names_server=1 ;;
+        --)
+          is_after_options=1
+          previous=""
+          continue
+          ;;
+        -*) ;;
+        *) [ -n "$launch_directory" ] || launch_directory="$arg" ;;
+      esac
+    elif [ "$is_value" = 0 ]; then
+      [ -n "$launch_directory" ] || launch_directory="$arg"
+    fi
     previous="$arg"
   done
 }
@@ -206,6 +234,51 @@ weir_scrub_environment() {
   [ -z "$kept_pane_env" ] || export WEIR_OPENCODE_PANE_ENV="$kept_pane_env"
 }
 
+# Saves the start of the turn `--prompt` sends, as Enter's gate does for a typed
+# input. The interface sends that input by itself as it comes up, with no key for
+# the gate to hold and no wait the plugin could put before it, so the start is taken
+# here, before OpenCode runs at all. The plugin hands the generation to the turn that
+# input starts. The folder is where the interface starts (`weir_read_arguments`).
+# Should OpenCode read the arguments otherwise, the runtime compares the worktrees and
+# refuses a start saved in another, so that turn has no start, as before. So does a
+# start that cannot be saved, or a path JSON cannot carry plainly.
+weir_prepare_launch_prompt() {
+  [ "$launch_prompt" = 1 ] || return 0
+  [ -x "$self_dir/weir-hook" ] || return 0
+  prepare_dir="$PWD"
+  if [ -n "$launch_directory" ]; then
+    [ -d "$launch_directory" ] || return 0
+    prepare_dir=$(CDPATH='' cd -- "$launch_directory" 2>/dev/null && pwd)
+  fi
+  case "$prepare_dir" in
+    "" | *[[:cntrl:]]*) return 0 ;;
+  esac
+  prepare_generation=$(/usr/bin/uuidgen 2>/dev/null | tr 'A-F' 'a-f')
+  [ -n "$prepare_generation" ] || return 0
+  prepare_cwd=$(printf '%s' "$prepare_dir" | sed 's/\\/\\\\/g; s/"/\\"/g')
+  [ -n "$prepare_cwd" ] || return 0
+  # The plugin's limits: the hook is told 8 s (`hookTimeLimit` of 10 s), which stops
+  # its git, and is killed at 10 s, as a wait for the worktree lock does not heed the
+  # first. OpenCode starts no later than that, with no start named. The shell's own
+  # notes on the jobs it reaps go nowhere; the hook's errors still reach the pane.
+  (
+    printf '{"hook_event_name":"weir.prepare","preparation":"%s","cwd":"%s","data":{}}' \
+      "$prepare_generation" "$prepare_cwd" |
+      WEIR_HOOK_TIME_LIMIT_MS=8000 "$self_dir/weir-hook" >/dev/null 2>&3 &
+    prepare_pid=$!
+    (
+      sleep 10
+      kill -TERM "$prepare_pid"
+    ) >/dev/null 2>&1 &
+    prepare_watch=$!
+    wait "$prepare_pid"
+    prepare_status=$?
+    kill -TERM "$prepare_watch"
+    exit "$prepare_status"
+  ) 3>&2 2>/dev/null || return 0
+  export WEIR_OPENCODE_LAUNCH_PREPARATION="$prepare_generation"
+}
+
 kept_pane_env=""
 
 # `$$` becomes the agent's pid at the exec, which the host's liveness sweep
@@ -223,6 +296,7 @@ if [ -n "${WEIR_OPENCODE_AGENT_STATES_DIR:-}" ] && weir_starts_interface "$@"; t
     export WEIR_OPENCODE_HOOK_DIR="$self_dir"
     export WEIR_OPENCODE_LAUNCH_SESSION="$launch_session"
     export WEIR_OPENCODE_LAUNCH_PROMPT="$launch_prompt"
+    weir_prepare_launch_prompt
     weir_keep_pane_environment
   fi
 fi

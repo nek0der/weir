@@ -716,7 +716,9 @@ and Restore Code would be wrong about them. So the turn's start is saved at the 
 that sends the input. The plugin takes Enter for itself while the session is at rest
 with nothing waiting and the prompt has words in it, asks the runtime to save a
 snapshot, and then sends the input. It gives up after ten seconds and sends the input
-anyway.
+anyway. A `--prompt` input has no Enter: the interface sends it by itself as it comes
+up. So the shim saves its start before OpenCode runs, under the same ten-second limit,
+and the plugin gives that start to the launch's first turn and to no other.
 
 This needed two methods and a capability, and they stay neutral. A provider with
 `Capability::TurnBeginPrepared` answers `turn_preparation` for the call that saves a
@@ -724,7 +726,7 @@ start, which writes no record, and `prepared_begin` for the turn that takes it, 
 generation it names. A turn that names none, or a start that is gone, has no start
 (`beginMissing`), as a turn first seen at its end has, rather than a late one taken
 for its start. So is a start saved in another worktree than the turn runs in, which
-would compare two repositories. That is what a `--prompt` launch, a slash command that starts a turn, a rebound submit key, a queued input,
+would compare two repositories. That is what a slash command that starts a turn, a rebound submit key, a queued input,
 or a turn the agent goes on to by itself gets, and they read as a turn with no change
 summary.
 

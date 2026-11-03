@@ -15,7 +15,8 @@ struct OpenCodeShimTests {
         home: URL,
         args: [String] = [],
         states: String? = nil,
-        environment: [String: String] = [:]
+        environment: [String: String] = [:],
+        limit: TimeInterval = 10
     ) throws -> Process {
         let stub = root.appendingPathComponent("real-opencode")
         try AgentCatalogFixture.makeExecutable(
@@ -35,7 +36,8 @@ struct OpenCodeShimTests {
                 "WEIR_REAL_OPENCODE": stub.path,
                 "WEIR_OPENCODE_AGENT_STATES_DIR": states ?? root.appendingPathComponent("states").path
             ].merging(environment) { _, new in new },
-            currentDirectory: root
+            currentDirectory: root,
+            limit: limit
         )
     }
 
@@ -269,6 +271,146 @@ struct OpenCodeShimTests {
             let home = root.appendingPathComponent("home")
             _ = try runShim(root: root, home: home, args: args)
             #expect(try paneEnvironment(in: root).contains("WEIR_OPENCODE_LAUNCH_PROMPT=1"))
+        }
+    }
+
+    /// A Hook Helper that keeps what a hook call is given and notes whether
+    /// `opencode` already ran, then exits with `status`, or never ends when `hangs`.
+    private func stubHelper(in root: URL, status: Int32 = 0, hangs: Bool = false) throws -> URL {
+        let helper = root.appendingPathComponent("helper")
+        try AgentCatalogFixture.makeExecutable(
+            helper,
+            script: """
+            #!/bin/sh
+            [ "$1" = hook ] || exit 0
+            cat > "\(root.path)/hook-body"
+            printf '%s\\n' "$*" "${WEIR_HOOK_TIME_LIMIT_MS:-}" "${WEIR_AGENT_RUN_ID:-}" > "\(root.path)/hook-call"
+            [ -e "\(root.path)/args" ] && touch "\(root.path)/ran-after-opencode"
+            \(hangs ? "exec sleep 600" : "exit \(status)")
+            """
+        )
+        return helper
+    }
+
+    private func hookBody(in root: URL) throws -> [String: Any] {
+        let data = try Data(contentsOf: root.appendingPathComponent("hook-body"))
+        return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    /// OpenCode sends a `--prompt` input by itself as its interface comes up, with
+    /// no Enter for the plugin's gate to hold, so the shim saves the turn's start
+    /// before OpenCode runs and names it to the plugin.
+    @Test(arguments: [["--prompt", "fix it"], ["--prompt=fix it"]])
+    func shim_savesTheStartOfALaunchPromptsTurn_beforeOpenCodeRuns(args: [String]) throws {
+        try withTempDir { root in
+            let home = root.appendingPathComponent("home")
+            let helper = try stubHelper(in: root)
+            _ = try runShim(root: root, home: home, args: args, environment: ["WEIR_HOOK_HELPER": helper.path])
+            let body = try hookBody(in: root)
+            #expect(body["hook_event_name"] as? String == "weir.prepare")
+            let generation = try #require(body["preparation"] as? String)
+            #expect(!generation.isEmpty)
+            let cwd = try #require(body["cwd"] as? String)
+            #expect(URL(fileURLWithPath: cwd).resolvingSymlinksInPath() == root.resolvingSymlinksInPath())
+            // Saved under the launch's run, the one the plugin's first turn takes.
+            let run = try #require(
+                try paneEnvironment(in: root).split(separator: "\n")
+                    .first { $0.hasPrefix("WEIR_AGENT_RUN_ID=") }?
+                    .dropFirst("WEIR_AGENT_RUN_ID=".count)
+            )
+            #expect(try read("hook-call", in: root) == "hook opencode\n8000\n\(run)\n")
+            #expect(!exists("ran-after-opencode", in: root))
+            #expect(try paneEnvironment(in: root).contains("WEIR_OPENCODE_LAUNCH_PREPARATION=\(generation)"))
+            #expect(try !read("env", in: root).contains("WEIR_OPENCODE_LAUNCH_PREPARATION"))
+        }
+    }
+
+    /// OpenCode's folder is its one positional argument, before or after the
+    /// options, so the shim passes over each option's value to find it.
+    @Test(arguments: [
+        ["FOLDER", "--prompt", "fix it"],
+        ["--prompt", "fix it", "FOLDER"],
+        ["--auto", "--prompt", "fix it", "FOLDER"],
+        ["--auto", "true", "--prompt=fix it", "FOLDER"],
+        ["--session", "ses_1", "FOLDER", "--prompt", "fix it"],
+        ["--log-level", "info", "--prompt", "fix it", "FOLDER"],
+        ["--prompt", "fix it", "--", "FOLDER"]
+    ])
+    func shim_savesALaunchPromptsStart_inTheFolderTheLaunchNames(args: [String]) throws {
+        try withTempDir { root in
+            let home = root.appendingPathComponent("home")
+            let project = root.appendingPathComponent("project \"quoted\"")
+            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+            let helper = try stubHelper(in: root)
+            _ = try runShim(
+                root: root,
+                home: home,
+                args: args.map { $0 == "FOLDER" ? project.lastPathComponent : $0 },
+                environment: ["WEIR_HOOK_HELPER": helper.path]
+            )
+            let cwd = try #require(try hookBody(in: root)["cwd"] as? String)
+            #expect(URL(fileURLWithPath: cwd).resolvingSymlinksInPath() == project.resolvingSymlinksInPath())
+        }
+    }
+
+    /// A value is no folder: the start is saved where the interface starts, here.
+    @Test(arguments: [["--auto", "false", "--prompt", "fix it"], ["-s", "ses_1", "--prompt", "fix it"]])
+    func shim_savesALaunchPromptsStart_inTheCurrentFolder_whenNoneIsNamed(args: [String]) throws {
+        try withTempDir { root in
+            let home = root.appendingPathComponent("home")
+            let helper = try stubHelper(in: root)
+            _ = try runShim(root: root, home: home, args: args, environment: ["WEIR_HOOK_HELPER": helper.path])
+            let cwd = try #require(try hookBody(in: root)["cwd"] as? String)
+            #expect(URL(fileURLWithPath: cwd).resolvingSymlinksInPath() == root.resolvingSymlinksInPath())
+        }
+    }
+
+    @Test(arguments: [[], ["--prompt="], ["--prompt", "fix it", "--server", "http://far:1234"]])
+    func shim_savesNoStart_withoutAPromptItSends(args: [String]) throws {
+        try withTempDir { root in
+            let home = root.appendingPathComponent("home")
+            let helper = try stubHelper(in: root)
+            _ = try runShim(root: root, home: home, args: args, environment: ["WEIR_HOOK_HELPER": helper.path])
+            #expect(!exists("hook-body", in: root))
+        }
+    }
+
+    /// A start the hook did not save is named to no turn, which then says it has none.
+    @Test func shim_namesNoStart_whenTheHookFails() throws {
+        try withTempDir { root in
+            let home = root.appendingPathComponent("home")
+            let helper = try stubHelper(in: root, status: 1)
+            let process = try runShim(
+                root: root,
+                home: home,
+                args: ["--prompt", "fix it"],
+                environment: ["WEIR_HOOK_HELPER": helper.path]
+            )
+            #expect(process.terminationStatus == 0)
+            #expect(exists("hook-body", in: root))
+            #expect(try !paneEnvironment(in: root).contains("WEIR_OPENCODE_LAUNCH_PREPARATION"))
+            #expect(exists("args", in: root))
+        }
+    }
+
+    /// A hook that never ends, as one waiting on a worktree lock past its limit
+    /// can, holds OpenCode up for no longer than the plugin's own preparation would.
+    @Test func shim_startsOpenCode_whenTheHookOutlastsTheLimit() throws {
+        try withTempDir { root in
+            let home = root.appendingPathComponent("home")
+            let helper = try stubHelper(in: root, hangs: true)
+            let started = ContinuousClock.now
+            let process = try runShim(
+                root: root,
+                home: home,
+                args: ["--prompt", "fix it"],
+                environment: ["WEIR_HOOK_HELPER": helper.path],
+                limit: 30
+            )
+            #expect(ContinuousClock.now - started < .seconds(30))
+            #expect(process.terminationStatus == 0)
+            #expect(exists("args", in: root))
+            #expect(try !paneEnvironment(in: root).contains("WEIR_OPENCODE_LAUNCH_PREPARATION"))
         }
     }
 
