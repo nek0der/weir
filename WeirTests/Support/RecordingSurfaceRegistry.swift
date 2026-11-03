@@ -89,7 +89,8 @@ final class RecordingReviewDeliverer: ReviewTextDelivering {
     }
 }
 
-/// A pane's terminal that counts the times it was asked for keyboard focus.
+/// A pane's terminal that counts the times it was asked for keyboard focus,
+/// and holds the keyboard when a test says so.
 @MainActor
 final class RecordingPaneSurface: PaneSurface {
     private(set) var keyboardFocusRequests = 0
@@ -114,9 +115,9 @@ final class RecordingPaneSurface: PaneSurface {
         .zero
     }
 
-    var holdsKeyboardFocus: Bool {
-        false
-    }
+    /// Whether the pane reads as the key window's first responder; false
+    /// unless a test puts the keyboard there.
+    var holdsKeyboardFocus = false
 
     func takeKeyboardFocus() {
         keyboardFocusRequests += 1
