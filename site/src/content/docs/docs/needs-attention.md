@@ -41,6 +41,8 @@ Going to the pane leaves the request with Weir, so you can still answer it on th
 
 **Answer in terminal** on the card, or in the bar's **⋯** menu, goes to the pane and sends the request to the agent's prompt. After that you answer it there. The card shows the time left. Once a request times out, you answer it in the terminal.
 
+When you quit Weir, every request it still holds goes to the agent's prompt. An answer you chose just before quitting is sent instead, and the agent gets it once.
+
 Weir adds no "always allow" option and writes nothing to an agent's settings. To always allow something, use the agent's own prompt.
 
 Codex questions are always answered in the terminal.

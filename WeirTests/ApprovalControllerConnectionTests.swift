@@ -245,4 +245,107 @@ struct ApprovalControllerConnectionTests {
             }
         }
     }
+
+    // MARK: - Sending before quit
+
+    /// One `approval.resolve` the quit sent.
+    private struct QuitExchange {
+        let requestID: String
+        let decision: String
+        let timeoutSeconds: Int
+    }
+
+    /// What the quit sends: the request each `approval.resolve` names and
+    /// the decision it carries, in order.
+    private final class QuitExchanges {
+        var sent: [QuitExchange] = []
+
+        func exchange(_ request: Data, timeoutSeconds: Int) throws -> Data {
+            let object = try AgentIntegrationApprovalWire.object(from: request)
+            let body = object["body"] as? [String: Any]
+            let decision = body?["decision"] as? [String: Any]
+            sent.append(QuitExchange(
+                requestID: body?["request_id"] as? String ?? "",
+                decision: decision?["decision"] as? String ?? "",
+                timeoutSeconds: timeoutSeconds
+            ))
+            return Data()
+        }
+    }
+
+    @Test func sendBeforeQuit_startsItsBudgetOnceTheSessionIsOpen() {
+        let epoch = UUID()
+        let request = ApprovalPresentation.test(epoch: epoch)
+        let exchanges = QuitExchanges()
+
+        ApprovalControllerConnection.sendBeforeQuit([(request, .allowOnce)], budget: .milliseconds(50)) {
+            // An open as slow as the service allows takes longer than the
+            // whole budget.
+            Thread.sleep(forTimeInterval: 0.2)
+            return (epoch, exchanges.exchange)
+        }
+
+        #expect(exchanges.sent.map(\.requestID) == [request.requestID.uuidString])
+        #expect(exchanges.sent.map(\.decision) == [ApprovalResolution.allowOnce.wireDecision])
+        #expect(exchanges.sent.map(\.timeoutSeconds) == [1])
+    }
+
+    @Test func sendBeforeQuit_aFailedExchange_doesNotStopTheRest() {
+        struct Dropped: Error {}
+        let epoch = UUID()
+        let failing = ApprovalPresentation.test(epoch: epoch)
+        let following = ApprovalPresentation.test(epoch: epoch)
+        let exchanges = QuitExchanges()
+
+        ApprovalControllerConnection.sendBeforeQuit(
+            [(failing, .delegate), (following, .allowOnce)],
+            budget: .seconds(2)
+        ) {
+            (epoch, { request, timeoutSeconds in
+                _ = try exchanges.exchange(request, timeoutSeconds: timeoutSeconds)
+                if exchanges.sent.count == 1 {
+                    throw Dropped()
+                }
+                return Data()
+            })
+        }
+
+        #expect(exchanges.sent.map(\.requestID) == [failing.requestID.uuidString, following.requestID.uuidString])
+    }
+
+    @Test func sendBeforeQuit_stopsOnceTheBudgetIsSpent() {
+        let epoch = UUID()
+        let first = ApprovalPresentation.test(epoch: epoch)
+        let second = ApprovalPresentation.test(epoch: epoch)
+        let exchanges = QuitExchanges()
+
+        ApprovalControllerConnection.sendBeforeQuit(
+            [(first, .delegate), (second, .delegate)],
+            budget: .milliseconds(50)
+        ) {
+            (epoch, { request, timeoutSeconds in
+                // A service that answers only once its wait is up.
+                Thread.sleep(forTimeInterval: 0.2)
+                return try exchanges.exchange(request, timeoutSeconds: timeoutSeconds)
+            })
+        }
+
+        #expect(exchanges.sent.map(\.requestID) == [first.requestID.uuidString])
+    }
+
+    @Test func sendBeforeQuit_skipsARequestOfAnotherEpoch() {
+        let epoch = UUID()
+        let current = ApprovalPresentation.test(epoch: epoch)
+        let earlier = ApprovalPresentation.test(epoch: UUID())
+        let exchanges = QuitExchanges()
+
+        ApprovalControllerConnection.sendBeforeQuit(
+            [(earlier, .delegate), (current, .delegate)],
+            budget: .seconds(2)
+        ) {
+            (epoch, exchanges.exchange)
+        }
+
+        #expect(exchanges.sent.map(\.requestID) == [current.requestID.uuidString])
+    }
 }

@@ -187,15 +187,43 @@ enum ApprovalControllerConnection {
         }
     }
 
-    /// Hands `approvals` to the agents' own prompts in one session, as Weir
-    /// quits. It runs on the main thread ahead of the session's save, so the
-    /// whole of it stays within `budget`: each exchange gets only what is left,
-    /// and the first one that fails ends it, as a service that stopped
-    /// answering would only fail the rest one timeout at a time. Whatever does
-    /// not go through is left to the broker's deadline, as before. A request
-    /// of another epoch is skipped: that broker never held it.
-    static func handOverBeforeQuit(_ approvals: [ApprovalPresentation], budget: Duration) {
-        guard !approvals.isEmpty else { return }
+    /// Sends `decisions` in one session as Weir quits
+    /// (`ApprovalPresentationStore.decisionsToSendAtQuit`), within the limits
+    /// the overload that takes `open` describes.
+    static func sendBeforeQuit(
+        _ decisions: [(approval: ApprovalPresentation, resolution: ApprovalResolution)],
+        budget: Duration
+    ) {
+        guard !decisions.isEmpty else { return }
+        sendBeforeQuit(decisions, budget: budget) {
+            // Opening is two exchanges (the session and its hello), each
+            // given the shortest wait the client counts.
+            let (client, epoch) = try openSession(timeoutSeconds: 1)
+            return (epoch, { request, timeoutSeconds in
+                try client.exchange(request, timeoutSeconds: timeoutSeconds)
+            })
+        }
+    }
+
+    /// Sends `decisions` through the session `open` returns. It runs on the
+    /// main thread ahead of the session's save, so it is bounded: opening
+    /// takes at most its own two short exchanges, and the sends after it
+    /// share `budget`, each exchange getting only what is left. The budget
+    /// starts once the session is open, so a slow open cannot spend it and
+    /// leave every decision unsent. A failed exchange does not end the rest,
+    /// as the budget already bounds a service that stopped answering;
+    /// whatever does not go through is left to the broker's deadline, as
+    /// before. A decision of another epoch is skipped: that broker never
+    /// held its request. A refusal changes nothing now: the broker keeps the
+    /// first decision that reached it, and the app is going.
+    static func sendBeforeQuit(
+        _ decisions: [(approval: ApprovalPresentation, resolution: ApprovalResolution)],
+        budget: Duration,
+        open: () throws -> (epoch: UUID, exchange: (Data, Int) throws -> Data)
+    ) {
+        guard !decisions.isEmpty,
+              let (currentEpoch, exchange) = try? open()
+        else { return }
         let clock = ContinuousClock()
         let deadline = clock.now + budget
         func secondsLeft() -> Int? {
@@ -204,24 +232,16 @@ enum ApprovalControllerConnection {
             // The XPC client counts whole seconds; never less than one.
             return max(1, Int(left.components.seconds) + (left.components.attoseconds > 0 ? 1 : 0))
         }
-        // Opening is two exchanges (the session and its hello), each given
-        // the shortest wait the client counts.
-        guard let (client, currentEpoch) = try? openSession(timeoutSeconds: 1) else { return }
-        for approval in approvals where approval.epoch == currentEpoch {
+        for (approval, resolution) in decisions where approval.epoch == currentEpoch {
             guard let timeout = secondsLeft() else { return }
-            do {
-                // A refusal changes nothing now: the app is going, and the
-                // request ends at its deadline either way.
-                _ = try client.exchange(AgentIntegrationApprovalWire.resolve(
-                    epoch: approval.epoch,
-                    runID: approval.runID,
-                    requestID: approval.requestID,
-                    decision: ApprovalResolution.delegate.wireDecision,
-                    answers: ApprovalResolution.delegate.answers
-                ), timeoutSeconds: timeout)
-            } catch {
-                return
-            }
+            // A failure is left to the broker's deadline (see above).
+            _ = try? exchange(AgentIntegrationApprovalWire.resolve(
+                epoch: approval.epoch,
+                runID: approval.runID,
+                requestID: approval.requestID,
+                decision: resolution.wireDecision,
+                answers: resolution.answers
+            ), timeout)
         }
     }
 

@@ -62,12 +62,14 @@ extension AppState {
                 // A setup step left running would go on in a worktree no
                 // one watches.
                 sessionLaunches.cancelAll()
-                // The requests Weir holds go to the agents' own prompts: an
-                // agent that outlives the app (under tmux) would otherwise
-                // wait out its deadline for a card no one can open.
+                // Every request Weir holds gets its one decision: the
+                // person's, when it is still on its way, and otherwise a
+                // hand-over to the agent's own prompt. An agent that outlives
+                // the app (under tmux) would otherwise wait out its deadline
+                // for a card no one can open.
                 if approvalPresentation.followsService {
-                    ApprovalControllerConnection.handOverBeforeQuit(
-                        approvalPresentation.requestsToHandOverAtQuit,
+                    ApprovalControllerConnection.sendBeforeQuit(
+                        approvalPresentation.decisionsToSendAtQuit,
                         budget: .seconds(2)
                     )
                 }

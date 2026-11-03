@@ -303,6 +303,45 @@ struct ApprovalEpisodeEndTests {
         #expect(await recorded.entries.map(\.resolution) == [.delegate])
     }
 
+    /// How the app can lose its subscription while a decision is on its way.
+    enum Interruption: CaseIterable {
+        case droppedConnection
+        case stop
+    }
+
+    /// A lost subscription says nothing about whether the person's answer
+    /// landed. Until its send returns, the turn's end must not release the
+    /// request, or the agent would get a hand-over the person never asked for.
+    @Test(arguments: Interruption.allCases)
+    func anInterruptionDuringThePersonsSend_releasesNothing(_ interruption: Interruption) async {
+        let gate = Gate<Void>()
+        let recorded = DecisionRecorder()
+        let store = ApprovalPresentationStore(decisionSender: { approval, resolution in
+            await recorded.append(approval.id, resolution)
+            await gate.wait()
+        })
+        let (session, paneID) = Self.claudePane(.running)
+        let request = ApprovalPresentation.test(sessionID: "session", deadlineMilliseconds: 0)
+        store.receive([request])
+        store.releaseStaleApprovals(in: session)
+        store.resolve(request, .allowOnce)
+        await gate.waitUntilRequested()
+
+        switch interruption {
+        case .droppedConnection: store.connectionDidDrop()
+        case .stop: store.stop()
+        }
+        // The broker has not taken the answer yet, so the next subscription
+        // still lists the request, and its turn ends meanwhile.
+        store.receive([request])
+        Self.move(session, paneID, to: .finished)
+        store.releaseStaleApprovals(in: session)
+
+        gate.open()
+        await store.waitUntilResolved(request)
+        #expect(await recorded.entries.map(\.resolution) == [.allowOnce])
+    }
+
     @Test func aReleaseThatSucceeds_endsTheEpisode() async {
         let releasing = Self.releasingStore { _, _ in }
         let (store, request) = (releasing.store, releasing.request)
