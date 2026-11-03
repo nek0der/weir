@@ -8,6 +8,7 @@
 
 import AppKit
 import Foundation
+import WeirDomain
 
 /// The words of a quit or close confirmation, kept unresolved so the alert
 /// is built in the app locale at the moment it opens. Pure, so the copy each
@@ -60,6 +61,7 @@ extension AppState {
     func shouldAllowQuit() -> Bool {
         let policy = settingsStore.settings.confirmations.quit
         let hasAgent = session.hasLiveAgentAnywhere()
+            || session.tabs.contains { $0.splitTree.allLeafIDs().contains(where: isAgentInFrontNow(inPane:)) }
         guard shouldConfirm(policy: policy, hasAgent: hasAgent) else { return true }
         // The whole app is closing: the alert is about no one window, and
         // AppKit waits on the answer, so it is an alert of its own. A Dock
@@ -86,6 +88,7 @@ extension AppState {
     func confirmClose(_ request: CloseConfirmer.Request, answer: @escaping @MainActor (Bool) -> Void) {
         let policy = closePolicy(for: request)
         let hasAgent = session.hasLiveAgent(inAnyOf: request.paneIDs)
+            || request.paneIDs.contains(where: isAgentInFrontNow(inPane:))
         guard shouldConfirm(policy: policy, hasAgent: hasAgent) else {
             answer(true)
             return
@@ -125,6 +128,22 @@ extension AppState {
         case (.allTabs, _): c.closeTabMouse
         case (.pane, _): c.closePane
         }
+    }
+
+    /// Whether the pane's terminal runs an agent in front at this moment,
+    /// beside the agents the session knows of (`WorkspaceSession.hasLiveAgent`).
+    /// The session reads the job in front only in the few seconds after a
+    /// title (`PaneAgentInFrontFollower`), so an agent slower to start than
+    /// that, before its first hook, is known only to the terminal; we ask
+    /// it here, where the answer decides a close. Behind a tmux client we
+    /// read nothing more: the person's own tmux answers only off the main
+    /// actor, and a run in Weir's own host has a record the session counts.
+    private func isAgentInFrontNow(inPane paneID: UUID) -> Bool {
+        guard let names = registry.view(for: paneID)?.foregroundGroupProcessNames else { return false }
+        if case .agent = AgentForeground.agentInFront(names: names, tmuxPane: .unknown) {
+            return true
+        }
+        return false
     }
 
     private func shouldConfirm(policy: ConfirmPolicy, hasAgent: Bool) -> Bool {

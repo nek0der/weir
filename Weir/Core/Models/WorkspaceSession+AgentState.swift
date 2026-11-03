@@ -1,6 +1,6 @@
 // WorkspaceSession+AgentState.swift
-// Weir — "is anything live?" predicates that read raw Claude/Codex
-// badges. Used by the close confirmations only — these are
+// Weir — "is anything live?" predicates that read raw agent badges
+// and the agents in front of each pane. Used by the close confirmations only — these are
 // intentionally NOT read from the attention list, because a finished
 // turn already read leaves no item there and is still a live session
 // worth protecting before close.
@@ -14,11 +14,9 @@ extension WorkspaceSession {
     /// confirmation. A pane whose finished turn has been read, and so has
     /// no attention item, still counts as live (closing the tab would tear
     /// down the session and force a `--resume` later), so we read raw
-    /// badges here rather than the attention list. An `.idle` agent (Claude
+    /// badges and the agents in front here rather than the attention list. An `.idle` agent (Claude
     /// open at the prompt) has no attention item either, but for
     /// confirm-on-close, idle still counts.
-    /// `.unknown` is genuinely no-state (no SessionStart observed) and
-    /// stays excluded so a fresh shell-only pane doesn't fire the dialog.
     func hasLiveAgent(in tab: Tab) -> Bool {
         tab.splitTree.allLeafIDs().contains { hasLiveAgent(pane: $0, in: tab) }
     }
@@ -27,9 +25,30 @@ extension WorkspaceSession {
     /// confirmation in a split tab — only the focused leaf is being
     /// torn down, so the question is whether *that* leaf carries a
     /// tracked agent, not the tab as a whole.
+    ///
+    /// An agent the terminal runs in front counts with or without a
+    /// record: a Codex typed into a shell writes its record at its first
+    /// prompt, an agent started where Weir's shim installed no hooks
+    /// never writes one, and a resume restored at launch is in front
+    /// while its record stays unknown until the agent reports. So does
+    /// the agent the pane strip's "+" staged before its command runs:
+    /// under a tmux Weir hosts, the job in front cannot be told, and the
+    /// staged entry is what is left of it.
+    ///
+    /// A run whose state is unknown and that nothing runs in front of
+    /// counts only inside a tmux Weir hosts, where the agent goes on
+    /// behind a client that has left. Elsewhere we take it for a run whose
+    /// agent ended (`SessionEnd` leaves its record unknown) and whose
+    /// badge waits for the sweep that finds its process gone, its pane
+    /// back at the shell. A resume restored at launch reads the same until
+    /// its terminal is read; the close confirmation reads the terminal
+    /// itself at the moment of the close (`AppState.confirmClose`).
     func hasLiveAgent(pane paneID: UUID, in tab: Tab) -> Bool {
-        AgentKind.allCases.contains { kind in
-            tab.agentBadges[kind]?[paneID].map { $0.state != .unknown } ?? false
+        if tab.agentsInFront[paneID] != nil {
+            return true
+        }
+        return AgentKind.allCases.contains { kind in
+            tab.agentBadges[kind]?[paneID].map { $0.state != .unknown || $0.isTmuxHosted == true } ?? false
         }
     }
 
