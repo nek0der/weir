@@ -13,13 +13,13 @@ sidebar:
 |---|---|
 | <kbd>⌘J</kbd> | Go to the next item |
 | <kbd>⇧⌘J</kbd> | Go to the previous item |
-| <kbd>⌃⌘J</kbd> | Open the list |
+| <kbd>⌥⌘J</kbd> | Open the list |
 
 ![The Needs Attention list: seven items in the order they arrived, the last with an Answer button](../../../assets/captures/docs/needs-attention-en.png)
 
 A turn that changed files stays in the list until you [mark it as viewed](/docs/review/#mark-turns-as-viewed).
 
-To see every project's worktrees grouped by state, press <kbd>⌥⌘O</kbd> for **All Projects**.
+To see every project's worktrees grouped by state, press <kbd>⇧⌘O</kbd> for **All Projects**.
 
 ## Answer an approval
 

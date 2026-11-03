@@ -15,7 +15,7 @@ For coding conventions (language, comments, lint discipline), see
 ```
 Weir/
   App/           entry point (WeirApp), AppState, window controllers, menu commands
-  Core/          models, settings, FFI glue, persistence, git, agents
+  Core/          models, settings, persistence, git, agents
     Domain/      plain values and pure rules (Foundation only)
   Presentation/  @MainActor @Observable stores that shape state for display
   UI/            SwiftUI views, NSViewRepresentable bridges, design system
@@ -23,7 +23,7 @@ Weir/
   FFI/           libghostty C ABI wrapper (GhosttyFFI)
   Resources/     Info.plist, xcstrings, claude-shim / codex-shim / antigravity-shim / opencode-shim (sharing agent-shim/runtime-common.sh),
                  antigravity-plugin and opencode-plugin (the plugins those shims place in each agent's folder),
-                 ghostty/ (shell integration, themes), terminfo
+                 ghostty/ (shell integration, themes), terminfo, cli/ (the `weir` shell command)
 AgentIntegrationService/
   Service/        launchd-managed macOS XPC host for the Rust approval broker
   HookHelper/     the signed executable the bundled hook wrappers exec
@@ -561,11 +561,15 @@ recovers by retrying `createSurface()` the next time SwiftUI updates it.
 ### FFI userdata
 
 C callbacks from libghostty pass `UnsafeRawPointer` userdata that
-points at a `SurfaceView`. The `SurfaceView` may have been deinitialized
-between the callback firing on libghostty's thread and the hop to the
-MainActor. `SurfaceView.liveView(forUserdata:)` resolves the pointer
-through a weak registry, so a freed view comes back as nil instead of
-being dereferenced in freed memory.
+points at a `SurfaceUserdataToken`, not at the `SurfaceView`. Each view
+has its own token, retained until `ghostty_surface_free` has returned. The
+view is freed before its surface, so a callback can arrive after the view
+is gone. Were the view's address the userdata, a new view at the same
+address would receive the old surface's last callbacks.
+`SurfaceView.liveView(forUserdata:)` looks the token up in a registry of
+weak references: a freed view comes back as nil instead of being
+dereferenced in freed memory, and no other view can be registered under a
+token that is still retained.
 
 ### Rust ABI boundary
 

@@ -103,8 +103,9 @@ Most of the style is enforced by `make lint` (`cargo fmt`, Clippy,
   off-actor writes go through a `nonisolated static func` write helper
   that takes a value-typed snapshot and routes through
   `SecureFileWrite.writeAtomic` (see `SessionStore`,
-  `NotificationHistoryStore`, `FrecencyStore`, `SettingsStore`,
-  `TurnReadStore`). Use `actor` only when `MainActor` serializes too much.
+  `NotificationHistoryStore`, `FrecencyStore`, `TurnReadStore`).
+  `SettingsStore` is the exception: it writes its small `settings.json`
+  on the main actor. Use `actor` only when `MainActor` serializes too much.
 - **FFI requires explicit `Sendable` proof.** The canonical wrapper is
   `GhosttyFFI.swift`. `nonisolated(unsafe)` is reserved for `deinit`
   cleanup of resources captured during a known-safe lifetime.
@@ -192,7 +193,7 @@ Short index of load-bearing files. Skim these before touching their domain.
 ## 6. PR & workflow
 
 - Branch names use conventional prefixes: `feat/<short>`, `fix/<short>`,
-  `chore/<short>`, `docs/<short>`.
+  `docs/<short>`, `chore/<short>`, `refactor/<short>`, `test/<short>`.
 - Commit messages follow Conventional Commits: `feat(scope): summary`,
   `fix(scope): summary`, etc. Scopes are lowercase (kebab-case if
   multi-word); reuse a scope that already appears in `git log` when

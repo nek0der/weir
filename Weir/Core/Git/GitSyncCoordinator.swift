@@ -9,10 +9,10 @@
 //     demand (`ProjectSync.start` lists the triggers).
 //   - When `git worktree list` reports a worktree set that differs
 //     from what's stored, we reconcile: keep user-pinned items
-//     untouched, add new git-detected worktrees, drop ones that no
-//     longer exist. Tabs whose `ownerWorktreeID` points at a removed
-//     worktree are migrated to "Project direct" so the user's work
-//     isn't lost.
+//     untouched and add new git-detected worktrees. A row whose
+//     worktree no longer exists stays, marked with `missingSince`,
+//     so its tabs and work are not dropped behind the user's back;
+//     the row goes only when the user removes it.
 
 import Foundation
 import OSLog

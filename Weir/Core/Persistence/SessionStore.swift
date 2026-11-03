@@ -237,8 +237,9 @@ final class SessionStore {
     /// Debounced save. Coalesces a burst of mutations into a single
     /// write 400ms after the last call, or 3s after the first. The
     /// snapshot value crosses onto the background queue inside the work
-    /// item — `SessionSnapshot` is value-typed (Sendable) so the capture
-    /// is safe.
+    /// item. The capture is safe because `SessionSnapshot` and everything
+    /// in it are value types; it is `@unchecked Sendable` only because
+    /// that chain is not annotated yet.
     func scheduleSave(_ snapshot: SessionSnapshot) {
         // A demo run shows `DemoFixture`; writing it would replace the
         // person's state.json with the fixture.

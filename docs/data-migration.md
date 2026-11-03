@@ -127,7 +127,7 @@ release that came just before the change being described.
 | `reviews/<hash>.json` | version 1 → 2 | `reviews/<hash>.json.pre-v2` |
 | `notifications.json` | two optional fields, no version | none |
 | `worktree-routing.json` | still version 1, two optional fields, and a third agent in `routing` | none |
-| Run records (`agent-states/`, `codex-agent-states/`) | still schema 3, seven optional fields | none |
+| Run records (`agent-states/`, `codex-agent-states/`) | still schema 3, twelve optional fields | none |
 | Antigravity's run records and resume hints (`antigravity-agent-states/`, `antigravity-sessions/`) | new | — |
 | OpenCode's run records and resume hints (`opencode-agent-states/`, `opencode-sessions/`) | new | — |
 | Saved turn starts (`opencode-agent-states/turn-preparations/`) | new: at most one per run, gone once a turn takes it | — |
