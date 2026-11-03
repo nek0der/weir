@@ -101,6 +101,9 @@ dev_service_plist() {
     "$1/Products/Applications/Weir.app/Contents/Library/LaunchAgents/com.nekoder.weir.agent-integration-service.dev.plist"
 }
 missing_archive() { rm -r "$1"; }
+automation_channel() {
+  printf 'weir-automation-protocol/1' >> "$1/Products/Applications/Weir.app/Contents/MacOS/Weir"
+}
 
 run_case "a distributable archive passes" pass unchanged
 run_case "the v0.1.5 generic archive fails" fail generic_archive
@@ -113,6 +116,7 @@ run_case "a missing release service plist fails" fail missing_service_plist
 run_case "a malformed release service plist fails" fail malformed_service_plist
 run_case "a bundled development service plist fails" fail dev_service_plist
 run_case "a missing archive fails" fail missing_archive
+run_case "a binary with the verification channel fails" fail automation_channel
 
 echo
 if [[ $fails -eq 0 ]]; then

@@ -24,6 +24,10 @@ extension AppState {
             )
         }
         windowRegistry.presenter = presenter
+        #if DEBUG && WEIR_AUTOMATION
+            // Once the presenter is in, so a capture can find each window.
+            automationChannel = AutomationChannel.startIfAsked(state: self)
+        #endif
         // A hidden window draws nothing; shown again, it arrives at its
         // tab once its selection is settled (`startActiveTabSync`).
         windowRegistry.onVisibilityChange = { [weak self] window, isHidden in

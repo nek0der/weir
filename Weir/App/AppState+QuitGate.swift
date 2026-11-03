@@ -59,9 +59,14 @@ extension AppState {
     /// Returns true when terminate should proceed.
     @MainActor
     func shouldAllowQuit() -> Bool {
+        #if DEBUG && WEIR_AUTOMATION
+            // The verification channel's `quit` has decided already.
+            if automationChannel?.controller.isQuitting == true {
+                return true
+            }
+        #endif
         let policy = settingsStore.settings.confirmations.quit
-        let hasAgent = session.hasLiveAgentAnywhere()
-            || session.tabs.contains { $0.splitTree.allLeafIDs().contains(where: isAgentInFrontNow(inPane:)) }
+        let hasAgent = hasAgentAQuitWouldEnd()
         guard shouldConfirm(policy: policy, hasAgent: hasAgent) else { return true }
         // The whole app is closing: the alert is about no one window, and
         // AppKit waits on the answer, so it is an alert of its own. A Dock
@@ -128,6 +133,15 @@ extension AppState {
         case (.allTabs, _): c.closeTabMouse
         case (.pane, _): c.closePane
         }
+    }
+
+    /// Whether quitting now would end an agent: one the session knows of, or
+    /// one only a pane's terminal knows of yet. The quit confirmation is
+    /// raised on it, and the verification channel's `quit`, which raises
+    /// none, refuses on it unless forced.
+    func hasAgentAQuitWouldEnd() -> Bool {
+        session.hasLiveAgentAnywhere()
+            || session.tabs.contains { $0.splitTree.allLeafIDs().contains(where: isAgentInFrontNow(inPane:)) }
     }
 
     /// Whether the pane's terminal runs an agent in front at this moment,

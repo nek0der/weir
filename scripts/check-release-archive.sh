@@ -76,6 +76,13 @@ else
   # The development plist registers a different label; shipping it would
   # register the Debug service in a user's session.
   [[ ! -e "$DEV_SERVICE_PLIST" ]] || fail "the development service plist is bundled in a Release archive"
+  # The agent verification channel (ADR 0005) compiles only in Debug. Its
+  # protocol marker and its type names appear nowhere else, so finding one
+  # in a Release binary means a listener that can type into panes would ship.
+  if [[ -d "$APP/Contents/MacOS" ]] \
+    && grep -rlaE 'weir-automation-protocol/|AutomationServer|AutomationController' "$APP/Contents/MacOS" >/dev/null; then
+    fail "the Debug-only verification channel is compiled into a Release binary"
+  fi
 fi
 
 if [[ $failures -gt 0 ]]; then

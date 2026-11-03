@@ -45,7 +45,23 @@ final class SurfaceRegistry: SurfaceViewProviding {
         views[id]
     }
 
+    #if DEBUG && WEIR_AUTOMATION
+        /// How many times a different view has been registered under each
+        /// pane ID, for the verification channel alone. Not persisted: the
+        /// channel pairs it with its run, so a caller that read a pane before
+        /// its view was made again is refused rather than sent to the new one.
+        /// Kept after a pane goes, so an ID used again never starts over at a
+        /// generation a caller already holds; one integer per pane the run
+        /// has had.
+        private(set) var generations: [UUID: Int] = [:]
+    #endif
+
     func register(_ view: SurfaceView, for id: UUID) {
+        #if DEBUG && WEIR_AUTOMATION
+            if views[id] !== view {
+                generations[id, default: 0] += 1
+            }
+        #endif
         // A re-register under the same id swaps the value side; clean
         // the reverse entry for the old view so it doesn't keep a stale
         // pointer to a paneID that now belongs to someone else.
@@ -122,6 +138,13 @@ final class SurfaceRegistry: SurfaceViewProviding {
     }
 
     // MARK: - Occlusion (energy)
+
+    /// Whether a surface keeps drawing while its window is covered or
+    /// minimized. Set with `WindowRegistry.keepsOffScreenPanesDrawing` by the
+    /// verification channel: each `SurfaceView` writes the occlusion too, from
+    /// its window's notifications, and without this would put back to sleep
+    /// what this registry keeps drawing.
+    static var keepsDrawingOffScreen = false
 
     /// Mark surfaces visible/occluded based on the set of pane IDs that
     /// are actually on screen. Surfaces not in `visibleIDs` get their

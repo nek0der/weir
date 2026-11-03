@@ -928,7 +928,7 @@ extension SurfaceView {
             MainActor.assumeIsolated {
                 guard let self, let surface = self.surface else { return }
                 let visible = self.window?.occlusionState.contains(.visible) ?? false
-                ghostty_surface_set_occlusion(surface, visible)
+                ghostty_surface_set_occlusion(surface, visible || SurfaceRegistry.keepsDrawingOffScreen)
             }
         }
 
@@ -939,7 +939,7 @@ extension SurfaceView {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, let surface = self.surface else { return }
-                ghostty_surface_set_occlusion(surface, false)
+                ghostty_surface_set_occlusion(surface, SurfaceRegistry.keepsDrawingOffScreen)
             }
         }
 

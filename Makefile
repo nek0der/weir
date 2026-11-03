@@ -1,4 +1,4 @@
-.PHONY: build build-release release-check run dev test test-measure rust-test plugin-test review-core fmt rust-fmt lint rust-lint rust-header dmg xcodegen ghostty site-images screenshot clean help FORCE
+.PHONY: build build-release release-check run dev check-automation test test-measure rust-test plugin-test review-core fmt rust-fmt lint rust-lint rust-header dmg xcodegen ghostty site-images screenshot clean help FORCE
 
 SCHEME  := Weir
 PROJECT := Weir.xcodeproj
@@ -50,6 +50,7 @@ help:
 	@echo "  make rust-test   Run Rust workspace tests"
 	@echo "  make plugin-test Run the OpenCode plugin's tests"
 	@echo "  make review-core Run the review scenarios without building the app"
+	@echo "  make check-automation Check the verification channel against a real run (builds first)"
 	@echo "  make fmt         Auto-format with SwiftFormat"
 	@echo "  make lint        Lint Swift and Rust sources, mirrors CI"
 	@echo "  make rust-header Regenerate the bridge C header and fail if it drifted"
@@ -104,11 +105,10 @@ release-check: $(PBXPROJ)
 		archive -archivePath '$(RELEASE_CHECK_ARCHIVE)'
 	scripts/check-release-archive.sh '$(RELEASE_CHECK_ARCHIVE)'
 
+# Only this checkout's build is quit and opened: other worktrees' Weir Dev
+# runs share its name and bundle identifier (scripts/run-dev-app.sh).
 run:
-	@app="$(APP_PATH)"; \
-	if [ ! -d "$$app" ]; then echo "App not found: $$app (run 'make build' first)"; exit 1; fi; \
-	osascript -e 'tell application "Weir Dev" to quit' >/dev/null 2>&1 || true; \
-	open "$$app"
+	@scripts/run-dev-app.sh "$(APP_PATH)"
 
 dev: build run
 
@@ -142,6 +142,15 @@ rust-test:
 # descriptor numbers another test asserts are closed.
 review-core:
 	scripts/validate-review-core.sh
+
+# Checks the verification channel (ADR 0005) against a real run of this
+# checkout's Debug build, behind the person's windows and with its own data.
+# Not part of `make test`: it launches the app. CHECK_AUTOMATION_FLAGS adds
+# --keys (needs the Accessibility and Screen Recording grants for this
+# terminal) or --agents (starts each coding agent, or those named, as in
+# --agents claude,codex; uses some model quota).
+check-automation: build
+	python3 -I scripts/check-automation.py $(CHECK_AUTOMATION_FLAGS)
 
 fmt:
 	cargo fmt --all
