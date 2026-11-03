@@ -60,7 +60,7 @@ help:
 	@echo "  make ghostty     Build vendored libghostty"
 	@echo "  make screenshot  Regenerate .github/assets/hero.png (demo mode)"
 	@echo "  make site-images Regenerate the site's captures (demo mode)"
-	@echo "  make clean       Remove DerivedData for this project"
+	@echo "  make clean       Remove DerivedData for this checkout"
 
 # Regenerate the Xcode project when it is missing, when project.yml changed,
 # or when a file under a source directory was added, removed, or renamed.
@@ -199,5 +199,14 @@ screenshot: build-release
 site-images: build-release
 	./scripts/site-images.sh '$(RELEASE_APP_PATH)'
 
+# Every checkout and worktree has its own DerivedData folder. A glob over
+# `Weir-*` would remove all of them and fail any build another worktree has
+# running, so we ask xcodebuild for this checkout's folder and remove only that.
 clean:
-	rm -rf $(HOME)/Library/Developer/Xcode/DerivedData/Weir-*
+	@dir=$$(xcodebuild -project $(PROJECT) -scheme $(SCHEME) -showBuildSettings 2>/dev/null \
+		| awk -F' = ' '/ BUILD_ROOT = /{print $$2; exit}'); \
+	dir=$${dir%/Build/Products}; \
+	case "$$dir" in \
+		$(HOME)/Library/Developer/Xcode/DerivedData/Weir-*) echo "Removing $$dir"; rm -rf "$$dir";; \
+		*) echo "No DerivedData folder for this checkout: '$$dir'";; \
+	esac
