@@ -29,6 +29,11 @@ final class WeirNotificationManager {
     /// The agents' banners held back since `holdAgentBanners`, posted as one
     /// when the hold ends. Nil while nothing is held.
     private var heldAgentBanners: HeldBanners<UNNotificationRequest>?
+    /// The observation `holdAgentBanners(onEvery:in:for:summary:)`
+    /// installed, kept so installing it again replaces it and the manager
+    /// removes it when it goes away. Optional because it exists only once
+    /// the app layer asks for it.
+    private var holdObservation: (center: NotificationCenter, token: any NSObjectProtocol)?
     /// The identifier of the banner that stands for what arrived around a
     /// wake.
     static let summaryIdentifier = "attention-summary"
@@ -48,6 +53,12 @@ final class WeirNotificationManager {
         self.bannerPoster = bannerPoster
         if bannerPoster == nil {
             requestPermission()
+        }
+    }
+
+    isolated deinit {
+        if let holdObservation {
+            holdObservation.center.removeObserver(holdObservation.token)
         }
     }
 
@@ -264,6 +275,28 @@ final class WeirNotificationManager {
         }
     }
 
+    /// Calls `holdAgentBanners(for:summary:)` whenever `observed` posts
+    /// `name`. The app layer passes the workspace's wake notification, which
+    /// Core cannot name. The observer holds the manager weakly and goes with
+    /// it, so the notification center never keeps the manager, or whatever
+    /// `summary` reads from, alive.
+    func holdAgentBanners(
+        onEvery name: Notification.Name,
+        in observed: NotificationCenter,
+        for duration: Duration,
+        summary: @escaping @MainActor () -> (title: String, body: String)?
+    ) {
+        if let holdObservation {
+            holdObservation.center.removeObserver(holdObservation.token)
+        }
+        let token = observed.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.holdAgentBanners(for: duration, summary: summary)
+            }
+        }
+        holdObservation = (observed, token)
+    }
+
     /// Holds the agents' banners for `duration`, then posts what arrived as
     /// one: the single banner itself when only one came, or `summary` when
     /// several did (nothing when it returns nil). History rows are written
@@ -376,12 +409,22 @@ struct RateLimiter {
         self.maxPerSecond = maxPerSecond
     }
 
-    mutating func allow(key: UUID) -> Bool {
-        let threshold = Date().addingTimeInterval(-1)
-        var events = (recentEvents[key] ?? []).filter { $0 > threshold }
-        defer { recentEvents[key] = events }
-        guard events.count < maxPerSecond else { return false }
-        events.append(Date())
+    /// How many keys have an event inside the window, for tests.
+    var trackedKeyCount: Int {
+        recentEvents.count
+    }
+
+    mutating func allow(key: UUID, now: Date = Date()) -> Bool {
+        let threshold = now.addingTimeInterval(-1)
+        // Every key whose window has emptied goes, not only this one: a pane
+        // or run that never notifies again would otherwise keep its entry for
+        // the life of the app.
+        recentEvents = recentEvents.compactMapValues { events in
+            let recent = events.filter { $0 > threshold }
+            return recent.isEmpty ? nil : recent
+        }
+        guard recentEvents[key, default: []].count < maxPerSecond else { return false }
+        recentEvents[key, default: []].append(now)
         return true
     }
 }

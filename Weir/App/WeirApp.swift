@@ -117,9 +117,6 @@ final class AppState {
     /// The requests whose banners were posted and may still be up, so each
     /// is taken back once it can no longer be acted on from.
     @ObservationIgnored var announcedRequestKeys: Set<ApprovalKey> = []
-    /// The wake observation `startNotificationRouting` installed. Optional
-    /// because it exists only once routing has started.
-    @ObservationIgnored var wakeObservation: (any NSObjectProtocol)?
     /// Keeps the bundled LaunchAgent aligned with the signed app artifact.
     let agentIntegrationServiceRegistrar = AgentIntegrationServiceRegistrar()
     /// The window the approval service's trouble is told in while it lasts
