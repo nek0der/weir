@@ -182,16 +182,22 @@ private final class ProjectSync {
         let started = generation
         guard let project = currentProject() else { return }
         let root = project.rootURL
-        // `git worktree list` already filters to actual checkouts —
-        // for non-git folders it returns nothing and we leave the
-        // user-pinned items alone.
-        let infos: [GitWorktreeInfo]
+        // For a non-git folder `git worktree list` returns nothing and we
+        // leave the user-pinned items alone. A listing that failed throws,
+        // and we write nothing: read as no worktrees, it would mark every
+        // row missing (`GitWorktreeList.fetch`).
+        let listed: [GitWorktreeInfo]
         do {
-            infos = try await listWorktrees(root)
+            listed = try await listWorktrees(root)
         } catch {
             log.error("worktree list failed: \(String(describing: error), privacy: .private)")
             return
         }
+        // A bare repository's own entry is no checkout: a row for it would
+        // open a shell in the repository's folder, and Delete would fail.
+        // A prunable one is a folder deleted outside git, which git lists
+        // until `git worktree prune`: its row is missing, not live.
+        let infos = listed.filter { !$0.isBare && !$0.isPrunable }
 
         // One listing, no `git status` per worktree: the listing names each
         // one's branch and HEAD, and nothing reads the dirty flag or the

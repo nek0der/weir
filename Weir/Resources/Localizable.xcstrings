@@ -21078,6 +21078,17 @@
         }
       }
     },
+    "This worktree is locked. Unlock it with git worktree unlock, then delete it.": {
+      "comment": "Delete worktree: git refused because the worktree is locked (git worktree lock); Force Delete would not help",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このワークツリーはロックされています。git worktree unlock でロックを解除してから削除してください。"
+          }
+        }
+      }
+    },
     "git worktree add didn’t finish within %lld minutes, so Weir stopped it and removed the partially created worktree. Check the repository’s hooks, such as post-checkout.": {
       "comment": "New session, the worktree stage: git worktree add ran past its deadline and was stopped, and what it had made was removed; the number is minutes",
       "localizations": {

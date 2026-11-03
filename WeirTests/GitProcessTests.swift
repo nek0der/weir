@@ -255,3 +255,104 @@ struct GitProcessShortHeadTests {
         #expect(commit == nil)
     }
 }
+
+/// What a git run starts with, whoever opened Weir.
+struct GitProcessEnvironmentTests {
+    /// A `git` that writes its arguments and its `GIT_*` variables to
+    /// `record`, one per line.
+    private func writeRecordingGit(in directory: URL, record: URL) throws -> GitExecutable {
+        let script = directory.appendingPathComponent("git")
+        try """
+        #!/bin/sh
+        { printf '%s\\n' "$@"; env | grep '^GIT_' | sort; } > '\(record.path)'
+        """.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        return GitExecutable(url: script, leadingArguments: [])
+    }
+
+    /// A repository's own `core.fsmonitor` program is not started, and
+    /// the variables the caller gives reach git.
+    @Test func aRun_turnsOffFsmonitor_andPassesTheGivenVariables() async throws {
+        try await withTempDir { directory in
+            let record = directory.appendingPathComponent("record")
+            let git = try writeRecordingGit(in: directory, record: record)
+            let result = try await GitProcess.run(
+                ["status"],
+                cwd: directory,
+                environment: ["GIT_TERMINAL_PROMPT": "0"],
+                executable: git
+            )
+            #expect(result.succeeded)
+            let lines = try String(contentsOf: record, encoding: .utf8).split(separator: "\n").map(String.init)
+            #expect(Array(lines.prefix(3)) == ["-c", "core.fsmonitor=false", "status"])
+            #expect(lines.contains("GIT_TERMINAL_PROMPT=0"))
+        }
+    }
+
+    /// The repository is the one at `cwd`: a variable of the shell that
+    /// opened Weir naming another does not reach git, while the rest of its
+    /// environment does, a fetch's certificates among it, and what the
+    /// caller gives wins.
+    @Test func theEnvironment_dropsInheritedRepositoryVariables() {
+        let env = GitProcess.environment(
+            inherited: [
+                "GIT_DIR": "/elsewhere/.git",
+                "GIT_INDEX_FILE": "/tmp/index",
+                "GIT_SSL_CAINFO": "/etc/corp.pem",
+                "HOME": "/Users/me",
+                "LANG": "ja_JP.UTF-8"
+            ],
+            given: ["GIT_TERMINAL_PROMPT": "0", "GIT_INDEX_FILE": "/tmp/copy"]
+        )
+        #expect(env == [
+            "GIT_SSL_CAINFO": "/etc/corp.pem",
+            "HOME": "/Users/me",
+            "LANG": "C",
+            "LC_ALL": "C",
+            "GIT_TERMINAL_PROMPT": "0",
+            "GIT_INDEX_FILE": "/tmp/copy"
+        ])
+    }
+}
+
+/// Which git Weir runs, from the `PATH` it was opened with.
+struct GitExecutableLocateTests {
+    /// Folders `name`d under `root`, each holding an executable `git`.
+    private func gitFolders(_ names: [String], in root: URL) throws -> [String] {
+        try names.map { name in
+            let folder = root.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let git = folder.appendingPathComponent("git")
+            try "#!/bin/sh\n".write(to: git, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: git.path)
+            return folder.path
+        }
+    }
+
+    /// Opened from the Dock, the app has launchd's `PATH`: a git in a
+    /// well-known install folder wins over the one in `/usr/bin`.
+    @Test func withLaunchdsPath_aWellKnownFolderWins() throws {
+        try withTempDir { root in
+            let folders = try gitFolders(["homebrew"], in: root)
+            let found = GitExecutable.locate(inheritedPath: "/usr/bin:/bin:/usr/sbin:/sbin", wellKnownDirectories: folders)
+            #expect(found.path == folders[0] + "/git")
+        }
+    }
+
+    /// Opened from a terminal, the app has that terminal's `PATH`, and its
+    /// order wins.
+    @Test func withATerminalsPath_itsOrderWins() throws {
+        try withTempDir { root in
+            let folders = try gitFolders(["chosen", "homebrew"], in: root)
+            let found = GitExecutable.locate(inheritedPath: folders[0] + ":/usr/bin", wellKnownDirectories: [folders[1]])
+            #expect(found.path == folders[0] + "/git")
+        }
+    }
+
+    @Test func withNoGitAnywhere_itIsTheSystemsGit() throws {
+        try withTempDir { root in
+            let found = GitExecutable.locate(inheritedPath: root.path, wellKnownDirectories: [])
+            #expect(found.path == "/usr/bin/git")
+        }
+    }
+}

@@ -35,6 +35,8 @@ final class FakeGit: GitRunning, Sendable {
         var leavesFolderOnError = false
         var pruneCalls: [URL] = []
         var nextRemoveResult: GitResult = .init(exitCode: 0, stdout: "", stderr: "")
+        var listedWorktrees: [GitWorktreeInfo] = []
+        var nextListWorktreesError: GitProcessError?
         var branchCalls: [BranchCall] = []
         var nextBranchResult: GitResult = .init(exitCode: 0, stdout: "", stderr: "")
         var createsDirectoryOnSuccess = false
@@ -146,6 +148,19 @@ final class FakeGit: GitRunning, Sendable {
         set { state.withLock { $0.nextRemoveResult = newValue } }
     }
 
+    /// What `listWorktrees(...)` returns. Default is none.
+    var listedWorktrees: [GitWorktreeInfo] {
+        get { state.withLock { $0.listedWorktrees } }
+        set { state.withLock { $0.listedWorktrees = newValue } }
+    }
+
+    /// Thrown from `listWorktrees(...)` instead of the list, as when git
+    /// refused the repository.
+    var nextListWorktreesError: GitProcessError? {
+        get { state.withLock { $0.nextListWorktreesError } }
+        set { state.withLock { $0.nextListWorktreesError = newValue } }
+    }
+
     /// Next result returned from `createBranch(...)`. Default is a success.
     var nextBranchResult: GitResult {
         get { state.withLock { $0.nextBranchResult } }
@@ -213,6 +228,14 @@ final class FakeGit: GitRunning, Sendable {
             $0.pruneCalls.append(repoRoot)
             return .success()
         }
+    }
+
+    func listWorktrees(repoRoot: URL) async throws -> [GitWorktreeInfo] {
+        let (listed, error) = state.withLock { ($0.listedWorktrees, $0.nextListWorktreesError) }
+        if let error {
+            throw error
+        }
+        return listed
     }
 
     func removeWorktree(

@@ -1,5 +1,5 @@
 // GitProcess.swift
-// Weir — thin async wrapper around the system `git` CLI. We shell
+// Weir — thin async wrapper around the `git` CLI. We shell
 // out rather than linking libgit2 because:
 //   1. The user already has git installed and configured (creds,
 //      hooks, signing). We benefit from the same behavior.
@@ -68,16 +68,37 @@ enum GitProcessError: WeirLocalizedError {
     }
 }
 
-/// The program a git run starts: `git` on `PATH` through `env`, or a
-/// test's stand-in.
+/// The program a git run starts: the git this app found once a launch
+/// (`located`), or a test's stand-in.
 struct GitExecutable: Sendable {
     let url: URL
     let leadingArguments: [String]
 
-    /// `/usr/bin/env git` picks up whichever git is on PATH, so
-    /// Homebrew installs (/opt/homebrew/bin/git) work alongside
-    /// the Xcode-bundled one without us hard-coding either.
-    static let onPath = GitExecutable(url: URL(fileURLWithPath: "/usr/bin/env"), leadingArguments: ["git"])
+    /// The git that `GitProcess` and the review run. Opened from the Dock,
+    /// the app has launchd's `PATH`, where `env git` finds the one in
+    /// `/usr/bin` and never a Homebrew one, while the agents in the panes
+    /// and the person use the newer git their shell finds. A repository that
+    /// git wrote can be unreadable to an older one, so we look in the
+    /// well-known install folders first in that case. Opened from a
+    /// terminal, the app has that terminal's `PATH`, and its order wins, as
+    /// `LoginShellPath.merged` decides for a setup step. Found without a
+    /// login shell, so the first sync does not wait on one; a git that only
+    /// a login shell's `PATH` names is not found.
+    static let located = GitExecutable(
+        url: locate(inheritedPath: ProcessInfo.processInfo.environment["PATH"] ?? ""),
+        leadingArguments: []
+    )
+
+    /// The git `located` picks for an app whose `PATH` is `inheritedPath`:
+    /// the first in `wellKnownDirectories` and then on the `PATH` when the
+    /// `PATH` is launchd's own, the first on the `PATH` and then in those
+    /// folders otherwise, and `/usr/bin/git` when there is none.
+    static func locate(inheritedPath: String, wellKnownDirectories: [String] = ToolLocator.wellKnownDirectories) -> URL {
+        let entries = inheritedPath.split(separator: ":").map(String.init)
+        let isLaunchdDefault = entries.allSatisfy(LoginShellPath.launchdDefault.contains)
+        let directories = isLaunchdDefault ? wellKnownDirectories + entries : entries + wellKnownDirectories
+        return ToolLocator.firstExecutable(named: "git", in: directories) ?? URL(fileURLWithPath: "/usr/bin/git")
+    }
 }
 
 enum GitProcess {
@@ -90,6 +111,12 @@ enum GitProcess {
     /// leaves a half-made worktree for the caller to clear.
     static let worktreeTimeout: Duration = .seconds(600)
 
+    /// What every run starts with. A repository's own `core.fsmonitor`
+    /// names a program git would start, and a folder opened from an
+    /// archive brings its `.git/config` along; the review turns it off
+    /// the same way (`ReviewGitCommand`).
+    static let commonOptions = ["-c", "core.fsmonitor=false"]
+
     /// Run `git <args>` with cwd = `cwd`. Throws when the launch
     /// itself fails, and `timedOut` when git is still running at
     /// `timeout` (it is then ended with its process group, SIGKILL after a
@@ -101,7 +128,7 @@ enum GitProcess {
         cwd: URL,
         timeout: Duration = readTimeout,
         environment: [String: String] = [:],
-        executable: GitExecutable = .onPath
+        executable: GitExecutable = .located
     ) async throws -> GitResult {
         try await withCheckedThrowingContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -116,23 +143,16 @@ enum GitProcess {
     }
 
     /// Synchronous variant — only call from a background queue.
-    /// `environment` is laid over Weir's own, the locale included.
+    /// `environment` is laid over Weir's own, without the variables that
+    /// name a repository, the locale included.
     static func runSync(
         _ args: [String],
         cwd: URL,
         timeout: Duration = readTimeout,
         environment: [String: String] = [:],
-        executable: GitExecutable = .onPath
+        executable: GitExecutable = .located
     ) throws -> GitResult {
-        // Pin git's locale to the C locale so error messages we
-        // pattern-match on (e.g. "not a working tree" in
-        // `deleteGitWorktree`) stay in English regardless of the
-        // user's LANG / LC_MESSAGES. We inherit the rest of the
-        // environment so PATH and user-config locations work.
-        var env = ProcessInfo.processInfo.environment
-        env["LC_ALL"] = "C"
-        env["LANG"] = "C"
-        env.merge(environment) { _, given in given }
+        let env = Self.environment(inherited: ProcessInfo.processInfo.environment, given: environment)
 
         let stdoutPipe = Pipe.forChildProcess()
         let stderrPipe = Pipe.forChildProcess()
@@ -143,7 +163,7 @@ enum GitProcess {
         do {
             process = try GroupedProcess.launch(
                 executable.url,
-                arguments: executable.leadingArguments + args,
+                arguments: executable.leadingArguments + commonOptions + args,
                 environment: env,
                 in: cwd,
                 stdout: stdoutPipe,
@@ -181,6 +201,36 @@ enum GitProcess {
                 )
         }
         return result
+    }
+
+    /// The variables that name a repository, its index, or its objects, or
+    /// change how its paths and config are read: the list the agent hook's
+    /// `clear_repository_variables` drops for the same reason.
+    static let repositoryVariables: Set<String> = [
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+        "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
+        "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_PREFIX", "GIT_SHALLOW_FILE",
+        "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_LITERAL_PATHSPECS", "GIT_GLOB_PATHSPECS",
+        "GIT_NOGLOB_PATHSPECS", "GIT_ICASE_PATHSPECS"
+    ]
+
+    /// What git runs with: `given` laid over `inherited`, the locale
+    /// pinned. Pinned to the C locale so error messages we pattern-match
+    /// on (e.g. "not a working tree" in `deleteGitWorktree`) stay in
+    /// English regardless of the user's LANG / LC_MESSAGES. The rest is
+    /// inherited so HOME, credential helpers, and proxies work, but none
+    /// of `repositoryVariables`: the repository is the one at `cwd`, never
+    /// one a `GIT_DIR` or `GIT_INDEX_FILE` of the shell that opened Weir
+    /// names. A caller gives the ones it means. Unlike the review, which
+    /// only reads and drops every `GIT_*` variable, we keep the rest: a
+    /// fetch needs the person's `GIT_SSH` or `GIT_SSL_CAINFO`, and a
+    /// worktree add their `GIT_CONFIG_GLOBAL`.
+    static func environment(inherited: [String: String], given: [String: String]) -> [String: String] {
+        var env = inherited.filter { !repositoryVariables.contains($0.key) }
+        env["LC_ALL"] = "C"
+        env["LANG"] = "C"
+        env.merge(given) { _, given in given }
+        return env
     }
 
     /// List local branch names ("main", "feat-x", …) for the repo.

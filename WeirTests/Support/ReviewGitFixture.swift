@@ -15,8 +15,11 @@ enum ReviewGitFixture {
             DispatchQueue.global(qos: .userInitiated).async {
                 continuation.resume(with: Result {
                     let process = Process()
-                    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                    process.arguments = ["git"] + arguments
+                    // The git the review runs, so a repository is written
+                    // and read by the same one.
+                    let git = GitExecutable.located
+                    process.executableURL = git.url
+                    process.arguments = git.leadingArguments + arguments
                     process.currentDirectoryURL = cwd
                     var environment = ProcessInfo.processInfo.environment.filter { !$0.key.hasPrefix("GIT_") }
                     environment["GIT_CONFIG_NOSYSTEM"] = "1"

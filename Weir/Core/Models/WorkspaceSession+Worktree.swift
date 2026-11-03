@@ -686,7 +686,7 @@ extension WorkspaceSession {
     /// remove`, then drops the row + closes its tabs. Returns the
     /// pane ids the caller should free from the registry. Throws on
     /// git failures so the caller can offer "Retry with Force" when
-    /// the tree is dirty, locked, or contains initialized submodules.
+    /// the tree is dirty or contains initialized submodules.
     @discardableResult
     func deleteGitWorktree(
         projectID: UUID,
@@ -714,9 +714,19 @@ extension WorkspaceSession {
             // matches what the user wanted ("gone"), so treat the
             // Weir row removal as success rather than refusing.
             // This handles orphan rows where the worktree was deleted
-            // outside Weir first.
+            // outside Weir first. "No such file or directory" is said of
+            // any file git could not open on the way, a hook or a config
+            // file among them, so it counts only once a listing no longer
+            // names the worktree.
             let lower = stderr.lowercased()
-            if lower.contains("not a working tree") || lower.contains("no such file or directory") {
+            let isGone = if lower.contains("not a working tree") {
+                true
+            } else if lower.contains("no such file or directory") {
+                await Self.isUnlisted(wt, repoRoot: project.rootURL, git: git)
+            } else {
+                false
+            }
+            if isGone {
                 // The draft goes with it here too. Git having lost the
                 // worktree first does not make the comments about it any more
                 // current, and a new worktree at the same path would open
@@ -725,6 +735,12 @@ extension WorkspaceSession {
                 let ids = removeWorktree(projectID: projectID, worktreeID: worktreeID)
                 requestSyncRefetch(projectID: projectID)
                 return ids
+            }
+            // "cannot remove a locked working tree": git wants `--force`
+            // twice for a lock, so Force Delete would fail the same way, and
+            // the lock is the person's to lift.
+            if lower.contains("locked working tree") {
+                throw DeleteWorktreeError.locked
             }
             if !force {
                 // Git protects initialized submodules even when the worktree
@@ -737,7 +753,7 @@ extension WorkspaceSession {
                 // modified or untracked files, use --force to delete it"
                 // when the tree is dirty. Surface that as a typed error so
                 // the UI can offer a one-click Force retry.
-                if lower.contains("modified") || lower.contains("--force") || lower.contains("locked") {
+                if lower.contains("modified") || lower.contains("--force") {
                     throw DeleteWorktreeError.dirtyNeedsForce
                 }
             }
@@ -756,5 +772,20 @@ extension WorkspaceSession {
         ReviewDraftWriter.removeDraft(root: wt.workingDirectory)
         requestSyncRefetch(projectID: projectID)
         return ids
+    }
+
+    /// Whether `git worktree list` no longer names `worktree`. `false` when
+    /// the listing failed: a removal we cannot confirm is not taken as done.
+    /// Git lists the real path, where the row may hold a symlinked spelling,
+    /// so both are resolved, and an entry on the row's branch names it too,
+    /// as the sync matches it (`GitSyncCoordinator`).
+    private static func isUnlisted(_ worktree: Worktree, repoRoot: URL, git: any GitRunning) async -> Bool {
+        guard let listed = try? await git.listWorktrees(repoRoot: repoRoot) else { return false }
+        let target = worktree.workingDirectory.resolvingSymlinksInPath().standardizedFileURL
+        let branch = worktree.gitRef?.branchName
+        return !listed.contains { info in
+            info.path.resolvingSymlinksInPath().standardizedFileURL == target
+                || (branch != nil && info.branch == branch)
+        }
     }
 }
