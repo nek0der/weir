@@ -2,9 +2,9 @@
 // Weir — locating and running optional developer CLIs (`gh`, `glab`).
 //
 // Separate from `GitProcess` because these tools are *optional*.
-// `git` sits in `/usr/bin`, which is on launchd's PATH, so resolving
-// it by name always works; `gh` and `glab` live wherever the user's
-// package manager put them. A GUI app
+// `git` is always there, in `/usr/bin` at least (`GitExecutable.located`
+// prefers a newer one from `wellKnownDirectories`); `gh` and `glab` live
+// wherever the user's package manager put them. A GUI app
 // launched from Finder or the Dock inherits launchd's PATH
 // (`/usr/bin:/bin:/usr/sbin:/sbin`), which contains neither Homebrew's
 // `/opt/homebrew/bin` nor `~/.local/bin` — so resolving `gh` by name
@@ -59,7 +59,7 @@ actor ToolLocator {
     /// These cover the overwhelming majority of installs and cost only
     /// a `stat` each, whereas the shell fallback sources the user's
     /// startup files.
-    private static let wellKnownDirectories = [
+    static let wellKnownDirectories = [
         "/opt/homebrew/bin",
         "/usr/local/bin",
         "/opt/local/bin"

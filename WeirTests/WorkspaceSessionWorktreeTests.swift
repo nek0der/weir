@@ -284,6 +284,7 @@ struct WorkspaceSessionWorktreeTests {
     enum RemovalOutcome: Equatable, Sendable {
         case dirtyNeedsForce
         case submodulesNeedForce
+        case locked
         case gitFailed(String)
         /// No error, and the row is gone.
         case rowDropped
@@ -291,13 +292,55 @@ struct WorkspaceSessionWorktreeTests {
 
     @Test("deleteGitWorktree: git's refusal decides the error, or drops the row of a folder git no longer knows", arguments: [
         ("fatal: '/p' contains modified or untracked files, use --force", RemovalOutcome.dirtyNeedsForce),
-        ("error: working tree is locked", .dirtyNeedsForce),
+        ("fatal: cannot remove a locked working tree, lock reason: on usb\nuse 'remove -f -f' to override or unlock first", .locked),
         ("use --force to delete", .dirtyNeedsForce),
         ("fatal: working trees containing submodules cannot be moved or removed", .submodulesNeedForce),
         ("fatal: permission denied", .gitFailed("fatal: permission denied")),
         ("fatal: '/p' is not a working tree", .rowDropped)
     ])
     func deleteGitWorktree_whenGitRefuses_readsItsWords(stderr: String, expected: RemovalOutcome) async throws {
+        #expect(try await Self.removalOutcome(stderr: stderr) == expected)
+    }
+
+    /// A lock holds whether or not the person chose Force: git wants
+    /// `--force` twice for it, so Force Delete would fail the same way.
+    @Test("deleteGitWorktree: a locked worktree is named as locked, Force or not", arguments: [false, true])
+    func deleteGitWorktree_ofALockedWorktree_saysItIsLocked(force: Bool) async throws {
+        let stderr = "fatal: cannot remove a locked working tree, lock reason: on usb\nuse 'remove -f -f' to override or unlock first"
+        #expect(try await Self.removalOutcome(stderr: stderr, force: force) == .locked)
+    }
+
+    /// "No such file or directory" is said of any file git could not open,
+    /// so the row goes only once a listing no longer names the worktree.
+    @Test("deleteGitWorktree: a missing file drops the row only when git no longer lists the worktree", arguments: [
+        (ListingAfterRemoval.without, RemovalOutcome.rowDropped),
+        (.stillNamingIt, .gitFailed("error: unable to open .git/hooks/x: No such file or directory")),
+        (.namingItsBranchElsewhere, .gitFailed("error: unable to open .git/hooks/x: No such file or directory")),
+        (.failed, .gitFailed("error: unable to open .git/hooks/x: No such file or directory"))
+    ])
+    func deleteGitWorktree_whenAFileIsMissing_checksTheListing(listing: ListingAfterRemoval, expected: RemovalOutcome) async throws {
+        let outcome = try await Self.removalOutcome(
+            stderr: "error: unable to open .git/hooks/x: No such file or directory",
+            listing: listing
+        )
+        #expect(outcome == expected)
+    }
+
+    /// What `git worktree list` says after a removal git refused.
+    enum ListingAfterRemoval: Sendable {
+        case without
+        case stillNamingIt
+        /// Under another spelling of its path, as git lists the real one.
+        case namingItsBranchElsewhere
+        case failed
+    }
+
+    /// How a removal git refused with `stderr` comes out.
+    private static func removalOutcome(
+        stderr: String,
+        force: Bool = false,
+        listing: ListingAfterRemoval = .without
+    ) async throws -> RemovalOutcome? {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
         let git = FakeGit()
         let wt = try await session.createGitWorktree(
@@ -309,20 +352,45 @@ struct WorkspaceSessionWorktreeTests {
             git: git
         )
         git.nextRemoveResult = .failure(stderr)
+        switch listing {
+        case .without: break
+        case .stillNamingIt:
+            git.listedWorktrees = [GitWorktreeInfo(
+                path: wt.workingDirectory,
+                headSHA: "abc",
+                branch: "feature",
+                isDetached: false,
+                isBare: false,
+                isLocked: false,
+                isPrunable: false
+            )]
+        case .namingItsBranchElsewhere:
+            git.listedWorktrees = [GitWorktreeInfo(
+                path: URL(fileURLWithPath: "/private/elsewhere/feature"),
+                headSHA: "abc",
+                branch: "feature",
+                isDetached: false,
+                isBare: false,
+                isLocked: false,
+                isPrunable: false
+            )]
+        case .failed:
+            git.nextListWorktreesError = .nonZeroExit(.failure("fatal: detected dubious ownership in repository"))
+        }
 
         let error = await WorktreeFixture.failure(DeleteWorktreeError.self) {
-            try await session.deleteGitWorktree(projectID: project.id, worktreeID: wt.id, force: false, git: git)
+            try await session.deleteGitWorktree(projectID: project.id, worktreeID: wt.id, force: force, git: git)
         }
 
         let isRowKept = session.project(project.id)?.worktrees.contains { $0.id == wt.id } == true
-        let outcome: RemovalOutcome? = switch error {
+        return switch error {
         case .dirtyNeedsForce?: .dirtyNeedsForce
         case .submodulesNeedForce?: .submodulesNeedForce
+        case .locked?: .locked
         case let .gitFailed(stderr)?: .gitFailed(stderr)
         case nil where !isRowKept: .rowDropped
         default: nil
         }
-        #expect(outcome == expected, "\(String(describing: error))")
     }
 
     @Test("deleteGitWorktree: force retry is forwarded to git")

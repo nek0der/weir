@@ -118,3 +118,44 @@ struct GitWorktreeListParserTests {
         )])
     }
 }
+
+/// What a listing says when git does not answer with one.
+@Suite("GitWorktreeList fetch", .tags(.smoke))
+struct GitWorktreeListFetchTests {
+    /// A folder in no repository has no worktrees: that is an answer.
+    @Test
+    func fetch_outsideARepository_isEmpty() async throws {
+        try await withTempDir { directory in
+            let worktrees = try await GitWorktreeList.fetch(repoRoot: directory)
+            #expect(worktrees.isEmpty)
+        }
+    }
+
+    /// A repository git refuses is not one with no worktrees: read as
+    /// that, every row of it was marked missing.
+    @Test
+    func fetch_ofARepositoryGitRefuses_throws() async throws {
+        let repo = try await TempGitRepo.make()
+        defer { repo.cleanup() }
+        let config = repo.url.appendingPathComponent(".git/config")
+        let handle = try FileHandle(forWritingTo: config)
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data("this is no config line\n".utf8))
+        try handle.close()
+        await #expect(throws: GitProcessError.self) {
+            try await GitWorktreeList.fetch(repoRoot: repo.url)
+        }
+    }
+
+    /// A worktree whose folder was deleted outside git stays listed,
+    /// marked prunable, until `git worktree prune`.
+    @Test
+    func fetch_afterAWorktreeFolderIsDeleted_marksItPrunable() async throws {
+        let repo = try await TempGitRepo.make()
+        defer { repo.cleanup() }
+        let linked = try await repo.addLinkedWorktree(branch: "gone")
+        try FileManager.default.removeItem(at: linked)
+        let worktrees = try await GitWorktreeList.fetch(repoRoot: repo.url)
+        #expect(worktrees.map(\.isPrunable) == [false, true])
+    }
+}

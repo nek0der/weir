@@ -118,6 +118,8 @@ enum DeleteWorktreeError: WeirLocalizedError {
     case worktreeNotFound
     case dirtyNeedsForce
     case submodulesNeedForce
+    /// `git worktree lock` holds it, which Force Delete does not get past.
+    case locked
     case gitFailed(stderr: String)
 
     /// Our sentence, with git's own stderr after it when git said
@@ -138,6 +140,7 @@ enum DeleteWorktreeError: WeirLocalizedError {
         case .worktreeNotFound: "Worktree not found."
         case .dirtyNeedsForce: "This worktree has uncommitted changes. To delete it anyway, choose Force Delete."
         case .submodulesNeedForce: "This worktree contains initialized submodules. To delete it anyway, choose Force Delete."
+        case .locked: "This worktree is locked. Unlock it with git worktree unlock, then delete it."
         case .gitFailed: "git worktree remove failed."
         }
     }

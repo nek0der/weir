@@ -44,14 +44,12 @@ private enum ReviewGitCommand {
             _ = fcntl(writer, F_SETNOSIGPIPE, 1)
         }
         guard !stop.isRequested else { throw CancellationError() }
-        // `env` so a Homebrew git on `PATH` wins, the same way `GitProcess`
-        // resolves it — a repository written by a newer git can be
-        // unreadable to the one in `/usr/bin`.
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["git"] + [
+        // The git `GitProcess` runs (`GitExecutable.located`), so the review
+        // reads a repository with the git the sidebar read it with.
+        let git = GitExecutable.located
+        process.executableURL = git.url
+        process.arguments = git.leadingArguments + GitProcess.commonOptions + [
             "--literal-pathspecs",
-            "-c",
-            "core.fsmonitor=false",
             "-c",
             "core.quotePath=true",
             "-c",
