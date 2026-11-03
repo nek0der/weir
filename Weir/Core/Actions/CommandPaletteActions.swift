@@ -210,11 +210,32 @@ enum CommandPaletteActions {
             commands.perform(.openProjectSettings(nil), in: window)
         case .closeProject:
             commands.perform(.closeProject(nil), in: window)
-        case .restoreTurn:
+        case .newAgentTab, .openSettingsSection, .movePaneToNewTab:
+            dispatchControlRow(action, session: session, window: window)
+        case .restoreTurn, .toggleIconBars:
             break // Run by the supervision window (`SupervisionWindowActions.runPaletteAction`).
         case .insertPrefix:
             break // Handled in ToolbarPaletteField, never reaches here.
         }
     }
+
     // swiftlint:enable function_parameter_count
+
+    /// The rows for controls with no keyboard shortcut of their own, each as
+    /// its control runs it.
+    private static func dispatchControlRow(_ action: CommandPaletteAction, session: WorkspaceSession, window: WindowID) {
+        switch action {
+        case let .newAgentTab(agent):
+            // The session the strip's "+" adds to: the window's.
+            guard let container = session.selection(window)?.activeContainerID, !session.isFolderMissing(container) else { return }
+            TabActions.newTab(session, in: container, running: agent, window: window, intent: .person, selects: true)
+        case let .openSettingsSection(section):
+            SettingsSection.open(section)
+        case .movePaneToNewTab:
+            guard let paneID = session.activeTab(in: window)?.splitTree.effectiveFocusedLeafID else { return }
+            TabActions.movePaneToNewTab(session, paneID: paneID, in: window, intent: .person)
+        default:
+            break
+        }
+    }
 }

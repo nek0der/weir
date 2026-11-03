@@ -76,6 +76,15 @@ extension SurfaceView {
     /// `GhosttyConfigBridge`: `keybind = super+q=unbind` so
     /// libghostty's own `.quit` action can't race the terminate path.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        #if DEBUG && WEIR_AUTOMATION
+            // A key the verification client posted never reaches a terminal
+            // (ADR 0006). The window offers a key equivalent to every pane
+            // in turn, so a pane declines it rather than takes it from the
+            // control it is for.
+            if AutomationPostedKeys.isPosted(event) {
+                return false
+            }
+        #endif
         if event.modifierFlags.contains(.command),
            event.charactersIgnoringModifiers == "q"
         {
@@ -150,6 +159,13 @@ extension SurfaceView {
     }
 
     override func keyDown(with event: NSEvent) {
+        #if DEBUG && WEIR_AUTOMATION
+            // A key the verification client posted never reaches a terminal
+            // (ADR 0006): Return here would run code.
+            if AutomationPostedKeys.isPosted(event) {
+                return
+            }
+        #endif
         // A plain key comes here without `performKeyEquivalent`.
         takenKeyRelease.notePress(keyCode: event.keyCode, isRepeat: event.isARepeat)
         if Self.consumeAsynchronousCompositionEnter(
@@ -328,6 +344,13 @@ extension SurfaceView {
     }
 
     override func keyUp(with event: NSEvent) {
+        #if DEBUG && WEIR_AUTOMATION
+            // A key the verification client posted never reaches a terminal
+            // (ADR 0006): Return here would run code.
+            if AutomationPostedKeys.isPosted(event) {
+                return
+            }
+        #endif
         if takenKeyRelease.takesRelease(keyCode: event.keyCode) {
             return
         }
@@ -335,6 +358,13 @@ extension SurfaceView {
     }
 
     override func flagsChanged(with event: NSEvent) {
+        #if DEBUG && WEIR_AUTOMATION
+            // A key the verification client posted never reaches a terminal
+            // (ADR 0006): Return here would run code.
+            if AutomationPostedKeys.isPosted(event) {
+                return
+            }
+        #endif
         // Bare modifier presses during IME composition clear the
         // preedit visually (ghostty#4634). Suppress them.
         if hasMarkedText() {

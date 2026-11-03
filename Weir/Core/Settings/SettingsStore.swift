@@ -185,6 +185,12 @@ final class SettingsStore {
     @ObservationIgnored
     private var lastSyncedBytes: Data?
 
+    /// Whether the launch found no `settings.json` and nothing has written
+    /// or read one since: a first launch, until the first save. A reload
+    /// that finds no file then has nothing new (`reload(from:)`).
+    @ObservationIgnored
+    private var hasNoFileYet = false
+
     /// Directory that hosts `settings.json`. Production callers use the
     /// no-arg `init()` which routes through `WeirPaths`; tests pass an
     /// isolated `WithTempDir` URL via `init(directory:)` so they don't
@@ -243,7 +249,8 @@ final class SettingsStore {
         self.appLanguageAtLaunch = language
         self.appLocale = Self.locale(for: language, sources: languageSources)
         let fileURL = Self.settingsFileURL(in: directory)
-        let result = Self.load(Result { try Data(contentsOf: fileURL) }, at: fileURL, writes: writesFiles)
+        let read = Result { try Data(contentsOf: fileURL) }
+        let result = Self.load(read, at: fileURL, writes: writesFiles)
         var loaded = result.settings
         self.isSavingSuspended = result.suspendsSaving
         self.savingSuspension = writesFiles ? result.suspension : nil
@@ -251,6 +258,7 @@ final class SettingsStore {
         // The launch's own move to the current schema, should the watcher
         // report it, is nothing new (`reloadFromDisk`).
         self.lastSyncedBytes = result.writtenBytes
+        self.hasNoFileYet = Self.isNoSuchFile(read)
         // The hero screenshot pipeline runs under `WEIR_DEMO=1`.
         // Force the toolbar opaque there so the captured PNG doesn't
         // depend on whatever wallpaper / other windows happen to sit
@@ -345,6 +353,11 @@ final class SettingsStore {
         }
         result.settings.normalizeKeyboard()
         return result
+    }
+
+    private static func isNoSuchFile(_ read: Result<Data, any Error>) -> Bool {
+        guard case let .failure(error as CocoaError) = read else { return false }
+        return error.code == .fileReadNoSuchFile
     }
 
     private static func loadAsStored(_ read: Result<Data, any Error>, at url: URL, writes: Bool) -> LoadResult {
@@ -575,6 +588,7 @@ final class SettingsStore {
             // ship out with the default 0644.
             try SecureFileWrite.writeAtomic(data, to: url)
             lastSyncedBytes = data
+            hasNoFileYet = false
             finishPendingMigration(written: data, at: url)
         } catch {
             log.error("settings.json save failed: \(String(describing: error), privacy: .private)")
@@ -630,6 +644,15 @@ final class SettingsStore {
         if let lastSyncedBytes, bytes == lastSyncedBytes {
             return
         }
+        // No file, as there was none at the launch, and nothing saved or read
+        // since: the event was another file in the folder (the session's
+        // `state.json`). Read as defaults, the missing file would undo every
+        // change made since the launch before the save that is about to
+        // write it.
+        if hasNoFileYet, Self.isNoSuchFile(read) {
+            return
+        }
+        hasNoFileYet = false
         let result = Self.load(read, at: settingsFileURL, writes: writesFiles, setsAsideUndecodable: false)
         // A file that does not decode may be a save still in progress, or a
         // hand edit with a slip in it. Moving it would send the rest of that

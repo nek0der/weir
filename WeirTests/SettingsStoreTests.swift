@@ -177,6 +177,41 @@ struct SettingsStoreTests {
         }
     }
 
+    /// With no file yet, the folder's other files (the session's state) set
+    /// the watcher off before the first save writes ours. That reload finds
+    /// no file, which is nothing new, and must not undo the change waiting
+    /// to be saved.
+    @Test func aReloadBeforeTheFirstSave_keepsAChangeMadeSinceTheLaunch() throws {
+        try withTempDir { dir in
+            let store = SettingsStore(directory: dir)
+            store.settings.font.family = "Menlo"
+
+            store.reloadFromDisk()
+
+            #expect(store.settings.font.family == "Menlo")
+            store.flushSynchronously()
+            let saved = try PersistenceCoders.makeDecoder().decode(WeirSettings.self, from: Data(contentsOf: store.settingsFileURL))
+            #expect(saved.font.family == "Menlo")
+        }
+    }
+
+    /// A file deleted after the launch read it is still a change on disk:
+    /// the settings go back to their defaults, as before.
+    @Test func aReloadAfterTheFileWasDeleted_readsTheDefaults() throws {
+        try withTempDir { dir in
+            var stored = WeirSettings.default
+            stored.font.family = "Menlo"
+            try WeirSettings.makeFileEncoder().encode(stored).write(to: dir.appendingPathComponent("settings.json"))
+            let store = SettingsStore(directory: dir)
+            #expect(store.settings.font.family == "Menlo")
+            try FileManager.default.removeItem(at: store.settingsFileURL)
+
+            store.reloadFromDisk()
+
+            #expect(store.settings.font.family == nil)
+        }
+    }
+
     /// A file that stops decoding while the app runs may be a save still in
     /// progress: it stays, the settings stay, and nothing writes over it
     /// until a change makes it readable again.

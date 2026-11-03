@@ -59,7 +59,8 @@ struct AgentInstallation: Equatable, Hashable, Sendable {
 /// A third agent is one more entry here, with its `AgentKind` case and its
 /// shim.
 enum AgentCatalog {
-    /// In the order the new worktree sheet's menu lists them.
+    /// In the order the new worktree sheet's menu, the pane strip's "+", and
+    /// the palette's New … Tab rows list them.
     static let entries: [AgentCatalogEntry] = [
         AgentCatalogEntry(
             kind: .claude,

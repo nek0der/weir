@@ -2,6 +2,7 @@
 // Weir — actions the command palette can dispatch.
 
 import Foundation
+import WeirDomain
 
 enum CommandPaletteAction: Equatable {
     case shortcutAction(WeirShortcutAction)
@@ -18,6 +19,16 @@ enum CommandPaletteAction: Equatable {
     /// "Restore Code to Before This Turn…": the restore strip in
     /// the decision bar of the turn's pane, with the keyboard on it.
     case restoreTurn
+    /// A tab running `agent` in the window's session, in the session's
+    /// folder, as the pane strip's "+" adds one (`AddTabMenu`).
+    case newAgentTab(AgentKind)
+    /// Settings, opened on `section`.
+    case openSettingsSection(SettingsSection)
+    /// The focused pane of the window's tab moved to a tab of its own, as
+    /// the pane's ⋯ and its context menu move it.
+    case movePaneToNewTab
+    /// The window's icon bars hidden, or shown again (View ▸ Hide Icon Bars).
+    case toggleIconBars
     case insertPrefix(PalettePrefix)
 
     var frecencyKey: String {
@@ -32,6 +43,10 @@ enum CommandPaletteAction: Equatable {
         case .openProjectSettings: "settings.project"
         case .closeProject: "project.close"
         case .restoreTurn: "restore.turn"
+        case let .newAgentTab(agent): "newTab.\(agent.rawValue)"
+        case let .openSettingsSection(section): "settings.section.\(section.rawValue)"
+        case .movePaneToNewTab: "pane.moveToNewTab"
+        case .toggleIconBars: "view.toggleIconBars"
         case let .insertPrefix(mode): "prefix.\(mode.character)"
         }
     }

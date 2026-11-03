@@ -94,16 +94,16 @@ what it returns when it cannot act.
 | Operation | Effect |
 |---|---|
 | `hello` | Checks the token and the protocol marker. Every connection starts with it. |
-| `state` | Projects, and per window its open layers and the tabs of the worktree it shows, with each pane's identity triple, agent state, and foreground process. |
+| `state` | Projects, and per window its open layers and the tabs of the worktree it shows, with each pane's identity triple, agent state, and foreground process. Per window also the dropdown open on the title bar or the pane strip (`dropdown`), whether a sheet or an alert is attached (`hasSheet`, which the channel cannot answer), whether the sidebar, the icon bars, and the Changes panel show, its review tab with the pane and the scope it compares, and what holds its keyboard (`keyboard`: a terminal pane, with its ID, or one of Weir's own controls). While Settings is open, `settings` names the section it shows. A field with no value is left out of the reply. |
 | `open` | Opens Needs Attention, All Projects, the notification history, the keyboard shortcuts, the plan usage panel, or review of a named pane's uncommitted changes, through the code its own control runs. Review is opened for the named pane, not for whatever the window has selected, in the window that shows that pane, and another pane's review already up does not count as open, for `open` or for `wait`. |
 | `typeLine` | One line of text, with `submit` true or false. Same character rules as `typeAgentCommand(_:)`. |
 | `paste` | Text that may span lines, through Ghostty's own paste action as review sends it. A program that asked for bracketed paste gets one block and nothing is submitted; any other program meets the paste confirmation, so its lines are not run unseen. |
 | `submit` | Sends Return to a pane. |
 | `wait` | Waits for a named outcome (see "Waiting"). |
-| `capture` | Readies one window for a capture and returns its window number (see "Capturing"). |
+| `capture` | Readies one window, or Settings with `settings`, for a capture and returns its window number (see "Capturing"). |
 | `commands` | Lists the window's command palette rows (the menus' and the keyboard shortcuts' commands) with whether each can run now. |
-| `command` | Runs one row by its ID, as the palette runs it. A row the palette shows disabled is refused, as its menu item would be. |
-| `setting` | Reads one setting by its `settings.json` key (`font.family`), sets it through the settings store, or clears an optional one (`unset`). A key counts as known by what the app's own decoding does with a probe there, so a field the file keeps as unknown is refused, and a value is checked and normalized in full before the store takes it. |
+| `command` | Runs one row by its ID, as the palette runs it. A row the palette shows disabled is refused, as its menu item would be. `newWindow` commits it as ⌘Return does, which opens another project's row in a new window. |
+| `setting` | Reads one setting by its `settings.json` key (`font.family`), sets it through the settings store, or clears an optional one (`unset`). A key counts as known by what the app's own decoding does with a probe there, so a field the file keeps as unknown is refused, and a value is checked and normalized in full before the store takes it. A value the Settings control would refuse, or ask about first, is refused too: a narrower turn retention (Settings asks before it deletes records), a binding the Keyboard pane refuses, and a quick terminal hotkey its recorder refuses, each checked against the bindings before the change, as the recorders check. A change to `review.externalDiffCommand` has its smart quotes made plain, as the field makes them. |
 | `focus` | Gives a pane the keyboard within its window, through the model as ⌘J does (which can change the selected tab and its zoom), without bringing the window or the app forward, so keys from outside the channel land there. |
 | `quit` | Ends the run as Quit does, without its confirmation, which is a native alert raised above other apps that the channel could not answer. It refuses while agents run unless `force` is given, and answers No to a paste confirmation left up, since the app does not finish quitting under one. |
 
@@ -114,7 +114,14 @@ tracks the real pointer and keyboard while it is open, so no request from
 outside opens one (ADR 0005). The channel reaches what a menu does instead,
 with two operations. `command` runs a command
 palette row, which is how Weir names its commands: the keyboard shortcut
-actions, and the palette's project, tab, and settings rows. `setting`
+actions, and the palette's project, tab, and settings rows. Controls with no
+shortcut have rows of their own for the same reason, which people use too:
+`newTab.<agent>` adds a tab running the agent as the pane strip's "+" does,
+for the agents "+" offers (those found on this Mac),
+`settings.section.<section>` opens Settings on a section,
+`pane.moveToNewTab` moves the focused pane as the pane's ⋯ does, and
+`view.toggleIconBars` hides or shows the icon bars as the View menu does.
+`setting`
 changes a setting by its key in `settings.json`, through `WeirSettings`'s own
 decoding, so a value the app would not read from the file is refused, and so
 is a key the app does not know, which the file would keep as an unknown
@@ -203,8 +210,9 @@ the screen, so unread marks and attention behave as they would.
 
 `capture` never activates the app. It refuses a window that is hidden or
 minimized, waits 150 ms for the last change to reach the window server, and
-returns the window's number. The client then runs `screencapture -l` with
-it. The capture runs in the client because the client's terminal already
+returns the window's number. With `settings` it does the same for the
+Settings window, which is not a project window. The client then runs
+`screencapture -l` with it. The capture runs in the client because the client's terminal already
 holds the Screen Recording grant; Weir asking for its own would put a system
 prompt in front of the person. The image shows the window's inactive chrome;
 it is for checking content, not for the hero shot, which `screenshot.sh`
@@ -219,7 +227,28 @@ Claude Code's own variables taken out of the environment, data in
 `build/automation-home`, and a nonce the run writes into its `info.json`, so
 two launches at once each find their own run. It returns once the run
 answers hello, ends a run that never does, and prints the run; `quit` ends
-it.
+it. A run's data starts with no project, and Open Folder… asks through a
+panel the channel cannot answer, so `launch --project FOLDER` hands folders
+to the new run as Finder's Open With does, which opens each as a project,
+and `launch --demo` starts the demo's projects instead (`WEIR_DEMO=1`, with
+`--layer`, `--appearance`, and `--language` for its other settings). Both
+leave the run behind the person's windows.
+
+`keys` posts named keys and modifiers to the run with `CGEventPostToPid`
+(ADR 0006): Esc, Return, Tab, the arrows, Home, End, and those with ⌘, ⇧,
+⌥, or ⌃. It posts nothing that types text, and it reads `state` before each
+key. It posts only while the run shows one window and Settings is closed,
+since a run behind other apps has no key window it can report
+(`NSApp.keyWindow` is nil) and a key could land in any window it shows,
+and only while one of Weir's own controls holds that window's keyboard,
+never a terminal pane. The keyboard can move between that read and the
+key's arrival, so the app checks again as each posted key arrives
+(`AutomationPostedKeys`, which tells one by the marker the client sets in its
+source's user data) and drops one bound for a terminal pane, a window with a
+sheet up, the quick terminal, Settings, or a window whose keyboard nothing
+holds; a terminal pane refuses one too. The run reports nothing back, so the
+check reads the result with `state` or `capture`. The terminal that runs it needs the
+Accessibility grant.
 
 `scripts/check-automation.py` (`make check-automation`) launches a fresh run,
 checks the channel against it section by section, and quits it; `--keys`
@@ -244,4 +273,9 @@ prefix, reading the run and generation from `state` first.
 - Which agents offer a way to send a prompt to a named session, so typing
   can be avoided for them.
 - Whether any menu needs a check that only opening it on screen can make.
+- Which window a key posted to a run behind other apps lands in when it
+  shows several, so `keys` could work there too. Until then it refuses.
+- ⌘⏎ for the decision bar's primary action is read by the terminal pane that
+  holds the keyboard, so `keys` does not post it; the action needs a palette
+  row instead.
 

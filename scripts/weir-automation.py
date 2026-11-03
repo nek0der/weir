@@ -3,7 +3,10 @@
 
 Usage: scripts/weir-automation.py [--run SHORT_ID] COMMAND ...
 
-  launch [--app PATH] [--home DIR]        start a run of this checkout's Debug build and print it as JSON
+  launch [--app PATH] [--home DIR] [--project FOLDER ...] [--demo [--layer L] [--appearance dark] [--language ja]]
+                                          start a run of this checkout's Debug build and print it as JSON;
+                                          --project opens each folder in it as a project, --demo shows the
+                                          demo's projects (and --layer one of its layers) instead
   quit [--force]                          end the run (force: even while agents run in it)
   state                                   print windows, tabs, and panes
   open LAYER [--window ID] [--pane ID]    open a layer (review needs --pane)
@@ -13,10 +16,16 @@ Usage: scripts/weir-automation.py [--run SHORT_ID] COMMAND ...
   submit PANE --expect PROCESS [--session S]
   wait layerOpen --layer LAYER [--window ID] [--timeout SECONDS]
   wait turnEnded --pane PANE [--timeout SECONDS]
-  capture OUT.png [--window ID]           capture one window, Weir left behind
+  capture OUT.png [--window ID | --settings]
+                                          capture one window (or Settings), Weir left behind
   commands [--window ID]                  list the command palette's rows and whether each can run
-  command NAME [--window ID]              run a row (shortcut.splitRight, or splitRight)
+  command NAME [--window ID] [--new-window]
+                                          run a row (shortcut.splitRight, or splitRight); --new-window
+                                          commits it as ⌘Return does
   setting KEY [VALUE] [--unset]           read a setting, set it to VALUE (JSON: '"Menlo"', 14, true), or clear it
+  keys KEY ... [--window ID]              post named keys (escape, down, return, cmd+return) to the run, only
+                                          while it shows one window and one of Weir's own controls there holds
+                                          the keyboard (ADR 0006); needs the Accessibility grant for this terminal
 
 With several runs live, --run names the one to drive (the short ID `launch`
 prints). A pane is named by its UUID, or a unique prefix of it; the run and
@@ -29,8 +38,10 @@ code, so the functions below raise `ChannelError` rather than exit; only
 """
 
 import argparse
+import hashlib
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -210,6 +221,152 @@ def resolve_pane(channel, prefix):
 # MARK: - launching and quitting
 
 
+# MARK: - posted keys (ADR 0006)
+
+# The keys `keys` posts, by name, as macOS key codes. Named keys only: each
+# has one code on every keyboard layout and types no text (no space), so
+# neither the layout nor an input method changes what arrives. Text goes
+# through `typeLine` and `paste`.
+KEY_CODES = {
+    "return": 36, "enter": 76, "tab": 48, "delete": 51, "forwarddelete": 117, "escape": 53,
+    "left": 123, "right": 124, "down": 125, "up": 126,
+    "home": 115, "end": 119, "pageup": 116, "pagedown": 121,
+}
+MODIFIER_FLAGS = {"cmd": 0x100000, "shift": 0x20000, "option": 0x80000, "ctrl": 0x40000}
+
+# The marker the app tells a posted key by (`AutomationPostedKeys.marker`),
+# "WEIRKEYS": a key that carries it is dropped unless one of Weir's own
+# controls in a project window is where it lands.
+POSTED_KEY_MARKER = 0x5745_4952_4B45_5953
+
+# One key down and up, posted to a process: PID CODE FLAGS MARKER [TEXT]. A
+# marker of 0 leaves the key unmarked, as a person's is, which only
+# `check-automation.py` posts, to stand in for the person's own typing; TEXT
+# is then the character the key types.
+POST_KEY_SWIFT = r"""
+import AppKit
+import CoreGraphics
+let args = CommandLine.arguments
+guard args.count >= 5, let pid = Int32(args[1]), let code = UInt16(args[2]), let flags = UInt64(args[3]),
+      let marker = Int64(args[4]) else { exit(1) }
+guard AXIsProcessTrusted() else { print("not trusted"); exit(2) }
+let source = CGEventSource(stateID: .hidSystemState)
+for down in [true, false] {
+    guard let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else { exit(3) }
+    event.flags = CGEventFlags(rawValue: flags)
+    if marker != 0 {
+        event.setIntegerValueField(.eventSourceUserData, value: marker)
+    }
+    if args.count > 5 {
+        var unit = Array(args[5].utf16)
+        event.keyboardSetUnicodeString(stringLength: unit.count, unicodeString: &unit)
+    }
+    event.postToPid(pid)
+    usleep(20_000)
+}
+"""
+
+
+def parse_key(name):
+    """`cmd+return` as its key code and modifier flags."""
+    *modifiers, key = name.lower().split("+")
+    if key not in KEY_CODES:
+        raise ChannelError(f"no key named {key!r}; keys are {', '.join(KEY_CODES)}, with {'+'.join(MODIFIER_FLAGS)}+ before one")
+    flags = 0
+    for modifier in modifiers:
+        if modifier not in MODIFIER_FLAGS:
+            raise ChannelError(f"no modifier named {modifier!r}; modifiers are {', '.join(MODIFIER_FLAGS)}")
+        flags |= MODIFIER_FLAGS[modifier]
+    return KEY_CODES[key], flags
+
+
+def key_poster(root):
+    """The helper that posts one key, built once per version of its source."""
+    digest = hashlib.sha256(POST_KEY_SWIFT.encode()).hexdigest()[:12]
+    folder = os.path.join(root, "build", "automation-keys")
+    binary = os.path.join(folder, f"post-key-{digest}")
+    if not os.path.exists(binary):
+        os.makedirs(folder, exist_ok=True)
+        # Built under names of this call's own and moved into place whole, so
+        # two first runs at once never read each other's half-written files.
+        work = tempfile.mkdtemp(dir=folder)
+        source = os.path.join(work, "post-key.swift")
+        with open(source, "w") as f:
+            f.write(POST_KEY_SWIFT)
+        try:
+            built = subprocess.run(["swiftc", "-O", source, "-o", os.path.join(work, "post-key")],
+                                   capture_output=True, text=True, timeout=300)
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise ChannelError(f"could not build the key poster: {error}") from error
+        if built.returncode != 0:
+            raise ChannelError("could not build the key poster: " + built.stderr)
+        os.replace(os.path.join(work, "post-key"), binary)
+        shutil.rmtree(work, ignore_errors=True)
+    return binary
+
+
+def post_key(pid, code, flags=0, marked=True, text=None):
+    """Posts one key down and up to `pid`, marked as the client's unless
+    `marked` is false."""
+    command = [key_poster(repository_root()), str(pid), str(code), str(flags), str(POSTED_KEY_MARKER if marked else 0)]
+    if text is not None:
+        command.append(text)
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ChannelError(f"could not post the key: {error}") from error
+    if done.returncode == 2:
+        raise ChannelError("this terminal needs the Accessibility grant to post keys (System Settings > Privacy & Security > Accessibility)")
+    if done.returncode != 0:
+        raise ChannelError(f"could not post the key: {done.stdout}{done.stderr}")
+
+
+def keyboard_window(channel):
+    """The one window a posted key can reach, as `state` reads it now, or why
+    there is none to name. While the run is behind the person's windows it has
+    no key window it can report (`NSApp.keyWindow` is nil), yet a posted key
+    still lands in one of its windows; with one project window shown and
+    Settings closed, that is the only place it can land."""
+    snapshot = channel.call({"op": "state"})["state"]
+    if snapshot.get("settings"):
+        return None, "Settings is open, and a key could land there; close it first"
+    shown = [w for w in snapshot["windows"] if w["isOnScreen"]]
+    if len(shown) != 1:
+        return None, f"the run shows {len(shown)} windows, and a key could land in any of them; keys need exactly one"
+    return shown[0], None
+
+
+def post_keys(run, channel, names, window_id=None):
+    """Posts each key in turn, reading `state` before each one. The run must
+    show one window (`window_id`, when given), and one of Weir's own controls
+    must hold its keyboard, never a terminal pane, where Return runs code
+    (ADR 0006). The app checks the same again as each key arrives
+    (`AutomationPostedKeys.mayDeliver`), since the keyboard can move between
+    this read and the key; the two checks change together.
+    The run reports nothing back, so the caller
+    reads the result with `state` or `capture`."""
+    keys = [(name, *parse_key(name)) for name in names]
+    posted = []
+    for name, code, flags in keys:
+        window, refusal = keyboard_window(channel)
+        if window is None:
+            return {"status": "failed", "posted": posted, "reason": refusal}
+        if window_id and not window["id"].lower().startswith(window_id.lower()):
+            return {"status": "failed", "posted": posted, "reason": f"the window shown is {window['id']}, not {window_id}"}
+        holder = window.get("keyboard")
+        if not holder:
+            return {"status": "failed", "posted": posted,
+                    "reason": "nothing in the window holds the keyboard; open the control the key is for first"}
+        if holder["kind"] != "control":
+            return {"status": "failed", "posted": posted, "keyboard": holder,
+                    "reason": "a terminal pane holds the keyboard; send Return there with submit and text with typeLine"}
+        post_key(run["pid"], code, flags)
+        posted.append(name)
+        time.sleep(0.05)
+    window, _ = keyboard_window(channel)
+    return {"status": "done", "posted": posted, "keyboard": (window or {}).get("keyboard")}
+
+
 def repository_root():
     return subprocess.run(
         ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
@@ -232,8 +389,19 @@ def debug_app_path(root):
     return os.path.join(values["BUILT_PRODUCTS_DIR"], values["FULL_PRODUCT_NAME"])
 
 
-def launch(app=None, home=None, wait=30):
+# The demo's layers (`DemoFixture.OpenLayer`), which `--layer` opens at launch.
+DEMO_LAYERS = ["needs-attention", "all-projects", "review", "approval-list", "approval-card"]
+
+
+def launch(app=None, home=None, wait=30, projects=(), demo=None):
     """Starts a run with the channel on and its own data, and returns it.
+
+    `projects` are folders handed to the run as Finder's Open With hands them,
+    which the app opens as projects: the run's own data starts with none, and
+    Open Folder… asks through a panel the channel cannot answer. `demo` starts
+    the demo's made-up projects instead (`DemoFixture`), as a dict of its
+    `WEIR_DEMO_*` settings (`layer`, `appearance`, `language`), `{}` for the
+    plain window.
 
     The run gets `CFFIXED_USER_HOME` pointed at `home` (by default
     `build/automation-home` in this checkout, which git ignores), so it never
@@ -257,10 +425,19 @@ def launch(app=None, home=None, wait=30):
     log = os.path.join(home, "weir.log")
     nonce = uuid.uuid4().hex
     environment = {key: value for key, value in os.environ.items() if not key.startswith(INHERITED_AGENT_VARIABLES)}
+    folders = [os.path.abspath(folder) for folder in projects]
+    missing = [folder for folder in folders if not os.path.isdir(folder)]
+    if missing:
+        raise ChannelError(f"not a folder: {', '.join(missing)}")
+    settings = ["--env", "WEIR_AUTOMATION=1", "--env", f"CFFIXED_USER_HOME={home}", "--env", f"WEIR_AUTOMATION_NONCE={nonce}"]
+    if demo is not None:
+        settings += ["--env", "WEIR_DEMO=1"]
+        for name, value in demo.items():
+            if value:
+                settings += ["--env", f"WEIR_DEMO_{name.upper()}={value}"]
+    # The folders go last, as the documents `open` hands the new run.
     subprocess.run(
-        ["open", "-g", "-n", "-a", app,
-         "--env", "WEIR_AUTOMATION=1", "--env", f"CFFIXED_USER_HOME={home}", "--env", f"WEIR_AUTOMATION_NONCE={nonce}",
-         "--stdout", log, "--stderr", log],
+        ["open", "-g", "-n", "-a", app, *settings, "--stdout", log, "--stderr", log, *folders],
         env=environment, check=True,
     )
     deadline = time.time() + wait
@@ -322,7 +499,8 @@ def build_request(args, channel):
     if args.command == "commands":
         return {"op": "commands", "window": args.window}
     if args.command == "command":
-        return {"op": "command", "name": args.name, "window": args.window}
+        return {"op": "command", "name": args.name, "window": args.window,
+                "newWindow": True if args.new_window else None}
     if args.command == "setting":
         request = {"op": "setting", "key": args.key, "unset": True if args.unset else None}
         if args.value is not None:
@@ -341,6 +519,11 @@ def parse_arguments():
     p = sub.add_parser("launch")
     p.add_argument("--app")
     p.add_argument("--home")
+    p.add_argument("--project", action="append", default=[], help="a folder to open as a project; repeat for more")
+    p.add_argument("--demo", action="store_true", help="the demo's projects instead of empty data")
+    p.add_argument("--layer", choices=DEMO_LAYERS, help="with --demo: the layer to open")
+    p.add_argument("--appearance", choices=["dark"], help="with --demo: the dark look")
+    p.add_argument("--language", choices=["ja"], help="with --demo: the Japanese UI")
     p = sub.add_parser("quit")
     p.add_argument("--force", action="store_true")
     sub.add_parser("state")
@@ -366,12 +549,17 @@ def parse_arguments():
     p = sub.add_parser("capture")
     p.add_argument("out")
     p.add_argument("--window")
+    p.add_argument("--settings", action="store_true", help="the Settings window")
     p = sub.add_parser("focus")
     p.add_argument("pane")
     p = sub.add_parser("commands")
     p.add_argument("--window")
     p = sub.add_parser("command")
     p.add_argument("name")
+    p.add_argument("--window")
+    p.add_argument("--new-window", action="store_true", help="as ⌘Return commits the row")
+    p = sub.add_parser("keys")
+    p.add_argument("keys", nargs="+", help="escape, return, tab, up, down, ..., with cmd+, shift+, option+, ctrl+ before one")
     p.add_argument("--window")
     p = sub.add_parser("setting")
     p.add_argument("key")
@@ -388,7 +576,10 @@ def main():
     args = parse_arguments()
     try:
         if args.command == "launch":
-            print_json(launch(args.app, args.home))
+            if not args.demo and (args.layer or args.appearance or args.language):
+                raise ChannelError("--layer, --appearance, and --language go with --demo")
+            demo = {"layer": args.layer, "appearance": args.appearance, "language": args.language} if args.demo else None
+            print_json(launch(args.app, args.home, projects=args.project, demo=demo))
             return 0
         run = find_run(args.run)
         if args.command == "quit":
@@ -397,13 +588,18 @@ def main():
             return 0 if reply["status"] == "done" else 1
         with Channel(run) as channel:
             if args.command == "capture":
-                reply = channel.call({"op": "capture", "window": args.window})
+                reply = channel.call({"op": "capture", "window": args.window,
+                                      "settings": True if args.settings else None})
                 if reply["status"] != "done":
                     print_json(reply)
                     return 1
                 subprocess.run(["screencapture", "-x", "-o", f"-l{reply['windowNumber']}", args.out], check=True)
                 print(args.out)
                 return 0
+            if args.command == "keys":
+                reply = post_keys(run, channel, args.keys, args.window)
+                print_json(reply)
+                return 0 if reply["status"] == "done" else 1
             reply = channel.call(build_request(args, channel))
         print_json(reply)
         return 0 if reply["status"] == "done" else 1

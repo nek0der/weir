@@ -13,8 +13,16 @@ extension SupervisionPaletteFacts {
     /// (`AppState.sidebarSections(in:)`); without them, the sections it last
     /// drew, which are enough to tell whether there is more than one row,
     /// and to list each project's rows in the sidebar's order.
+    /// `installedAgents` are the agents found on this Mac, read for the
+    /// window's session as its "+" reads them.
     @MainActor
-    init(window: ProjectWindowState, session: WorkspaceSession, sections: SidebarPresentedSections? = nil, restoreTurnNumber: Int? = nil) {
+    init(
+        window: ProjectWindowState,
+        session: WorkspaceSession,
+        sections: SidebarPresentedSections? = nil,
+        restoreTurnNumber: Int? = nil,
+        installedAgents: InstalledAgentsStore? = nil
+    ) {
         let selection = window.selection
         let sections = sections ?? window.presentedSections
         self.init(
@@ -27,7 +35,8 @@ extension SupervisionPaletteFacts {
             arePanesHidden: window.arePanesHidden,
             isChoosingProject: selection.isChoosingProject,
             areRailsHidden: window.areRailsHidden,
-            hasWorktreeMenu: selection.shownProjectID.flatMap { session.project($0) }.map(CheckoutName.hasWorktreeMenu) ?? false
+            hasWorktreeMenu: selection.shownProjectID.flatMap { session.project($0) }.map(CheckoutName.hasWorktreeMenu) ?? false,
+            installedAgents: installedAgents?.installedAgents(for: selection.activeContainerID.projectID)
         )
     }
 }

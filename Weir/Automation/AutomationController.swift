@@ -108,10 +108,19 @@
                     isKey: registry.keyWindowID == window.id,
                     isOnScreen: registry.presenter?.isOnScreen(window.id) ?? false,
                     openLayers: openLayers(of: window, in: state),
+                    dropdown: window.titleBarMenu.map { Self.name(of: $0.menu) },
+                    hasSheet: window.hasAttachedSheet,
+                    isSidebarShown: window.isSidebarShown,
+                    areIconBarsHidden: window.areRailsHidden,
+                    isChangesPanelShown: selection.showsChangesPanel,
+                    review: window.review.map {
+                        AutomationSnapshot.Review(pane: $0.agentPaneID, scope: Self.name(of: $0.selection), isShown: $0.isShown)
+                    },
+                    keyboard: keyboard(of: window, in: state),
                     tabs: tabs
                 )
             }
-            return AutomationSnapshot(run: runID, projects: projects, windows: windows)
+            return AutomationSnapshot(run: runID, projects: projects, windows: windows, settings: settingsSnapshot())
         }
 
         private func pane(of id: UUID, in state: AppState) -> AutomationSnapshot.Pane {
@@ -128,30 +137,6 @@
                 isInTmux: Self.isInTmux(id, view: view, in: state),
                 hasKeyboard: view.map { $0.window?.firstResponder === $0 } ?? false
             )
-        }
-
-        private func openLayers(of window: ProjectWindowState, in state: AppState) -> [AutomationLayer] {
-            let layers = window.openLayers(session: state.session)
-            var open: [AutomationLayer] = []
-            if window.titleBarMenu?.menu == .needsAttention {
-                open.append(.needsAttention)
-            }
-            if layers.contains(.allProjects) {
-                open.append(.allProjects)
-            }
-            if layers.contains(.notificationHistory) {
-                open.append(.notificationHistory)
-            }
-            if layers.contains(.keyboardShortcuts) {
-                open.append(.keyboardShortcuts)
-            }
-            if layers.contains(.planUsage) {
-                open.append(.planUsage)
-            }
-            if window.review?.isShown == true {
-                open.append(.review)
-            }
-            return open
         }
 
         // MARK: - open
@@ -613,7 +598,8 @@
                 supervision: SupervisionPaletteFacts(
                     window: window,
                     session: state.session,
-                    restoreTurnNumber: RestoreActions.paletteTarget(window: window, state: state)?.displayNumber
+                    restoreTurnNumber: RestoreActions.paletteTarget(window: window, state: state)?.displayNumber,
+                    installedAgents: state.installedAgents
                 ),
                 window: window.id,
                 locale: state.settingsStore.appLocale
@@ -632,7 +618,7 @@
             if Task.isCancelled {
                 return AutomationReply(id: request.id, status: .cancelled)
             }
-            let execution = CommandPaletteExecution(action: item.action, windowID: window.id)
+            let execution = CommandPaletteExecution(action: item.action, windowID: window.id, opensInNewWindow: request.newWindow == true)
             guard window.commands.send(.runPaletteRow(execution)) else {
                 return .failed(request.id, "no view of the window took the command")
             }
@@ -652,7 +638,8 @@
                 if let value {
                     // Checked and normalized in full before the one assignment,
                     // so a refused value is never saved.
-                    store.settings = try AutomationSettings.setting(value, at: key, in: store.settings)
+                    let hotKeyCenter = state.quickTerminalHotKeyCenter
+                    store.settings = try AutomationSettings.setting(value, at: key, in: store.settings) { hotKeyCenter.isTakenBySystem($0) }
                     revision += 1
                 }
                 var reply = AutomationReply(id: request.id, status: .done)
@@ -744,12 +731,28 @@
         /// (`WindowRegistry.keepsOffScreenPanesDrawing`); the pause lets the
         /// last change reach the screen's copy of the window.
         private func capture(_ request: AutomationRequest, in state: AppState) async -> AutomationReply {
+            if request.settings == true {
+                guard let nsWindow = Self.settingsWindow() else {
+                    return AutomationReply(id: request.id, status: .notObservable, reason: "Settings is not open")
+                }
+                return await capture(nsWindow, request: request) { Self.settingsWindow() }
+            }
             guard let window = resolveWindow(request.window, in: state) else { return .failed(request.id, "no such window") }
             guard let presenter = state.windowRegistry.presenter as? ProjectWindowPresenter,
                   let nsWindow = presenter.nsWindow(for: window.id)
             else {
                 return AutomationReply(id: request.id, status: .notObservable, reason: "the window is not shown")
             }
+            return await capture(nsWindow, request: request) { presenter.nsWindow(for: window.id) }
+        }
+
+        /// `nsWindow`'s number once the last change has had time to reach the
+        /// window server. `current` finds the window again after the pause.
+        private func capture(
+            _ nsWindow: NSWindow,
+            request: AutomationRequest,
+            current: () -> NSWindow?
+        ) async -> AutomationReply {
             guard nsWindow.isVisible, !nsWindow.isMiniaturized else {
                 return AutomationReply(id: request.id, status: .notObservable, reason: "the window is hidden or minimized")
             }
@@ -760,7 +763,7 @@
             }
             // Looked at again: the window can close, hide, or be minimized
             // during the pause, and its number would then capture nothing.
-            guard presenter.nsWindow(for: window.id) === nsWindow, nsWindow.isVisible, !nsWindow.isMiniaturized else {
+            guard current() === nsWindow, nsWindow.isVisible, !nsWindow.isMiniaturized else {
                 return AutomationReply(id: request.id, status: .notObservable, reason: "the window went away during the capture")
             }
             var reply = AutomationReply(id: request.id, status: .done)

@@ -64,7 +64,8 @@ struct PaletteCommands: Commands {
             supervision: SupervisionPaletteFacts(
                 window: window,
                 session: state.session,
-                restoreTurnNumber: RestoreActions.paletteTarget(window: window, state: state)?.displayNumber
+                restoreTurnNumber: RestoreActions.paletteTarget(window: window, state: state)?.displayNumber,
+                installedAgents: state.installedAgents
             )
         )
     }

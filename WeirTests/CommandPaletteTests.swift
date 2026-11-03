@@ -201,6 +201,75 @@ struct CommandPaletteTests {
         #expect(Self.isEnabled(.showOpenTabs, in: choosing) == false)
     }
 
+    @Test("a row adds a tab running each agent the strip's + offers, and is off with no session")
+    func catalog_newAgentTabs_followThePaneStrip() throws {
+        let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+        var facts = SupervisionPaletteFacts.empty
+        let ids = AgentCatalog.entries.map { CommandPaletteAction.newAgentTab($0.kind).frecencyKey }
+
+        let showing = try Self.items(session, supervision: facts)
+        for id in ids {
+            #expect(showing.first { $0.id == id }?.isEnabled == true, "\(id)")
+        }
+        facts.isChoosingProject = true
+        let choosing = try Self.items(session, supervision: facts)
+        for id in ids {
+            #expect(choosing.first { $0.id == id }?.isEnabled == false, "\(id)")
+        }
+    }
+
+    @Test("the agent rows offer the agents found on this Mac, as the strip's + does")
+    func catalog_newAgentTabs_offerOnlyTheAgentsFound() throws {
+        let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+        var facts = SupervisionPaletteFacts.empty
+        facts.installedAgents = [.codex]
+
+        let items = try Self.items(session, supervision: facts)
+
+        let offered = items.compactMap { item -> AgentKind? in
+            if case let .newAgentTab(agent) = item.action {
+                return agent
+            }
+            return nil
+        }
+        #expect(offered == [.codex])
+    }
+
+    @Test("a row opens Settings on each of its sections")
+    func catalog_settingsSections_areOffered() throws {
+        let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+
+        let items = try Self.items(session)
+
+        for section in SettingsSection.allCases {
+            let row = items.first { $0.action == .openSettingsSection(section) }
+            #expect(row?.id == "settings.section.\(section.rawValue)")
+            #expect(row?.category == .settings)
+        }
+    }
+
+    @Test("Move Pane to New Tab needs a split tab, and Hide Icon Bars says which way it goes")
+    func catalog_windowRows_followTheWindow() throws {
+        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
+        session.openTab(container: .project(project.id))
+        var facts = SupervisionPaletteFacts.empty
+        let move = { (items: [CommandPaletteItem]) in items.first { $0.action == .movePaneToNewTab }?.isEnabled }
+        let bars = { (items: [CommandPaletteItem]) in items.first { $0.action == .toggleIconBars }?.title }
+
+        let single = try Self.items(session, supervision: facts)
+        #expect(move(single) == false)
+        #expect(bars(single) == "Hide Icon Bars")
+
+        PaneActions.split(session, direction: .horizontal, in: session.primaryWindowID)
+        facts.areRailsHidden = true
+        let split = try Self.items(session, supervision: facts)
+        #expect(move(split) == true)
+        #expect(bars(split) == "Show Icon Bars")
+
+        facts.arePanesHidden = true
+        #expect(try move(Self.items(session, supervision: facts)) == false)
+    }
+
     @Test("Plan Usage needs the rail, and Show Worktree Menu needs its button")
     func catalog_controlsWithNoAnchor_areOff() throws {
         let (session, _, _) = WorkspaceSessionFixture.withLooseTab()

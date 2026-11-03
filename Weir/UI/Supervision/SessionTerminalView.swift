@@ -102,6 +102,7 @@ private struct SessionTerminalEmptyState: View {
     @Environment(AttentionState.self) private var attention
     @Environment(ReviewPresentation.self) private var reviewPresentation
     @Environment(\.surfaceRegistry) private var registry
+    @Environment(InstalledAgentsStore.self) private var installedAgents: InstalledAgentsStore?
     @Environment(\.frecencyStore) private var frecencyStore
     @Environment(\.restoreHandler) private var restoreHandler
     @Environment(\.locale) private var locale
@@ -153,7 +154,8 @@ private struct SessionTerminalEmptyState: View {
                     supervision: SupervisionPaletteFacts(
                         window: window,
                         session: session,
-                        restoreTurnNumber: restoreHandler?.paletteTurnNumber()
+                        restoreTurnNumber: restoreHandler?.paletteTurnNumber(),
+                        installedAgents: installedAgents
                     )
                 )
             },
