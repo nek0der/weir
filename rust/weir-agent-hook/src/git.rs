@@ -1006,6 +1006,7 @@ mod tests {
     use super::{GitScope, GitSnapshots, input_file, limit_commands_for_test};
     use std::io::Read;
     use std::os::unix::fs::MetadataExt;
+    use std::path::Path;
     use std::time::{Duration, Instant};
 
     /// A git that never answers is stopped at the limit with what it
@@ -1013,47 +1014,28 @@ mod tests {
     /// starting; outside the operation git runs again.
     #[test]
     fn a_git_past_the_limit_is_stopped_with_what_it_started() {
-        limit_commands_for_test(Duration::from_millis(300));
         let scratch = tempfile::tempdir().expect("scratch");
-        let pid_file = scratch.path().join("pid");
-        // We use a shell alias: git starts it as its own child, as it starts a
-        // filter, and it records its pid before it hangs.
-        let alias = format!(
-            "alias.hang=!echo $$ > '{}'; exec sleep 30",
-            pid_file.display()
-        );
-        let started = Instant::now();
-        {
+        let pid = hang_until_started(scratch.path(), |limit, alias| {
+            limit_commands_for_test(limit);
+            let started = Instant::now();
             let _git = GitScope::begin();
             assert_eq!(
-                GitSnapshots::run(scratch.path(), &["-c", &alias, "hang"], None),
+                GitSnapshots::run(scratch.path(), &["-c", alias, "hang"], None),
                 None
             );
-            assert!(started.elapsed() < Duration::from_secs(10));
+            assert!(started.elapsed() < limit + Duration::from_secs(10));
             let again = Instant::now();
             assert_eq!(
                 GitSnapshots::run(scratch.path(), &["--version"], None),
                 None
             );
             assert!(again.elapsed() < Duration::from_millis(100), "not started");
-        }
+        });
+        // A git that ends is not held to the short limit, which a busy
+        // machine can spend before git answers.
+        limit_commands_for_test(super::COMMAND_LIMIT);
         assert!(GitSnapshots::run(scratch.path(), &["--version"], None).is_some());
-
-        let pid: libc::pid_t = std::fs::read_to_string(&pid_file)
-            .expect("pid")
-            .trim()
-            .parse()
-            .expect("a pid");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        // SAFETY: `kill` with signal 0 sends nothing; it only asks whether
-        // the process is there.
-        while unsafe { libc::kill(pid, 0) } == 0 {
-            assert!(
-                Instant::now() < deadline,
-                "the alias's sleep is still there"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        assert_gone(pid);
     }
 
     /// The time a hook's caller gives it stops git as `COMMAND_LIMIT` does, with what
@@ -1061,26 +1043,55 @@ mod tests {
     #[test]
     fn a_git_past_the_hooks_deadline_is_stopped_with_what_it_started() {
         let scratch = tempfile::tempdir().expect("scratch");
-        let pid_file = scratch.path().join("pid");
+        let pid = hang_until_started(scratch.path(), |limit, alias| {
+            let started = Instant::now();
+            {
+                let _deadline = super::HookDeadline::begin(Some(limit));
+                assert_eq!(
+                    GitSnapshots::run(scratch.path(), &["-c", alias, "hang"], None),
+                    None
+                );
+            }
+            assert!(started.elapsed() < limit + Duration::from_secs(10));
+            assert_eq!(super::command_limit(), super::COMMAND_LIMIT);
+        });
+        assert_gone(pid);
+    }
+
+    /// Runs `hang`, a shell alias that records its pid and sleeps, through
+    /// `run` with the limit it is given, and returns the pid. We use an alias
+    /// because git starts it as its own child, as it starts a filter. On a
+    /// busy machine the limit can pass before git starts the alias's shell,
+    /// and then no process is there to show that the stop reached what git
+    /// started. We then try again with twice the limit, which stays short of
+    /// the sleep, so a stopped git is still told from one that ended.
+    fn hang_until_started(scratch: &Path, mut run: impl FnMut(Duration, &str)) -> libc::pid_t {
+        let pid_file = scratch.join("pid");
+        let written = scratch.join("pid.new");
+        // The shell moves the file into place only after it has written the
+        // whole pid, so a shell stopped mid-write leaves no file to misread.
         let alias = format!(
-            "alias.hang=!echo $$ > '{}'; exec sleep 30",
+            "alias.hang=!echo $$ > '{}' && mv '{}' '{}'; exec sleep 30",
+            written.display(),
+            written.display(),
             pid_file.display()
         );
-        let started = Instant::now();
-        {
-            let _deadline = super::HookDeadline::begin(Some(Duration::from_millis(300)));
-            assert_eq!(
-                GitSnapshots::run(scratch.path(), &["-c", &alias, "hang"], None),
-                None
+        let mut limit = Duration::from_millis(300);
+        loop {
+            run(limit, &alias);
+            if let Ok(pid) = std::fs::read_to_string(&pid_file) {
+                return pid.trim().parse().expect("a pid");
+            }
+            limit *= 2;
+            assert!(
+                limit < Duration::from_secs(20),
+                "git never started the alias"
             );
         }
-        assert!(started.elapsed() < Duration::from_secs(10));
-        assert_eq!(super::command_limit(), super::COMMAND_LIMIT);
-        let pid: libc::pid_t = std::fs::read_to_string(&pid_file)
-            .expect("pid")
-            .trim()
-            .parse()
-            .expect("a pid");
+    }
+
+    /// Waits for the process `pid` to be gone.
+    fn assert_gone(pid: libc::pid_t) {
         let deadline = Instant::now() + Duration::from_secs(5);
         // SAFETY: `kill` with signal 0 sends nothing; it only asks whether
         // the process is there.

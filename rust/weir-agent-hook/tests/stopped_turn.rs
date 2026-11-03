@@ -355,13 +355,20 @@ fn a_stopped_turn_waits_for_lines_that_reach_the_transcript_after_the_report() {
     let late = {
         let transcript = transcript.clone();
         std::thread::spawn(move || {
+            use std::io::Write;
             std::thread::sleep(std::time::Duration::from_millis(200));
             let lines = [
-                prompt_line,
                 r#"{"type":"assistant","isSidechain":false,"requestId":"req_1","message":{"id":"msg_1","role":"assistant","usage":{"input_tokens":4,"cache_creation_input_tokens":319,"cache_read_input_tokens":45055,"output_tokens":6}}}"#,
                 r#"{"type":"user","isSidechain":false,"message":{"role":"user","content":"[Request interrupted by user]"}}"#,
             ];
-            fs::write(&transcript, lines.join("\n") + "\n").expect("transcript");
+            // Claude Code appends the reply's lines. A write that empties the
+            // file first would show the wait a transcript that awaits nothing,
+            // and end it before the lines land.
+            fs::OpenOptions::new()
+                .append(true)
+                .open(&transcript)
+                .and_then(|mut file| file.write_all((lines.join("\n") + "\n").as_bytes()))
+                .expect("transcript");
         })
     };
     assert_eq!(end(&request), StoppedTurnEnd::Ended);
