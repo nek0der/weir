@@ -87,7 +87,8 @@ extension SurfaceView {
     // trackpad two-finger tap), and that's where the right-press is sent —
     // only when there's no selection to protect. Emitting a press here too
     // would clear a mouse-reporting pane's shift-selection before the menu
-    // could offer Copy.
+    // could offer Copy. The menu's tracking takes the physical release as
+    // well, so the release reaches libghostty from `menuDidClose`.
 
     override func rightMouseUp(with event: NSEvent) {
         sendMouseButton(event, state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_RIGHT)
@@ -120,16 +121,27 @@ extension SurfaceView {
         // reports the move, and the TUI would see a pointer that is not
         // over it.
         guard !isPointerCovered(event) else {
-            // Off the terminal, as libghostty reads a position outside it:
-            // a link's underline or a TUI's hover left at the panel's edge
-            // would stay there.
-            if let surface {
-                ghostty_surface_mouse_pos(surface, -1, -1, Self.translateMods(event.modifierFlags))
-            }
+            sendPointerLeft(event)
             return
         }
         updatePaneDragCursor(event)
         sendMousePos(event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        // While a button is held AppKit keeps sending drags past the
+        // pane's edge, and the drag owns the position: a selection
+        // extending outside the pane must not be cut at the edge.
+        guard NSEvent.pressedMouseButtons == 0 else { return }
+        sendPointerLeft(event)
+    }
+
+    /// Tell libghostty the pointer is off the terminal, as it reads a
+    /// position outside it. Without this a link's underline or a TUI's
+    /// hover stays at the last cell the pointer crossed.
+    private func sendPointerLeft(_ event: NSEvent) {
+        guard let surface else { return }
+        ghostty_surface_mouse_pos(surface, -1, -1, Self.translateMods(event.modifierFlags))
     }
 
     /// Whether another view is what the pointer is over.
@@ -197,6 +209,11 @@ extension SurfaceView {
         button: ghostty_input_mouse_button_e
     ) {
         guard let surface else { return }
+        // libghostty reads a click at the last position it was given. After
+        // the pointer left the pane that is (-1, -1), and a click on coming
+        // back, before any move, would land off the terminal or on its
+        // top-left cell, so each button carries its own position.
+        sendMousePos(event)
         _ = ghostty_surface_mouse_button(surface, state, button, Self.translateMods(event.modifierFlags))
     }
 

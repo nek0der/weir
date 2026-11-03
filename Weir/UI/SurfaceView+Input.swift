@@ -5,6 +5,7 @@
 // the SwiftLint cap; logically these belong to the surface view.
 
 import AppKit
+import Carbon.HIToolbox
 import GhosttyKit
 
 extension SurfaceView {
@@ -44,6 +45,30 @@ extension SurfaceView {
             mods |= GHOSTTY_MODS_SUPER_RIGHT.rawValue
         }
         return ghostty_input_mods_e(mods)
+    }
+
+    /// Whether a modifier-only event pressed or released its key, or nil
+    /// when the key is not one of the modifiers libghostty encodes.
+    ///
+    /// AppKit reports both directions as `flagsChanged`, so we read the
+    /// direction from the flags the event leaves behind. The generic flag
+    /// stays set while the other side's key is held, so where the event
+    /// carries device bits we judge by this key's side; an event without
+    /// any device bit for the modifier falls back to the generic flag.
+    static func modifierKeyAction(
+        keyCode: UInt16,
+        modifierFlags flags: NSEvent.ModifierFlags
+    ) -> ghostty_input_action_e? {
+        if Int(keyCode) == kVK_CapsLock {
+            return flags.contains(.capsLock) ? GHOSTTY_ACTION_PRESS : GHOSTTY_ACTION_RELEASE
+        }
+        guard let key = ModifierKey(keyCode: keyCode) else { return nil }
+        guard flags.contains(key.flag) else { return GHOSTTY_ACTION_RELEASE }
+        let rawFlags = flags.rawValue
+        guard rawFlags & (key.deviceBit | key.otherSideDeviceBit) != 0 else {
+            return GHOSTTY_ACTION_PRESS
+        }
+        return rawFlags & key.deviceBit != 0 ? GHOSTTY_ACTION_PRESS : GHOSTTY_ACTION_RELEASE
     }
 
     /// Applies libghostty's text-translation modifier decision to an AppKit
@@ -190,5 +215,33 @@ extension SurfaceView {
                 _ = ghostty_surface_key(surface, key)
             }
         }
+    }
+}
+
+/// One side of a modifier, as AppKit tells the two keys apart: the
+/// generic flag both sides share and this key's own device bit.
+private struct ModifierKey {
+    let flag: NSEvent.ModifierFlags
+    let deviceBit: UInt
+    let otherSideDeviceBit: UInt
+
+    init?(keyCode: UInt16) {
+        switch Int(keyCode) {
+        case kVK_Shift: self.init(.shift, NX_DEVICELSHIFTKEYMASK, NX_DEVICERSHIFTKEYMASK)
+        case kVK_RightShift: self.init(.shift, NX_DEVICERSHIFTKEYMASK, NX_DEVICELSHIFTKEYMASK)
+        case kVK_Control: self.init(.control, NX_DEVICELCTLKEYMASK, NX_DEVICERCTLKEYMASK)
+        case kVK_RightControl: self.init(.control, NX_DEVICERCTLKEYMASK, NX_DEVICELCTLKEYMASK)
+        case kVK_Option: self.init(.option, NX_DEVICELALTKEYMASK, NX_DEVICERALTKEYMASK)
+        case kVK_RightOption: self.init(.option, NX_DEVICERALTKEYMASK, NX_DEVICELALTKEYMASK)
+        case kVK_Command: self.init(.command, NX_DEVICELCMDKEYMASK, NX_DEVICERCMDKEYMASK)
+        case kVK_RightCommand: self.init(.command, NX_DEVICERCMDKEYMASK, NX_DEVICELCMDKEYMASK)
+        default: return nil
+        }
+    }
+
+    private init(_ flag: NSEvent.ModifierFlags, _ deviceBit: Int32, _ otherSideDeviceBit: Int32) {
+        self.flag = flag
+        self.deviceBit = UInt(deviceBit)
+        self.otherSideDeviceBit = UInt(otherSideDeviceBit)
     }
 }

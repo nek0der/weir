@@ -9,6 +9,24 @@ import Testing
 @testable import Weir
 @testable import WeirDomain
 
+/// A device-side modifier bit as AppKit carries it in `modifierFlags`.
+private func device(_ mask: Int32) -> NSEvent.ModifierFlags {
+    NSEvent.ModifierFlags(rawValue: UInt(mask))
+}
+
+/// A modifier-only event and the action it has to reach libghostty as.
+private struct ModifierChange: Sendable {
+    let keyCode: Int
+    let flags: NSEvent.ModifierFlags
+    let isPress: Bool
+
+    init(_ keyCode: Int, _ flags: NSEvent.ModifierFlags, isPress: Bool) {
+        self.keyCode = keyCode
+        self.flags = flags
+        self.isPress = isPress
+    }
+}
+
 @Suite("Surface keyboard translation")
 @MainActor
 struct SurfaceKeyboardTranslationTests {
@@ -76,6 +94,40 @@ struct SurfaceKeyboardTranslationTests {
         #expect(translated === event)
         #expect(SurfaceView.bindingText(from: event).isEmpty)
         #expect(key.unshifted_codepoint == 0)
+    }
+
+    // MARK: - Modifier press and release
+
+    @Test("A modifier's release is sent as a release, judged by the key's own side", arguments: [
+        // Left ⇧ down, then up.
+        ModifierChange(kVK_Shift, [.shift, device(NX_DEVICELSHIFTKEYMASK)], isPress: true),
+        ModifierChange(kVK_Shift, [], isPress: false),
+        // Left ⇧ up while right ⇧ is still held: the generic flag stays.
+        ModifierChange(kVK_Shift, [.shift, device(NX_DEVICERSHIFTKEYMASK)], isPress: false),
+        // Right ⇧ up while left ⇧ is still held.
+        ModifierChange(kVK_RightShift, [.shift, device(NX_DEVICELSHIFTKEYMASK)], isPress: false),
+        ModifierChange(kVK_RightShift, [.shift, device(NX_DEVICERSHIFTKEYMASK)], isPress: true),
+        ModifierChange(kVK_RightOption, [.option, device(NX_DEVICERALTKEYMASK)], isPress: true),
+        ModifierChange(kVK_Option, [], isPress: false),
+        ModifierChange(kVK_Command, [.command, device(NX_DEVICELCMDKEYMASK)], isPress: true),
+        ModifierChange(kVK_RightControl, [.control, device(NX_DEVICELCTLKEYMASK)], isPress: false),
+        // An event with no device bit, as a synthetic one can be.
+        ModifierChange(kVK_Control, [.control], isPress: true),
+        ModifierChange(kVK_CapsLock, [.capsLock], isPress: true),
+        ModifierChange(kVK_CapsLock, [], isPress: false)
+    ])
+    private func modifierKeyAction_readsTheDirectionFromTheFlagsLeft(_ change: ModifierChange) {
+        let action = SurfaceView.modifierKeyAction(keyCode: UInt16(change.keyCode), modifierFlags: change.flags)
+        let expected = change.isPress ? GHOSTTY_ACTION_PRESS : GHOSTTY_ACTION_RELEASE
+        #expect(action?.rawValue == expected.rawValue)
+    }
+
+    @Test("A key libghostty does not encode as a modifier is not forwarded")
+    func modifierKeyAction_otherKey_isNil() {
+        let function = SurfaceView.modifierKeyAction(keyCode: UInt16(kVK_Function), modifierFlags: [.function])
+        let letter = SurfaceView.modifierKeyAction(keyCode: UInt16(kVK_ANSI_A), modifierFlags: [.shift])
+        #expect(function == nil)
+        #expect(letter == nil)
     }
 
     // MARK: - ⌘⏎

@@ -22,7 +22,11 @@ extension SurfaceView {
         //      Split / Close / Find target the previously-focused
         //      pane (focusedLeafID is only written by .onTapGesture).
         //   2. Re-emit the right-mouse press to libghostty so TUIs
-        //      with mouse reporting still see the click.
+        //      with mouse reporting still see the click, and the release
+        //      when the menu closes: the menu's tracking takes the
+        //      physical release too, and without ours libghostty keeps
+        //      the button held, reporting every later move as a
+        //      right-button drag.
         if window?.firstResponder !== self {
             window?.makeFirstResponder(self)
         }
@@ -38,11 +42,15 @@ extension SurfaceView {
         // (word-select under the cursor for the default context-menu
         // action; click-forwarding in a TUI), then re-read the selection
         // for the Copy gate below.
+        let isPressSent: Bool
         if let surface, !ghostty_surface_has_selection(surface) {
             sendRightMousePressForMenu(with: event)
+            isPressSent = true
+        } else {
+            isPressSent = false
         }
 
-        return SurfaceContextMenu.make(
+        let menu = SurfaceContextMenu.make(
             SurfaceContextMenuState(
                 hasSelection: surface.map { ghostty_surface_has_selection($0) } ?? false,
                 isInPane: paneID != nil,
@@ -55,6 +63,12 @@ extension SurfaceView {
             ),
             locale: resolvedAppLocale
         )
+        // Only a menu that followed a press closes with a release, so a
+        // program never sees a release it had no press for.
+        if isPressSent {
+            menu.delegate = self
+        }
+        return menu
     }
 
     /// The app locale the host installed, for the text this view puts
@@ -113,6 +127,20 @@ extension SurfaceView {
     private func runSurfaceBinding(_ action: String) {
         guard let surface else { return }
         GhosttyFFI.performBindingAction(action, on: surface)
+    }
+}
+
+extension SurfaceView: NSMenuDelegate {
+    /// The right-button release `menu(for:)` owes libghostty for the press
+    /// it sent. The surface is the delegate only of such a menu.
+    func menuDidClose(_ menu: NSMenu) {
+        guard let surface else { return }
+        _ = ghostty_surface_mouse_button(
+            surface,
+            GHOSTTY_MOUSE_RELEASE,
+            GHOSTTY_MOUSE_RIGHT,
+            Self.translateMods(NSEvent.modifierFlags)
+        )
     }
 }
 
