@@ -333,6 +333,10 @@ enum SupervisionWindowActions {
         if action == .restoreTurn {
             return RestoreActions.runFromPalette(window: window, state: state)
         }
+        if action == .toggleIconBars {
+            toggleIconBars(in: window)
+            return .handledReturningKeyboard
+        }
         return runProjectRow(
             action,
             in: window,
@@ -341,6 +345,12 @@ enum SupervisionWindowActions {
             frecency: state.frecencyStore,
             opensInNewWindow: opensInNewWindow
         )
+    }
+
+    /// View ▸ Hide Icon Bars and the palette's row: the window's rails
+    /// hidden, or shown again.
+    static func toggleIconBars(in window: ProjectWindowState) {
+        window.areRailsHidden.toggle()
     }
 
     /// File → New Window, the palette, and the Dock menu: a new

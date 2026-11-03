@@ -78,12 +78,15 @@ enum CommandPaletteCatalog {
                 locale: locale
             )
         )
+        appendNewAgentTabs(to: &items, session: session, window: window, supervision: supervision, locale: locale)
+        appendWindowRows(to: &items, session: session, window: window, supervision: supervision, locale: locale)
         appendTabs(to: &items, session: session)
         appendProjects(to: &items, session: session, window: window, supervision: supervision, locale: locale)
         appendClosedTabs(to: &items, session: session)
         appendRecentProjects(to: &items, session: session)
         appendRestore(to: &items, facts: supervision, locale: locale)
         appendSettings(to: &items, locale: locale)
+        appendSettingsSections(to: &items, locale: locale)
         // A project ID the window still holds after its project went is no
         // project to set up or close, like the project ▾'s items.
         if let projectID = supervision.projectID, let project = session.project(projectID) {
@@ -158,20 +161,100 @@ enum CommandPaletteCatalog {
             // A pane command is off while the review hides the panes.
             let enabled = isActionEnabled(action, context: context)
                 && !SupervisionPaletteFacts.isOffPaneCommand(action, arePanesHidden: supervision.arePanesHidden)
-            let localizedTitle = action.localizedTitle.resolved(in: dependencies.locale)
-            let englishTitle = action.localizedTitle.resolved(in: .english)
-            items.append(CommandPaletteItem(
-                id: "shortcut.\(action.rawValue)",
-                category: .actions,
-                title: localizedTitle,
-                searchAlias: localizedTitle != englishTitle ? englishTitle : nil,
-                subtitle: nil,
+            items.append(row(
+                action.localizedTitle,
                 icon: action.iconName,
                 shortcutDisplay: shortcut?.displayString,
                 action: .shortcutAction(action),
-                isEnabled: enabled
+                isEnabled: enabled,
+                locale: dependencies.locale
             ))
         }
+    }
+
+    // MARK: - New agent tabs
+
+    /// One row per agent the pane strip's "+" offers, in the catalog's
+    /// order: the agents found on this Mac (`InstalledAgentRule`), so an
+    /// agent the "+" lists has its row and one it leaves out has none. Off
+    /// where "+" is: no session in the window, or its folder gone.
+    private static func appendNewAgentTabs(
+        to items: inout [CommandPaletteItem],
+        session: WorkspaceSession,
+        window: WindowID,
+        supervision: SupervisionPaletteFacts,
+        locale: Locale
+    ) {
+        let container = session.selection(window)?.activeContainerID
+        let isEnabled = !supervision.isChoosingProject && container.map { !session.isFolderMissing($0) } ?? false
+        let agents = InstalledAgentRule.shown(catalog: AgentCatalog.entries.map(\.kind), installed: supervision.installedAgents)
+        for agent in agents {
+            items.append(row(
+                "New \(AgentCatalog.entry(for: agent).displayName) Tab",
+                icon: "plus",
+                action: .newAgentTab(agent),
+                isEnabled: isEnabled,
+                locale: locale
+            ))
+        }
+    }
+
+    // MARK: - Window rows
+
+    /// Rows for what the window's controls do with no keyboard shortcut of
+    /// their own: Move Pane to New Tab, from the pane's ⋯ and its context
+    /// menu, and View ▸ Hide Icon Bars.
+    private static func appendWindowRows(
+        to items: inout [CommandPaletteItem],
+        session: WorkspaceSession,
+        window: WindowID,
+        supervision: SupervisionPaletteFacts,
+        locale: Locale
+    ) {
+        // A pane alone in its tab has nowhere to move from, and a pane
+        // command is off while the review hides the panes.
+        let canMovePane = session.activeTab(in: window)?.splitTree.isSplit == true && !supervision.arePanesHidden
+        items.append(row(
+            "Move Pane to New Tab",
+            icon: "rectangle.split.2x1",
+            action: .movePaneToNewTab,
+            isEnabled: canMovePane,
+            locale: locale
+        ))
+        items.append(row(
+            supervision.areRailsHidden ? "Show Icon Bars" : "Hide Icon Bars",
+            icon: "rectangle.lefthalf.inset.filled",
+            action: .toggleIconBars,
+            locale: locale
+        ))
+    }
+
+    /// A row titled `title` in `locale`, found by its English title too, and
+    /// named by its action's key (`CommandPaletteAction.frecencyKey`), which
+    /// `commands` and `command` list and run it by.
+    private static func row(
+        _ title: LocalizedStringResource,
+        category: CommandPaletteCategory = .actions,
+        subtitle: String? = nil,
+        icon: String,
+        shortcutDisplay: String? = nil,
+        action: CommandPaletteAction,
+        isEnabled: Bool = true,
+        locale: Locale
+    ) -> CommandPaletteItem {
+        let localizedTitle = title.resolved(in: locale)
+        let englishTitle = title.resolved(in: .english)
+        return CommandPaletteItem(
+            id: action.frecencyKey,
+            category: category,
+            title: localizedTitle,
+            searchAlias: localizedTitle != englishTitle ? englishTitle : nil,
+            subtitle: subtitle,
+            icon: icon,
+            shortcutDisplay: shortcutDisplay,
+            action: action,
+            isEnabled: isEnabled
+        )
     }
 
     // MARK: - Tabs
@@ -312,19 +395,21 @@ enum CommandPaletteCatalog {
     // MARK: - Settings
 
     private static func appendSettings(to items: inout [CommandPaletteItem], locale: Locale) {
-        let resource: LocalizedStringResource = "Open Settings"
-        let localizedTitle = resource.resolved(in: locale)
-        let englishTitle = resource.resolved(in: .english)
-        items.append(CommandPaletteItem(
-            id: "settings.open",
-            category: .settings,
-            title: localizedTitle,
-            searchAlias: localizedTitle != englishTitle ? englishTitle : nil,
-            subtitle: nil,
-            icon: "gear",
-            shortcutDisplay: nil,
-            action: .openSettings
-        ))
+        items.append(row("Open Settings", category: .settings, icon: "gear", action: .openSettings, locale: locale))
+    }
+
+    /// Settings opened on each of its sections, in the sidebar's order, as
+    /// the keyboard shortcut list's "Customize…" opens it on Keyboard.
+    private static func appendSettingsSections(to items: inout [CommandPaletteItem], locale: Locale) {
+        for section in SettingsSection.allCases {
+            items.append(row(
+                "Settings: \(section.title)",
+                category: .settings,
+                icon: section.icon,
+                action: .openSettingsSection(section),
+                locale: locale
+            ))
+        }
     }
 
     /// "Restore Code to Before This Turn…", with the turn it goes
@@ -332,18 +417,13 @@ enum CommandPaletteCatalog {
     /// (`SupervisionPaletteFacts.restoreTurnNumber`). Whether the restore
     /// can run now, the strip it opens says, as every entry's does.
     private static func appendRestore(to items: inout [CommandPaletteItem], facts: SupervisionPaletteFacts, locale: Locale) {
-        let localizedTitle = RestoreGate.entryTitle.resolved(in: locale)
-        let englishTitle = RestoreGate.entryTitle.resolved(in: .english)
-        items.append(CommandPaletteItem(
-            id: "restore.turn",
-            category: .actions,
-            title: localizedTitle,
-            searchAlias: localizedTitle != englishTitle ? englishTitle : nil,
+        items.append(row(
+            RestoreGate.entryTitle,
             subtitle: facts.restoreTurnNumber.map { "T\($0)" },
             icon: "arrow.uturn.backward",
-            shortcutDisplay: nil,
             action: .restoreTurn,
-            isEnabled: facts.restoreTurnNumber != nil
+            isEnabled: facts.restoreTurnNumber != nil,
+            locale: locale
         ))
     }
 
@@ -351,37 +431,20 @@ enum CommandPaletteCatalog {
     /// supervision window, where the project ▾ also has them. The detail
     /// names the project, since the palette's other settings are the app's.
     private static func appendProjectSettings(to items: inout [CommandPaletteItem], projectName: String, locale: Locale) {
-        let resource: LocalizedStringResource = "Project Settings…"
-        let localizedTitle = resource.resolved(in: locale)
-        let englishTitle = resource.resolved(in: .english)
-        items.append(CommandPaletteItem(
-            id: "settings.project",
+        items.append(row(
+            "Project Settings…",
             category: .settings,
-            title: localizedTitle,
-            searchAlias: localizedTitle != englishTitle ? englishTitle : nil,
             subtitle: projectName,
             icon: "gearshape",
-            shortcutDisplay: nil,
-            action: .openProjectSettings
+            action: .openProjectSettings,
+            locale: locale
         ))
     }
 
     /// Close Project…, beside the project ▾'s: it asks first, as
     /// that one does. The detail names the project it closes.
     private static func appendCloseProject(to items: inout [CommandPaletteItem], projectName: String, locale: Locale) {
-        let resource: LocalizedStringResource = "Close Project…"
-        let localizedTitle = resource.resolved(in: locale)
-        let englishTitle = resource.resolved(in: .english)
-        items.append(CommandPaletteItem(
-            id: "project.close",
-            category: .actions,
-            title: localizedTitle,
-            searchAlias: localizedTitle != englishTitle ? englishTitle : nil,
-            subtitle: projectName,
-            icon: "xmark",
-            shortcutDisplay: nil,
-            action: .closeProject
-        ))
+        items.append(row("Close Project…", subtitle: projectName, icon: "xmark", action: .closeProject, locale: locale))
     }
 
     // MARK: - Action availability

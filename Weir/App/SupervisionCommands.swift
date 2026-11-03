@@ -95,7 +95,9 @@ struct SupervisionCommands: Commands {
                 .weirShortcut(.planUsage, in: state.settingsStore)
                 .disabled(window == nil || window?.areRailsHidden == true)
                 Button(window?.areRailsHidden == true ? "Show Icon Bars" : "Hide Icon Bars") {
-                    window?.areRailsHidden.toggle()
+                    if let window {
+                        SupervisionWindowActions.toggleIconBars(in: window)
+                    }
                 }
                 .disabled(window == nil)
             }

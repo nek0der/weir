@@ -9,9 +9,13 @@ Use this when a change has to be seen in the app itself: what a pane shows,
 what an agent does with a prompt, whether a layer opens, how a setting looks.
 Unit tests come first; this is for what they cannot show.
 
-Do not use it for real key presses, input methods, or a menu opening on
-screen: no request from outside can do those (ADR 0005). Ask the person for
-full-screen control for those, or leave them to a manual check, and say which.
+A key a check is about (Esc, Return, Tab, the arrows, ⌘⏎ and the like)
+can be posted to the run behind the person's windows with `keys` (ADR 0006),
+as long as one of Weir's own controls holds the keyboard: a dropdown, a
+sheet's field, the restore strip. Input methods, a standard macOS menu
+opening on screen, and the active window's look still need full-screen
+control or a manual check: ask the person for the first, or say which you
+left to the second.
 
 When a check needs something no operation or palette row reaches, add an
 operation as ADR 0005's "Adding an operation" says, rather than reaching for
@@ -33,6 +37,19 @@ its own data. Several worktrees can each have one at once.
    With several runs live (other agents' worktrees), every later command
    needs `--run <short ID>`; without it the script refuses to guess.
 
+   The run's data starts empty, and Open Folder… asks through a panel no
+   request can answer, so hand it what the check needs at launch:
+
+   - `launch --project /path/to/repo` (repeat for more) opens each folder
+     as a project, in a window of its own; `state` names the window by its
+     `project`. A scratch repository under `build/` keeps the person's
+     repositories out of it.
+   - `launch --demo` shows the demo's made-up projects, worktrees, turns,
+     and review instead, with no agent running; `--layer approval-card`
+     (or `needs-attention`, `all-projects`, `review`, `approval-list`) opens
+     that layer at once, and `--appearance dark` / `--language ja` change the
+     look. Use it to look at a state an agent would take a while to reach.
+
 3. Find the pane: `scripts/weir-automation.py --run ID state`. A pane is
    named by a prefix of its `id`; `foregroundProcess` says what runs in it.
 4. Act, then wait for the outcome, then look:
@@ -50,8 +67,31 @@ its own data. Several worktrees can each have one at once.
    - Several lines go with `paste`, then `submit`.
    - A layer: `$A open needsAttention`, then `$A wait layerOpen --layer needsAttention`.
    - A menu item or shortcut: `$A commands` lists them with whether each can
-     run now; `$A command splitRight` runs one.
-   - A setting: `$A setting font.family '"Menlo"'` (the value is JSON).
+     run now; `$A command splitRight` runs one. `--new-window` commits a row
+     as ⌘Return does, which opens another project's row in a new window.
+   - Controls with no shortcut have palette rows too: `newTab.claude` (and
+     `.codex`, `.antigravity`, `.opencode`, for each agent the pane strip's
+     "+" offers on this Mac) adds a tab as "+" does, `settings.section.keyboard` (any `SettingsSection`) opens
+     Settings there, `pane.moveToNewTab` and `view.toggleIconBars`.
+   - What a check opened shows in `state`: each window's `dropdown` (the
+     title bar's and the strip's), `hasSheet`, `isSidebarShown`,
+     `areIconBarsHidden`, `isChangesPanelShown`, `review` with its scope,
+     and `settings` with the section while Settings is open. Capture
+     Settings with `$A capture /tmp/settings.png --settings`.
+   - A key: open the control first, then `$A keys down return` (names:
+     `escape`, `return`, `tab`, the arrows, `home`, `end`, with `cmd+`,
+     `shift+`, `option+`, `ctrl+` before one), then read the result with
+     `state` or `capture`. A key that arrives anywhere but a control of a
+     project window is dropped by the app, so a dropped key shows as no
+     change. The client posts nothing while a terminal pane holds the
+     keyboard (`keyboard` in `state`: Return there is `submit`, text is
+     `type-line`), while Settings is open, or while the run shows more than
+     one window, since the key could land in another. It needs this
+     terminal's Accessibility grant.
+   - A setting: `$A setting font.family '"Menlo"'` (the value is JSON). It is
+     refused where the Settings control would refuse or ask first: a
+     binding another action holds, a quick terminal hotkey the recorder
+     refuses, or a narrower turn retention, which deletes records.
 
 5. Quit: `$A quit` (`--force` when agents still run in it).
 
@@ -70,8 +110,21 @@ and the reason is what to act on.
   arrive while the shell is between prompts and show its brackets as text.
 - Keys sent from outside the channel go to the pane with the keyboard: give
   it with `$A focus PANE` first.
+- What a Copy put on the clipboard can be read with `pbpaste`; the
+  clipboard is the person's, so put back what was there.
 - An agent's first start in a folder may ask whether to trust it. Do not
   answer yes on the person's behalf: it writes to their agent's settings. Ask.
+- tmux needs no full-screen control. Start it with the channel, on a server
+  and session of the run's own so the person's sessions are never touched:
+  `$A type-line PANE "tmux -L weir-check new -s check" --expect zsh`.
+  Inside it the channel refuses to type (`isInTmux` in `state`), since the
+  process in front is tmux; send with tmux itself instead,
+  `tmux -L weir-check send-keys -t check 'echo hi' Enter`, then `capture`.
+  End it with `tmux -L weir-check kill-server`.
+- A sheet or an alert a row opened (`hasSheet` in `state`: New Worktree…,
+  Project Settings…, Close Project…) cannot be answered or closed through
+  the channel yet, and it covers the window until the run quits. Open one
+  only when the check is about it, and last.
 - A paste into a program without bracketed paste raises the paste
   confirmation (`notObservable`), which only the person can answer; `quit`
   clears it by refusing the paste.

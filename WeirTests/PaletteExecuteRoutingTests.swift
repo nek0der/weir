@@ -99,6 +99,30 @@ struct PaletteExecuteRoutingTests {
         #expect(commands.commands(in: session.primaryWindowID).isEmpty)
     }
 
+    @Test func anAgentRow_addsATabRunningTheAgent_inTheWindowsSession() throws {
+        let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
+
+        try CommandPaletteActions.runRowForTest(.newAgentTab(.codex), session: session, window: session.primaryWindowID)
+
+        let added = try #require(session.tabs.first { $0.id != tab.id })
+        #expect(added.container == .loose)
+        #expect(session.primarySelection.activeTabID == added.id)
+        #expect(added.initialCommands.values.first == AgentKind.codex.launchCommand)
+    }
+
+    @Test func moveToNewTab_movesTheFocusedPane_andSelectsItsTab() throws {
+        let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
+        PaneActions.split(session, direction: .horizontal, in: session.primaryWindowID)
+        let focused = try #require(session.tab(tab.id)?.splitTree.effectiveFocusedLeafID)
+
+        try CommandPaletteActions.runRowForTest(.movePaneToNewTab, session: session, window: session.primaryWindowID)
+
+        let added = try #require(session.tabs.first { $0.id != tab.id })
+        #expect(added.splitTree.allLeafIDs() == [focused])
+        #expect(session.tab(tab.id)?.splitTree.allLeafIDs().contains(focused) == false)
+        #expect(session.primarySelection.activeTabID == added.id)
+    }
+
     @Test func aRowTheWindowRunsItself_isNotDispatchedAgain() throws {
         let (session, tabA, _, _, _) = WorkspaceSessionFixture.withTwoLooseTabs()
         var ranInWindow: [WeirShortcutAction] = []

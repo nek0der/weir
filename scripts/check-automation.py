@@ -7,12 +7,13 @@ Usage: scripts/check-automation.py [--keys] [--agents [NAMES]] [--only SECTIONS]
 with its own data, runs the sections below in order, quits it, and exits 0
 only when every check passed. It never touches the person's Weir Dev session.
 
-  (always)   connection and authentication, state, layers, commands, settings,
-             typing, the channel's own unsent text, paste, waiting,
+  (always)   connection and authentication, state, layers, commands, the
+             palette rows the channel leans on, settings, typing, the channel's own unsent text, paste, waiting,
              disconnects, the command line, tmux (when installed), quitting
-  --keys     the person's unsent text (keys sent from outside, which needs the
-             Accessibility grant for this terminal) and captures (which need
-             Screen Recording)
+  --keys     the person's unsent text and the client's posted keys (keys sent
+             from outside, which need the Accessibility grant for this
+             terminal), and captures of the window and of Settings (which
+             need Screen Recording)
   --agents   Claude Code, Codex, OpenCode, and Antigravity, each started in a
              pane of its own, prompted, waited on, and quit; each costs a
              little model use. `--agents claude,codex` checks only those, for
@@ -55,29 +56,12 @@ ChannelError = client.ChannelError
 # Keys from outside, as a person typing would send them: posted to the app's
 # process, so they reach whichever pane has the keyboard. Written to a file at
 # run time and run with `swift`, because a check script cannot post events.
-POST_KEYS_SWIFT = r"""
-import AppKit
-import CoreGraphics
-let args = CommandLine.arguments
-guard args.count == 3, let pid = Int32(args[1]) else { exit(1) }
-guard AXIsProcessTrusted() else { print("not trusted"); exit(2) }
-let source = CGEventSource(stateID: .hidSystemState)
-let codes: [Character: CGKeyCode] = [
+# The key codes `post_keys` types the person's letters with, on a US layout.
+PERSON_KEY_CODES = {
     "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12,
     "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38,
     "k": 40, "n": 45, "m": 46, " ": 49, "\n": 36,
-]
-for ch in args[2] {
-    guard let code = codes[ch] else { continue }
-    for down in [true, false] {
-        guard let event = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: down) else { continue }
-        var unit = Array(String(ch).utf16)
-        event.keyboardSetUnicodeString(stringLength: unit.count, unicodeString: &unit)
-        event.postToPid(pid)
-        usleep(20_000)
-    }
 }
-"""
 
 
 class Checks:
@@ -156,12 +140,11 @@ class Run:
         return path
 
     def post_keys(self, text):
-        source = os.path.join(self.scratch, "post-keys.swift")
-        with open(source, "w") as f:
-            f.write(POST_KEYS_SWIFT)
-        done = subprocess.run(["swift", source, str(self.info["pid"]), text], capture_output=True, text=True, timeout=120)
-        if done.returncode != 0:
-            raise ChannelError("could not post keys (Accessibility grant for this terminal?): " + done.stdout + done.stderr)
+        """Types `text` as the person would, with unmarked keys the app takes
+        for theirs, unlike the client's `keys`, which it drops at a pane."""
+        for character in text:
+            if character in PERSON_KEY_CODES:
+                client.post_key(self.info["pid"], PERSON_KEY_CODES[character], marked=False, text=character)
 
     def capture(self, path):
         reply = self.call({"op": "capture"})
@@ -332,6 +315,53 @@ def commands(run, checks):
     checks.refused("a command without a name is refused", run.call({"op": "command"}), "name")
 
 
+# The rows the palette offers for controls with no keyboard shortcut, which
+# the channel reaches through `command` (ADR 0005, "Adding an operation").
+AGENT_ROWS = ["newTab.claude", "newTab.codex", "newTab.antigravity", "newTab.opencode"]
+SETTINGS_SECTIONS = ["general", "appearance", "font", "terminal", "tabsAndPanes", "quickTerminal",
+                     "keyboard", "integrations", "review", "advanced"]
+
+
+def palette_rows(run, checks):
+    checks.section("palette rows")
+    rows = {row["id"]: row for row in run.call({"op": "commands"})["commands"]}
+    # Listed and on, but not run: each would start a coding agent in a pane.
+    # Only the agents this Mac has are offered, once they were looked for.
+    agent_rows = [name for name in rows if name.startswith("newTab.")]
+    checks.check("a row adds a tab running an agent the strip's + offers, and only those",
+                 agent_rows and set(agent_rows) <= set(AGENT_ROWS) and all(rows[name]["isEnabled"] for name in agent_rows), agent_rows)
+    checks.check("a row opens Settings on each section",
+                 all(f"settings.section.{name}" in rows for name in SETTINGS_SECTIONS), sorted(i for i in rows if i.startswith("settings.")))
+    checks.check("moving a pane to a new tab is off with one pane", rows["pane.moveToNewTab"]["isEnabled"] is False, rows["pane.moveToNewTab"])
+
+    def window():
+        return run.call({"op": "state"})["state"]["windows"][0]
+
+    hidden = run.call({"op": "command", "name": "view.toggleIconBars"})
+    checks.check("Hide Icon Bars hides them, as state says", hidden["status"] == "done" and run.until(lambda: window()["areIconBarsHidden"], 5), hidden)
+    shown = run.call({"op": "command", "name": "view.toggleIconBars"})
+    checks.check("running it again shows them", shown["status"] == "done" and run.until(lambda: not window()["areIconBarsHidden"], 5), shown)
+
+    run.call({"op": "command", "name": "splitDown"})
+    run.until(lambda: len(run.panes()) == 2, 5)
+    moved = run.call({"op": "command", "name": "pane.moveToNewTab"})
+    checks.check("Move Pane to New Tab makes a tab of the focused pane",
+                 moved["status"] == "done" and run.until(lambda: len(window()["tabs"]) == 2 and len(run.panes()) == 1, 5), moved)
+    run.call({"op": "command", "name": "closeTab"})
+    checks.check("the moved pane's tab closes again for the next check", run.until(lambda: len(window()["tabs"]) == 1, 5), window()["tabs"])
+
+    checks.check("state names no dropdown while none is open", window().get("dropdown") is None, window().get("dropdown"))
+    run.call({"op": "command", "name": "showOpenTabs"})
+    checks.check("state names the dropdown a command opened", run.until(lambda: window().get("dropdown") == "openTabs", 5), window().get("dropdown"))
+    run.call({"op": "command", "name": "showOpenTabs"})
+    checks.check("the dropdown closes again", run.until(lambda: window().get("dropdown") is None, 5), window().get("dropdown"))
+
+    for name in ["keyboard", "general"]:
+        opened = run.call({"op": "command", "name": f"settings.section.{name}"})
+        seen = run.until(lambda: (run.call({"op": "state"})["state"].get("settings") or {}).get("section") == name, 5)
+        checks.check(f"the {name} row opens Settings on {name}, as state says", opened["status"] == "done" and seen, opened)
+
+
 def settings(run, checks):
     checks.section("settings")
     cases = [
@@ -354,6 +384,13 @@ def settings(run, checks):
                          ("font..size", "named like"), ("", "named like")]:
             checks.refused(f"the key {key!r} is refused", run.call({"op": "setting", "key": key, "value": 1}), why)
         checks.refused("schemaVersion is refused", run.call({"op": "setting", "key": "schemaVersion", "value": 9}), "schemaVersion")
+        days = run.call({"op": "setting", "key": "advanced.turnRetention.days"})["value"]
+        checks.refused("a narrower turn retention is refused, since Settings asks before it deletes records",
+                       run.call({"op": "setting", "key": "advanced.turnRetention.days", "value": days - 1}), "retention")
+        # ⌘T is New Tab's. Modifiers are written as their raw value: 1 is ⌘.
+        checks.refused("a binding another action holds is refused, as the Keyboard pane refuses it",
+                       run.call({"op": "setting", "key": "keyboard.overrides.splitRight", "value": {"key": "t", "modifiers": 1}}),
+                       "Keyboard pane")
         saved = os.path.join(run.info["home"], "Library", "Application Support", "Weir Dev", "settings.json")
         checks.check("settings.json holds the change", run.until(lambda: _font_family(saved) == "Menlo", 5), saved)
         cleared = run.call({"op": "setting", "key": "font.family", "unset": True})
@@ -456,6 +493,57 @@ def person_drafts(run, checks):
     run.until(lambda: not run.pane(ref)["hasUnsubmittedInput"], 3)
 
 
+def posted_keys(run, checks):
+    checks.section("posted keys (--keys)")
+
+    def window():
+        return run.call({"op": "state"})["state"]["windows"][0]
+
+    def post(*names):
+        return client.post_keys(run.info, run.channel, list(names))
+
+    checks.check("a fresh run's keyboard is on its pane", (window().get("keyboard") or {}).get("kind") == "pane", window().get("keyboard"))
+    checks.refused("a key is not posted while a pane holds the keyboard", post("return"), "terminal pane")
+    # Past the client's check, as a key would arrive after the keyboard moved
+    # back to the pane: the app itself drops it (`AutomationPostedKeys`).
+    ref = run.panes()[0]["ref"]
+    run.call({"op": "focus", "pane": ref})
+    marker = run.marker("posted-return")
+    run.type("typeLine", ref, f"touch {marker}", submit=False)
+    client.post_key(run.info["pid"], client.KEY_CODES["return"])
+    time.sleep(1)
+    checks.check("the app drops a posted Return bound for a pane, past the client's check", not os.path.exists(marker))
+    run.type("submit", ref)
+    checks.check("the line it was dropped on is intact, and the channel's own submit runs it", run.until(lambda: os.path.exists(marker), 5))
+    run.call({"op": "command", "name": "newTab"})
+    run.until(lambda: len(window()["tabs"]) == 2, 5)
+    first = window()["tabs"][0]["id"]
+    run.call({"op": "command", "name": "showOpenTabs"})
+    run.until(lambda: window().get("dropdown") == "openTabs", 5)
+    checks.check("Open Tabs takes the keyboard as it opens",
+                 run.until(lambda: (window().get("keyboard") or {}).get("kind") == "control", 5), window().get("keyboard"))
+    posted = post("up", "return")
+    chosen = run.until(lambda: next(t for t in window()["tabs"] if t["isSelected"])["id"] == first and window().get("dropdown") is None, 5)
+    checks.check("↑ and Return posted to Open Tabs choose the tab above and close it", posted["status"] == "done" and chosen, (posted, window()))
+    run.call({"op": "command", "name": "showOpenTabs"})
+    run.until(lambda: (window().get("keyboard") or {}).get("kind") == "control", 5)
+    posted = post("escape")
+    checks.check("Escape posted to Open Tabs closes it", posted["status"] == "done" and run.until(lambda: window().get("dropdown") is None, 5), posted)
+    checks.check("a key name that is not one is refused before anything is posted",
+                 _raises(lambda: post("a")), "posted a letter")
+    run.call({"op": "command", "name": f"tab.{window()['tabs'][1]['id']}"})
+    run.call({"op": "command", "name": "closeTab"})
+    checks.check("the added tab closes again for the next check", run.until(lambda: len(window()["tabs"]) == 1, 5), window()["tabs"])
+
+
+def _raises(action):
+    try:
+        action()
+    except ChannelError:
+        return True
+    return False
+
+
 def captures(run, checks):
     checks.section("captures (--keys)")
     windows = run.call({"op": "state"})["state"]["windows"]
@@ -474,6 +562,15 @@ def captures(run, checks):
     with open(before, "rb") as a, open(after, "rb") as b:
         checks.check("the window's pixels changed after typing behind other windows", a.read() != b.read())
     checks.refused("a window that does not exist is refused", run.call({"op": "capture", "window": "00000000-0000-0000-0000-000000000000"}), "window")
+    closed = run.call({"op": "capture", "settings": True})
+    checks.check("a capture of Settings while it is closed is not observable", closed["status"] == "notObservable", closed)
+    run.call({"op": "command", "name": "settings.section.font"})
+    run.until(lambda: run.call({"op": "state"})["state"].get("settings"), 5)
+    settings_path = os.path.join(run.scratch, "settings.png")
+    reply = run.call({"op": "capture", "settings": True})
+    if reply["status"] == "done":
+        subprocess.run(["screencapture", "-x", "-o", f"-l{reply['windowNumber']}", settings_path], timeout=30, check=True)
+    checks.check("a capture of Settings is written", reply["status"] == "done" and os.path.getsize(settings_path) > 10000, reply)
 
 
 def waiting(run, checks):
@@ -732,8 +829,8 @@ def main():
             # section has split and closed panes, a pane given the keyboard
             # has been seen to lose it again (not solved yet,
             # docs/verification-channel.md).
-            sections += [person_drafts, captures]
-        sections += [layers, commands, settings, typing, channel_drafts, paste, waiting, disconnects, command_line, tmux]
+            sections += [person_drafts, posted_keys, captures]
+        sections += [layers, commands, palette_rows, settings, typing, channel_drafts, paste, waiting, disconnects, command_line, tmux]
         if args.agents:
             sections += [agents]
         # Last: it leaves the paste confirmation up, which only quitting clears.

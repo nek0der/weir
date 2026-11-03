@@ -20,7 +20,9 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         open(.general)
     }
 
-    private static func open(_ section: Self) {
+    /// Opens Settings on `section`: the palette's Settings rows, and the
+    /// two above.
+    static func open(_ section: Self) {
         UserDefaults.standard.set(section.rawValue, forKey: lastSectionDefaultsKey)
         NotificationCenter.default.post(name: .weirOpenSettings, object: nil)
     }

@@ -14722,6 +14722,40 @@
         }
       }
     },
+    "New %@ Tab": {
+      "comment": "Command palette row: a tab running the agent, as the pane strip’s + adds one; argument: the agent’s product name",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New %@ Tab"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新規 %@ タブ"
+          }
+        }
+      }
+    },
+    "Settings: %@": {
+      "comment": "Command palette row: Settings opened on one of its sections; argument: the section’s name",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Settings: %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定：%@"
+          }
+        }
+      }
+    },
     "Add Tab to %@": {
       "comment": "The pane strip’s + hover chip and its menu heading; argument: the branch or folder the tab opens in",
       "localizations": {

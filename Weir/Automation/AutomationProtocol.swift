@@ -53,6 +53,16 @@
         case review
     }
 
+    /// What holds a window's keyboard, as `state` reports it.
+    enum AutomationKeyboardHolder: String, Codable, Sendable {
+        /// A terminal pane, where Return runs code: keys go there through
+        /// `typeLine`, `paste`, and `submit`, never posted (ADR 0006).
+        case pane
+        /// One of Weir's own controls: a dropdown, a sheet's field, the
+        /// restore strip, a search field.
+        case control
+    }
+
     /// What `wait` waits for.
     enum AutomationOutcome: String, Codable, Sendable {
         /// The layer named by `layer` is open in `window`.
@@ -113,6 +123,11 @@
         /// `setting`: clear the setting back to unset (`value` cannot say
         /// that: JSON null and a missing value decode alike).
         var unset: Bool?
+        /// `command`: run the row as ⌘Return commits it, which opens another
+        /// project's row in a new window (`CommandPaletteExecution.opensInNewWindow`).
+        var newWindow: Bool?
+        /// `capture`: the Settings window rather than a project window.
+        var settings: Bool?
     }
 
     struct AutomationReply: Codable, Sendable {
@@ -162,7 +177,48 @@
             let isKey: Bool
             let isOnScreen: Bool
             let openLayers: [AutomationLayer]
+            /// The title bar's or the pane strip's dropdown open in the
+            /// window (`TitleBarMenuRequest.Menu`): `project`, `worktree`,
+            /// `needsAttention`, `addTab`, or `openTabs`.
+            let dropdown: String?
+            /// Whether a sheet or an alert is attached to the window, as
+            /// AppKit reports it: the new worktree sheet, project settings,
+            /// the clipboard confirmation, or a confirmation. The channel
+            /// cannot answer one, so a check that opened one says so.
+            let hasSheet: Bool
+            let isSidebarShown: Bool
+            let areIconBarsHidden: Bool
+            let isChangesPanelShown: Bool
+            /// The window's review tab, shown or behind.
+            let review: Review?
+            /// What holds the window's keyboard, where a key posted to the
+            /// run from outside lands (ADR 0006); left out when nothing does.
+            let keyboard: Keyboard?
             let tabs: [Tab]
+        }
+
+        struct Keyboard: Codable, Equatable, Sendable {
+            let kind: AutomationKeyboardHolder
+            /// The pane, when `kind` is `pane`.
+            let pane: UUID?
+            /// The responder's type, to tell one control from another.
+            let view: String
+        }
+
+        struct Review: Codable, Equatable, Sendable {
+            /// The agent pane it reviews.
+            let pane: UUID?
+            /// What it compares (`ReviewScopeOption`): `unviewedTurns`,
+            /// `worktreeUnviewedTurns`, `turn`, `incompleteTurn`,
+            /// `uncommitted`, or `branch`.
+            let scope: String
+            let isShown: Bool
+        }
+
+        /// The Settings window, while it is open.
+        struct Settings: Codable, Equatable, Sendable {
+            /// The section it shows (`SettingsSection`).
+            let section: String
         }
 
         struct Tab: Codable, Equatable, Sendable {
@@ -198,6 +254,7 @@
         let run: String
         let projects: [Project]
         let windows: [Window]
+        let settings: Settings?
     }
 
 #endif

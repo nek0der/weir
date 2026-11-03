@@ -37,7 +37,17 @@
 
         /// `settings` with `value` at `key`, normalized as the settings store
         /// normalizes it, so what is returned is what the store would keep.
-        static func setting(_ value: WeirJSONValue, at key: String, in settings: WeirSettings) throws -> WeirSettings {
+        /// The checks the Settings window's own controls make before they
+        /// write run here too (`refusal(of:from:isTakenBySystem:)`), so a
+        /// value its control would refuse or ask about is refused.
+        /// `isTakenBySystem` answers as the quick terminal's recorder asks
+        /// (`QuickTerminalHotKeyCenter.isTakenBySystem`).
+        static func setting(
+            _ value: WeirJSONValue,
+            at key: String,
+            in settings: WeirSettings,
+            isTakenBySystem: (StoredShortcut) -> Bool = { _ in false }
+        ) throws -> WeirSettings {
             let path = try components(of: key)
             guard path.first != "schemaVersion" else {
                 throw Failure(message: "schemaVersion is the file's, not a setting")
@@ -66,7 +76,59 @@
             guard contains(kept, value) else {
                 throw Failure(message: "\(key) is not a setting this build knows, or the app changed the value to \(kept)")
             }
+            if let refusal = refusal(of: changed, from: settings, isTakenBySystem: isTakenBySystem) {
+                throw Failure(message: refusal)
+            }
+            // The External Diff Tool field makes smart quotes plain as it
+            // takes its text, so a command a person typed runs. Only a change
+            // to that field does it, as only typing there does in the app.
+            if ["review", "review.externalDiffCommand"].contains(key) {
+                changed.review.externalDiffCommand = CommandLineText.sanitizeSmartPunctuation(changed.review.externalDiffCommand)
+            }
             return changed
+        }
+
+        /// Why the Settings window would not take `changed` as it stands, or
+        /// `nil` when it would. These are the checks its controls make in the
+        /// view, which the store does not repeat. Each is asked of `settings`,
+        /// the bindings before the change, as the recorders ask: normalizing
+        /// `changed` has already given up a default the new binding takes,
+        /// so a conflict would no longer show there.
+        /// - Keep Turns For and Turns per Conversation ask before a narrower
+        ///   limit deletes records (`AdvancedPane`). The channel cannot answer
+        ///   that question, so it does not narrow them at all.
+        /// - The Keyboard pane's recorder refuses a binding another action
+        ///   holds or Weir reserves (`KeyboardSettings.validate`).
+        /// - The quick terminal's recorder refuses a hotkey without ⌘ or ⌃,
+        ///   one Weir reserves, one macOS uses, or one a menu item holds
+        ///   (`QuickTerminalSettings.validateHotKey`).
+        static func refusal(
+            of changed: WeirSettings,
+            from settings: WeirSettings,
+            isTakenBySystem: (StoredShortcut) -> Bool
+        ) -> String? {
+            let retention = (old: settings.advanced.turnRetention, new: changed.advanced.turnRetention)
+            if retention.new.days < retention.old.days || retention.new.turns < retention.old.turns {
+                return "a narrower turn retention deletes records, which Settings asks about first; set it there"
+            }
+            for (name, keys) in changed.keyboard.overrides where settings.keyboard.overrides[name] != keys {
+                guard let action = WeirShortcutAction(rawValue: name) else { continue }
+                let validation = settings.keyboard.validate(keys, for: action, quickTerminalHotKey: settings.quickTerminal.hotKey)
+                guard validation == .ok else {
+                    return "keyboard.overrides.\(name) is refused as the Keyboard pane refuses it: \(validation)"
+                }
+            }
+            if let hotKey = changed.quickTerminal.hotKey, hotKey != settings.quickTerminal.hotKey {
+                let validation = settings.quickTerminal.validateHotKey(
+                    hotKey,
+                    keyboard: settings.keyboard,
+                    isTakenBySystem: isTakenBySystem
+                )
+                guard validation == .ok else {
+                    return "quickTerminal.hotKey is refused as the Quick Terminal pane refuses it: \(validation)"
+                }
+            }
+            return nil
         }
 
         /// Whether the app knows `path`, judged by what its own decoding does

@@ -270,7 +270,8 @@
         }
 
         @Test func aKeyboardOverride_isSetAndAnUnknownKeyInsideItRefused() throws {
-            let shortcut = StoredShortcut(key: "d", modifiers: [.command, .shift])
+            // Keys no action holds by default, which the Keyboard pane takes.
+            let shortcut = StoredShortcut(key: "d", modifiers: [.command, .control, .option])
             let value = try JSONDecoder().decode(WeirJSONValue.self, from: JSONEncoder().encode(shortcut))
             let changed = try AutomationSettings.setting(value, at: "keyboard.overrides.splitRight", in: WeirSettings())
             #expect(changed.keyboard.overrides["splitRight"] == shortcut)
@@ -285,6 +286,60 @@
             #expect(throws: AutomationSettings.Failure.self) {
                 try AutomationSettings.setting(.object(fields), at: "keyboard.overrides.splitRight", in: WeirSettings())
             }
+        }
+
+        @Test func aBindingAnotherActionHolds_isRefusedAsTheKeyboardPaneRefusesIt() throws {
+            // ⌘T is New Tab's.
+            let value = try JSONDecoder().decode(
+                WeirJSONValue.self,
+                from: JSONEncoder().encode(StoredShortcut(key: "t", modifiers: [.command]))
+            )
+            #expect(throws: AutomationSettings.Failure.self) {
+                try AutomationSettings.setting(value, at: "keyboard.overrides.splitRight", in: WeirSettings())
+            }
+        }
+
+        @Test func aQuickTerminalHotKeyWithoutCommandOrControl_isRefused() throws {
+            let value = try JSONDecoder().decode(
+                WeirJSONValue.self,
+                from: JSONEncoder().encode(StoredShortcut(key: "k", modifiers: [.option]))
+            )
+            #expect(throws: AutomationSettings.Failure.self) {
+                try AutomationSettings.setting(value, at: "quickTerminal.hotKey", in: WeirSettings())
+            }
+            let taken = try JSONDecoder().decode(
+                WeirJSONValue.self,
+                from: JSONEncoder().encode(StoredShortcut(key: "k", modifiers: [.command, .control]))
+            )
+            #expect(throws: AutomationSettings.Failure.self) {
+                try AutomationSettings.setting(taken, at: "quickTerminal.hotKey", in: WeirSettings()) { _ in true }
+            }
+        }
+
+        @Test func aNarrowerTurnRetention_isRefused_andAWiderOneTaken() throws {
+            let settings = WeirSettings()
+            let days = settings.advanced.turnRetention.days
+            #expect(throws: AutomationSettings.Failure.self) {
+                try AutomationSettings.setting(.int(days - 1), at: "advanced.turnRetention.days", in: settings)
+            }
+            let wider = try AutomationSettings.setting(.int(days + 1), at: "advanced.turnRetention.days", in: settings)
+            #expect(wider.advanced.turnRetention.days == days + 1)
+        }
+
+        @Test func anExternalDiffCommand_isKeptWithItsSmartQuotesMadePlain() throws {
+            let changed = try AutomationSettings.setting(
+                .string("difft \u{201C}a b\u{201D}"),
+                at: "review.externalDiffCommand",
+                in: WeirSettings()
+            )
+            #expect(changed.review.externalDiffCommand == "difft \"a b\"")
+        }
+
+        @Test func anotherSetting_leavesTheExternalDiffCommandAsTheFileHasIt() throws {
+            var settings = WeirSettings()
+            settings.review.externalDiffCommand = "difft \u{201C}a\u{201D}"
+            let changed = try AutomationSettings.setting(.int(14), at: "font.size", in: settings)
+            #expect(changed.review.externalDiffCommand == "difft \u{201C}a\u{201D}")
         }
 
         @Test func aChoiceThatFallsBackToItsDefault_isReadAndSet() throws {

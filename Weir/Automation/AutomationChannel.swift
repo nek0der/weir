@@ -19,6 +19,9 @@
         private let server: AutomationServer
         let controller: AutomationController
         private var terminateObserver: (any NSObjectProtocol)?
+        /// The monitor that drops a posted key bound for the wrong place
+        /// (`AutomationPostedKeys.installGate`).
+        private var postedKeyGate: Any?
 
         private init(folder: AutomationRunFolder, server: AutomationServer, controller: AutomationController) {
             self.folder = folder
@@ -54,6 +57,11 @@
                     queue: .main
                 ) { [weak channel] _ in
                     MainActor.assumeIsolated { channel?.stop() }
+                }
+                let registry = state.windowRegistry
+                channel.postedKeyGate = AutomationPostedKeys.installGate { window in
+                    let presenter = registry.presenter as? ProjectWindowPresenter
+                    return registry.windows.contains { presenter?.nsWindow(for: $0.id) === window }
                 }
                 state.windowRegistry.keepsOffScreenPanesDrawing = true
                 SurfaceRegistry.keepsDrawingOffScreen = true
@@ -108,6 +116,10 @@
             if let terminateObserver {
                 NotificationCenter.default.removeObserver(terminateObserver)
                 self.terminateObserver = nil
+            }
+            if let postedKeyGate {
+                NSEvent.removeMonitor(postedKeyGate)
+                self.postedKeyGate = nil
             }
         }
     }

@@ -40,6 +40,10 @@ struct SupervisionPaletteFacts: Equatable {
     var areRailsHidden = false
     /// Whether the title bar shows the worktree ▾ (`CheckoutName.hasWorktreeMenu`).
     var hasWorktreeMenu = false
+    /// The agents found on this Mac for the window's session, which the
+    /// pane strip's "+" offers (`InstalledAgentsStore`); `nil` until they were
+    /// looked for once, when every agent is offered (`InstalledAgentRule`).
+    var installedAgents: [AgentKind]?
 
     /// Whether ⇧⌘[ ⇧⌘] have a tab to step to among `tabCount` terminal
     /// tabs: another one, or the window's review tab (`facts`). The menu
