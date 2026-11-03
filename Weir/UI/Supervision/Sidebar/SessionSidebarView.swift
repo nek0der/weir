@@ -313,7 +313,8 @@ struct SessionSidebarView: View {
             isKeyboardSelected: isFocused && keyboardLine == .row(row.id),
             now: now,
             actions: rowActions,
-            onAnswer: answerAction(row, others: others),
+            onAnswer: answerAction(row),
+            isCardSource: row.answerKey.map { window.approvalCard.isPresenting($0, in: approvals) } ?? false,
             // Another project's row switches the window to it in place, or
             // brings forward the window that shows it. With ⌘, a row of a
             // project no window shows opens in a new window, as its menu's
@@ -627,15 +628,15 @@ struct SessionSidebarView: View {
         KeyboardHandoff.returnToTerminal(paneID: paneID, registry: registry, keeper: .terminalOrTextField, timing: .nextTurn)
     }
 
-    /// Answer…: in this window's card, or, on a row of a project another
-    /// window shows, in that window's, which comes forward.
-    private func answerAction(_ row: SessionSidebarModel.Row, others: [UUID: WindowID]) -> (() -> Void)? {
+    /// Answer…: this window's card, beside the row, as Needs Attention and
+    /// All Projects open it beside theirs; also on a row of a project
+    /// another window shows, which the sidebar lists here too. It stays
+    /// while the card is up for it, and the row is lit instead
+    /// (`isCardSource`).
+    private func answerAction(_ row: SessionSidebarModel.Row) -> (() -> Void)? {
         guard let key = row.answerKey, let request = approvals.ledger.entries[key]?.presentation else { return nil }
-        let other = row.id.projectID.flatMap { otherWindow(showing: $0, in: others) }
-        // Hidden while the card is already up for it.
-        guard !(other ?? window).approvalCard.isPresenting(key, in: approvals) else { return nil }
-        return { [windowActions] in
-            windowActions?.answer(request, row.id.projectID)
+        return { [window, approvals] in
+            window.approvalCard.present(request, from: approvals)
         }
     }
 

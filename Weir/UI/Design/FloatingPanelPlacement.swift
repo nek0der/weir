@@ -244,6 +244,34 @@ enum FloatingPanelPlacement {
         max(minimumScrollingHeight, containerMaxY - anchor.maxY - gap - margin)
     }
 
+    /// A panel standing on `bar`, `gap` above it, its trailing edge level
+    /// with the bar's, which is the pane's: the approval card opened from a
+    /// pane's decision bar, whose Answer… is at the bar's trailing end. Not
+    /// pulled inside the window's margin on that side, as `clampX` would: a
+    /// pane at the window's trailing side ends nearer the window's edge than
+    /// the margin, and the panel's edge would then stand off the pane's.
+    /// Only a bar narrower than the panel pushes it past the bar's leading
+    /// edge, as far as the window's margin. Its bottom stays put as it
+    /// grows, and it rises no higher than `top`, the columns' top.
+    static func onBar(
+        _ bar: CGRect,
+        panelSize: CGSize,
+        gap: CGFloat,
+        top: CGFloat
+    ) -> CGPoint {
+        CGPoint(
+            x: max(margin, bar.maxX - panelSize.width),
+            y: max(top, bar.minY - gap - panelSize.height)
+        )
+    }
+
+    /// The tallest a panel standing on `bar` may be and still leave the bar
+    /// in sight below it, with the columns' `top` above it; never below
+    /// `minimumScrollingHeight`.
+    static func roomAbove(bar: CGRect, top: CGFloat, gap: CGFloat) -> CGFloat {
+        max(minimumScrollingHeight, bar.minY - gap - top)
+    }
+
     /// The surface a panel stands on (`beside`): its leading edge, and the
     /// top and bottom of the window's columns, in the anchor's coordinates.
     struct Surface: Equatable {

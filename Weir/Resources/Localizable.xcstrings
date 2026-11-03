@@ -15146,23 +15146,6 @@
         }
       }
     },
-    "Answer on the approval card": {
-      "comment": "Decision bar: Weir still holds the request, so the card answers it",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Answer on the approval card"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "承認カードで回答してください"
-          }
-        }
-      }
-    },
     "Close Window": {
       "comment": "Menu, palette, keyboard settings: hides the window; its sessions keep running",
       "localizations": {
@@ -23904,6 +23887,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Git でワークツリーの一覧を取得できませんでした。"
+          }
+        }
+      }
+    },
+    "Answer in the terminal or on the card": {
+      "comment": "Decision bar: Weir holds the request, and the agent's own prompt in the pane answers it too",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Answer in the terminal or on the card"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ターミナルかカードで回答"
+          }
+        }
+      }
+    },
+    "Answer on the card": {
+      "comment": "Decision bar: Weir holds the request, and the agent shows no prompt of its own meanwhile",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Answer on the card"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "カードで回答"
           }
         }
       }

@@ -25,4 +25,6 @@ enum ProviderCapabilityName {
     static let approvalHookRecordsLifecycle = "approval_hook_records_lifecycle"
     /// A SIGTERM to the helper withdraws the request.
     static let approvalWithdrawnBySignal = "approval_withdrawn_by_signal"
+    /// The agent's own prompt answers a request Weir holds, beside the card.
+    static let approvalPromptBesideCard = "approval_prompt_beside_card"
 }

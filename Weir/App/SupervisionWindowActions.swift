@@ -179,30 +179,11 @@ enum SupervisionWindowActions {
         newSession(in: window, session: session, projectID: projectID)
     }
 
-    /// Answer… on a row of a project another window shows: that window
-    /// comes forward and opens its own card on the request, as the
-    /// person goes on there. Any other row's opens this window's card.
     /// Goes to the scratch tabs, closing every layer over the window: one left
     /// open would hide the move, and the key would seem to do nothing.
     static func showScratch(in window: ProjectWindowState, session: WorkspaceSession) {
         window.closeLayers(Set(WindowLayer.allCases), session: session)
         session.setActiveContainer(.loose, in: window.id, intent: .person)
-    }
-
-    static func answer( // swiftlint:disable:this function_parameter_count
-        _ request: ApprovalPresentation,
-        inProject projectID: UUID?,
-        from window: ProjectWindowState,
-        approvals: ApprovalPresentationStore,
-        session: WorkspaceSession,
-        registry: WindowRegistry
-    ) {
-        if let projectID, let other = registry.window(showingProject: projectID, in: session), other.id != window.id {
-            registry.raise(other.id, in: session)
-            other.approvalCard.present(request, from: approvals)
-            return
-        }
-        window.approvalCard.present(request, from: approvals)
     }
 
     /// A row's Open Changes Panel: the row selected and the panel opened in
@@ -525,7 +506,7 @@ enum SupervisionWindowActions {
     static func perform(_ action: PrimaryAction, inPane paneID: UUID, window: ProjectWindowState, state: AppState) -> Bool {
         switch action {
         case let .openCard(itemID):
-            openApprovalCard(itemID, window: window, state: state)
+            openApprovalCard(itemID, inPane: paneID, window: window, state: state)
         case let .markReviewed(itemID, throughTurn):
             viewedLineActions(window: window, state: state).markViewed(itemID, through: throughTurn, inPane: paneID)
         case let .resume(itemID):
@@ -549,13 +530,19 @@ enum SupervisionWindowActions {
         }
     }
 
-    /// "Answer…" on an approval or a question Weir holds: its card, beside
-    /// the request's row as a row's Answer… opens it. The keyboard lands on
-    /// the card's Close, not on Deny: the key that opened it may be followed
-    /// by keys meant for the terminal, and one of them must not answer.
-    private static func openApprovalCard(_ itemID: AttentionItemID, window: ProjectWindowState, state: AppState) -> Bool {
+    /// "Answer…" on an approval or a question Weir holds: its card, standing
+    /// on the pane's bar next to the button, pressed or reached with ⌘⏎. The
+    /// keyboard lands on the card's Close, not on Deny: the key that opened
+    /// it may be followed by keys meant for the terminal, and one of them
+    /// must not answer.
+    private static func openApprovalCard(
+        _ itemID: AttentionItemID,
+        inPane paneID: UUID,
+        window: ProjectWindowState,
+        state: AppState
+    ) -> Bool {
         guard let request = heldRequest(itemID, state: state) else { return false }
-        window.approvalCard.present(request, from: state.approvalPresentation, focusesClose: true)
+        window.approvalCard.present(request, from: state.approvalPresentation, openedFromPane: paneID, focusesClose: true)
         return true
     }
 
@@ -690,16 +677,6 @@ enum SupervisionWindowActions {
             },
             newWorktree: { [window, state] projectID in
                 newWorktree(inProject: projectID, from: window, session: state.session, registry: state.windowRegistry)
-            },
-            answer: { [window, state] request, projectID in
-                answer(
-                    request,
-                    inProject: projectID,
-                    from: window,
-                    approvals: state.approvalPresentation,
-                    session: state.session,
-                    registry: state.windowRegistry
-                )
             },
             openChangesPanel: { [window, state] row in
                 openChangesPanel(row, from: window, session: state.session, registry: state.windowRegistry)

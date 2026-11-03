@@ -238,6 +238,7 @@ routing toggle when the descriptors cannot be read
 | `question_ends_with_turn` | A question's request ends with the turn it was asked in, which the Hook Helper watches for. | yes | no | no | no |
 | `approval_hook_records_lifecycle` | The agent calls the Hook Helper instead of its lifecycle hook for a permission request, so the helper records one it does not answer. | no | yes | no | no |
 | `approval_withdrawn_by_signal` | A SIGTERM to the Hook Helper, sent when the person answers at the agent's own prompt, withdraws the request. | no | no | no | yes |
+| `approval_prompt_beside_card` | The agent shows its own prompt while Weir holds a request, so the decision bar names the terminal as well as the card. | yes | no | no | yes |
 
 ### Event vocabulary
 

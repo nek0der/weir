@@ -35,6 +35,9 @@ struct ApprovalCardHost: View {
     /// grows past anything it has shown.
     @State private var placementHeights: [String: CGFloat] = [:]
     static let cardWidth: CGFloat = 400
+    /// Between a decision bar and the card standing on it: the gap the
+    /// window keeps between its surfaces.
+    private static let barGap = WeirLayout.Supervision.surfaceGap
     private let fallbackCardHeight: CGFloat = 180
 
     /// The selection of the window this card is in.
@@ -51,12 +54,14 @@ struct ApprovalCardHost: View {
                 let origin = geometry.frame(in: .global).origin
                 let openedFrom = window.approvalCard.state.openedFrom?.offsetBy(dx: -origin.x, dy: -origin.y)
                 let rowAnchor = window.approvalCard.rowAnchor(for: approval)?.offsetBy(dx: -origin.x, dy: -origin.y)
+                let barAnchor = window.approvalCard.barAnchor()?.offsetBy(dx: -origin.x, dy: -origin.y)
                 let columnTop = window.historyAnchor.map { $0.columnTop - origin.y } ?? WeirLayout.floatingPanelWindowMargin
                 let columnBottom = window.historyAnchor.map { $0.columnBottom - origin.y }
                     ?? geometry.size.height - WeirLayout.floatingPanelWindowMargin
                 let cardHeight = measuredCardHeights[approval.id] ?? fallbackCardHeight
                 let placed = placement(
                     openedFrom: openedFrom,
+                    barAnchor: barAnchor,
                     columnTop: columnTop,
                     columnBottom: columnBottom,
                     rowAnchor: rowAnchor,
@@ -74,8 +79,11 @@ struct ApprovalCardHost: View {
                     movesToPane: openPaneAction(for: approval) != nil,
                     onOpenPane: openPaneAction(for: approval),
                     // The columns' height: a taller card would cover the
-                    // status bar under them.
-                    maxHeight: FloatingPanelPlacement.maximumHeight(columnTop: columnTop, columnBottom: columnBottom)
+                    // status bar under them. On a bar, what is above the
+                    // bar, so the bar that opened it stays in sight.
+                    maxHeight: barAnchor.map {
+                        FloatingPanelPlacement.roomAbove(bar: $0, top: columnTop, gap: Self.barGap)
+                    } ?? FloatingPanelPlacement.maximumHeight(columnTop: columnTop, columnBottom: columnBottom)
                 )
                 .id(approval.id)
                 .frame(width: width)
@@ -114,12 +122,14 @@ struct ApprovalCardHost: View {
 
     /// Where the card goes. Opened from the rail, it stands beside the rail as
     /// the rail's panels do; from the title bar's Needs Attention, it hangs
-    /// below it as the list does; otherwise it stands on the session's surface,
-    /// level with its row in this window's sidebar. A request may arrive one
-    /// layout pass before its row reports a frame: it then starts at the
-    /// middle of the columns, on the same edge.
+    /// below it as the list does; from a pane's decision bar, it stands on
+    /// the bar, next to its Answer…; otherwise it stands on the session's
+    /// surface, level with its row in this window's sidebar. A request may
+    /// arrive one layout pass before its row reports a frame: it then starts
+    /// at the middle of the columns, on the same edge.
     private func placement( // swiftlint:disable:this function_parameter_count
         openedFrom: CGRect?,
+        barAnchor: CGRect?,
         columnTop: CGFloat,
         columnBottom: CGFloat,
         rowAnchor: CGRect?,
@@ -148,6 +158,14 @@ struct ApprovalCardHost: View {
                 container: container,
                 gap: WeirLayout.Supervision.titleBarDropdownGap,
                 alignment: .centered
+            )
+        }
+        if let barAnchor {
+            return FloatingPanelPlacement.onBar(
+                barAnchor,
+                panelSize: panelSize,
+                gap: Self.barGap,
+                top: columnTop
             )
         }
         return FloatingPanelPlacement.beside(

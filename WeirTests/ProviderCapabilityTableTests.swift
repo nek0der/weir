@@ -37,6 +37,7 @@ struct ProviderCapabilityTableTests {
         #expect(capabilities.contains(ProviderCapabilityName.questionAnsweredByAgent) == (kind == .codex))
         #expect(capabilities.contains(ProviderCapabilityName.approvalHookRecordsLifecycle) == (kind == .codex))
         #expect(capabilities.contains(ProviderCapabilityName.approvalWithdrawnBySignal) == (kind == .opencode))
+        #expect(capabilities.contains(ProviderCapabilityName.approvalPromptBesideCard) == [.claude, .opencode].contains(kind))
         // The app reads the same descriptors through its own registry.
         #expect(AgentProviderRegistry.has(ProviderCapabilityName.questionAnsweredByAgent, kind) == (kind == .codex))
     }

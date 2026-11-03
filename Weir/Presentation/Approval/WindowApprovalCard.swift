@@ -36,6 +36,11 @@ struct ApprovalCardState: Equatable {
     /// That control is the Needs Attention list: the card stands to its left,
     /// so the list stays in sight for what to answer next.
     var standsLeftOfOpener = false
+    /// The pane whose decision bar opened the card, with Answer… or ⌘⏎. The
+    /// card stands on that bar (`WindowApprovalCard.barAnchor`), next to the
+    /// button, rather than beside the request's row: the row may be in a
+    /// hidden sidebar, and the person is looking at the pane.
+    var openedFromPane: UUID?
     /// Whether keyboard focus is in the card. Only then does the card act
     /// as the surface the person works in: it takes Escape, holds back ⌘⏎
     /// in its window, and keeps the window's small panels from opening.
@@ -61,6 +66,11 @@ final class WindowApprovalCard {
     /// scrolls, and the views that read only whether a card is up or
     /// focused must not be drawn again for each one.
     private var rowAnchors: [String: CGRect] = [:]
+    /// Where each pane's decision bar is in this window, in global
+    /// coordinates. Read as the card is drawn, so a card opened from a bar
+    /// follows it as the pane is resized; apart from `state` for the same
+    /// reason as `rowAnchors`.
+    private var barAnchors: [UUID: CGRect] = [:]
     /// Where the card is, in the window. Read when a press lands, so nothing
     /// is drawn again as it moves.
     @ObservationIgnored var frame = CGRect.zero
@@ -83,6 +93,7 @@ final class WindowApprovalCard {
         openedFrom: CGRect? = nil,
         isOpenedFromRail: Bool = false,
         standsLeftOfOpener: Bool = false,
+        openedFromPane: UUID? = nil,
         focusesClose: Bool = false
     ) {
         guard approvals.approvalForCard(approval.id) != nil else { return }
@@ -91,6 +102,7 @@ final class WindowApprovalCard {
             card.openedFrom = openedFrom
             card.isOpenedFromRail = isOpenedFromRail
             card.standsLeftOfOpener = standsLeftOfOpener
+            card.openedFromPane = openedFromPane
             if card.presentedID == approval.id {
                 if shouldFocusCard {
                     card.cardFocusRequestID = approval.id
@@ -153,6 +165,25 @@ final class WindowApprovalCard {
         rowAnchors[approval.id]
     }
 
+    func updateBarAnchor(_ rect: CGRect, forPane paneID: UUID) {
+        guard barAnchors[paneID] != rect else { return }
+        barAnchors[paneID] = rect
+    }
+
+    /// The frame of the bar the card was opened from, while that bar has
+    /// reported one.
+    func barAnchor() -> CGRect? {
+        state.openedFromPane.flatMap { barAnchors[$0] }
+    }
+
+    /// Forgets the bars of panes the session no longer has.
+    func forgetBars(notIn livePanes: Set<UUID>) {
+        let live = barAnchors.filter { livePanes.contains($0.key) }
+        if live.count != barAnchors.count {
+            barAnchors = live
+        }
+    }
+
     /// Forgets the rows' frames: the sidebar went away, and a card pointing
     /// at a row off screen points at nothing.
     func clearRowAnchors() {
@@ -161,15 +192,17 @@ final class WindowApprovalCard {
         }
     }
 
-    /// Closes a card standing beside a row as the window switches to
-    /// another project: the person has moved on from that row. The
-    /// rows' frames stay, as the sidebar lists every project's rows through
-    /// a switch, and a row that does not move reports none again. A card
+    /// Closes a card standing beside a row or on a pane's decision bar as the
+    /// window switches to another project: the person has moved on from that
+    /// row, and the pane is no longer shown. The rows' frames stay, as the
+    /// sidebar lists every project's rows through a switch, and a row that
+    /// does not move reports none again. A card
     /// opened from a control (`ApprovalCardState.openedFrom`) stands beside
     /// that control and stays. The request stays pending, and opens again
     /// from Needs Attention or its row.
     func forgetRows() {
         if state.presentedID != nil, state.openedFrom == nil {
+            // A card opened from a bar has no `openedFrom` either.
             dismiss()
         }
     }

@@ -30,7 +30,10 @@ Weir holds each request until you answer it, wherever its pane is. You answer it
 | The bar under the agent's pane | Choose **Answer…**, or press <kbd>⌘⏎</kbd> |
 | The **Needs Attention** list | Choose **Answer…** |
 | The worktree's sidebar row | Hover over it and choose **Answer…** |
+| **All Projects** | Choose the worktree's **Answer…** |
 | The menu bar, while another app is in front | A short, low-impact shell command can be answered right there. For any other request, choose **Answer…** to open Weir |
+
+The card opens next to where you chose **Answer…**, in the same window. If you opened it from a row in a list or the sidebar, that row stays highlighted while the card is open.
 
 Going to the pane leaves the request with Weir, so you can still answer it on the card after you leave. Claude Code and OpenCode also show their own prompts in the pane, and whichever you answer first counts. Codex shows its prompt only after you choose **Answer in terminal** or the request times out.
 

@@ -2054,6 +2054,10 @@ mod registry_tests {
         assert_eq!(with(Capability::QuestionAnsweredByAgent), ["codex"]);
         assert_eq!(with(Capability::ApprovalHookRecordsLifecycle), ["codex"]);
         assert_eq!(with(Capability::ApprovalWithdrawnBySignal), ["opencode"]);
+        assert_eq!(
+            with(Capability::ApprovalPromptBesideCard),
+            ["claude", "opencode"]
+        );
     }
 
     #[test]
