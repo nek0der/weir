@@ -99,7 +99,7 @@ struct WorktreeTextTests {
         "Previous Session Repaired",
         "Couldn’t Restore the Previous Session",
         "Previous Session Not Restored",
-        "Saved session uses schema v%lld; Weir expected v%lld. A fresh window was opened instead.",
+        "This session was saved by a different version of Weir, so this version can’t open it. A fresh window was opened instead.",
         "Your sessions aren’t being saved: state.json can’t be read by this version and couldn’t be set aside. "
             + "Move it out of the folder, then quit and reopen Weir.",
         "Running in tmux — the session survives quitting Weir",

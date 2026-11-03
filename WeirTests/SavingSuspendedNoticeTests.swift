@@ -32,8 +32,8 @@ struct SavingSuspendedNoticeTests {
         ))
         #expect(notice.files == [Self.sessionFile, Self.settingsFile])
         #expect(notice.sentences == [
-            "セッションを保存していません。このバージョンでは state.json を読み込めず、退避もできませんでした。state.json をフォルダの外に移動してから、Weir を終了して再度開いてください。",
-            "設定を保存していません。このバージョンでは settings.json を読み込めず、退避もできませんでした。settings.json をフォルダの外に移動してから、Weir を終了して再度開いてください。"
+            "セッションを保存していません。このバージョンでは state.json を読み込めず、退避もできませんでした。state.json をフォルダーの外に移動してから、Weir を終了して再度開いてください。",
+            "設定を保存していません。このバージョンでは settings.json を読み込めず、退避もできませんでした。settings.json をフォルダーの外に移動してから、Weir を終了して再度開いてください。"
         ])
     }
 

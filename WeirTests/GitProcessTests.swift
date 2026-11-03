@@ -183,6 +183,12 @@ struct GitProcessDeadlineTests {
         #expect(message.resolved(in: Locale(identifier: "en")) == "git didn’t finish within 60 seconds.")
         #expect(message.resolved(in: Locale(identifier: "ja")) == "git が 60 秒以内に完了しませんでした。")
     }
+
+    @Test func aOneSecondTimeout_saysSecondInTheSingular() {
+        let message = GitProcessError.timedOut(seconds: 1).message
+        #expect(message.resolved(in: Locale(identifier: "en")) == "git didn’t finish within 1 second.")
+        #expect(message.resolved(in: Locale(identifier: "ja")) == "git が 1 秒以内に完了しませんでした。")
+    }
 }
 
 @Suite("GitProcess resolveMainCheckout", .tags(.smoke))
