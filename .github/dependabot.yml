@@ -22,6 +22,8 @@ updates:
 
   # Cargo: monthly minor and patch updates. Cargo.lock is committed because
   # the workspace ships a native library; major upgrades stay explicit reviews.
+  # A person merges every Cargo update, because the crates are linked into the
+  # app we sign and ship; auto-merge-dependabot.yml takes only GitHub Actions.
   - package-ecosystem: cargo
     directory: /
     schedule:

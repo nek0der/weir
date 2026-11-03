@@ -35,6 +35,11 @@ on:
 permissions:
   contents: write
 
+# The same Xcode as ci.yml, pinned for the reason given there: the newest on
+# the runner can be a beta, and this job ships what it builds.
+env:
+  XCODE_APP: /Applications/Xcode_26.6.app
+
 # One group for every tag, not one per ref. Two tags released at once would
 # otherwise race over which one is Latest and which one the appcast names.
 # The group holds one running and one pending run, and a newer pending run
@@ -131,12 +136,14 @@ jobs:
             exit 1
           fi
 
-      - name: Select latest Xcode
+      - name: Select Xcode
         run: |
           set -euo pipefail
-          XCODE=$(printf '%s\n' /Applications/Xcode*.app | sort -V | tail -1)
-          echo "Selecting $XCODE"
-          sudo xcode-select -s "$XCODE"
+          if [ ! -d "$XCODE_APP" ]; then
+            echo "::error::$XCODE_APP is not on this runner image. Set XCODE_APP in ci.yml and release.yml to an Xcode the image lists."
+            exit 1
+          fi
+          sudo xcode-select -s "$XCODE_APP"
           xcodebuild -version
 
       - name: Install tooling
@@ -174,9 +181,11 @@ jobs:
 
       # Save the xcframework explicitly so the cache lands even when a
       # later step (cert import, notarize, …) fails. The default v4
-      # post-step skips save on prior failures.
+      # post-step skips save on prior failures. Not on a canceled run, as in
+      # ci.yml: a build stopped partway would be saved under the key of a
+      # complete one, and every later run would hit it.
       - name: Save GhosttyKit.xcframework cache
-        if: always() && steps.cache-ghostty.outputs.cache-hit != 'true' && hashFiles('vendor/ghostty/macos/GhosttyKit.xcframework/**') != ''
+        if: ${{ !cancelled() && steps.cache-ghostty.outputs.cache-hit != 'true' && hashFiles('vendor/ghostty/macos/GhosttyKit.xcframework/**') != '' }}
         uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: vendor/ghostty/macos/GhosttyKit.xcframework
