@@ -6,6 +6,7 @@ import AppKit
 import Foundation
 import Testing
 @testable import Weir
+@testable import WeirDomain
 
 /// Each test sets `CloseConfirmer.gate` and puts it back before it returns.
 /// The tests are synchronous on the main actor, so no other test that
@@ -199,6 +200,108 @@ struct CloseConfirmationFlowTests {
     private final class SheetRecord {
         var responses: [NSApplication.ModalResponse] = []
         var finishes = 0
+    }
+
+    /// Asks to close the tab's one pane, and says whether the question
+    /// the gate got is about a pane that carries an agent, as
+    /// `AppState.confirmClose` reads it for the `onlyWhenAgent` policy.
+    private func asksAboutAnAgent(closing tab: Tab, in session: WorkspaceSession, gate: PendingGate) throws -> Bool {
+        TabActions.closeTab(session, registry: NoopSurfaceRegistry(), tabID: tab.id)
+        let request = try #require(gate.requests.last)
+        return session.hasLiveAgent(inAnyOf: request.paneIDs)
+    }
+
+    @Test func aCodexJustTypedIntoAShell_isAskedAbout_beforeItHasARecord() throws {
+        try withGate { gate in
+            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            // Codex writes its record at its first prompt; until then only
+            // its terminal's job in front says it is there.
+            PaneAgentInFrontFollower(session: session).apply(.agent(.codex), at: .titleChanged, inPane: pane)
+            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
+            #expect(isAsked)
+        }
+    }
+
+    @Test(arguments: AgentKind.allCases)
+    func anAgentOpenedByTheStripsPlus_isAskedAbout_beforeItIsInFront(kind: AgentKind) throws {
+        try withGate { gate in
+            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            session.update(tab.id) { $0.agentsInFront[pane] = PaneAgentInFront(kind: kind, isStaged: true) }
+            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
+            #expect(isAsked)
+        }
+    }
+
+    @Test(arguments: AgentKind.allCases)
+    func anAgentStartedWithoutHooks_isAskedAbout_thoughItNeverWritesARecord(kind: AgentKind) throws {
+        try withGate { gate in
+            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            let follower = PaneAgentInFrontFollower(session: session)
+            follower.apply(.agent(kind), at: .titleChanged, inPane: pane)
+            // A command it runs finishes under it; the agent is still in
+            // front, and no hook ever places a run in the pane.
+            follower.apply(.agent(kind), at: .commandFinished, inPane: pane)
+            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
+            #expect(isAsked)
+        }
+    }
+
+    @Test(arguments: AgentKind.allCases)
+    func aRunRestoredAtLaunch_isAskedAbout_whileItsStateIsUnknown(kind: AgentKind) throws {
+        try withGate { gate in
+            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            session.update(tab.id) { $0.agentBadges[kind] = [pane: AgentBadge(state: .unknown, updatedAt: Date())] }
+            // Its resume is typed into the restored pane and waits at the
+            // agent's prompt, which reports nothing until the person types.
+            PaneAgentInFrontFollower(session: session).apply(.agent(kind), at: .titleChanged, inPane: pane)
+            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
+            #expect(isAsked)
+        }
+    }
+
+    @Test(arguments: AgentKind.allCases)
+    func aRunRestoredInWeirsTmux_isAskedAbout_withNothingReadInFront(kind: AgentKind) throws {
+        try withGate { gate in
+            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            var badge = AgentBadge(state: .unknown, updatedAt: Date())
+            badge.isTmuxHosted = true
+            session.update(tab.id) { $0.agentBadges[kind] = [pane: badge] }
+            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
+            #expect(isAsked)
+        }
+    }
+
+    @Test func aRunWhoseAgentEnded_isNotAskedAbout_whileItsBadgeWaitsForTheSweep() throws {
+        try withGate { gate in
+            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            let follower = PaneAgentInFrontFollower(session: session)
+            follower.apply(.agent(.claude), at: .titleChanged, inPane: pane)
+            // `/exit`: SessionEnd leaves the record unknown, and the shell's
+            // prompt comes back.
+            session.update(tab.id) { $0.agentBadges[.claude] = [pane: AgentBadge(state: .unknown, updatedAt: Date())] }
+            follower.apply(.none, at: .commandFinished, inPane: pane)
+            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
+            #expect(!isAsked)
+        }
+    }
+
+    @Test func aPaneWhoseAgentLeftForTheShell_isNotAskedAbout() throws {
+        try withGate { gate in
+            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            let follower = PaneAgentInFrontFollower(session: session)
+            follower.apply(.agent(.codex), at: .titleChanged, inPane: pane)
+            follower.apply(.none, at: .commandFinished, inPane: pane)
+            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
+            #expect(!isAsked)
+        }
+    }
+
+    @Test func aPlainShell_isNotAskedAbout() throws {
+        try withGate { gate in
+            let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
+            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
+            #expect(!isAsked)
+        }
     }
 
     @Test func withNoGate_theCloseHappensAtOnce() {
