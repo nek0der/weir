@@ -94,15 +94,13 @@ extension AppState {
         }
         // Whatever the agents report while the Mac slept arrives at once on
         // wake; one banner says how much is waiting instead of a burst.
-        let center = NSWorkspace.shared.notificationCenter
-        wakeObservation = center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { [weak self] in
-                guard let self else { return }
-                notificationManager.holdAgentBanners(for: Self.wakeBannerHold) { [weak self] in
-                    guard let self else { return nil }
-                    return AttentionSummaryText.make(attentionQueue.queue.counts(), locale: notificationManager.appLocale())
-                }
-            }
+        notificationManager.holdAgentBanners(
+            onEvery: NSWorkspace.didWakeNotification,
+            in: NSWorkspace.shared.notificationCenter,
+            for: Self.wakeBannerHold
+        ) { [weak self] in
+            guard let self else { return nil }
+            return AttentionSummaryText.make(attentionQueue.queue.counts(), locale: notificationManager.appLocale())
         }
         observeRepeatedly { [weak self] in
             _ = self?.approvalPresentation.ledger.entries
