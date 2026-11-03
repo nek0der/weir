@@ -619,6 +619,47 @@ struct StoredShortcut: Codable, Hashable {
     private static func displayKey(for key: String) -> String {
         NamedKey(storedName: key)?.glyph ?? key.uppercased()
     }
+
+    /// Whether `key` can stand in a keybind line: a key we know by name, or
+    /// one printable character other than `>`. A stored key is read from a
+    /// file anyone can edit, and `ghosttyTrigger` is spliced into
+    /// libghostty's line-oriented config, where a line break would start a
+    /// key of its own. libghostty splits a trigger at every `>`, as the
+    /// mark between the keys of a sequence, so a binding on `>` never
+    /// registers.
+    var hasWritableKey: Bool {
+        if NamedKey(storedName: key) != nil {
+            return true
+        }
+        // One scalar, not one grapheme: libghostty reads a trigger's key as
+        // a single code point.
+        return hasPrintableKey && key.unicodeScalars.count == 1 && key != ">"
+    }
+
+    /// Whether `key` is something the update notice can print as it is:
+    /// not empty, and with no white space, line break, or control
+    /// character. We drop a stored binding whose key is not, and retire one
+    /// whose key is printable but cannot be written, such as a libghostty
+    /// key name we do not know (`numpad_add`).
+    var hasPrintableKey: Bool {
+        !key.isEmpty && !key.unicodeScalars.contains {
+            CharacterSet.whitespacesAndNewlines.union(.controlCharacters).contains($0)
+        }
+    }
+
+    /// Whether the keys are input a terminal pane types: a key that types a
+    /// character, or Space, Tab, Return, ⌫, ⌦, or ⎋, held with nothing but ⇧
+    /// and ⌥. ⇧ types the capital, and ⌥ the character macOS puts on the key
+    /// or the Alt a TUI reads, so a binding there takes that input from
+    /// every pane. Arrows, Home, End, the page keys, and the function keys
+    /// type no character, so ⇧ and ⌥ alone may still bind them.
+    var typesText: Bool {
+        guard modifiers.isSubset(of: [.shift, .option]) else { return false }
+        guard let named = NamedKey(storedName: key) else { return true }
+        return Self.namedKeysThatType.contains(named)
+    }
+
+    private static let namedKeysThatType: Set<NamedKey> = [.space, .tab, .return, .backspace, .delete, .escape]
 }
 
 extension NamedKey {
@@ -673,16 +714,37 @@ enum ReservedShortcuts {
         // `=ignore` and swallow the key even where the bar has nothing
         // to press. A binding here would steal it.
         set.insert(StoredShortcut(key: "return", modifiers: [.command]).ghosttyTrigger)
-        for n in 1...9 {
-            // ⌘0 is rebindable (it's resetFontSize's default).
-            // ⌘1…⌘9 — go to tab N.
-            set.insert(StoredShortcut(key: "\(n)", modifiers: [.command]).ghosttyTrigger)
-            // ⌘⌃1…⌘⌃9 — go to workspace N.
-            set.insert(
-                StoredShortcut(key: "\(n)", modifiers: [.command, .control])
-                    .ghosttyTrigger
-            )
-        }
+        set.formUnion(numberJumpTriggers)
         return set
     }()
+
+    /// ⌘1…⌘9 (go to tab N) and ⌃⌘1…⌃⌘9 (go to worktree N), which
+    /// `NumberShortcutCommands` binds in the menu. ⌘0 is rebindable (it's
+    /// resetFontSize's default).
+    static let numberJumpTriggers: [String] = (1...9).flatMap { n in
+        [
+            StoredShortcut(key: "\(n)", modifiers: [.command]).ghosttyTrigger,
+            StoredShortcut(key: "\(n)", modifiers: [.command, .control]).ghosttyTrigger
+        ]
+    }
+
+    /// The keys of the menu items macOS and SwiftUI give every app: Settings…
+    /// (⌘,), Hide (⌘H), Minimize (⌘M), and the Edit menu's Undo, Redo, Cut,
+    /// Copy, Paste, and Select All. AppKit looks a key up in menu order, so the
+    /// app menu takes ⌘, and ⌘H before a binding of ours could, and a binding
+    /// in the File menu takes ⌘C from Copy. Neither is a key the recorder may
+    /// hand to an action.
+    static let standardMenuTriggers: Set<String> = Set(
+        [
+            StoredShortcut(key: ",", modifiers: [.command]),
+            StoredShortcut(key: "h", modifiers: [.command]),
+            StoredShortcut(key: "m", modifiers: [.command]),
+            StoredShortcut(key: "z", modifiers: [.command]),
+            StoredShortcut(key: "z", modifiers: [.command, .shift]),
+            StoredShortcut(key: "x", modifiers: [.command]),
+            StandardEditShortcut.copy,
+            StandardEditShortcut.paste,
+            StandardEditShortcut.selectAll
+        ].map(\.ghosttyTrigger)
+    )
 }

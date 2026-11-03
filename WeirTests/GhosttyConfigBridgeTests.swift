@@ -331,6 +331,49 @@ struct GhosttyConfigBridgeTests {
         }
     }
 
+    /// A stored key is read from a file anyone can edit. One with a line
+    /// break in it would start a config key of its own, so the bridge
+    /// writes no keybind for it.
+    @Test("A trigger with a line break writes no keybind and no extra key")
+    func keybinds_triggerWithLineBreak_isRefused() {
+        var settings = WeirSettings.default
+        settings.keyboard.overrides[WeirShortcutAction.toggleSidebar.rawValue] = StoredShortcut(
+            key: "t=ignore\nclipboard-paste-protection = false\nkeybind = x",
+            modifiers: [.command]
+        )
+        let config = generate(settings)
+        #expect(!config.contains("clipboard-paste-protection = false"))
+        #expect(!config.contains("keybind = x"))
+        #expect(value(of: "clipboard-paste-protection", in: config) == "true")
+    }
+
+    /// The forced keys come after every keybind line, so nothing a binding
+    /// writes can follow them.
+    @Test("Forced overrides are written after the last keybind")
+    func forcedOverrides_followTheLastKeybind() throws {
+        let config = generate(.default)
+        let lines = config.split(separator: "\n").map(String.init)
+        let lastKeybind = try #require(lines.lastIndex { $0.hasPrefix("keybind = ") })
+        let forcedKeys = [
+            "background-opacity", "term", "confirm-close-surface",
+            "clipboard-paste-protection", "shell-integration-features", "custom-shader-animation"
+        ]
+        for key in forcedKeys {
+            let index = try #require(lines.firstIndex { $0.hasPrefix("\(key) = ") })
+            #expect(index > lastKeybind, "\(key)")
+        }
+    }
+
+    /// The menu disables a numbered jump with no tab or worktree behind it,
+    /// and the binding drops the keystroke there instead of the terminal
+    /// taking it.
+    @Test("Numbered jumps reach libghostty as =ignore", arguments: 1...9)
+    func keybinds_numberJumps_emitIgnore(number: Int) {
+        let config = generate(.default)
+        #expect(config.contains("keybind = super+\(number)=ignore"))
+        #expect(config.contains("keybind = super+ctrl+\(number)=ignore"))
+    }
+
     @Test("user config diagnostics distinguish invalid and clean files")
     func userConfigDiagnostics_reportOnlyInvalidConfig() throws {
         try withTempDir { directory in

@@ -1,8 +1,8 @@
 // GhosttyConfigBridge.swift
 // Weir — translates `WeirSettings` into the `key = value\n` text
 // libghostty parses, and applies it to the running app. The forced
-// keys (transparent pane, no native window decoration, …) go *last*
-// in the file so libghostty's last-write-wins merge silently
+// keys (transparent pane, paste protection, …) go *last* in the file,
+// after the keybinds, so libghostty's last-write-wins merge silently
 // overrides anything the user, `~/.config/ghostty/config`, or our
 // own earlier lines wrote — cheaper than pre-parsing to filter.
 
@@ -28,8 +28,8 @@ enum GhosttyConfigBridge {
     // MARK: - Serialization
 
     /// Build the full `key = value\n` string Weir wants libghostty
-    /// to evaluate. Order matters: user-facing settings first so the
-    /// forced-overrides section at the bottom always wins.
+    /// to evaluate. Order matters: user-facing settings first, then the
+    /// keybinds, so the forced-overrides section at the bottom always wins.
     static func makeConfigString(
         settings: WeirSettings,
         resourcesDir: String?
@@ -48,7 +48,8 @@ enum GhosttyConfigBridge {
             // libghostty's config is line-oriented, so an embedded
             // newline in a hand-edited `settings.json` would otherwise
             // inject extra config keys (`window-decoration = client`,
-            // `command = …`) BEFORE the forced-overrides block. The
+            // `command = …`). The forced-overrides block comes later and
+            // still wins, but keys outside it would stick. The
             // picker only offers `NSFontManager` families today, but
             // defensive sanitization at the splice site is cheap.
             let sanitized = family.replacingOccurrences(of: "\n", with: " ")
@@ -104,10 +105,36 @@ enum GhosttyConfigBridge {
             lines.append("theme = light:\(light),dark:\(dark)")
         }
 
-        // MARK: - Forced overrides — must go LAST so libghostty's
+        // MARK: - Pattern A — single source of truth for keybinds
 
-        // last-write-wins merging guarantees they stick even if user
-        // config or some earlier line set them otherwise.
+        //
+        // Wipe libghostty's built-in macOS defaults so the menu bar
+        // owns every shortcut; without `clear` a user remap (e.g.
+        // "New Tab" → ⌘⇧T) would leave libghostty still firing its
+        // own ⌘T behind the user's back. Forced bindings + the
+        // user-configured action keybinds get re-emitted below.
+        lines.append("keybind = clear")
+        // Defense-in-depth against libghostty's `super+q=quit`
+        // racing AppKit's terminate path (which fires
+        // `applicationWillTerminate` and persists scrollback). ⌘Q is
+        // already routed to the menu via
+        // `SurfaceView.performKeyEquivalent`, but unbinding here
+        // covers any future keystroke-routing change.
+        lines.append("keybind = super+q=unbind")
+        // Legacy XTerm key encoding emits identical bytes for ↩
+        // and ⇧↩, so TUIs can't tell them apart. Mapping ⇧↩ to a
+        // literal newline matches the recommended bare-ghostty
+        // workaround (ghostty discussion #7780).
+        lines.append(#"keybind = shift+enter=text:\n"#)
+
+        lines.append(contentsOf: actionKeybindLines(settings: settings))
+        lines.append(contentsOf: numberJumpKeybindLines())
+
+        // MARK: - Forced overrides
+
+        // These go LAST, after the keybinds too, so libghostty's
+        // last-write-wins merging keeps them even if user config or an
+        // earlier line of ours set them otherwise.
 
         lines.append("")
         lines.append("# Weir forced overrides — do not override these in user config.")
@@ -152,30 +179,6 @@ enum GhosttyConfigBridge {
         // wakeups/s even at idle.
         lines.append("custom-shader-animation = false")
 
-        // MARK: - Pattern A — single source of truth for keybinds
-
-        //
-        // Wipe libghostty's built-in macOS defaults so the menu bar
-        // owns every shortcut; without `clear` a user remap (e.g.
-        // "New Tab" → ⌘⇧T) would leave libghostty still firing its
-        // own ⌘T behind the user's back. Forced bindings + the
-        // user-configured action keybinds get re-emitted below.
-        lines.append("keybind = clear")
-        // Defense-in-depth against libghostty's `super+q=quit`
-        // racing AppKit's terminate path (which fires
-        // `applicationWillTerminate` and persists scrollback). ⌘Q is
-        // already routed to the menu via
-        // `SurfaceView.performKeyEquivalent`, but unbinding here
-        // covers any future keystroke-routing change.
-        lines.append("keybind = super+q=unbind")
-        // Legacy XTerm key encoding emits identical bytes for ↩
-        // and ⇧↩, so TUIs can't tell them apart. Mapping ⇧↩ to a
-        // literal newline matches the recommended bare-ghostty
-        // workaround (ghostty discussion #7780).
-        lines.append(#"keybind = shift+enter=text:\n"#)
-
-        lines.append(contentsOf: actionKeybindLines(settings: settings))
-
         return lines.joined(separator: "\n") + "\n"
     }
 
@@ -193,10 +196,25 @@ enum GhosttyConfigBridge {
         var out: [String] = []
         for action in WeirShortcutAction.allCases {
             guard let shortcut = settings.keyboard.shortcut(for: action) else { continue }
+            // `KeyboardSettings.normalize` retires such a key when settings
+            // load; we check again for a caller that builds settings without it.
+            guard shortcut.hasWritableKey else {
+                log.error("Skipped a keybind whose key cannot be written for \(action.rawValue, privacy: .public)")
+                continue
+            }
             let rhs = action.ghosttyAction ?? "ignore"
             out.append("keybind = \(shortcut.ghosttyTrigger)=\(rhs)")
         }
         return out
+    }
+
+    /// `=ignore` for ⌘1…⌘9 and ⌃⌘1…⌃⌘9, the menu's numbered jumps
+    /// (`NumberShortcutCommands`). The menu disables a number with no tab or
+    /// worktree behind it, and a disabled item lets the keystroke through
+    /// to the terminal like any other: the binding is what drops it there,
+    /// as it does for a menu-owned action's keys.
+    private static func numberJumpKeybindLines() -> [String] {
+        ReservedShortcuts.numberJumpTriggers.map { "keybind = \($0)=ignore" }
     }
 
     /// Write the config string to a stable temp file and return its

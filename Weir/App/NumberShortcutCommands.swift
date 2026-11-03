@@ -78,6 +78,8 @@ struct NumberShortcutCommands: Commands {
 
     /// ⌃⌘n: the nth working worktree the window's sidebar shows, off
     /// past the last of them, so the menu says which numbers go somewhere.
+    /// An item that is off lets the keystroke through to the terminal, where
+    /// the `=ignore` binding `GhosttyConfigBridge` writes for it drops it.
     private func goToWorktreeButton(number: Int, workingRowCount: Int) -> some View {
         Button {
             guard let window else { return }

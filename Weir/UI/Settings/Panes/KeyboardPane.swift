@@ -518,7 +518,7 @@ private struct ShortcutRecorder: View {
 
     @MainActor
     private func handleKey(_ event: NSEvent) {
-        switch ShortcutRecorderKey.meaning(of: event.namedKey) {
+        switch ShortcutRecorderKey.meaning(of: event.namedKey, modifiers: ShortcutModifiers(event.modifierFlags)) {
         case .cancel:
             stopRecording()
             return
@@ -551,7 +551,8 @@ private struct ShortcutRecorder: View {
             keyboard.setOverride(shortcut, for: action)
             rejection = nil
             stopRecording()
-        case .conflict, .conflictWithPair, .keptBySidebar, .reserved, .missingModifier, .quickTerminalConflict:
+        case .conflict, .conflictWithPair, .keptBySidebar, .reserved, .missingModifier, .unwritableKey, .typesText,
+             .standardMenuItem, .quickTerminalConflict:
             rejection = result
             // Stay recording so the user can press another combo
             // without an extra click; Esc still cancels via

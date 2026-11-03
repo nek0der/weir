@@ -272,7 +272,7 @@ private struct QuickTerminalHotKeyRecorder: View {
     }
 
     private func handleKey(_ event: NSEvent) {
-        switch ShortcutRecorderKey.meaning(of: event.namedKey) {
+        switch ShortcutRecorderKey.meaning(of: event.namedKey, modifiers: ShortcutModifiers(event.modifierFlags)) {
         case .cancel:
             stopRecording()
         case .restoreDefault:

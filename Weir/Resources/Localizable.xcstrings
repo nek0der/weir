@@ -50,6 +50,23 @@
         }
       }
     },
+    "A standard macOS menu item uses these keys": {
+      "comment": "Settings → Keyboard: ⌘C, ⌘V, ⌘, and similar belong to Copy, Paste, Settings…",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A standard macOS menu item uses these keys"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "macOS の標準のメニュー項目が使用するため、割り当てられません"
+          }
+        }
+      }
+    },
     "A worktree %@ makes gets the setup commands only when it lands in this project’s location.": {
       "localizations": {
         "en": {
@@ -111,6 +128,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "Antigravity の値は最後の返答時点のものです。"
+          }
+        }
+      }
+    },
+    "With only ⇧ or ⌥, this key is input to the terminal. Add ⌃ or ⌘": {
+      "comment": "Settings → Keyboard: ⇧T, ⌥T, or ⌥⌫ would take that input from every terminal pane",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "With only ⇧ or ⌥, this key is input to the terminal. Add ⌃ or ⌘"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⇧ か ⌥ だけでは、このキーは端末への入力になります。⌃ か ⌘ を含めてください"
+          }
+        }
+      }
+    },
+    "This key can’t be used in a shortcut": {
+      "comment": "Settings → Keyboard: the terminal cannot read a binding on this key, such as >",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This key can’t be used in a shortcut"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このキーはショートカットに使用できません"
           }
         }
       }
