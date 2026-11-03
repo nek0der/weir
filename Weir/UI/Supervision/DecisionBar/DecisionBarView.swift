@@ -30,6 +30,9 @@ struct DecisionBarView: View {
     /// This bar, as the gate knows it: a pane's next bar may be drawn
     /// before this one goes.
     @State private var barID = UUID()
+    /// Opens the bar's ⋯ for Show Decision Bar Menu, which the window
+    /// reaches through `ProjectWindowState.decisionBarMenus`.
+    @State private var menuOpener = PopUpMenuOpener()
 
     var body: some View {
         // A restore strip opened for this pane takes the bar's place, also
@@ -187,15 +190,36 @@ struct DecisionBarView: View {
         return session.tab(tabID)?.splitTree.effectiveFocusedLeafID == paneID
     }
 
+    /// Hands the window this bar's ⋯, for Show Decision Bar Menu.
+    private func registerMenu(inPane paneID: UUID) {
+        let opener = menuOpener
+        window.decisionBarMenus.set(
+            .init(owner: barID, isShown: { opener.shownTrigger != nil }, open: opener.open),
+            inPane: paneID
+        )
+    }
+
     private func bar(_ model: DecisionBarModel) -> some View {
         DecisionBarFootBar(
             model: model,
             paneID: paneID,
             receiptHelp: receiptHelp(model),
             canStartNew: model.stopItem.map(stopLedger.startsNew.contains) ?? false,
-            newConversationBlocker: model.stopItem.flatMap { stopLedger.newConversationBlockers[$0] }
+            newConversationBlocker: model.stopItem.flatMap { stopLedger.newConversationBlockers[$0] },
+            menuOpener: menuOpener,
+            showsMenuKey: isSelectedPane
         ) { itemID in
             window.decisionBarSelection[paneID] = itemID
+        }
+        .onAppear { registerMenu(inPane: paneID) }
+        // A zoomed pane's view stays as the tab beside it is chosen, and
+        // takes that tab's pane: the ⋯ moves with it.
+        .onChange(of: paneID) { old, new in
+            window.decisionBarMenus.forget(pane: old, by: barID)
+            registerMenu(inPane: new)
+        }
+        .onDisappear { [window, paneID, barID] in
+            window.decisionBarMenus.forget(pane: paneID, by: barID)
         }
         // An approval card opened from this bar stands on it.
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { [window, paneID] frame in

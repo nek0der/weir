@@ -127,6 +127,14 @@ struct SupervisionCommands: Commands {
                 }
                 .weirShortcut(.showWorktreeMenu, in: state.settingsStore)
                 .disabled(!hasWorktreeMenu(window))
+                // On whenever there is a window: whether the focused pane's
+                // bar shows a ⋯ is not something the menu can watch, and
+                // the key does nothing where there is none.
+                Button("Show Decision Bar Menu", systemImage: WeirShortcutAction.showDecisionBarMenu.iconName) {
+                    window?.commands.send(.showDecisionBarMenu)
+                }
+                .weirShortcut(.showDecisionBarMenu, in: state.settingsStore)
+                .disabled(window == nil)
                 Button("Focus Sidebar", systemImage: WeirShortcutAction.focusSidebar.iconName) {
                     guard let window else { return }
                     SupervisionWindowActions.focusSidebar(in: state.session, window: window)

@@ -14,7 +14,10 @@ struct ToastHost: View {
     /// one host, `WindowChromeHost`, lays this over a main window's content,
     /// and `MainWindowContent` puts that window in the environment.
     @Environment(ProjectWindowState.self) private var window
+    @Environment(WorkspaceSession.self) private var session
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.locale) private var locale
 
     private var windowID: WindowID {
         window.id
@@ -37,6 +40,48 @@ struct ToastHost: View {
             ModalMotion.transientBanner.animation(reduceMotion: reduceMotion),
             value: toastCenter.current(in: windowID)?.id
         )
+        // The palette's Undo row names the toast it takes back, so the toast
+        // stays while the palette is open in this window.
+        .onChange(of: PaletteHold(toast: toastCenter.current(in: windowID)?.id, isPaletteOpen: isPaletteOpen), initial: true) { old, new in
+            if let toast = old.toast, old.isPaletteOpen {
+                toastCenter.releaseDismiss(toast, in: windowID, reason: .palette)
+            }
+            if let toast = new.toast, new.isPaletteOpen {
+                toastCenter.holdDismiss(toast, in: windowID, reason: .palette)
+            }
+        }
+        // A toast says nothing to VoiceOver by being drawn; the window with
+        // the keyboard reads each one out as it comes, so a toast behind
+        // does not speak over what the person is doing.
+        .onChange(of: toastCenter.current(in: windowID)?.id) { _, id in
+            guard id != nil, appearsActive, let item = toastCenter.current(in: windowID) else { return }
+            AccessibilityNotification.Announcement(ToastAnnouncement.text(for: item, locale: locale)).post()
+        }
+    }
+
+    private var isPaletteOpen: Bool {
+        session.commandPaletteState?.windowID == windowID
+    }
+
+    /// The toast the palette holds, compared as one value so a change to
+    /// either moves the hold once.
+    private struct PaletteHold: Equatable {
+        let toast: UUID?
+        let isPaletteOpen: Bool
+    }
+}
+
+/// What VoiceOver hears as a toast comes: its message, and where its Undo is
+/// for a person who does not point.
+enum ToastAnnouncement {
+    static func text(for item: ToastItem, locale: Locale) -> String {
+        let message = item.message.resolved(in: locale)
+        guard item.undo != nil else { return message }
+        let hint = LocalizedStringResource(
+            "Undo is also in the command palette.",
+            comment: "VoiceOver, after a toast's message: its Undo is also a row of the command palette (⇧⌘P)"
+        ).resolved(in: locale)
+        return message + " " + hint
     }
 }
 
@@ -63,6 +108,19 @@ private struct ToastCapsule: View {
                 .modifier(FloatingSurfaceShadow())
         )
         .pointerStyle(.default)
+        // The pointer on the toast keeps it, so it does not go from under a
+        // person reading it or reaching for its Undo.
+        .onHover { [toastCenter, windowID, id = item.id] isHovering in
+            if isHovering {
+                toastCenter.holdDismiss(id, in: windowID, reason: .pointer)
+            } else {
+                toastCenter.releaseDismiss(id, in: windowID, reason: .pointer)
+            }
+        }
+        // Hover's end is not heard once the toast is gone from under it.
+        .onDisappear { [toastCenter, windowID, id = item.id] in
+            toastCenter.releaseDismiss(id, in: windowID, reason: .pointer)
+        }
     }
 
     private func content(font: Font, linkFont: Font, text: Color, link: Color, spacing: CGFloat) -> some View {
@@ -89,7 +147,8 @@ private struct ToastCapsule: View {
             // No ⌘Z shortcut — Weir runs terminal sessions where
             // ⌘Z routes into the focused pane (editor undo), so the
             // toast can't claim that key without breaking the host
-            // app's primary use case. Users click Undo explicitly.
+            // app's primary use case. The command palette lists the
+            // toast's Undo for the keyboard instead.
             DismissGlyphButton(label: "Dismiss") {
                 toastCenter.dismiss(in: windowID)
             }

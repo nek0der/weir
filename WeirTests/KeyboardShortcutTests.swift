@@ -83,6 +83,17 @@ struct KeyboardShortcutTests {
         )
     }
 
+    /// ⌥⌘M, the key first thought of, is the Window menu's Minimize All.
+    @Test func showDecisionBarMenu_isANavigationAction_onOptionCommandPeriod_thatNoOtherDefaultHolds() {
+        let key = StoredShortcut(key: ".", modifiers: [.command, .option])
+        #expect(WeirShortcutAction.showDecisionBarMenu.category == .navigation)
+        #expect(WeirShortcutAction.showDecisionBarMenu.ghosttyAction == nil)
+        #expect(WeirShortcutAction.showDecisionBarMenu.defaultShortcut == key)
+        #expect(WeirShortcutAction.allCases.filter { $0.defaultShortcut == key } == [.showDecisionBarMenu])
+        #expect(!ReservedShortcuts.standardMenuTriggers.contains(key.ghosttyTrigger))
+        #expect(KeyboardSettings().validate(key, for: .showDecisionBarMenu) == .ok)
+    }
+
     @Test("Override wins over the default")
     func shortcut_overrideWins() {
         var kb = KeyboardSettings()

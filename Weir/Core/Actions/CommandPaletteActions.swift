@@ -212,7 +212,7 @@ enum CommandPaletteActions {
             commands.perform(.closeProject(nil), in: window)
         case .newAgentTab, .openSettingsSection, .movePaneToNewTab:
             dispatchControlRow(action, session: session, window: window)
-        case .restoreTurn, .toggleIconBars:
+        case .restoreTurn, .toggleIconBars, .undoToast:
             break // Run by the supervision window (`SupervisionWindowActions.runPaletteAction`).
         case .insertPrefix:
             break // Handled in ToolbarPaletteField, never reaches here.

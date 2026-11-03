@@ -161,7 +161,7 @@ struct SessionSidebarView: View {
         .background {
             if isFocused {
                 WindowKeyDownMonitor { event, nsWindow in
-                    handleMonitoredKey(event, in: nsWindow)
+                    handleMonitoredKey(event, in: nsWindow, model: model)
                 }
                 .frame(width: 0, height: 0)
                 .accessibilityHidden(true)
@@ -217,7 +217,9 @@ struct SessionSidebarView: View {
             SidebarSectionFoldRow(
                 fold: fold,
                 isKeyboardSelected: isFocused && keyboardLine == item.id,
-                clear: foldClear(fold)
+                clear: foldClear(fold),
+                clearKey: SidebarKeyboardCursor.isClearKeyFree(in: settings.settings.keyboard)
+                    ? SidebarKeyboardCursor.clearKey.displayString : nil
             ) { setFold(fold.section, of: fold.projectID, isOpen: !fold.isOpen) }
         case let .row(row):
             sessionRow(row, in: row.id.projectID.flatMap { session.project($0) }, others: others, now: now)
@@ -588,6 +590,14 @@ struct SessionSidebarView: View {
         return .handled
     }
 
+    /// The fold line of `section` under `projectID`'s header, as drawn.
+    private func fold(_ section: SidebarSection, of projectID: UUID, in model: SidebarListModel) -> SessionSidebarModel.Fold? {
+        model.items.lazy.compactMap { item -> SessionSidebarModel.Fold? in
+            guard case let .fold(fold) = item, fold.projectID == projectID, fold.section == section else { return nil }
+            return fold
+        }.first
+    }
+
     /// The cursor's key for `press`; `nil` for one it leaves alone, and
     /// for Return with a modifier.
     private static func cursorKey(_ press: KeyPress) -> SidebarKeyboardCursor.Key? {
@@ -603,15 +613,25 @@ struct SessionSidebarView: View {
 
     /// The window's key, seen ahead of the menus while the sidebar has the
     /// keyboard: Move Project Up and Down (⌥⌘↑ ⌥⌘↓ by default) move the
-    /// project of the line the keys are on, else the window's
-    /// (`SidebarKeyRoute`). `true` takes the key.
-    private func handleMonitoredKey(_ event: NSEvent, in nsWindow: NSWindow) -> Bool {
+    /// project of the line the keys are on, else the window's, and ⌘⌫
+    /// clears the fold line the keys are on (`SidebarKeyRoute`). `true`
+    /// takes the key. A binding the person gave ⌘⌫ keeps it.
+    private func handleMonitoredKey(_ event: NSEvent, in nsWindow: NSWindow, model: SidebarListModel) -> Bool {
         let route = SidebarKeyRoute.route(
             for: event,
             keyboard: settings.settings.keyboard,
             hasKeyboard: ownsKeys,
             isComposing: nsWindow.isComposingText
         )
+        if route == .clearFold {
+            // A line with no button leaves the key to the window.
+            guard let line = SidebarKeyboardCursor.foldLine(at: keyboardLine),
+                  let fold = fold(line.section, of: line.projectID, in: model),
+                  let clear = foldClear(fold)
+            else { return false }
+            clear.action()
+            return true
+        }
         guard case let .moveProject(offset) = route else { return false }
         if let projectID = SidebarKeyboardCursor.projectToMove(at: keyboardLine, shown: window.selection.shownProjectID) {
             arrange { $0.move(projectID, by: offset, among: projectIDs) }

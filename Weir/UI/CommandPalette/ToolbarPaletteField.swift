@@ -15,6 +15,7 @@ struct ToolbarPaletteField: View {
     @Environment(\.surfaceRegistry) private var registry
     @Environment(\.restoreHandler) private var restoreHandler
     @Environment(InstalledAgentsStore.self) private var installedAgents: InstalledAgentsStore?
+    @Environment(ToastCenter.self) private var toastCenter: ToastCenter?
 
     /// The palette open in this window. One open in another window leaves
     /// this field idle, so the two fields never edit the same query.
@@ -55,7 +56,8 @@ struct ToolbarPaletteField: View {
                 window: window,
                 session: session,
                 restoreTurnNumber: restoreHandler?.paletteTurnNumber(),
-                installedAgents: installedAgents
+                installedAgents: installedAgents,
+                toasts: toastCenter
             )
         )
     }

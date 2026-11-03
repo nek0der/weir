@@ -16,6 +16,10 @@ as they are fixed or confirmed.
   review's keys.** From the keyboard, `]` moves to the next hunk, ⇧J
   extends the selection over its lines, and `c` comments on them.
   Discarding a hunk needs the pointer.
+- **The decision bar's ‹ ›, and its own Undo, need the pointer or
+  VoiceOver.** They stay out of Tab's way, leaving Tab to the terminal. ⌥⌘.
+  opens the bar's **⋯**, and the Undo of the notice shown with Mark as Viewed
+  or a restore is a row of the command palette while the notice shows.
 
 ## Approvals and questions
 

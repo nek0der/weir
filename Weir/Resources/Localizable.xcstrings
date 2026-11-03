@@ -360,6 +360,39 @@
         }
       }
     },
+    "Show Decision Bar Menu": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show Decision Bar Menu"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ペインの下のバーのメニューを表示"
+          }
+        }
+      }
+    },
+    "Undo is also in the command palette.": {
+      "comment": "VoiceOver, after a toast's message: its Undo is also a row of the command palette (⇧⌘P)",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Undo is also in the command palette."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コマンドパレットからも元に戻せます。"
+          }
+        }
+      }
+    },
     "Shows once Antigravity replies. Needs a status line of your own (set one with /statusline).": {
       "comment": "Plan usage panel, Antigravity section before any usage was reported; /statusline is a command name",
       "localizations": {

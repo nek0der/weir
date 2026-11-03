@@ -40,10 +40,25 @@ struct SupervisionPaletteFacts: Equatable {
     var areRailsHidden = false
     /// Whether the title bar shows the worktree ▾ (`CheckoutName.hasWorktreeMenu`).
     var hasWorktreeMenu = false
+    /// Whether the focused pane's decision bar shows a ⋯ for Show
+    /// Decision Bar Menu to open.
+    var hasDecisionBarMenu = false
     /// The agents found on this Mac for the window's session, which the
     /// pane strip's "+" offers (`InstalledAgentsStore`); `nil` until they were
     /// looked for once, when every agent is offered (`InstalledAgentRule`).
     var installedAgents: [AgentKind]?
+    /// The window's toast while it offers Undo, which the palette lists
+    /// as a row; `nil` while it shows none, or one with nothing to undo.
+    var toastUndo: ToastUndo?
+
+    /// A toast's Undo as the palette lists it.
+    struct ToastUndo: Equatable {
+        /// The toast's id, which the row takes back and no other.
+        let id: UUID
+        let message: DisplayText
+        /// What Undo takes back, where "Undo" does not say it (`ToastItem.undoLabel`).
+        let label: LocalizedStringResource?
+    }
 
     /// Whether ⇧⌘[ ⇧⌘] have a tab to step to among `tabCount` terminal
     /// tabs: another one, or the window's review tab (`facts`). The menu

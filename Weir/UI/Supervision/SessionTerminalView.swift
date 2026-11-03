@@ -103,6 +103,7 @@ private struct SessionTerminalEmptyState: View {
     @Environment(ReviewPresentation.self) private var reviewPresentation
     @Environment(\.surfaceRegistry) private var registry
     @Environment(InstalledAgentsStore.self) private var installedAgents: InstalledAgentsStore?
+    @Environment(ToastCenter.self) private var toastCenter: ToastCenter?
     @Environment(\.frecencyStore) private var frecencyStore
     @Environment(\.restoreHandler) private var restoreHandler
     @Environment(\.locale) private var locale
@@ -155,7 +156,8 @@ private struct SessionTerminalEmptyState: View {
                         window: window,
                         session: session,
                         restoreTurnNumber: restoreHandler?.paletteTurnNumber(),
-                        installedAgents: installedAgents
+                        installedAgents: installedAgents,
+                        toasts: toastCenter
                     )
                 )
             },

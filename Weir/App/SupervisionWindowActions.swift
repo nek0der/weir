@@ -1,7 +1,7 @@
 // SupervisionWindowActions.swift
 // Weir — the supervision window's own actions, shared by the menu bar and the palette.
 
-import Foundation
+import AppKit
 import os
 import WeirDomain
 
@@ -337,6 +337,10 @@ enum SupervisionWindowActions {
             toggleIconBars(in: window)
             return .handledReturningKeyboard
         }
+        if case let .undoToast(id) = action {
+            state.toastCenter.undo(id, in: window.id)
+            return .handledReturningKeyboard
+        }
         return runProjectRow(
             action,
             in: window,
@@ -649,10 +653,23 @@ enum SupervisionWindowActions {
             openFolder(from: window, session: session, registry: state.windowRegistry, frecency: state.frecencyStore)
         case .focusSidebar:
             focusSidebar(in: session, window: window)
+        case .showDecisionBarMenu:
+            showDecisionBarMenu(in: window, session: session)
         default:
             return false
         }
         return true
+    }
+
+    /// Opens the ⋯ of the focused pane's decision bar; nothing while the
+    /// review stands where the panes were, or where the bar shows no ⋯.
+    /// The beep says the key was heard and had nothing to open, as a menu
+    /// key with nothing to do does.
+    static func showDecisionBarMenu(in window: ProjectWindowState, session: WorkspaceSession) {
+        guard let paneID = window.decisionBarMenuPane(in: session), window.decisionBarMenus.open(inPane: paneID) else {
+            NSSound.beep()
+            return
+        }
     }
 
     /// Opens a title bar dropdown or the rail's plan usage panel from its key.
