@@ -41,9 +41,18 @@ struct ReviewInsertionTests {
 
     /// The insert's setup, its pane taking text unless `isPaneStarted` is
     /// false: a pane whose terminal has not started has no deliverer yet.
-    private static func insert(isPaneStarted: Bool = true) async throws -> Insert {
+    /// `drafts`, when given, is where the review's draft is kept.
+    private static func insert(
+        isPaneStarted: Bool = true,
+        drafts: (any ReviewDraftStoring)? = nil
+    ) async throws -> Insert {
         let fixture = WorkspaceSessionFixture.withLooseTab()
-        let review = try fakeReviewSession(git: FakeReviewRepository.oneFile())
+        let git = try FakeReviewRepository.oneFile()
+        let review = if let drafts {
+            ReviewSession(root: URL(fileURLWithPath: "/tmp/weir-review-root"), git: git, drafts: drafts)
+        } else {
+            fakeReviewSession(git: git)
+        }
         let insert = Insert(session: fixture.session, paneID: fixture.paneID, review: review)
         if isPaneStarted {
             insert.registry.deliverers[fixture.paneID] = insert.deliverer
@@ -315,6 +324,99 @@ struct ReviewInsertionTests {
         #expect(outcome.paneID == insert.paneID)
         #expect(insert.deliverer.delivered.count == 1)
         #expect(store.comments.first?.insertedAt != nil)
+    }
+
+    /// While the draft cannot be saved, an insert that reached the agent is
+    /// not recorded as sent: the review stays open on it, since closing would
+    /// drop the only record, and the draft read again would offer the same
+    /// comments as never sent.
+    @Test func anInsertWhileSavingIsSuspended_isNotRecorded_andKeepsTheReviewOpen() async throws {
+        let drafts = RecordingReviewDraftStore()
+        drafts.loadError = ReviewDraftLoadError.migratedWithoutCopy(ReviewDraft(comments: []))
+        let insert = try await Self.insert(drafts: drafts)
+        let store = insert.review
+        try #require(store.isSavingSuspended)
+
+        let outcome = try await ReviewInsertion.run(reviewSession: store, to: insert.target())
+        #expect(insert.deliverer.delivered.count == 1, "the text still goes to the agent")
+        #expect(!outcome.wasRecorded)
+        #expect(!outcome.isComplete, "so the review does not close over it")
+        #expect(drafts.saves == 0, "nothing written over the only copy")
+        // This window still says what it sent, under the banner that says
+        // none of it is kept.
+        #expect(store.comments.first?.insertedAt != nil)
+        #expect(store.errorMessage == DisplayText(error: ReviewError.draftNotSaved))
+        #expect(store.markInserted(store.comments).wasRecorded == false)
+    }
+
+    /// Two windows reviewing one worktree share its comments, and one
+    /// window's insert holds them until its paste answers: the other's Insert
+    /// is refused meanwhile rather than sending the same comments again, and
+    /// works once the first is done.
+    @Test func twoReviewsOfOneWorktree_doNotInsertTheSameCommentsAtOnce() async throws {
+        let insert = try await Self.insert()
+        let first = insert.review
+        let second = try ReviewSession(writer: first.writer, git: FakeReviewRepository.oneFile())
+        await second.refreshAsTheAppDoes()
+        try #require(second.shownComments == first.shownComments)
+        insert.deliverer.verdict = .waits
+
+        async let waiting = ReviewInsertion.run(reviewSession: first, to: insert.target())
+        // A paste left unanswered cannot be canceled, so a failed check below
+        // would hang on it rather than fail. The first answer stands, so this
+        // changes nothing once the test has given its own.
+        defer {
+            for receipt in insert.deliverer.receipts {
+                receipt?.settlement?.settle(wasDelivered: false)
+            }
+        }
+        await pollUntil { insert.deliverer.delivered.count == 1 }
+        try #require(insert.deliverer.delivered.count == 1, "the first insert reached the paste")
+        await #expect(throws: ReviewError.insertInProgress) {
+            try await ReviewInsertion.run(reviewSession: second, to: insert.target())
+        }
+        #expect(insert.deliverer.delivered.count == 1, "the second sent nothing")
+
+        try #require(insert.deliverer.receipts.last ?? nil).settlement?.settle(wasDelivered: true)
+        #expect(try await waiting.isComplete)
+
+        // A refused insert lets go of its comments too.
+        insert.deliverer.verdict = .isRefused
+        await #expect(throws: ReviewError.pasteRefused) {
+            try await ReviewInsertion.run(reviewSession: first, to: insert.target())
+        }
+        insert.deliverer.verdict = .lands
+        let outcome = try await ReviewInsertion.run(reviewSession: second, to: insert.target())
+        #expect(outcome.isComplete)
+        #expect(insert.deliverer.delivered.count == 3)
+    }
+
+    /// A pane whose program has exited keeps its terminal on screen, and that
+    /// terminal takes a paste as a live one does; nothing reads it. The insert
+    /// is refused there, before the press and after Git answers alike.
+    @Test func anInsertIntoAPaneWhoseProgramExited_isRefusedAndRecordsNothing() async throws {
+        let insert = try await Self.insert()
+        let store = insert.review
+        insert.session.setChildExited(paneID: insert.paneID, code: 0)
+        #expect(ReviewAgents.destination(session: insert.session, paneID: insert.paneID, registry: insert.registry)?
+            .hasExited == true)
+
+        await #expect(throws: ReviewError.paneExited) {
+            try await ReviewInsertion.run(reviewSession: store, to: insert.target())
+        }
+        #expect(insert.deliverer.delivered.isEmpty)
+        #expect(store.comments.first?.insertedAt == nil)
+
+        // The program exits during the waits after the press.
+        insert.session.setChildExited(paneID: insert.paneID, code: nil)
+        await #expect(throws: ReviewError.paneExited) {
+            try await ReviewInsertion.run(reviewSession: store, to: insert.target(isSameReview: {
+                insert.session.setChildExited(paneID: insert.paneID, code: 1)
+                return true
+            }))
+        }
+        #expect(insert.deliverer.delivered.isEmpty)
+        #expect(store.comments.first?.insertedAt == nil)
     }
 }
 

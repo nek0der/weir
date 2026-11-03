@@ -6,9 +6,11 @@ import WeirDomain
 
 /// The order the insert has to happen in, away from the view that starts it.
 ///
-/// Three rules travel together here, and each one is a bug if it moves: the
+/// Four rules travel together here, and each one is a bug if it moves: the
 /// destination is resolved twice because Git answers slowly enough for the
-/// reader to switch panes inside the gap; the comments are marked only after
+/// reader to switch panes inside the gap; the comments are claimed on the
+/// worktree's draft before the first wait, so another window's insert cannot
+/// send them while this one waits; the comments are marked only after
 /// the pane took the text, which the paste says through its receipt rather
 /// than the paste action's return; and the receipt names only the comments
 /// this insert is marking. Left in a view, they belonged to that view's
@@ -86,8 +88,11 @@ enum ReviewInsertion {
     /// Resolves, builds, delivers and records — in that order.
     ///
     /// Throws `targetUnavailable` when the pane the reader pressed Insert in
-    /// is no longer the pane that would receive the text, and `pasteRefused`
-    /// when the paste was started and the terminal did not take it.
+    /// is no longer the pane that would receive the text, `paneExited` when
+    /// the program in it has exited, `insertInProgress` when another review
+    /// of the worktree is inserting some of the same comments, and
+    /// `pasteRefused` when the paste was started and the terminal did not
+    /// take it.
     @MainActor
     static func run(reviewSession: ReviewSession, to target: Target) async throws -> Outcome {
         let session = target.session
@@ -100,8 +105,15 @@ enum ReviewInsertion {
             paneID: target.originPaneID(),
             registry: registry
         ) else { throw ReviewError.targetUnavailable }
+        guard !pressed.hasExited else { throw ReviewError.paneExited }
         let root = reviewSession.root
         let comments = reviewSession.shownComments
+        // Claimed before the first wait and held until the paste answers:
+        // another window's review of the worktree shares these comments, and
+        // its insert must not send them while this one is still waiting.
+        let claimed = Set(comments.filter { !$0.isResolved }.map(\.id))
+        guard reviewSession.writer.beginInsert(claimed) else { throw ReviewError.insertInProgress }
+        defer { reviewSession.writer.endInsert(claimed) }
         // Line numbers age with the worktree. Inserting a comment that points
         // at code which has since moved is worse than refusing: the agent
         // would edit the wrong lines with full confidence. Only the comments
@@ -140,6 +152,9 @@ enum ReviewInsertion {
         guard target.isSameReview(), target.originPaneID() == destination.paneID else {
             throw ReviewError.targetUnavailable
         }
+        // Asked of the session rather than of `destination`: the program can
+        // exit during any of the waits since the press, the last included.
+        guard session.childExitCode(paneID: destination.paneID) == nil else { throw ReviewError.paneExited }
         let settlement = ReviewPasteSettlement()
         try ReviewAgents.insert(
             prompt,

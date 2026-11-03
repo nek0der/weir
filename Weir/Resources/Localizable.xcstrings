@@ -7820,6 +7820,23 @@
         }
       }
     },
+    "These comments are being inserted from another window. Wait for that insert to finish.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "These comments are being inserted from another window. Wait for that insert to finish."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "これらのコメントは別のウインドウから挿入中です。その挿入が終わるまでお待ちください。"
+          }
+        }
+      }
+    },
     "These comments are too long to send together. Resolve or delete some and try again.": {
       "localizations": {
         "en": {
@@ -18437,6 +18454,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "ペインのターミナルが起動しませんでした。もう一度お試しください。"
+          }
+        }
+      }
+    },
+    "The program in this pane has exited, so the comments weren’t inserted. They stay in this review.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The program in this pane has exited, so the comments weren’t inserted. They stay in this review."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このペインのプログラムは終了しているため、コメントは挿入していません。コメントはこのレビューに残っています。"
           }
         }
       }
