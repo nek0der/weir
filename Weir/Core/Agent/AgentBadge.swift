@@ -33,8 +33,8 @@ struct AgentBadge: Codable, Equatable {
     /// interrupt, or the idle prompt after a turn that stopped without a
     /// `Stop`), on `SessionEnd`, and on a session start other than a
     /// compaction, which keeps the turn it came in open. A run shown at work
-    /// without it is working outside a turn (ADR 0004, "Work outside a
-    /// turn"). The tooltip's elapsed-seconds value is computed at render
+    /// without it is working outside a turn (`docs/provider-adapters.md`,
+    /// "Work outside a turn"). The tooltip's elapsed-seconds value is computed at render
     /// time as `Date().timeIntervalSince(runStartedAt)` so it never goes
     /// stale.
     var runStartedAt: Date?

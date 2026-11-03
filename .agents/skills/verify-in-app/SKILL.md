@@ -15,7 +15,8 @@ full-screen control for those, or leave them to a manual check, and say which.
 
 When a check needs something no operation or palette row reaches, add an
 operation as ADR 0005's "Adding an operation" says, rather than reaching for
-full-screen control.
+full-screen control. Every operation, its replies, and its limits are in
+`docs/verification-channel.md`.
 
 The run is a Debug build of this checkout, behind the person's windows, with
 its own data. Several worktrees can each have one at once.

@@ -74,16 +74,5 @@ secrets/
 .claude/local/
 .claude/worktrees/
 
-# Local-only notes under docs/ stay out of git. Architecture decision records
-# and published reference documents are tracked; docs/adr/ is allowed as a
-# directory so a new ADR needs no entry here.
-docs/*
-!docs/adr/
-!docs/agent-integration-protocol.md
-!docs/data-migration.md
-!docs/known-limitations.md
-!docs/libghostty-fork.md
-!docs/user-guide.md
-
 # Distribution artifacts (dmg, zip, etc.)
 dist/

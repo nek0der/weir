@@ -1,7 +1,8 @@
 # Weir user guide
 
-The README gives a short tour. This guide covers each part of the window in
-detail, then the workflow, the other features, and every default shortcut.
+The [README](../README.md) gives a short tour. This guide covers each part of
+the window in detail, then the workflow, the other features, and the main
+default shortcuts. ⌘/ lists them all.
 
 ## Terms
 
@@ -134,43 +135,49 @@ The **▾** at the strip's left end (⇧⌘A) opens **Open Tabs**: every tab of 
 session, with who runs in it and its state, to search, switch to, or close.
 Use it when the strip has more tabs than fit.
 
-Every pane has a one-line header with the pane's name and folder. For an
-agent it adds the model, the effort, the permission mode unless it is the
-default, and the tokens its conversation's kept turns have used.
-When the agent runs every action without asking (Claude Code's bypass mode, or Codex with approvals
-set to never), the header says **Runs without asking** beside a warning
-sign. Antigravity does not report its permission mode, so its header shows
-neither the mode nor this warning. OpenCode's header names the role you chose for the
-agent, if any, the model, and the service it goes through, whichever model it runs: the
-badge stays `Op`. A long model name is cut in the middle, and the hover text has it
-whole. As the pane narrows, the folder goes first, then the tokens with OpenCode's service, then the
-model, the effort, and the mode, then the name. The warning stays as its sign.
+Every pane has a one-line header with the pane's name and folder. For an agent
+it adds the model, the effort, the permission mode unless it is the default, and
+the tokens its conversation's kept turns have used. When the agent runs every
+action without asking (Claude Code's bypass mode, or Codex with approvals set to
+never), the header says **Runs without asking** beside a warning sign.
+Antigravity does not report its permission mode, so its header shows neither the
+mode nor this warning. OpenCode's header names the role you chose for the agent,
+if any, the model, and the service it goes through, whichever model it runs: the
+badge stays `Op`. A long model name is cut in the middle, and the hover text has
+it whole. As the pane narrows, the folder goes first, then the tokens with
+OpenCode's service, then the model, the effort, and the mode, then the name. The
+warning stays as its sign.
 
-When tmux shows several agents in one terminal, the header gives priority
-to a visible agent that runs without asking, keeping its warning even when
-another split has focus. The model and provider name describe that same
-agent. Otherwise, the focused agent takes priority. When an agent launches
-another CLI in the same tmux pane, settings follow the child while it works.
-The header returns to the parent with its next report of its settings, or when the child reports that its session has ended.
-Agents in hidden tmux windows or panes hidden by zoom do not supply the
-header settings.
-If older records do not identify which invocation is current, the header
-says **Agent settings unavailable** with a warning sign instead of guessing
-the model, effort, or permission mode. A new invocation records its launch order.
+When tmux shows several agents in one terminal, the header gives priority to a
+visible agent that runs without asking, keeping its warning even when another
+split has focus. The model and provider name describe that same agent.
+Otherwise, the focused agent takes priority. When an agent launches another CLI
+in the same tmux pane, settings follow the child while it works. The header
+returns to the parent with its next report of its settings, or when the child
+reports that its session has ended. Agents in hidden tmux windows or panes
+hidden by zoom do not supply the header settings. If older records do not
+identify which invocation is current, the header says **Agent settings
+unavailable** with a warning sign instead of guessing the model, effort, or
+permission mode. A new invocation records its launch order.
 
 ### Decision bar
 
 Under each agent pane. One line sums up the unviewed turns (their numbers,
-files, lines, and checks) or says what the agent is waiting on. It offers only the
-actions the CLI does not have:
+files, lines, and checks) or says what the agent is waiting on. It offers only
+the actions the CLI does not have:
 
+- **Answer…** (⌘⏎), on an approval or a question Weir holds, which opens the
+  approval card
 - **Mark as Viewed** (⌘⏎)
 - **Review Unviewed**
 - **Resume Same Conversation**, after a stop
+- **Notify When It Resets**, after a stop at a usage limit
+- **Close All Tabs**, for a worktree that was deleted
 - a **⋯** menu with **Restore Code to Before T*n*…** (and, after a stop,
   **Show Partial Changes** and **Start New Conversation**)
 
-Approvals and questions are answered in the agent's own prompt, not here.
+**Answer in terminal**, in the **⋯** menu, hands an approval or a question to
+the agent's own prompt instead.
 
 When a Claude Code turn ends with shells, subagents, or other tasks still
 running in the background, the line adds how many, until a later turn ends
@@ -209,20 +216,20 @@ and a **Conversation** filter.
   strip shows the tabs ("Tab 3"), where it runs when that is another
   worktree, or "No tab" once it ended. When it last worked and its
   unviewed turns follow. The tooltip and VoiceOver name the conversation.
-- While a worktree has two or more conversations running or with turns to
-  read, each of them gets a color, drawn as a short vertical bar just left
-  of its agent badge: on its pane's header, on its pane strip tab and its
-  **Open Tabs** row, under the turn number on its cards, in the
-  **Conversation** filter and its menu, in the review's scope menu, and on
-  the review's file tags. A tab's bar shares its height among the colors of
-  the conversations its badge stands for, up to three. A conversation keeps
-  its color while it runs or has turns to read, so a pane, a tab, and their
-  cards can be matched at a glance. Rest the pointer on a tab and the cards
-  of every conversation it runs are tinted in their colors while the others
-  fade, or on a pane's header for that pane's alone; point at a card and its
-  pane is outlined, or its tab tinted while the pane is behind another tab. A worktree with one such
-  conversation, and a scratch tab, show no bar. A file tag still shows the
-  number ("#2") when the conversation's name carries one.
+- While a worktree has two or more conversations running or with turns to read,
+  each of them gets a color, drawn as a short vertical bar just left of its
+  agent badge: on its pane's header, on its pane strip tab and its **Open Tabs**
+  row, under the turn number on its cards, in the **Conversation** filter and
+  its menu, in the review's scope menu, and on the review's file tags. A tab's
+  bar shares its height among the colors of the conversations its badge stands
+  for, up to three. A conversation keeps its color while it runs or has turns to
+  read, so a pane, a tab, and their cards can be matched at a glance. Rest the
+  pointer on a tab and the cards of every conversation it runs are tinted in
+  their colors while the others fade, or on a pane's header for that pane's
+  alone; point at a card and its pane is outlined, or its tab tinted while the
+  pane is behind another tab. A worktree with one such conversation, and a
+  scratch tab, show no bar. A file tag still shows the number ("#2") when the
+  conversation's name carries one.
 - An unviewed turn's number ("T7") stands in a blue pill; a viewed turn's
   number is gray. The card open in the review is ringed in blue.
 - The viewed turns at the top of the list fold into one line, **Show 12
@@ -237,19 +244,19 @@ and a **Conversation** filter.
   or open it in the review; a running turn has none. Both are also in the
   card's context menu and its VoiceOver actions; the context menu also
   offers **Show Tab** while a tab of this worktree runs the conversation.
-- With two or more conversations with turns and the filter on **All**, **Timeline** and
-  **By Conversation** above the list choose how the turns are listed; each
-  window keeps its choice. **By Conversation** gives each conversation a
-  section, the running ones first, then those with unviewed turns, then
-  those viewed, the latest first in each. A section's heading shows the
-  conversation's color, badge, and name, the same line as the filter's
-  menu, its unviewed count, and **Show Tab** while a tab of this worktree
-  runs it. Click the heading to collapse the section; it opens again when
-  you switch worktrees, change the grouping, or reopen the panel. Its cards
-  leave out the badge, which the heading carries. A card's moves reach its
-  own conversation's line only, and **Unmark as Viewed** under a section
-  takes back that conversation's line alone. Pointing at a heading tints
-  the conversation's tab, as a card does.
+- With two or more conversations with turns and the filter on **All**,
+  **Timeline** and **By Conversation** above the list choose how the turns are
+  listed; each window keeps its choice. **By Conversation** gives each
+  conversation a section, the running ones first, then those with unviewed
+  turns, then those viewed, the latest first in each. A section's heading shows
+  the conversation's color, badge, and name, the same line as the filter's menu,
+  its unviewed count, and **Show Tab** while a tab of this worktree runs it.
+  Click the heading to collapse the section; it opens again when you switch
+  worktrees, change the grouping, or reopen the panel. Its cards leave out the
+  badge, which the heading carries. A card's moves reach its own conversation's
+  line only, and **Unmark as Viewed** under a section takes back that
+  conversation's line alone. Pointing at a heading tints the conversation's tab,
+  as a card does.
 - **Review All Unviewed** opens the review.
 - **Commit & PR** at the bottom shows what is not yet in the base branch or
   not yet pushed, and offers **Create PR** (with `gh`) and **Clean Up
@@ -265,22 +272,21 @@ encoding.
 1. **Start.** **New Worktree** (⌘N) makes a worktree on a new or existing
    branch, fetching a remote base first and copying in the ignored files the
    project names, such as `.env`, then opens Claude Code, Codex, Antigravity,
-   OpenCode, a shell, or nothing in it. The sheet only makes the worktree; you give the agent its
-   first instruction in its own prompt. **Create** (⌘⏎) makes it; ⌥⌘N makes
-   one at once with the last choices, without the sheet.
+   OpenCode, a shell, or nothing in it. The sheet only makes the worktree; you
+   give the agent its first instruction in its own prompt. **Create** (⌘⏎) makes
+   it; ⌥⌘N makes one at once with the last choices, without the sheet.
 2. **It works.** The sidebar row and the decision bar show what the agent is
    doing. Nothing moves or takes focus on its own.
-3. **It needs you.** An approval, a question, a stop, or a finished turn
-   joins **Needs Attention**. Press ⌘J to go to the next item (⇧⌘J for the
-   previous one), or ⌥⌘J to open the list. Weir holds each request until you
-   answer it, wherever its pane is: **Answer…** on the bar under the pane
-   (⌘⏎), in the list, or on the sidebar row opens the approval card, and
-   **Answer in terminal** hands it to the agent's own prompt. While another
-   app is in front, the menu bar can answer a short, low-impact shell
-   command. Codex questions are always answered in the terminal, and so is
-   everything Antigravity asks. OpenCode's questions are answered in the terminal
-   too, and its own prompt stays up while Weir holds an approval: answer at either
-   one.
+3. **It needs you.** An approval, a question, a stop, or a finished turn joins
+   **Needs Attention**. Press ⌘J to go to the next item (⇧⌘J for the previous
+   one), or ⌥⌘J to open the list. Weir holds each request until you answer it,
+   wherever its pane is: **Answer…** on the bar under the pane (⌘⏎), in the
+   list, or on the sidebar row opens the approval card, and **Answer in
+   terminal** hands it to the agent's own prompt. While another app is in front,
+   the menu bar can answer a short, low-impact shell command. Codex questions
+   are always answered in the terminal, and so is everything Antigravity asks.
+   OpenCode's questions are answered in the terminal too, and its own prompt
+   stays up while Weir holds an approval: answer at either one.
 4. **You review.** **Review Unviewed**, **Review All Unviewed**, or ⌥⌘R opens
    a review tab in place of the terminal. Its scope menu picks one
    conversation's unviewed turns, all unviewed turns in the worktree, a
@@ -304,10 +310,10 @@ encoding.
   permission requests for the approval card. The release DMG has it. A build
   without a Team ID leaves every approval to the agent's own prompt; see
   [CONTRIBUTING.md](../CONTRIBUTING.md#native-approvals-in-a-debug-build).
-  Antigravity always asks in its own prompt, in any build, and Weir shows
-  that it waits; [Known limitations](known-limitations.md#antigravity) says why.
-  [OpenCode](known-limitations.md#opencode) uses the card too, with its own prompt up
-  beside it.
+  Antigravity always asks in its own prompt, in any build, and Weir shows that
+  it waits; [Known limitations](known-limitations.md#antigravity) says why.
+  [OpenCode](known-limitations.md#opencode) uses the card too, with its own
+  prompt up beside it.
 - **Worktrees.** Create, switch, and delete worktrees from **New Worktree**,
   the worktree menu, and the sidebar row. When an agent `cd`s into another
   worktree, Weir offers to move the tab there.
@@ -329,9 +335,9 @@ encoding.
   attention state.
 - **Shell command.** **Settings → Integrations → Shell Command** adds a `weir`
   command to the terminal: `weir .` opens the current folder as a project.
-- **Updates and languages.** Weir checks for updates once a day through
-  Sparkle and installs one when you choose to. The interface is in English and Japanese; choose one in
-  **Settings → General → Display Language**.
+- **Updates and languages.** Weir checks for updates once a day through Sparkle
+  and installs one when you choose to. The interface is in English and Japanese;
+  choose one in **Settings → General → Display Language**.
 
 ## Shortcuts
 
@@ -339,7 +345,7 @@ encoding.
 |---|---|
 | ⌘J / ⇧⌘J | Next / previous item that needs you |
 | ⌥⌘J | Show Needs Attention |
-| ⌘⏎ | Decision bar's main action (Mark as Viewed, Resume, Notify When It Resets) |
+| ⌘⏎ | Decision bar's main action (Answer…, Mark as Viewed, Resume, Notify When It Resets, Close All Tabs) |
 | ⌥⌘R | Review |
 | ⌥⌘L | Review Latest Turn |
 | ⌥⌘I | Changes panel |
