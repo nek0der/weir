@@ -76,7 +76,8 @@ extension Tab {
     }
 
     /// Clears everything `paneTransferState(of:)` reads for `paneID`, once
-    /// the pane has left this tab.
+    /// the pane has left this tab, by a move or by closing
+    /// (`PaneActions.removeClosedLeaf`).
     mutating func removePaneTransferState(of paneID: UUID) {
         paneStates.removeValue(forKey: paneID)
         for provider in AgentKind.allCases {

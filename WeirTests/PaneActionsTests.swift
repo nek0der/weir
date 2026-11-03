@@ -156,6 +156,122 @@ struct PaneActionsTests {
         #expect(lastReconcile.count == 2)
     }
 
+    // MARK: - A pane that closes
+
+    // A tuple keeps the call sites' destructuring, as the fixtures' do.
+    // swiftlint:disable large_tuple
+
+    /// Three panes, a | b | c, with `a` focused: the person is in `a`.
+    private static func threePanes() throws -> (session: WorkspaceSession, tabID: UUID, a: UUID, b: UUID, c: UUID) {
+        let (session, tab, a) = WorkspaceSessionFixture.withLooseTab()
+        PaneActions.split(session, direction: .horizontal)
+        PaneActions.split(session, direction: .horizontal)
+        let leaves = try #require(session.tab(tab.id)).splitTree.allLeafIDs()
+        try #require(leaves.count == 3 && leaves[0] == a)
+        session.update(tab.id) { $0.splitTree.focusedLeafID = a }
+        return (session, tab.id, a, leaves[1], leaves[2])
+    }
+
+    // swiftlint:enable large_tuple
+
+    @Test("a pane closing behind the person's back leaves the focus and the keyboard where they were")
+    func removeClosedLeaf_unfocusedPane_keepsFocusAndKeyboard() throws {
+        let (session, tabID, a, _, c) = try Self.threePanes()
+        let registry = RecordingSurfaceRegistry()
+        let surfaceA = RecordingPaneSurface()
+        registry.surfaces[a] = surfaceA
+
+        PaneActions.removeClosedLeaf(
+            c, fromTab: tabID, session, registry: registry, agentProjection: nil, pullsKeyboardFocus: false
+        )
+
+        #expect(session.tab(tabID)?.splitTree.focusedLeafID == a)
+        #expect(surfaceA.keyboardFocusRequests == 0)
+    }
+
+    @Test("the focused pane's shell ending hands the keyboard to the pane that takes the focus")
+    func removeClosedLeaf_focusedPane_pullsKeyboardToSuccessor() throws {
+        let (session, tabID, a, b, _) = try Self.threePanes()
+        let registry = RecordingSurfaceRegistry()
+        let surfaceB = RecordingPaneSurface()
+        registry.surfaces[b] = surfaceB
+
+        PaneActions.removeClosedLeaf(
+            a, fromTab: tabID, session, registry: registry, agentProjection: nil, pullsKeyboardFocus: true
+        )
+
+        let focused = try #require(session.tab(tabID)?.splitTree.focusedLeafID)
+        #expect(focused != a)
+        #expect(focused == b)
+        #expect(surfaceB.keyboardFocusRequests == 1)
+    }
+
+    @Test("a hidden pane closing keeps the zoom; the zoomed pane closing ends it")
+    func removeClosedLeaf_zoom_endsOnlyWithTheZoomedPane() throws {
+        let (session, tabID, a, b, c) = try Self.threePanes()
+        let registry = RecordingSurfaceRegistry()
+        session.update(tabID) { $0.zoomedLeafID = a }
+
+        PaneActions.removeClosedLeaf(
+            b, fromTab: tabID, session, registry: registry, agentProjection: nil, pullsKeyboardFocus: false
+        )
+        #expect(session.tab(tabID)?.zoomedLeafID == a)
+        #expect(session.tab(tabID)?.splitTree.focusedLeafID == a)
+
+        PaneActions.removeClosedLeaf(
+            a, fromTab: tabID, session, registry: registry, agentProjection: nil, pullsKeyboardFocus: false
+        )
+        #expect(session.tab(tabID)?.zoomedLeafID == nil)
+        #expect(session.tab(tabID)?.splitTree.focusedLeafID == c)
+    }
+
+    @Test("a closed pane leaves nothing of its own behind in its tab or the session")
+    func removeClosedLeaf_dropsEveryPerPaneEntry() throws {
+        let (session, tabID, a, _, c) = try Self.threePanes()
+        let registry = RecordingSurfaceRegistry()
+        session.update(tabID) { t in
+            t.paneStates[c] = PaneState()
+            t.scrollbackPaths[c] = "/tmp/scrollback"
+            t.initialCommands[c] = "make test"
+        }
+        session.paneSearchStates[c] = PaneSearchState()
+        session.paneTransients[c] = PaneTransients(isBellRinging: true)
+
+        PaneActions.removeClosedLeaf(
+            c, fromTab: tabID, session, registry: registry, agentProjection: nil, pullsKeyboardFocus: false
+        )
+
+        let tab = try #require(session.tab(tabID))
+        #expect(tab.paneTransferState(of: c) == Tab.PaneTransferState())
+        #expect(session.paneSearchStates[c] == nil)
+        #expect(session.paneTransients[c] == nil)
+        #expect(registry.unregisteredIDs == [c])
+        #expect(registry.lastReconcileIDs?.contains(a) == true)
+        #expect(registry.lastReconcileIDs?.contains(c) == false)
+    }
+
+    @Test("the last pane closing closes its tab")
+    func removeClosedLeaf_lastPane_closesTab() {
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+
+        PaneActions.removeClosedLeaf(
+            pane, fromTab: tab.id, session, registry: RecordingSurfaceRegistry(), agentProjection: nil, pullsKeyboardFocus: true
+        )
+
+        #expect(session.tab(tab.id) == nil)
+    }
+
+    @Test("jumping to a pane from a notification ends a zoom on another pane")
+    func jumpToPane_whileAnotherPaneIsZoomed_unzooms() throws {
+        let (session, tabID, a, b, _) = try Self.threePanes()
+        session.update(tabID) { $0.zoomedLeafID = a }
+
+        jumpToPane(b, session: session, registry: NoopSurfaceRegistry(), in: session.primaryWindowID, intent: .person)
+
+        #expect(session.tab(tabID)?.zoomedLeafID == nil)
+        #expect(session.tab(tabID)?.splitTree.focusedLeafID == b)
+    }
+
     // MARK: - Equalize
 
     @Test("equalizeSplits routes the SplitTree primitive through the active tab")

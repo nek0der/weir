@@ -186,35 +186,48 @@ enum PaneActions {
             )
             return
         }
+        removeClosedLeaf(
+            leafID,
+            fromTab: tabID,
+            session,
+            registry: registry,
+            agentProjection: agentProjection,
+            pullsKeyboardFocus: session.selection(window)?.activeTabID == tabID
+        )
+    }
+
+    /// Takes a closed pane out of its tab and drops everything kept for it;
+    /// closes the tab when the pane was its last. Both ways a pane closes
+    /// come here, the person's close (`closePane`) and the pane's own shell
+    /// exiting (`GhosttyEventCoordinator`), so the tab and session state
+    /// one of them clears the other does too. `pullsKeyboardFocus` says
+    /// whether the keyboard was on the closed pane, or on its tab, for the
+    /// caller to know; the focus then goes to the pane the tab focuses now.
+    static func removeClosedLeaf( // swiftlint:disable:this function_parameter_count
+        _ leafID: UUID,
+        fromTab tabID: UUID,
+        _ session: WorkspaceSession,
+        registry: any PaneSurfaceProviding,
+        agentProjection: AgentProjectionAdapter?,
+        pullsKeyboardFocus: Bool
+    ) {
+        guard let tab = session.tab(tabID), tab.splitTree.contains(leafID: leafID) else { return }
         // Closed before its agent started: nothing will take the file.
         InitialPromptFile.remove(tab.initialPromptFiles[leafID])
         session.update(tab.id) { t in
-            let result = t.splitTree.remove(leafID)
-            t.splitTree = result.tree
+            t.splitTree = t.splitTree.remove(leafID).tree
             if let z = t.zoomedLeafID, !t.splitTree.contains(leafID: z) {
                 t.zoomedLeafID = nil
             }
-            // Drop every per-pane dictionary entry for the closed leaf. Most
-            // are persisted through `SessionSnapshot`, where a missed one
-            // accumulates on disk on every ⌘W against a multi-pane tab; the
-            // rest (`initialAgentExecutables`, `agentsInFront`) live only in
-            // memory but would tie a stale state to a leaf that is gone.
-            // Tmux bindings are pruned when they are next captured
-            // (`captureTmuxBindings`).
-            // `mergePaneIntoTab` sweeps the same set on its leaf-out path;
-            // keep the two close-leaf paths structurally identical.
-            for provider in AgentKind.allCases {
-                t.agentSessions[provider]?.removeValue(forKey: leafID)
-            }
-            t.paneStates.removeValue(forKey: leafID)
-            t.scrollbackPaths.removeValue(forKey: leafID)
-            t.initialCommands.removeValue(forKey: leafID)
-            t.initialPromptFiles.removeValue(forKey: leafID)
-            t.initialAgentExecutables.removeValue(forKey: leafID)
-            for provider in AgentKind.allCases {
-                t.agentBadges[provider]?.removeValue(forKey: leafID)
-            }
-            t.agentsInFront.removeValue(forKey: leafID)
+            // Drop every per-pane entry for the closed leaf. Most are
+            // persisted through `SessionSnapshot`, where a missed one
+            // accumulates on disk with every pane that closes in a
+            // multi-pane tab; the rest (`initialAgentExecutables`,
+            // `agentsInFront`) live only in memory but would tie a stale
+            // state to a leaf that is gone. `removePaneTransferState` is the
+            // set a pane moved to another tab takes with it, so a close and
+            // a move cannot drift apart.
+            t.removePaneTransferState(of: leafID)
         }
         session.paneSearchStates.removeValue(forKey: leafID)
         session.paneTransients.removeValue(forKey: leafID)
@@ -223,26 +236,22 @@ enum PaneActions {
         // If the tab is now empty, close it altogether.
         if let refreshed = session.tab(tabID), refreshed.splitTree.isEmpty {
             session.closeTab(refreshed.id)
-        } else {
-            // Reconcile registry entries against EVERY tab's leaves —
-            // not just the active tab's. Passing only the active tab's
-            // ids would wipe surfaces in other tabs, and the next visit
-            // to one of those tabs would spawn a fresh shell in place
-            // of the (still-alive) leaf.
-            let allLive = session.allPaneIDs
-            registry.reconcile(activeIDs: allLive)
-            // Promote the surviving sibling to first responder —
-            // SwiftUI's reparent on close does NOT re-fire
-            // `viewDidMoveToWindow`, so the just-closed pane's
-            // `SurfaceView` leaves the responder chain and AppKit
-            // falls back to the window itself. Without this pull,
-            // the next keystroke is silently dropped on the floor
-            // until the user clicks the surviving pane.
-            if session.selection(window)?.activeTabID == tabID,
-               let surviving = session.tab(tabID)?.splitTree.effectiveFocusedLeafID
-            {
-                pullKeyboardFocus(to: surviving, registry: registry)
-            }
+            return
+        }
+        // Reconcile registry entries against EVERY tab's leaves —
+        // not just this tab's. Passing only this tab's ids would wipe
+        // surfaces in other tabs, and the next visit to one of those
+        // tabs would spawn a fresh shell in place of the (still-alive)
+        // leaf.
+        registry.reconcile(activeIDs: session.allPaneIDs)
+        // Promote the focused survivor to first responder — SwiftUI's
+        // reparent on close does NOT re-fire `viewDidMoveToWindow`, so
+        // the just-closed pane's `SurfaceView` leaves the responder
+        // chain and AppKit falls back to the window itself. Without
+        // this pull, the next keystroke is silently dropped on the
+        // floor until the user clicks the surviving pane.
+        if pullsKeyboardFocus, let surviving = session.tab(tabID)?.splitTree.effectiveFocusedLeafID {
+            pullKeyboardFocus(to: surviving, registry: registry)
         }
     }
 

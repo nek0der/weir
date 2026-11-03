@@ -2,6 +2,7 @@
 // Weir — instrumented `SurfaceViewProviding` that records the last `reconcile(activeIDs:)` set for tests.
 
 import Foundation
+import GhosttyKit
 @testable import Weir
 
 @MainActor
@@ -18,6 +19,14 @@ final class RecordingSurfaceRegistry: SurfaceViewProviding {
     }
 
     func register(_: SurfaceView, for _: UUID) {}
+
+    /// Stand-ins for the panes' terminals, by pane. A pane with no entry is
+    /// one not mounted, as `view(for:)` answers for every pane.
+    var surfaces: [UUID: RecordingPaneSurface] = [:]
+
+    func paneSurface(for id: UUID) -> (any PaneSurface)? {
+        surfaces[id]
+    }
 
     func unregister(_ id: UUID) {
         unregisteredIDs.append(id)
@@ -77,5 +86,39 @@ final class RecordingReviewDeliverer: ReviewTextDelivering {
         case .isRefused: receipt?.settlement?.settle(wasDelivered: false)
         case .waits: break
         }
+    }
+}
+
+/// A pane's terminal that counts the times it was asked for keyboard focus.
+@MainActor
+final class RecordingPaneSurface: PaneSurface {
+    private(set) var keyboardFocusRequests = 0
+
+    var surface: ghostty_surface_t? {
+        nil
+    }
+
+    var ttyName: String? {
+        nil
+    }
+
+    var isInWindow: Bool {
+        true
+    }
+
+    var boundsSize: CGSize {
+        .zero
+    }
+
+    var rectInWindow: CGRect {
+        .zero
+    }
+
+    var holdsKeyboardFocus: Bool {
+        false
+    }
+
+    func takeKeyboardFocus() {
+        keyboardFocusRequests += 1
     }
 }

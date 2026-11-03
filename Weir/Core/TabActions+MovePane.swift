@@ -64,8 +64,8 @@ extension TabActions {
         session.update(sourceTab.id) { t in
             // The conversation that names the tab goes with its pane.
             newTab.receiveConversationName(t.takeConversationName(of: paneID))
-            let result = t.splitTree.remove(paneID)
-            t.splitTree = result.tree
+            // The source keeps its focus unless the moved pane held it.
+            t.splitTree = t.splitTree.remove(paneID).tree
             if t.zoomedLeafID == paneID {
                 t.zoomedLeafID = nil
             }
