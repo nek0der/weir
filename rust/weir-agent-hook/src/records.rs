@@ -48,19 +48,56 @@ pub(crate) fn with_record_lock_attempts<T>(
     if !cfg!(unix) {
         return Some(body());
     }
-    let lock = open_lock_file(&sidecar)?;
-    for attempt in 0..attempts {
+    let mut lock = open_lock_file(&sidecar)?;
+    let mut attempt = 0;
+    let mut reopens = 0;
+    loop {
         match try_lock(&lock) {
+            // A sweep removes a sidecar whose file is gone (`leftovers`),
+            // under its lock. A writer that opened it before then holds a
+            // lock nobody else will take, so it opens the one now at the
+            // path and locks that instead. That costs no attempt: the lock
+            // was not busy.
+            Ok(()) if !is_at_path(&lock, &sidecar) => {
+                let _ = unlock(&lock);
+                if reopens == LOCK_REOPENS {
+                    return None;
+                }
+                reopens += 1;
+                lock = open_lock_file(&sidecar)?;
+            }
             Ok(()) => {
                 let result = body();
                 let _ = unlock(&lock);
                 return Some(result);
             }
-            Err(busy) if busy && attempt + 1 < attempts => thread::sleep(LOCK_RETRY),
+            Err(busy) if busy && attempt + 1 < attempts => {
+                attempt += 1;
+                thread::sleep(LOCK_RETRY);
+            }
             Err(_) => return None,
         }
     }
-    None
+}
+
+/// How many times a sidecar a sweep removed under us is opened again before
+/// the event is dropped as if the lock were busy.
+const LOCK_REOPENS: u32 = 4;
+
+/// Whether `file` is still the file at `path`: the same inode, not one a
+/// sweep removed while we waited for its lock.
+#[cfg(unix)]
+pub(crate) fn is_at_path(file: &File, path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (file.metadata(), fs::symlink_metadata(path)) {
+        (Ok(open), Ok(named)) => open.dev() == named.dev() && open.ino() == named.ino(),
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) fn is_at_path(_file: &File, _path: &Path) -> bool {
+    true
 }
 
 #[cfg(unix)]
@@ -84,7 +121,7 @@ pub(crate) fn open_lock_file(_sidecar: &Path) -> Option<File> {
 
 /// `Err(true)` means the lock is held by someone else; `Err(false)` means
 /// locking failed for another reason.
-fn try_lock(file: &File) -> Result<(), bool> {
+pub(crate) fn try_lock(file: &File) -> Result<(), bool> {
     match file.try_lock() {
         Ok(()) => Ok(()),
         Err(std::fs::TryLockError::WouldBlock) => Err(true),
@@ -92,7 +129,7 @@ fn try_lock(file: &File) -> Result<(), bool> {
     }
 }
 
-fn unlock(file: &File) -> io::Result<()> {
+pub(crate) fn unlock(file: &File) -> io::Result<()> {
     file.unlock()
 }
 
@@ -109,7 +146,9 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let temporary = directory.join(format!(".{name}.tmp.{}", std::process::id()));
+    // A name of its own for each write: a pid comes back, and the sweep of
+    // temporaries a killed writer left must never take one being written.
+    let temporary = directory.join(format!(".{name}.tmp-{}", uuid::Uuid::new_v4()));
     let mut file = create_user_only(&temporary)?;
     let written = file.write_all(bytes).and_then(|()| file.sync_data());
     drop(file);
@@ -156,12 +195,28 @@ pub fn ensure_user_only_directory(directory: &Path) {
 }
 
 /// Reads and decodes a record, tolerating all supported schema versions.
-/// Anything unreadable counts as no record; the run then restarts at revision
-/// one, which is what the shell receiver did when it could not read `revision`.
+/// Anything unreadable counts as no record, which suits a reader; a writer
+/// that replaces the record reads it with `read_record_to_replace`.
 #[must_use]
 pub fn read_record(path: &Path) -> Option<RunRecord> {
-    let bytes = fs::read(path).ok()?;
-    RunRecord::decode(&bytes).ok()
+    read_record_to_replace(path).ok().flatten()
+}
+
+/// Reads the record a writer is about to replace: `Ok(None)` when there is
+/// no file, and `Err` with the reason when there is one this build cannot
+/// read. A newer build's record (an unsupported schema version, a field of
+/// a new shape) is not ours to replace; written over, the run would start
+/// again at revision one, below a revision the projection has already
+/// accepted, and every later write would be dropped as older. A turn record
+/// this build cannot read is left the same way (`turn::Current::Unreadable`).
+pub(crate) fn read_record_to_replace(path: &Path) -> Result<Option<RunRecord>, String> {
+    match fs::read(path) {
+        Ok(bytes) => RunRecord::decode(&bytes)
+            .map(Some)
+            .map_err(|error| error.to_string()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 /// Reads at most `limit` bytes from the end of `path`. A transcript's title
@@ -372,6 +427,12 @@ impl HookLog {
         }
     }
 
+    /// A log at `path`, for tests that read what was logged.
+    #[cfg(all(test, unix))]
+    pub(crate) fn at(path: PathBuf) -> Self {
+        Self { path: Some(path) }
+    }
+
     /// A log that drops every line, for callers without an environment.
     #[must_use]
     pub fn disabled() -> Self {
@@ -379,9 +440,17 @@ impl HookLog {
     }
 
     /// Appends `message` with a timestamp; failures to log are ignored.
+    /// The lines name record paths and why a payload was refused, so the
+    /// file is the user's alone, like the records; and a log left enabled
+    /// is kept to one earlier generation of `HOOK_LOG_LIMIT_BYTES`.
     pub fn line(&self, message: &str) {
         let Some(path) = &self.path else { return };
-        if let Ok(mut file) = OpenOptions::new().append(true).create(true).open(path) {
+        if fs::metadata(path).is_ok_and(|metadata| metadata.len() >= HOOK_LOG_LIMIT_BYTES) {
+            let mut previous = path.clone().into_os_string();
+            previous.push(".1");
+            let _ = fs::rename(path, previous);
+        }
+        if let Ok(mut file) = open_log(path) {
             let _ = writeln!(
                 file,
                 "{} weir-agent-hook: {message}",
@@ -389,6 +458,28 @@ impl HookLog {
             );
         }
     }
+}
+
+/// How large the hook log grows before it is set aside for a new one.
+const HOOK_LOG_LIMIT_BYTES: u64 = 4 * 1024 * 1024;
+
+#[cfg(unix)]
+fn open_log(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .mode(0o600)
+        .open(path)?;
+    // The mode applies only when the file is created, so a log an earlier
+    // build left readable is narrowed here; the rename keeps it for `.1`.
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn open_log(path: &Path) -> io::Result<File> {
+    OpenOptions::new().append(true).create(true).open(path)
 }
 
 #[cfg(test)]
@@ -477,6 +568,55 @@ mod tests {
         assert!(!hint_is_owned(&path, "s-1", RUN, PANE, &scratch.0));
         fs::write(&path, b"{").expect("write");
         assert!(!hint_is_owned(&path, "s-1", RUN, PANE, &scratch.0));
+    }
+
+    #[test]
+    fn a_record_to_replace_tells_a_missing_one_from_one_this_build_cannot_read() {
+        let scratch = Scratch::new("to-replace");
+        let path = scratch.0.join(weir_agent_model::run_record_file_name(RUN));
+        assert_eq!(
+            read_record_to_replace(&path).map(|record| record.is_some()),
+            Ok(false)
+        );
+        scratch.record(RUN, "2026-09-14T00:00:10Z");
+        assert_eq!(
+            read_record_to_replace(&path).map(|record| record.is_some()),
+            Ok(true)
+        );
+        fs::write(&path, br#"{"schemaVersion":4,"revision":9}"#).expect("record");
+        assert!(
+            read_record_to_replace(&path).is_err(),
+            "a newer build's record"
+        );
+        assert!(
+            read_record(&path).is_none(),
+            "which a reader takes for none"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_hook_log_is_private_and_kept_to_one_earlier_generation() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new("log");
+        let path = scratch.0.join("hook.log");
+        // A log an earlier build created readable by others.
+        fs::write(&path, b"").expect("earlier log");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("chmod");
+        let log = HookLog::at(path.clone());
+        log.line("first");
+        let mode = fs::metadata(&path).expect("log").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        let full = usize::try_from(HOOK_LOG_LIMIT_BYTES).expect("limit");
+        fs::write(&path, vec![b'x'; full]).expect("fill");
+        log.line("after the limit");
+        let previous = scratch.0.join("hook.log.1");
+        let previous = fs::metadata(&previous).expect("previous");
+        assert_eq!(previous.len(), HOOK_LOG_LIMIT_BYTES);
+        assert_eq!(previous.permissions().mode() & 0o777, 0o600);
+        let current = fs::read_to_string(&path).expect("log");
+        assert!(current.ends_with("after the limit\n"), "{current}");
+        assert!(current.len() < 100);
     }
 
     #[test]

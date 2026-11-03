@@ -11,12 +11,20 @@ import Synchronization
 
 @MainActor
 enum ProjectionFixture {
+    /// The leftover sweep a bootstrap queues runs in the background, so a
+    /// suite that plants a lone lock sidecar or a temporary would race it.
+    /// What the sweep removes is the bridge's own suite's to check.
+    static let sweepsNothing: TurnGarbageCollector.Sweep = { _ in
+        LeftoverSweep(sidecars: 0, temporaries: 0, counters: 0)
+    }
+
     /// Makes an adapter reading one provider's records out of `state`, its resume
     /// hints out of `sessions`, and its cwd moves out of `cwdEvents`, with
     /// liveness answered by `processStatus`. `writesFiles: false` reads as
     /// demo mode does, writing nothing. `turnCollector`, `turnDeletionsURL`,
     /// `stoppedTurns`, and `engine` default to what the adapter itself
-    /// defaults to, so a suite names only the one it observes or makes fail.
+    /// defaults to, so a suite names only the one it observes or makes fail;
+    /// the collector's launch sweep alone is left out (`sweepsNothing`).
     static func adapter(
         provider: String = "codex",
         state: URL,
@@ -27,7 +35,7 @@ enum ProjectionFixture {
         forgottenHintsURL: URL? = nil,
         turnDeletionsURL: URL? = nil,
         processStatus: @escaping (String?) -> AgentProcessStatus = AgentProcessStatus.inspect,
-        turnCollector: TurnGarbageCollector = TurnGarbageCollector(),
+        turnCollector: TurnGarbageCollector = TurnGarbageCollector(sweep: sweepsNothing),
         stoppedTurns: StoppedTurnCloser = StoppedTurnCloser(),
         engine: any ProjectionPassing = WeirProjectionBridge.Engine()
     ) -> AgentProjectionAdapter {

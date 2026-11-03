@@ -824,6 +824,50 @@ impl Turns<'_> {
         .unwrap_or_else(|| Err("counter lock busy".to_owned()))
     }
 
+    /// Removes the turn record `commit` wrote for `run` when the run record
+    /// that names it could not be written: a turn begun, or one recorded
+    /// from its end alone. Only those name a turn `previous` did not, and a
+    /// turn `previous` names is still the run's on disk. Its display
+    /// number stays taken, as a deleted turn's does.
+    ///
+    /// Returns `pin` while the turn stays. One that does (a turn `previous`
+    /// names, which may have just been ended) keeps what `commit` wrote to
+    /// it, so its snapshot is still pinned against `git gc`.
+    pub(crate) fn take_back(
+        &self,
+        previous: Option<&RunRecord>,
+        run: &RunRecord,
+        pin: Option<Pin>,
+    ) -> Option<Pin> {
+        let is_gone = self.remove_begun(previous, run);
+        pin.filter(|_| !is_gone)
+    }
+
+    /// Removes the turn only `run` names, and says whether it is gone.
+    fn remove_begun(&self, previous: Option<&RunRecord>, run: &RunRecord) -> bool {
+        let Some(turn_id) = run.current_turn_id.as_deref() else {
+            return false;
+        };
+        if previous.and_then(|record| record.current_turn_id.as_deref()) == Some(turn_id) {
+            return false;
+        }
+        let path = self.record_path(turn_id);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                self.log.line(&format!(
+                    "turn {turn_id} taken back: its run record was not written"
+                ));
+                true
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(error) => {
+                self.log
+                    .line(&format!("remove {}: {error}", path.display()));
+                false
+            }
+        }
+    }
+
     /// Pins a snapshot's tree; a failure costs the tree's protection from
     /// `git gc`, not the record.
     pub(crate) fn pin(&self, pin: &Pin, snapshots: &dyn SnapshotRunner) {

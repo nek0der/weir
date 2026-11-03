@@ -19,8 +19,10 @@ private let log = Logger.weir("turn.gc")
 /// again.
 actor TurnGarbageCollector {
     typealias Apply = @Sendable ([String], URL) throws -> [TurnDeletion]
+    typealias Sweep = @Sendable ([URL]) throws -> LeftoverSweep
 
     private let apply: Apply
+    private let sweep: Sweep
     private let priority: TaskPriority
     private let queue: DispatchSerialQueue
 
@@ -34,9 +36,11 @@ actor TurnGarbageCollector {
     /// work for as long as the rest of a parallel run keeps the Mac busy.
     init(
         priority: TaskPriority = .background,
-        apply: @escaping Apply = { try WeirTurnBridge.deleteTurns($0, in: $1) }
+        apply: @escaping Apply = { try WeirTurnBridge.deleteTurns($0, in: $1) },
+        sweep: @escaping Sweep = { try WeirTurnBridge.sweepLeftovers(in: $0) }
     ) {
         self.apply = apply
+        self.sweep = sweep
         self.priority = priority
         queue = DispatchSerialQueue(
             label: "com.nekoder.weir.turn-gc",
@@ -74,6 +78,32 @@ actor TurnGarbageCollector {
         } catch {
             log.error("turn deletion failed: \(String(describing: error), privacy: .private)")
             return []
+        }
+    }
+
+    /// Removes the files no record needs from `directories`
+    /// (`WeirTurnBridge.sweepLeftovers`) and answers what went; nil when
+    /// the bridge refused the call, which is only logged, since what it
+    /// left is still there for the next launch's sweep.
+    @discardableResult
+    func sweepLeftovers(in directories: [URL]) -> LeftoverSweep? {
+        do {
+            let swept = try sweep(directories)
+            log.info("""
+            swept \(swept.sidecars, privacy: .public) lock sidecars, \
+            \(swept.temporaries, privacy: .public) temporaries, \(swept.counters, privacy: .public) counters
+            """)
+            return swept
+        } catch {
+            log.error("leftover sweep failed: \(String(describing: error), privacy: .private)")
+            return nil
+        }
+    }
+
+    /// From the main actor: the sweep is queued and this returns at once.
+    nonisolated func enqueueSweep(of directories: [URL]) {
+        Task(priority: priority) {
+            await sweepLeftovers(in: directories)
         }
     }
 

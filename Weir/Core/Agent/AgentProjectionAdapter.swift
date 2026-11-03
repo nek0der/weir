@@ -195,6 +195,9 @@ final class AgentProjectionAdapter {
         }
         refresh()
         finishInterruptedDeletions()
+        // Once a run: nothing else removes what each record ever written
+        // leaves beside it (`AgentDirectories.leftoverSweep`).
+        turnCollector.enqueueSweep(of: AgentDirectories.leftoverSweep(of: Array(directories.values)))
     }
 
     /// Finishes the deletions a quit cut short (a record moved aside, its

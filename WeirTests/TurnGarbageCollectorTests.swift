@@ -20,6 +20,39 @@ struct TurnGarbageCollectorTests {
         }
     }
 
+    /// What a sweep removes is the bridge's own rule (`leftovers` in the
+    /// hook runtime); here, that its answer reaches Swift.
+    @Test func theBridgesSweep_reportsWhatItRemoved() throws {
+        try withTempDir { directory in
+            FileManager.default.createFile(atPath: directory.appendingPathComponent("gone.json.flock").path, contents: nil)
+            FileManager.default.createFile(atPath: directory.appendingPathComponent("kept.json").path, contents: nil)
+            FileManager.default.createFile(atPath: directory.appendingPathComponent("kept.json.flock").path, contents: nil)
+
+            let swept = try WeirTurnBridge.sweepLeftovers(in: [directory])
+
+            #expect(swept == LeftoverSweep(sidecars: 1, temporaries: 0, counters: 0))
+            #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("kept.json.flock").path))
+        }
+    }
+
+    @Test func theLaunchSweep_coversEveryDirectoryTheRecordsAreWrittenIn() throws {
+        let root = URL(fileURLWithPath: "/states")
+        let owner = AgentDirectories(
+            state: root.appendingPathComponent("agent-states", isDirectory: true),
+            sessions: root.appendingPathComponent("sessions", isDirectory: true),
+            cwdEvents: root.appendingPathComponent("cwd-events", isDirectory: true)
+        )
+
+        let swept = AgentDirectories.leftoverSweep(of: [owner, owner])
+
+        let expected = try [
+            owner.state, owner.sessions, owner.retired,
+            #require(owner.cwdEvents), #require(owner.worktreeEvents), #require(owner.turns)
+        ]
+        #expect(Set(swept) == Set(expected))
+        #expect(swept.count == expected.count, "each directory once")
+    }
+
     @Test func aBatchTheBridgeRefuses_isOnlyLogged() async {
         struct Refused: Error {}
         let collector = TurnGarbageCollector(priority: .userInitiated) { _, _ in throw Refused() }

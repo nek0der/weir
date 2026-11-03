@@ -1,6 +1,7 @@
 //! This is the C ABI for the app's work on turns: deleting the ones the
-//! retention sweep chose (`weir_turn_gc_apply_v1`), and ending a turn the
-//! person stopped where no hook reports it (`weir_stopped_turn_end_v1`).
+//! retention sweep chose (`weir_turn_gc_apply_v1`), ending a turn the
+//! person stopped where no hook reports it (`weir_stopped_turn_end_v1`), and
+//! sweeping the files no record needs (`weir_leftover_sweep_v1`).
 //! The git and file work lives in the hook runtime, beside the code that
 //! writes what it removes or ends, so the side that pins a turn's trees and
 //! the side that unpins them agree on the names, and a stopped turn ends as
@@ -11,6 +12,7 @@ use serde::Serialize;
 use std::path::Path;
 use weir_agent_hook::{
     GitSnapshots, HookLog, StoppedTurnRequest, delete_turns, end_stopped_turn, format_utc_seconds,
+    sweep_leftovers,
 };
 
 /// Largest input one call accepts: a batch of turn ids and a path.
@@ -152,6 +154,50 @@ pub unsafe extern "C" fn weir_stopped_turn_end_v1(
     unsafe { call_with_output(out, out_len, body) }
 }
 
+/// Sweeps the files no record needs from each of the agents' directories:
+/// a lock sidecar whose file is gone (removed under its lock), a temporary
+/// file a killed writer left an hour ago or more, and a turn counter no
+/// remaining turn uses, a day after it was last written
+/// (`weir_agent_hook::sweep_leftovers`). `directories` is a JSON array of
+/// absolute paths; each is swept on its own, not its subdirectories, and
+/// one that cannot be listed is skipped. The body is
+/// `{"sidecars":n,"temporaries":n,"counters":n}`, what was removed.
+///
+/// Lists and reads whole directories, so the caller keeps it off the main
+/// thread.
+///
+/// # Safety
+///
+/// The input pointer must be readable for its length (or null with length
+/// zero), and the output pointers must be writable. On `WEIR_TURN_OK` the
+/// caller owns the body and frees it with `weir_approval_bytes_free_v1`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn weir_leftover_sweep_v1(
+    directories: *const u8,
+    directories_len: usize,
+    out: *mut *mut u8,
+    out_len: *mut usize,
+) -> i32 {
+    // Only `call_with_output` runs this, after it has checked the output.
+    let body = || {
+        // SAFETY: The caller guarantees the input region is readable.
+        let directories = unsafe { input_bytes(directories, directories_len) }?;
+        let directories: Vec<std::path::PathBuf> =
+            serde_json::from_slice(directories).map_err(|_| TURN_INVALID_INPUT)?;
+        if !directories.iter().all(|directory| directory.is_absolute()) {
+            return Err(TURN_INVALID_INPUT);
+        }
+        let directories: Vec<&Path> = directories
+            .iter()
+            .map(std::path::PathBuf::as_path)
+            .collect();
+        let swept = sweep_leftovers(&directories, std::time::SystemTime::now());
+        serde_json::to_vec(&swept).map_err(|_| TURN_INTERNAL)
+    };
+    // SAFETY: We pass the pointers on under the caller's guarantees.
+    unsafe { call_with_output(out, out_len, body) }
+}
+
 const TURN_FRAME: FrameCodes = FrameCodes {
     ok: TURN_OK,
     null_pointer: TURN_NULL_POINTER,
@@ -253,6 +299,45 @@ mod tests {
             )
         };
         assert_eq!(status, TURN_NULL_POINTER);
+    }
+
+    fn sweep(directories: &[u8]) -> (i32, Option<Value>) {
+        let mut out: *mut u8 = ptr::dangling_mut();
+        let mut out_len: usize = 99;
+        // SAFETY: Every pointer is a live local of this test.
+        let status = unsafe {
+            weir_leftover_sweep_v1(
+                directories.as_ptr(),
+                directories.len(),
+                &raw mut out,
+                &raw mut out_len,
+            )
+        };
+        // SAFETY: The pair is what this call wrote.
+        let body = unsafe { take_bytes(out, out_len) };
+        (
+            status,
+            body.and_then(|body| serde_json::from_slice(&body).ok()),
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_sweep_reports_what_it_removed() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        std::fs::write(scratch.path().join("gone.json.flock"), b"").expect("sidecar");
+        let directories = serde_json::to_vec(&[scratch.path()]).expect("json");
+        let (status, body) = sweep(&directories);
+        assert_eq!(status, TURN_OK);
+        assert_eq!(
+            body,
+            Some(serde_json::json!({"sidecars": 1, "temporaries": 0, "counters": 0}))
+        );
+    }
+
+    #[test]
+    fn a_sweep_of_a_relative_directory_is_refused() {
+        assert_eq!(sweep(br#"["state"]"#).0, TURN_INVALID_INPUT);
     }
 
     fn end_turn(request: &[u8]) -> (i32, Option<Value>) {
