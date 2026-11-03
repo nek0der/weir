@@ -47,7 +47,7 @@ Weir places a plugin at `~/.config/opencode/plugins/weir` the first time `openco
 
 ## An OpenCode turn shows no changes
 
-Weir saves a turn's start when you press Enter. A `--prompt` launch, a slash command chosen from OpenCode's menu, a rebound submit key, and a turn the agent goes on to by itself have no start, so they show no change summary or **Restore Code**. If the save takes more than ten seconds, as it can in a very large repository, Weir sends your input without a start.
+Weir saves a turn's start when you press Enter, or before OpenCode starts for a `--prompt` launch. A slash command chosen from OpenCode's menu, a rebound submit key, and a turn the agent goes on to by itself have no start, so they show no change summary or **Restore Code**. If the save takes more than ten seconds, as it can in a very large repository, Weir sends your input without a start.
 
 ## A row has no pull request status
 

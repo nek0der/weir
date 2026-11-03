@@ -64,7 +64,7 @@ enum ShimHarness {
         return text.split(separator: "\0", omittingEmptySubsequences: false).dropLast().map(String.init)
     }
 
-    /// Runs `shim` with `arguments` and waits for it, at most ten seconds.
+    /// Runs `shim` with `arguments` and waits for it, at most `limit` seconds.
     ///
     /// `underPTY` runs it through `script`, so its stdin and stdout are a
     /// terminal: the tmux hosting decision asks whether they are. Without
@@ -76,6 +76,7 @@ enum ShimHarness {
         environment: [String: String],
         underPTY: Bool = false,
         currentDirectory: URL? = nil,
+        limit: TimeInterval = 10,
         sourceLocation: SourceLocation = #_sourceLocation
     ) throws -> Process {
         let process = Process()
@@ -96,7 +97,11 @@ enum ShimHarness {
             process.currentDirectoryURL = currentDirectory
         }
         try process.run()
-        #expect(process.waitUntilExit(within: 10), "the shim did not exit within ten seconds", sourceLocation: sourceLocation)
+        #expect(
+            process.waitUntilExit(within: limit),
+            "the shim did not exit within \(limit) seconds",
+            sourceLocation: sourceLocation
+        )
         return process
     }
 

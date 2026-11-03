@@ -29,7 +29,14 @@ import plugin, {
   writeFocusAnswer,
 } from "../../Weir/Resources/opencode-plugin/tui.js"
 
-function harness({ shown = "ses_a", waits = {}, prepared = true, launchPrompt = false, autoAccepts = false } = {}) {
+function harness({
+  shown = "ses_a",
+  waits = {},
+  prepared = true,
+  launchPrompt = false,
+  launchPreparation,
+  autoAccepts = false,
+} = {}) {
   const sent = []
   const worktreeCalls = []
   const interrupted = []
@@ -72,6 +79,7 @@ function harness({ shown = "ses_a", waits = {}, prepared = true, launchPrompt = 
     setTimer: () => {},
     cwd: () => "/repo",
     launchPrompt: () => launchPrompt,
+    launchPreparation: () => launchPreparation,
     log: () => {},
     launchRun: () => "LAUNCH",
     autoAccepts: () => autoAccepts,
@@ -1614,6 +1622,50 @@ test("--prompt claims only the session this screen moves to, and an unrelated st
   h.show("ses_later")
   await h.event("session.execution.started", { sessionID: "ses_later" })
   assert.deepEqual(h.names(), [], "once")
+})
+
+test("--prompt's turn begins from the start the shim saved before OpenCode ran", async () => {
+  const h = harness({ shown: null, launchPrompt: true, launchPreparation: "gen_launch" })
+  h.show("ses_mine")
+  await h.event("session.execution.started", { sessionID: "ses_mine" })
+  const started = h.last("session.execution.started")
+  assert.equal(started.preparation, "gen_launch")
+  assert.deepEqual(h.envOf("session.execution.started"), {}, "on the launch's run, where the shim saved it")
+  await h.event("session.execution.succeeded", { sessionID: "ses_mine" })
+  await submit(h, "ses_mine", "again")
+  assert.notEqual(h.last("session.execution.started").preparation, "gen_launch", "once")
+})
+
+test("--prompt's saved start goes to the session the launch resumes", async () => {
+  const h = harness({ shown: "ses_old", launchPrompt: true, launchPreparation: "gen_launch" })
+  await h.supervisor.launch("ses_old")
+  await h.event("session.execution.started", { sessionID: "ses_old" })
+  assert.equal(h.last("session.execution.started").preparation, "gen_launch")
+})
+
+test("an Enter's claim ahead of --prompt drops the launch's saved start", async () => {
+  const h = harness({ shown: "ses_a", launchPrompt: true, launchPreparation: "gen_launch" })
+  await submit(h, "ses_a")
+  assert.notEqual(h.last("session.execution.started").preparation, "gen_launch")
+  await h.event("session.execution.succeeded", { sessionID: "ses_a" })
+  h.sent.length = 0
+  // A slash command, which no gate sees.
+  h.supervisor.checkShown()
+  h.supervisor.onKey()
+  await h.event("session.execution.started", { sessionID: "ses_a" })
+  assert.equal(h.last("session.execution.started").preparation, undefined)
+})
+
+test("a session on another run than the launch's takes no launch start", async () => {
+  const h = harness({ shown: null, launchPrompt: true, launchPreparation: "gen_launch" })
+  // The launch's run went to the session first on screen, so the start saved under
+  // it is not that of another session the screen then moves to.
+  h.show("ses_other")
+  h.supervisor.checkShown()
+  await h.supervisor.settled()
+  h.show("ses_mine")
+  await h.event("session.execution.started", { sessionID: "ses_mine" })
+  assert.equal(h.last("session.execution.started")?.preparation, undefined)
 })
 
 test("an Enter's claim disarms --prompt too", async () => {

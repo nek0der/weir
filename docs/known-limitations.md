@@ -374,9 +374,10 @@ These describe OpenCode 2.2.5.
   straight through, and a launch with `--server` goes unwatched, since that server's
   folders are not this Mac's to snapshot.
 - **A turn may have no start.** Weir saves a turn's start at the Enter that sends the
-  input. A `--prompt` launch, a slash command chosen from its menu (where Enter picks
-  the command), a rebound submit key, and a turn the agent goes on to by itself come with
-  no saved start, and show no change summary or Restore Code. A slash
+  input, or, for a `--prompt` launch, before OpenCode starts. A slash command chosen
+  from its menu (where Enter picks the command), a rebound submit key, and a turn the
+  agent goes on to by itself come with no saved start, and show no change summary or
+  Restore Code. A slash
   command typed out, the menu closed, goes through Enter like any input. So does a save that takes over ten
   seconds, in a very large repository, which sends the input anyway. A restore in the
   moment between Enter and the turn's start is not noticed, and that turn's change

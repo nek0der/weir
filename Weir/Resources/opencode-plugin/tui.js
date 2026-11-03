@@ -195,6 +195,12 @@ export function createSupervisor(initialContext, io) {
   // `--prompt` makes the interface send its input with no key at all, on the home
   // screen or the session it resumes. The session the screen shows is its own, once.
   let isLaunchPromptDue = io.launchPrompt?.() === true
+  // The start the shim saved for that input before OpenCode ran, under the launch's
+  // run: no gate sees it, and the interface sends it before any wait here could hold
+  // it. Only the launch's first claimed turn may take it, and only on that run. It has
+  // no lifetime here, as Enter's does: the interface may hold the input behind a dialog
+  // of its own first, and the runtime refuses a start older than ten minutes.
+  let launchPreparation = isLaunchPromptDue ? io.launchPreparation?.() || undefined : undefined
   // What happened is judged in `queue`, which waits on no hook; what it means to
   // report goes on to `reports`, one hook at a time.
   let queue = Promise.resolve()
@@ -409,9 +415,14 @@ export function createSupervisor(initialContext, io) {
       return
     }
     const isInput = preparation?.expected === true && (preparation.session === sessionID || isHomeInputFor(sessionID))
-    const generation = isInput ? preparation.generation : undefined
-    takeRun(sessionID, isInput ? preparation.run : undefined)
+    const run = takeRun(sessionID, isInput ? preparation.run : undefined)
+    const generation = isInput
+      ? preparation.generation
+      : run === launchRun
+        ? launchPreparation
+        : undefined
     if (isInput) preparation = undefined
+    launchPreparation = undefined
     lastOwned.add(sessionID)
     // An end that arrived during the claim's wait was this execution's.
     if ((endsSeen.get(sessionID) ?? 0) === endsBefore) {
@@ -1186,6 +1197,7 @@ function realIO(pane) {
     setTimer: (work, ms) => setTimeout(work, ms).unref?.(),
     cwd: () => process.cwd(),
     launchPrompt: () => pane.WEIR_OPENCODE_LAUNCH_PROMPT === "1",
+    launchPreparation: () => pane.WEIR_OPENCODE_LAUNCH_PREPARATION,
     launchRun: () => pane.WEIR_AGENT_RUN_ID,
     // `--auto` approves whatever a permission does not deny (`usePermission` in its
     // interface at v2.2.5). `session.permissions` in a config file does the same, and
