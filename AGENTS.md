@@ -219,6 +219,14 @@ Short index of load-bearing files. Skim these before touching their domain.
   each agent finishes.
 - **Always verify the build**: after a change, run `make build` (or the Xcode
   MCP equivalent) and confirm zero warnings before declaring done.
+- **Checking a change without taking over the screen**: the `verify-in-app`
+  skill runs this checkout's Debug build behind the person's windows and
+  drives it with `scripts/weir-automation.py`. Prefer it to full-screen
+  computer use. After changing `Weir/Automation`, run `make check-automation`.
+- **Skills**: procedures an agent loads when a task needs them live in
+  `.agents/skills/` (each linked from `.claude/skills/`). `.agents/skills/README.md`
+  says what belongs in one and how to keep one true; a change to what a skill
+  describes updates the skill in the same pull request.
 - **Localization is a hard requirement**: any new user-facing string must be
   added to `Localizable.xcstrings` with both `en` and `ja` translations. An
   English-only entry is considered incomplete.

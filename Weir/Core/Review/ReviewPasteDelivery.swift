@@ -23,14 +23,22 @@ final class ReviewPasteSettlement {
     private(set) var wasDelivered: Bool?
     /// The one insert waiting; `nil` until it asks, and after it is answered.
     private var waiter: CheckedContinuation<Bool, Never>?
+    /// Called once, inside `settle`, before the waiter is resumed. For a caller
+    /// that must note the pane's state as the paste lands: the clipboard read
+    /// that delivers it settles in the same call, so no key of the person's
+    /// can come between, as it could before an awaiting task resumes.
+    private let onSettle: (@MainActor (Bool) -> Void)?
 
-    init() {}
+    init(onSettle: (@MainActor (Bool) -> Void)? = nil) {
+        self.onSettle = onSettle
+    }
 
     /// The paste reached the terminal (`wasDelivered`) or did not (refused
     /// at the sheet, dropped with its pane, or never claimed).
     func settle(wasDelivered: Bool) {
         guard self.wasDelivered == nil else { return }
         self.wasDelivered = wasDelivered
+        onSettle?(wasDelivered)
         waiter?.resume(returning: wasDelivered)
         waiter = nil
     }

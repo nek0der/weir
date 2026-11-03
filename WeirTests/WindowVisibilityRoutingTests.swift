@@ -38,6 +38,25 @@ struct WindowVisibilityRoutingTests {
         #expect(recorder.applied.last == [pane])
     }
 
+    @Test func keepsOffScreenPanesDrawing_drawsACoveredWindowWithoutCountingItSeen() {
+        let registry = WindowRegistry(primaryID: WindowID())
+        let recorder = OcclusionRecorder()
+        registry.occlusion = recorder
+        let pane = UUID()
+        registry.didReportDisplay(window: registry.primary.id, rendered: [pane], attended: [pane])
+        registry.windowScreenPresenceChanged(registry.primary.id, isOnScreen: false)
+        #expect(recorder.applied.last == [])
+
+        registry.keepsOffScreenPanesDrawing = true
+
+        #expect(recorder.applied.last == [pane])
+        #expect(registry.visibility.union.isEmpty)
+        #expect(registry.attention.attendedPanes.isEmpty)
+
+        registry.keepsOffScreenPanesDrawing = false
+        #expect(recorder.applied.last == [])
+    }
+
     @Test func aReportWhileOffScreen_waitsForTheWindow() {
         let registry = WindowRegistry(primaryID: WindowID())
         let recorder = OcclusionRecorder()

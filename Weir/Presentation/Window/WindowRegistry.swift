@@ -932,12 +932,20 @@ final class WindowRegistry {
         applyVisibility()
     }
 
+    /// Whether a covered, hidden, or minimized window keeps its panes drawing:
+    /// off to save energy, on for the verification channel, whose runs sit
+    /// behind the person's windows. What counts as seen follows the screen.
+    var keepsOffScreenPanesDrawing = false {
+        didSet { applyVisibility() }
+    }
+
     private func applyVisibility() {
         var next = PaneVisibility()
         for (window, panes) in reportedPanes where !offScreenWindows.contains(window) {
             next.report(window: window, visiblePaneIDs: panes)
         }
         visibility = next
+        let drawing = keepsOffScreenPanesDrawing ? Set(reportedPanes.values.joined()) : next.union
         let attended = attendedByWindow
             .filter { !offScreenWindows.contains($0.key) }
             .values
@@ -945,7 +953,7 @@ final class WindowRegistry {
         if attention.attendedPanes != attended {
             attention.attendedPanes = attended
         }
-        occlusion?.updateOcclusion(visibleIDs: next.union)
+        occlusion?.updateOcclusion(visibleIDs: drawing)
     }
 
     // MARK: - Decision bars

@@ -224,6 +224,20 @@ final class AgentIntegrationServiceRegistrar {
             Self.log.notice("Native approvals are off: demo mode")
             return
         }
+        #if DEBUG && WEIR_AUTOMATION
+            // A run the verification channel drives shares the bundle
+            // identifier too, with only its data moved aside, so it leaves the
+            // registration alone for the same reason the demo does. Decided as
+            // the channel decides whether to start: a run it refuses is an
+            // ordinary run on the person's data, and keeps its approvals.
+            let environment = ProcessInfo.processInfo.environment
+            let isAutomationRun = environment["WEIR_AUTOMATION"] == "1"
+                && AutomationChannel.dataRefusal(environment: environment, isDemoActive: DemoFixture.isDemoActive) == nil
+            guard !isAutomationRun else {
+                Self.log.notice("Native approvals are off: automation run")
+                return
+            }
+        #endif
         self.readinessChanged = readinessChanged
 
         #if DEBUG

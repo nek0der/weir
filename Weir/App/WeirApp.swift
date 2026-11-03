@@ -16,6 +16,11 @@ private let log = Logger.weir("boot")
 final class AppState {
     let ghosttyApp: GhosttyApp?
     let registry = SurfaceRegistry()
+    #if DEBUG && WEIR_AUTOMATION
+        /// The agent verification channel (ADR 0005), when this Debug run
+        /// was launched with `WEIR_AUTOMATION=1`. `nil` for every other run.
+        @ObservationIgnored var automationChannel: AutomationChannel?
+    #endif
     /// Polls which panes are showing tmux so the pane strip's tabs can
     /// mark them. Declared here rather than built in `init` because it needs
     /// nothing but its collaborators, which are handed to `start`.
