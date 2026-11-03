@@ -34,6 +34,10 @@ struct PaneHeaderAgent: Equatable {
 struct PaneHeaderLabel: Equatable {
     var name: String
     var detail: String?
+    /// The pane's directory, home abbreviated, even where `detail` leaves
+    /// it out as a repeat of the name: the status band calls a shell
+    /// "Shell" rather than by its folder, so the folder is its to state.
+    var folder: String?
     /// The agent the pane is for, whose badge leads the header; `nil` for a
     /// shell, which has the shell's mark.
     var agentKind: AgentKind?
@@ -391,6 +395,7 @@ enum PaneHeaderRules {
         return PaneHeaderLabel(
             name: name,
             detail: detail == name ? nil : detail,
+            folder: detail,
             agentKind: agent?.kind,
             agentName: agent.flatMap { normalizedName($0.providerName) },
             isNamedByPerson: personName != nil,

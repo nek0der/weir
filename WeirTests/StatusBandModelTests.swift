@@ -29,12 +29,19 @@ struct StatusBandModelTests {
         #expect(model.details.map(\.isFolder) == [false, true, false, false])
     }
 
-    @Test func aScratchTab_isPlacedInScratch_byItsFolder() {
-        let model = StatusBandModel(.init(paneName: "zsh", scratchFolder: "~/notes"), locale: Self.japanese)
-        #expect(model.path == "スクラッチ › ~/notes › zsh")
+    @Test func aScratchShell_isPlacedInScratch_andItsFolderIsWhereItIsNow() {
+        var input = StatusBandModel.Input(paneName: "notes", folder: "~/notes")
+        input.isUnnamedShell = true
+        #expect(StatusBandModel(input, locale: Self.japanese).path == "スクラッチ › Shell")
+        // The folder follows the shell, so the path never says one place
+        // while the right says another.
+        input.folder = "/tmp"
+        let moved = StatusBandModel(input, locale: Self.english)
+        #expect(moved.path == "Scratch › Shell")
+        #expect(moved.details.map(\.text) == ["/tmp", "UTF-8"])
     }
 
-    @Test func theCrumbs_markTheBranchOrFolderAsCode_andDropARepeat() {
+    @Test func theCrumbs_markTheBranchAsCode() {
         let project = StatusBandModel(
             .init(projectName: "weir", checkoutName: "main", paneName: "Claude"),
             locale: Self.english
@@ -44,11 +51,7 @@ struct StatusBandModelTests {
             .init(text: "main", isCode: true),
             .init(text: "Claude", isCode: false)
         ])
-        // A shell tab named by its folder: the repeat goes, and the folder
-        // it repeated stays code.
-        let scratch = StatusBandModel(.init(paneName: "~/notes", scratchFolder: "~/notes"), locale: Self.english)
-        #expect(scratch.crumbs == [.init(text: "Scratch", isCode: false), .init(text: "~/notes", isCode: true)])
-        #expect(scratch.path == scratch.crumbs.map(\.text).joined(separator: StatusBandModel.crumbSeparator))
+        #expect(project.path == project.crumbs.map(\.text).joined(separator: StatusBandModel.crumbSeparator))
     }
 
     @Test func anUnnamedShell_isCalledShell_ratherThanByItsFolderAgain() {

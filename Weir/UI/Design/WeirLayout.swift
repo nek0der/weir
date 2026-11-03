@@ -829,6 +829,10 @@ enum WeirLayout {
         /// Between the facts on the band's right: one step, as wide as the
         /// inset, so the facts read as apart as the band is from the edge.
         static let statusBandSpacing = spaceM
+        /// The least the path before the pane's name keeps, an ellipsis and
+        /// a few letters of its last step; below it the path goes whole, as
+        /// a sliver of one letter would read as a name.
+        static let statusBandLeadingPathMinWidth: CGFloat = 48
 
         // MARK: Changes panel
 
