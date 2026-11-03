@@ -247,8 +247,7 @@ final class CodexHookInstaller {
     }
 
     static func executableCommand(for url: URL) -> String {
-        let path = url.resolvingSymlinksInPath().path
-        return "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        ShellQuote.single(url.resolvingSymlinksInPath().path)
     }
 
     static func bundledHookScript() -> URL? {

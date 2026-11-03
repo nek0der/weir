@@ -26,14 +26,14 @@ struct ReviewContinuityTests {
         let store = ReviewSession(root: root, git: repository, drafts: drafts)
         await store.refreshAsTheAppDoes()
         // Nothing has been read yet, so there is nothing to resume to.
-        #expect(store.resumeFileID == nil)
+        #expect(store.resumeFile(in: store.scope, among: store.files) == nil)
         store.rememberOpenFile(second.id)
         await store.flushNavigationSave()
         #expect(store.errorMessage == nil)
 
         let reopened = ReviewSession(root: root, git: repository, drafts: drafts)
         #expect(await reopened.refreshAsTheAppDoes() == .applied(selectedFileID: second.id))
-        #expect(reopened.resumeFileID == second.id)
+        #expect(reopened.resumeFile(in: reopened.scope, among: reopened.files) == second)
         #expect(reopened.diff?.file == second)
 
         // The worktree moves between readings. A remembered file that is no
@@ -42,7 +42,27 @@ struct ReviewContinuityTests {
         let moved = ReviewSession(root: root, git: repository, drafts: drafts)
         await moved.refreshAsTheAppDoes()
         #expect(moved.lastFileID == second.id)
-        #expect(moved.resumeFileID == nil)
+        #expect(moved.resumeFile(in: moved.scope, among: moved.files) == nil)
+    }
+
+    /// The file remembered for one scope is not resumed in another, though it
+    /// is in both lists.
+    @Test func resumeFile_rememberedForOneScope_isNotResumedInAnother() async {
+        let drafts = RecordingReviewDraftStore()
+        let repository = FakeReviewRepository()
+        let first = ReviewFile(path: "a.swift", layer: .unstaged, status: .modified)
+        let second = ReviewFile(path: "b.swift", layer: .unstaged, status: .modified)
+        repository.files = [first, second]
+        repository.diffs = [
+            first.id: ReviewDiff(file: first, fingerprint: "a", lines: []),
+            second.id: ReviewDiff(file: second, fingerprint: "b", lines: [])
+        ]
+        let store = ReviewSession(root: URL(fileURLWithPath: "/tmp/weir-review-resume-scope"), git: repository, drafts: drafts)
+        await store.refreshAsTheAppDoes()
+        store.rememberOpenFile(second.id)
+
+        #expect(store.resumeFile(in: .uncommitted, among: [first, second]) == second)
+        #expect(store.resumeFile(in: .branch(base: "main"), among: [first, second]) == nil)
     }
 
     @Test func aCommentAndTheFileOpenWhenItWasWritten_areSavedTogether() async throws {

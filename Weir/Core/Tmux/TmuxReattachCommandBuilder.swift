@@ -32,11 +32,12 @@ enum TmuxReattachCommandBuilder {
             let command = tmuxAttachCommand(target: binding.sessionID)
             let fallback = binding.sessionName.isEmpty
                 ? ""
-                : " \(quoted(tmuxAttachCommand(target: exactNameTarget(binding.sessionName))))"
+                : " \(ShellQuote.single(tmuxAttachCommand(target: exactNameTarget(binding.sessionName))))"
             // The condition and attach run on the same server connection, so
             // a restarted server cannot receive the old numeric ID. Its
             // restored session may still be found by the persisted name.
-            return "tmux -S \(quoted(binding.socketPath)) if-shell -F \(quoted(condition)) \(quoted(command))\(fallback)"
+            let socket = ShellQuote.single(binding.socketPath)
+            return "tmux -S \(socket) if-shell -F \(ShellQuote.single(condition)) \(ShellQuote.single(command))\(fallback)"
         }
         // Legacy or malformed generation data cannot authenticate a numeric
         // ID. Preserve only the user's named restore intent in that case.
@@ -45,25 +46,19 @@ enum TmuxReattachCommandBuilder {
     }
 
     private static func attach(socketPath: String, target: String) -> String {
-        "tmux -S \(quoted(socketPath)) attach -t \(quoted(target))"
+        "tmux -S \(ShellQuote.single(socketPath)) attach -t \(ShellQuote.single(target))"
     }
 
     /// `if-shell` parses each branch as tmux syntax after the outer shell has
     /// removed one quoting layer. The same single-quote form is valid in both
     /// parsers, including the escaped quote sequence used for session names.
     private static func tmuxAttachCommand(target: String) -> String {
-        "attach-session -t \(quoted(target))"
+        "attach-session -t \(ShellQuote.single(target))"
     }
 
     /// Without `=`, tmux falls through from an exact name to prefix and glob
     /// matching. A restore hint must never select a different, similar name.
     private static func exactNameTarget(_ name: String) -> String {
         "=\(name)"
-    }
-
-    /// Single-quoted for `sh`. A session name is user-supplied and tmux
-    /// permits a quote in one, so it cannot reach the shell unescaped.
-    private static func quoted(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }

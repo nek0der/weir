@@ -1,8 +1,8 @@
 // GitProcessTests.swift
 // Weir — running `git`: its deadline, worktree removal, the main checkout, and a detached HEAD.
 //
-// The two checks against Weir's own checkout need its `.git` directory
-// and skip without it (`RepoFixture.hasLocalRepo`); the rest build their
+// The check against Weir's own checkout needs its `.git` directory and
+// skips without it (`RepoFixture.hasLocalRepo`); the rest build their
 // repositories with `TempGitRepo`.
 
 import Foundation
@@ -18,22 +18,6 @@ struct GitProcessSmokeTests {
         let result = try await GitProcess.run(["--version"], cwd: root)
         #expect(result.succeeded, "git --version should succeed: \(result.stderr)")
         #expect(result.stdout.contains("git version"))
-    }
-
-    @Test(.disabled(if: !RepoFixture.hasLocalRepo, "no local git"))
-    func isGitRepository_returnsTrue_forWeirRoot() async throws {
-        let root = try #require(RepoFixture.weirRoot)
-        let isRepo = await GitProcess.isGitRepository(root)
-        #expect(isRepo)
-    }
-
-    /// A folder of its own: a stray `.git` in `/tmp` on the machine must not
-    /// decide this.
-    @Test
-    func isGitRepository_returnsFalse_forAPlainFolder() async throws {
-        try await withTempDir { directory in
-            #expect(await GitProcess.isGitRepository(directory) == false)
-        }
     }
 
     @Test
@@ -108,6 +92,37 @@ struct GitProcessSmokeTests {
         // Whatever git makes of "-D" as a name, it is not `git branch -D develop`.
         _ = try await LiveGit().createBranch(repoRoot: repo.url, name: "-D", startPoint: "develop")
         #expect(try await LiveGit().createBranch(repoRoot: repo.url, name: "kept", startPoint: "develop").succeeded)
+    }
+
+    /// A tag of the same name turns git's short name for the branch into
+    /// `heads/v1`, and the new worktree sheet would not find `v1` among the
+    /// branches, nor name it as the branch checked out.
+    @Test
+    func listLocalBranches_namesABranchByItsOwnName_besideATagOfTheSameName() async throws {
+        let repo = try await TempGitRepo.make()
+        defer { repo.cleanup() }
+        _ = try await GitProcess.run(["branch", "v1"], cwd: repo.url)
+        _ = try await GitProcess.run(["tag", "v1"], cwd: repo.url)
+        _ = try await GitProcess.run(["branch", "feat/nested"], cwd: repo.url)
+        let branches = try await GitProcess.listLocalBranches(repoRoot: repo.url)
+        #expect(branches.contains("v1"))
+        #expect(branches.contains("feat/nested"))
+        #expect(!branches.contains { $0.hasPrefix("heads/") })
+        _ = try await GitProcess.run(["checkout", "-q", "v1"], cwd: repo.url)
+        #expect(try await GitProcess.currentBranch(repoRoot: repo.url) == "v1")
+        _ = try await GitProcess.run(["checkout", "-q", "--detach"], cwd: repo.url)
+        #expect(try await GitProcess.currentBranch(repoRoot: repo.url) == nil)
+    }
+
+    /// Before the first commit git already names the branch the repository
+    /// will have, but there is nothing yet to make a worktree from.
+    @Test
+    func currentBranch_isNil_beforeTheFirstCommit() async throws {
+        let branch: String? = try await withTempDir { directory in
+            _ = try await GitProcess.run(["init", "-q", "-b", "main"], cwd: directory)
+            return try await GitProcess.currentBranch(repoRoot: directory)
+        }
+        #expect(branch == nil)
     }
 }
 
@@ -236,29 +251,6 @@ struct GitProcessResolveMainCheckoutTests {
         let resolved = await GitProcess.resolveMainCheckout(of: linkedPath)
 
         #expect(resolved.standardizedFileURL == repo.url.standardizedFileURL)
-    }
-}
-
-struct GitProcessShortHeadTests {
-    @Test func aDetachedHead_isNamedByItsShortCommit() async throws {
-        let repo = try await TempGitRepo.make()
-        defer { repo.cleanup() }
-        let full = try await GitProcess.run(["rev-parse", "HEAD"], cwd: repo.url).stdout
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        _ = try await GitProcess.run(["checkout", "-q", "--detach"], cwd: repo.url)
-        let branch = try await GitProcess.currentBranch(repoRoot: repo.url)
-        #expect(branch == nil)
-        let head = try await GitProcess.shortHead(repoRoot: repo.url)
-        let short = try #require(head)
-        #expect(short.count >= 7)
-        #expect(full.hasPrefix(short))
-    }
-
-    @Test func aFolderOutsideARepository_hasNoCommit() async throws {
-        let commit: String? = try await withTempDir { folder in
-            try await GitProcess.shortHead(repoRoot: folder)
-        }
-        #expect(commit == nil)
     }
 }
 

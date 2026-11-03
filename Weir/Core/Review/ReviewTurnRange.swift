@@ -64,7 +64,7 @@ struct ReviewTurnRange: Equatable, Hashable, Codable, Sendable {
     /// same tree are still two ranges.
     var scopeID: String {
         let key = turnIDs.map(\.rawValue).joined(separator: "\n")
-        let digest = SHA256.hash(data: Data(key.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        let digest = SHA256.hash(data: Data(key.utf8)).prefix(8).hexString
         return "turns:" + digest
     }
 

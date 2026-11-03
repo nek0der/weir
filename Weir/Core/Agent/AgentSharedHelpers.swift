@@ -79,10 +79,10 @@ extension Unicode.Scalar {
     }
 }
 
-/// POSIX single-quoting for paths embedded in resume shell commands.
-/// The `'\''` dance is the standard way to escape an embedded `'`
-/// within a single-quoted string — survives `cd …` without further
-/// quoting from the caller.
+/// POSIX single-quoting for a value a shell command line must carry as one
+/// argument, whatever it holds: a path or a tmux session name may have a
+/// space or a quote in it. The `'\''` dance is the standard way to escape
+/// an embedded `'` within a single-quoted string.
 enum ShellQuote {
     static func single(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"

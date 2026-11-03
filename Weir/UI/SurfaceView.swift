@@ -736,7 +736,9 @@ final class SurfaceView: NSView {
               !urls.isEmpty
         else { return false }
 
-        let paths = urls.map { shellEscape($0.path) }
+        // Quoted so a space or another special character in a name stays
+        // part of one argument.
+        let paths = urls.map { ShellQuote.single($0.path) }
         let joined = paths.joined(separator: " ")
         joined.withCString { ghostty_surface_text(surface, $0, UInt(strlen($0))) }
         noteTextInput()
@@ -745,13 +747,6 @@ final class SurfaceView: NSView {
 
     private var fileOnlyOptions: [NSPasteboard.ReadingOptionKey: Any] {
         [.urlReadingFileURLsOnly: true]
-    }
-
-    /// Shell-escape a file path so spaces and special characters don't
-    /// break the command line. Wraps in single quotes with internal
-    /// single quotes escaped via the `'\''` idiom.
-    private func shellEscape(_ path: String) -> String {
-        "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }
 

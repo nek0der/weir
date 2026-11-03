@@ -62,10 +62,9 @@ struct WorkspaceSessionTests {
         let tab = s.openTab(container: .project(p.id))
         let paneID = try #require(tab.splitTree.allLeafIDs().first)
         #expect(s.hasUnread(in: .project(p.id)) == false)
-        #expect(s.windowHasUnread == false)
+        #expect(s.windowUnreadCount == 0)
         s.markUnread(paneID: paneID)
         #expect(s.hasUnread(in: .project(p.id)))
-        #expect(s.windowHasUnread)
         #expect(s.windowUnreadCount == 1)
     }
 

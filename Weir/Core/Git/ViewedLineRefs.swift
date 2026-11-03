@@ -32,7 +32,7 @@ struct ViewedLineRefs: ViewedLineRefWriting {
     /// known to be a valid ref name.
     static func refName(of conversation: ConversationKey) -> String {
         let key = "\(conversation.provider.rawValue)\n\(conversation.conversationID)\n\(conversation.isFallback)"
-        let hash = SHA256.hash(data: Data(key.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
+        let hash = SHA256.hash(data: Data(key.utf8)).prefix(16).hexString
         return "refs/weir/reviewed/\(hash)"
     }
 

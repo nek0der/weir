@@ -282,9 +282,9 @@ extension SelectionIntentTests {
         let git = FakeGit()
         let meanwhile: @MainActor @Sendable () -> Void
 
-        func createWorktree(repoRoot: URL, path: URL, baseBranch: String, newBranchName: String?) async throws -> GitResult {
+        func createWorktree(repoRoot: URL, path: URL, baseBranch: String) async throws -> GitResult {
             await meanwhile()
-            return try await git.createWorktree(repoRoot: repoRoot, path: path, baseBranch: baseBranch, newBranchName: newBranchName)
+            return try await git.createWorktree(repoRoot: repoRoot, path: path, baseBranch: baseBranch)
         }
 
         func removeWorktree(repoRoot: URL, path: URL, force: Bool) async throws -> GitResult {

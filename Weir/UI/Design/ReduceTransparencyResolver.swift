@@ -33,7 +33,7 @@ final class ReduceTransparencyResolver {
     /// disables it and shows an explanation.
     private(set) var systemReducesTransparency: Bool = false
 
-    private var userEnabled: Bool = true
+    private var isUserEnabled: Bool = true
     @ObservationIgnored
     private nonisolated(unsafe) var observer: (any NSObjectProtocol)?
 
@@ -67,16 +67,16 @@ final class ReduceTransparencyResolver {
     /// `AppState.startSettingsConfigSync` so the resolver tracks the
     /// SettingsStore value over the app's lifetime.
     func apply(userEnabled: Bool) {
-        guard userEnabled != self.userEnabled else { return }
-        self.userEnabled = userEnabled
+        guard userEnabled != isUserEnabled else { return }
+        isUserEnabled = userEnabled
         recompute()
     }
 
     private func recompute() {
         systemReducesTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
         // Glass shows only when the user wants it AND the OS allows it.
-        // Either opting out (`!userEnabled`) or the system flag forces
+        // Either opting out (`!isUserEnabled`) or the system flag forces
         // the opaque path.
-        shouldReduceTransparency = !userEnabled || systemReducesTransparency
+        shouldReduceTransparency = !isUserEnabled || systemReducesTransparency
     }
 }

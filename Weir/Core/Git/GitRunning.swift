@@ -16,8 +16,7 @@ protocol GitRunning: Sendable {
     func createWorktree(
         repoRoot: URL,
         path: URL,
-        baseBranch: String,
-        newBranchName: String?
+        baseBranch: String
     ) async throws -> GitResult
 
     func removeWorktree(
@@ -77,14 +76,12 @@ struct LiveGit: GitRunning {
     func createWorktree(
         repoRoot: URL,
         path: URL,
-        baseBranch: String,
-        newBranchName: String?
+        baseBranch: String
     ) async throws -> GitResult {
         try await GitProcess.createWorktree(
             repoRoot: repoRoot,
             path: path,
-            baseBranch: baseBranch,
-            newBranchName: newBranchName
+            baseBranch: baseBranch
         )
     }
 

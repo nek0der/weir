@@ -11,7 +11,9 @@
 #
 # Escape hatch: add a reviewed exception to .forbidden-terms-allow, one
 # "path:substring" fragment per line (e.g. an attribution that must name the
-# upstream project). An entry suppresses any matching line in that file.
+# upstream project). An entry suppresses any matching line in that file. An
+# entry no line needs fails the check too: once its line is gone, it would
+# let the term back into that file unreviewed.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -26,6 +28,20 @@ cd "$(git rev-parse --show-toplevel)"
 # negative case so an accidental edit can't silently disable one.
 pattern='\b(cmux|manaflow|superisland|notchi|wezterm|alacritty|kitty|iterm2?|vs ?code|vscode|calyx|warp|zellij|tabby|hyper(\.app)?|rio|orca|stablyai|gitlens|lazygit|gerrit|phabricator)\b'
 
+# Indexed arrays rather than associative ones: macOS still ships bash 3.2.
+entries=()
+used=()
+if [[ -f .forbidden-terms-allow ]]; then
+  while IFS= read -r entry || [[ -n "$entry" ]]; do
+    [[ -z "$entry" || "$entry" == \#* ]] && continue
+    entries+=("$entry")
+    used+=(0)
+  done < .forbidden-terms-allow
+fi
+
+# Every entry a line matches counts as used, not only the first: two entries
+# can cover one line, and neither is dead while the line is there.
+#
 # Skip this script + its allow-list (they name the terms by necessity) and the
 # vendored upstream shell-integration (it legitimately credits Kitty and uses
 # the `kitty-shell-cwd://` OSC protocol token — that tree is upstream code).
@@ -34,17 +50,15 @@ while IFS= read -r line; do
   [[ -z "$line" ]] && continue
   path="${line%%:*}"
   allowed=0
-  if [[ -f .forbidden-terms-allow ]]; then
-    while IFS= read -r entry; do
-      [[ -z "$entry" || "$entry" == \#* ]] && continue
-      apath="${entry%%:*}"
-      asub="${entry#*:}"
-      if [[ "$path" == "$apath" && "$line" == *"$asub"* ]]; then
-        allowed=1
-        break
-      fi
-    done < .forbidden-terms-allow
-  fi
+  for i in "${!entries[@]}"; do
+    entry="${entries[$i]}"
+    apath="${entry%%:*}"
+    asub="${entry#*:}"
+    if [[ "$path" == "$apath" && "$line" == *"$asub"* ]]; then
+      allowed=1
+      used[i]=1
+    fi
+  done
   [[ $allowed -eq 0 ]] && hits+="$line"$'\n'
 done < <(git grep -nIPi "$pattern" -- \
   ':!scripts/check-forbidden-terms.sh' \
@@ -53,6 +67,12 @@ done < <(git grep -nIPi "$pattern" -- \
   ':!Weir/Resources/ghostty/shell-integration' \
   2>/dev/null || true)
 
+unused=""
+for i in "${!entries[@]}"; do
+  [[ "${used[$i]}" -eq 0 ]] && unused+="${entries[$i]}"$'\n'
+done
+
+status=0
 if [[ -n "${hits//[$'\n\t ']/}" ]]; then
   {
     echo "✗ Forbidden competitor names / foreign issue refs in tracked files:"
@@ -61,6 +81,16 @@ if [[ -n "${hits//[$'\n\t ']/}" ]]; then
     echo "Rewrite to the neutral technical reason (see CONTRIBUTING.md), or add a"
     echo "reviewed exception to .forbidden-terms-allow."
   } >&2
-  exit 1
+  status=1
 fi
+if [[ -n "$unused" ]]; then
+  {
+    echo "✗ Entries in .forbidden-terms-allow that no line needs any more:"
+    printf '%s' "$unused"
+    echo
+    echo "Remove them, so the term cannot come back into that file unreviewed."
+  } >&2
+  status=1
+fi
+[[ $status -eq 0 ]] || exit 1
 echo "✓ check-forbidden-terms: clean."

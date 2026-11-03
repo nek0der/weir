@@ -228,16 +228,6 @@ enum ConversationText {
         )
     }
 
-    /// The tooltip's facts as VoiceOver reads them where they are its
-    /// label (the review's scope menu heading), led by the spoken name, so
-    /// a titled conversation says its agent.
-    static func spokenHelp(_ choice: ConversationChoice, locale: Locale) -> String {
-        AgentStatusText.joined(
-            [spokenName(choice, locale: locale), unviewed(choice.unviewedCount, locale: locale), state(choice, locale: locale)],
-            locale: locale
-        )
-    }
-
     /// What VoiceOver reads after an agent's name: its latest prompt in
     /// full, when it last did something, its unviewed turns, and where it
     /// runs or that it ended. The detail line's facts, with nothing cut,

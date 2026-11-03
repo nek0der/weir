@@ -133,21 +133,18 @@ enum WeirMotion {
     /// highlight reads as one shared element.
     static let paneMergeHighlight: Animation = paced(.spring(response: 0.28, dampingFraction: 0.86))
 
-    /// A selection indicator moving for a viewer who has asked for less
-    /// motion. Not nothing: Reduce Motion asks for the overshoot and the
-    /// parallax to go, and a control whose indicator jumps between states
-    /// reads as one that did not register the click at all. The travel here is
-    /// a few dozen points, which is what the setting is least concerned with.
-    static let reducedSlide: Animation = paced(.easeInOut(duration: 0.18))
-
     /// A segmented control's pill moving to the chosen segment
     /// (`SegmentPillSlide`), eased in and out. Durations rather than an
     /// `Animation`: the slide runs on its own clock, so the layout around
     /// the control (a sheet changing height with the choice) is never
     /// animated with it.
     static let segmentSlideDuration: TimeInterval = 0.24 * pace
-    /// The same slide for a viewer who asked for less motion: shorter,
-    /// as `reducedSlide` is, and still a slide.
+    /// The same slide for a viewer who asked for less motion: shorter, and
+    /// still a slide. Not nothing: Reduce Motion asks for the overshoot and
+    /// the parallax to go, and a control whose pill jumps between segments
+    /// reads as one that did not register the click at all. The travel here
+    /// is a few dozen points, which is what the setting is least concerned
+    /// with.
     static let reducedSegmentSlideDuration: TimeInterval = 0.18 * pace
 
     /// Bottom-anchored transient banners (toast + worktree-move

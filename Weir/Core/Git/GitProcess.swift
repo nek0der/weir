@@ -233,10 +233,12 @@ enum GitProcess {
         return env
     }
 
-    /// List local branch names ("main", "feat-x", …) for the repo.
+    /// List local branch names ("main", "feat-x", …) for the repo. The
+    /// full name with `refs/heads/` cut, not `refname:short`: the short one
+    /// turns to `heads/x` where a tag is also named `x`.
     static func listLocalBranches(repoRoot: URL) async throws -> [String] {
         let result = try await run(
-            ["branch", "--format=%(refname:short)"],
+            ["branch", "--format=%(refname:lstrip=2)"],
             cwd: repoRoot
         )
         guard result.succeeded else { return [] }
@@ -246,41 +248,35 @@ enum GitProcess {
             .filter { !$0.isEmpty }
     }
 
-    /// Current branch name, or nil when HEAD is detached.
+    /// Current branch name, or nil when HEAD is detached, and nothing before
+    /// the first commit. Asked of `git branch --show-current` rather than
+    /// `rev-parse --abbrev-ref`, which gives `heads/x` where a tag is also
+    /// named `x`, as `listLocalBranches` says. It prints nothing for a
+    /// detached HEAD, but names the branch a repository with no commit will
+    /// have, which is no base a worktree can be made from, so we ask first
+    /// whether HEAD names a commit.
     static func currentBranch(repoRoot: URL) async throws -> String? {
+        let head = try await run(["rev-parse", "--verify", "--quiet", "HEAD"], cwd: repoRoot)
+        guard head.succeeded else { return nil }
         let result = try await run(
-            ["rev-parse", "--abbrev-ref", "HEAD"],
+            ["branch", "--show-current"],
             cwd: repoRoot
         )
         guard result.succeeded else { return nil }
         let name = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (name.isEmpty || name == "HEAD") ? nil : name
+        return name.isEmpty ? nil : name
     }
 
-    /// The checked-out commit, short, as `git rev-parse --short HEAD` names
-    /// it: what names a detached HEAD, which has no branch. `nil` when git
-    /// cannot say (no commit yet, not a repository).
-    static func shortHead(repoRoot: URL) async throws -> String? {
-        let result = try await run(["rev-parse", "--short", "HEAD"], cwd: repoRoot)
-        guard result.succeeded else { return nil }
-        let sha = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        return sha.isEmpty ? nil : sha
-    }
-
-    /// Create a new worktree. When `newBranchName` is non-nil, runs
-    /// `git worktree add -b <new> <path> <base>`, otherwise checks out
-    /// the existing branch.
+    /// Create a new worktree that checks out `baseBranch`, which exists. A
+    /// new branch is made before, on its own (`GitRunning.createBranch`), so
+    /// a failure says which of the two did not happen.
     @discardableResult
     static func createWorktree(
         repoRoot: URL,
         path: URL,
-        baseBranch: String,
-        newBranchName: String? = nil
+        baseBranch: String
     ) async throws -> GitResult {
         var args = ["worktree", "add"]
-        if let name = newBranchName, !name.isEmpty {
-            args.append(contentsOf: ["-b", name])
-        }
         // `--` forces git to parse the remaining tokens as positional
         // args. Defends against pathological paths or branch names that
         // start with `-` (git refname rules forbid them, but the
@@ -345,18 +341,4 @@ enum GitProcess {
         return isLinked ? main.path.standardizedFileURL : url
     }
 
-    /// Quick check: does `git` find a repository rooted at `url`?
-    /// Returns false for non-git folders and on launch errors.
-    static func isGitRepository(_ url: URL) async -> Bool {
-        // `git -C <url> rev-parse --is-inside-work-tree` exits 0 only
-        // when inside a working tree. Using `--git-dir` instead would
-        // be wrong — submodules and bare repos would answer "yes" to
-        // the existence check but aren't usable as Weir roots.
-        guard let result = try? await run(
-            ["-C", url.path, "rev-parse", "--is-inside-work-tree"],
-            cwd: url
-        ) else { return false }
-        return result.succeeded
-            && result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "true"
-    }
 }

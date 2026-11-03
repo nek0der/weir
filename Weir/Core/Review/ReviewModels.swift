@@ -283,7 +283,7 @@ struct ReviewDiff {
     var hasVanished = false
 
     static func hash(_ value: Data) -> String {
-        SHA256.hash(data: value).map { String(format: "%02x", $0) }.joined()
+        SHA256.hash(data: value).hexString
     }
 }
 

@@ -277,7 +277,7 @@ struct SegmentPillSlide: Equatable, Sendable {
     /// wherever the pill is now, so a second click mid-slide turns it
     /// without a jump. With Reduce Motion it is shorter, but still a
     /// slide: with no movement at all the control reads as one that did
-    /// not take the click, as `WeirMotion.reducedSlide` says.
+    /// not take the click, as `WeirMotion.reducedSegmentSlideDuration` says.
     static func after(
         selecting new: Int?,
         previously old: Int?,

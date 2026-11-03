@@ -32,7 +32,8 @@ final class ReviewDraftWriter {
     /// reviewed.
     ///
     /// A hint, not a selection: a session reads it when a list first arrives,
-    /// and `resumeFileID` is what decides whether it still names anything.
+    /// and `ReviewSession.resumeFile(in:among:)` is what decides whether it
+    /// still names anything.
     private(set) var lastFileIDs: [String: String] = [:]
     /// The fixed ranges of turns this review has read, by scope ID, so a
     /// comment kept for one is checked against that range rather than the

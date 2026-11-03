@@ -404,8 +404,9 @@ extension ApprovalPresentationStore {
         }
     }
 
-    /// The ledger's requests as the attention rules read them, each with
-    /// the time left the service last reported.
+    /// The ledger's requests, each with the time left the service last
+    /// reported, as one snapshot. Only tests read it; the attention list
+    /// takes each entry's fact through `fact(for:)`.
     var approvalFacts: [ApprovalFact] {
         sortedEntries.map(fact(for:))
     }

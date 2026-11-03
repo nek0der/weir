@@ -213,20 +213,20 @@ private struct AboutSection: View {
 /// `@Observable` adapter.
 private struct UpdatesSection: View {
     let updater: SPUUpdater
-    @State private var autoCheck: Bool
+    @State private var isAutoCheckEnabled: Bool
     @Environment(UpdateStateModel.self) private var stateModel
 
     init(updater: SPUUpdater) {
         self.updater = updater
-        self._autoCheck = State(initialValue: updater.automaticallyChecksForUpdates)
+        self._isAutoCheckEnabled = State(initialValue: updater.automaticallyChecksForUpdates)
     }
 
     var body: some View {
         Section {
             SettingsToggle("Automatically check for updates", isOn: Binding(
-                get: { autoCheck },
+                get: { isAutoCheckEnabled },
                 set: { newValue in
-                    autoCheck = newValue
+                    isAutoCheckEnabled = newValue
                     updater.automaticallyChecksForUpdates = newValue
                 }
             ))

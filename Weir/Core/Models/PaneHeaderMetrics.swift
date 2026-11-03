@@ -57,22 +57,6 @@ enum PaneHeaderMetrics {
         + itemSpacing // spacer to menu
         + menuSlot
 
-    /// Width of the narrowest form of a zoomed pane's header: it keeps the
-    /// unzoom button, in a slot the size of the menu's, beside the menu.
-    /// Only a zoomed pane has the button, and a zoomed pane is as wide as
-    /// the window's terminal area, so the split floor stays `minimumWidth`.
-    static let zoomedMinimumWidth: CGFloat = minimumWidth
-        + itemSpacing // unzoom button's gap
-        + menuSlot // the unzoom button
-
-    /// Width of the form that keeps the prompt cache clock after the name and
-    /// the state mark have gone: the narrowest form and the clock with its
-    /// gap. The split floor stays `minimumWidth`; a pane narrower than this
-    /// drops the clock rather than growing for it.
-    static let clockFormWidth: CGFloat = minimumWidth
-        + itemSpacing // clock's gap
-        + markSlot // the clock, in the state mark's slot size
-
     /// Header width at which the name is edited in place: the narrowest
     /// form, the field with its gap, and the state mark with its gap, which
     /// an agent pane keeps while renaming. Narrower headers open the

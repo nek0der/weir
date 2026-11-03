@@ -133,7 +133,7 @@
             guard status == errSecSuccess else {
                 throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
             }
-            return bytes.map { String(format: "%02x", $0) }.joined()
+            return bytes.hexString
         }
 
         private static func requireOwnedPrivateDirectory(_ url: URL) throws {

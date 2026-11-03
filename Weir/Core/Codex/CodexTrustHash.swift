@@ -57,7 +57,7 @@ enum CodexTrustHash {
             identity["matcher"] = .string(matcher)
         }
         let digest = SHA256.hash(data: Data(Canonical.object(identity).serialized.utf8))
-        return "sha256:" + digest.map { String(format: "%02x", $0) }.joined()
+        return "sha256:" + digest.hexString
     }
 
     /// Build the `[hooks.state."<KEY>"]` table key. Format:

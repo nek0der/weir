@@ -51,6 +51,6 @@ struct AgentIntegrationServiceArtifact: Codable, Equatable, Sendable {
 
     private static func digest(of url: URL) throws -> String {
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        return SHA256.hash(data: data).hexString
     }
 }

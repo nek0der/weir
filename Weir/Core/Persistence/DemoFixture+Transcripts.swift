@@ -70,7 +70,7 @@ extension DemoFixture {
         let body = lines.map(encoded).joined(separator: "\\n")
         var reset = "PS1='\(prompt) \\$ ' PROMPT='\(prompt) %% ' && clear"
         if let title {
-            reset += " && printf '\\033]2;%s\\007' '\(title.replacingOccurrences(of: "'", with: "'\\''"))'"
+            reset += " && printf '\\033]2;%s\\007' \(ShellQuote.single(title))"
         }
         switch end {
         case .prompt where lines.isEmpty:

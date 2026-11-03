@@ -228,7 +228,7 @@ struct ToolProcessTests {
     }
 
     /// A canceled run ends its child rather than waiting for it.
-    @Test func runTool_cancelled_endsTheChild() async throws {
+    @Test func runTool_canceled_endsTheChild() async throws {
         try await withTempDir { directory in
             // The child says it is running, so the cancel reaches a child
             // rather than a run that has not spawned one yet.

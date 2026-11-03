@@ -156,7 +156,7 @@ private struct ActivePill: View {
     @Environment(WindowRegistry.self) private var windowRegistry
     @Environment(\.frecencyStore) private var frecencyStore
     @Environment(\.surfaceRegistry) private var registry
-    @FocusState private var fieldFocused: Bool
+    @FocusState private var isFieldFocused: Bool
     @State private var debounceTask: Task<Void, Never>?
 
     /// The field while typing: the idle field's shape, the text in the text
@@ -195,7 +195,7 @@ private struct ActivePill: View {
             Text(state.placeholder)
         }
         .textFieldStyle(.plain)
-        .focused($fieldFocused)
+        .focused($isFieldFocused)
         .onChange(of: state.query) { _, newValue in
             scheduleFilter(query: newValue)
         }
@@ -223,7 +223,7 @@ private struct ActivePill: View {
     /// so the cursor lands at the end, not selecting all.
     private func grabFocus() {
         KeyboardHandoff.afterResponderSettles {
-            fieldFocused = true
+            isFieldFocused = true
             if let initial = state.initialQuery {
                 state.initialQuery = nil
                 DispatchQueue.main.async {

@@ -1,8 +1,7 @@
 // CodexTrustHashTests.swift
 // Weir — verifies the SHA-256 trust hash matches Codex's
-// `command_hook_hash` output. The reference vector below was
-// produced via the bash spike `scripts/spike-codex-shadow.sh` with
-// the exact same canonical identity:
+// `command_hook_hash` output. The reference vector below is the hash
+// Codex itself gave this canonical identity:
 //
 //   identity = {
 //     "event_name": "session_start",
@@ -37,12 +36,12 @@ struct CodexTrustHashTests {
         }
     }
 
-    /// The SessionStart vector is the spike's (see the header). The
-    /// one-second one is Codex's own `currentHash` for the timeout
-    /// `SessionEnd` and `Interrupt` default to: every other event defaults
-    /// to 600, so a serializer that confused a `1` for `true` stayed
-    /// invisible until those two were subscribed. The matcher one is the
-    /// SHA-256 of `{"event_name":"pre_tool_use","hooks":[{"async":false,
+    /// The SessionStart vector is the header's. The one-second one is Codex's
+    /// own `currentHash` for the timeout `SessionEnd` and `Interrupt` default
+    /// to: every other event defaults to 600, so a serializer that confused a
+    /// `1` for `true` stayed invisible until those two were subscribed. The
+    /// matcher one is the SHA-256 of
+    /// `{"event_name":"pre_tool_use","hooks":[{"async":false,
     /// "command":"/usr/bin/touch /tmp/lcx-pretool.marker","timeout":600,
     /// "type":"command"}],"matcher":"Bash"}`, so a change to where the
     /// matcher sits in the canonical JSON shows up at once.

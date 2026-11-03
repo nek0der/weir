@@ -13,7 +13,7 @@ struct ReviewChangeCheckTests {
         var hasher = Insecure.SHA1()
         hasher.update(data: Data("blob \(data.count)\u{0}".utf8))
         hasher.update(data: data)
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        return hasher.finalize().hexString
     }
 
     /// What the change check sees in a real repository.

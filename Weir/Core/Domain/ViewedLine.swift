@@ -90,6 +90,8 @@ package struct ViewedLine: Equatable, Codable, Sendable {
         self.history = history
     }
 
+    /// The turn the line sits under. Only tests read it, to see where a
+    /// change put the line.
     var lastViewedTurnID: TurnID? {
         position?.turnID
     }

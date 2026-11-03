@@ -81,9 +81,7 @@ final class OneShot<Argument> {
         cb(value)
     }
 
-    /// True after `call(_:)` has been invoked. Useful for assertions
-    /// at transition boundaries (driver wants to ensure ack fired
-    /// before overwriting state).
+    /// True after `call(_:)` has been invoked. Only tests read it.
     var hasFired: Bool {
         callback == nil
     }
@@ -380,7 +378,7 @@ final class UpdaterStack {
                 displayVersion: "v0.1.99",
                 contentLength: 60_817_408,
                 date: Date().addingTimeInterval(-86400),
-                releaseNotesURL: URL(string: "https://nek0der.github.io/weir/Limpid-0.1.5.md")
+                releaseNotesURL: URL(string: "https://nek0der.github.io/weir/Weir-0.1.16.md")
             )
         }
     }

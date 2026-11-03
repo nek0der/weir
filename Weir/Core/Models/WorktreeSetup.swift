@@ -302,7 +302,7 @@ enum WorktreeSetup {
                     running.resume(cont, with: .exited(proc.terminationStatus))
                 }
                 guard running.adopt(process) else {
-                    running.resume(cont, with: .cancelled)
+                    running.resume(cont, with: .canceled)
                     return
                 }
                 do {
@@ -326,7 +326,7 @@ enum WorktreeSetup {
         // left behind is what a step that ends leaves anyway.
         running.finished()
         switch outcome {
-        case .exited(0), .cancelled:
+        case .exited(0), .canceled:
             return nil
         case let .exited(status):
             if !Task.isCancelled {
@@ -366,7 +366,7 @@ enum WorktreeSetup {
 private enum StepOutcome: Sendable {
     case exited(Int32)
     case notStarted(String)
-    case cancelled
+    case canceled
 }
 
 /// The step's process, for the cancellation handler on another thread,

@@ -166,12 +166,13 @@ enum PaneHeaderForm: CaseIterable, Equatable {
     case withName
     /// Kind's mark, warning's symbol, cache clock, state mark, menu.
     case withMark
-    /// Kind's mark, cache clock, menu: `PaneHeaderMetrics.clockFormWidth`. Tried
-    /// only while the pane has a clock to show.
+    /// Kind's mark, cache clock, menu. Tried only while the pane has a clock
+    /// to show.
     case withClock
-    /// Kind's mark and menu: `PaneHeaderMetrics.minimumWidth`, or
-    /// `zoomedMinimumWidth` with the unzoom button a zoomed pane keeps
-    /// beside its menu in every form.
+    /// Kind's mark and menu, and the unzoom button a zoomed pane keeps beside
+    /// its menu in every form. Without the button it is
+    /// `PaneHeaderMetrics.minimumWidth` wide, the split's floor; only a zoomed
+    /// pane has the button, and a zoomed pane is as wide as the terminal area.
     case kindAndMenu
 
     var showsName: Bool {
