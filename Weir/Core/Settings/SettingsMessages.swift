@@ -51,6 +51,21 @@ extension ShortcutValidation {
             "Reserved by Weir (⌘⏎, ⌘1–9, ⌃⌘1–9)"
         case .missingModifier:
             "Shortcut must include ⌃, ⌥, ⇧, or ⌘"
+        case .unwritableKey:
+            LocalizedStringResource(
+                "This key can’t be used in a shortcut",
+                comment: "Settings → Keyboard: the terminal cannot read a binding on this key, such as >"
+            )
+        case .typesText:
+            LocalizedStringResource(
+                "With only ⇧ or ⌥, this key is input to the terminal. Add ⌃ or ⌘",
+                comment: "Settings → Keyboard: ⇧T, ⌥T, or ⌥⌫ would take that input from every terminal pane"
+            )
+        case .standardMenuItem:
+            LocalizedStringResource(
+                "A standard macOS menu item uses these keys",
+                comment: "Settings → Keyboard: ⌘C, ⌘V, ⌘, and similar belong to Copy, Paste, Settings…"
+            )
         case .quickTerminalConflict:
             "Already used by the Quick Terminal hotkey"
         }

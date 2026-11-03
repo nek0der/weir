@@ -115,9 +115,17 @@ struct KeyboardUnassignTests {
     }
 
     @Test func backspace_restoresTheDefault_andEscapeCancels_inBothRecorders() {
-        #expect(ShortcutRecorderKey.meaning(of: .backspace) == .restoreDefault)
-        #expect(ShortcutRecorderKey.meaning(of: .escape) == .cancel)
-        #expect(ShortcutRecorderKey.meaning(of: .return) == .record)
-        #expect(ShortcutRecorderKey.meaning(of: nil) == .record)
+        #expect(ShortcutRecorderKey.meaning(of: .backspace, modifiers: []) == .restoreDefault)
+        #expect(ShortcutRecorderKey.meaning(of: .escape, modifiers: []) == .cancel)
+        #expect(ShortcutRecorderKey.meaning(of: .return, modifiers: []) == .record)
+        #expect(ShortcutRecorderKey.meaning(of: nil, modifiers: []) == .record)
+    }
+
+    /// With a modifier held, ⌫ and ⎋ are keys like any other, so ⌘⌫ can
+    /// close something and ⌘⎋ can be bound.
+    @Test(arguments: [NamedKey.backspace, .escape])
+    func modifiedBackspaceOrEscape_isRecorded(key: NamedKey) {
+        #expect(ShortcutRecorderKey.meaning(of: key, modifiers: [.command]) == .record)
+        #expect(ShortcutRecorderKey.meaning(of: key, modifiers: [.shift]) == .record)
     }
 }

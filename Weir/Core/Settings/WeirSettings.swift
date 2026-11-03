@@ -668,14 +668,8 @@ struct KeyboardSettings: Codable, Equatable {
         for action: WeirShortcutAction,
         quickTerminalHotKey: StoredShortcut? = nil
     ) -> ShortcutValidation {
-        // Require at least one of ⌘/⌥/⌃/⇧. A bare letter would
-        // hijack every plain keypress of that character and make
-        // the terminal untypeable.
-        if proposed.modifiers.isEmpty {
-            return .missingModifier
-        }
-        if ReservedShortcuts.triggers.contains(proposed.ghosttyTrigger) {
-            return .reserved
+        if let refusal = Self.refusal(ofKeys: proposed) {
+            return refusal
         }
         if action.keysItsPlaceKeeps.contains(proposed) {
             return .keptBySidebar
@@ -765,16 +759,23 @@ struct KeyboardSettings: Codable, Equatable {
     /// build reserves or gave to a new action, and a hand edit can do the
     /// same. Running it twice changes nothing more.
     ///
-    /// A binding on a reserved key (⌘⏎, which the decision bar takes)
-    /// moves to `retired`, and so does a quick terminal hotkey on one. A
+    /// A binding on keys the recorder refuses (`refusal(ofKeys:)`: a
+    /// reserved key such as ⌘⏎, which the decision bar takes, a standard
+    /// menu item's, ⇧ or ⌥ alone on a key that types, or a key libghostty
+    /// cannot read) moves to `retired`, and so does a quick terminal hotkey
+    /// on a reserved key. A
     /// default whose keys a person's own binding or the hotkey already
     /// holds is given up (`unbound`): the person's choice wins over a
     /// default that arrived later, and no two actions share keys. First, a
     /// binding of an action folded into another moves to the one that took
     /// it over (`foldActions`).
     mutating func normalize(quickTerminalHotKey: inout StoredShortcut?) {
+        // A key with a line break or a control character only comes from a
+        // hand edit. The notice would print it as is, so we drop it.
+        overrides = overrides.filter(\.value.hasPrintableKey)
+        retired = retired.filter(\.value.hasPrintableKey)
         foldActions()
-        for (raw, binding) in overrides where ReservedShortcuts.triggers.contains(binding.ghosttyTrigger) {
+        for (raw, binding) in overrides where Self.refusal(ofKeys: binding) != nil {
             overrides.removeValue(forKey: raw)
             retired[raw] = binding
         }
