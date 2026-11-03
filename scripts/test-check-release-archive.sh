@@ -41,9 +41,8 @@ make_good_archive() {
     printf '#!/bin/sh\n' > "$app/MacOS/$binary"
     chmod +x "$app/MacOS/$binary"
   done
-  plutil -create xml1 "$app/Library/LaunchAgents/com.nekoder.weir.agent-integration-service.plist"
-  plutil -insert Label -string com.nekoder.weir.agent-integration-service \
-    "$app/Library/LaunchAgents/com.nekoder.weir.agent-integration-service.plist"
+  cp "${REPO_ROOT}/AgentIntegrationService/Resources/com.nekoder.weir.agent-integration-service.plist" \
+    "$app/Library/LaunchAgents/"
   plutil -create xml1 "$archive/Info.plist"
   plutil -insert ApplicationProperties -dictionary "$archive/Info.plist"
   plutil -insert ApplicationProperties.ApplicationPath -string Applications/Weir.app \
@@ -96,6 +95,22 @@ malformed_service_plist() {
   printf 'not a plist' > \
     "$1/Products/Applications/Weir.app/Contents/Library/LaunchAgents/com.nekoder.weir.agent-integration-service.plist"
 }
+SERVICE_PLIST_PATH="Products/Applications/Weir.app/Contents/Library/LaunchAgents/com.nekoder.weir.agent-integration-service.plist"
+dev_label() { plutil -replace Label -string com.nekoder.weir.agent-integration-service.dev "$1/$SERVICE_PLIST_PATH"; }
+missing_label() { plutil -remove Label "$1/$SERVICE_PLIST_PATH"; }
+wrong_program() { plutil -replace BundleProgram -string Contents/MacOS/Weir "$1/$SERVICE_PLIST_PATH"; }
+missing_requester() {
+  /usr/libexec/PlistBuddy -c "Delete :MachServices:com.nekoder.weir.agent-integration-service.requester" \
+    "$1/$SERVICE_PLIST_PATH"
+}
+disabled_controller() {
+  /usr/libexec/PlistBuddy -c "Set :MachServices:com.nekoder.weir.agent-integration-service.controller false" \
+    "$1/$SERVICE_PLIST_PATH"
+}
+extra_mach_service() {
+  /usr/libexec/PlistBuddy -c "Add :MachServices:com.nekoder.weir.agent-integration-service.dev.requester bool true" \
+    "$1/$SERVICE_PLIST_PATH"
+}
 dev_service_plist() {
   cp "$1/Products/Applications/Weir.app/Contents/Library/LaunchAgents/com.nekoder.weir.agent-integration-service.plist" \
     "$1/Products/Applications/Weir.app/Contents/Library/LaunchAgents/com.nekoder.weir.agent-integration-service.dev.plist"
@@ -115,6 +130,12 @@ run_case "a missing Sparkle.framework fails" fail missing_sparkle
 run_case "a missing release service plist fails" fail missing_service_plist
 run_case "a malformed release service plist fails" fail malformed_service_plist
 run_case "a bundled development service plist fails" fail dev_service_plist
+run_case "a service plist with the development label fails" fail dev_label
+run_case "a service plist with no label fails" fail missing_label
+run_case "a service plist naming another program fails" fail wrong_program
+run_case "a service plist without the requester service fails" fail missing_requester
+run_case "a service plist with the controller service off fails" fail disabled_controller
+run_case "a service plist with an extra Mach service fails" fail extra_mach_service
 run_case "a missing archive fails" fail missing_archive
 run_case "a binary with the verification channel fails" fail automation_channel
 

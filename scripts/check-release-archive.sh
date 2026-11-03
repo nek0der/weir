@@ -27,12 +27,44 @@ APP_RELATIVE="Applications/Weir.app"
 APP="$ARCHIVE/Products/$APP_RELATIVE"
 SERVICE_PLIST_DIR="$APP/Contents/Library/LaunchAgents"
 SERVICE_PLIST="$SERVICE_PLIST_DIR/com.nekoder.weir.agent-integration-service.plist"
+# The Release values of `AgentIntegrationConfiguration` (its `#else` block).
+# The app registers the plist by name and then connects to these, so a plist
+# that names others still lints and registers, and every approval then finds
+# no service.
+SERVICE_LABEL="com.nekoder.weir.agent-integration-service"
+SERVICE_PROGRAM="Contents/MacOS/AgentIntegrationService"
+SERVICE_MACH_SERVICES=(
+  "com.nekoder.weir.agent-integration-service.controller"
+  "com.nekoder.weir.agent-integration-service.requester"
+)
 DEV_SERVICE_PLIST="$SERVICE_PLIST_DIR/com.nekoder.weir.agent-integration-service.dev.plist"
 
 failures=0
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   failures=$((failures + 1))
+}
+
+plist_value() {
+  /usr/libexec/PlistBuddy -c "Print :$1" "$SERVICE_PLIST" 2>/dev/null || true
+}
+
+check_service_plist() {
+  local label program mach_count
+  label=$(plist_value Label)
+  [[ "$label" == "$SERVICE_LABEL" ]] \
+    || fail "the service plist's Label is '${label}', not $SERVICE_LABEL"
+  program=$(plist_value BundleProgram)
+  [[ "$program" == "$SERVICE_PROGRAM" ]] \
+    || fail "the service plist's BundleProgram is '${program}', not $SERVICE_PROGRAM"
+  for name in "${SERVICE_MACH_SERVICES[@]}"; do
+    [[ "$(plist_value "MachServices:$name")" == "true" ]] \
+      || fail "the service plist does not publish the Mach service $name"
+  done
+  # PlistBuddy prints each entry of a dictionary as "key = value".
+  mach_count=$(plist_value MachServices | grep -c ' = ' || true)
+  [[ "$mach_count" -eq "${#SERVICE_MACH_SERVICES[@]}" ]] \
+    || fail "the service plist publishes $mach_count Mach services, not ${#SERVICE_MACH_SERVICES[@]}"
 }
 
 if [[ ! -d "$ARCHIVE" ]]; then
@@ -69,7 +101,11 @@ else
   done
   [[ -d "$APP/Contents/Frameworks/Sparkle.framework" ]] || fail "Sparkle.framework is not embedded"
   if [[ -f "$SERVICE_PLIST" ]]; then
-    plutil -lint -s "$SERVICE_PLIST" || fail "the agent integration service plist does not lint"
+    if plutil -lint -s "$SERVICE_PLIST"; then
+      check_service_plist
+    else
+      fail "the agent integration service plist does not lint"
+    fi
   else
     fail "the release agent integration service plist is missing"
   fi

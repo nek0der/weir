@@ -97,6 +97,7 @@ RELEASE_CHECK_ARCHIVE ?= build/ReleaseCheck/Weir.xcarchive
 RELEASE_CHECK_BUILD_SETTINGS ?=
 release-check: $(PBXPROJ)
 	scripts/test-check-release-archive.sh
+	scripts/test-package-dmg.sh
 	rm -rf '$(RELEASE_CHECK_ARCHIVE)'
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release \
 		-destination '$(BUILD_DESTINATION)' \

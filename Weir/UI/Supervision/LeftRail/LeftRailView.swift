@@ -175,6 +175,7 @@ private struct RailUpdateButton: View {
     @Environment(SettingsStore.self) private var settings
     @Environment(\.weirAccent) private var accent
     @Environment(\.locale) private var locale
+    @Environment(\.controlActiveState) private var controlActiveState
     @State private var isHovering = false
 
     var body: some View {
@@ -192,6 +193,13 @@ private struct RailUpdateButton: View {
         .hoverChip(model.state.helpText, shortcut: nil, placement: .beside)
         // When the update is done with, the button goes and leaves the state.
         .onDisappear { isOpen = false }
+        // Check for Updates chosen during an update opens it here, in the
+        // window the person is in, rather than in every window.
+        .onChange(of: model.focusRequests) {
+            if controlActiveState == .key {
+                isOpen = true
+            }
+        }
         .accessibilityLabel(Text(model.state.helpText))
         .accessibilityValue(Text(verbatim: model.state.progressValueText(locale: locale)))
         .popover(isPresented: $isOpen, arrowEdge: .trailing) {

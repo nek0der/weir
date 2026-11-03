@@ -253,7 +253,7 @@ private struct UpdatesSection: View {
                         updater.checkForUpdates()
                     #endif
                 }
-                .disabled(stateModel.isBusy)
+                .disabled(stateModel.disablesCheckForUpdates)
             }
             .settingsControlRow()
             .settingsSearchTarget(SettingsSearchCatalog.checkForUpdates.id)
