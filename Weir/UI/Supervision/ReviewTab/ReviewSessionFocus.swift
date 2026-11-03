@@ -49,7 +49,7 @@ enum ReviewSessionFocus {
         runtimes: () -> [AgentRuntimePresentation],
         limit: Duration = limit,
         isAlive: (pid_t) -> Bool = ProcessLiveness.isLive,
-        under root: URL = WeirPaths.applicationSupportDirectory()
+        under root: URL? = AgentTabFocus.defaultRoot
     ) async -> Bool {
         // A run with a channel is one of an agent with tabs; no other has one.
         guard let agent = destination.agent else { return true }

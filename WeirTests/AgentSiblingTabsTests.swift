@@ -214,6 +214,13 @@ struct AgentSiblingTabsTests {
         try? FileManager.default.removeItem(at: directory)
     }
 
+    /// Demo mode has nowhere to write a request: nothing is asked, and nothing confirmed.
+    @Test func withNowhereToWrite_nothingIsAskedOrConfirmed() async {
+        AgentTabFocus.request(Self.tab("abc", isBehind: true), under: nil)
+        let confirmed = await AgentTabFocus.confirm(sessionID: "ses_abc", channel: UUID(), limit: .seconds(1), under: nil)
+        #expect(!confirmed)
+    }
+
     // MARK: Review
 
     private static func destination(_ pane: UUID, agent: AgentKind? = .opencode) -> ReviewDestination {

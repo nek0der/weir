@@ -259,6 +259,82 @@ struct DemoFixtureTests {
         #expect(command.hasPrefix("PS1='p \\$ ' PROMPT='p %% ' && clear && printf '%b\\n' 'don'\\''t' && "))
     }
 
+    /// A demo pane's shell is the demo's own zsh, reading the bundled startup
+    /// files and no history file, whatever the app was launched with.
+    @Test func aPanesShell_readsTheDemosStartupFiles_andNoHistoryFile() {
+        let files = URL(fileURLWithPath: "/Applications/Weir.app/Contents/Resources/demo-shell", isDirectory: true)
+        let env = DemoFixture.shellEnvironment(
+            over: ["PATH": "/shims:/usr/bin", "ZDOTDIR": "/shim/zdotdir", "HISTFILE": "/Users/me/.zsh_history"],
+            startupDirectory: files,
+            panesReady: "/tmp/ready"
+        )
+        #expect(DemoFixture.shellCommand == "/bin/zsh")
+        #expect(env["ZDOTDIR"] == files.path)
+        #expect(env["HISTFILE"] == "")
+        #expect(env["SAVEHIST"] == "0")
+        #expect(env["PATH"] == "/shims:/usr/bin")
+        #expect(env["USER"] == "demo")
+        #expect(env["HOST"] == "localhost")
+        #expect(env["WEIR_DEMO_PANES_READY"] == "/tmp/ready")
+        // Without the bundled files, a folder that holds none, never the person's.
+        let bare = DemoFixture.shellEnvironment(over: [:], startupDirectory: nil, panesReady: "")
+        #expect(bare["ZDOTDIR"] == "/var/empty")
+    }
+
+    /// Runs the shell as a demo pane does, as a login shell taking a typed
+    /// line, in a home whose startup files would keep a history and say so,
+    /// and finds neither: the line reached no history file, none of the
+    /// home's files ran, and the system's history file was undone. The
+    /// prompt is the demo's, and Ghostty's integration, which reports the
+    /// pane's folder, is loaded.
+    @Test(.disabled(if: !RepoFixture.hasLocalRepo, "no source tree"))
+    func aPanesShell_runsNoneOfTheHomesStartupFiles_andKeepsNoHistory() throws {
+        let root = try #require(RepoFixture.weirRoot)
+        let files = root.appendingPathComponent("Weir/Resources/demo-shell", isDirectory: true)
+        let ghostty = root.appendingPathComponent("Weir/Resources/ghostty", isDirectory: true)
+        try withTempDir { home in
+            let rc = "HISTFILE=$HOME/.zsh_history; SAVEHIST=100; setopt inc_append_history; print HOME_RC_RAN\n"
+            for name in [".zshenv", ".zprofile", ".zshrc"] {
+                try rc.write(to: home.appendingPathComponent(name), atomically: true, encoding: .utf8)
+            }
+            let printed = home.appendingPathComponent("printed")
+            FileManager.default.createFile(atPath: printed.path, contents: nil)
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: DemoFixture.shellCommand)
+            process.arguments = ["-il"]
+            process.currentDirectoryURL = home
+            process.environment = DemoFixture.shellEnvironment(
+                over: [
+                    "HOME": home.path,
+                    "PATH": "/usr/bin:/bin",
+                    "HISTFILE": home.appendingPathComponent(".zsh_history").path,
+                    "GHOSTTY_RESOURCES_DIR": ghostty.path
+                ],
+                startupDirectory: files,
+                panesReady: ""
+            )
+            let input = Pipe()
+            let output = try FileHandle(forWritingTo: printed)
+            process.standardInput = input
+            process.standardOutput = output
+            process.standardError = output
+            try process.run()
+            let line = #"print -r -- "scene [$HISTFILE] [$SAVEHIST] [$PROMPT] [${precmd_functions[(r)_ghostty_precmd]}]""#
+            input.fileHandleForWriting.write(Data("\(line)\nexit\n".utf8))
+            try input.fileHandleForWriting.close()
+            let exited = process.waitUntilExit(within: 10)
+            if !exited {
+                process.terminate()
+            }
+            try output.close()
+            #expect(exited)
+            let text = try String(contentsOf: printed, encoding: .utf8)
+            #expect(text.contains("scene [] [0] [demo@weir %1~ %% ] [_ghostty_precmd]"), "\(text)")
+            #expect(!text.contains("HOME_RC_RAN"), "\(text)")
+            #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent(".zsh_history").path))
+        }
+    }
+
     /// The script starts the demo shells in this folder under its isolated
     /// home, and the footer and headers read it: the two have to agree.
     @Test(.disabled(if: !RepoFixture.hasLocalRepo, "no source tree"))

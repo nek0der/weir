@@ -155,9 +155,10 @@ final class SettingsStore {
     @ObservationIgnored
     private var suppressNextSave: Bool = false
 
-    /// False in demo mode: nothing this store does reaches the file.
+    /// False in demo mode: nothing this store does reaches the file, and
+    /// nothing watches it for edits (`SettingsFileWatcher.start`).
     @ObservationIgnored
-    private let writesFiles: Bool
+    let writesFiles: Bool
 
     /// See `LoadResult.suspendsSaving`.
     @ObservationIgnored

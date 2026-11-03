@@ -275,9 +275,9 @@ if [ "${SHELL_COUNT}" -eq 0 ]; then
   exit 1
 fi
 
-# Wait for every pane's scene. Until a pane runs it, the pane shows the
-# contributor's own prompt, branch, and path, so a pane that never reports stops
-# the run. Each pane runs under one `login`, the app's direct child, counted
+# Wait for every pane's scene. Until a pane runs it, the pane shows the demo
+# shell's own prompt and the scene being typed, so a pane that never reports
+# stops the run. Each pane runs under one `login`, the app's direct child, counted
 # again each time because a pane can still be opening.
 panes_open() {
   local child count=0

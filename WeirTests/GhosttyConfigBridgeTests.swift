@@ -139,6 +139,19 @@ struct GhosttyConfigBridgeTests {
         #expect(GhosttyConfigBridge.resolvedTerm(resourcesDir: "/missing/share/ghostty") == "xterm-256color")
     }
 
+    /// Demo mode's shell goes in the config, as a surface's own command
+    /// would keep its pane open once the shell exits. No other run names one.
+    @Test func makeConfig_namesAShellOnlyWhenGivenOne_inTheForcedOverrides() {
+        let config = GhosttyConfigBridge.makeConfigString(settings: .default, resourcesDir: nil, shell: "/bin/zsh")
+        #expect(value(of: "command", in: config) == "/bin/zsh")
+        #expect(value(of: "initial-command", in: config) == "/bin/zsh")
+        let forced = config.components(separatedBy: "# Weir forced overrides").last ?? ""
+        #expect(forced.contains("\ncommand = /bin/zsh\n"))
+        let plain = GhosttyConfigBridge.makeConfigString(settings: .default, resourcesDir: nil, shell: nil)
+        #expect(value(of: "command", in: plain) == nil)
+        #expect(value(of: "initial-command", in: plain) == nil)
+    }
+
     @Test("term names the compiled database shipped beside Ghostty resources")
     func makeConfig_term_usesBundledXtermGhostty() throws {
         let resourcesDir = try #require(GhosttyApp.resolveResourcesDir())

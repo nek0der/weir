@@ -69,10 +69,14 @@ final class SettingsFileWatcher {
     }
 
     /// Start watching. Safe to call multiple times — the second call
-    /// is a no-op while the first source is still live.
+    /// is a no-op while the first source is still live. Nothing to watch
+    /// for a store that does not write its file (demo mode): the run keeps
+    /// its own settings, and the folder we would create to watch is the
+    /// person's.
     func start() {
         guard dirSource == nil else { return }
-        guard let url = store?.settingsFileURL else { return }
+        guard let store, store.writesFiles else { return }
+        let url = store.settingsFileURL
         let dir = url.deletingLastPathComponent()
 
         // Make sure the directory exists so `open` doesn't fail on a
