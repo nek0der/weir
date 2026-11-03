@@ -43,6 +43,10 @@ final class FrecencyStore {
     /// False in demo mode: what is used is ranked in memory only, and the
     /// person's own ranking is neither read nor written.
     private let writesFiles: Bool
+    /// Set when a file that could not be read could not be moved aside
+    /// either. Saving would then write over the only copy, so every save is
+    /// skipped until the next launch tries again.
+    private var isSavingSuspended = false
 
     convenience init(writesFiles: Bool) {
         self.init(directory: WeirPaths.applicationSupportDirectory(), writesFiles: writesFiles)
@@ -82,8 +86,12 @@ final class FrecencyStore {
     // MARK: - Persistence
 
     func flushSynchronously() {
+        // Nothing changed this launch: the file already holds the ranking.
+        // Rows past their lifetime wait there for the next change, and the
+        // next load drops them anyway.
+        let hasChanges = saveDebounce.hasPending
         saveDebounce.cancel()
-        guard writesFiles else { return }
+        guard writesFiles, !isSavingSuspended, hasChanges else { return }
         pruneExpired()
         let snapshot = entries
         let url = fileURL
@@ -93,13 +101,34 @@ final class FrecencyStore {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL) else { return }
+        // No file yet is the first launch; a file that is there but cannot
+        // be read is kept like one that does not decode.
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch {
+            log.error("failed to read frecency.json: \(String(describing: error), privacy: .private)")
+            setAside(reason: "read-failed")
+            return
+        }
         do {
             let decoder = PersistenceCoders.makeDecoder()
             entries = try decoder.decode([String: Entry].self, from: data)
             pruneExpired()
         } catch {
             log.error("failed to decode frecency.json: \(String(describing: error), privacy: .private)")
+            setAside(reason: "decode-failed")
+        }
+    }
+
+    /// The next `record` would otherwise write over the file with this
+    /// launch's ranking alone. Move it aside first, as the other stores do,
+    /// or stop saving when it cannot be moved.
+    private func setAside(reason: String) {
+        if SecureFileWrite.setAside(fileURL, reason: reason) == .keptInPlace {
+            log.error("frecency.json stays in place; saving is suspended for this launch")
+            isSavingSuspended = true
         }
     }
 
@@ -112,8 +141,9 @@ final class FrecencyStore {
     }
 
     private func scheduleSave() {
-        saveDebounce.cancel()
-        guard writesFiles else { return }
+        // Not canceled first: `schedule` replaces the pending save and keeps
+        // the burst's deadline, which a cancel would start over each time.
+        guard writesFiles, !isSavingSuspended else { return }
         pruneExpired()
         let snapshot = entries
         let url = fileURL

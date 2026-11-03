@@ -36,6 +36,11 @@ release that came just before the change being described.
     a folder that cannot be searched is not taken for a missing one. It
     cannot be moved either, so Weir stops saving for the launch.
 
+  In a launch that sets `state.json` aside, or stops saving, Weir deletes
+  no scrollback file and no staged first instruction. Renamed back before
+  the next launch that reads a `state.json`, the file brings its panes'
+  scrollback back with it.
+
   For `settings.json`:
   - A file that is there but cannot be read is renamed
     `settings.json.bak-read-failed-<unix>`, and Weir starts from the
@@ -214,6 +219,8 @@ this release wrote still opens:
   again (`WindowRecord.swift`). A record that says `column` opens on the
   strip. The build before reads a record without them as the strip at the
   default width.
+- A run state this build does not know (in a tab's `agentBadges`) reads as
+  `unknown`, as one no hook has reported yet, rather than failing the file.
 - A window record that cannot be read costs only that window's layout: a
   later window is passed over, and the primary window starts from its
   defaults. A project's saved view (`projectViews`) that cannot be read costs
@@ -833,8 +840,13 @@ when it saves. That build then groups the moves of one mark by their time, as
 it did before.
 
 A file from a newer build is read for what it can give and not rewritten. A
-file that cannot be read is dropped and written again on the next change:
-turns go back to unread or not viewed, never the reverse.
+`turn-reads.json` that cannot be read is dropped and written again on the
+next change: turns go back to unread, never the reverse. A
+`viewed-lines.json` that cannot be read is set aside as
+`viewed-lines.json.bak-read-failed-<unix>` or `.bak-decode-failed-<unix>`,
+since its deleted turns' spans and restores' moves are not a reading to
+take again. Turns go back to not viewed. When the file cannot be moved, it
+is left in place and saving stops for that launch.
 
 The previous release does not know either file and leaves them alone.
 

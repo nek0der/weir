@@ -619,4 +619,40 @@ struct ViewedLineStoreTests {
         #expect(try await !GitProcess.run(["rev-parse", "--verify", "--quiet", ref], cwd: first.url).succeeded)
         #expect(try await GitProcess.run(["rev-parse", "--verify", "--quiet", ref], cwd: second.url).succeeded)
     }
+
+    // MARK: - A file that cannot be read
+
+    // The file holds the deleted turns' spans and the restores' moves as
+    // well as the lines; dropping it would lose them for good.
+
+    @Test func aFileThatDoesNotDecode_isMovedAside_notSavedOver() throws {
+        try withTempDir { dir in
+            let garbled = Data(#"{ "schemaVersion": 1, "lines": "#.utf8)
+            try garbled.write(to: file(in: dir))
+
+            let store = ViewedLineStore(directory: dir)
+            try store.markViewed(through: Fixture.turn("b", number: 2), source: .decisionBar)
+            store.flushSynchronously()
+
+            let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            let kept = try #require(names.first { $0.hasPrefix("viewed-lines.json.bak-decode-failed-") })
+            #expect(try Data(contentsOf: dir.appendingPathComponent(kept)) == garbled)
+            #expect(try ViewedLineStore(directory: dir).isViewed(Fixture.turn("b", number: 2)))
+        }
+    }
+
+    @Test func anUnreadableFile_thatCannotBeMovedAside_isNeverSavedOver() throws {
+        try withTempDir { dir in
+            let garbled = Data(#"{ "schemaVersion": 1, "lines": "#.utf8)
+            try garbled.write(to: file(in: dir))
+            try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+            let store = ViewedLineStore(directory: dir)
+            try store.markViewed(through: Fixture.turn("b", number: 2), source: .decisionBar)
+            store.flushSynchronously()
+
+            #expect(try Data(contentsOf: file(in: dir)) == garbled)
+        }
+    }
 }

@@ -36,6 +36,16 @@ package enum AgentState: String, Codable, Equatable, CaseIterable {
     /// fresh / at-launch state) so the attention list treats a finished
     /// turn as actionable without snagging on never-used panes.
     case finished
+
+    /// A state this build does not know (a newer build's, or a hand edit)
+    /// reads as `unknown`, as a run no hook has reported on yet. Synthesized
+    /// decoding would throw, and the throw would fail the whole session's
+    /// tabs, which state.json reads in one piece. The projection writes the
+    /// run's state again on its next pass.
+    package init(from decoder: any Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = AgentState(rawValue: raw) ?? .unknown
+    }
 }
 
 package extension AgentState {

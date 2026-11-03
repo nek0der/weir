@@ -57,4 +57,37 @@ struct DebouncedSaveTests {
         #expect(runs.labels == ["ran"])
         #expect(save.hasPending)
     }
+
+    @Test func schedule_changesThatNeverStop_stillSaveOnceTheBurstHasWaitedTheMaximum() {
+        let timer = ManualTimer()
+        let save = DebouncedSave(delay: .milliseconds(20), maxWait: .milliseconds(100), timer: timer.timer)
+        let runs = Runs()
+
+        // A change every 10 ms puts the quiet delay off forever.
+        for index in 0..<10 {
+            save.schedule { runs.labels.append("change \(index)") }
+            timer.advance(by: .milliseconds(10))
+        }
+        #expect(runs.labels == ["change 9"], "the latest change saved at the deadline")
+
+        // The next change starts a burst of its own, with a deadline of its own.
+        save.schedule { runs.labels.append("after") }
+        timer.advance(by: .milliseconds(20))
+        #expect(runs.labels == ["change 9", "after"])
+        timer.advance(by: .milliseconds(100))
+        #expect(runs.labels == ["change 9", "after"], "a save runs once, whichever timer comes first")
+    }
+
+    @Test func cancel_dropsTheBurstsDeadlineToo() {
+        let timer = ManualTimer()
+        let save = DebouncedSave(delay: .milliseconds(20), maxWait: .milliseconds(100), timer: timer.timer)
+        let runs = Runs()
+
+        save.schedule { runs.labels.append("canceled") }
+        timer.advance(by: .milliseconds(10))
+        save.cancel()
+        timer.advance(by: .milliseconds(100))
+
+        #expect(runs.labels.isEmpty)
+    }
 }

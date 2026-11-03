@@ -375,12 +375,14 @@ final class AppState {
             sessionLoadIssue = session.restore(from: snapshot)
         case let .versionMismatch(found, expected):
             sessionLoadIssue = .versionMismatch(found: found, expected: expected)
+            session.keepsUnreferencedFiles = true
         case let .decodeFailed(error):
             sessionLoadIssue = .decodeFailed(message: DisplayText(error: error))
+            session.keepsUnreferencedFiles = true
         }
         // Always make sure the window has at least one tab to render.
         session.openLaunchTabIfNone()
-        if writesUserFiles {
+        if writesUserFiles, !session.keepsUnreferencedFiles {
             InitialPromptFile.removeOrphans(keeping: Set(session.tabs.flatMap(\.initialPromptFiles.values)))
         }
 

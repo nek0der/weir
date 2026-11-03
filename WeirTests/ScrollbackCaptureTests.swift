@@ -57,6 +57,26 @@ struct ScrollbackCaptureTests {
         }
     }
 
+    @Test func capture_afterStateWasSetAside_keepsTheFilesNoTabNames() throws {
+        // The set-aside state.json still names them: renaming it back must
+        // bring its panes' scrollback back too.
+        try withFiles { files in
+            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            session.scrollbackFiles = files
+            session.keepsUnreferencedFiles = true
+            let setAsidePanes = files.directory.appendingPathComponent("\(UUID().uuidString).vt")
+            try Data("set aside".utf8).write(to: setAsidePanes)
+            let registry = RecordingSurfaceRegistry()
+            registry.scrollback[pane] = "prompt$ ls"
+
+            session.captureScrollbackPaths(from: registry)
+
+            let saved = files.directory.appendingPathComponent("\(pane.uuidString).vt")
+            #expect(session.tab(tab.id)?.scrollbackPaths[pane] == saved.path)
+            #expect(FileManager.default.fileExists(atPath: setAsidePanes.path))
+        }
+    }
+
     @Test func capture_keepsAnUnmountedPanesEarlierFile() throws {
         // A restored tab the person never clicked into has no terminal this
         // run; its earlier file is what the next launch replays.
