@@ -116,6 +116,38 @@ expect "a substitution with one ja form untranslated fails" fail "$(catalog subs
   } } }
 }")" "ja state is new, translated"
 
+expect "an en entry still marked new fails" fail "$(catalog en-new "{
+  \"%lld/%lld\": { \"localizations\": {
+    \"en\": { \"stringUnit\": { \"state\": \"new\", \"value\": \"%1\$lld/%2\$lld\" } },
+    \"ja\": $translated
+  } }
+}")" "en state is new"
+
+expect "an en plural with one form needing review fails" fail "$(catalog en-plural "{
+  \"%lld files\": { \"localizations\": {
+    \"en\": { \"variations\": { \"plural\": {
+      \"one\": $translated,
+      \"other\": { \"stringUnit\": { \"state\": \"needs_review\", \"value\": \"x\" } }
+    } } },
+    \"ja\": $translated
+  } }
+}")" "en state is needs_review, translated"
+
+expect "a ja value with the long vowel passes" pass "$(catalog long-vowel '{
+  "Open Folder": { "localizations": { "ja": { "stringUnit": { "state": "translated", "value": "フォルダーをエディターで開く" } } } }
+}')"
+
+expect "a ja value without the long vowel fails" fail "$(catalog short-folder '{
+  "Open Folder": { "localizations": { "ja": { "stringUnit": { "state": "translated", "value": "フォルダを開く" } } } }
+}')" "ja writes without the long vowel: フォルダ"
+
+expect "a short form at the end of a ja plural form fails" fail "$(catalog short-plural "{
+  \"%lld editors\": { \"localizations\": { \"ja\": { \"variations\": { \"plural\": {
+    \"one\": $translated,
+    \"other\": { \"stringUnit\": { \"state\": \"translated\", \"value\": \"%lld 個のエディタ\" } }
+  } } } } }
+}")" "ja writes without the long vowel: エディタ"
+
 expect "the repository catalog passes" pass "${REPO_ROOT}/Weir/Resources/Localizable.xcstrings"
 
 if [[ $failures -gt 0 ]]; then

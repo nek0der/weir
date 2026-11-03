@@ -30,10 +30,18 @@ enum SessionLoadIssue: Equatable, Identifiable {
     /// The decoder's own message is shown as is: it names the JSON path
     /// that failed, which no catalog string could carry. Our own migration
     /// errors bring a catalog string instead (`DisplayText(error:)`).
+    ///
+    /// A version mismatch names no schema number: the person cannot act on
+    /// it, and `id` and the log keep it. Nor does it say the file was set
+    /// aside, since that can fail, and `SavingSuspendedText` then says so
+    /// right after this sentence.
     var detail: DisplayText {
         switch self {
-        case let .versionMismatch(found, expected):
-            .localized("Saved session uses schema v\(found); Weir expected v\(expected). A fresh window was opened instead.")
+        case .versionMismatch:
+            .localized(LocalizedStringResource(
+                "This session was saved by a different version of Weir, so this version can’t open it. A fresh window was opened instead.",
+                comment: "The alert that the previous session was not restored: state.json was written by a version this one cannot read"
+            ))
         case let .decodeFailed(message):
             message
         case let .recovered(droppedTabCount, didResetActiveContainer):

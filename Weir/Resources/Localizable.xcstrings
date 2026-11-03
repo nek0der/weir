@@ -1054,9 +1054,21 @@
       "comment": "Worktree-operation error — git ran past its deadline and was stopped; the number is seconds",
       "localizations": {
         "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "git didn’t finish within %lld seconds."
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "git didn’t finish within %lld second."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "git didn’t finish within %lld seconds."
+                }
+              }
+            }
           }
         },
         "ja": {
@@ -1945,7 +1957,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このフォルダは Git リポジトリではありません"
+            "value": "このフォルダーは Git リポジトリではありません"
           }
         }
       }
@@ -2149,7 +2161,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "フォルダを選択…"
+            "value": "フォルダーを選択…"
           }
         }
       }
@@ -2925,7 +2937,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "エディタ"
+            "value": "エディター"
           }
         }
       }
@@ -3158,7 +3170,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "ターミナルで確認を求められた場合（サインインや、このフォルダを信頼するかどうかなど）は、ターミナルで回答してください。エイリアスなどでエージェントをフルパスで起動した場合は、Weir で追跡できません。"
+            "value": "ターミナルで確認を求められた場合（サインインや、このフォルダーを信頼するかどうかなど）は、ターミナルで回答してください。エイリアスなどでエージェントをフルパスで起動した場合は、Weir で追跡できません。"
           }
         }
       }
@@ -3985,7 +3997,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "ファイルをエディタで開く"
+            "value": "ファイルをエディターで開く"
           }
         }
       }
@@ -4424,7 +4436,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "スクラッチのフォルダ"
+            "value": "スクラッチのフォルダー"
           }
         }
       }
@@ -4754,7 +4766,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Sonnet の週の上限"
+            "value": "Sonnet の週間上限"
           }
         }
       }
@@ -5135,7 +5147,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "リンク先は別のコンピュータ上のファイルです。"
+            "value": "リンク先は別のコンピューター上のファイルです。"
           }
         }
       }
@@ -5151,7 +5163,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "リンク先はファイルでもフォルダでもありません。"
+            "value": "リンク先はファイルでもフォルダーでもありません。"
           }
         }
       }
@@ -6011,7 +6023,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "settings.json をデフォルトのエディタで開く"
+            "value": "settings.json をデフォルトのエディターで開く"
           }
         }
       }
@@ -6632,7 +6644,7 @@
       "localizations": {
         "en": {
           "stringUnit": {
-            "state": "new",
+            "state": "translated",
             "value": "%1$@ — %2$@"
           }
         },
@@ -6738,7 +6750,7 @@
       "localizations": {
         "en": {
           "stringUnit": {
-            "state": "new",
+            "state": "translated",
             "value": "%1$lld/%2$lld"
           }
         },
@@ -6815,7 +6827,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ にはすでにフォルダがあります。"
+            "value": "%@ にはすでにフォルダーがあります。"
           }
         }
       }
@@ -7584,7 +7596,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "指定したフォルダ"
+            "value": "指定したフォルダー"
           }
         }
       }
@@ -8160,7 +8172,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "新しいスクラッチのタブを開くフォルダです。"
+            "value": "新しいスクラッチのタブを開くフォルダーです。"
           }
         }
       }
@@ -8204,7 +8216,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "作業フォルダ"
+            "value": "作業フォルダー"
           }
         }
       }
@@ -8275,7 +8287,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "すべてに `git worktree remove` を実行します。フォルダはディスクから削除され、ブランチは残ります。"
+            "value": "すべてに `git worktree remove` を実行します。フォルダーはディスクから削除され、ブランチは残ります。"
           }
         }
       }
@@ -8701,7 +8713,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "一覧とフォルダ階層を切り替えます"
+            "value": "一覧とフォルダー階層を切り替えます"
           }
         }
       }
@@ -8757,7 +8769,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "フォルダ"
+            "value": "フォルダー"
           }
         }
       }
@@ -8774,7 +8786,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "リポジトリのフォルダ"
+            "value": "リポジトリのフォルダー"
           }
         }
       }
@@ -8953,7 +8965,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "ホームフォルダ"
+            "value": "ホームフォルダー"
           }
         }
       }
@@ -8989,7 +9001,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "前のタブと同じフォルダ"
+            "value": "前のタブと同じフォルダー"
           }
         }
       }
@@ -9401,7 +9413,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "フォルダを開く"
+            "value": "フォルダーを開く"
           }
         }
       }
@@ -10341,23 +10353,24 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "`git worktree remove` を実行します。フォルダはディスクから削除されます。\n\n%@"
+            "value": "`git worktree remove` を実行します。フォルダーはディスクから削除されます。\n\n%@"
           }
         }
       }
     },
-    "Saved session uses schema v%lld; Weir expected v%lld. A fresh window was opened instead.": {
+    "This session was saved by a different version of Weir, so this version can’t open it. A fresh window was opened instead.": {
+      "comment": "The alert that the previous session was not restored: state.json was written by a version this one cannot read",
       "localizations": {
         "en": {
           "stringUnit": {
-            "state": "new",
-            "value": "Saved session uses schema v%1$lld; Weir expected v%2$lld. A fresh window was opened instead."
+            "state": "translated",
+            "value": "This session was saved by a different version of Weir, so this version can’t open it. A fresh window was opened instead."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "保存済みセッションのスキーマは v%1$lld ですが、Weir は v%2$lld を想定しています。新しいウインドウを開きました。"
+            "value": "このセッションは別のバージョンの Weir で保存されたため、このバージョンでは開けません。代わりに新しいウインドウを開きました。"
           }
         }
       }
@@ -11687,7 +11700,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "デフォルトのエディタで開く"
+            "value": "デフォルトのエディターで開く"
           }
         }
       }
@@ -14204,7 +14217,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "フォルダを開く…"
+            "value": "フォルダーを開く…"
           }
         }
       }
@@ -14476,7 +14489,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Shell"
+            "value": "シェル"
           }
         }
       }
@@ -14738,7 +14751,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "同じフォルダで実行されます。同時に編集すると、変更が競合することがあります。"
+            "value": "同じフォルダーで実行されます。同時に編集すると、変更が競合することがあります。"
           }
         }
       }
@@ -15395,7 +15408,49 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%1$lld columns, %2$lld rows"
+            "value": "%1$#@columns@, %2$#@rows@"
+          },
+          "substitutions": {
+            "columns": {
+              "argNum": 1,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%arg column"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%arg columns"
+                    }
+                  }
+                }
+              }
+            },
+            "rows": {
+              "argNum": 2,
+              "formatSpecifier": "lld",
+              "variations": {
+                "plural": {
+                  "one": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%arg row"
+                    }
+                  },
+                  "other": {
+                    "stringUnit": {
+                      "state": "translated",
+                      "value": "%arg rows"
+                    }
+                  }
+                }
+              }
+            }
           }
         },
         "ja": {
@@ -17054,7 +17109,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "セッションを保存していません。このバージョンでは state.json を読み込めず、退避もできませんでした。state.json をフォルダの外に移動してから、Weir を終了して再度開いてください。"
+            "value": "セッションを保存していません。このバージョンでは state.json を読み込めず、退避もできませんでした。state.json をフォルダーの外に移動してから、Weir を終了して再度開いてください。"
           }
         }
       }
@@ -17122,7 +17177,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "設定を保存していません。このバージョンでは settings.json を読み込めず、退避もできませんでした。settings.json をフォルダの外に移動してから、Weir を終了して再度開いてください。"
+            "value": "設定を保存していません。このバージョンでは settings.json を読み込めず、退避もできませんでした。settings.json をフォルダーの外に移動してから、Weir を終了して再度開いてください。"
           }
         }
       }
@@ -17739,7 +17794,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "エディタで開く"
+            "value": "エディターで開く"
           }
         }
       }
@@ -18317,7 +18372,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "1 行に 1 コマンドを書きます。新しいワークツリーを作成した直後に、その中で順に実行します。空にすると何も実行しません。state.json でタイムアウトやフォルダを指定した行は、その行を編集しても指定を保ちます。"
+            "value": "1 行に 1 コマンドを書きます。新しいワークツリーを作成した直後に、その中で順に実行します。空にすると何も実行しません。state.json でタイムアウトやフォルダーを指定した行は、その行を編集しても指定を保ちます。"
           }
         }
       }
@@ -18924,7 +18979,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld 行で、state.json で指定したタイムアウトまたはフォルダが失われました。"
+            "value": "%lld 行で、state.json で指定したタイムアウトまたはフォルダーが失われました。"
           }
         }
       }
@@ -20276,7 +20331,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "プロジェクトとして開くフォルダを選択してください。"
+            "value": "プロジェクトとして開くフォルダーを選択してください。"
           }
         }
       }
@@ -20833,7 +20888,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "フォルダ階層"
+            "value": "フォルダー階層"
           }
         }
       }
@@ -21139,7 +21194,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "このフォルダは Git リポジトリではないため、変更を追跡できません。"
+            "value": "このフォルダーは Git リポジトリではないため、変更を追跡できません。"
           }
         }
       }
@@ -21205,7 +21260,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": ".env など Git が無視するファイルを、Weir がワークツリーを作成するたびにプロジェクトのフォルダからコピーします。1 行に 1 つのパスまたはパターンを入力します。"
+            "value": ".env など Git が無視するファイルを、Weir がワークツリーを作成するたびにプロジェクトのフォルダーからコピーします。1 行に 1 つのパスまたはパターンを入力します。"
           }
         }
       }
@@ -21321,7 +21376,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "%2$@ では %1$@ がフォルダになっていて、中に Git が無視するファイルがあります。変更を移動するとそれらが削除されるため、ワークツリーは作成していません。%3$@ は変更していません。"
+            "value": "%2$@ では %1$@ がフォルダーになっていて、中に Git が無視するファイルがあります。変更を移動するとそれらが削除されるため、ワークツリーは作成していません。%3$@ は変更していません。"
           }
         }
       }
@@ -21433,7 +21488,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "Git が無視するファイルをプロジェクトのフォルダからコピーする"
+            "value": "Git が無視するファイルをプロジェクトのフォルダーからコピーする"
           }
         }
       }
@@ -21594,7 +21649,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "セットアップコマンド %1$lld は実行していません。フォルダ %2$@ がワークツリーの外にあります。"
+            "value": "セットアップコマンド %1$lld は実行していません。フォルダー %2$@ がワークツリーの外にあります。"
           }
         }
       }
@@ -21815,7 +21870,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "コピーできるのはプロジェクトのフォルダ内で .git の外にあるパスだけのため、この行は保存されません。"
+            "value": "コピーできるのはプロジェクトのフォルダー内で .git の外にあるパスだけのため、この行は保存されません。"
           }
         }
       }
@@ -22089,7 +22144,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "タブはホームフォルダで開始します"
+            "value": "タブはホームフォルダーで開始します"
           }
         }
       }
@@ -22300,7 +22355,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "フォルダ %@"
+            "value": "フォルダー %@"
           }
         }
       }

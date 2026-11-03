@@ -69,6 +69,19 @@ struct CatalogWordingTests {
         }
     }
 
+    /// One word for each limit and for a pane with no agent: a weekly
+    /// limit is 「週間上限」 for every model, and "Shell" is 「シェル」, as
+    /// the count of an agent's background shells (「シェル 3 件」) says it.
+    /// The long vowel of 「フォルダー」 and 「エディター」 is
+    /// `scripts/check-localization.sh`'s to check.
+    @Test func japanese_saysWeeklyLimitAndShellOneWay() throws {
+        for entry in try Self.entries() {
+            for value in entry.japanese {
+                #expect(!value.contains(#/週の上限|\bShell\b/#), "\(entry.key): \(value)")
+            }
+        }
+    }
+
     /// The window is 「ウインドウ」, as the menus AppKit draws beside ours
     /// say it, and an agent waiting on a person's answer is 「回答待ち」:
     /// 「質問待ち」 read as waiting for a question.
@@ -125,8 +138,8 @@ struct CatalogWordingTests {
         }
     }
 
-    /// One word for each idea, as macOS says it: 「デフォルト」, not 「既定」
-    /// or 「初期値」; 「フォルダ」, not 「ディレクトリ」; and an agent is
+    /// One word for each idea: 「デフォルト」 as macOS says it, not 「既定」
+    /// or 「初期値」; 「フォルダー」, not 「ディレクトリ」; and an agent is
     /// 「実行中」 (Running), never 「動作中」 or 「稼働」. VoiceOver labels
     /// are entries too, so they say what the screen says.
     @Test func japanese_saysDefaultFolderAndRunning() throws {

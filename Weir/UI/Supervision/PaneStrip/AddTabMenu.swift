@@ -73,7 +73,7 @@ struct AddTabMenu: View {
     }
 
     /// An agent by its product name, the catalog's, the same in every
-    /// language; "Shell" is our word.
+    /// language; "Shell" is our word, so it is translated.
     private func title(of item: Item) -> Text {
         guard let agent = item.agent else { return Text("Shell") }
         return Text(verbatim: AgentCatalog.entry(for: agent).displayName)

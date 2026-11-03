@@ -32,7 +32,7 @@ struct StatusBandModelTests {
     @Test func aScratchShell_isPlacedInScratch_andItsFolderIsWhereItIsNow() {
         var input = StatusBandModel.Input(paneName: "notes", folder: "~/notes")
         input.isUnnamedShell = true
-        #expect(StatusBandModel(input, locale: Self.japanese).path == "スクラッチ › Shell")
+        #expect(StatusBandModel(input, locale: Self.japanese).path == "スクラッチ › シェル")
         // The folder follows the shell, so the path never says one place
         // while the right says another.
         input.folder = "/tmp"
@@ -59,7 +59,7 @@ struct StatusBandModelTests {
         var input = StatusBandModel.Input(projectName: "alpha", checkoutName: "main", paneName: "alpha", folder: "~/alpha")
         input.isUnnamedShell = true
         #expect(StatusBandModel(input, locale: Self.english).path == "alpha › main › Shell")
-        #expect(StatusBandModel(input, locale: Self.japanese).path == "alpha › main › Shell")
+        #expect(StatusBandModel(input, locale: Self.japanese).path == "alpha › main › シェル")
         // The folder still shows on the right.
         #expect(StatusBandModel(input, locale: Self.english).details.map(\.text).contains("~/alpha"))
     }
@@ -103,6 +103,19 @@ struct StatusBandModelTests {
         #expect(!english.spokenLabel.contains("×"))
         let japanese = StatusBandModel(.init(projectName: "weir", paneName: "zsh", gridSize: Self.grid), locale: Self.japanese)
         #expect(japanese.spokenLabel.contains("120 列、40 行"))
+    }
+
+    /// One column and one row are said in the singular, each on its own.
+    @Test func voiceOver_saysOneColumnAndOneRowInTheSingular() {
+        let size = { (columns: Int, rows: Int) in
+            StatusBandModel(
+                .init(projectName: "weir", paneName: "zsh", gridSize: TerminalGridSize(columns: columns, rows: rows)),
+                locale: Self.english
+            ).spokenLabel
+        }
+        #expect(size(1, 1).contains("1 column, 1 row"))
+        #expect(size(1, 40).contains("1 column, 40 rows"))
+        #expect(size(120, 1).contains("120 columns, 1 row"))
     }
 
     @Test func theInput_isThePaneWithTheKeyboard_inTheWindowsSelectedTab() throws {

@@ -180,6 +180,20 @@ struct LiveLocaleTests {
         #expect(SessionLoadIssue.decodeFailed(message: .verbatim("line 2")).detail == .verbatim("line 2"))
     }
 
+    /// The person cannot act on a schema number, so the alert names none;
+    /// `id` keeps both versions apart.
+    @Test func sessionRestoreIssue_namesNoSchemaNumber() {
+        let issue = SessionLoadIssue.versionMismatch(found: 3, expected: 4)
+        guard case let .localized(detail) = issue.detail else {
+            Issue.record("a schema mismatch is described by Weir")
+            return
+        }
+        for text in [detail.resolved(in: en), detail.resolved(in: ja)] {
+            #expect(!text.contains("3") && !text.contains("4") && !text.contains("schema") && !text.contains("スキーマ"), "\(text)")
+        }
+        #expect(issue.id != SessionLoadIssue.versionMismatch(found: 5, expected: 4).id)
+    }
+
     @Test func migrationErrors_areDescribedInBothLanguages() {
         let errors: [any WeirLocalizedError] = [
             MigrationBackup.BackupError.noFreeBackupName,

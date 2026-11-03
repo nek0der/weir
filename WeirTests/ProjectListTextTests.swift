@@ -21,8 +21,8 @@ struct ProjectListTextTests {
         let key = try #require(KeyboardSettings().shortcut(for: .openFolder)?.displayString)
         #expect(key == "⌘O")
         #expect(ShortcutHelpText.make(name: title, shortcut: key, locale: Self.english) == "Open Folder… (⌘O)")
-        #expect(ShortcutHelpText.make(name: title, shortcut: key, locale: Self.japanese) == "フォルダを開く…（⌘O）")
+        #expect(ShortcutHelpText.make(name: title, shortcut: key, locale: Self.japanese) == "フォルダーを開く…（⌘O）")
         #expect(ProjectListText.openFolderLabel.resolved(in: Self.english) == "Open Folder")
-        #expect(ProjectListText.openFolderLabel.resolved(in: Self.japanese) == "フォルダを開く")
+        #expect(ProjectListText.openFolderLabel.resolved(in: Self.japanese) == "フォルダーを開く")
     }
 }
