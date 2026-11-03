@@ -236,6 +236,9 @@ struct PaneHeaderTests {
         let atHome = PaneHeaderRules.label(customName: nil, agent: nil, workingDirectory: home, fallbackName: "Terminal")
         #expect(atHome.name == "~")
         #expect(atHome.detail == nil)
+        // The folder stays for the status band, which calls the shell
+        // "Shell" and would otherwise say nowhere that it is home.
+        #expect(atHome.folder == "~")
 
         let below = PaneHeaderRules.label(
             customName: nil,

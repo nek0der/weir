@@ -5,9 +5,10 @@ import SwiftUI
 
 /// Display only. It stands on the window's ground, under the
 /// surfaces, whose lower edges set it apart. When the two sides do not
-/// fit, the path gives way first and loses its left end, so the pane's own
-/// name stays in sight; only when the details alone are too wide does the
-/// folder among them lose its middle.
+/// fit, the path before the pane gives way first and loses its left end.
+/// The pane's own name stands apart from it and gives way only with the
+/// details, among which the folder loses its middle first, so a long
+/// folder cannot take the whole band.
 struct StatusBandView: View {
     @Environment(WorkspaceSession.self) private var session
     @Environment(ProjectWindowState.self) private var window
@@ -26,12 +27,31 @@ struct StatusBandView: View {
             ),
             locale: locale
         )
-        HStack(spacing: WeirLayout.Supervision.statusBandSpacing) {
-            Text(Self.path(model.crumbs))
-                .lineLimit(1)
-                .supervisionTruncation(.breadcrumb)
+        // One stack, so the priorities rank the leading path, the pane's
+        // name, and the details against each other.
+        HStack(spacing: 0) {
+            if model.crumbs.count > 1 {
+                // Cut down to its floor, then gone with the separator after
+                // it, rather than left as one letter that reads like a name.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 0) {
+                        IdealWidthCap(maxIdealWidth: WeirLayout.Supervision.statusBandLeadingPathMinWidth) {
+                            Text(Self.path(model.crumbs.dropLast()))
+                                .lineLimit(1)
+                                .supervisionTruncation(.breadcrumb)
+                        }
+                        Text(verbatim: StatusBandModel.crumbSeparator)
+                            .fixedSize()
+                    }
+                    Color.clear.frame(width: 0, height: 0)
+                }
                 .layoutPriority(-1)
-            Spacer(minLength: 0)
+            }
+            Text(Self.path(model.crumbs.suffix(1)))
+                .lineLimit(1)
+                .supervisionTruncation(.name)
+                .layoutPriority(1)
+            Spacer(minLength: WeirLayout.Supervision.statusBandSpacing * 2)
             // Each fact on its own, set apart by space rather than dots.
             HStack(spacing: WeirLayout.Supervision.statusBandSpacing) {
                 ForEach(Array(model.details.enumerated()), id: \.offset) { _, detail in
@@ -56,9 +76,9 @@ struct StatusBandView: View {
     /// The band's words.
     private static let size = WeirFont.Supervision.Size.meta
 
-    /// The path as one line, so it is cut as one: the branch or folder in
-    /// the code face, as everywhere a name Git gave is drawn.
-    private static func path(_ crumbs: [StatusBandModel.Crumb]) -> AttributedString {
+    /// Steps of the path as one line, so they are cut as one: the branch or
+    /// folder in the code face, as everywhere a name Git gave is drawn.
+    private static func path(_ crumbs: some Collection<StatusBandModel.Crumb>) -> AttributedString {
         crumbs.enumerated().reduce(into: AttributedString()) { line, entry in
             if entry.offset > 0 {
                 line += AttributedString(StatusBandModel.crumbSeparator)
