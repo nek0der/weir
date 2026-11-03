@@ -70,7 +70,7 @@ struct LiveLocaleTests {
             .invalidDiff, .unsupported, .tooLarge, .gitFailed, .changed, .targetUnavailable, .sessionNotShown, .invalidText,
             .storageFailed, .resolvedBacklogTooLarge, .baseUnavailable, .draftUnreadable, .checkInterrupted,
             .commentLimitReached, .commentTooLong, .nothingToInsert, .promptTooLong, .timedOut,
-            .instructionsInvalid, .instructionsTooLong, .unsavedComment
+            .instructionsInvalid, .instructionsTooLong, .unsavedComment, .insertInProgress, .paneExited
         ]
         for error in errors {
             guard case let .localized(message) = DisplayText(error: error) else {

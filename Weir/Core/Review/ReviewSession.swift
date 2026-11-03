@@ -705,6 +705,11 @@ final class ReviewSession {
     /// agent got the text from before that edit, so the edited one was never
     /// asked for. Answers how many were left unmarked for that reason, which
     /// keeps the review open on them.
+    ///
+    /// While saving is suspended the marks are kept in memory, where this
+    /// window can show them, and reported as not recorded: the review would
+    /// otherwise close over them, the writer would go with it, and the draft
+    /// read afresh next time would have them as never sent.
     @discardableResult
     func markInserted(_ sent: [ReviewComment], at date: Date = Date()) -> (changed: Int, wasRecorded: Bool) {
         let sentByID = Dictionary(sent.map { ($0.id, $0) }) { first, _ in first }
@@ -722,7 +727,7 @@ final class ReviewSession {
         }
         guard isMarking else { return (changed, true) }
         commit(next)
-        return (changed, comments == next)
+        return (changed, comments == next && !isSavingSuspended)
     }
 
     func setResolved(_ id: UUID, _ isResolved: Bool, at date: Date = Date()) {

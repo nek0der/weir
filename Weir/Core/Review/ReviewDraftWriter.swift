@@ -46,6 +46,12 @@ final class ReviewDraftWriter {
     /// sessions record a comment here only when they read it there
     /// (`ReviewSession.isCheckedHere`).
     private(set) var staleCommentIDs: Set<UUID> = []
+    /// The comments an insert from some review of this worktree is carrying,
+    /// from its check until the paste answers. Here rather than in a view
+    /// because two windows on the worktree each have an Insert of their own:
+    /// without it both could send the same comments while the first waited
+    /// on the paste, and each would then report a complete insert.
+    @ObservationIgnored private var insertingCommentIDs: Set<UUID> = []
     /// Whether the draft on disk could not be read when this writer opened.
     private(set) var hasUnreadableDraft = false
     /// Whether this writer must not write the draft: the file on disk could
@@ -134,6 +140,19 @@ final class ReviewDraftWriter {
     /// check found.
     func recordCheck(of checked: Set<UUID>, valid: Set<UUID>) {
         staleCommentIDs = staleCommentIDs.subtracting(checked).union(checked.subtracting(valid))
+    }
+
+    /// Claims `ids` for one insert, or answers false when another insert
+    /// already carries any of them.
+    func beginInsert(_ ids: Set<UUID>) -> Bool {
+        guard insertingCommentIDs.isDisjoint(with: ids) else { return false }
+        insertingCommentIDs.formUnion(ids)
+        return true
+    }
+
+    /// Lets go of what `beginInsert` claimed, however the insert ended.
+    func endInsert(_ ids: Set<UUID>) {
+        insertingCommentIDs.subtract(ids)
     }
 
     /// Takes comments just checked against their scope off the stale list.

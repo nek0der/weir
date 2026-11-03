@@ -38,7 +38,8 @@ enum ReviewAgents {
             paneID: paneID,
             title: agent ?? fallback ?? tab.title,
             agent: kind,
-            isLive: registry.deliverer(for: paneID)?.isReadyForReviewPaste == true
+            isLive: registry.deliverer(for: paneID)?.isReadyForReviewPaste == true,
+            hasExited: session.childExitCode(paneID: paneID) != nil
         )
     }
 

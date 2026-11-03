@@ -118,6 +118,11 @@ struct ReviewDestination: Equatable {
     /// still a destination, started when the text goes to it
     /// (`ReviewInsertion.Target.startPane`).
     var isLive = true
+    /// Whether the program in the pane has exited. Its surface stays, with the
+    /// exit drawn over it, and takes a paste as readily as a live one; what it
+    /// is handed goes nowhere, so an insert there is refused rather than
+    /// recorded as delivered.
+    var hasExited = false
 }
 
 /// Which destination probe is the current one.
