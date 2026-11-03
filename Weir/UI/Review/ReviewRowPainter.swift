@@ -167,6 +167,62 @@ enum ReviewRowPainter {
         return accent.withAlphaComponent(0.34)
     }
 
+    /// Whether the reader asked macOS to differentiate without color, as
+    /// SwiftUI reports it. Held here for the same reason as `accent`: the
+    /// rows draw outside SwiftUI, and the table hands it over on every update.
+    private(set) static var differentiatesWithoutColor = false
+
+    static func setDifferentiatesWithoutColor(_ value: Bool) {
+        differentiatesWithoutColor = value
+    }
+
+    /// The sign a changed line shows before its code, or `nil` for none.
+    ///
+    /// Only where the fill no longer tells the line's kind: on a selected
+    /// line, whose fill is the accent whatever the kind, and on every changed
+    /// line when the reader asked for differences that do not rest on color,
+    /// since a green fill and a red one are the only other sign. The band at
+    /// the left is the same two colors.
+    static func kindGlyph(
+        for kind: ReviewLine.Kind,
+        isSelected: Bool,
+        differentiatesWithoutColor: Bool
+    ) -> String? {
+        guard isSelected || differentiatesWithoutColor else { return nil }
+        return switch kind {
+        case .added: "+"
+        case .removed: "\u{2212}"
+        case .fileHeader, .hunk, .context, .marker: nil
+        }
+    }
+
+    /// `kindGlyph` in the gap between the numbers and the code, in the
+    /// band's color: where Git puts the sign, and a place nothing else
+    /// draws. The marker column was tried first, and lost the sign on the
+    /// line the reader had just clicked, which the add-comment target holds.
+    ///
+    /// `gutterEnd` is where the gutter's strip ends, the numbers' padding
+    /// included (`ReviewRowMetrics.gutterTotal`).
+    static func drawKindGlyph(for line: ReviewLine, in row: NSRect, gutterEnd: CGFloat, isSelected: Bool) {
+        guard let glyph = kindGlyph(
+            for: line.kind,
+            isSelected: isSelected,
+            differentiatesWithoutColor: differentiatesWithoutColor
+        ) else { return }
+        let width = ReviewRowMetrics.signWidth
+        draw(
+            glyph,
+            in: NSRect(x: gutterEnd - width, y: row.minY, width: width, height: row.height),
+            font: ReviewRowMetrics.font,
+            color: band(for: line.kind),
+            alignment: .center
+        )
+    }
+
+    /// The mark drawn after a line whose ending is a carriage return its
+    /// paired line does not have: the symbol Unicode keeps for showing one.
+    static let carriageReturnGlyph = "\u{240D}"
+
     static func band(for kind: ReviewLine.Kind) -> NSColor {
         switch kind {
         case .added: NSColor.systemGreen
@@ -284,16 +340,17 @@ enum ReviewRowPainter {
         language: ReviewSyntax.Language? = nil,
         match: String = "",
         intralineRanges: [NSRange] = [],
+        marksLineEnding: Bool = false,
         selectedRange: NSRange? = nil
     ) {
         let text = line.text
         let font = ReviewRowMetrics.font
-        guard !text.isEmpty, cell.width > 0 else { return }
+        guard !text.isEmpty || marksLineEnding, cell.width > 0 else { return }
         NSGraphicsContext.saveGraphicsState()
         defer { NSGraphicsContext.restoreGraphicsState() }
         NSBezierPath(rect: cell).setClip()
         let attributes = attributes(font: font, color: .labelColor, alignment: .left, truncates: offset <= 0)
-        let height = (text as NSString).size(withAttributes: attributes).height
+        let height = ((text.isEmpty ? carriageReturnGlyph : text) as NSString).size(withAttributes: attributes).height
         let box = NSRect(
             x: cell.minX - offset,
             y: cell.minY + (cell.height - height) / 2,
@@ -307,6 +364,7 @@ enum ReviewRowPainter {
             attributes: attributes,
             intralineRanges: intralineRanges,
             intralineKind: line.kind,
+            marksLineEnding: marksLineEnding,
             selectedRange: selectedRange
         ) {
             styled.draw(in: box)
@@ -329,6 +387,7 @@ enum ReviewRowPainter {
         attributes: [NSAttributedString.Key: Any],
         intralineRanges: [NSRange] = [],
         intralineKind: ReviewLine.Kind,
+        marksLineEnding: Bool = false,
         selectedRange: NSRange? = nil
     ) -> NSAttributedString? {
         let tokens = language.map { ReviewSyntax.tokens(in: text, language: $0) } ?? []
@@ -341,7 +400,8 @@ enum ReviewRowPainter {
             guard range.location >= 0, range.length > 0, NSMaxRange(range) <= length else { return nil }
             return range
         }
-        guard !tokens.isEmpty || !intraline.isEmpty || !found.isEmpty || selection != nil else { return nil }
+        guard !tokens.isEmpty || !intraline.isEmpty || !found.isEmpty || selection != nil || marksLineEnding
+        else { return nil }
         let result = NSMutableAttributedString(string: text, attributes: attributes)
         for token in tokens {
             result.addAttribute(.foregroundColor, value: color(for: token.kind), range: NSRange(token.range, in: text))
@@ -365,6 +425,17 @@ enum ReviewRowPainter {
         if let selection {
             result.addAttribute(.backgroundColor, value: NSColor.selectedTextBackgroundColor, range: selection)
             result.addAttribute(.foregroundColor, value: NSColor.selectedTextColor, range: selection)
+        }
+        // After the text rather than in it: the line's text is what a comment
+        // quotes and a selection measures, and the return was never part of
+        // it. Filled like a changed character, so it reads as the change.
+        if marksLineEnding {
+            var mark = attributes
+            mark[.foregroundColor] = NSColor.secondaryLabelColor
+            if let color = intralineColor(for: intralineKind) {
+                mark[.backgroundColor] = color
+            }
+            result.append(NSAttributedString(string: carriageReturnGlyph, attributes: mark))
         }
         return result
     }

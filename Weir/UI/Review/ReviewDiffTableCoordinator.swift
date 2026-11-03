@@ -106,6 +106,9 @@ extension ReviewDiffTable {
         var hasComposerRow = false
         /// The accent this table last drew with. See `updateNSView`.
         var appliedAccent: Color?
+        /// Whether this table last drew for a reader who differentiates
+        /// without color. See `updateNSView`.
+        var appliedDifferentiatesWithoutColor: Bool?
         /// The locale this table's rows were last built in. See `updateNSView`.
         var appliedLocale: Locale?
         private var lastWidth: CGFloat = 0
@@ -337,6 +340,18 @@ extension ReviewDiffTable {
         /// by character count left the widest line out of its own candidate
         /// set: one line of Japanese outdraws a longer line of ASCII.
         private func widestLine() -> CGFloat {
+            let attributes: [NSAttributedString.Key: Any] = [.font: ReviewRowMetrics.font]
+            // The mark a changed line ending draws after the text. Its
+            // highlights arrive after the text is measured, and the cache
+            // keeps the text alone, so the mark is added each time; on any
+            // line, since the widest line is the one it can push out of reach.
+            let mark = parent.intralineHighlights.marksAnyLineEnding
+                ? ceil((ReviewRowPainter.carriageReturnGlyph as NSString).size(withAttributes: attributes).width)
+                : 0
+            return widestText(attributes: attributes) + mark
+        }
+
+        private func widestText(attributes: [NSAttributedString.Key: Any]) -> CGFloat {
             if let cached = cachedWidest, cachedWidestKey == parent.widthKey {
                 return cached
             }
@@ -344,7 +359,6 @@ extension ReviewDiffTable {
             // of them is the same answer for a great deal more work, and this
             // runs for a diff that can be a hundred thousand lines long.
             let candidates = stackCandidates(parent.stack)
-            let attributes: [NSAttributedString.Key: Any] = [.font: ReviewRowMetrics.font]
             let width = candidates.reduce(0.0) { widest, candidate in
                 max(widest, ceil((candidate.text as NSString).size(withAttributes: attributes).width))
             }
@@ -586,6 +600,7 @@ extension ReviewDiffTable {
                     language: language(forRow: row),
                     match: parent.search.query,
                     intralineRanges: parent.intralineHighlights[line.id],
+                    marksLineEnding: parent.intralineHighlights.marksLineEnding(of: line.id),
                     selectedRange: parent.selection.text.range(in: line, at: row, on: nil),
                     locale: parent.locale
                 )

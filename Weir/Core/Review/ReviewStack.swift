@@ -160,7 +160,8 @@ extension ReviewLine {
             oldLine: oldLine,
             newLine: newLine,
             isExpansion: isExpansion,
-            hunkIndex: hunkIndex
+            hunkIndex: hunkIndex,
+            endsInCarriageReturn: endsInCarriageReturn
         )
     }
 }
@@ -478,11 +479,16 @@ struct ReviewStack {
 
     fileprivate mutating func setOpenHighlights(_ highlights: ReviewIntralineHighlights) {
         intralineHighlights.rangesByLineID = highlights.rangesByLineID
+        intralineHighlights.lineEndingIDs = highlights.lineEndingIDs
     }
 
     fileprivate mutating func setHighlights(_ highlights: ReviewIntralineHighlights, slot: Int) {
-        guard !highlights.rangesByLineID.isEmpty else { return }
-        intralineHighlights.bands[slot] = highlights.rangesByLineID
+        if !highlights.rangesByLineID.isEmpty {
+            intralineHighlights.bands[slot] = highlights.rangesByLineID
+        }
+        if !highlights.lineEndingIDs.isEmpty {
+            intralineHighlights.lineEndingBands[slot] = highlights.lineEndingIDs
+        }
     }
 
     fileprivate mutating func merge(counts: [Int: Int], offset: Int) {

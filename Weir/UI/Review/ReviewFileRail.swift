@@ -535,8 +535,10 @@ struct ReviewFileActionsMenu: View {
     @Environment(SettingsStore.self) private var settingsStore
     @Environment(ToastCenter.self) private var toastCenter
 
+    /// `nil` for a name that is not UTF-8 as well: its `path` is only a
+    /// likeness, which names no file, or another one.
     private var fileURL: URL? {
-        ReviewFileAction.fileURL(for: file.path, in: root)
+        file.isNameUndecodable ? nil : ReviewFileAction.fileURL(for: file.path, in: root)
     }
 
     private var application: FileApplicationResolution {
@@ -547,6 +549,7 @@ struct ReviewFileActionsMenu: View {
         Button("Copy Relative Path") {
             copy(file.path)
         }
+        .disabled(file.isNameUndecodable)
         Button("Copy Absolute Path") {
             if let fileURL {
                 copy(fileURL.path)

@@ -189,7 +189,10 @@ extension ReviewDiffTable.Coordinator {
     /// offers it (`ReviewFileActionsMenu`).
     func headerMenuItems(forRow row: Int) -> [NSMenuItem] {
         guard parent.rows.indices.contains(row), case let .file(header) = parent.rows[row].kind,
-              let root = parent.root
+              let root = parent.root,
+              // Every item is about the path, and a name that is not UTF-8
+              // has only a likeness of one (`ReviewFile.isNameUndecodable`).
+              !header.file.isNameUndecodable
         else { return [] }
         let file = header.file
         let fileURL = ReviewFileAction.fileURL(for: file.path, in: root)

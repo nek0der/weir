@@ -115,6 +115,39 @@
         }
       }
     },
+    "This file’s name isn’t UTF-8, so it can’t be opened here.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This file’s name isn’t UTF-8, so it can’t be opened here."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このファイルの名前は UTF-8 ではないため、ここでは開けません。"
+          }
+        }
+      }
+    },
+    "This line ends in a carriage return; the line it is paired with does not.": {
+      "comment": "VoiceOver, review: a changed line whose only or extra difference is its line ending",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This line ends in a carriage return; the line it is paired with does not."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この行はキャリッジリターン（CR）で終わっていて、対になる行はそうではありません。"
+          }
+        }
+      }
+    },
     "duration.compact.hours": {
       "comment": "A time in one short unit, in hours (a turn card's duration, a sidebar row's time since); argument: the hours",
       "localizations": {
