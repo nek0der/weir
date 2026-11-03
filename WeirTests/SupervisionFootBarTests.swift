@@ -212,7 +212,7 @@ struct SupervisionFootBarTests {
             let model = try #require(Self.decisionBarModels().first)
             let view = HStack(spacing: Layout.surfaceGap) {
                 Self.column(width: nil) {
-                    DecisionBarFootBar(model: model, paneID: Self.pane, receiptHelp: nil, canStartNew: true, onShowNext: {})
+                    DecisionBarFootBar(model: model, paneID: Self.pane, receiptHelp: nil, canStartNew: true, onShow: { _ in })
                         .recordFrame(in: book, as: "session")
                 }
                 Self.column(width: Layout.changesPanelDefaultWidth) {

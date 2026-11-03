@@ -17,7 +17,7 @@ extension SupervisionFootBarTests {
             #expect(hint.isShown)
             for model in Self.decisionBarModels() {
                 for size in Self.typeSizes {
-                    let row = DecisionBarRow(model: model, paneID: Self.pane, receiptHelp: nil, canStartNew: true, onShowNext: {})
+                    let row = DecisionBarRow(model: model, paneID: Self.pane, receiptHelp: nil, canStartNew: true, onShow: { _ in })
                         .environment(settings)
                         .environment(hint)
                         .environment(\.primaryActionHandler, Self.actions)
@@ -45,7 +45,7 @@ extension SupervisionFootBarTests {
             for wait in waits {
                 let item = AttentionItem.testPrompt(wait, pane: Self.pane)
                 let model = DecisionBarModel(content: .make(.init(items: [item])), locale: locale)
-                let row = DecisionBarRow(model: model, paneID: Self.pane, receiptHelp: nil, canStartNew: true, onShowNext: {})
+                let row = DecisionBarRow(model: model, paneID: Self.pane, receiptHelp: nil, canStartNew: true, onShow: { _ in })
                     .environment(\.primaryActionHandler, Self.actions)
                 let size = Self.size(of: row, proposing: width, language: language, settings: settings)
                 #expect(size.width <= width, "\(language) at \(width): \(model.text)")
@@ -232,8 +232,9 @@ extension SupervisionFootBarTests {
 
     /// Unread turns with every button the bar gives them (a receipt,
     /// "Mark as Viewed" with ⌘⏎, "Review Unviewed", and the restore's ⋯),
-    /// the same with a stop also pending, a stop with its resume and its
-    /// ⋯, and the line after Mark as Viewed with its Undo.
+    /// the same with the count's ‹ and › before them, at two items and at
+    /// three, a stop with its resume and its ⋯, and the line after Mark as
+    /// Viewed with its Undo.
     private static func decisionBarsWithButtons(locale: Locale) -> [DecisionBarModel] {
         let check = CheckSummary(command: "make test", isFiltered: true, exitCode: 1)
         let turn = UnreadTurn(
@@ -250,19 +251,32 @@ extension SupervisionFootBarTests {
             subject: .runtime(id: "r", provider: .claude, paneID: pane, tabID: nil, projectID: nil),
             arrivedAt: Date(timeIntervalSince1970: 0)
         )
+        let later = UnreadTurn(
+            turnID: TurnID("T8"),
+            numbers: 8...8,
+            changes: .changed(files: 3, added: 40, removed: 12),
+            conversation: TurnSummaryFixture.conversation
+        )
+        queue.insert(
+            id: .unread(later.turnID),
+            kind: .unread(later),
+            subject: .runtime(id: "r", provider: .claude, paneID: pane, tabID: nil, projectID: nil),
+            arrivedAt: Date(timeIntervalSince1970: 1)
+        )
         let unread = queue.items[0]
         let stop = AttentionItem.testStop(pane: pane)
         let undo = ViewedLineUndo(conversation: TurnSummaryFixture.conversation, changeID: UUID())
         return [
             DecisionBarModel(content: .make(.init(items: [unread])), locale: locale),
             DecisionBarModel(content: .make(.init(items: [unread, stop], selected: unread.id)), locale: locale),
+            DecisionBarModel(content: .make(.init(items: queue.items + [stop], selected: unread.id)), locale: locale),
             DecisionBarModel(content: .make(.init(items: [stop], stopResumes: [stop.id: .available])), locale: locale),
             DecisionBarModel(content: .make(.init(done: .init(result: .markedViewed(undo), next: nil))), locale: locale)
         ]
     }
 
     private static func decisionBarRow(_ model: DecisionBarModel, fits: [DecisionBarModel.Fit]? = nil) -> some View {
-        DecisionBarRow(model: model, paneID: pane, receiptHelp: nil, canStartNew: true, onShowNext: {}, fits: fits)
+        DecisionBarRow(model: model, paneID: pane, receiptHelp: nil, canStartNew: true, onShow: { _ in }, fits: fits)
             .environment(\.primaryActionHandler, actions)
             .environment(\.restoreHandler, restoreHandler)
     }

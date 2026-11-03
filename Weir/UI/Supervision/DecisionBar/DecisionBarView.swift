@@ -194,11 +194,8 @@ struct DecisionBarView: View {
             receiptHelp: receiptHelp(model),
             canStartNew: model.stopItem.map(stopLedger.startsNew.contains) ?? false,
             newConversationBlocker: model.stopItem.flatMap { stopLedger.newConversationBlockers[$0] }
-        ) {
-            window.decisionBarSelection[paneID] = DecisionBarContent.next(
-                after: model.content.itemID,
-                in: attentionQueue.queue.items(inPane: paneID)
-            )
+        ) { itemID in
+            window.decisionBarSelection[paneID] = itemID
         }
     }
 }

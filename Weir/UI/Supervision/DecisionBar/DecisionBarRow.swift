@@ -15,7 +15,7 @@ struct DecisionBarFootBar: View {
     /// Why the stop's pane cannot start a new conversation, `nil` when it
     /// can or nothing is known (`StopLedgerStore.newConversationBlockers`).
     var newConversationBlocker: DecisionBarContent.ResumeBlocker?
-    let onShowNext: () -> Void
+    let onShow: (AttentionItemID) -> Void
 
     var body: some View {
         SupervisionFootBar(fill: DecisionBarRow.fill(model.tone), rule: DecisionBarRow.rule(model.tone)) {
@@ -24,7 +24,7 @@ struct DecisionBarFootBar: View {
                 paneID: paneID,
                 receiptHelp: receiptHelp,
                 canStartNew: canStartNew,
-                onShowNext: onShowNext,
+                onShow: onShow,
                 newConversationBlocker: newConversationBlocker
             )
         }
@@ -35,7 +35,7 @@ struct DecisionBarFootBar: View {
     }
 }
 
-/// The decision bar's row: its tag, its count, its words, and its buttons,
+/// The decision bar's row: its count, its tag, its words, and its buttons,
 /// from the bar's model and what the pane reads for it. Apart from
 /// `DecisionBarView`, which reads the window's stores, so the row can be
 /// drawn, and measured against the foot bar, from a model alone.
@@ -48,8 +48,8 @@ struct DecisionBarRow: View {
     /// Whether the stop's ⋯ can start a new conversation now: the shell is
     /// at its prompt with nothing typed (`StopLedgerStore.startsNew`).
     let canStartNew: Bool
-    /// The count's press: the pane's next item.
-    let onShowNext: () -> Void
+    /// Shows the pane's item: the count's ‹ and ›.
+    let onShow: (AttentionItemID) -> Void
     /// Why it cannot (`StopResumeRules.newConversationBlocker`), which the
     /// disabled item says as its tooltip.
     var newConversationBlocker: DecisionBarContent.ResumeBlocker?
@@ -79,14 +79,15 @@ struct DecisionBarRow: View {
     private func row(_ model: DecisionBarModel, shape: DecisionBarModel.Shape) -> some View {
         let layout = WeirLayout.Supervision.self
         return HStack(spacing: layout.decisionBarSpacing) {
+            // First on the line, where it stays put as ‹ and › step through
+            // items whose tags and buttons differ in width, and as far as it
+            // can be from the primary button a run of presses could reach.
+            if let position = model.content.position, let countText = model.countText, shape.showsCount {
+                stepper(position, text: countText, spoken: model.countSpokenText ?? countText)
+            }
             if let tag = model.tag, shape.showsTag {
                 DecisionBarTag(text: tag, tone: model.tone)
                     .accessibilityLabel(Text(verbatim: model.spokenTag ?? tag))
-            }
-            // Beside the tag, as part of what the bar is on: which of the
-            // pane's items it shows, and whether a higher one waits.
-            if let countText = model.countText, shape.showsCount {
-                countButton(model, text: countText)
             }
             IdealWidthCap(maxIdealWidth: shape.keepsWordsFloor ? layout.decisionBarTextMinWidth : 0) {
                 words(model, showsTag: shape.showsTag)
@@ -175,29 +176,46 @@ struct DecisionBarRow: View {
             .fixedSize(horizontal: isWhole, vertical: false)
     }
 
-    /// "1 / 2 · Approval also pending" (or a question, a response, a stop),
-    /// in a box beside the tag; a press
-    /// shows the pane's next item.
-    private func countButton(_ model: DecisionBarModel, text: String) -> some View {
-        Button {
-            onShowNext()
-        } label: {
-            let shape = RoundedRectangle(cornerRadius: WeirLayout.Supervision.chipCornerRadius, style: .continuous)
+    /// "‹ 1 / 2 ›": which of the pane's items the bar is on, with a
+    /// borderless glyph either side to step to the one before or after
+    /// it, so the count reads as something to press rather than a label.
+    private func stepper(_ position: DecisionBarContent.Position, text: String, spoken: String) -> some View {
+        HStack(spacing: 0) {
+            stepButton(
+                "chevron.left",
+                to: position.previous,
+                label: Text("Show Previous Item", comment: "Decision bar's ‹, VoiceOver and tooltip: shows the pane's item before this one")
+            )
             Text(verbatim: text)
                 .font(.supervision(.caption).monospacedDigit())
                 .foregroundStyle(SupervisionTokens.muted.color)
                 .lineLimit(1)
-                .padding(.horizontal, WeirLayout.Supervision.decisionBarCountHorizontalPadding)
-                .overlay(shape.strokeBorder(SupervisionTokens.line.color, lineWidth: 1))
-                .contentShape(shape)
                 .fixedSize()
+                // The digits alone do not say what they count.
+                .help(Text(verbatim: spoken))
+                .accessibilityLabel(Text(verbatim: spoken))
+            stepButton(
+                "chevron.right",
+                to: position.next,
+                label: Text("Show Next Item", comment: "Decision bar's ›, VoiceOver and tooltip: shows the pane's item after this one")
+            )
         }
-        .buttonStyle(.plain)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func stepButton(_ systemName: String, to itemID: AttentionItemID, label: Text) -> some View {
+        Button {
+            onShow(itemID)
+        } label: {
+            Image(systemName: systemName)
+                .font(.supervision(.caption, weight: .semibold))
+                .frame(height: WeirLayout.Supervision.decisionBarTagHeight)
+        }
+        .buttonStyle(.supervisionIcon(horizontalPadding: WeirLayout.Supervision.decisionBarStepHorizontalPadding))
         // Out of the ⇥ order, so ⇥ stays the terminal's for its TUI.
         .focusable(false)
-        .help(Text(verbatim: model.countSpokenText ?? text))
-        .accessibilityLabel(Text(verbatim: model.countSpokenText ?? text))
-        .accessibilityHint(Text("Shows the next item in this pane"))
+        .help(label)
+        .accessibilityLabel(label)
     }
 
     /// The row's buttons in `shape`: what the model leaves in the row, then
@@ -266,15 +284,15 @@ struct DecisionBarRow: View {
         let paneID = paneID
         switch item {
         case .showNext:
-            guard let countText = model.countText else { return nil }
-            let onShowNext = onShowNext
+            guard let countText = model.countText, let next = model.content.position?.next else { return nil }
+            let onShow = onShow
             return PopUpMenuItem(
                 title: LocalizedStringResource(
                     "Show Next Item (\(countText))",
                     comment: "Decision bar's ⋯, short of room: shows the pane's next item; argument: the count, as 1 / 2"
                 )
             ) {
-                onShowNext()
+                onShow(next)
             }
         case .review:
             guard let actions else { return nil }

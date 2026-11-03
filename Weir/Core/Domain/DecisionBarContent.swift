@@ -98,12 +98,20 @@ package struct DecisionBarContent: Equatable, Sendable {
 
     /// The item's place among the pane's items in the order they arrived
     /// ("1 / 2"), the order the Needs Attention list has them in, and the
-    /// kind of a higher-ranked one the bar is not on ("Approval also
-    /// pending"). `nil` while the pane has one item or none.
+    /// items the bar's ‹ and › show, wrapping. `nil` while the pane has one
+    /// item or none.
     package struct Position: Equatable, Sendable {
         package let index: Int
         package let count: Int
-        package let higherKind: AlsoPending?
+        package let previous: AttentionItemID
+        package let next: AttentionItemID
+
+        package init(index: Int, count: Int, previous: AttentionItemID, next: AttentionItemID) {
+            self.index = index
+            self.count = count
+            self.previous = previous
+            self.next = next
+        }
     }
 
     /// Whether a stop can be resumed in its conversation.
@@ -130,16 +138,6 @@ package struct DecisionBarContent: Equatable, Sendable {
         case draft
     }
 
-    package enum AlsoPending: Equatable, Sendable {
-        case approval
-        case question
-        /// A wait at the agent's prompt we cannot name as either.
-        case response
-        /// The agent waits for the person to sign in again.
-        case signIn
-        case stop
-    }
-
     package let body: Body
     package let position: Position?
     /// The item shown, so a press acts on it and nothing else.
@@ -164,7 +162,7 @@ package struct DecisionBarContent: Equatable, Sendable {
     package struct Input: Sendable {
         /// The pane's attention items.
         package var items: [AttentionItem] = []
-        /// The item chosen for this pane, from the bar's count button, the
+        /// The item chosen for this pane, from the bar's ‹ and ›, the
         /// Needs Attention list, or ⌘J; the highest-ranked otherwise.
         package var selected: AttentionItemID?
         /// The pane's agent, for its summary at rest.
@@ -269,14 +267,6 @@ package struct DecisionBarContent: Equatable, Sendable {
         )
     }
 
-    /// The pane's item after `current` for the count button, in the order
-    /// they arrived, wrapping.
-    package static func next(after current: AttentionItemID?, in items: [AttentionItem]) -> AttentionItemID? {
-        let arrived = arrivalOrder(items.filter { !isAnswerOnly($0) })
-        guard let index = arrived.firstIndex(where: { $0.id == current }) else { return arrived.first?.id }
-        return arrived[(index + 1) % arrived.count].id
-    }
-
     /// Whether the bar of a pane with `items` takes a "Done" left for it
     /// (by the review tab): with nothing waiting, or one that shows over
     /// what waits.
@@ -359,21 +349,12 @@ package struct DecisionBarContent: Equatable, Sendable {
 
     private static func position(of shown: AttentionItem, in arrived: [AttentionItem]) -> Position? {
         guard arrived.count > 1, let index = arrived.firstIndex(where: { $0.id == shown.id }) else { return nil }
-        let higher = PanePriority.dominant(arrived.filter { PanePriority.outranks($0.kind, shown.kind) })
-        return Position(index: index + 1, count: arrived.count, higherKind: higher.flatMap { alsoPending($0.kind) })
-    }
-
-    private static func alsoPending(_ kind: AttentionItemKind) -> AlsoPending? {
-        switch kind {
-        // A wait at the prompt is named as its row names it: the approval
-        // or question its record says, else a response.
-        case .approval, .prompt(.approval): .approval
-        case .prompt(.unclassified): .response
-        case .prompt(.signIn): .signIn
-        case .question, .prompt(.question): .question
-        case .stop: .stop
-        case .unread: nil
-        }
+        return Position(
+            index: index + 1,
+            count: arrived.count,
+            previous: arrived[(index + arrived.count - 1) % arrived.count].id,
+            next: arrived[(index + 1) % arrived.count].id
+        )
     }
 
     private static func summary(of agent: SessionRowFact.Agent?) -> SessionRowFact.Fact {

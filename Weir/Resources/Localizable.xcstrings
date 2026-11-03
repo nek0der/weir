@@ -14874,23 +14874,6 @@
         }
       }
     },
-    "Response also pending": {
-      "comment": "Decision bar: a higher-ranked wait at the agent's prompt, as neither approval nor question, waits in this pane",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Response also pending"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "応答待ちもあります"
-          }
-        }
-      }
-    },
     "Timed out — answer in terminal": {
       "comment": "Decision bar, short of room: Weir's time for the request ran out, so the terminal answers it",
       "localizations": {
@@ -15006,57 +14989,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "%1$lld / %2$lld"
-          }
-        }
-      }
-    },
-    "Approval also pending": {
-      "comment": "Decision bar: a higher-ranked approval waits in this pane",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Approval also pending"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "承認待ちもあります"
-          }
-        }
-      }
-    },
-    "Question also pending": {
-      "comment": "Decision bar: a higher-ranked question waits in this pane",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Question also pending"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "回答待ちもあります"
-          }
-        }
-      }
-    },
-    "Stop also pending": {
-      "comment": "Decision bar: a higher-ranked stop waits in this pane",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Stop also pending"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "停止もあります"
           }
         }
       }
@@ -20702,17 +20634,6 @@
         }
       }
     },
-    "Shows the next item in this pane": {
-      "comment": "Decision bar: tooltip of the count button",
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "このペインの次の項目を表示します"
-          }
-        }
-      }
-    },
     "This file can’t be reviewed as text.": {
       "localizations": {
         "ja": {
@@ -22969,23 +22890,6 @@
         }
       }
     },
-    "Sign-in also pending": {
-      "comment": "Decision bar: a higher-ranked wait for the person to sign the agent in again waits in this pane",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Sign-in also pending"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "サインイン待ちもあります"
-          }
-        }
-      }
-    },
     "%lld Sign-in": {
       "comment": "Attention count by kind: agents waiting for the person to sign in again",
       "localizations": {
@@ -23793,6 +23697,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "エージェント：%@"
+          }
+        }
+      }
+    },
+    "Show Previous Item": {
+      "comment": "Decision bar's ‹, VoiceOver and tooltip: shows the pane's item before this one",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show Previous Item"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前の項目を表示"
+          }
+        }
+      }
+    },
+    "Show Next Item": {
+      "comment": "Decision bar's ›, VoiceOver and tooltip: shows the pane's item after this one",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show Next Item"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "次の項目を表示"
           }
         }
       }

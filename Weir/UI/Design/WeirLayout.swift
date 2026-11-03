@@ -547,10 +547,12 @@ enum WeirLayout {
 
         static let decisionBarSpacing = spaceS
         static let decisionBarButtonSpacing = spaceXS
-        /// The tag before the bar's words, and the count after it.
+        /// The tag before the bar's words, and the count's ‹ and › before it.
         static let decisionBarTagHeight: CGFloat = 18
         static let decisionBarTagHorizontalPadding = spaceS
-        static let decisionBarCountHorizontalPadding = spaceSnug
+        /// The room either side of the count's ‹ and ›, less than a
+        /// heading's glyph has, so the two stay close to the count they step.
+        static let decisionBarStepHorizontalPadding = spaceXS
         /// The ⋯'s square: as wide as a borderless menu button around its
         /// glyph, the press area the SwiftUI menu it replaced had.
         static let decisionBarMoreWidth: CGFloat = 22

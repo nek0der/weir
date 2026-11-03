@@ -30,8 +30,8 @@ final class ProjectWindowState: Identifiable {
     /// it on its own.
     var cursor = AttentionCursorState()
     /// The item each pane's decision bar is on, by pane, once one was
-    /// chosen: from the bar's count button, the Needs Attention list, or
-    /// ⌘J. A pane without one shows its highest-ranked item.
+    /// chosen: from the bar's ‹ and ›, the Needs Attention list, or ⌘J. A
+    /// pane without one shows its highest-ranked item.
     var decisionBarSelection: [UUID: AttentionItemID] = [:]
     /// What was just handled in a pane, while its bar says so. The
     /// person moving on (⌘J, the list, another pane) clears it, and so does
