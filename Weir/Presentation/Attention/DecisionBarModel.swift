@@ -39,10 +39,11 @@ struct DecisionBarModel: Equatable {
     /// row keeps it whole and cuts the sentence instead: it is what the
     /// person has to do.
     let instruction: String?
-    /// "1 / 2 · Approval also pending".
+    /// "1 / 2", between the bar's ‹ and ›.
     let countText: String?
-    /// What VoiceOver reads for the count ("Needs Attention in this pane:
-    /// 1 / 2"), which on its own would not say what it counts.
+    /// What VoiceOver reads for the count, and its tooltip ("Needs
+    /// Attention in this pane: 1 of 2"), which on its own would not say
+    /// what it counts.
     let countSpokenText: String?
     /// The deadline of a request Weir still holds, for "8:42 left".
     let heldUntil: ServiceDeadline?
@@ -232,7 +233,8 @@ struct DecisionBarModel: Equatable {
     /// How the row is drawn in one fit.
     struct Shape: Equatable {
         var showsTag: Bool
-        /// Whether the count stands beside the tag, rather than in the ⋯.
+        /// Whether the count with its ‹ and › leads the row, rather than
+        /// standing in the ⋯.
         var showsCount: Bool
         /// Whether the row has its buttons and its ⋯.
         var showsButtons: Bool
@@ -254,7 +256,7 @@ struct DecisionBarModel: Equatable {
 
     /// A move the bar's ⋯ offers.
     enum MoreItem: Equatable {
-        /// The count's press, moved out of the row: the pane's next item.
+        /// The count's ›, moved out of the row: the pane's next item.
         case showNext
         /// "Review Unviewed", folded out of the row.
         case review
@@ -341,13 +343,17 @@ struct DecisionBarModel: Equatable {
     ) {
         self.content = content
         self.resetNotice = resetNotice
-        countText = content.position.map { Self.positionText($0, locale: locale) }
+        countText = content.position.map { position in
+            LocalizedStringResource(
+                "\(position.index) / \(position.count)",
+                comment: "Decision bar: which of the pane's items it shows"
+            ).resolved(in: locale)
+        }
         countSpokenText = content.position.map { position in
-            let count = LocalizedStringResource(
+            LocalizedStringResource(
                 "Needs Attention in this pane: \(position.index) of \(position.count)",
                 comment: "Decision bar, VoiceOver: which of the pane's items the bar shows"
             ).resolved(in: locale)
-            return AgentStatusText.spokenList([count, Self.alsoPendingText(position.higherKind, locale: locale) ?? ""], locale: locale)
         }
         heldUntil = switch content.body {
         case let .approval(_, _, .card(deadline)), let .question(_, .card(deadline)): deadline
@@ -597,39 +603,6 @@ struct DecisionBarModel: Equatable {
             runs: ReceiptText.runs(turn, includesTurnNumber: false, emphasizesChanges: true, locale: locale),
             spokenTag: ReceiptText.spokenTurns(numbers, locale: locale)
         )
-    }
-
-    private static func positionText(_ position: DecisionBarContent.Position, locale: Locale) -> String {
-        let count = LocalizedStringResource(
-            "\(position.index) / \(position.count)",
-            comment: "Decision bar: which of the pane's items it shows"
-        ).resolved(in: locale)
-        return AgentStatusText.joined([count, alsoPendingText(position.higherKind, locale: locale) ?? ""], locale: locale)
-    }
-
-    /// "Approval also pending", when a higher-ranked item waits.
-    private static func alsoPendingText(_ kind: DecisionBarContent.AlsoPending?, locale: Locale) -> String? {
-        let resource: LocalizedStringResource? = switch kind {
-        case .approval: LocalizedStringResource(
-                "Approval also pending",
-                comment: "Decision bar: a higher-ranked approval waits in this pane"
-            )
-        case .question: LocalizedStringResource(
-                "Question also pending",
-                comment: "Decision bar: a higher-ranked question waits in this pane"
-            )
-        case .response: LocalizedStringResource(
-                "Response also pending",
-                comment: "Decision bar: a higher-ranked wait at the agent's prompt, as neither approval nor question, waits in this pane"
-            )
-        case .signIn: LocalizedStringResource(
-                "Sign-in also pending",
-                comment: "Decision bar: a higher-ranked wait for the person to sign the agent in again waits in this pane"
-            )
-        case .stop: LocalizedStringResource("Stop also pending", comment: "Decision bar: a higher-ranked stop waits in this pane")
-        case nil: nil
-        }
-        return resource?.resolved(in: locale)
     }
 
     /// A stop's words: why it stopped, and whether and how its

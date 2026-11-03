@@ -173,7 +173,8 @@ struct AttentionQueueStoreTests {
             return DecisionBarContent.make(.init(items: items))
         }
         // An approval outranks the unviewed turn, and is counted after it.
-        let position = hasEarlierUnviewedTurn ? DecisionBarContent.Position(index: 2, count: 2, higherKind: nil) : nil
+        let turnID = AttentionItemID.unread(unviewed.turn.turnID)
+        let position = hasEarlierUnviewedTurn ? DecisionBarContent.Position(index: 2, count: 2, previous: turnID, next: turnID) : nil
 
         // The first request is handed to the TUI, where the person says "No".
         let rejected = request()

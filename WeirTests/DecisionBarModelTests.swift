@@ -210,19 +210,6 @@ struct DecisionBarModelTests {
         #expect(unread.text == "The turn finished", "the tag already says unread")
     }
 
-    @Test func aWaitAtThePrompt_isNamedAlsoPending_asItsRowNamesIt() throws {
-        for (wait, english, japanese) in [
-            (PromptWait(detail: "Which color?", kind: .question, tool: nil), "Question also pending", "回答待ちもあります"),
-            (PromptWait(detail: "Allow network access?"), "Response also pending", "応答待ちもあります"),
-            (PromptWait(detail: "Bash: ls", kind: .approval, tool: "Bash"), "Approval also pending", "承認待ちもあります")
-        ] {
-            let items = Self.items([.stop(.processExited), .prompt(wait)])
-            let stopID = try #require(items.first?.id)
-            #expect(Self.model(.init(items: items, selected: stopID)).countText == "1 / 2 · \(english)")
-            #expect(Self.model(.init(items: items, selected: stopID), locale: Self.japanese).countText?.hasSuffix(japanese) == true)
-        }
-    }
-
     @Test func aPaneWithTwoItems_countsThemInTheOrderTheyArrived() throws {
         // The stop arrived first, the approval after it.
         let handed = ApprovalFact.test(state: .handedToTerminal(since: SuspendingClock().now))
@@ -236,21 +223,25 @@ struct DecisionBarModelTests {
 
         let onStop = Self.model(.init(items: items, selected: stopID))
         #expect(onStop.tag == "Stopped")
-        #expect(onStop.countText == "1 / 2 · Approval also pending")
-        #expect(onStop.countSpokenText == "Needs Attention in this pane: 1 of 2, Approval also pending")
+        #expect(onStop.countText == "1 / 2")
+        #expect(onStop.countSpokenText == "Needs Attention in this pane: 1 of 2")
         #expect(Self.model(.init(items: items, selected: stopID), locale: Self.japanese).countSpokenText
-            == "このペインの要対応、2 件中 1 件目、承認待ちもあります")
-        #expect(Self.model(.init(items: items, selected: stopID), locale: Self.japanese).countText == "1 / 2 · 承認待ちもあります")
+            == "このペインの要対応、2 件中 1 件目")
 
-        #expect(DecisionBarContent.next(after: stopID, in: items) == approvalID)
-        #expect(DecisionBarContent.next(after: approvalID, in: items) == stopID, "it wraps")
+        #expect(onStop.content.position?.next == approvalID)
+        #expect(onStop.content.position?.previous == approvalID)
+        #expect(unchosen.content.position?.next == stopID, "it wraps")
     }
 
-    @Test func twoOfTheSameKind_addNoAlsoPending() throws {
+    @Test func threeItems_stepBothWays_inTheOrderTheyArrived() throws {
         let handed = ApprovalRequestState.handedToTerminal(since: SuspendingClock().now)
-        let items = Self.items([.approval(ApprovalFact.test(state: handed)), .approval(ApprovalFact.test(state: handed))])
-        let second = try #require(items.last?.id)
-        #expect(Self.model(.init(items: items, selected: second)).countText == "2 / 2")
+        let turn = UnreadTurn(turnID: TurnID("T1"), numbers: 1...1, changes: .changed(files: 1, added: 1, removed: 0))
+        let items = Self.items([.stop(.processExited), .approval(ApprovalFact.test(state: handed)), .unread(turn)])
+        let ids = items.map(\.id)
+        let middle = try #require(Self.model(.init(items: items, selected: ids[1])).content.position)
+        #expect(middle == DecisionBarContent.Position(index: 2, count: 3, previous: ids[0], next: ids[2]))
+        let first = try #require(Self.model(.init(items: items, selected: ids[0])).content.position)
+        #expect(first.previous == ids[2], "it wraps back to the last")
     }
 
     @Test func rightAfterAnAnswerInTheTerminal_theBarSaysSo_andWhereCommandJGoesNext() {
@@ -445,7 +436,7 @@ struct DecisionBarModelTests {
 
         #expect(bar.content.itemID == changedID)
         #expect(bar.countText == nil, "one item for the bar")
-        #expect(DecisionBarContent.next(after: changedID, in: items) == changedID)
+        #expect(bar.content.position == nil)
     }
 
     @Test func markAsViewed_namesTheLastTurnShown_soATurnJoiningLaterWaitsAgain() throws {

@@ -159,13 +159,6 @@ package enum PanePriority {
         items.min(by: precedes)
     }
 
-    /// Whether an item of kind `lhs` comes before one of kind `rhs`
-    /// whenever they arrived: a question before an approval, both before
-    /// a stop, and a stop before an unread turn.
-    static func outranks(_ lhs: AttentionItemKind, _ rhs: AttentionItemKind) -> Bool {
-        rank(lhs) < rank(rhs)
-    }
-
     private static func precedes(_ lhs: AttentionItem, _ rhs: AttentionItem) -> Bool {
         let left = rank(lhs.kind)
         let right = rank(rhs.kind)
