@@ -9,6 +9,12 @@ import SwiftUI
 /// a person who does not drag or right-click.
 struct SidebarProjectActions {
     var newWorktree: () -> Void = {}
+    /// Whether a worktree can be made: not while the project's folder is
+    /// gone or no git runs (`Project.canMakeWorktree`), where the sheet
+    /// would only fail.
+    var canMakeWorktree = true
+    /// Whether the project's folder is on disk, for Show in Finder.
+    var hasFolder = true
     /// The key the sheet's own command has (⌘N), shown beside the entry.
     var newWorktreeShortcut: StoredShortcut?
     /// The keys Move Project Up and Down have now, shown beside the
@@ -106,6 +112,7 @@ struct SidebarProjectActionsMenu: View {
             }
         }
         .contextMenuShortcut(actions.newWorktreeShortcut)
+        .disabled(!actions.canMakeWorktree)
         .tint(Color.primary)
         Divider()
         // The keys the sidebar takes for these while it has the keyboard
@@ -175,6 +182,7 @@ struct SidebarProjectActionsMenu: View {
         Button(action: actions.revealInFinder) {
             Label("Show in Finder", systemImage: "folder")
         }
+        .disabled(!actions.hasFolder)
         .tint(Color.primary)
         Button(role: .destructive, action: actions.closeProject) {
             Label("Close Project…", systemImage: "xmark")

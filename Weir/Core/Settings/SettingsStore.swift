@@ -523,6 +523,18 @@ final class SettingsStore {
         SecureFileWrite.quarantine(url, reason: "init-failure")
     }
 
+    /// Restore Default Settings on the libghostty init-failure screen:
+    /// moves `settings.json` aside and holds the defaults. The relaunch
+    /// that follows quits first, and the quit's flush (`flushSynchronously`)
+    /// writes what is held: holding the old settings, it wrote back the
+    /// very file the reset set aside.
+    func restoreDefaultsForRelaunch() {
+        saveDebounceTask?.cancel()
+        saveDebounceTask = nil
+        Self.moveSettingsFileAside(at: settingsFileURL)
+        settings = .default
+    }
+
     /// Schedule a JSON write after `saveDebounce`. Repeated calls
     /// reset the timer so a slider drag emits one final write.
     private func scheduleSave() {

@@ -305,6 +305,29 @@ struct WindowRecordTests {
         #expect(restored.projectViews[third.id] != nil)
     }
 
+    /// The launch's alerts (the session not restored, settings not saved)
+    /// go to the window in front, which the launch shows last, so the
+    /// first window to appear is behind it: the restore makes the front
+    /// window the primary, which `noticeWindow` names before and after the
+    /// windows are shown.
+    @Test func theLaunchsNotices_goToTheWindowInFront_thoughItIsShownLast() throws {
+        let fixture = Fixture()
+        fixture.session.frontWindowID = fixture.other
+        let restored = try fixture.relaunched()
+        let front = try #require(restored.windowIDs.first { restored.selection($0)?.projectID == fixture.second.id })
+        let registry = WindowRegistry(primary: restored.primarySelection)
+        let presenter = RecordingWindowPresenter()
+        registry.presenter = presenter
+
+        registry.adoptWindows(of: restored)
+        #expect(registry.noticeWindow.id == front)
+        registry.showRestoredWindows(of: restored)
+
+        #expect(presenter.shown.last == front)
+        #expect(presenter.shown.first != front)
+        #expect(registry.noticeWindow.id == front)
+    }
+
     @Test func restore_withEveryWindowHidden_showsTheOneLastUsed_elseThePrimary() throws {
         let fixture = Fixture()
         fixture.session.setWindow(fixture.session.primaryWindowID, isHidden: true)

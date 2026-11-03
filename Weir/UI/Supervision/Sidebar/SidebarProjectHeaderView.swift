@@ -133,6 +133,10 @@ struct SidebarProjectHeaderView: View {
                 .help(Text(verbatim: contents ?? ""))
                 .layoutPriority(3)
             }
+            if let trouble = header.trouble {
+                troubleMark(trouble)
+                    .layoutPriority(3)
+            }
             trailingMark
                 .layoutPriority(2)
             // The sidebar heading's ＋ in its header's size: muted at rest,
@@ -147,6 +151,7 @@ struct SidebarProjectHeaderView: View {
                     .frame(height: Layout.sidebarHeadingButtonHeight)
             }
             .buttonStyle(.supervisionIcon(horizontalPadding: Layout.spaceXS))
+            .disabled(!actions.canMakeWorktree)
             // The pointer's alone: the keyboard and VoiceOver reach it
             // through the header's actions and its menu.
             .focusable(false)
@@ -190,7 +195,7 @@ struct SidebarProjectHeaderView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: SidebarHeaderText.accessibilityLabel(header, locale: locale)))
         .accessibilityValue(Text(SidebarSectionText.state(isOpen: !header.isCollapsed)))
-        .accessibilityHint(contents.map { Text(verbatim: $0) } ?? Text(verbatim: ""))
+        .accessibilityHint(accessibilityHint(contents: contents))
         .accessibilityAddTraits([.isHeader, .isButton])
         .accessibilityAction { actions.toggle() }
         .accessibilityActions {
@@ -204,7 +209,9 @@ struct SidebarProjectHeaderView: View {
             if actions.canMoveDown {
                 Button(action: actions.moveDown) { Text(SidebarProjectActionText.moveDown) }
             }
-            Button(action: actions.newWorktree) { Text(SidebarHeaderText.newWorktree(in: header.name)) }
+            if actions.canMakeWorktree {
+                Button(action: actions.newWorktree) { Text(SidebarHeaderText.newWorktree(in: header.name)) }
+            }
             Button(action: actions.syncWorktrees) { Text(SidebarProjectActionText.syncWorktrees) }
             if let showHiddenWorktrees = actions.showHiddenWorktrees {
                 Button(action: showHiddenWorktrees) { Text(SidebarProjectActionText.showHiddenWorktrees) }
@@ -248,13 +255,38 @@ struct SidebarProjectHeaderView: View {
             .buttonStyle(.plain)
             .focusable(false)
             .help(Text(SidebarHeaderText.otherWindowHelp(header.name)))
-        } else if let count = SidebarHeaderText.count(header, locale: locale) {
+        } else if header.trouble == nil, let count = SidebarHeaderText.count(header, locale: locale) {
             Text(verbatim: count)
                 .font(.supervision(.detail))
                 .monospacedDigit()
                 .foregroundStyle(SupervisionTokens.muted.color)
                 .lineLimit(1)
         }
+    }
+
+    /// What kept the last sync from reading the project's folder, in place
+    /// of the count: a glyph and words, so it does not rest on the color,
+    /// and the sentence that says what to do in its tooltip.
+    private func troubleMark(_ trouble: SidebarProjectHeader.Trouble) -> some View {
+        HStack(spacing: Layout.spaceXS) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .accessibilityHidden(true)
+            Text(ProjectTroubleText.label(trouble.kind))
+                .lineLimit(1)
+        }
+        .font(.supervision(.micro))
+        .foregroundStyle(SupervisionTokens.stoppedText.color)
+        .help(Text(ProjectTroubleText.explanation(trouble.kind, folder: trouble.folder)))
+    }
+
+    /// What VoiceOver says after the header's name: the trouble and what to
+    /// do about it, which its sentence says whole, else what waits or runs
+    /// inside a folded header.
+    private func accessibilityHint(contents: String?) -> Text {
+        if let trouble = header.trouble {
+            return Text(ProjectTroubleText.explanation(trouble.kind, folder: trouble.folder))
+        }
+        return contents.map { Text(verbatim: $0) } ?? Text(verbatim: "")
     }
 
     /// One of a folded header's marks, at the compact size a tab's mark

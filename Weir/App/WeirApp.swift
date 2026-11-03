@@ -123,6 +123,9 @@ final class AppState {
     /// The window that alert is shown in (`startNoticePlacement`). `nil`
     /// while there is none.
     private(set) var savingNoticeWindowID: WindowID?
+    /// The window the alert that the session was not restored is shown in
+    /// (`startNoticePlacement`). `nil` while there is none.
+    private(set) var loadIssueWindowID: WindowID?
     let store: SessionStore
     // Dependency graph — owned here so the rest of the app can read
     // these via explicit constructor injection instead of `.shared`.
@@ -285,12 +288,13 @@ final class AppState {
     let prStatusStore = PRStatusStore()
     private(set) var prStatusSyncer: PRStatusSyncer?
     private var turnEndPRRefresh: TurnEndPRRefresh?
-    /// Set when the on-disk snapshot couldn't be restored at boot.
+    /// Set when the on-disk snapshot couldn't be restored at boot, until
+    /// the alert that tells it is answered (`dismissLoadIssue`).
     /// A version mismatch or decode failure normally just dropped the
     /// file silently; surfacing it as an alert lets the user notice
     /// that the previous session's tabs / projects / history are
     /// gone before they assume it's their own muscle memory.
-    var sessionLoadIssue: SessionLoadIssue?
+    private(set) var sessionLoadIssue: SessionLoadIssue?
 
     init() {
         // Weir owns its tab model, so disable AppKit's parallel window
@@ -579,6 +583,7 @@ final class AppState {
             _ = agentIntegrationServiceRegistrar.issue
             _ = clipboardConfirmation.pending?.id
             _ = launchSavingSuspension
+            _ = sessionLoadIssue
             for window in windowRegistry.windows {
                 _ = window.isHidden
             }
@@ -616,14 +621,33 @@ final class AppState {
         }
         // A clipboard confirmation asked in the same window goes first: a
         // shell waits on it. The service's alert does too, as a window
-        // presents one alert at a time.
+        // presents one alert at a time. The session's goes before the
+        // settings': it says what is gone. Placed rather than taken by the
+        // first window to appear, which is one behind the others: the
+        // launch shows the window in front last (`showRestoredWindows`),
+        // and the restore made it the primary, which `noticeWindow` names
+        // until a window takes the keyboard (`WindowRecord.normalized`).
+        let loadWindow = sessionLoadIssue.map { _ in
+            windows.placeNotice(keeping: loadIssueWindowID) { windows.noticeWindow }
+        }
+        let loadWaits = loadWindow != nil && (placement?.window == loadWindow || issueWindow == loadWindow)
+        if loadIssueWindowID != (loadWaits ? nil : loadWindow) {
+            loadIssueWindowID = loadWaits ? nil : loadWindow
+        }
         let savingWindow = launchSavingSuspension.map { _ in
             windows.placeNotice(keeping: savingNoticeWindowID) { windows.noticeWindow }
         }
-        let savingWaits = savingWindow != nil && (placement?.window == savingWindow || issueWindow == savingWindow)
+        let savingWaits = savingWindow != nil
+            && (placement?.window == savingWindow || issueWindow == savingWindow || loadWindow == savingWindow)
         if savingNoticeWindowID != (savingWaits ? nil : savingWindow) {
             savingNoticeWindowID = savingWaits ? nil : savingWindow
         }
+    }
+
+    /// Takes down the alert that the session was not restored once answered.
+    func dismissLoadIssue() {
+        sessionLoadIssue = nil
+        placeNotices()
     }
 
     /// Takes down the launch's saving alert once answered.

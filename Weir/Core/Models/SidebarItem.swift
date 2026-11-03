@@ -122,6 +122,11 @@ struct Project: Codable, Equatable, Identifiable {
     /// names the whole project. Nil when the person gave none, as in every
     /// state.json written before rows kept their own names.
     var rootDisplayName: String?
+    /// Why the last sync could not read the project's folder (`GitSyncCoordinator`),
+    /// for the sidebar to say so; `nil` while it reads. Optional because
+    /// nothing is known before the first sync, and never written to
+    /// `state.json`: it is what the disk says now, as `Worktree.missingSince` is.
+    var trouble: ProjectTrouble?
     /// Keys a newer build wrote on the project that this one does not
     /// know, written back as they were (`WeirSettings.unknownFields` has
     /// the pattern). Empty for a project this build made.
@@ -248,6 +253,18 @@ struct Project: Codable, Equatable, Identifiable {
         )
     }
 
+    /// The project's own folder is gone from disk, as the last sync found:
+    /// nothing can open in it, as in a missing worktree's.
+    var isRootMissing: Bool {
+        trouble == .folderMissing
+    }
+
+    /// Whether a new worktree could be made: not in a folder that is gone,
+    /// nor with no git to run `git worktree add`.
+    var canMakeWorktree: Bool {
+        trouble != .folderMissing && trouble != .gitUnavailable
+    }
+
     /// Resolve the final on-disk URL for a worktree with the given
     /// (already sanitized) branch leaf, using this project's
     /// placement strategy. The worktree hook resolves the same path
@@ -267,6 +284,59 @@ struct Project: Codable, Equatable, Identifiable {
         case let .custom(parent):
             return parent.appendingPathComponent(branchLeaf)
         }
+    }
+}
+
+/// What kept the last sync from listing a project's worktrees. A listing
+/// that failed writes nothing (`GitWorktreeList.fetch`), so without this the
+/// sidebar kept the rows it had and only the log said why.
+enum ProjectTrouble: Equatable, Sendable {
+    /// The folder was deleted or moved, or its volume is not mounted.
+    case folderMissing
+    /// No git could be started: on a Mac without the Command Line Tools,
+    /// `/usr/bin/git` is a stub that only says they are missing.
+    case gitUnavailable
+    /// git ran and refused, or did not finish; `detail` is the first line
+    /// of what it said, in English as git wrote it, `nil` when it said
+    /// nothing.
+    case listingFailed(detail: String?)
+
+    /// The trouble a listing that threw `error` stands for. The folder is
+    /// asked about first: git started in a folder that is gone fails
+    /// either to launch or to find the repository, and neither says the
+    /// folder is the reason. A launch that failed is git missing only when
+    /// `hasGit` says so: the launch also enters the folder, and one that
+    /// is there but refuses entry (a folder macOS has not let Weir read
+    /// yet) fails it with git in place.
+    static func of(
+        _ error: any Error,
+        folderExists: Bool,
+        hasGit: Bool = FileManager.default.isExecutableFile(atPath: GitExecutable.located.url.path)
+    ) -> Self {
+        guard folderExists else { return .folderMissing }
+        switch error as? GitProcessError {
+        case let .launchFailed(message):
+            return hasGit ? .listingFailed(detail: firstLine(message)) : .gitUnavailable
+        case let .nonZeroExit(result):
+            if isMissingDeveloperTools(result.stderr) {
+                return .gitUnavailable
+            }
+            return .listingFailed(detail: firstLine(result.stderr))
+        case .timedOut, nil:
+            return .listingFailed(detail: nil)
+        }
+    }
+
+    /// Whether git's stub said the Command Line Tools are not installed:
+    /// `xcrun`'s words, which do not follow the C locale.
+    static func isMissingDeveloperTools(_ stderr: String) -> Bool {
+        stderr.contains("xcrun: error") || stderr.contains("invalid active developer path")
+            || stderr.contains("No developer tools were found")
+    }
+
+    private static func firstLine(_ text: String) -> String? {
+        text.split(whereSeparator: \.isNewline).first.map { $0.trimmingCharacters(in: .whitespaces) }
+            .flatMap { $0.isEmpty ? nil : $0 }
     }
 }
 

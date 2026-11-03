@@ -560,6 +560,9 @@ private struct AddTabButton: View {
                 .foregroundStyle(isLit ? SupervisionTokens.text.color : SupervisionTokens.muted.color)
                 .paneStripControlFace(fill: isLit ? SupervisionTokens.selection.color : .clear, alignment: .trailing)
         }
+        // Off while the row's folder is gone, as New Tab is: the shell
+        // would start somewhere else.
+        .disabled(session.isFolderMissing(container))
         .hoverChip(name, shortcut: nil, placement: .below)
         .heldKeyCap(.newTab, placement: .center)
         // Bare at rest, so its glyph rather than its square is what stands on

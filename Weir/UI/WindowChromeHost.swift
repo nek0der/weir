@@ -16,14 +16,13 @@ import SwiftUI
 /// shows, its palette, and its keyboard shortcuts panel. The clipboard
 /// confirmation shows in the window of the pane that asked, the approval
 /// service's alert and the alert that settings are not being saved in the
-/// window last used, and the session-restore alert in the first window to
-/// appear.
+/// window last used, and the session-restore alert in the window in front
+/// as the launch shows its windows.
 struct WindowChromeHost: ViewModifier {
     let state: AppState
     /// The window this chrome belongs to. The palette's dropdown and the
     /// rows it runs are this window's only when the palette opened here.
     let window: ProjectWindowState
-    @State private var loadIssue: SessionLoadIssue?
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.supervisionWindowHandler) private var actions
@@ -39,6 +38,12 @@ struct WindowChromeHost: ViewModifier {
               state.clipboardRequestPlacement == ClipboardRequestPlacement(requestID: request.id, window: window.id)
         else { return nil }
         return request
+    }
+
+    /// The session-restore failure when this window tells it
+    /// (`AppState.loadIssueWindowID`), never in every window at once.
+    private var loadIssue: SessionLoadIssue? {
+        state.loadIssueWindowID == window.id ? state.sessionLoadIssue : nil
     }
 
     /// Whether app-wide news (the approval service's trouble) is told here,
@@ -204,28 +209,25 @@ struct WindowChromeHost: ViewModifier {
             }
             // The traffic lights center on the title bar.
             .weirWindowToolbar(stripHeight: WeirLayout.Supervision.titleBarHeight)
-            // Surface session-restore failures the first time the window
-            // comes up. Pulling the issue off AppState clears it so a
-            // dismiss closes the alert for the rest of the session.
-            .task {
-                if let issue = state.sessionLoadIssue {
-                    state.sessionLoadIssue = nil
-                    loadIssue = issue
-                }
-            }
+            // A session-restore failure, in the one window it is placed in
+            // (`AppState.loadIssueWindowID`): the one in front as the launch
+            // showed its windows. Answering it takes it off AppState, so it
+            // does not come back for the rest of the launch.
             .alert(
                 Text(loadIssue?.title ?? ""),
                 isPresented: Binding(
                     get: { loadIssue != nil },
                     set: {
-                        if !$0 {
-                            loadIssue = nil
+                        // Only this window's own dismissal: one the alert
+                        // left for another window is not an answer.
+                        if !$0, loadIssue != nil {
+                            state.dismissLoadIssue()
                         }
                     }
                 ),
                 presenting: loadIssue
             ) { _ in
-                Button("OK", role: .cancel) { loadIssue = nil }
+                Button("OK", role: .cancel) { state.dismissLoadIssue() }
             } message: { issue in
                 Text(verbatim: SavingSuspendedText.loadIssueMessage(
                     detail: issue.detail.resolved(in: state.settingsStore.appLocale),

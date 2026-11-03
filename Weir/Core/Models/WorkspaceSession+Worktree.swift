@@ -322,6 +322,21 @@ extension WorkspaceSession {
         return p.worktrees.contains(where: \.isMissing)
     }
 
+    /// Whether `container`'s folder is gone from disk, as the last sync
+    /// found: a missing worktree's, or the project's own
+    /// (`Project.isRootMissing`). Nothing can open in it, so what would
+    /// start a shell or a worktree there is turned off.
+    func isFolderMissing(_ container: ContainerID) -> Bool {
+        switch container {
+        case .loose:
+            false
+        case let .project(projectID):
+            project(projectID)?.isRootMissing ?? false
+        case let .worktree(projectID, worktreeID):
+            worktree(projectID: projectID, worktreeID: worktreeID)?.isMissing ?? false
+        }
+    }
+
     func hasHiddenWorktrees(projectID: UUID) -> Bool {
         guard let p = projects.first(where: { $0.id == projectID }) else { return false }
         return p.worktrees.contains(where: \.isHidden)

@@ -28,6 +28,17 @@ struct SidebarProjectHeader: Identifiable, Equatable {
     /// The requests waiting inside a folded header: the approval card
     /// opened for one stands beside the header, as its row is not drawn.
     let requestKeys: [ApprovalKey]
+    /// What kept the last sync from reading the project's folder
+    /// (`Project.trouble`): the header says so in place of its count,
+    /// open or folded, as it is about every row under it.
+    var trouble: Trouble?
+
+    /// A project's trouble, with the folder its sentence names
+    /// (`ProjectTroubleText.explanation`).
+    struct Trouble: Equatable {
+        let kind: ProjectTrouble
+        let folder: URL
+    }
 
     /// The marks a folded header shows, one of each kind, in this order:
     /// a wait on the person, a stop, then a turn running. Unread turns get

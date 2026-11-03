@@ -151,7 +151,7 @@ struct WorktreeDropdown: View {
                     // The window's sheet opens for the project the window shows.
                     window.commands.send(.newWorktree)
                 }
-                .disabled(!CheckoutName.isRepository(project))
+                .disabled(!CheckoutName.isRepository(project) || !project.canMakeWorktree)
             }
             .padding(WeirLayout.Supervision.dropdownPadding)
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 }

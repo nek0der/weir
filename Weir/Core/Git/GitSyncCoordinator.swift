@@ -186,11 +186,17 @@ private final class ProjectSync {
         // leave the user-pinned items alone. A listing that failed throws,
         // and we write nothing: read as no worktrees, it would mark every
         // row missing (`GitWorktreeList.fetch`).
+        // Its trouble goes on the project, which the sidebar shows: told
+        // only in the log, the rows stayed as they were and nothing said
+        // the folder was gone or git could not run.
         let listed: [GitWorktreeInfo]
         do {
             listed = try await listWorktrees(root)
         } catch {
             log.error("worktree list failed: \(String(describing: error), privacy: .private)")
+            let exists = await Self.folderExists(root)
+            guard started == generation, !Task.isCancelled else { return }
+            setTrouble(ProjectTrouble.of(error, folderExists: exists))
             return
         }
         // A bare repository's own entry is no checkout: a row for it would
@@ -204,6 +210,7 @@ private final class ProjectSync {
         // ahead and behind counts a status gave. Run on every activation,
         // a status per worktree made a new row wait for all of them.
         guard started == generation, !Task.isCancelled else { return }
+        setTrouble(nil)
         guard let session else { return }
         guard let pIdx = session.projects.firstIndex(where: { $0.id == projectID }) else { return }
 
@@ -221,6 +228,24 @@ private final class ProjectSync {
         )
         writeBackIfChanged(session: session, pIdx: pIdx, merged: merged)
         updateMainBranch(session: session, pIdx: pIdx, mainInfo: mainInfo)
+    }
+
+    /// Writes the project's trouble when it changed: a write tells every
+    /// view that reads the projects.
+    private func setTrouble(_ trouble: ProjectTrouble?) {
+        guard let session, let index = session.projects.firstIndex(where: { $0.id == projectID }),
+              session.projects[index].trouble != trouble
+        else { return }
+        session.projects[index].trouble = trouble
+    }
+
+    /// Whether `url` is a folder on disk, asked off the main actor: a
+    /// volume that stopped answering holds the caller.
+    private static func folderExists(_ url: URL) async -> Bool {
+        await Task.detached {
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+        }.value
     }
 
     // MARK: - refetch sub-steps

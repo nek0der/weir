@@ -23,6 +23,20 @@ struct TabCommands: Commands {
         target.flatMap { state.session.activeTab(in: $0.id) }
     }
 
+    /// The project the key main window shows, which New Worktree… makes one
+    /// in; `nil` while it shows none or no main window is key.
+    private var shownProject: Project? {
+        target.flatMap { state.session.selection($0.id)?.shownProjectID }.flatMap { state.session.project($0) }
+    }
+
+    /// New Tab opens in the window's active row, so it is off while that
+    /// row's folder is gone (`WorkspaceSession.isFolderMissing`): the shell
+    /// would start somewhere else.
+    private var canOpenTab: Bool {
+        guard let target, let selection = state.session.selection(target.id) else { return false }
+        return !state.session.isFolderMissing(selection.activeContainerID)
+    }
+
     /// ⌥⌘W has a terminal tab to close, or the review tab in front.
     private var closeTabIsLive: Bool {
         ReviewTabModel.closeCommandsAreLive(hasActiveTab: activeTab != nil, review: target?.review)
@@ -52,7 +66,7 @@ struct TabCommands: Commands {
                     Label("New Tab", systemImage: "plus.rectangle")
                 }
                 .weirShortcut(.newTab, in: state.settingsStore)
-                .disabled(target == nil)
+                .disabled(!canOpenTab)
                 // New Worktree… (⌘N), the one item that opens the new
                 // worktree sheet for the window's project, and ⌥⌘N, which
                 // makes one at once with the sheet's last choices.
@@ -69,7 +83,7 @@ struct TabCommands: Commands {
                     Label("New Worktree…", systemImage: ContainerSymbol.worktree)
                 }
                 .weirShortcut(.newWorktree, in: state.settingsStore)
-                .disabled(target.flatMap { state.session.selection($0.id)?.shownProjectID } == nil)
+                .disabled(shownProject?.canMakeWorktree != true)
                 Button {
                     guard let target else { return }
                     target.commands.send(.newWorktreeNow)
@@ -77,8 +91,7 @@ struct TabCommands: Commands {
                     Label("Create Worktree Now", systemImage: WeirShortcutAction.newWorktreeNow.iconName)
                 }
                 .weirShortcut(.newWorktreeNow, in: state.settingsStore)
-                .disabled(target.flatMap { state.session.selection($0.id)?.shownProjectID } == nil || target?
-                    .isCreatingWorktreeAtOnce == true)
+                .disabled(shownProject?.canMakeWorktree != true || target?.isCreatingWorktreeAtOnce == true)
                 Button {
                     guard let target else { return }
                     TabActions.renameActiveTab(state.session, in: target.id, commands: state.windowRegistry)

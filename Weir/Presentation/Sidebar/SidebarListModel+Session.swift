@@ -80,7 +80,8 @@ extension SidebarListModel {
                     counts: AttentionQueue.counts(of: itemsByProject[id] ?? []),
                     running: sources.running(id)
                 ) : [],
-                requestKeys: isCollapsed ? Self.requestKeys(in: itemsByProject[id] ?? []) : []
+                requestKeys: isCollapsed ? Self.requestKeys(in: itemsByProject[id] ?? []) : [],
+                trouble: project.trouble.map { SidebarProjectHeader.Trouble(kind: $0, folder: project.rootURL) }
             )
             guard !isCollapsed else { return Group(header: header, rows: nil) }
             let rows = SessionSidebarModel(
