@@ -43,6 +43,7 @@ extension View {
         .environment(state.prStatusStore)
         .environment(state.gitFacts)
         .environment(state.sessionLaunches)
+        .environment(state.installedAgents)
         .environment(state.stopLedger)
         .environment(state.usageLimitResetSync)
         .environment(\.prStatusSyncer, state.prStatusSyncer)

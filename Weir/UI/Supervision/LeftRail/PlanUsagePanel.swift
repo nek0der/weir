@@ -2,6 +2,7 @@
 // Weir — the rail's plan usage button and the floating panel it opens: each agent's limit windows.
 
 import SwiftUI
+import WeirDomain
 
 /// The rail's usage icon: a mark while a window nears or reaches its limit,
 /// and the usage panel beside the rail on a click.
@@ -155,6 +156,7 @@ struct PlanUsageOverlay: View {
 /// them, then Codex's, which the overlay asks Codex for while it is shown.
 struct PlanUsagePanel: View {
     @Environment(PlanUsageStore.self) private var store
+    @Environment(InstalledAgentsStore.self) private var installedAgents
     @Environment(\.locale) private var locale
 
     private typealias Layout = WeirLayout.Supervision
@@ -163,19 +165,52 @@ struct PlanUsagePanel: View {
         TimelineView(.periodic(from: .now, by: 30)) { context in
             VStack(alignment: .leading, spacing: Layout.spaceL) {
                 header
-                PlanUsageSectionView(section: PlanUsageText.claudeSection(store.claude, now: context.date, locale: locale))
-                Divider()
-                PlanUsageSectionView(section: PlanUsageText.codexSection(
-                    store.codex,
-                    last: store.lastCodexUsage,
-                    now: context.date,
-                    locale: locale
-                ))
-                Divider()
-                PlanUsageSectionView(section: PlanUsageText.antigravitySection(store.antigravity, now: context.date, locale: locale))
+                let shown = shownAgents
+                ForEach(shown, id: \.self) { agent in
+                    if agent != shown.first {
+                        Divider()
+                    }
+                    if let section = section(of: agent, now: context.date) {
+                        PlanUsageSectionView(section: section)
+                    }
+                }
             }
             .padding(Layout.spaceL)
             .frame(width: Layout.railPanelWidth, alignment: .leading)
+        }
+    }
+
+    /// The agents with a section, those found on this Mac and those whose
+    /// usage was reported all the same (`InstalledAgentRule`), so a person
+    /// who never installed Antigravity is not told how to make it report.
+    private var shownAgents: [AgentKind] {
+        let reported: [AgentKind: Bool] = [
+            .claude: store.claude != nil,
+            .codex: store.lastCodexUsage != nil,
+            .antigravity: store.antigravity != nil
+        ]
+        let withUsage = AgentCatalog.entries.map(\.kind).filter { reported[$0] != nil }
+        let shown = InstalledAgentRule.shown(
+            catalog: withUsage,
+            installed: installedAgents.installedAnywhere,
+            alsoShowing: Set(reported.filter(\.value).keys)
+        )
+        // A panel of a heading alone says nothing; every section's note
+        // at least says what it waits for.
+        return shown.isEmpty ? withUsage : shown
+    }
+
+    /// The agent's section; `nil` for one that reports no usage.
+    private func section(of agent: AgentKind, now: Date) -> PlanUsageSection? {
+        switch agent {
+        case .claude:
+            PlanUsageText.claudeSection(store.claude, now: now, locale: locale)
+        case .codex:
+            PlanUsageText.codexSection(store.codex, last: store.lastCodexUsage, now: now, locale: locale)
+        case .antigravity:
+            PlanUsageText.antigravitySection(store.antigravity, now: now, locale: locale)
+        case .opencode:
+            nil
         }
     }
 

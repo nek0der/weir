@@ -1,32 +1,28 @@
 // AddTabMenu.swift
-// Weir — the pane strip's "+" menu: a Claude, Codex, Antigravity, OpenCode, or shell tab in this session.
+// Weir — the pane strip's "+" menu: a tab running an agent found on this Mac, or a shell, in this session.
 
 import SwiftUI
 import WeirDomain
 
-/// What the strip's "+" adds to the session it heads: a tab running Claude
-/// or Codex, or a shell. An agent added here works in the same folder as
-/// the session's own, so its items say so; a new folder is a new session.
-/// It takes the keyboard as it opens: ↑↓ move through the items from the
-/// first, and Return adds the selected one (`DropdownListKeys`).
+/// What the strip's "+" adds to the session it heads: a tab running one
+/// of the agents found on this Mac (`AddTabOffer`), or a shell. An agent
+/// added here works in the same folder as the session's own, which one
+/// line under the items says while an agent already works there; a new
+/// folder is a new session. It takes the keyboard as it opens: ↑↓ move
+/// through the items from the first, and Return adds the selected one
+/// (`DropdownListKeys`).
 struct AddTabMenu: View {
-    /// The menu's items, in order, as the keys move through them.
-    enum Item: CaseIterable, Hashable {
-        case claude
-        case codex
-        case antigravity
-        case opencode
+    /// One of the menu's items, as the keys move through them.
+    enum Item: Hashable {
+        case agent(AgentKind)
         case shell
 
         /// The agent the tab runs; `nil` for a shell.
         var agent: AgentKind? {
-            switch self {
-            case .claude: .claude
-            case .codex: .codex
-            case .antigravity: .antigravity
-            case .opencode: .opencode
-            case .shell: nil
+            if case let .agent(kind) = self {
+                return kind
             }
+            return nil
         }
     }
 
@@ -34,6 +30,7 @@ struct AddTabMenu: View {
     let dismiss: () -> Void
     @Environment(WorkspaceSession.self) private var session
     @Environment(SettingsStore.self) private var settings
+    @Environment(InstalledAgentsStore.self) private var installedAgents
     /// The window the menu is in, whose selection the new tab is shown in.
     @Environment(ProjectWindowState.self) private var window
     @Environment(\.locale) private var locale
@@ -52,11 +49,12 @@ struct AddTabMenu: View {
                 .supervisionTruncation(.subject)
                 .padding(WeirLayout.Supervision.dropdownHeadingInsets)
                 .accessibilityAddTraits(.isHeader)
-            ForEach(Item.allCases, id: \.self) { item in
+            let offer = offer
+            let items = Self.items(of: offer)
+            ForEach(items, id: \.self) { item in
                 AddTabMenuItem(
                     title: title(of: item),
                     agent: item.agent,
-                    caption: item.agent == nil ? nil : sharedFolderCaption,
                     shortcut: item == .shell ? settings.settings.keyboard.shortcut(for: .newTab)?.displayString : nil,
                     isSelected: item == selection.id,
                     // The pointer selects, so one item is lit: the one
@@ -65,11 +63,34 @@ struct AddTabMenu: View {
                     action: { add(running: item.agent) }
                 )
             }
+            if let note = offer.note {
+                AddTabMenuNote(note: note)
+            }
         }
         .padding(WeirLayout.Supervision.dropdownPadding)
-        .dropdownListKeys(Item.allCases, selection: $selection) { item in
+        .dropdownListKeys(Self.items(of: offer), selection: $selection) { item in
             add(running: item.agent)
         }
+        // A "+" pressed from the keyboard or VoiceOver never had the pointer
+        // on it (`AddTabButton`), so the menu looks again as it opens; an
+        // agent installed or removed since then joins or leaves the list.
+        .task {
+            await installedAgents.refresh(projectID: container.projectID)
+        }
+    }
+
+    /// The agents found for the place's project, with the note they need.
+    private var offer: AddTabOffer {
+        AddTabOffer(
+            catalog: AgentCatalog.entries.map(\.kind),
+            installed: installedAgents.installedAgents(for: container.projectID),
+            isAgentWorkingInFolder: session.tabs(in: container).contains { !$0.agentKinds.isEmpty }
+        )
+    }
+
+    /// The items in order: the agents offered, then the shell, always there.
+    static func items(of offer: AddTabOffer) -> [Item] {
+        offer.agents.map(Item.agent) + [.shell]
     }
 
     /// An agent by its product name, the catalog's, the same in every
@@ -110,25 +131,52 @@ struct AddTabMenu: View {
         return name
     }
 
-    private var sharedFolderCaption: Text {
-        Text("Runs in the same folder. Editing at the same time may cause conflicts.")
-    }
-
     private func add(running agent: AgentKind?) {
         dismiss()
         TabActions.newTab(session, in: container, running: agent, window: window.id, intent: .person, selects: true)
     }
 }
 
+/// The line under the items: said once for all of them, where each item
+/// saying it made the menu four times as tall as what it offers.
+private struct AddTabMenuNote: View {
+    let note: AddTabOffer.Note
+    @Environment(\.locale) private var locale
+
+    var body: some View {
+        text
+            .font(.supervision(.caption))
+            .foregroundStyle(SupervisionTokens.muted.color)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(WeirLayout.Supervision.addTabMenuItemInsets)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var text: Text {
+        switch note {
+        case .agentAlreadyWorking:
+            Text("An agent is already working in this folder. Editing at the same time may cause conflicts.")
+        case .noAgentFound:
+            // Named from the catalog, so an agent added to it is named
+            // here too.
+            Text("No agents found. Weir lists \(agentNames) found on your PATH.")
+        }
+    }
+
+    /// Every agent the catalog has, by its product name, as a list in the
+    /// window's language.
+    private var agentNames: String {
+        AgentCatalog.entries.map(\.displayName).formatted(.list(type: .and).locale(locale))
+    }
+}
+
 /// One item: the badge the new tab will wear, its name, and the key that
-/// adds it from anywhere. An agent's item also says, in a line of its own,
-/// that it shares the session's folder.
+/// adds it from anywhere.
 private struct AddTabMenuItem: View {
     let title: Text
     /// The agent the tab runs, whose badge the item shows; `nil` for a
     /// shell.
     let agent: AgentKind?
-    let caption: Text?
     /// "⌘T", as the person has it assigned.
     var shortcut: String?
     /// The arrow keys' item, or the one under the pointer.
@@ -143,17 +191,9 @@ private struct AddTabMenuItem: View {
                     .alignmentGuide(.firstTextBaseline) {
                         $0[VerticalAlignment.center] + WeirLayout.Supervision.addTabMenuBadgeRaise
                     }
-                VStack(alignment: .leading, spacing: WeirLayout.Supervision.spaceHairline) {
-                    title
-                        .font(.supervision(.body))
-                        .foregroundStyle(SupervisionTokens.text.color)
-                    if let caption {
-                        caption
-                            .font(.supervision(.caption))
-                            .foregroundStyle(SupervisionTokens.muted.color)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
+                title
+                    .font(.supervision(.body))
+                    .foregroundStyle(SupervisionTokens.text.color)
                 Spacer(minLength: WeirLayout.Supervision.spaceS)
                 if let shortcut {
                     KeyComboText(shortcut, size: .meta, weight: .regular)

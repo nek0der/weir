@@ -4,6 +4,7 @@
 import Foundation
 import Testing
 @testable import Weir
+@testable import WeirDomain
 
 @MainActor
 struct DropdownListKeysTests {
@@ -48,16 +49,20 @@ struct DropdownListKeysTests {
     /// ↑↓ stop at either end, and Return chooses the selected item; the
     /// "+" opens on its first item.
     @Test func theAddTabMenu_movesAndChoosesItsItems() {
-        let items = AddTabMenu.Item.allCases
+        let items = AddTabMenu.items(of: AddTabOffer(
+            catalog: AgentCatalog.entries.map(\.kind),
+            installed: nil,
+            isAgentWorkingInFolder: false
+        ))
         var selection = DropdownListKeys<AddTabMenu.Item>.opening(items, on: nil)
-        #expect(selection.id == .claude)
+        #expect(selection.id == .agent(.claude))
         selection.move(forward: false, in: items)
-        #expect(selection.id == .claude, "stops at the top")
-        for _ in AddTabMenu.Item.allCases {
+        #expect(selection.id == .agent(.claude), "stops at the top")
+        for _ in items {
             selection.move(forward: true, in: items)
         }
         #expect(DropdownListKeys.chosen(selection, in: items) == .shell, "stops at the bottom")
         #expect(AddTabMenu.Item.shell.agent == nil)
-        #expect(AddTabMenu.Item.codex.agent == .codex)
+        #expect(AddTabMenu.Item.agent(.codex).agent == .codex)
     }
 }

@@ -303,6 +303,7 @@ struct NewSessionSheetLayoutTests {
         let sheet = NewSessionSheet(request: NewSessionSheetRequest(projectID: project.id), model: model)
             .environment(session)
             .environment(SessionLaunchStore(path: { nil }, git: FakeGit()))
+            .environment(InstalledAgentsStore { _ in [] })
             .environment(ProjectWindowState(selection: session.primarySelection))
             .environment(SettingsStore(directory: directory, writesFiles: false))
             .environment(\.locale, Locale(identifier: language))

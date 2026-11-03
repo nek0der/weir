@@ -27,13 +27,7 @@ struct NewSessionFacts: Sendable {
     /// sheet says on its own, and the worktree stage reports Git's own
     /// words if the person goes on.
     static func read(root: URL, projectID: UUID) async -> NewSessionFacts {
-        // The pane `PATH` record is read only when the run writes it: a
-        // demo run neither writes nor reads the person's files.
-        async let installed = AgentCatalog.detectInstallations(
-            panePathRecord: DemoFixture.isDemoActive
-                ? nil
-                : AgentCatalog.panePathRecordURL(in: WeirPaths.applicationSupportDirectory(), project: projectID)
-        )
+        async let installed = InstalledAgentsStore.liveDetect(projectID)
         var facts = await readGit(root: root)
         facts.installations = await installed
         return facts
@@ -77,6 +71,9 @@ struct NewSessionStores {
     let settingsStore: SettingsStore
     /// Reads the sheet's facts, given the project's folder and its ID.
     var readFacts: @Sendable (URL, UUID) async -> NewSessionFacts = { await NewSessionFacts.read(root: $0, projectID: $1) }
+    /// Keeps the agents the sheet found, so the pane strip's "+" names the
+    /// same ones; `nil` in a test that does not read them.
+    var installedAgents: InstalledAgentsStore?
     var git: any GitRunning = LiveGit()
     /// `gh` and `glab`, for a worktree made from a pull request; `nil`
     /// where nothing may ask them (a demo run), which offers none.
@@ -117,7 +114,13 @@ enum NewSessionActions {
     ) async -> NewSessionModel? {
         guard let project = stores.session.project(request.projectID) else { return nil }
         let shown = shownRow(of: project, in: window, session: stores.session)
+        // Numbered before the read begins, so a lookup that ends while
+        // the sheet still waits on Git is not undone by this one.
+        let lookup = stores.installedAgents?.beginLookup(for: project.id)
         let facts = await stores.readFacts(project.rootURL, project.id)
+        if let lookup {
+            stores.installedAgents?.record(facts.installations, from: lookup)
+        }
         // The project as it is now: it may have changed under the wait.
         guard let project = stores.session.project(request.projectID) else { return nil }
         // Named by its branch; a worktree on a detached HEAD by its folder.
