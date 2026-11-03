@@ -2,10 +2,7 @@
 // Weir — what one projection pass is told, and what it answers with.
 
 import Foundation
-import OSLog
 import WeirDomain
-
-private let log = Logger.weir("agent.projection.input")
 
 /// Everything the rules read that this process had to look up: the files in
 /// the watched directories, which panes exist, which processes are alive,
@@ -443,12 +440,16 @@ struct AgentProjectedConversationKey: Decodable, Sendable {
 /// single entry from a newer writer costs that entry and not the pass.
 struct AgentProjectionLossyList<Element: Decodable>: Decodable {
     var elements: [Element] = []
+    /// How many entries did not decode. Expected for a provider this build
+    /// lacks; anything else is the two sides disagreeing about a shape, which
+    /// nothing else would show. The conversations' count is said in the log
+    /// by `TurnHistory` when it changes.
+    var skipped = 0
 
     init() {}
 
     init(from decoder: any Decoder) throws {
         var container = try decoder.unkeyedContainer()
-        var skipped = 0
         while !container.isAtEnd {
             if let element = try? container.decode(Element.self) {
                 elements.append(element)
@@ -457,11 +458,6 @@ struct AgentProjectionLossyList<Element: Decodable>: Decodable {
                 _ = try container.decode(Skipped.self)
                 skipped += 1
             }
-        }
-        // Expected for a provider this build lacks; anything else is the two
-        // sides disagreeing about a shape, which nothing else would show.
-        if skipped > 0 {
-            log.notice("skipped \(skipped) \(String(describing: Element.self), privacy: .public) entries")
         }
     }
 

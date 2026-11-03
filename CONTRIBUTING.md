@@ -77,7 +77,7 @@ make dev
 
 `make help` lists the common targets (`build`, `run`, `test`, `lint`, `dmg`, `screenshot`, `clean`, …).
 
-You should see a Weir window with a working terminal pane (zsh by default), the Worktrees sidebar with that terminal on its Scratch row, and the pane strip. Weir logs the embedded libghostty version through `os_log` under the `com.nekoder.weir` subsystem (`log stream --predicate 'subsystem == "com.nekoder.weir"'`).
+You should see a Weir window with a working terminal pane (zsh by default), the Worktrees sidebar with that terminal on its Scratch row, and the pane strip. Weir logs the embedded libghostty version through `Logger` under the `com.nekoder.weir` subsystem (`log stream --predicate 'subsystem == "com.nekoder.weir"'`). What a terminal reports as it runs, such as its title, its directory, a bell, or a search, is logged at the debug level; add `--level debug` to see it.
 
 > First-launch tip: a locally built Debug binary is ad-hoc signed, so macOS may quarantine it. Right-click the app and choose Open the first time.
 

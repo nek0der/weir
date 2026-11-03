@@ -6,7 +6,7 @@ import Carbon
 import GhosttyKit
 import OSLog
 
-private let log = Logger.weir("secure-input")
+private let log = Logger.weir("terminal.secure-input")
 
 /// The three state transitions libghostty can request from an apprt.
 enum SecureInputMode: Equatable {

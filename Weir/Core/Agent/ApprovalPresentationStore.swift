@@ -80,7 +80,7 @@ struct ApprovalPresentation: Identifiable, Equatable, Sendable {
 @MainActor
 @Observable
 final class ApprovalPresentationStore {
-    private nonisolated static let log = Logger.weir("agent-approval")
+    private nonisolated static let log = Logger.weir("agent.approval")
     private(set) var pending: [ApprovalPresentation] = []
     /// The time left on each pending request, by request, as the service's
     /// clock last reported it. Kept apart from `pending` because it is read

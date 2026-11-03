@@ -9,7 +9,7 @@
 import Foundation
 import OSLog
 
-private let log = Logger.weir("prompt-cache.action")
+private let log = Logger.weir("attention.prompt-cache.action")
 
 /// What a clock shows: the status, the window it describes, and the run
 /// and pane its panel speaks for.

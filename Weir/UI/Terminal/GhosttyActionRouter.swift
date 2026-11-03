@@ -124,7 +124,7 @@ enum GhosttyActionRouter {
             // User content — keep `.private` in Release so terminal
             // titles (which often include working paths or branch
             // names) don't end up in unified log / sysdiagnose.
-            log.notice("SET_TITLE \(sanitized, privacy: .private)")
+            log.debug("SET_TITLE \(sanitized, privacy: .private)")
             return .setTitle(view, title: sanitized)
 
         case GHOSTTY_ACTION_PWD:
@@ -134,12 +134,12 @@ enum GhosttyActionRouter {
             let pwd = String(cString: cstr)
             // Working directory is user content — `.private` so the
             // unified log doesn't accumulate the user's project tree.
-            log.notice("PWD \(pwd, privacy: .private)")
+            log.debug("PWD \(pwd, privacy: .private)")
             return .setPwd(view, pwd: pwd)
 
         case GHOSTTY_ACTION_GOTO_TAB:
             let raw = action.action.goto_tab.rawValue
-            log.notice("GOTO_TAB raw=\(raw, privacy: .public)")
+            log.debug("GOTO_TAB raw=\(raw, privacy: .public)")
             return .gotoTab(surfaceView(from: target), rawIndex: raw)
 
         case GHOSTTY_ACTION_SHOW_CHILD_EXITED:
@@ -156,7 +156,7 @@ enum GhosttyActionRouter {
             // Shell-supplied title can carry secrets the user pasted
             // into a command — strip it from the log even though
             // the in-app notification panel still shows it.
-            log.notice("DESKTOP_NOTIFICATION title=\(title, privacy: .private)")
+            log.debug("DESKTOP_NOTIFICATION title=\(title, privacy: .private)")
             return .desktopNotification(view, title: title, body: body)
 
         case GHOSTTY_ACTION_PROGRAM_STATUS:
@@ -168,26 +168,26 @@ enum GhosttyActionRouter {
 
         case GHOSTTY_ACTION_RING_BELL:
             guard let view = surfaceView(from: target) else { return nil }
-            log.notice("RING_BELL")
+            log.debug("RING_BELL")
             return .ringBell(view)
 
         case GHOSTTY_ACTION_END_SEARCH:
             guard let view = surfaceView(from: target) else { return nil }
-            log.notice("END_SEARCH")
+            log.debug("END_SEARCH")
             return .endSearch(view)
 
         case GHOSTTY_ACTION_SEARCH_TOTAL:
             guard let view = surfaceView(from: target) else { return nil }
             let raw = action.action.search_total.total
             let total: Int? = raw < 0 ? nil : Int(raw)
-            log.notice("SEARCH_TOTAL total=\(raw, privacy: .public)")
+            log.debug("SEARCH_TOTAL total=\(raw, privacy: .public)")
             return .searchTotal(view, total: total)
 
         case GHOSTTY_ACTION_SEARCH_SELECTED:
             guard let view = surfaceView(from: target) else { return nil }
             let raw = action.action.search_selected.selected
             let selected: Int? = raw < 0 ? nil : Int(raw)
-            log.notice("SEARCH_SELECTED selected=\(raw, privacy: .public)")
+            log.debug("SEARCH_SELECTED selected=\(raw, privacy: .public)")
             return .searchSelected(view, selected: selected)
 
         case GHOSTTY_ACTION_SCROLLBAR:
@@ -209,7 +209,7 @@ enum GhosttyActionRouter {
         case GHOSTTY_ACTION_COMMAND_FINISHED:
             guard let view = surfaceView(from: target) else { return nil }
             let payload = action.action.command_finished
-            log.notice("COMMAND_FINISHED exit=\(payload.exit_code, privacy: .public) duration=\(payload.duration, privacy: .public)ns")
+            log.debug("COMMAND_FINISHED exit=\(payload.exit_code, privacy: .public) duration=\(payload.duration, privacy: .public)ns")
             return .commandFinished(view, exitCode: Int(payload.exit_code), durationNs: payload.duration)
 
         case GHOSTTY_ACTION_MOUSE_OVER_LINK:

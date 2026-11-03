@@ -12,7 +12,7 @@ import AppKit
 import OSLog
 import SwiftUI
 
-private let log = Logger.weir("quick-terminal")
+private let log = Logger.weir("terminal.quick")
 
 @MainActor
 @Observable

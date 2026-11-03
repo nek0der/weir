@@ -317,6 +317,7 @@ struct TurnRecordCacheTests {
         )
 
         #expect(list.elements.map(\.key.conversationID) == ["s"])
+        #expect(list.skipped == 1)
     }
 
     // MARK: - Through a pass

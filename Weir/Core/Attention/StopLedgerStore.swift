@@ -6,7 +6,7 @@ import Observation
 import OSLog
 import WeirDomain
 
-private let log = Logger.weir("stop-ledger")
+private let log = Logger.weir("attention.stop-ledger")
 
 /// The app's `StopLedger`, and the clock of each resume: one whose command
 /// returned to the shell at once with no run of the conversation, or that has not

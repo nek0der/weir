@@ -287,7 +287,7 @@ final class GhosttyEventCoordinator {
         // which is exactly the bug the user hit. Worktree labels are
         // owned by the user (rename) and by GitSync (basename of the
         // disk path) — not by per-pane shell titles.
-        log.notice("SET_TITLE applied to tab \(tabID, privacy: .public): \(title, privacy: .private)")
+        log.debug("SET_TITLE applied to tab \(tabID, privacy: .public): \(title, privacy: .private)")
     }
 
     /// GOTO_TAB switches the active tab among the tabs of the sidebar row
@@ -389,7 +389,7 @@ final class GhosttyEventCoordinator {
         let hasSystem = features.contains(.system)
         let hasAttention = features.contains(.attention)
         let hasPaneFlash = features.contains(.paneFlash)
-        log.notice(
+        log.debug(
             """
             RING_BELL focusedSource=\(isFocusedSource, privacy: .public) \
             features=(system=\(hasSystem, privacy: .public) \
@@ -459,7 +459,7 @@ final class GhosttyEventCoordinator {
            badge.state == .needsInput,
            Date().timeIntervalSince(badge.updatedAt) < 60
         {
-            log.notice("DESKTOP_NOTIFICATION suppressed (needsInput badge active)")
+            log.debug("DESKTOP_NOTIFICATION suppressed (needsInput badge active)")
             return
         }
 
@@ -480,7 +480,7 @@ final class GhosttyEventCoordinator {
         )
 
         let isFocusedSource = view.holdsKeyboardFocus
-        log.notice("DESKTOP_NOTIFICATION focusedSource=\(isFocusedSource, privacy: .public)")
+        log.debug("DESKTOP_NOTIFICATION focusedSource=\(isFocusedSource, privacy: .public)")
         if !isFocusedSource {
             session.markUnread(paneID: paneID)
         }
