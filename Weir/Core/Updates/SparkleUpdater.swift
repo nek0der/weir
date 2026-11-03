@@ -10,7 +10,10 @@
 // to swap it after construction.
 
 import Observation
+import OSLog
 import Sparkle
+
+private let log = Logger.weir("updates")
 
 // MARK: - Update presentation
 
@@ -236,7 +239,7 @@ final class UpdaterStack {
         do {
             try updater.start()
         } catch {
-            NSLog("[Weir] SPUUpdater.start failed: \(error)")
+            log.error("SPUUpdater.start failed: \(String(describing: error), privacy: .private)")
         }
         // In Debug, keep scheduled auto-checks off so a `make dev`
         // session running alongside the installed Release dmg can't

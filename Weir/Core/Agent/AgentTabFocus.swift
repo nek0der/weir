@@ -16,7 +16,7 @@ import WeirDomain
 /// knows: several processes can run from one pane under tmux, and each takes only its own
 /// (`AgentRuntimePresentation.tabChannel`).
 enum AgentTabFocus {
-    private static let log = Logger(subsystem: "com.nekoder.weir", category: "agent.tab-focus")
+    private static let log = Logger.weir("agent.tab-focus")
 
     /// What the plugin read of the screen as it answered: the session in front, nil for
     /// none (its home screen).

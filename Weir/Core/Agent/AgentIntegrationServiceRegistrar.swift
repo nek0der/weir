@@ -174,7 +174,7 @@ struct AgentIntegrationIssuePresentation: Equatable, Sendable {
 @MainActor
 @Observable
 final class AgentIntegrationServiceRegistrar {
-    private static let log = Logger.weir("agent-integration-service")
+    private static let log = Logger.weir("agent.integration-service")
     private static let controlEnvironmentKey = "WEIR_AGENT_SERVICE_CONTROL"
 
     private(set) var isReady = false

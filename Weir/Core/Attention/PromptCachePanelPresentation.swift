@@ -36,7 +36,7 @@ import Foundation
 import Observation
 import OSLog
 
-private let log = Logger.weir("prompt-cache.panel")
+private let log = Logger.weir("attention.prompt-cache.panel")
 
 @MainActor
 @Observable

@@ -201,3 +201,42 @@ custom_rules:
       An error's description or stderr can carry an absolute path. Log it
       with privacy: .private.
     severity: error
+
+  # One subsystem (AGENTS.md §3): a line logged anywhere else is missed by
+  # the filter `subsystem == "com.nekoder.weir"`; `NSLog` writes its text in
+  # public; and `Logger()` logs with no subsystem at all. `Logger.weir(_:)` is
+  # the one place that names the subsystem.
+  log_outside_subsystem:
+    name: "Log outside the subsystem"
+    regex: '\b(?:NSLog|os_log)\s*\(|\b(?:Logger|OSLog)(?:\.init)?\s*\(\s*(?:\)|subsystem\s*:)|(?<![\w.])\.init\(\s*subsystem\s*:|\bLogger\s*\(\s*OSLog\b'
+    included: '(?:^|/)(?:Weir|AgentIntegrationService)/'
+    excluded: '(?:^|/)Weir/Core/Logging/WeirLogger\.swift$'
+    excluded_match_kinds:
+      - comment
+      - comment.mark
+      - comment.url
+      - doccomment
+      - doccomment.field
+      - string
+    message: >-
+      Log through Logger.weir("area.part"), which keeps the line in the
+      com.nekoder.weir subsystem.
+    severity: error
+
+  # A category's first segment is its area (`WeirLogger.swift`), so a filter
+  # on `agent.` finds every logger of the agent area; a hyphen there would
+  # make a second area of the same name.
+  log_category_area:
+    name: "Log category area with a hyphen"
+    regex: '(?:\bLogger)?\.weir\(\s*#*"[^".]*-'
+    excluded_match_kinds:
+      - comment
+      - comment.mark
+      - comment.url
+      - doccomment
+      - doccomment.field
+    message: >-
+      The first segment of a category is one word naming the area; join
+      words with a hyphen only in a later segment (agent.approval,
+      attention.stop-ledger).
+    severity: error

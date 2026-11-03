@@ -1,5 +1,6 @@
 // TurnHistoryTests.swift
-// Weir — when the turns are known: work that needs them waits for the first pass that reports them.
+// Weir — when the turns are known: work that needs them waits for the first pass that
+// reports them, and what a pass could not read is said once.
 
 import Foundation
 import Testing
@@ -39,5 +40,14 @@ struct TurnHistoryTests {
         #expect(!history.hasLoaded)
         history.replace(with: [])
         #expect(history.hasLoaded, "an empty report is still a report")
+    }
+
+    @Test func skippedEntries_areSaidOnlyWhenTheCountChanges() {
+        var report = SkippedEntriesReport()
+        // Each value is one pass that reports the list; a pass that leaves it
+        // out never asks.
+        let said = [1, 1, 2, 0, 0, 1].map { report.newCount($0) }
+
+        #expect(said == [1, nil, 2, nil, nil, 1])
     }
 }

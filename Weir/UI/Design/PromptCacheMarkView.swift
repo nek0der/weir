@@ -342,4 +342,4 @@ private struct PromptCacheHoverTracker: NSViewRepresentable {
 
 /// The clock trackers' debug log, under the panel's category so one stream
 /// shows both.
-private let trackerLog = Logger.weir("prompt-cache.panel")
+private let trackerLog = Logger.weir("attention.prompt-cache.panel")

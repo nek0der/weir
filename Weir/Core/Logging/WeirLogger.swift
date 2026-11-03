@@ -9,10 +9,11 @@ import OSLog
 
 extension Logger {
     /// Build a `Logger` bound to Weir's canonical subsystem. Pass a
-    /// dot-separated category — the existing convention groups
-    /// related call sites (`surface.view`, `claude.session.store`,
-    /// `pane.drag`). Adding a new logger means one line at the top of
-    /// the file:
+    /// dot-separated category whose first segment is the area, one word,
+    /// so a filter on the area (`category BEGINSWITH "agent."`) finds
+    /// every call site in it (`surface.view`, `agent.approval`,
+    /// `attention.stop-ledger`). A hyphen only joins the words of a later
+    /// segment. Adding a new logger means one line at the top of the file:
     ///
     /// ```swift
     /// private let log = Logger.weir("my.area")

@@ -973,7 +973,7 @@ extension AgentProjectionAdapter {
         hasBootstrapped = true
         let response = answer.response
         if let conversations = response.projection.conversations {
-            turnHistory.replace(with: conversations.elements)
+            turnHistory.replace(with: conversations.elements, skipped: conversations.skipped)
         }
         turnDeletions.isHistoryComplete = answer.turns.isComplete
 
