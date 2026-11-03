@@ -1,5 +1,5 @@
 // SidebarKeyboardCursor.swift
-// Weir — what the arrow keys, Return, and Move Project Up and Down do in the sidebar while it has the keyboard.
+// Weir — what the arrow keys, Return, ⌘⌫, and Move Project Up and Down do in the sidebar while it has the keyboard.
 
 import Foundation
 import WeirDomain
@@ -15,6 +15,9 @@ import WeirDomain
 ///   or a closed fold line it goes up to the project's header. With ⌥, ← and →
 ///   on a header fold or open every header.
 /// - Return opens the row, or opens or folds a header or fold line.
+/// - ⌘⌫ on the fold line of the worktrees ready to clean up, or of the
+///   missing ones, does what its button does (Delete Worktrees…, Remove
+///   All from Sidebar), as ⌘⌫ moves a file to the Trash in the Finder.
 /// - Move Project Up and Down (⌥⌘↑ ⌥⌘↓ by default) move the project of
 ///   the line the keys are on, else the window's project
 ///   (`SidebarKeyRoute`).
@@ -80,6 +83,24 @@ enum SidebarKeyboardCursor {
         case .left:
             left(at: current, isOption: isOption, in: lines)
         }
+    }
+
+    /// ⌘⌫, the key that clears a fold line.
+    static let clearKey = StoredShortcut(key: NamedKey.backspace.rawValue, modifiers: [.command])
+
+    /// Whether ⌘⌫ is the sidebar's: no action has it in `keyboard`. One that
+    /// does keeps it, also where its menu item is off and the menu lets the
+    /// key through.
+    static func isClearKeyFree(in keyboard: KeyboardSettings) -> Bool {
+        !WeirShortcutAction.allCases.contains { keyboard.shortcut(for: $0) == clearKey }
+    }
+
+    /// The fold line ⌘⌫ would press the button of: the line the keys are on,
+    /// when it is a fold line. Whether that line has a button is its own
+    /// (`SidebarFoldClear`).
+    static func foldLine(at current: SidebarItemID?) -> (projectID: UUID, section: SidebarSection)? {
+        guard case let .fold(projectID, section)? = current else { return nil }
+        return (projectID, section)
     }
 
     private static func right(at current: SidebarItemID?, isOption: Bool, in lines: Lines) -> Action {

@@ -65,7 +65,8 @@ struct PaletteCommands: Commands {
                 window: window,
                 session: state.session,
                 restoreTurnNumber: RestoreActions.paletteTarget(window: window, state: state)?.displayNumber,
-                installedAgents: state.installedAgents
+                installedAgents: state.installedAgents,
+                toasts: state.toastCenter
             )
         )
     }

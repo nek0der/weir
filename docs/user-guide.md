@@ -118,7 +118,10 @@ is used up. A click outside the panel or Escape closes it.
   its rows from the sidebar, and the **Ready to Clean Up** line shows **×**,
   which deletes its worktrees with `git worktree remove` after a
   confirmation. Their branches stay. A worktree Git would remove only with
-  Force gets the same Force confirmation as **Delete Worktree…**.
+  Force gets the same Force confirmation as **Delete Worktree…**. With the
+  sidebar's keys on either line (⌥⌘0, then the arrows), the **×** shows and
+  ⌘⌫ presses it, unless you gave ⌘⌫ to another action in **Settings →
+  Keyboard**.
 - Fold a header and it shows what waits inside.
 - A header's **+** opens **New Worktree** for that project (⌘N for the
   window's). The **+** beside the sidebar's **Projects** heading opens a
@@ -177,7 +180,13 @@ the actions the CLI does not have:
   **Show Partial Changes** and **Start New Conversation**)
 
 **Answer in terminal**, in the **⋯** menu, hands an approval or a question to
-the agent's own prompt instead.
+the agent's own prompt instead. The bar's buttons stay out of Tab's way, leaving
+Tab to the terminal, so ⌥⌘. opens the **⋯** of the focused pane's bar.
+
+A notice at the bottom of the window with **Undo**, such as the one after
+**Mark as Viewed**, stays while the pointer is on it, and its **Undo** is also a
+row of the command palette while it shows. While VoiceOver is on, the window
+in front reads each notice out, and keeps it on screen three times as long.
 
 When a Claude Code turn ends with shells, subagents, or other tasks still
 running in the background, the line adds how many, until a later turn ends
@@ -358,6 +367,7 @@ encoding.
 | ⇧⌘] / ⇧⌘[ | Next / previous tab |
 | ⇧⌘A | Show Open Tabs |
 | ⌥⌘P / ⌥⌘B | Show the project / worktree menu |
+| ⌥⌘. | Show the decision bar's ⋯ menu |
 | ⌥⌘[ / ⌥⌘] | Go back / forward |
 | ⌃⌘1…⌃⌘9 | Go to worktree N |
 | ⌘1…⌘9 | Go to tab N |

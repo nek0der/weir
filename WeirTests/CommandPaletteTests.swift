@@ -284,6 +284,45 @@ struct CommandPaletteTests {
         #expect(Self.isEnabled(.showWorktreeMenu, in: changed) == true)
     }
 
+    @Test("Show Decision Bar Menu is on only while the focused pane's bar shows its ⋯")
+    func catalog_showDecisionBarMenu_needsTheBarsMenu() throws {
+        let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+        var facts = SupervisionPaletteFacts.empty
+        #expect(try Self.isEnabled(.showDecisionBarMenu, in: Self.items(session, supervision: facts)) == false)
+        facts.hasDecisionBarMenu = true
+        #expect(try Self.isEnabled(.showDecisionBarMenu, in: Self.items(session, supervision: facts)) == true)
+    }
+
+    /// The toast's Undo is the pointer's alone on screen, so the palette
+    /// lists it while the toast offers one, and names that toast.
+    @Test func catalog_listsTheToastsUndo_onlyWhileItOffersOne_withItsMessageAndLabel() throws {
+        let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+        let isUndo = { (item: CommandPaletteItem) in
+            if case .undoToast = item.action {
+                true
+            } else {
+                false
+            }
+        }
+        var facts = SupervisionPaletteFacts.empty
+        #expect(try !Self.items(session, supervision: facts).contains(where: isUndo))
+
+        let toast = ToastItem(.markedViewed(through: 3)) {}
+        facts.toastUndo = SupervisionPaletteFacts.ToastUndo(toast)
+        let plain = try #require(Self.items(session, supervision: facts).first(where: isUndo))
+        #expect(plain.action == .undoToast(toast.id))
+        #expect(plain.title == "Undo")
+        #expect(plain.subtitle == toast.message.resolved(in: Locale(identifier: "en")))
+        #expect(plain.isEnabled)
+
+        let across = ToastItem(.markedViewedInConversations(through: 3, conversation: "main", others: 1)) {}
+        facts.toastUndo = SupervisionPaletteFacts.ToastUndo(across)
+        let labeled = try #require(Self.items(session, supervision: facts).first(where: isUndo))
+        #expect(labeled.title == "Undo in 2 Conversations")
+
+        #expect(SupervisionPaletteFacts.ToastUndo(ToastItem(message: .verbatim("Not enough room"), undo: nil)) == nil)
+    }
+
     @Test("a window with no project, or one whose project is gone, offers no project rows")
     func catalog_projectRows_needTheProject() throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")

@@ -105,6 +105,9 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
     /// Open the title bar's project ▾ and worktree ▾ from the keyboard.
     case showProjectMenu
     case showWorktreeMenu
+    /// Opens the ⋯ of the decision bar under the focused pane, whose
+    /// buttons stay out of ⇥'s stops so ⇥ is the terminal's.
+    case showDecisionBarMenu
     /// Moves the keyboard to the sessions sidebar.
     case focusSidebar
     /// Move the project the sidebar's keys are on (or the window's) up or
@@ -184,7 +187,7 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
              .toggleChangesPanel, .allProjects, .showScratch, .planUsage: .view
         case .nextSession, .previousSession, .nextTab, .previousTab,
              .nextAttention, .previousAttention, .showNeedsAttention, .showOpenTabs,
-             .showProjectMenu, .showWorktreeMenu, .focusSidebar,
+             .showProjectMenu, .showWorktreeMenu, .showDecisionBarMenu, .focusSidebar,
              .moveProjectUp, .moveProjectDown, .goBack, .goForward: .navigation
         case .splitRight, .splitDown, .equalizeSplits, .toggleSplitZoom,
              .focusPaneLeft, .focusPaneRight, .focusPaneUp, .focusPaneDown: .splits
@@ -223,7 +226,7 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
              .notificationHistory, .review, .reviewLatestTurn, .toggleChangesPanel, .allProjects, .showScratch, .planUsage,
              .nextSession, .previousSession, .nextTab, .previousTab,
              .nextAttention, .previousAttention, .showNeedsAttention, .showOpenTabs,
-             .showProjectMenu, .showWorktreeMenu, .focusSidebar,
+             .showProjectMenu, .showWorktreeMenu, .showDecisionBarMenu, .focusSidebar,
              .moveProjectUp, .moveProjectDown, .goBack, .goForward,
              .splitRight, .splitDown,
              .equalizeSplits, .toggleSplitZoom,
@@ -269,6 +272,7 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .showOpenTabs: "Show Open Tabs"
         case .showProjectMenu: "Show Project Menu"
         case .showWorktreeMenu: "Show Worktree Menu"
+        case .showDecisionBarMenu: "Show Decision Bar Menu"
         case .focusSidebar: "Focus Sidebar"
         case .moveProjectUp: "Move Project Up"
         case .moveProjectDown: "Move Project Down"
@@ -331,6 +335,7 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .showOpenTabs: "chevron.down.square"
         case .showProjectMenu: "folder"
         case .showWorktreeMenu: ContainerSymbol.worktree
+        case .showDecisionBarMenu: "ellipsis.circle"
         case .focusSidebar: "sidebar.squares.left"
         case .moveProjectUp: "arrow.up.square"
         case .moveProjectDown: "arrow.down.square"
@@ -445,6 +450,8 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .showProjectMenu: .init(key: "p", modifiers: [.command, .option])
         // B for the branch it names: ⌘T, ⇧⌘T, and ⌥⌘W read as the tabs'.
         case .showWorktreeMenu: .init(key: "b", modifiers: [.command, .option])
+        // The dots of the ⋯ it opens. ⌥⌘M is the Window menu's Minimize All.
+        case .showDecisionBarMenu: .init(key: ".", modifiers: [.command, .option])
         case .focusSidebar: .init(key: "0", modifiers: [.command, .option])
         // Focus Pane Above and Below's keys, which the sidebar takes only
         // while it has the keyboard (`sharesKeys(with:)`).

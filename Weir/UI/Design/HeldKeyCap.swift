@@ -43,6 +43,12 @@ extension View {
     /// Shows the key of whichever of `actions` the held modifier keys reach,
     /// as the person has bound it.
     func heldKeyCap(_ actions: WeirShortcutAction..., placement: HeldKeyCapPlacement = .corner) -> some View {
+        heldKeyCap(actions: actions, placement: placement)
+    }
+
+    /// `heldKeyCap(_:placement:)` for actions decided as the view is drawn:
+    /// none shows no key, and the control keeps its identity either way.
+    func heldKeyCap(actions: [WeirShortcutAction], placement: HeldKeyCapPlacement = .corner) -> some View {
         modifier(HeldActionKeyCap(actions: actions, placement: placement))
     }
 

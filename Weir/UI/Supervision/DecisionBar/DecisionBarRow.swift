@@ -15,6 +15,11 @@ struct DecisionBarFootBar: View {
     /// Why the stop's pane cannot start a new conversation, `nil` when it
     /// can or nothing is known (`StopLedgerStore.newConversationBlockers`).
     var newConversationBlocker: DecisionBarContent.ResumeBlocker?
+    /// What opens the bar's ⋯ from the keyboard (`DecisionBarRow.menuOpener`).
+    var menuOpener: PopUpMenuOpener?
+    /// Whether the ⋯ shows Show Decision Bar Menu's key while its modifiers
+    /// are held (`DecisionBarRow.showsMenuKey`).
+    var showsMenuKey = false
     let onShow: (AttentionItemID) -> Void
 
     var body: some View {
@@ -25,7 +30,9 @@ struct DecisionBarFootBar: View {
                 receiptHelp: receiptHelp,
                 canStartNew: canStartNew,
                 onShow: onShow,
-                newConversationBlocker: newConversationBlocker
+                newConversationBlocker: newConversationBlocker,
+                menuOpener: menuOpener,
+                showsMenuKey: showsMenuKey
             )
         }
         // Its fill is opaque, so its buttons fill theirs opaquely too
@@ -53,6 +60,13 @@ struct DecisionBarRow: View {
     /// Why it cannot (`StopResumeRules.newConversationBlocker`), which the
     /// disabled item says as its tooltip.
     var newConversationBlocker: DecisionBarContent.ResumeBlocker?
+    /// Opens the ⋯ for Show Decision Bar Menu, as a click on it would;
+    /// `nil` for a row drawn from a model alone, which only a click opens.
+    var menuOpener: PopUpMenuOpener?
+    /// Whether the ⋯ shows Show Decision Bar Menu's key while its
+    /// modifiers are held: on the focused pane's bar alone, the one the key
+    /// opens.
+    var showsMenuKey = false
     /// The fits the row may take, widest first: the model's
     /// (`DecisionBarModel.fits`), but for a test that measures one fit on
     /// its own.
@@ -371,10 +385,20 @@ struct DecisionBarRow: View {
     /// show the keys as they are set then, and answer them only while it
     /// is open (`PopUpMenuButton`).
     private func moreMenu(_ sections: [[DecisionBarModel.MoreItem]]) -> some View {
-        PopUpMenuButton(title: LocalizedStringResource(
+        let title = LocalizedStringResource(
             "More Actions",
             comment: "Tooltip and VoiceOver label of a ⋯ menu (the decision bar, the notification history, the menu bar item)"
-        )) {
+        )
+        // The tooltip names the key, as the bar's other buttons name theirs.
+        let button = PopUpMenuButton(
+            verbatim: title.resolved(in: locale),
+            help: ShortcutHelpText.make(
+                name: title,
+                shortcut: settings.settings.keyboard.shortcut(for: .showDecisionBarMenu)?.displayString,
+                locale: locale
+            ),
+            value: nil
+        ) {
             moreEntries(sections)
         } label: {
             Image(systemName: "ellipsis")
@@ -383,9 +407,13 @@ struct DecisionBarRow: View {
                 .contentShape(Rectangle())
         }
         // Out of the ⇥ order, as the bar's buttons are, so ⇥ stays the
-        // terminal's for its TUI; a click and VoiceOver open it.
+        // terminal's for its TUI; a click, VoiceOver, and Show Decision
+        // Bar Menu open it.
         .keyboardFocusable(false)
-        .fixedSize()
+        return (menuOpener.map(button.opened(by:)) ?? button)
+            .fixedSize()
+            // On the focused pane's bar alone: the key opens no other.
+            .heldKeyCap(actions: showsMenuKey ? [.showDecisionBarMenu] : [])
     }
 
     /// The primary button's name.

@@ -95,6 +95,27 @@ struct SidebarKeyboardCursorTests {
         #expect(Cursor.action(for: .return, isOption: false, at: nil, in: lines) == Cursor.Action.none)
     }
 
+    /// ⌘⌫ goes to the fold line the keys are on, whose button it presses;
+    /// a row or a header has none.
+    @Test func commandDelete_findsTheFoldLine_theKeysAreOn() {
+        let line = Cursor.foldLine(at: .fold(Self.open, .cleanable))
+        #expect(line?.projectID == Self.open)
+        #expect(line?.section == .cleanable)
+        for other: SidebarItemID? in [.row(Self.row), .header(Self.open), nil] {
+            #expect(Cursor.foldLine(at: other) == nil, "\(String(describing: other))")
+        }
+    }
+
+    /// ⌘⌫ given to an action in Settings → Keyboard stays the action's,
+    /// also where its menu item is off and lets the key reach the sidebar.
+    @Test func theClearKey_isTheSidebars_onlyWhileNoActionHasIt() {
+        var keyboard = KeyboardSettings()
+        #expect(Cursor.isClearKeyFree(in: keyboard))
+        #expect(Cursor.clearKey.displayString == "⌘⌫")
+        keyboard.setOverride(Cursor.clearKey, for: .equalizeSplits)
+        #expect(!Cursor.isClearKeyFree(in: keyboard))
+    }
+
     /// ⌥⌘↑ ⌥⌘↓ move the project of the line the keys are on, else the
     /// window's; the scratch row's is the window's.
     @Test func theProjectToMove_isTheLinesElseTheWindows() {

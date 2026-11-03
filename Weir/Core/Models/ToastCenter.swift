@@ -23,6 +23,22 @@ final class ToastCenter {
 
     private var dismissTasks: [WindowID: Task<Void, Never>] = [:]
 
+    /// Why a toast stays past its lifetime: the pointer is on it, or its
+    /// window's command palette is open, whose Undo row names it.
+    enum Hold: Hashable {
+        case pointer
+        case palette
+    }
+
+    /// What holds each window's toast, by the toast's id: a hold set for a
+    /// toast that has since been replaced holds nothing.
+    private var holds: [WindowID: (id: UUID, reasons: Set<Hold>)] = [:]
+
+    /// How many times its lifetime a toast stays: longer while VoiceOver
+    /// is on, so the toast is still there once its announcement has been
+    /// heard. Set by the app layer, which can ask; 1 without it (a test).
+    @ObservationIgnored var lifetimeScale: @MainActor () -> Double = { 1 }
+
     /// Where a toast goes whose caller does not know its window
     /// (`showInFrontWindow`): the window commands act on. Set by the app
     /// layer, which knows the windows; without one (a test, say) such
@@ -40,14 +56,51 @@ final class ToastCenter {
     /// Apple HIG guideline that a fresh action supersedes the prior
     /// reversible state.
     func show(_ item: ToastItem, in window: WindowID) {
-        dismissTasks[window]?.cancel()
+        holds[window] = nil
         items[window] = item
-        dismissTasks[window] = Task { [weak self, id = item.id, lifetime = item.lifetimeSeconds] in
+        startLifetime(in: window)
+    }
+
+    /// Starts the window's toast's lifetime over, from its whole length.
+    private func startLifetime(in window: WindowID) {
+        dismissTasks.removeValue(forKey: window)?.cancel()
+        guard let item = items[window] else { return }
+        let lifetime = item.lifetimeSeconds * lifetimeScale()
+        dismissTasks[window] = Task { [weak self, id = item.id] in
             try? await Task.sleep(for: .seconds(lifetime))
             guard !Task.isCancelled else { return }
             guard self?.items[window]?.id == id else { return }
-            self?.items[window] = nil
+            self?.dismiss(in: window)
         }
+    }
+
+    /// Keeps the toast `id` on screen in `window` until `reason` lets go
+    /// (`releaseDismiss`). Nothing when the window shows another toast.
+    func holdDismiss(_ id: UUID, in window: WindowID, reason: Hold) {
+        guard items[window]?.id == id else { return }
+        var reasons = holds[window]?.id == id ? holds[window]?.reasons ?? [] : []
+        reasons.insert(reason)
+        holds[window] = (id, reasons)
+        dismissTasks.removeValue(forKey: window)?.cancel()
+    }
+
+    /// Lets go of `reason`'s hold on the toast `id`; once nothing holds it,
+    /// it stays its whole lifetime again rather than what was left of it,
+    /// so the person has the time to read it that a fresh toast has.
+    func releaseDismiss(_ id: UUID, in window: WindowID, reason: Hold) {
+        guard let hold = holds[window], hold.id == id, hold.reasons.contains(reason) else { return }
+        let reasons = hold.reasons.subtracting([reason])
+        if reasons.isEmpty {
+            holds[window] = nil
+            startLifetime(in: window)
+        } else {
+            holds[window] = (id, reasons)
+        }
+    }
+
+    /// Whether the toast `id` is held in `window`.
+    func isHeld(_ id: UUID, in window: WindowID) -> Bool {
+        holds[window]?.id == id
     }
 
     /// `show(_:in:)` for a caller that does not know which window its
@@ -64,9 +117,18 @@ final class ToastCenter {
         undo()
     }
 
+    /// `undo(in:)` for the toast `id` alone: the palette's Undo row named
+    /// that toast, and one that replaced it since is not what the person
+    /// chose to take back.
+    func undo(_ id: UUID, in window: WindowID) {
+        guard items[window]?.id == id else { return }
+        undo(in: window)
+    }
+
     /// Drop `window`'s toast without calling undo.
     func dismiss(in window: WindowID) {
         dismissTasks.removeValue(forKey: window)?.cancel()
+        holds[window] = nil
         items[window] = nil
     }
 
@@ -104,6 +166,10 @@ struct ToastItem: Identifiable {
     /// Seconds before the toast auto-dismisses. 5s matches macOS
     /// Mail's "deleted message" undo window.
     var lifetimeSeconds: Double = 5.0
+
+    /// How many times `lifetimeSeconds` a toast stays while VoiceOver is
+    /// on: long enough to hear its announcement, then find its Undo.
+    static let voiceOverLifetimeScale = 3.0
 }
 
 extension ToastItem {

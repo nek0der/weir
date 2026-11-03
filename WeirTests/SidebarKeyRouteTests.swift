@@ -1,5 +1,5 @@
 // SidebarKeyRouteTests.swift
-// Weir — Move Project Up and Down: their keys, only while the sidebar has the keyboard.
+// Weir — Move Project Up and Down and ⌘⌫: their keys, only while the sidebar has the keyboard.
 
 import Foundation
 import Testing
@@ -159,5 +159,17 @@ struct SidebarKeyRouteTests {
         let titles = navigation?.entries.map(\.title) ?? []
         #expect(titles.contains("Move Project Up"))
         #expect(titles.contains("Move Project Down"))
+    }
+
+    /// ⌘⌫ goes to the sidebar while it has the keyboard, unless an action
+    /// was given it.
+    @Test func commandDelete_clearsAFoldLine_whileTheSidebarHasTheKeyboard_andNoActionHasIt() {
+        let commandDelete = SidebarKeyboardCursor.clearKey
+        var keyboard = KeyboardSettings()
+        #expect(Route.route(pressed: commandDelete, keyboard: keyboard, hasKeyboard: true, isComposing: false) == .clearFold)
+        #expect(Route.route(pressed: commandDelete, keyboard: keyboard, hasKeyboard: false, isComposing: false) == .pass)
+        #expect(Route.route(pressed: commandDelete, keyboard: keyboard, hasKeyboard: true, isComposing: true) == .pass)
+        keyboard.setOverride(commandDelete, for: .equalizeSplits)
+        #expect(Route.route(pressed: commandDelete, keyboard: keyboard, hasKeyboard: true, isComposing: false) == .pass)
     }
 }

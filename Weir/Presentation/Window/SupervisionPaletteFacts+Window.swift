@@ -14,14 +14,16 @@ extension SupervisionPaletteFacts {
     /// drew, which are enough to tell whether there is more than one row,
     /// and to list each project's rows in the sidebar's order.
     /// `installedAgents` are the agents found on this Mac, read for the
-    /// window's session as its "+" reads them.
+    /// window's session as its "+" reads them. `toasts` holds the toast
+    /// whose Undo the palette lists.
     @MainActor
     init(
         window: ProjectWindowState,
         session: WorkspaceSession,
         sections: SidebarPresentedSections? = nil,
         restoreTurnNumber: Int? = nil,
-        installedAgents: InstalledAgentsStore? = nil
+        installedAgents: InstalledAgentsStore? = nil,
+        toasts: ToastCenter? = nil
     ) {
         let selection = window.selection
         let sections = sections ?? window.presentedSections
@@ -36,7 +38,17 @@ extension SupervisionPaletteFacts {
             isChoosingProject: selection.isChoosingProject,
             areRailsHidden: window.areRailsHidden,
             hasWorktreeMenu: selection.shownProjectID.flatMap { session.project($0) }.map(CheckoutName.hasWorktreeMenu) ?? false,
-            installedAgents: installedAgents?.installedAgents(for: selection.activeContainerID.projectID)
+            hasDecisionBarMenu: window.hasDecisionBarMenu(in: session),
+            installedAgents: installedAgents?.installedAgents(for: selection.activeContainerID.projectID),
+            toastUndo: toasts?.current(in: window.id).flatMap(SupervisionPaletteFacts.ToastUndo.init)
         )
+    }
+}
+
+extension SupervisionPaletteFacts.ToastUndo {
+    /// `item`'s Undo, `nil` for a toast with nothing to take back.
+    init?(_ item: ToastItem) {
+        guard item.undo != nil else { return nil }
+        self.init(id: item.id, message: item.message, label: item.undoLabel)
     }
 }

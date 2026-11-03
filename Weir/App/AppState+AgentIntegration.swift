@@ -76,6 +76,11 @@ extension AppState {
         toastCenter.frontWindow = { [weak self] in
             self?.windowRegistry.backgroundCommandTarget.id
         }
+        // Read as each toast is shown, so turning VoiceOver on or off
+        // counts from the next toast.
+        toastCenter.lifetimeScale = {
+            NSWorkspace.shared.isVoiceOverEnabled ? ToastItem.voiceOverLifetimeScale : 1
+        }
     }
 
     /// With the hidden setting that holds requests off, hands every held

@@ -14,6 +14,7 @@ Press <kbd>⌘/</kbd> in Weir to see the full list with your own bindings. To ch
 | <kbd>⌘J</kbd> / <kbd>⇧⌘J</kbd> | Next / previous item that needs you |
 | <kbd>⌥⌘J</kbd> | Show Needs Attention |
 | <kbd>⌘⏎</kbd> | The bar's main action, such as Answer…, Mark as Viewed, or Resume |
+| <kbd>⌥⌘.</kbd> | The bar's ⋯ menu |
 | <kbd>⌥⌘R</kbd> | Review |
 | <kbd>⌥⌘L</kbd> | Review Latest Turn |
 | <kbd>⌥⌘I</kbd> | Changes panel |

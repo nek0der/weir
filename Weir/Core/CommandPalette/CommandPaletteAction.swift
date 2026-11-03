@@ -29,6 +29,9 @@ enum CommandPaletteAction: Equatable {
     case movePaneToNewTab
     /// The window's icon bars hidden, or shown again (View ▸ Hide Icon Bars).
     case toggleIconBars
+    /// The window's toast taken back, as its Undo does: the toast `UUID`
+    /// names, and nothing once another has replaced it.
+    case undoToast(UUID)
     case insertPrefix(PalettePrefix)
 
     var frecencyKey: String {
@@ -47,6 +50,8 @@ enum CommandPaletteAction: Equatable {
         case let .openSettingsSection(section): "settings.section.\(section.rawValue)"
         case .movePaneToNewTab: "pane.moveToNewTab"
         case .toggleIconBars: "view.toggleIconBars"
+        // One key for every toast, so the row ranks as the one it always is.
+        case .undoToast: "toast.undo"
         case let .insertPrefix(mode): "prefix.\(mode.character)"
         }
     }

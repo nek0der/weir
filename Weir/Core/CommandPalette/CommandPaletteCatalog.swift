@@ -37,6 +37,8 @@ enum CommandPaletteCatalog {
         let hasRails: Bool
         /// The title bar shows the worktree ▾.
         let hasWorktreeMenu: Bool
+        /// The focused pane's decision bar shows its ⋯.
+        let hasDecisionBarMenu: Bool
     }
 
     private struct ShortcutDependencies {
@@ -85,6 +87,7 @@ enum CommandPaletteCatalog {
         appendClosedTabs(to: &items, session: session)
         appendRecentProjects(to: &items, session: session)
         appendRestore(to: &items, facts: supervision, locale: locale)
+        appendToastUndo(to: &items, facts: supervision, locale: locale)
         appendSettings(to: &items, locale: locale)
         appendSettingsSections(to: &items, locale: locale)
         // A project ID the window still holds after its project went is no
@@ -153,7 +156,8 @@ enum CommandPaletteCatalog {
             canGoForward: session.canNavigateForward(in: window),
             hasPaneStrip: !supervision.isChoosingProject,
             hasRails: !supervision.areRailsHidden,
-            hasWorktreeMenu: supervision.hasWorktreeMenu
+            hasWorktreeMenu: supervision.hasWorktreeMenu,
+            hasDecisionBarMenu: supervision.hasDecisionBarMenu
         )
 
         for action in WeirShortcutAction.allCases {
@@ -427,6 +431,24 @@ enum CommandPaletteCatalog {
         ))
     }
 
+    /// The window's toast's Undo, with the toast's message as its subtitle,
+    /// while the toast offers one: its button is the pointer's alone, as ⇥
+    /// stays the terminal's and ⌘Z the pane's. The toast stays while the
+    /// palette is open (`ToastHost`).
+    private static func appendToastUndo(to items: inout [CommandPaletteItem], facts: SupervisionPaletteFacts, locale: Locale) {
+        guard let undo = facts.toastUndo else { return }
+        items.append(row(
+            undo.label ?? LocalizedStringResource(
+                "Undo",
+                comment: "Takes back the last move: a toast's, the decision bar's after Mark as Viewed, or a restore's"
+            ),
+            subtitle: undo.message.resolved(in: locale),
+            icon: "arrow.uturn.backward.circle",
+            action: .undoToast(undo.id),
+            locale: locale
+        ))
+    }
+
     /// The window's project settings: the palette's way to them in the
     /// supervision window, where the project ▾ also has them. The detail
     /// names the project, since the palette's other settings are the app's.
@@ -482,6 +504,7 @@ enum CommandPaletteCatalog {
         case .showOpenTabs: context.hasPaneStrip
         case .planUsage: context.hasRails
         case .showWorktreeMenu: context.hasWorktreeMenu
+        case .showDecisionBarMenu: context.hasDecisionBarMenu
         default: true
         }
     }

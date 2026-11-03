@@ -50,6 +50,8 @@ enum WindowCommand: Equatable {
     /// Open the title bar's project ▾ or worktree ▾.
     case showProjectMenu
     case showWorktreeMenu
+    /// Open the ⋯ of the decision bar under the window's focused pane.
+    case showDecisionBarMenu
     /// Open or close the plan usage panel from its rail button.
     case togglePlanUsage
     /// Move the keyboard to the sessions sidebar.

@@ -78,6 +78,9 @@ final class ProjectWindowState: Identifiable {
     /// What each pane's bar shows and since when, for ⌘⏎. Not
     /// observed: nothing is drawn from it.
     @ObservationIgnored var primaryActionGate = PrimaryActionGate()
+    /// The ⋯ of each pane's decision bar, which Show Decision Bar Menu
+    /// opens on the focused pane. Not observed: only that key reads it.
+    @ObservationIgnored var decisionBarMenus = DecisionBarMenus()
 
     /// Global frame of this window's palette field, which the palette's
     /// dropdown hangs from. Each window has its own field, so one frame

@@ -6,16 +6,20 @@ import SwiftUI
 /// One of the lists that fold into a line, 26pt: a chevron, the list's
 /// name, how many rows it holds, and at its end, under the pointer, the
 /// button that clears the list when it has one (Delete Worktrees…, Remove
-/// All from Sidebar). Pressing it opens or folds the list; the rows under
-/// it are drawn only while it is open.
+/// All from Sidebar), which ⌘⌫ presses while the keys are on the line.
+/// Pressing it opens or folds the list; the rows under it are drawn only
+/// while it is open.
 struct SidebarSectionFoldRow: View {
     let fold: SessionSidebarModel.Fold
     /// The arrow keys are on this line while the sidebar has the keyboard.
     var isKeyboardSelected = false
-    /// The line's one action, as its button at the line's end; `nil` for a
-    /// list with none. The line has no right-click menu: the button is
-    /// the one thing to do there.
+    /// The line's one action, as its button at the line's end and ⌘⌫;
+    /// `nil` for a list with none. The line has no right-click menu: the
+    /// button is the one thing to do there.
     var clear: SidebarFoldClear?
+    /// The key that presses the button while the keys are on the line (⌘⌫),
+    /// `nil` while an action the person gave it keeps it.
+    var clearKey: String?
     let onToggle: () -> Void
     @Environment(\.locale) private var locale
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -83,12 +87,19 @@ struct SidebarSectionFoldRow: View {
 
     /// The line's one way to clear its list, as a glyph at the line's end,
     /// where the project header has its fold. It shows only under the
-    /// pointer: at rest a glyph on every fold line drew the eye away from
-    /// the rows, and clearing a list is not what the line is for.
+    /// pointer, or while the keys are on the line, where ⌘⌫ presses it: at
+    /// rest a glyph on every fold line drew the eye away from the rows, and
+    /// clearing a list is not what the line is for.
     @ViewBuilder private var clearButton: some View {
         if let clear {
             clearButton(clear)
         }
+    }
+
+    /// Whether ⌘⌫ presses the button now: the keys are on the line, and no
+    /// action has the key.
+    private var showsClearKey: Bool {
+        isKeyboardSelected && clearKey != nil
     }
 
     private func clearButton(_ clear: SidebarFoldClear) -> some View {
@@ -100,7 +111,7 @@ struct SidebarSectionFoldRow: View {
         .buttonStyle(.supervisionIcon(horizontalPadding: Layout.spaceXS))
         // Hidden rather than left out, so the line does not shift as the
         // pointer comes and goes.
-        .opacity(isHovering ? 1 : 0)
+        .opacity(isHovering || showsClearKey ? 1 : 0)
         .allowsHitTesting(isHovering)
         // The glyph stands where the header's fold does: the row's inset
         // less the room the button keeps beside it.
@@ -110,7 +121,9 @@ struct SidebarSectionFoldRow: View {
         .focusable(false)
         // AppKit's own tooltip: `.help` never showed here, on a button laid
         // over another button.
-        .trackedHelp(clear.kind.name.resolved(in: locale))
+        .trackedHelp(ShortcutHelpText.make(name: clear.kind.name, shortcut: clearKey, locale: locale))
+        // ⌫ while ⌘ is held, as the window's other controls show their keys.
+        .heldKeyCap(chord: .command) { [showsClearKey] in showsClearKey ? "⌫" : nil }
         .accessibilityHidden(true)
     }
 }

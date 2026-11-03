@@ -508,6 +508,7 @@ enum TabActions {
         case .showOpenTabs: .showOpenTabs
         case .showProjectMenu: .showProjectMenu
         case .showWorktreeMenu: .showWorktreeMenu
+        case .showDecisionBarMenu: .showDecisionBarMenu
         case .focusSidebar: .focusSidebar
         default: nil
         }
@@ -530,7 +531,7 @@ enum TabActions {
             attention.walkAttention?(true)
         case .previousAttention:
             attention.walkAttention?(false)
-        case .showNeedsAttention, .showOpenTabs, .showProjectMenu, .showWorktreeMenu, .focusSidebar:
+        case .showNeedsAttention, .showOpenTabs, .showProjectMenu, .showWorktreeMenu, .showDecisionBarMenu, .focusSidebar:
             // The window carries these out, with what it knows of its controls.
             if let command = windowCommand(forNavigation: action) {
                 scope.perform(command)

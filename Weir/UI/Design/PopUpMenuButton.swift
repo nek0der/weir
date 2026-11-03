@@ -219,14 +219,26 @@ extension PopUpMenuButton {
 /// Opens a `PopUpMenuButton`'s menu from code, as a click on it would.
 @MainActor
 final class PopUpMenuOpener {
-    /// `nil` until the button is drawn, or once it is gone.
-    weak var trigger: PopUpMenuTriggerView?
+    /// Every trigger drawn for the button, held weakly: a `ViewThatFits`
+    /// builds one in each of the forms it weighs, and the one that was
+    /// drawn last need not be the one on screen. Empty until the button is
+    /// drawn.
+    private let triggers = NSHashTable<PopUpMenuTriggerView>.weakObjects()
+
+    func register(_ trigger: PopUpMenuTriggerView) {
+        triggers.add(trigger)
+    }
+
+    /// The trigger on screen, `nil` when none is.
+    var shownTrigger: PopUpMenuTriggerView? {
+        triggers.allObjects.first(where: \.isOnScreen)
+    }
 
     /// On the next turn, so the key press that asked for it returns before
     /// the menu's tracking takes over.
     func open() {
         DispatchQueue.main.async { [weak self] in
-            self?.trigger?.open()
+            self?.shownTrigger?.open()
         }
     }
 }
@@ -317,7 +329,7 @@ private struct PopUpMenuTrigger: NSViewRepresentable {
         view.isEnabled = isEnabled
         view.allowsKeyboardFocus = allowsKeyboardFocus
         view.makeMenu = makeMenu
-        opener?.trigger = view
+        opener?.register(view)
     }
 }
 
@@ -370,6 +382,13 @@ final class PopUpMenuTriggerView: NSView {
 
     override func mouseDown(with _: NSEvent) {
         open()
+    }
+
+    /// Whether the button can be seen: in a window that is on screen, not
+    /// hidden, and not clipped away.
+    var isOnScreen: Bool {
+        guard let window, window.isVisible, !isHiddenOrHasHiddenAncestor else { return false }
+        return !visibleRect.isEmpty
     }
 
     func open() {

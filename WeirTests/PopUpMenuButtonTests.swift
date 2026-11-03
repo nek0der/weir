@@ -141,6 +141,36 @@ struct PopUpMenuButtonTests {
         #expect(trigger.isAccessibilityElement() && trigger.isAccessibilityEnabled(), "VoiceOver still reaches it")
     }
 
+    /// A `ViewThatFits` builds the ⋯ in every form it weighs; the opener
+    /// opens the one drawn on screen, not whichever was built last.
+    @Test(.hostsWindows)
+    func opener_findsTheTriggerOnScreen_amongThoseBuilt() {
+        let opener = PopUpMenuOpener()
+        #expect(opener.shownTrigger == nil)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 200, height: 100),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let content = NSView(frame: window.contentRect(forFrameRect: window.frame))
+        window.contentView = content
+        let shown = PopUpMenuTriggerView(frame: NSRect(x: 10, y: 10, width: 20, height: 20))
+        let hidden = PopUpMenuTriggerView(frame: NSRect(x: 40, y: 10, width: 20, height: 20))
+        hidden.isHidden = true
+        let detached = PopUpMenuTriggerView(frame: NSRect(x: 0, y: 0, width: 20, height: 20))
+        content.addSubview(shown)
+        content.addSubview(hidden)
+        opener.register(hidden)
+        opener.register(detached)
+        window.orderFront(nil)
+        #expect(opener.shownTrigger == nil, "neither a hidden trigger nor one in no window is on screen")
+        opener.register(shown)
+        #expect(opener.shownTrigger === shown)
+    }
+
     @Test("a verbatim item keeps its words, its checkmark, and its tooltip")
     func make_verbatimItem() {
         let menu = PopUpMenu.make([
