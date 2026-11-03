@@ -11464,12 +11464,12 @@
         }
       }
     },
-    "Most failures come from a malformed ~/.config/ghostty/config. Open Settings and turn off Use Ghostty config file in Integrations, or choose Restore Default Settings.": {
+    "Most failures come from a malformed ~/.config/ghostty/config. Open Settings, turn off Use Ghostty config file in Integrations, and relaunch Weir. Restore Default Settings relaunches Weir with the default settings.": {
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "多くの場合、原因は ~/.config/ghostty/config の記述の誤りです。設定を開いて「連携」の「Ghostty の設定ファイルを使用する」をオフにするか、「設定をデフォルトに戻す」を選択してください。"
+            "value": "多くの場合、原因は ~/.config/ghostty/config の記述の誤りです。設定を開いて「連携」の「Ghostty の設定ファイルを使用する」をオフにし、Weir を再起動してください。「設定をデフォルトに戻す」を選ぶと、デフォルトの設定で Weir を再起動します。"
           }
         }
       }
@@ -23765,6 +23765,145 @@
           "stringUnit": {
             "state": "translated",
             "value": "次の項目を表示"
+          }
+        }
+      }
+    },
+    "Relaunch Weir": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weir を再起動"
+          }
+        }
+      }
+    },
+    "In Console, search for com.nekoder.weir to see Weir’s logs.": {
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コンソールで com.nekoder.weir を検索すると、Weir のログを表示できます。"
+          }
+        }
+      }
+    },
+    "Folder Missing": {
+      "comment": "Sidebar project header, in place of its count: the project's folder is gone from disk",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Folder Missing"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォルダーがありません"
+          }
+        }
+      }
+    },
+    "Git Unavailable": {
+      "comment": "Sidebar project header, in place of its count: no git could be run",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Git Unavailable"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Git を使えません"
+          }
+        }
+      }
+    },
+    "Git Error": {
+      "comment": "Sidebar project header, in place of its count: git refused to list the project's worktrees",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Git Error"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Git のエラー"
+          }
+        }
+      }
+    },
+    "The project’s folder is gone: %@. Move it back, or close the project.": {
+      "comment": "Sidebar project header, tooltip and VoiceOver: the project's folder was deleted or moved; the path follows",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The project’s folder is gone: %@. Move it back, or close the project."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロジェクトのフォルダーが見つかりません：%@。元の場所に戻すか、プロジェクトを閉じてください。"
+          }
+        }
+      }
+    },
+    "Git couldn’t run. Install the Command Line Tools with xcode-select --install in Terminal.": {
+      "comment": "Project header tooltip and VoiceOver: no git could be run; xcode-select --install is a command",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Git couldn’t run. Install the Command Line Tools with xcode-select --install in Terminal."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Git を実行できません。ターミナルで xcode-select --install を実行して、Command Line Tools をインストールしてください。"
+          }
+        }
+      }
+    },
+    "Git couldn’t list the worktrees: %@": {
+      "comment": "Project header tooltip and VoiceOver: git refused to list the worktrees; git's English message follows",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Git couldn’t list the worktrees: %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Git でワークツリーの一覧を取得できませんでした：%@"
+          }
+        }
+      }
+    },
+    "Git couldn’t list the worktrees.": {
+      "comment": "Sidebar project header, tooltip and VoiceOver: git did not list the worktrees and said nothing",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Git couldn’t list the worktrees."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Git でワークツリーの一覧を取得できませんでした。"
           }
         }
       }

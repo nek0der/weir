@@ -4,9 +4,10 @@
 // `Text` with no way out: ⌘, didn't render (toolbar lives inside the
 // failed layout), no Quit button, no log-revealing affordance. Most
 // init failures come from a malformed user-side ghostty config
-// (Layer 2 in `GhosttyConfigBridge`), so we give the user three ways
-// to escape: open Settings, reveal Console.app filtered by Weir's
-// subsystem, and reset `settings.json` to defaults.
+// (Layer 2 in `GhosttyConfigBridge`), so we give the user ways to
+// escape: open Settings, open Console.app, reset `settings.json` to
+// defaults, and relaunch. libghostty is set up once a launch, so a fix
+// takes effect only on the next one, and the screen says so.
 
 import AppKit
 import SwiftUI
@@ -26,8 +27,9 @@ struct LibghosttyInitFailureView: View {
             // unlocalized.
             Text(
                 """
-                Most failures come from a malformed ~/.config/ghostty/config. Open Settings and turn off \
-                Use Ghostty config file in Integrations, or choose Restore Default Settings.
+                Most failures come from a malformed ~/.config/ghostty/config. Open Settings, turn off \
+                Use Ghostty config file in Integrations, and relaunch Weir. Restore Default Settings \
+                relaunches Weir with the default settings.
                 """
             )
             .font(WeirFont.body)
@@ -41,21 +43,29 @@ struct LibghosttyInitFailureView: View {
                 Button("Show Logs in Console") {
                     revealConsole()
                 }
+                .help(Text("In Console, search for com.nekoder.weir to see Weir’s logs."))
                 Button("Restore Default Settings") {
-                    SettingsStore.moveSettingsFileAside()
+                    state.settingsStore.restoreDefaultsForRelaunch()
+                    AppRelaunch.relaunch()
                 }
                 Button("Quit Weir") {
                     NSApp.terminate(nil)
                 }
                 .keyboardShortcut("q", modifiers: [.command])
+                // The one way a change takes effect: libghostty is set up
+                // once a launch.
+                Button("Relaunch Weir") {
+                    AppRelaunch.relaunch()
+                }
+                .keyboardShortcut(.defaultAction)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
     }
 
-    /// Launch Console.app so the user can filter on the `com.nekoder.weir`
-    /// subsystem and copy the init-failure trail.
+    /// Launch Console.app. It takes no filter from outside, so the button's
+    /// tooltip names the subsystem (`com.nekoder.weir`) to search for.
     private func revealConsole() {
         let url = URL(fileURLWithPath: "/System/Applications/Utilities/Console.app")
         NSWorkspace.shared.open(url)

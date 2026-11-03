@@ -71,3 +71,55 @@ enum SidebarHeaderText {
         )
     }
 }
+
+/// The words for a project's trouble (`ProjectTrouble`): the few the header
+/// shows in place of its count, and the sentence its tooltip and VoiceOver
+/// say, which names what to do next.
+enum ProjectTroubleText {
+    static func label(_ trouble: ProjectTrouble) -> LocalizedStringResource {
+        switch trouble {
+        case .folderMissing:
+            LocalizedStringResource(
+                "Folder Missing",
+                comment: "Sidebar project header, in place of its count: the project's folder is gone from disk"
+            )
+        case .gitUnavailable:
+            LocalizedStringResource(
+                "Git Unavailable",
+                comment: "Sidebar project header, in place of its count: no git could be run"
+            )
+        case .listingFailed:
+            LocalizedStringResource(
+                "Git Error",
+                comment: "Sidebar project header, in place of its count: git refused to list the project's worktrees"
+            )
+        }
+    }
+
+    /// What happened and what to do. `folder` is the project's folder, which
+    /// a person looks for after a rename.
+    static func explanation(_ trouble: ProjectTrouble, folder: URL) -> LocalizedStringResource {
+        switch trouble {
+        case .folderMissing:
+            LocalizedStringResource(
+                "The project’s folder is gone: \(folder.path). Move it back, or close the project.",
+                comment: "Sidebar project header, tooltip and VoiceOver: the project's folder was deleted or moved; the path follows"
+            )
+        case .gitUnavailable:
+            LocalizedStringResource(
+                "Git couldn’t run. Install the Command Line Tools with xcode-select --install in Terminal.",
+                comment: "Project header tooltip and VoiceOver: no git could be run; xcode-select --install is a command"
+            )
+        case let .listingFailed(detail?):
+            LocalizedStringResource(
+                "Git couldn’t list the worktrees: \(detail)",
+                comment: "Project header tooltip and VoiceOver: git refused to list the worktrees; git's English message follows"
+            )
+        case .listingFailed(nil):
+            LocalizedStringResource(
+                "Git couldn’t list the worktrees.",
+                comment: "Sidebar project header, tooltip and VoiceOver: git did not list the worktrees and said nothing"
+            )
+        }
+    }
+}

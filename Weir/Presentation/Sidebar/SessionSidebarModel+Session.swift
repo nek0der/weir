@@ -269,9 +269,7 @@ extension SessionSidebarModel {
                 hasGitFacts: git.facts != nil
             ),
             lastActivity: rowRuntimes.map(\.badge.updatedAt).max(),
-            isMissing: project.flatMap { project in
-                container.worktreeID.flatMap { session.worktree(projectID: project.id, worktreeID: $0) }
-            }?.isMissing ?? false,
+            isMissing: session.isFolderMissing(container),
             // In `AgentKind`'s order, as the row's badges are.
             agents: AgentKind.allCases.flatMap { kind in
                 agentsInFront.filter { $0.provider == kind }.map { SessionRowFact.Input(agents: [$0]) }

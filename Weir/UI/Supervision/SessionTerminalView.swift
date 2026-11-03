@@ -126,7 +126,12 @@ private struct SessionTerminalEmptyState: View {
     /// truth per command.
     private var commands: [EmptySessionCommand] {
         [
-            EmptySessionCommand(title: "New Tab", action: .newTab, isEnabled: true) {
+            // Off while the row's folder is gone, as the File menu's is.
+            EmptySessionCommand(
+                title: "New Tab",
+                action: .newTab,
+                isEnabled: session.selection(window.id).map { !session.isFolderMissing($0.activeContainerID) } ?? true
+            ) {
                 TabActions.newTab(session, in: window.id, intent: .person)
             },
             EmptySessionCommand(

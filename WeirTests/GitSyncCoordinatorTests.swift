@@ -113,9 +113,62 @@ struct GitSyncCoordinatorTests {
             await pollUntil(timeout: .milliseconds(200)) {
                 session.projects.first { $0.id == project.id } != before
             }
-            let after = try #require(session.projects.first { $0.id == project.id })
+            var after = try #require(session.projects.first { $0.id == project.id })
+            // What git said goes on the project, for the sidebar to show.
+            #expect(after.trouble == .listingFailed(detail: "fatal: detected dubious ownership in repository"))
+            after.trouble = nil
             #expect(after == before)
             #expect(!session.hasMissingWorktrees(projectID: project.id))
+            withExtendedLifetime(coordinator) {}
+        }
+    }
+
+    /// A listing that fails or succeeds as `fails` says, counting the calls.
+    private final class SwitchableListing: Sendable {
+        private let state = OSAllocatedUnfairLock(initialState: (fails: true, calls: 0))
+
+        var calls: Int {
+            state.withLock { $0.calls }
+        }
+
+        func setFails(_ fails: Bool) {
+            state.withLock { $0.fails = fails }
+        }
+
+        func list(_: URL) async throws -> [GitWorktreeInfo] {
+            let fails = state.withLock { state in
+                state.calls += 1
+                return state.fails
+            }
+            if fails {
+                throw GitProcessError.launchFailed("The folder does not exist")
+            }
+            return []
+        }
+    }
+
+    /// The project's folder renamed away: the listing fails, and the
+    /// project says its folder is missing rather than only the log saying
+    /// git failed. Put back, the next sync takes the trouble down.
+    @Test func aListing_inAFolderThatIsGone_marksTheProjectsFolderMissing_untilItIsBack() async throws {
+        try await withTempDir { dir in
+            let root = dir.appendingPathComponent("repo")
+            let (session, project) = WorkspaceSessionFixture.withProject(rootURL: root)
+            let listing = SwitchableListing()
+            let coordinator = GitSyncCoordinator(session: session) { try await listing.list($0) }
+            @MainActor func trouble() -> ProjectTrouble? {
+                session.projects.first { $0.id == project.id }?.trouble
+            }
+            await pollUntil(timeout: .seconds(3), interval: .milliseconds(10)) { trouble() != nil }
+            #expect(trouble() == .folderMissing)
+            #expect(session.isFolderMissing(.project(project.id)))
+
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            listing.setFails(false)
+            coordinator.appDidBecomeActive()
+            await pollUntil(timeout: .seconds(3), interval: .milliseconds(10)) { trouble() == nil }
+            #expect(trouble() == nil)
+            #expect(!session.isFolderMissing(.project(project.id)))
             withExtendedLifetime(coordinator) {}
         }
     }

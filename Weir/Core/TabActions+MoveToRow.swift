@@ -7,17 +7,19 @@ import WeirDomain
 @MainActor
 extension TabActions {
     /// Whether `container`'s row can take work: it still exists, and its
-    /// worktree is on disk. A moved tab's new panes start in the row's folder
-    /// (`WorkspaceSession.moveTab`), and a missing worktree has none.
+    /// folder is on disk. A moved tab's new panes start in the row's folder
+    /// (`WorkspaceSession.moveTab`), and a missing worktree or a project
+    /// whose own folder is gone has none (`WorkspaceSession.isFolderMissing`).
     private static func canTakeWork(_ container: ContainerID, in session: WorkspaceSession) -> Bool {
-        switch container {
+        let exists = switch container {
         case .loose:
             true
         case let .project(projectID):
             session.project(projectID) != nil
         case let .worktree(projectID, worktreeID):
-            session.worktree(projectID: projectID, worktreeID: worktreeID)?.isMissing == false
+            session.worktree(projectID: projectID, worktreeID: worktreeID) != nil
         }
+        return exists && !session.isFolderMissing(container)
     }
 
     /// Whether dropping `work` on `container`'s row would move it. A pane
