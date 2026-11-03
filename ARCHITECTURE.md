@@ -698,8 +698,10 @@ Agent lifecycle stores are runtime-scoped: one UUID per shim invocation, plus
 tmux socket, server-generation, and pane metadata when a multiplexer sits
 between the agent and Weir. Hooks never query tmux. `TmuxTopology` resolves
 current pane membership (including linked windows), and `TmuxPanePresence`
-joins clients to surface ttys. An unresolved tmux record never falls back to a
-launch pane or a saved restore binding. What runs in front of a pane is read in
+joins clients to surface ttys. The client of a tmux server started inside a
+pane of another one writes to that pane's tty, not to a surface's, so it is
+followed through that pane to the Weir pane showing it. An unresolved tmux
+record never falls back to a launch pane or a saved restore binding. What runs in front of a pane is read in
 one place, `ProcessNames` (`Core/Process`), by the path the process was started
 from, so a long executable name is never cut to the kernel's 16 characters.
 The terminal, the review's paste probe, and `TmuxPaneJob` (which asks the

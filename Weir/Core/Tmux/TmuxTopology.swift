@@ -33,6 +33,17 @@ struct TmuxPaneLocation: Equatable {
     /// the server's whole life. `nil` when the probe could not read it
     /// (and in fixtures), where `serverStartedAt` stands in.
     var serverProcessStartedAt: String?
+    /// The pty tmux gives this pane. A tmux client run inside the pane
+    /// writes to it, so it is how a nested server's client is traced back
+    /// to the outer pane showing it. `nil` in older observations and
+    /// fixtures.
+    var paneTTY: String?
+    /// The outer panes, outermost first, whose tmux clients this pane is
+    /// shown through when it is on a server nested in another. Empty for a
+    /// pane a Weir surface's own client shows. Selecting the agent's pane
+    /// selects each of these first, or the person would still see the
+    /// outer window they were in.
+    var route: [TmuxPaneLocation] = []
 
     /// The start a run record's `tmuxServerStartedAt` is matched against.
     var recordedServerStart: String {
@@ -54,13 +65,14 @@ struct TmuxTopology: Equatable {
 
     static let paneArguments = [
         "list-panes", "-a", "-F",
-        "#{pid}\t#{start_time}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{window_active}\t#{pane_active}\t#{window_zoomed_flag}"
+        "#{pid}\t#{start_time}\t#{session_id}\t#{window_id}\t#{pane_id}\t#{window_active}\t#{pane_active}"
+            + "\t#{window_zoomed_flag}\t#{pane_tty}"
     ]
 
     static func parsePanes(_ output: String, socketPath: String) -> [TmuxPaneLocation] {
         output.split(separator: "\n").compactMap { line in
             let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
-            guard fields.count == 7 || fields.count == 8,
+            guard (7...9).contains(fields.count),
                   Int(fields[0]) != nil, Int(fields[1]) != nil,
                   isID(fields[2], prefix: "$"), isID(fields[3], prefix: "@"),
                   isID(fields[4], prefix: "%")
@@ -70,7 +82,8 @@ struct TmuxTopology: Equatable {
                 serverPID: fields[0], serverStartedAt: fields[1],
                 sessionID: fields[2], windowID: fields[3], paneID: fields[4],
                 isActive: fields[5] == "1" && fields[6] == "1",
-                isVisible: fields.count == 8 ? fields[5] == "1" && (fields[7] != "1" || fields[6] == "1") : nil
+                isVisible: fields.count >= 8 ? fields[5] == "1" && (fields[7] != "1" || fields[6] == "1") : nil,
+                paneTTY: fields.count == 9 && !fields[8].isEmpty ? fields[8] : nil
             )
         }
     }
@@ -89,6 +102,14 @@ struct TmuxTopology: Equatable {
                 && $0.serverPID == endpoint.serverPID && $0.recordedServerStart == endpoint.serverStartedAt
                 && $0.paneID == endpoint.paneID
         }
+    }
+
+    /// Whether `other` reports the same servers, panes, and clients,
+    /// whenever each was observed. A probe stamps every server it visits,
+    /// so comparing whole values would call each pass a change.
+    func hasSameObservations(as other: TmuxTopology) -> Bool {
+        clients == other.clients && panes == other.panes
+            && socketAliases == other.socketAliases && outcomes == other.outcomes
     }
 
     mutating func merge(_ batch: TmuxTopology, candidates: Set<String>, now: TimeInterval) {

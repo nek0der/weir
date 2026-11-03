@@ -4,6 +4,7 @@
 // test asks a real tmux whether we read it correctly, because the
 // format string is the part no unit test can validate.
 
+import Darwin
 import Foundation
 import Testing
 @testable import Weir
@@ -200,6 +201,101 @@ struct TmuxClientProbeSocketTests {
             let absent = dir.appendingPathComponent("tmux-501", isDirectory: true)
             #expect(TmuxClientProbe.socketPaths(inServerDirectory: absent).isEmpty)
         }
+    }
+}
+
+/// Serialized: each case fills most of a pass's budget with slow calls,
+/// and two at once would slow each other's past what the timings assume.
+@Suite("TmuxClientProbe poll budget", .serialized)
+struct TmuxClientProbeBudgetTests {
+    /// More servers than one pass's budget reaches, each answering slowly
+    /// but within its own timeout: the server the budget ran out on is left
+    /// unvisited for the next pass to start with, not recorded as having
+    /// timed out, which would drop what the last pass heard from it.
+    @Test(.timeLimit(.minutes(1)))
+    func serverTheBudgetRunsOutOn_isLeftForTheNextPass() throws {
+        let folder = try makeSlowServers()
+        defer { try? FileManager.default.removeItem(atPath: folder.path) }
+
+        let batch = TmuxClientProbe.probe(tmuxPath: folder.tmux, paths: Set(folder.sockets), timeout: Self.callTimeout)
+        let sockets = folder.sockets
+
+        let answered = Set(batch.snapshot.outcomes.keys)
+        #expect(!answered.isEmpty)
+        #expect(answered.count < sockets.count)
+        #expect(!batch.snapshot.outcomes.values.contains(.timedOut))
+        #expect(Set(batch.snapshot.observedAt.keys) == answered)
+        // The next pass starts at the first server this one did not answer.
+        #expect(batch.nextCursor == answered.count)
+    }
+
+    /// A server that answered last time is asked on every pass, even when
+    /// the turns of the others would not reach it within the budget, and
+    /// the server whose turn it is is asked before it, so the turns move on
+    /// however long the answering servers take.
+    @Test(.timeLimit(.minutes(1)))
+    func serverThatAnsweredLastTime_isAskedEveryPass_afterTheOneWhoseTurnItIs() throws {
+        let folder = try makeSlowServers()
+        defer { try? FileManager.default.removeItem(atPath: folder.path) }
+        let live = try #require(folder.sockets.last)
+        let turns = folder.sockets.filter { $0 != live }.sorted()
+
+        let batch = TmuxClientProbe.probe(
+            tmuxPath: folder.tmux, paths: Set(folder.sockets), answering: [live], cursor: 3, timeout: Self.callTimeout
+        )
+
+        #expect(batch.snapshot.outcomes[live] != nil)
+        #expect(batch.snapshot.outcomes[turns[3]] != nil)
+        // The others' turns go on from where they were: the live one is
+        // not one of them.
+        let others = batch.snapshot.outcomes.keys.filter { $0 != live }
+        #expect(batch.nextCursor == (3 + others.count) % turns.count)
+    }
+
+    /// What each call is given: five times what the stand-in takes, so a
+    /// loaded machine does not make a call time out on its own.
+    private static let callTimeout: TimeInterval = 1
+
+    /// A folder of socket files and the tmux stand-in that answers for them.
+    private struct SlowServers {
+        let path: String
+        let tmux: String
+        let sockets: [String]
+    }
+
+    /// Sixteen socket files whose tmux takes 0.2 s a call and finds no
+    /// server: more than one pass can afford for all of them.
+    private func makeSlowServers() throws -> SlowServers {
+        let folder = "/private/tmp/weir-budget-\(UUID().uuidString.prefix(8))"
+        try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
+        let tmux = "\(folder)/tmux"
+        try "#!/bin/sh\nsleep 0.2\necho 'no server running' >&2\nexit 1\n"
+            .write(toFile: tmux, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tmux)
+        let sockets = (0..<16).map { "\(folder)/s\($0)" }
+        for path in sockets {
+            try bindSocket(at: path)
+        }
+        return SlowServers(path: folder, tmux: tmux, sockets: sockets)
+    }
+
+    /// A Unix socket file at `path`, which is all `probe` checks before it
+    /// asks tmux; nothing listens on it.
+    private func bindSocket(at path: String) throws {
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        try #require(descriptor >= 0)
+        defer { close(descriptor) }
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        withUnsafeMutableBytes(of: &address.sun_path) { buffer in
+            buffer.copyBytes(from: path.utf8.prefix(buffer.count - 1))
+        }
+        let result = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        try #require(result == 0)
     }
 }
 

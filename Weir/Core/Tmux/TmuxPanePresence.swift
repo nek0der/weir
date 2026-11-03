@@ -11,6 +11,43 @@ struct TmuxSurfaceSnapshot: Equatable {
     var isTmuxClient: Bool {
         foregroundName == TmuxClientProbe.clientProcessName
     }
+
+    /// What a probe's result is joined on. The foreground pid is left out:
+    /// a build or an agent's tool call changes it every few hundred
+    /// milliseconds in some pane, and a probe outdated by that alone would
+    /// be thrown away again and again while the client on each tty stayed
+    /// where it was.
+    var joinKey: JoinKey {
+        JoinKey(paneID: paneID, tty: tty, isTmuxClient: isTmuxClient)
+    }
+
+    struct JoinKey: Equatable {
+        let paneID: UUID
+        let tty: String?
+        let isTmuxClient: Bool
+    }
+}
+
+/// How the probe runs, apart so a test can stand in for the machine's tmux.
+struct TmuxProbeRunner: Sendable {
+    /// The tmux to run, or `nil` when none is installed. Called on the
+    /// main actor, as each candidate costs one `stat`.
+    var locate: @Sendable () -> String?
+    /// One bounded pass over the candidate sockets, off the main actor,
+    /// the servers that answered last time first.
+    var probe: @Sendable (
+        _ tmuxPath: String, _ candidates: Set<String>, _ answering: Set<String>, _ cursor: Int
+    ) -> TmuxClientProbe.ProbeBatch
+
+    static let live = TmuxProbeRunner(
+        locate: { TmuxClientProbe.locateTmux() },
+        probe: { tmuxPath, candidates, answering, cursor in
+            let defaults = TmuxClientProbe.socketPaths(inServerDirectory: TmuxClientProbe.defaultServerDirectory())
+            return TmuxClientProbe.probe(
+                tmuxPath: tmuxPath, paths: candidates.union(defaults.map(\.path)), answering: answering, cursor: cursor
+            )
+        }
+    )
 }
 
 enum AgentAttachmentResolution: Equatable {
@@ -27,7 +64,30 @@ final class TmuxPanePresence {
     private(set) var topology = TmuxTopology()
     private(set) var surfaces: [TmuxSurfaceSnapshot] = []
     private(set) var detachedPaneIDs: Set<UUID> = []
+    /// The tmux sessions each Weir pane shows through a tmux run inside
+    /// another one, keyed by the Weir pane. Apart from `bindingsByPaneID`,
+    /// which is the outer client a pane reattaches to.
+    private(set) var nestedReachByPaneID: [UUID: [NestedReach]] = [:]
+    /// Called when what the projection and the quit capture read here has
+    /// changed: a binding, or what the topology reports.
     var onBindingsChanged: (() -> Void)?
+
+    /// A session a Weir pane shows through a nested client, the outer panes
+    /// on the way (outermost first), and whether they are all active and
+    /// visible.
+    struct NestedReach: Equatable {
+        let socketKey: String
+        let sessionID: String
+        let isActive: Bool
+        let isVisible: Bool?
+        var route: [TmuxPaneLocation] = []
+
+        /// How far in front of the person this way in is: active before
+        /// visible, and visible before unknown before hidden.
+        var rank: Int {
+            (isActive ? 3 : 0) + (isVisible == true ? 2 : isVisible == nil ? 1 : 0)
+        }
+    }
 
     /// Poll cadence, stepped by what the last probe found. A firing timer
     /// is a CPU the system cannot leave idle, and Weir sits open all
@@ -50,8 +110,18 @@ final class TmuxPanePresence {
     @ObservationIgnored private nonisolated(unsafe) var timer: Timer?
     private var surfaceProvider: () -> [TmuxSurfaceSnapshot] = { [] }
     private var candidateProvider: () -> Set<String> = { [] }
+    private let runner: TmuxProbeRunner
     private var isActive = false
     private var isClientProbeRunning = false
+    /// The topology as `onBindingsChanged` last reported it. A pass that
+    /// joins no clients still merges what the servers said, so whether the
+    /// next one changed anything is judged against this, not against the
+    /// topology just before it.
+    private var reportedTopology = TmuxTopology()
+    /// Whether the last refresh found a tmux. Until it has looked, assume one.
+    /// A pane running a tmux we cannot find must not step the poll up to the
+    /// fast cadence, only for the refresh that follows to step it down again.
+    private var isTmuxInstalled = true
     private var revision = 0
     private var cursor = 0
     private static let queue = DispatchQueue(label: "com.nekoder.weir.tmux.probe", qos: .utility)
@@ -59,14 +129,19 @@ final class TmuxPanePresence {
     /// `surfaces` is what `refreshLocalSurfaces` reads until `start` hands
     /// in the app's, so a test can tell the presence which panes show a
     /// tmux client without starting the poll, which would ask the
-    /// machine's tmux.
+    /// machine's tmux. `runner` is how a test that does start it stands in
+    /// for that tmux.
     init(
         bindingsByPaneID: [UUID: TmuxBinding] = [:],
         topology: TmuxTopology = TmuxTopology(),
-        surfaces: @escaping () -> [TmuxSurfaceSnapshot] = { [] }
+        surfaces: @escaping () -> [TmuxSurfaceSnapshot] = { [] },
+        runner: TmuxProbeRunner = .live
     ) {
         self.bindingsByPaneID = bindingsByPaneID
         self.topology = topology
+        reportedTopology = topology
+        nestedReachByPaneID = Self.nestedReach(from: bindingsByPaneID, topology: topology)
+        self.runner = runner
         surfaceProvider = surfaces
     }
 
@@ -119,12 +194,19 @@ final class TmuxPanePresence {
                 detachedPaneIDs.insert(frame.paneID)
             }
         }
-        if next != surfaces {
+        // A closed pane's detach has nothing left to tell the capture,
+        // which only asks about the panes it still has.
+        detachedPaneIDs.formIntersection(next.map(\.paneID))
+        // Only a change a probe's result is joined on outdates a probe
+        // under way; see `TmuxSurfaceSnapshot.joinKey`.
+        if next.map(\.joinKey) != surfaces.map(\.joinKey) {
             revision += 1
+        }
+        if next != surfaces {
             surfaces = next
         }
         paneIDs = Set(next.filter(\.isTmuxClient).map(\.paneID))
-        if !paneIDs.isEmpty {
+        if !paneIDs.isEmpty, isTmuxInstalled {
             // A pane is running tmux. Return to the fast cadence now
             // rather than waiting for a probe to confirm a binding, so
             // starting tmux costs one slow interval of latency and no
@@ -132,56 +214,93 @@ final class TmuxPanePresence {
             rearmTimer(interval: Self.pollInterval)
         }
         let filtered = bindingsByPaneID.filter { paneIDs.contains($0.key) }
-        if filtered != bindingsByPaneID {
+        let nested = nestedReachByPaneID.filter { paneIDs.contains($0.key) }
+        if filtered != bindingsByPaneID || nested != nestedReachByPaneID {
             bindingsByPaneID = filtered
+            nestedReachByPaneID = nested
             onBindingsChanged?()
         }
     }
 
     func refresh() {
         guard isActive else { return }
+        let path = runner.locate()
+        isTmuxInstalled = path != nil
         refreshLocalSurfaces()
         guard !isClientProbeRunning else { return }
-        guard let path = TmuxClientProbe.locateTmux() else {
+        guard let path else {
             rearmTimer(interval: Self.dormantPollInterval)
             return
         }
-        let frames = surfaces
         let requestRevision = revision
         let candidates = candidateProvider()
         let startCursor = cursor
+        let answering = Set(topology.outcomes.compactMap { path, outcome in
+            if case .success = outcome {
+                path
+            } else {
+                nil
+            }
+        })
+        let runner = runner
         isClientProbeRunning = true
         Self.queue.async { [weak self] in
-            let defaults = TmuxClientProbe.socketPaths(inServerDirectory: TmuxClientProbe.defaultServerDirectory())
-            let batch = TmuxClientProbe.probe(tmuxPath: path, paths: candidates.union(defaults.map(\.path)), cursor: startCursor)
+            let batch = runner.probe(path, candidates, answering, startCursor)
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.isClientProbeRunning = false
                 guard self.isActive else { return }
                 self.refreshLocalSurfaces()
-                guard self.revision == requestRevision, self.surfaces == frames else {
-                    self.refresh()
-                    return
-                }
-                self.cursor = batch.nextCursor
-                self.topology.merge(
-                    batch.snapshot,
-                    candidates: Set(batch.snapshot.socketAliases.values),
-                    now: ProcessInfo.processInfo.systemUptime
-                )
-                self.bindingsByPaneID = Self.resolveClients(frames: frames, clients: self.topology.clients)
-                // Step down to the idle cadence once no pane runs a tmux
-                // client any more. Stepping up is `refreshLocalSurfaces`'s
-                // job the moment one does, so the same criterion is used
-                // here: judging by resolved bindings instead would fight
-                // that re-arm every tick while a client's tty cannot be
-                // matched.
-                self.rearmTimer(
-                    interval: self.paneIDs.isEmpty ? Self.idlePollInterval : Self.pollInterval
-                )
-                // Observation can resolve a pending event without changing a binding.
-                self.onBindingsChanged?()
+                self.apply(batch, joinsClients: self.revision == requestRevision)
             }
+        }
+    }
+
+    /// Fold a probe's result into what the panes show.
+    ///
+    /// What the servers said is kept whatever the panes did meanwhile: it
+    /// does not depend on them, and a pass whose answers were dropped leaves
+    /// each server it visited unobserved for one more round of the poll,
+    /// which across a few such passes outlives `snapshotLifetime` and drops
+    /// a pane's session that was there all along.
+    ///
+    /// `joinsClients` is false when a pane opened or closed, or a client
+    /// came or went, while the probe ran: its clients may then be on ttys
+    /// other than the ones we would join them to, so the bindings stay as
+    /// they were and we ask again at once, since that change is the
+    /// person's and they will look for it.
+    private func apply(_ batch: TmuxClientProbe.ProbeBatch, joinsClients: Bool) {
+        cursor = batch.nextCursor
+        let priorBindings = bindingsByPaneID
+        let priorNested = nestedReachByPaneID
+        topology.merge(
+            batch.snapshot,
+            candidates: Set(batch.snapshot.socketAliases.values),
+            now: ProcessInfo.processInfo.systemUptime
+        )
+        guard joinsClients else {
+            refresh()
+            return
+        }
+        bindingsByPaneID = Self.resolveClients(frames: surfaces, clients: topology.clients)
+        nestedReachByPaneID = Self.nestedReach(from: bindingsByPaneID, topology: topology)
+        // Step down to the idle cadence once no pane runs a tmux
+        // client any more. Stepping up is `refreshLocalSurfaces`'s
+        // job the moment one does, so the same criterion is used
+        // here: judging by resolved bindings instead would fight
+        // that re-arm every tick while a client's tty cannot be
+        // matched.
+        rearmTimer(interval: paneIDs.isEmpty ? Self.idlePollInterval : Self.pollInterval)
+        // A pass that saw what the last one saw changes nothing the
+        // projection reads, and each pass it asks for reads every record
+        // on the main actor. The topology counts even with the bindings
+        // unchanged: a server's answer is what tells a run nobody is
+        // attached to from one not known yet (`resolution(for:)`).
+        if bindingsByPaneID != priorBindings || nestedReachByPaneID != priorNested
+            || !topology.hasSameObservations(as: reportedTopology)
+        {
+            reportedTopology = topology
+            onBindingsChanged?()
         }
     }
 
@@ -194,9 +313,83 @@ final class TmuxPanePresence {
         return resolved
     }
 
+    /// The sessions each Weir pane reaches through a tmux client run in a
+    /// pane of the session it shows, and so on inward. The inner client
+    /// writes to the outer pane's pty, never to a Weir surface's, so without
+    /// this a run on the inner server would read as attached to no pane.
+    nonisolated static func nestedReach(
+        from bindings: [UUID: TmuxBinding], topology: TmuxTopology
+    ) -> [UUID: [NestedReach]] {
+        var result: [UUID: [NestedReach]] = [:]
+        for (paneID, binding) in bindings {
+            let direct = NestedReach(
+                socketKey: topology.socketKey(binding.socketPath), sessionID: binding.sessionID, isActive: true, isVisible: true
+            )
+            var reached: [NestedReach] = []
+            var frontier = [direct]
+            while let outer = frontier.popLast() {
+                for pane in topology.panes where pane.socketPath == outer.socketKey && pane.sessionID == outer.sessionID {
+                    guard let tty = pane.paneTTY, let inner = topology.clients[tty] else { continue }
+                    let reach = NestedReach(
+                        socketKey: topology.socketKey(inner.socketPath),
+                        sessionID: inner.sessionID,
+                        isActive: outer.isActive && pane.isActive,
+                        isVisible: Self.both(outer.isVisible, pane.isVisible),
+                        route: outer.route + [pane]
+                    )
+                    guard reach.socketKey != direct.socketKey || reach.sessionID != direct.sessionID else { continue }
+                    if let index = reached.firstIndex(where: {
+                        $0.socketKey == reach.socketKey && $0.sessionID == reach.sessionID
+                    }) {
+                        // Shown through two outer panes: the one more in
+                        // front wins, and is walked again so the sessions
+                        // further in learn of it. The rank only rises, so a
+                        // cycle ends.
+                        guard reach.rank > reached[index].rank else { continue }
+                        reached[index] = reach
+                    } else {
+                        reached.append(reach)
+                    }
+                    frontier.append(reach)
+                }
+            }
+            if !reached.isEmpty {
+                result[paneID] = reached
+            }
+        }
+        return result
+    }
+
+    /// Visible only when both are; unknown when neither says it is hidden
+    /// and one does not say.
+    private nonisolated static func both(_ lhs: Bool?, _ rhs: Bool?) -> Bool? {
+        if lhs == false || rhs == false {
+            return false
+        }
+        return lhs == nil || rhs == nil ? nil : true
+    }
+
     func attachments(for endpoint: TmuxRuntimeEndpoint?) -> [UUID: TmuxPaneLocation] {
         var result: [UUID: TmuxPaneLocation] = [:]
         for location in topology.locations(for: endpoint) {
+            for (paneID, reaches) in nestedReachByPaneID {
+                guard let reach = reaches.first(where: {
+                    $0.socketKey == location.socketPath && $0.sessionID == location.sessionID
+                }) else { continue }
+                // In front of the person only as far as every outer pane on
+                // the way is.
+                result[paneID] = TmuxPaneLocation(
+                    socketPath: location.socketPath, serverPID: location.serverPID,
+                    serverStartedAt: location.serverStartedAt, sessionID: location.sessionID,
+                    windowID: location.windowID, paneID: location.paneID,
+                    isActive: reach.isActive && location.isActive,
+                    isVisible: Self.both(reach.isVisible, location.isVisible),
+                    serverProcessStartedAt: location.serverProcessStartedAt, paneTTY: location.paneTTY,
+                    route: reach.route
+                )
+            }
+            // A pane that shows the session itself wins over one that
+            // reaches it through another.
             for paneID in paneIDs(socketPath: location.socketPath, sessionID: location.sessionID) {
                 result[paneID] = location
             }

@@ -39,6 +39,11 @@ struct IntegrationsPane: View {
         shellCommandStatus = Self.shellCommand?.status()
     }
 
+    /// The folders `TmuxClientProbe.locateTmux` looks in, for the warning,
+    /// so a person whose tmux is elsewhere can see that it is.
+    private static let tmuxDirectories = TmuxClientProbe.tmuxCandidates
+        .map { (($0 as NSString).deletingLastPathComponent as NSString).abbreviatingWithTildeInPath }
+
     private func changeShellCommand(_ change: @escaping () async throws -> Void) {
         isChangingShellCommand = true
         shellCommandError = nil
@@ -167,12 +172,25 @@ struct IntegrationsPane: View {
                 // the switch was turned on to avoid.
                 if store.settings.advanced.hostsAgentsInTmux, !isTmuxFound {
                     Label {
-                        Text("tmux wasn’t found. Agents run without tmux until it is installed, and stop when Weir quits.")
+                        // The folders one to a line: run into the sentence,
+                        // six paths were hard to read and to compare with
+                        // where the person's tmux is.
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("tmux wasn’t found. Agents run without tmux until it is installed, and stop when Weir quits.")
+                            Text("Folders searched:")
+                                .foregroundStyle(.secondary)
+                            ForEach(Self.tmuxDirectories, id: \.self) { directory in
+                                Text(verbatim: directory)
+                                    .font(.caption.monospaced())
+                                    .textSelection(.enabled)
+                            }
+                        }
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(SupervisionTokens.waitingText.color)
                     }
                     .font(.caption)
+                    .accessibilityElement(children: .contain)
                 }
             } header: {
                 Text("tmux")
