@@ -17,7 +17,11 @@ import WeirDomain
 
 extension EnvironmentValues {
     /// We share open drafts through the app-owned pool to avoid concurrent writers.
-    @Entry var reviewWriters = ReviewDraftWriterPool(shouldPersist: false)
+    @Entry var reviewWriters = EnvironmentValues.unsavedReviewWriters
+
+    /// The pool for Previews and tests, made once. A pool made in the entry
+    /// itself would be a new one, holding none of the drafts, at every read.
+    private static let unsavedReviewWriters = ReviewDraftWriterPool(shouldPersist: false)
 
     /// libghostty surface registry — UUID ↔ SurfaceView lookup.
     /// Typed as the protocol so views (and `TabActions`) don't
@@ -71,14 +75,31 @@ extension EnvironmentValues {
     /// not `@Observable`, and it decides this once, when it loads.
     @Entry var suspendedSessionFile: URL?
 
+    /// `nil` in Previews and tests, where no records are known and there is
+    /// no terminal to reload.
+    @Entry var settingsAppActions: SettingsAppActions?
+}
+
+/// What Settings asks of the app, as one object `AppState` makes once.
+/// SwiftUI compares an environment value with the last one at each update,
+/// and no two closures compare equal, so closures set there would count as
+/// a change for every view that reads them each time Settings' body runs;
+/// one object compares by identity.
+@MainActor
+final class SettingsAppActions {
     /// How many turn records the given limits would delete now, for the
     /// confirmation a narrower turn history asks (Advanced), or `nil`
     /// when the count could not be made. Asynchronous, since the sweep that
-    /// counts them waits for a pass under way. `nil` in Previews and tests,
-    /// where no records are known and nothing is asked.
-    @Entry var turnRecordsRemoved: (@MainActor (TurnRetentionLimits) async -> Int?)?
-
+    /// counts them waits for a pass under way.
+    let turnRecordsRemoved: @MainActor (TurnRetentionLimits) async -> Int?
     /// Reads the person's Ghostty config again (Integrations' "Reload").
-    /// `nil` in Previews and tests, where there is no terminal to reload.
-    @Entry var reloadGhosttyConfig: (@MainActor () -> Void)?
+    let reloadGhosttyConfig: @MainActor () -> Void
+
+    init(
+        turnRecordsRemoved: @escaping @MainActor (TurnRetentionLimits) async -> Int?,
+        reloadGhosttyConfig: @escaping @MainActor () -> Void
+    ) {
+        self.turnRecordsRemoved = turnRecordsRemoved
+        self.reloadGhosttyConfig = reloadGhosttyConfig
+    }
 }

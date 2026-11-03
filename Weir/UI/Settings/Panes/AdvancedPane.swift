@@ -7,7 +7,7 @@ import WeirDomain
 
 struct AdvancedPane: View {
     @Environment(SettingsStore.self) private var store
-    @Environment(\.turnRecordsRemoved) private var turnRecordsRemoved
+    @Environment(\.settingsAppActions) private var appActions
     @State private var isResetConfirmationPresented = false
     /// A narrower turn history waiting for the person to confirm what it
     /// deletes; nil while the rows show what is saved.
@@ -139,8 +139,8 @@ struct AdvancedPane: View {
     /// one is already counting.
     private func countPendingRetention() async {
         guard let pending = pendingRetention else { return }
-        let removed: Int? = if let turnRecordsRemoved {
-            await turnRecordsRemoved(pending.limits)
+        let removed: Int? = if let appActions {
+            await appActions.turnRecordsRemoved(pending.limits)
         } else {
             0
         }

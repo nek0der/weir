@@ -18,12 +18,12 @@ permissions:
 # Every macOS job uses this Xcode, and release.yml names the same one. We pin
 # it rather than take the newest on the runner, because the newest can be a
 # beta, and a release built with a beta compiler and SDK would ship notarized.
-# 26.6 is the newest release on the macos-26 image and the one the latest
-# release was built with. The image points this name at a later 26.6.x patch
-# when it adds one, which is still a release. A runner image that drops it
-# fails the Select Xcode step by name; a bump changes both files together.
+# 27.1 is the newest release on the xcode-27 image. The image points this
+# name at a later 27.1.x patch when it adds one, which is still a release. A
+# runner image that drops it fails the Select Xcode step by name; a bump
+# changes both files together.
 env:
-  XCODE_APP: /Applications/Xcode_26.6.app
+  XCODE_APP: /Applications/Xcode_27.1.app
 
 # A pull request only needs its latest push checked, so a new push cancels the
 # run before it. Every commit on `main` gets a run of its own: canceling would
@@ -185,7 +185,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-26, ubuntu-24.04, windows-2025]
+        os: [xcode-27, ubuntu-24.04, windows-2025]
 
     # The release pull request and a site-only pull request skip the steps here,
     # not the job: a skipped matrix job reports under its unexpanded name, and
@@ -235,10 +235,10 @@ jobs:
   # A sixth would wait for a free runner, and the one left waiting could be
   # this one.
   build:
-    name: Build (macOS 26)
+    name: Build (macOS 27)
     needs: scope
     if: needs.scope.outputs.app != 'false' && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--'))
-    runs-on: macos-26
+    runs-on: xcode-27
     # The slowest run so far took 23 minutes. A cold libghostty build adds to
     # that, and the limit stays under the 90 minutes `main-ci-passed` waits.
     timeout-minutes: 60
@@ -506,10 +506,10 @@ jobs:
   # build skips. Signing and notarization still need the certificate and stay in
   # release.yml.
   release-archive:
-    name: Release archive (macOS 26)
+    name: Release archive (macOS 27)
     needs: scope
     if: needs.scope.outputs.app != 'false' && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--'))
-    runs-on: macos-26
+    runs-on: xcode-27
     # The slowest run so far took 20 minutes; a cold libghostty build adds to it.
     timeout-minutes: 60
 
@@ -586,7 +586,7 @@ jobs:
     name: SwiftFormat
     needs: scope
     if: needs.scope.outputs.app != 'false' && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--'))
-    runs-on: macos-26
+    runs-on: xcode-27
     # Under a minute with the Mint cache. Without it, Mint builds SwiftFormat
     # from source first.
     timeout-minutes: 15
@@ -617,7 +617,7 @@ jobs:
   review-core:
     name: Review core scenarios
     needs: [format, lint]
-    runs-on: macos-26
+    runs-on: xcode-27
     # Under a minute so far.
     timeout-minutes: 15
     steps:
@@ -642,7 +642,7 @@ jobs:
     name: SwiftLint
     needs: scope
     if: needs.scope.outputs.app != 'false' && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--'))
-    runs-on: macos-26
+    runs-on: xcode-27
     # Under a minute so far.
     timeout-minutes: 15
     steps:

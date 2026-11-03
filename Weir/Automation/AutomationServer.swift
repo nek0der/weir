@@ -175,7 +175,7 @@
             let handle = handle
             let fd = connection.fd
             let queue = queue
-            connection.tasks[taskID] = Task {
+            connection.tasks[taskID] = Task { [weak self] in
                 let reply = await handle(request)
                 queue.async { [weak self] in
                     // The task's own ID, not the descriptor, says the

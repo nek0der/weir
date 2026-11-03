@@ -7,7 +7,7 @@ import SwiftUI
 struct IntegrationsPane: View {
     @Environment(SettingsStore.self) private var store
 
-    @Environment(\.reloadGhosttyConfig) private var reloadGhosttyConfig
+    @Environment(\.settingsAppActions) private var appActions
     /// The Ghostty config file libghostty reads last, which wins where they
     /// overlap; nil when there is none. Looked up when the pane shows and
     /// when its window comes forward (`refresh`), never while drawing.
@@ -131,12 +131,12 @@ struct IntegrationsPane: View {
                         }
                         .accessibilityLabel(Text("Open Ghostty config file"))
                     }
-                    if store.settings.advanced.ghosttyConfig.isOn, isConfigUnread, let reloadGhosttyConfig {
+                    if store.settings.advanced.ghosttyConfig.isOn, isConfigUnread, let appActions {
                         HStack(spacing: 12) {
                             SettingsFootnote("The file changed since Weir last read it.")
                             Spacer(minLength: 12)
                             Button("Reload") {
-                                reloadGhosttyConfig()
+                                appActions.reloadGhosttyConfig()
                                 refresh()
                             }
                             .help(Text("Reads the Ghostty config file again."))
