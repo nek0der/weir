@@ -22042,6 +22042,17 @@
         }
       }
     },
+    "Folders searched:": {
+      "comment": "Settings, Integrations: above the folders searched for tmux, in the warning shown while Run agents in tmux is on and no tmux is installed",
+      "localizations": {
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "検索したフォルダー："
+          }
+        }
+      }
+    },
     "tmux wasn’t found. Agents run without tmux until it is installed, and stop when Weir quits.": {
       "comment": "Settings, Integrations: under Run agents in tmux while it is on and no tmux is installed",
       "localizations": {

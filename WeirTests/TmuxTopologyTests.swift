@@ -35,6 +35,25 @@ struct TmuxTopologyTests {
         #expect(panes.map(\.isVisible) == [true, true, false, false, true])
     }
 
+    /// The pane's pty is what a client of a server nested in it writes to.
+    @Test func parsedPanes_keepThePanesTTY() throws {
+        let pane = try #require(TmuxTopology.parsePanes("42\t100\t$1\t@1\t%1\t1\t1\t0\t/dev/ttys020\n", socketPath: path).first)
+        #expect(pane.paneTTY == "/dev/ttys020")
+        #expect(pane.isVisible == true)
+        let older = try #require(TmuxTopology.parsePanes("42\t100\t$1\t@1\t%1\t1\t1\t0\n", socketPath: path).first)
+        #expect(older.paneTTY == nil)
+    }
+
+    /// A later stamp on the same answer is not a new observation.
+    @Test func sameObservations_ignoreWhenEachWasObserved() {
+        let first = TmuxTopology(clients: ["/dev/tty1": binding], outcomes: [path: .success("")], observedAt: [path: 1])
+        var later = first
+        later.observedAt[path] = 2
+        #expect(first.hasSameObservations(as: later))
+        later.outcomes[path] = .timedOut
+        #expect(!first.hasSameObservations(as: later))
+    }
+
     @Test func parsedPanes_olderObservationsLeaveVisibilityUnknown() throws {
         let pane = try #require(TmuxTopology.parsePanes("42\t100\t$1\t@1\t%1\t1\t0\n", socketPath: path).first)
 

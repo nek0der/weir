@@ -55,13 +55,19 @@ enum TmuxClientProbe {
         return bindings
     }
 
-    /// Where package managers put tmux. Resolving by name is not an
-    /// option: a GUI app launched from Finder or the Dock inherits
-    /// launchd's `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), which
-    /// contains no Homebrew — the same reason `ToolLocator` exists.
+    /// Where package managers put tmux: Homebrew on either architecture,
+    /// MacPorts, a Nix profile, and nix-darwin's system profile. Resolving
+    /// by name is not an option: a GUI app launched from Finder or the Dock
+    /// inherits launchd's `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`), which
+    /// contains none of them — the same reason `ToolLocator` exists. Settings
+    /// lists these when none holds a tmux, so the person can tell whether
+    /// theirs is somewhere we do not look.
     static let tmuxCandidates = [
         "/opt/homebrew/bin/tmux",
         "/usr/local/bin/tmux",
+        "/opt/local/bin/tmux",
+        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".nix-profile/bin/tmux").path,
+        "/run/current-system/sw/bin/tmux",
         "/usr/bin/tmux"
     ]
 
@@ -123,8 +129,18 @@ enum TmuxClientProbe {
         var nextCursor: Int
     }
 
+    /// One pass over `paths`, within `TmuxTiming.pollBudget`.
+    ///
+    /// `answering` names the servers that answered last time; each pass asks
+    /// them all. The rest take turns from `cursor`, and a folder of leftover
+    /// sockets whose servers are gone can be more than one pass reaches: in
+    /// strict turns, a live server among them would go unobserved past
+    /// `snapshotLifetime` and its sessions expire from every pane between
+    /// visits. The server whose turn it is goes before them, with the whole
+    /// budget, so slow answering servers cannot keep the turns from moving
+    /// and a new server from ever being found.
     static func probe(
-        tmuxPath: String, paths: Set<String>, cursor: Int = 0,
+        tmuxPath: String, paths: Set<String>, answering: Set<String> = [], cursor: Int = 0,
         timeout: TimeInterval = TmuxTiming.queryTimeout
     ) -> ProbeBatch {
         var snapshot = TmuxTopology()
@@ -133,14 +149,21 @@ enum TmuxClientProbe {
             snapshot.socketAliases[raw] = key.value
             snapshot.socketAliases[key.value] = key.value
         }
-        let ordered = Set(snapshot.socketAliases.values).sorted()
-        guard !ordered.isEmpty else { return ProbeBatch(snapshot: snapshot, nextCursor: 0) }
+        let all = Set(snapshot.socketAliases.values)
+        let first = all.intersection(answering.map { snapshot.socketAliases[$0] ?? $0 }).sorted()
+        let rest = all.subtracting(first).sorted()
+        guard !all.isEmpty else { return ProbeBatch(snapshot: snapshot, nextCursor: 0) }
+        let start = rest.isEmpty ? 0 : cursor % rest.count
+        let turns = Array(rest[start...] + rest[..<start])
+        let ordered = turns.prefix(1).map { ($0, true) } + first.map { ($0, false) } + turns.dropFirst().map { ($0, true) }
         let deadline = ProcessInfo.processInfo.systemUptime + TmuxTiming.pollBudget
+        // Counts only the servers taking turns.
         var visited = 0
-        for offset in ordered.indices {
+        for (path, isTakingTurns) in ordered {
             guard deadline - ProcessInfo.processInfo.systemUptime > TmuxTiming.terminationGrace + TmuxTiming.drainGrace else { break }
-            let path = ordered[(cursor + offset) % ordered.count]
-            visited += 1
+            if isTakingTurns {
+                visited += 1
+            }
             snapshot.observedAt[path] = ProcessInfo.processInfo.systemUptime
             var info = stat()
             guard lstat(path, &info) == 0, info.st_uid == getuid(),
@@ -149,31 +172,61 @@ enum TmuxClientProbe {
                 continue
             }
             let result = probeServer(tmuxPath: tmuxPath, socketPath: path, deadline: deadline, timeout: timeout)
+            guard !result.isOutOfBudget else {
+                // The pass ran out before this server had its answer, which
+                // says nothing about the server. Recorded as a failure, it
+                // would replace what the last pass heard from it and drop
+                // its sessions from every pane until a pass reached it in
+                // time; left unvisited, the next pass starts with it.
+                snapshot.observedAt[path] = nil
+                if isTakingTurns {
+                    visited -= 1
+                }
+                break
+            }
             snapshot.outcomes[path] = result.outcome
             snapshot.panes += result.panes
             snapshot.clients.merge(result.clients) { _, new in new }
         }
-        return ProbeBatch(snapshot: snapshot, nextCursor: (cursor + visited) % ordered.count)
+        return ProbeBatch(snapshot: snapshot, nextCursor: rest.isEmpty ? 0 : (start + visited) % rest.count)
     }
 
     private struct ServerResult {
         let outcome: TmuxCommandResult
         var panes: [TmuxPaneLocation] = []
         var clients: [String: TmuxBinding] = [:]
+        /// The pass's budget, not the server, cut a query short.
+        var isOutOfBudget = false
     }
 
     private static func probeServer(
         tmuxPath: String, socketPath: String, deadline: TimeInterval, timeout: TimeInterval
     ) -> ServerResult {
+        var isCutShort = false
         func query(_ arguments: [String]) -> TmuxCommandResult {
             let available = deadline - ProcessInfo.processInfo.systemUptime - TmuxTiming.terminationGrace - TmuxTiming.drainGrace
-            guard available > 0 else { return .timedOut }
-            return TmuxCommand().run(
+            guard available > 0 else {
+                isCutShort = true
+                return .timedOut
+            }
+            let result = TmuxCommand().run(
                 executable: tmuxPath,
                 arguments: clientArguments(socketPath: socketPath) + arguments,
                 timeout: min(timeout, available)
             )
+            // Timed out only because the budget allowed less than a
+            // server is given: not the server's failure either.
+            if result == .timedOut, available < timeout {
+                isCutShort = true
+            }
+            return result
         }
+        var result = serverAnswer(socketPath: socketPath, query: query)
+        result.isOutOfBudget = isCutShort && result.outcome != .success("")
+        return result
+    }
+
+    private static func serverAnswer(socketPath: String, query: (_ arguments: [String]) -> TmuxCommandResult) -> ServerResult {
         let paneResult = query(TmuxTopology.paneArguments)
         guard case let .success(paneText) = paneResult else { return ServerResult(outcome: paneResult) }
         var panes = TmuxTopology.parsePanes(paneText, socketPath: socketPath)
@@ -211,7 +264,15 @@ enum TmuxClientProbe {
         return String(info.pbi_start_tvsec)
     }
 
+    /// Selects `location`'s pane in its server, after each outer pane on
+    /// its route, from the outside in.
     static func selectPane(tmuxPath: String, location: TmuxPaneLocation) {
+        for step in location.route + [location] {
+            selectOnePane(tmuxPath: tmuxPath, location: step)
+        }
+    }
+
+    private static func selectOnePane(tmuxPath: String, location: TmuxPaneLocation) {
         // tmux evaluates this format, not a shell. Check server generation
         // at execution time so a queued click cannot target a reused pane ID.
         let target = "\(location.sessionID):\(location.windowID).\(location.paneID)"
