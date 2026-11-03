@@ -535,9 +535,9 @@ final class AgentProjectionAdapter {
         }
     }
 
-    private func intents() -> [AgentProjectionIntent] {
+    private func intents() -> [AgentResumeIntentPayload] {
         resumeIntents.allIntents().map {
-            AgentProjectionIntent(
+            AgentResumeIntentPayload(
                 runID: $0.runID,
                 paneID: $0.paneID,
                 sessionID: $0.sessionID,
@@ -935,7 +935,7 @@ extension AgentProjectionAdapter {
         return AgentProjectionPass.Work(
             sweptWith: protection,
             input: input,
-            now: AnyEncodableInstant.now(),
+            now: AgentProjectionInstant.now(),
             unchanged: unchanged,
             turnSources: turnDirectories(),
             sent: turnRecords.snapshot(),

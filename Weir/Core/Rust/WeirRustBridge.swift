@@ -41,12 +41,17 @@ enum WeirRustTitleResolver {
             }
         }
 
-        guard result == WEIR_TITLE_RESOLVE_OK.rawValue,
+        guard result == Int32(WEIR_TITLE_RESOLVE_OK.rawValue),
               outputLength <= output.count
         else { return nil }
         return String(bytes: output[..<outputLength], encoding: .utf8)
     }
 
+    /// Lends `value`'s UTF-8 to one call, as a null pointer when there is
+    /// none. Nothing crosses the boundary to free: Rust only reads the
+    /// pointer while `body` runs and copies what it keeps, and it writes the
+    /// title into `output`, our own buffer. A call that hands bytes out
+    /// instead goes through `RustBytes`, which frees them.
     private static func withOptionalUTF8<Result>(
         _ value: String?,
         _ body: (UnsafePointer<UInt8>?, Int) -> Result

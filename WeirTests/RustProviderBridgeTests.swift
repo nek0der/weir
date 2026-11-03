@@ -112,6 +112,27 @@ struct RustProviderBridgeTests {
         #expect(try RustProviderBridge.processNames(provider: "gemini").isEmpty)
     }
 
+    /// The helper asks for one provider's descriptor; a descriptor of
+    /// another provider it cannot read must not take that one away, and the
+    /// asked one malformed must not read as a provider with no names.
+    @Test("decodes only the asked provider's descriptor")
+    func descriptorDecode_isLimitedToTheAskedProvider() throws {
+        let body = try WeirProjectionBridge.providers()
+        var registry = try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        registry["newer"] = ["id": "newer"]
+        let mixed = try JSONSerialization.data(withJSONObject: registry)
+
+        let codex = try #require(try AgentProviderDescriptor.descriptor("codex", in: mixed))
+        #expect(codex.processNames == AgentProviderRegistry.processNames(for: .codex))
+        #expect(try AgentProviderDescriptor.descriptor("gemini", in: mixed) == nil)
+        #expect(throws: (any Error).self) {
+            try AgentProviderDescriptor.descriptor("newer", in: mixed)
+        }
+        #expect(throws: (any Error).self) {
+            try AgentProviderDescriptor.registry(from: mixed)
+        }
+    }
+
     @Test func hookObservationClockCanBeControlledWithoutReorderingTheRecord() throws {
         try withTempDir { directory in
             let pane = UUID().uuidString

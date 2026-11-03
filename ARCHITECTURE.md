@@ -27,7 +27,9 @@ Weir/
 AgentIntegrationService/
   Service/        launchd-managed macOS XPC host for the Rust approval broker
   HookHelper/     the signed executable the bundled hook wrappers exec
-  ProviderBridge/ Swift wrapper around the Rust provider translation C ABI
+  ProviderBridge/ Swift wrapper around the Rust provider translation C ABI, the provider
+                  descriptor, and `RustBytes` (the app and the Hook Helper compile all of it,
+                  the service only `RustBytes`)
   RequesterProbe/, ControllerProbe/  development requester and controller for the two XPC roles
   Shared/         role-specific XPC contracts, identifiers, and signing policy
   Resources/      Debug and Release LaunchAgent property lists
@@ -50,8 +52,11 @@ rust/
 Swift dependencies flow from **App → UI → Presentation → Core → external
 boundaries** (the layers are described below). The libghostty boundary lives
 in `FFI/`. The Rust boundary lives behind `Core/Rust/WeirRustBridge.swift`
-and the C header in `rust/weir-rust-bridge/include/`. Rust stays independent
-of Swift and Apple frameworks. UI may consume Core models but never reaches
+and the C header in `rust/weir-rust-bridge/include/`. Swift takes, copies,
+and frees the bytes every call hands back through `RustBytes`
+(`AgentIntegrationService/ProviderBridge/RustBytes.swift`), which the app,
+the service, and the Hook Helper all compile. Rust stays independent of Swift
+and Apple frameworks. UI may consume Core models but never reaches
 into their private state. Core keeps AppKit and SwiftUI out. What every
 agent shares, its shim (`AgentShimLocator`) and its resume command
 (`AgentResumeCommandBuilder`), lives once in `Core/Agent` and takes an

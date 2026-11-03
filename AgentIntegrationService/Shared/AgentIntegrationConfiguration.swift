@@ -142,7 +142,7 @@ enum AgentIntegrationError: Error, CustomStringConvertible {
         case let .requestFailed(message):
             "The Agent Integration Service request failed: \(message)"
         case let .rustFailure(code):
-            "The Rust approval host rejected the operation with status \(code)."
+            "The Rust bridge refused the call with status \(code)."
         case let .securityStatus(status):
             "Security framework returned OSStatus \(status)."
         case .timeout:

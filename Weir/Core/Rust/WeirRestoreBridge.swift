@@ -515,16 +515,15 @@ enum WeirRestoreBridge {
     ) -> Int32
 
     private static func call(_ entry: Entry, _ input: Data) throws -> Data {
-        var out: UnsafeMutablePointer<UInt8>?
-        var outCount = 0
-        let status = input.withUnsafeBytes { buffer in
-            entry(buffer.bindMemory(to: UInt8.self).baseAddress, buffer.count, &out, &outCount)
+        let output = RustBytes.call { out, outCount in
+            RustBytes.withBytes(input) { pointer, count in
+                entry(pointer, count, out, outCount)
+            }
         }
-        guard let out else { throw WeirRestoreBridgeError(status: status) }
-        // The bytes are ours whatever the status turned out to be.
-        defer { weir_approval_bytes_free_v1(out, outCount) }
-        guard status == Int32(WEIR_TURN_OK.rawValue) else { throw WeirRestoreBridgeError(status: status) }
-        return Data(bytes: out, count: outCount)
+        guard output.status == Int32(WEIR_TURN_OK.rawValue), let body = output.body else {
+            throw WeirRestoreBridgeError(status: output.status)
+        }
+        return body
     }
 }
 

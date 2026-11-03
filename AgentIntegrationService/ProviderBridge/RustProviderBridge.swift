@@ -25,12 +25,11 @@ enum RustProviderBridge {
     /// Renders a decision with the request it answers. Only an answer needs
     /// the request; it echoes the provider's tool input back with the answers.
     static func approvalOutput(provider: String, requestJSON: Data, decisionJSON: Data) throws -> Data? {
-        try requestJSON.withUnsafeBytes { requestBuffer -> Data? in
-            let requestPointer = requestBuffer.bindMemory(to: UInt8.self).baseAddress
-            return try call(provider: provider, input: decisionJSON, notApproval: false) { pointers in
+        try RustBytes.withBytes(requestJSON) { requestPointer, requestCount in
+            try call(provider: provider, input: decisionJSON, notApproval: false) { pointers in
                 weir_provider_approval_output_v2(
                     pointers.provider, pointers.providerCount,
-                    requestPointer, requestBuffer.count,
+                    requestPointer, requestCount,
                     pointers.input, pointers.inputCount,
                     pointers.out, pointers.outCount
                 )
@@ -44,9 +43,7 @@ enum RustProviderBridge {
     /// does not have.
     static func processNames(provider: String) throws -> Set<String> {
         guard let descriptor = try descriptor(provider: provider) else { return [] }
-        guard let names = descriptor["processNames"] as? [String]
-        else { throw AgentIntegrationError.invalidResponse }
-        return Set(names)
+        return Set(descriptor.processNames)
     }
 
     /// The capabilities `provider`'s descriptor declares, in their Rust
@@ -56,31 +53,24 @@ enum RustProviderBridge {
     /// assumed would act on a request the provider does not send that way.
     static func capabilities(provider: String) -> Set<String> {
         // `try?`: no registry reads as no capability, the default above.
-        guard let descriptor = try? descriptor(provider: provider),
-              let capabilities = descriptor["capabilities"] as? [String]
-        else { return [] }
-        return Set(capabilities)
+        guard let descriptor = try? descriptor(provider: provider) else { return [] }
+        return Set(descriptor.capabilities)
     }
 
-    /// `provider`'s descriptor as the Rust registry serializes it, or `nil`
+    /// `provider`'s descriptor as the Rust registry reports it, or `nil`
     /// when this build does not have the provider.
-    private static func descriptor(provider: String) throws -> [String: Any]? {
-        var out: UnsafeMutablePointer<UInt8>?
-        var outCount = 0
-        let status = weir_projection_providers_v1(&out, &outCount)
-        guard let out else { throw AgentIntegrationError.rustFailure(status) }
-        // The bytes belong to us until the matching free, whatever the status
-        // turned out to be.
-        defer { weir_approval_bytes_free_v1(out, outCount) }
-        guard status == Int32(WEIR_PROJECTION_OK.rawValue) else {
-            throw AgentIntegrationError.rustFailure(status)
+    private static func descriptor(provider: String) throws -> AgentProviderDescriptor? {
+        let output = RustBytes.call { out, outCount in
+            weir_projection_providers_v1(out, outCount)
         }
-        let body = Data(bytes: out, count: outCount)
-        guard let registry = try JSONSerialization.jsonObject(with: body) as? [String: Any]
-        else { throw AgentIntegrationError.invalidResponse }
-        guard let descriptor = registry[provider] else { return nil }
-        guard let fields = descriptor as? [String: Any] else { throw AgentIntegrationError.invalidResponse }
-        return fields
+        guard output.status == Int32(WEIR_PROJECTION_OK.rawValue), let registry = output.body else {
+            throw AgentIntegrationError.rustFailure(output.status)
+        }
+        do {
+            return try AgentProviderDescriptor.descriptor(provider, in: registry)
+        } catch {
+            throw AgentIntegrationError.invalidResponse
+        }
     }
 
     /// A turn that failed, as the provider's crate reads it from a line of its
@@ -176,14 +166,14 @@ enum RustProviderBridge {
     ) throws -> RustHookOutcome {
         var environment = environment
         environment["WEIR_HOOK_OBSERVED_ORDER"] = String(observationClock())
-        let environmentJSON = try JSONSerialization.data(withJSONObject: environment)
-        let body = try environmentJSON.withUnsafeBytes { environmentBuffer in
+        let environmentJSON = try JSONEncoder().encode(environment)
+        let body = try RustBytes.withBytes(environmentJSON) { environmentPointer, environmentCount in
             try call(provider: provider, input: payload, notApproval: false) { pointers in
                 weir_hook_run_v1(
                     pointers.provider, pointers.providerCount,
                     kind.abiValue,
                     pointers.input, pointers.inputCount,
-                    environmentBuffer.bindMemory(to: UInt8.self).baseAddress, environmentBuffer.count,
+                    environmentPointer, environmentCount,
                     pointers.out, pointers.outCount
                 )
             }
@@ -213,44 +203,37 @@ enum RustProviderBridge {
         notApproval: Bool,
         _ body: (Pointers) -> Int32
     ) throws -> Data? {
-        var out: UnsafeMutablePointer<UInt8>?
-        var outCount = 0
-        let providerBytes = Array(provider.utf8)
+        let providerBytes = Data(provider.utf8)
         // Every pointer is scoped to the call: the buffers stay alive for the
-        // duration of `body`, and the output slots are read only afterwards.
-        let status = withUnsafeMutablePointer(to: &out) { outPointer in
-            withUnsafeMutablePointer(to: &outCount) { outCountPointer in
-                providerBytes.withUnsafeBufferPointer { providerBuffer in
-                    input.withUnsafeBytes { inputBuffer in
-                        body(Pointers(
-                            provider: providerBuffer.baseAddress,
-                            providerCount: providerBuffer.count,
-                            input: inputBuffer.bindMemory(to: UInt8.self).baseAddress,
-                            inputCount: inputBuffer.count,
-                            out: outPointer,
-                            outCount: outCountPointer
-                        ))
-                    }
+        // duration of `body`, and the output is read only afterwards.
+        let output = RustBytes.call { out, outCount in
+            RustBytes.withBytes(providerBytes) { providerPointer, providerCount in
+                RustBytes.withBytes(input) { inputPointer, inputCount in
+                    body(Pointers(
+                        provider: providerPointer,
+                        providerCount: providerCount,
+                        input: inputPointer,
+                        inputCount: inputCount,
+                        out: out,
+                        outCount: outCount
+                    ))
                 }
             }
         }
-        if let out {
-            // The bytes belong to us until the matching free, whatever the
-            // status turned out to be.
-            defer { weir_approval_bytes_free_v1(out, outCount) }
-            guard status == Int32(WEIR_PROVIDER_OK.rawValue) else {
-                throw AgentIntegrationError.rustFailure(status)
+        if let bytes = output.body {
+            guard output.status == Int32(WEIR_PROVIDER_OK.rawValue) else {
+                throw AgentIntegrationError.rustFailure(output.status)
             }
-            return Data(bytes: out, count: outCount)
+            return bytes
         }
-        switch status {
+        switch output.status {
         case Int32(WEIR_PROVIDER_OK.rawValue):
             // Success with an empty body: delegate.
             return nil
         case Int32(WEIR_PROVIDER_NOT_APPROVAL.rawValue) where notApproval:
             return nil
         default:
-            throw AgentIntegrationError.rustFailure(status)
+            throw AgentIntegrationError.rustFailure(output.status)
         }
     }
 }

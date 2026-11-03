@@ -11,7 +11,7 @@ import WeirDomain
 /// Typed rather than assembled as a dictionary because every field on the
 /// other side has a default: a mistyped key would not fail, it would quietly
 /// mean "nothing here", and a pane would simply stop showing a badge.
-struct AgentProjectionInput: Encodable {
+struct AgentProjectionInput: Encodable, Sendable {
     var providers: [String: AgentProviderDescriptor] = [:]
     /// The person's home directory, which each provider's default
     /// configuration directory is under: the rules read a provider's own
@@ -31,7 +31,7 @@ struct AgentProjectionInput: Encodable {
     /// Every turn record, by turn id; content only for the ones new or
     /// changed since the last pass that succeeded (`TurnRecordCache`).
     var turnFiles: [AgentProjectionFile] = []
-    var resumeIntents: [AgentProjectionIntent] = []
+    var resumeIntents: [AgentResumeIntentPayload] = []
     var marks = AgentProjectionMarks()
     var presence = AgentProjectionPresence()
     var tabs: [AgentProjectionTabPanes] = []
@@ -214,19 +214,6 @@ struct AgentProjectionWorktreeFile: Encodable {
     var content: String
 }
 
-struct AgentProjectionIntent: Encodable {
-    var runID: String
-    var paneID: UUID
-    var sessionID: String
-    var ownerRunID: String?
-    var pid: String
-    var createdAt: String
-
-    private enum CodingKeys: String, CodingKey {
-        case runID, paneID, sessionID, ownerRunID, pid, createdAt
-    }
-}
-
 /// Viewed marks, as runtime identifier to the attention episode they were
 /// taken against.
 struct AgentProjectionMarks: Codable, Equatable, Sendable {
@@ -298,27 +285,6 @@ struct AgentProjectionProgramStatus: Encodable, Equatable {
     /// When the program began reporting this state and kind, which a repeat
     /// of the report leaves.
     var stateSince: String
-}
-
-/// What a provider declares about itself, as the Rust registry reports it.
-/// The host reads only some of it, but every field is named here: the
-/// descriptors go back to the rules in each pass's input, and a field left
-/// out would reach them as its default (`WeirProjectionBridgeTests` holds
-/// the round trip to the registry's own JSON).
-struct AgentProviderDescriptor: Codable {
-    var id: String
-    var displayName: String
-    var capabilities: [String]
-    var pidSweepIntervalMs: Int
-    var stateDirectory: String
-    var sessionDirectory: String
-    var cwdEventsDirectory: String?
-    var processNames: [String]
-    var sessionEndDropReasons: [String]
-    var internalAgentDirectories: [String]
-    /// The `app` name the provider's agent gives itself in OSC 7501, when it
-    /// reports its status.
-    var programStatusApp: String?
 }
 
 /// What one pass answers with. The state it also returns travels as raw bytes
@@ -692,28 +658,21 @@ extension AgentRunRecordFacts {
     }
 }
 
-/// One value of the two-clock envelope. A tiny type rather than a dictionary
-/// of `Any` so the encoded shape cannot drift.
-enum AnyEncodableInstant: Encodable {
-    case text(String)
-    case number(UInt64)
+/// The two clocks a pass reads the time by. A type rather than a dictionary
+/// so the encoded shape cannot drift.
+struct AgentProjectionInstant: Encodable, Sendable {
+    /// The wall clock, in ISO 8601.
+    let wall: String
+    /// Uptime rather than the wall clock, so a clock adjustment cannot
+    /// expire or revive a notification that is waiting for a pane.
+    let monotonicMs: UInt64
 
     /// Both clocks as a pass reads them now.
-    static func now() -> [String: AnyEncodableInstant] {
-        [
-            "wall": .text(AgentDateParsing.formatISO8601(Date())),
-            // Uptime rather than the wall clock, so a clock adjustment cannot
-            // expire or revive a notification that is waiting for a pane.
-            "monotonicMs": .number(UInt64(ProcessInfo.processInfo.systemUptime * 1000))
-        ]
-    }
-
-    func encode(to encoder: any Encoder) throws {
-        var container = encoder.singleValueContainer()
-        switch self {
-        case let .text(value): try container.encode(value)
-        case let .number(value): try container.encode(value)
-        }
+    static func now() -> AgentProjectionInstant {
+        AgentProjectionInstant(
+            wall: AgentDateParsing.formatISO8601(Date()),
+            monotonicMs: UInt64(ProcessInfo.processInfo.systemUptime * 1000)
+        )
     }
 }
 

@@ -286,8 +286,11 @@ struct AgentRecordPatch: Decodable, Sendable {
 }
 
 /// The intent written at terminate so the next launch can tell a run
-/// Weir killed from one that ended on its own.
-struct AgentResumeIntentPayload: Decodable, Sendable {
+/// Weir killed from one that ended on its own, as the rules spell it both
+/// ways: out of a pass in `writeResumeIntent`, and back into each pass's
+/// input as `resumeIntents`. `createdAt` is the ISO 8601 text, which the
+/// host converts to and from the `Date` `AgentResumeIntentStore` keeps.
+struct AgentResumeIntentPayload: Codable, Sendable {
     var runID: String
     var paneID: UUID
     var sessionID: String

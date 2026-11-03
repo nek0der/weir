@@ -97,4 +97,17 @@ struct TurnGarbageCollectorTests {
         let deletions = try JSONDecoder().decode([TurnDeletion].self, from: data)
         #expect(deletions.map(\.outcome) == [.unknown, .deleted])
     }
+
+    /// Only a restore under way is acted on; any other reason is kept as the
+    /// bridge spelled it, for the log.
+    @Test func aRestoreUnderWay_isReadFromTheReason() throws {
+        let data = Data(#"""
+        [{"outcome":"failed","turnId":"A","reason":"restoreInProgress"},
+         {"outcome":"failed","turnId":"B","reason":"moving the record failed"},
+         {"outcome":"deleted","turnId":"C"}]
+        """#.utf8)
+        let deletions = try JSONDecoder().decode([TurnDeletion].self, from: data)
+        #expect(deletions.map(\.reason) == [.restoreInProgress, .other("moving the record failed"), nil])
+        #expect(deletions[1].reason?.text == "moving the record failed")
+    }
 }

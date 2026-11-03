@@ -17,9 +17,19 @@ enum RustStatusLineBridge {
         // has a status line to run: it is looked up as for a session with no
         // project (an empty document), and only the usage goes unread.
         let text = String(bytes: input, encoding: .utf8) ?? "{}"
-        let request: [String: Any] = ["provider": provider, "input": text, "environment": environment]
-        let answer = try call(JSONSerialization.data(withJSONObject: request), weir_status_line_run_v1)
-        return answer["command"] as? String
+        let request = CommandRequest(provider: provider, input: text, environment: environment)
+        return try command(fromAnswer: call(JSONEncoder().encode(request), weir_status_line_run_v1))
+    }
+
+    /// The person's command in the relay's answer. A `command` that is not a
+    /// string reads as none, as it did when the answer was read as a
+    /// dictionary; an answer that is not an object is no answer.
+    static func command(fromAnswer answer: Data) throws -> String? {
+        do {
+            return try JSONDecoder().decode(StatusLineCommandAnswer.self, from: answer).command
+        } catch {
+            throw AgentIntegrationError.invalidResponse
+        }
     }
 
     /// The status line setting the provider is launched with: the person's
@@ -31,18 +41,36 @@ enum RustStatusLineBridge {
         workingDirectory: String,
         relayCommand: String
     ) throws -> [String: Any]? {
-        let request: [String: Any] = [
-            "provider": provider,
-            "environment": environment,
-            "workingDirectory": workingDirectory,
-            "relayCommand": relayCommand
-        ]
-        let answer = try call(JSONSerialization.data(withJSONObject: request), weir_status_line_setting_v1)
-        switch answer["statusLine"] {
+        let request = SettingRequest(
+            provider: provider,
+            environment: environment,
+            workingDirectory: workingDirectory,
+            relayCommand: relayCommand
+        )
+        let answer = try call(JSONEncoder().encode(request), weir_status_line_setting_v1)
+        // Read untyped: the setting is the person's own object, which goes
+        // back into their settings document as it came.
+        guard let object = try JSONSerialization.jsonObject(with: answer) as? [String: Any] else {
+            throw AgentIntegrationError.invalidResponse
+        }
+        switch object["statusLine"] {
         case let setting as [String: Any]: return setting
         case is NSNull: return nil
         default: throw AgentIntegrationError.invalidResponse
         }
+    }
+
+    private struct CommandRequest: Encodable {
+        let provider: String
+        let input: String
+        let environment: [String: String]
+    }
+
+    private struct SettingRequest: Encodable {
+        let provider: String
+        let environment: [String: String]
+        let workingDirectory: String
+        let relayCommand: String
     }
 
     private typealias Function = (
@@ -50,20 +78,29 @@ enum RustStatusLineBridge {
         UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>?, UnsafeMutablePointer<Int>?
     ) -> Int32
 
-    private static func call(_ request: Data, _ function: Function) throws -> [String: Any] {
-        var out: UnsafeMutablePointer<UInt8>?
-        var outCount = 0
-        let status = request.withUnsafeBytes { buffer in
-            function(buffer.bindMemory(to: UInt8.self).baseAddress, buffer.count, &out, &outCount)
+    private static func call(_ request: Data, _ function: Function) throws -> Data {
+        let output = RustBytes.call { out, outCount in
+            RustBytes.withBytes(request) { pointer, count in
+                function(pointer, count, out, outCount)
+            }
         }
-        guard let out else { throw AgentIntegrationError.rustFailure(status) }
-        // The bytes are ours whatever the status turned out to be.
-        defer { weir_approval_bytes_free_v1(out, outCount) }
-        guard status == Int32(WEIR_USAGE_OK.rawValue) else {
-            throw AgentIntegrationError.rustFailure(status)
+        guard output.status == Int32(WEIR_USAGE_OK.rawValue), let body = output.body else {
+            throw AgentIntegrationError.rustFailure(output.status)
         }
-        guard let object = try JSONSerialization.jsonObject(with: Data(bytes: out, count: outCount)) as? [String: Any]
-        else { throw AgentIntegrationError.invalidResponse }
-        return object
+        return body
+    }
+}
+
+/// The relay's answer (`RustStatusLineBridge.command(fromAnswer:)`).
+private struct StatusLineCommandAnswer: Decodable {
+    let command: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case command
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        command = try? container.decodeIfPresent(String.self, forKey: .command)
     }
 }

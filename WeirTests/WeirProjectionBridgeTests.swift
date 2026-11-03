@@ -11,7 +11,7 @@ struct WeirProjectionBridgeTests {
     @Test("the registry reports the providers this build has")
     func providers_areReported() throws {
         let body = try WeirProjectionBridge.providers()
-        let registry = try JSONDecoder().decode([String: AgentProviderDescriptor].self, from: body)
+        let registry = try AgentProviderDescriptor.registry(from: body)
         #expect(registry["claude"]?.stateDirectory == "agent-states")
         #expect(registry["codex"]?.stateDirectory == "codex-agent-states")
         // The rules branch on capabilities, so the host must be able to read
@@ -27,7 +27,7 @@ struct WeirProjectionBridgeTests {
     @Test("the descriptors go back to the rules as the registry reported them")
     func providers_roundTripUnchanged() throws {
         let body = try WeirProjectionBridge.providers()
-        let registry = try JSONDecoder().decode([String: AgentProviderDescriptor].self, from: body)
+        let registry = try AgentProviderDescriptor.registry(from: body)
         /// A `null` and a missing key are the same `None` to the rules, and
         /// Swift leaves a `nil` out, so the nulls are not compared.
         func withoutNulls(_ data: Data) throws -> [String: NSDictionary] {
@@ -83,14 +83,10 @@ struct WeirProjectionBridgeTests {
     func finishedNotice_isHeldUntilTheAskedForPass() throws {
         let pane = UUID()
         let engine = WeirProjectionBridge.Engine()
-        var input = AgentProjectionInput()
-        input.providers = try JSONDecoder().decode(
-            [String: AgentProviderDescriptor].self,
-            from: WeirProjectionBridge.providers()
-        )
+        var input = try ProjectionBridgeFixture.input()
         input.tabs = [AgentProjectionTabPanes(id: UUID(), panes: [pane])]
         input.pidStatus = ["4242": "alive"]
-        func pass(_ state: String, revision: Int, at milliseconds: Int) throws -> AgentProjectionResponse {
+        func pass(_ state: String, revision: Int, at milliseconds: UInt64) throws -> AgentProjectionResponse {
             let record: [String: Any] = [
                 "schemaVersion": 3,
                 "paneId": pane.uuidString,
@@ -101,15 +97,18 @@ struct WeirProjectionBridgeTests {
                 "updatedAt": "2026-09-14T12:00:0\(revision)Z",
                 "pid": "4242"
             ]
-            input.records = try [AgentProjectionFile(
+            input.records = try [ProjectionBridgeFixture.file(
                 provider: "claude",
                 name: "AAAAAAAA-1111-4111-8111-AAAAAAAAAAA1",
-                content: String(data: JSONSerialization.data(withJSONObject: record), encoding: .utf8)
+                record: record
             )]
-            let now = Data(#"{"wall":"2026-09-14T12:01:00Z","monotonicMs":\#(milliseconds)}"#.utf8)
-            let answer = try engine.pass(input: JSONEncoder().encode(input), now: now)
+            let answer = try ProjectionBridgeFixture.pass(
+                input,
+                now: ProjectionBridgeFixture.now("2026-09-14T12:01:00Z", monotonicMs: milliseconds),
+                engine: engine
+            )
             try engine.commit(answer.proposal)
-            return try JSONDecoder().decode(AgentProjectionResponse.self, from: answer.body)
+            return answer.response
         }
         func notices(_ response: AgentProjectionResponse) -> [AgentNotificationKind] {
             response.commands.compactMap {
@@ -129,7 +128,7 @@ struct WeirProjectionBridgeTests {
         let finished = try pass("finished", revision: 2, at: 10)
         #expect(notices(finished).isEmpty)
         let delay = try #require(finished.projection.nextPassInMs)
-        let settled = try pass("finished", revision: 2, at: 10 + Int(delay))
+        let settled = try pass("finished", revision: 2, at: 10 + delay)
         #expect(notices(settled) == [.finished])
     }
 
@@ -152,15 +151,11 @@ struct WeirProjectionBridgeTests {
             "tmuxServerStartedAt": "100",
             "sessionId": "session-1"
         ]
-        var input = AgentProjectionInput()
-        input.providers = try JSONDecoder().decode(
-            [String: AgentProviderDescriptor].self,
-            from: WeirProjectionBridge.providers()
-        )
-        input.records = try [AgentProjectionFile(
+        var input = try ProjectionBridgeFixture.input()
+        input.records = try [ProjectionBridgeFixture.file(
             provider: "claude",
             name: "AAAAAAAA-1111-4111-8111-AAAAAAAAAAA1",
-            content: String(data: JSONSerialization.data(withJSONObject: record), encoding: .utf8)
+            record: record
         )]
         input.pidStatus = ["4242": "alive"]
         input.tabs = [AgentProjectionTabPanes(id: UUID(), panes: [pane])]
@@ -174,11 +169,10 @@ struct WeirProjectionBridgeTests {
             ))
         ] = [pane]
 
-        let pass = try WeirProjectionBridge.Engine().pass(
-            input: JSONEncoder().encode(input),
-            now: Data(#"{"wall":"2026-09-14T12:01:00Z","monotonicMs":60000}"#.utf8)
-        )
-        let response = try JSONDecoder().decode(AgentProjectionResponse.self, from: pass.body)
+        let response = try ProjectionBridgeFixture.pass(
+            input,
+            now: ProjectionBridgeFixture.now("2026-09-14T12:01:00Z", monotonicMs: 60000)
+        ).response
 
         #expect(response.projection.badgesByPane[pane]?["claude"]?.state == "running")
     }
@@ -197,24 +191,15 @@ struct WeirProjectionBridgeTests {
             "cwd": "/Volumes/Dotfiles/.codex/memories",
             "updatedAt": "2026-09-14T12:00:00Z"
         ]
-        var input = AgentProjectionInput()
-        input.providers = try JSONDecoder().decode(
-            [String: AgentProviderDescriptor].self,
-            from: WeirProjectionBridge.providers()
-        )
+        var input = try ProjectionBridgeFixture.input()
         input.home = "/Users/me"
-        input.sessionRecords = try [AgentProjectionFile(
-            provider: "codex",
-            name: pane.uuidString,
-            content: String(data: JSONSerialization.data(withJSONObject: hint), encoding: .utf8)
-        )]
+        input.sessionRecords = try [ProjectionBridgeFixture.file(provider: "codex", name: pane.uuidString, record: hint)]
         input.tabs = [AgentProjectionTabPanes(id: UUID(), panes: [pane])]
         func session(_ input: AgentProjectionInput) throws -> String? {
-            let pass = try WeirProjectionBridge.Engine().pass(
-                input: JSONEncoder().encode(input),
-                now: Data(#"{"wall":"2026-09-14T12:01:00Z","monotonicMs":60000}"#.utf8)
-            )
-            let response = try JSONDecoder().decode(AgentProjectionResponse.self, from: pass.body)
+            let response = try ProjectionBridgeFixture.pass(
+                input,
+                now: ProjectionBridgeFixture.now("2026-09-14T12:01:00Z", monotonicMs: 60000)
+            ).response
             // Keyed as the rules spell a pane, which is not `uuidString`'s case.
             return response.projection.sessions.first { UUID(uuidString: $0.key) == pane }?.value["codex"]?.sessionID
         }
@@ -261,20 +246,15 @@ struct WeirProjectionBridgeTests {
         let name = "AAAAAAAA-1111-4111-8111-AAAAAAAAAAA1"
         let pane = try #require(UUID(uuidString: "11111111-1111-4111-8111-111111111111"))
         let url = root.appendingPathComponent("rust/fixtures/projection/background-task/agent-states/\(name).state.json")
-        var input = AgentProjectionInput()
-        input.providers = try JSONDecoder().decode(
-            [String: AgentProviderDescriptor].self,
-            from: WeirProjectionBridge.providers()
-        )
+        var input = try ProjectionBridgeFixture.input()
         input.records = try [AgentProjectionFile(provider: "claude", name: name, content: String(contentsOf: url, encoding: .utf8))]
         input.pidStatus = ["4242": "alive"]
         input.tabs = [AgentProjectionTabPanes(id: UUID(), panes: [pane])]
 
-        let pass = try WeirProjectionBridge.Engine().pass(
-            input: JSONEncoder().encode(input),
-            now: Data(#"{"wall":"2026-10-28T12:10:00Z","monotonicMs":600000}"#.utf8)
-        )
-        let response = try JSONDecoder().decode(AgentProjectionResponse.self, from: pass.body)
+        let response = try ProjectionBridgeFixture.pass(
+            input,
+            now: ProjectionBridgeFixture.now("2026-10-28T12:10:00Z", monotonicMs: 600_000)
+        ).response
 
         let badge = try #require(response.projection.badgesByPane[pane]?["claude"])
         #expect(badge.asAgentBadge.backgroundWork == BackgroundWork(shells: 1))
@@ -290,20 +270,15 @@ struct WeirProjectionBridgeTests {
         let name = "BBBBBBBB-2222-4222-8222-BBBBBBBBBBB2"
         let pane = try #require(UUID(uuidString: "11111111-1111-4111-8111-111111111111"))
         let url = root.appendingPathComponent("rust/fixtures/projection/codex-turn/codex-agent-states/\(name).state.json")
-        var input = AgentProjectionInput()
-        input.providers = try JSONDecoder().decode(
-            [String: AgentProviderDescriptor].self,
-            from: WeirProjectionBridge.providers()
-        )
+        var input = try ProjectionBridgeFixture.input()
         input.records = try [AgentProjectionFile(provider: "codex", name: name, content: String(contentsOf: url, encoding: .utf8))]
         input.pidStatus = ["4242": "alive"]
         input.tabs = [AgentProjectionTabPanes(id: UUID(), panes: [pane])]
 
-        let pass = try WeirProjectionBridge.Engine().pass(
-            input: JSONEncoder().encode(input),
-            now: Data(#"{"wall":"2026-09-14T12:10:00Z","monotonicMs":600000}"#.utf8)
-        )
-        let response = try JSONDecoder().decode(AgentProjectionResponse.self, from: pass.body)
+        let response = try ProjectionBridgeFixture.pass(
+            input,
+            now: ProjectionBridgeFixture.now("2026-09-14T12:10:00Z", monotonicMs: 600_000)
+        ).response
 
         let badge = try #require(response.projection.badgesByPane[pane]?["codex"]).asAgentBadge
         #expect(badge.model == "gpt-5.6-sol")
@@ -336,4 +311,34 @@ struct WeirProjectionBridgeTests {
         #expect(saved.runObservedOrder == UInt64.max - 1)
     }
 
+    /// The rules read both clocks by these two names, and refuse an
+    /// envelope without either (`emptyPass_answersAndCommits`).
+    @Test("the clocks a pass reads cross as the two named fields")
+    func instant_encodesBothClocks() throws {
+        let encoded = try JSONEncoder().encode(AgentProjectionInstant(wall: "2026-09-14T12:00:00Z", monotonicMs: 42))
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(object.count == 2)
+        #expect(object["wall"] as? String == "2026-09-14T12:00:00Z")
+        #expect(object["monotonicMs"] as? Int == 42)
+    }
+
+    /// One type carries a resume intent both ways, so the keys a pass is
+    /// given are the keys its command is read with.
+    @Test("a resume intent reads back as it was given")
+    func resumeIntent_roundTrips() throws {
+        let intent = AgentResumeIntentPayload(
+            runID: "AAAAAAAA-1111-4111-8111-AAAAAAAAAAA1",
+            paneID: UUID(),
+            sessionID: "session-1",
+            ownerRunID: nil,
+            pid: "4242",
+            createdAt: "2026-09-14T12:00:00Z"
+        )
+        let encoded = try JSONEncoder().encode(intent)
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(Set(object.keys) == ["runID", "paneID", "sessionID", "pid", "createdAt"])
+        let decoded = try JSONDecoder().decode(AgentResumeIntentPayload.self, from: encoded)
+        #expect(decoded.paneID == intent.paneID)
+        #expect(decoded.createdAt == intent.createdAt)
+    }
 }

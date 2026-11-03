@@ -58,12 +58,12 @@ actor TurnGarbageCollector {
                 switch deletion.outcome {
                 // A restore of the worktree is under way: the next sweep
                 // deletes the turn.
-                case .failed where deletion.reason == "restoreInProgress":
+                case .failed where deletion.reason == .restoreInProgress:
                     log.info("turn \(deletion.turnID, privacy: .public) left for the next sweep: a restore is under way")
                 case .failed:
                     log.error("""
                     turn \(deletion.turnID, privacy: .public) not deleted: \
-                    \(deletion.reason ?? "", privacy: .private)
+                    \(deletion.reason?.text ?? "", privacy: .private)
                     """)
                 case .deletedLeavingRefs:
                     log.info("""

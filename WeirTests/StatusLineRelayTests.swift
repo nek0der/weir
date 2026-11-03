@@ -161,6 +161,30 @@ struct StatusLineRelayTests {
     }
 }
 
+/// The relay's answer is read with a type now, as it was read with a
+/// dictionary before: a command that is not a string is none, and an answer
+/// that is not an object is no answer.
+@Suite("RustStatusLineBridge answer")
+struct StatusLineAnswerTests {
+    @Test(arguments: [
+        (#"{"command":"echo hi"}"#, "echo hi"),
+        (#"{}"#, nil),
+        (#"{"command":null}"#, nil),
+        (#"{"command":42}"#, nil)
+    ] as [(String, String?)])
+    func commandAnswer_readsOnlyAString(answer: String, command: String?) throws {
+        #expect(try RustStatusLineBridge.command(fromAnswer: Data(answer.utf8)) == command)
+    }
+
+    @Test(arguments: ["[]", "{", "\"text\""])
+    func commandAnswer_thatIsNotAnObject_isInvalid(answer: String) {
+        let error = #expect(throws: AgentIntegrationError.self) {
+            try RustStatusLineBridge.command(fromAnswer: Data(answer.utf8))
+        }
+        #expect(error?.description == AgentIntegrationError.invalidResponse.description)
+    }
+}
+
 @Suite(
     "Claude shim status line",
     .tags(.smoke),

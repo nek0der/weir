@@ -70,11 +70,10 @@ private final class AgentIntegrationConnection: NSObject, AgentIntegrationXPCPro
 
 /// One exchange carried off the connection's queue.
 ///
-/// `@unchecked Sendable` because neither the session wrapper nor XPC's reply
-/// block is marked `Sendable`. It is safe: the Rust session serializes its
-/// own use behind a mutex (`weir_approval_service_create_v1`), a helper or
-/// the controller sends its next request only after this one's reply, and an
-/// XPC reply block may be called from any thread, once.
+/// `@unchecked Sendable` because XPC's reply block is not marked `Sendable`.
+/// It is safe: an XPC reply block may be called from any thread, once. The
+/// session's own conformance carries its safety argument
+/// (`RustApprovalSession`).
 private struct PendingExchange: @unchecked Sendable {
     let session: RustApprovalSession
     let request: Data
