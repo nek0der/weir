@@ -137,7 +137,8 @@ extension AppState {
                 refreshAttentionQueue()
                 refreshStopResumeOffers()
             },
-            programStatus: programStatus
+            programStatus: programStatus,
+            agentProjection: agentProjection
         )
     }
 

@@ -199,18 +199,24 @@ struct SplitTree: Codable, Equatable {
     // MARK: - Remove
 
     /// Remove the leaf with the given id. The sibling collapses up into
-    /// the removed leaf's slot. Returns the new tree and the leaf that
-    /// should receive focus (or nil if the tree is now empty).
+    /// the removed leaf's slot. Focus moves only when the removed leaf held
+    /// it: a pane that closes behind the person's back (its shell exited,
+    /// it was dragged away) must not take the focus off the pane they are
+    /// typing in, or the next ⌘W closes a pane they never chose. Returns
+    /// the new tree and the leaf focus moved to, or nil when it stayed
+    /// where it was or the tree is now empty.
     func remove(_ leafID: UUID) -> (tree: SplitTree, focusTarget: UUID?) {
         guard let root else { return (self, nil) }
-        let (newRoot, focusTarget) = Self.removeLeaf(in: root, id: leafID)
-        if let newRoot {
-            return (
-                SplitTree(root: newRoot, focusedLeafID: focusTarget),
-                focusTarget
-            )
+        let (newRoot, sibling) = Self.removeLeaf(in: root, id: leafID)
+        guard let newRoot else { return (SplitTree(), nil) }
+        let collapsed = SplitTree(root: newRoot)
+        // A focus naming a leaf the tree no longer has (an old saved
+        // session) is not kept: ⌘W would then find nothing to close.
+        if let focused = effectiveFocusedLeafID, focused != leafID, collapsed.contains(leafID: focused) {
+            return (SplitTree(root: newRoot, focusedLeafID: focused), nil)
         }
-        return (SplitTree(), nil)
+        let target = sibling ?? collapsed.allLeafIDs().first
+        return (SplitTree(root: newRoot, focusedLeafID: target), target)
     }
 
     // MARK: - Resize

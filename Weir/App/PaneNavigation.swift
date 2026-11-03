@@ -13,13 +13,16 @@ func jumpToPane(
     intent: SelectionIntent
 ) {
     guard let tab = session.tab(containing: paneID) else { return }
-    session.setActiveTab(tab.id, in: window, intent: intent)
-    session.update(tab.id) { t in
-        t.splitTree.focusedLeafID = paneID
-    }
-    if let view = registry.view(for: paneID) {
-        view.window?.makeFirstResponder(view)
-    }
+    // The same jump ⌘J makes, so a tab zoomed on another pane unzooms
+    // instead of focusing a pane the person cannot see.
+    PaneActions.activateAndFocus(
+        session,
+        registry: registry,
+        tabID: tab.id,
+        paneID: paneID,
+        in: window,
+        intent: intent
+    )
     flashPane(paneID, session: session)
 }
 

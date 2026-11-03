@@ -69,6 +69,76 @@ struct SplitTreeTests {
         #expect(removed.focusTarget == a)
     }
 
+    /// A pane that closes behind the person's back (its shell exited, it
+    /// was dragged to another tab) leaves the focus on the pane they are in;
+    /// otherwise the next ⌘W closes a pane they never chose.
+    @Test("removing a leaf that is not focused keeps the focus where it was")
+    func remove_unfocusedLeaf_keepsFocus() {
+        let a = UUID()
+        let b = UUID()
+        let c = UUID()
+        var tree = SplitTree(leafID: a)
+            .insert(at: a, direction: .horizontal, newID: b).tree
+            .insert(at: b, direction: .horizontal, newID: c).tree
+        tree.focusedLeafID = a
+
+        let removed = tree.remove(c)
+
+        #expect(removed.tree.allLeafIDs() == [a, b])
+        #expect(removed.tree.focusedLeafID == a)
+        #expect(removed.focusTarget == nil)
+    }
+
+    @Test("removing a leaf when none is focused keeps the leaf focus fell back to")
+    func remove_withNoFocusedLeaf_keepsTheEffectiveFocus() {
+        let a = UUID()
+        let b = UUID()
+        let c = UUID()
+        var tree = SplitTree(leafID: a)
+            .insert(at: a, direction: .horizontal, newID: b).tree
+            .insert(at: b, direction: .horizontal, newID: c).tree
+        tree.focusedLeafID = nil
+
+        let removed = tree.remove(c)
+
+        #expect(removed.tree.effectiveFocusedLeafID == a)
+        #expect(removed.focusTarget == nil)
+    }
+
+    @Test("removing a leaf when the focus names a leaf the tree lacks focuses one it has")
+    func remove_withStaleFocus_focusesALeafStillThere() {
+        let a = UUID()
+        let b = UUID()
+        let c = UUID()
+        var tree = SplitTree(leafID: a)
+            .insert(at: a, direction: .horizontal, newID: b).tree
+            .insert(at: b, direction: .horizontal, newID: c).tree
+        tree.focusedLeafID = UUID()
+
+        let removed = tree.remove(c)
+
+        #expect(removed.tree.focusedLeafID == b)
+        #expect(removed.focusTarget == b)
+    }
+
+    @Test("removing the focused leaf moves the focus to its sibling")
+    func remove_focusedLeaf_movesToSibling() {
+        let a = UUID()
+        let b = UUID()
+        let c = UUID()
+        // a | (b | c), with b focused: c takes b's place and the focus.
+        var tree = SplitTree(leafID: a)
+            .insert(at: a, direction: .horizontal, newID: b).tree
+            .insert(at: b, direction: .horizontal, newID: c).tree
+        tree.focusedLeafID = b
+
+        let removed = tree.remove(b)
+
+        #expect(removed.tree.allLeafIDs() == [a, c])
+        #expect(removed.tree.focusedLeafID == c)
+        #expect(removed.focusTarget == c)
+    }
+
     @Test("removing the last leaf produces an empty tree")
     func remove_lastLeaf_producesEmptyTree() {
         let only = UUID()

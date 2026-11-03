@@ -51,6 +51,10 @@ final class GhosttyEventCoordinator {
     /// decides the titles an agent's tab leaves off. Optional so a
     /// coordinator built for a test needs none.
     private let programStatus: PaneProgramStatusStore?
+    /// Told when a pane's shell ends and the pane closes, as a closed pane
+    /// tells it, so the records the pane held are settled at once. Weak and
+    /// optional so a coordinator built for a test needs none.
+    private weak var agentProjection: AgentProjectionAdapter?
 
     /// Pending SET_TITLE applies, keyed by pane id. We debounce title
     /// updates by a tiny delay so a shell that prints the command name
@@ -79,7 +83,8 @@ final class GhosttyEventCoordinator {
         linkOpener: TerminalLinkOpener,
         onTitleChanged: @escaping @MainActor (_ paneID: UUID) -> Void = { _ in },
         onCommandFinished: @escaping @MainActor (_ paneID: UUID, _ exitCode: Int, _ durationNs: UInt64) -> Void = { _, _, _ in },
-        programStatus: PaneProgramStatusStore? = nil
+        programStatus: PaneProgramStatusStore? = nil,
+        agentProjection: AgentProjectionAdapter? = nil
     ) {
         self.ghosttyApp = ghosttyApp
         self.session = session
@@ -94,6 +99,7 @@ final class GhosttyEventCoordinator {
         self.onTitleChanged = onTitleChanged
         self.onCommandFinished = onCommandFinished
         self.programStatus = programStatus
+        self.agentProjection = agentProjection
     }
 
     // Single entry point invoked by `GhosttyActionRouter.sink`. Switch
@@ -522,24 +528,31 @@ final class GhosttyEventCoordinator {
         pendingBellFlashes[paneID]?.cancel()
         pendingBellFlashes.removeValue(forKey: paneID)
         programStatus?.forget(paneID)
-        session.paneSearchStates.removeValue(forKey: paneID)
-        session.paneTransients.removeValue(forKey: paneID)
         guard let owningTab = session.tab(containing: paneID) else {
+            session.paneSearchStates.removeValue(forKey: paneID)
+            session.paneTransients.removeValue(forKey: paneID)
             registry.unregister(paneID)
             return
         }
-
-        let oldLeafCount = owningTab.splitTree.allLeafIDs().count
-        let result = owningTab.splitTree.remove(paneID)
-        session.update(owningTab.id) { tab in
-            tab.splitTree = result.tree
-            if let focus = result.focusTarget {
-                tab.splitTree.focusedLeafID = focus
-            }
-        }
-        registry.unregister(paneID)
-        if oldLeafCount == 1 {
-            session.closeTab(owningTab.id)
+        // Read before the leaf goes: the keyboard follows the pane that
+        // takes the focus only when it was on the pane whose shell ended,
+        // or had already fallen back to the window with nowhere to go.
+        // A pane that ends behind the person's back leaves their typing
+        // where it is. We ask the pane's own window rather than
+        // `holdsKeyboardFocus`, which needs the key window: a pane ending
+        // in a window behind still hands its focus on within that window.
+        let heldKeyboardFocus = view.window.map { window in
+            window.firstResponder === view || window.firstResponder === window
+        } ?? false
+        PaneActions.removeClosedLeaf(
+            paneID,
+            fromTab: owningTab.id,
+            session,
+            registry: registry,
+            agentProjection: agentProjection,
+            pullsKeyboardFocus: heldKeyboardFocus
+        )
+        if session.tab(owningTab.id) == nil {
             log.notice("CLOSE_SURFACE collapsed tab \(owningTab.id, privacy: .public)")
         } else {
             log.notice("CLOSE_SURFACE removed pane in tab \(owningTab.id, privacy: .public)")

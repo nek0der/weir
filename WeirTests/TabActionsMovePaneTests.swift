@@ -176,6 +176,32 @@ struct TabActionsMovePaneTests {
         #expect(session.tab(source.id)?.zoomedLeafID == nil)
     }
 
+    @Test("moving a pane the person is not in leaves the source tab's focus where it was")
+    func unfocusedMovedLeaf_keepsSourceFocus() throws {
+        let (session, source, target, _) = try Self.sessionWithSourceAndTarget(sourcePanes: 3)
+        let leaves = source.splitTree.allLeafIDs()
+        let typingIn = try #require(leaves.first)
+        let moved = try #require(leaves.last)
+        session.update(source.id) { $0.splitTree.focusedLeafID = typingIn }
+
+        TabActions.mergePaneIntoTab(session, paneID: moved, into: target.id)
+
+        #expect(session.tab(source.id)?.splitTree.focusedLeafID == typingIn)
+    }
+
+    @Test("moving a pane the person is not in to a tab of its own leaves the source tab's focus where it was")
+    func unfocusedPaneToNewTab_keepsSourceFocus() throws {
+        let (session, source, _, _) = try Self.sessionWithSourceAndTarget(sourcePanes: 3)
+        let leaves = source.splitTree.allLeafIDs()
+        let typingIn = try #require(leaves.first)
+        let moved = try #require(leaves.last)
+        session.update(source.id) { $0.splitTree.focusedLeafID = typingIn }
+
+        TabActions.movePaneToNewTab(session, paneID: moved)
+
+        #expect(session.tab(source.id)?.splitTree.focusedLeafID == typingIn)
+    }
+
     // MARK: - Conversation names
 
     private static func conversation(_ name: String, paneID: UUID, startedAt seconds: TimeInterval) -> ConversationName {

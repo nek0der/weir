@@ -64,11 +64,11 @@ extension TabActions {
             t.receiveConversationName(conversationName)
         }
 
-        // Drop the pane from the source tab. zoom is per-tab so clear
-        // it if the moved pane was the zoomed one.
+        // Drop the pane from the source tab. Its focus stays put unless
+        // the moved pane held it; zoom is per-tab so clear it if the
+        // moved pane was the zoomed one.
         session.update(sourceTab.id) { t in
-            let result = t.splitTree.remove(paneID)
-            t.splitTree = result.tree
+            t.splitTree = t.splitTree.remove(paneID).tree
             if t.zoomedLeafID == paneID {
                 t.zoomedLeafID = nil
             }
