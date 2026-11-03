@@ -190,7 +190,7 @@ extension AppState {
     /// as no review is left to offer it; a restore's record does that for
     /// a restore.
     private func undoStopped(_ stopped: [RestoreJournal]) {
-        Task { [restores] in
+        Task { [self, restores] in
             let locale = settingsStore.appLocale
             var again: [RestoreJournal] = []
             var notes: [String] = []

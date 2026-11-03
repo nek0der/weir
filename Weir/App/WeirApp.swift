@@ -31,6 +31,15 @@ final class AppState {
     /// here because the environment default only stands in for Previews
     /// and tests.
     let reviewWriters: ReviewDraftWriterPool
+    /// Settings' calls into the app (`SettingsAppActions`). Its closures
+    /// hold the state weakly, since the state holds them.
+    @ObservationIgnored lazy var settingsAppActions = SettingsAppActions(
+        turnRecordsRemoved: { [weak self] limits in
+            guard let self else { return nil }
+            return await self.turnsRemoved(by: limits)
+        },
+        reloadGhosttyConfig: { [weak self] in self?.reloadGhosttyUserConfig() }
+    )
     /// Whether this run may write the person's files, decided once at
     /// launch: a demo run (`WEIR_DEMO=1`) writes none of them, so the
     /// build the person runs keeps its own. Every writer of those files —
@@ -842,8 +851,7 @@ struct WeirApp: App {
                 .environment(\.sparkleUpdater, updaterStack.updater)
                 .environment(updaterStack.stateModel)
                 .environment(\.suspendedSessionFile, state.suspendedSessionFile)
-                .environment(\.turnRecordsRemoved) { await state.turnsRemoved(by: $0) }
-                .environment(\.reloadGhosttyConfig) { state.reloadGhosttyUserConfig() }
+                .environment(\.settingsAppActions, state.settingsAppActions)
                 // Settings is where the accent picker lives — inject
                 // the same accent so the swatch row previews the live
                 // value while the user clicks through hues.

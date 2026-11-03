@@ -1,7 +1,7 @@
 name: Release
 
 # Tag-driven release pipeline. Push a v*.*.* tag and this workflow will:
-#   1. Build a Release archive on a macOS 26 runner
+#   1. Build a Release archive on the xcode-27 runner
 #   2. Sign the .app with the Developer ID Application certificate
 #   3. Notarize the .app and staple the ticket
 #   4. Package into a signed + notarized + stapled dmg
@@ -38,7 +38,7 @@ permissions:
 # The same Xcode as ci.yml, pinned for the reason given there: the newest on
 # the runner can be a beta, and this job ships what it builds.
 env:
-  XCODE_APP: /Applications/Xcode_26.6.app
+  XCODE_APP: /Applications/Xcode_27.1.app
 
 # One group for every tag, not one per ref. Two tags released at once would
 # otherwise race over which one is Latest and which one the appcast names.
@@ -59,7 +59,7 @@ concurrency:
 jobs:
   release:
     name: Build, notarize, and publish
-    runs-on: macos-26
+    runs-on: xcode-27
     timeout-minutes: 60
 
     env:
