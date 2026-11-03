@@ -125,48 +125,6 @@ struct SidebarProjectRoutingTests {
         #expect(window.newSession == nil)
     }
 
-    // MARK: - Answer…
-
-    @Test func answer_onARowAnotherWindowShows_opensThatWindowsCard_andBringsItForward() throws {
-        let fixture = Fixture()
-        let other = try fixture.window(showing: fixture.b)
-        let approvals = ApprovalPresentationStore()
-        let request = ApprovalPresentation.test()
-        approvals.receive([request])
-
-        SupervisionWindowActions.answer(
-            request,
-            inProject: fixture.b.id,
-            from: fixture.primary,
-            approvals: approvals,
-            session: fixture.session,
-            registry: fixture.registry
-        )
-
-        #expect(other.approvalCard.presentedApproval(in: approvals)?.id == request.id)
-        #expect(!fixture.primary.approvalCard.isOpen(in: approvals))
-        #expect(fixture.presenter.shown == [other.id])
-    }
-
-    @Test func answer_onAnyOtherRow_opensThisWindowsCard() {
-        let fixture = Fixture()
-        let approvals = ApprovalPresentationStore()
-        let request = ApprovalPresentation.test()
-        approvals.receive([request])
-
-        SupervisionWindowActions.answer(
-            request,
-            inProject: fixture.c.id,
-            from: fixture.primary,
-            approvals: approvals,
-            session: fixture.session,
-            registry: fixture.registry
-        )
-
-        #expect(fixture.primary.approvalCard.presentedApproval(in: approvals)?.id == request.id)
-        #expect(fixture.presenter.shown.isEmpty)
-    }
-
     // MARK: - A row's menu
 
     /// Open Changes Panel on a row of a project another window shows opens

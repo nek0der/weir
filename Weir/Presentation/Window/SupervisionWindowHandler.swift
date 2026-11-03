@@ -24,8 +24,6 @@ struct SupervisionWindowHandler: Equatable, Sendable {
     let openFolder: @MainActor @Sendable () -> Void
     /// A sidebar header's ＋: the new worktree sheet for that project.
     let newWorktree: @MainActor @Sendable (UUID) -> Void
-    /// Answer… on a row, by the request and the row's project.
-    let answer: @MainActor @Sendable (ApprovalPresentation, UUID?) -> Void
     /// A row's Open Changes Panel.
     let openChangesPanel: @MainActor @Sendable (ContainerID) -> Void
     /// Whether ⌥⌘N's first use after an update took the key.

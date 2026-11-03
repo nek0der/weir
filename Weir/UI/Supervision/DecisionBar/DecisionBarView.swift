@@ -197,6 +197,10 @@ struct DecisionBarView: View {
         ) { itemID in
             window.decisionBarSelection[paneID] = itemID
         }
+        // An approval card opened from this bar stands on it.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { [window, paneID] frame in
+            window.approvalCard.updateBarAnchor(frame, forPane: paneID)
+        }
     }
 }
 

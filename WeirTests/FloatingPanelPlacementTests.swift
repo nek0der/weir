@@ -278,6 +278,55 @@ struct FloatingPanelBesideTests {
     }
 }
 
+/// The approval card opened from a pane's decision bar: on the bar, its
+/// trailing edge level with the bar's, where the bar's Answer… is.
+struct FloatingPanelOnBarTests {
+    private static let panel = CGSize(width: 400, height: 200)
+
+    private static func onBar(_ bar: CGRect, panel: CGSize = Self.panel, top: CGFloat = 50) -> CGPoint {
+        FloatingPanelPlacement.onBar(bar, panelSize: panel, gap: 6, top: top)
+    }
+
+    @Test func standsAboveTheBar_atItsTrailingEnd() {
+        let bar = CGRect(x: 300, y: 700, width: 800, height: 32)
+        #expect(Self.onBar(bar) == CGPoint(x: 700, y: 494))
+    }
+
+    @Test func aBarNearTheWindowsEdge_keepsThePanelLevelWithIt() {
+        // A pane at the window's trailing side ends nearer the window's edge
+        // than the window's margin: the panel still ends where the pane does.
+        let bar = CGRect(x: 300, y: 700, width: 898, height: 32)
+        #expect(Self.onBar(bar).x + Self.panel.width == bar.maxX)
+    }
+
+    @Test func aTallerPanel_growsUpward_andStopsAtTheColumnsTop() {
+        let bar = CGRect(x: 300, y: 700, width: 800, height: 32)
+        let short = Self.onBar(bar)
+        let tall = Self.onBar(bar, panel: CGSize(width: 400, height: 300))
+        #expect(short.y + Self.panel.height == tall.y + 300, "its bottom stays on the bar")
+        #expect(Self.onBar(bar, panel: CGSize(width: 400, height: 900)).y == 50)
+    }
+
+    @Test func aBarNarrowerThanThePanel_keepsItsTrailingEdge_untilTheWindowsMargin() {
+        // A narrow split in the middle: the panel reaches past the bar's
+        // leading edge, and still ends at the bar's trailing one.
+        let middle = CGRect(x: 500, y: 700, width: 200, height: 32)
+        #expect(Self.onBar(middle).x == 300)
+        // One at the window's leading side: the margin holds it.
+        let leading = CGRect(x: 60, y: 700, width: 200, height: 32)
+        #expect(Self.onBar(leading).x == 6)
+    }
+
+    @Test func thePanelIsNoTallerThanWhatIsAboveTheBar() {
+        let bar = CGRect(x: 300, y: 700, width: 800, height: 32)
+        #expect(FloatingPanelPlacement.roomAbove(bar: bar, top: 50, gap: 6) == 644)
+        #expect(
+            FloatingPanelPlacement.roomAbove(bar: bar.offsetBy(dx: 0, dy: -640), top: 50, gap: 6)
+                == FloatingPanelPlacement.minimumScrollingHeight
+        )
+    }
+}
+
 /// How tall a panel beside its anchor may be: a long reason or question
 /// scrolls inside the card rather than pushing its actions off the window.
 struct FloatingPanelHeightTests {

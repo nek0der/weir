@@ -799,8 +799,9 @@ build that reads a newer file degrades cleanly.
      `AgentKind.allCases`, so they take it without a change.
   4. Approvals: a provider that asks through the Hook Helper declares
      `approval_hook` and whichever of `question_answered_by_agent`,
-     `question_ends_with_turn`, `approval_hook_records_lifecycle`, and
-     `approval_withdrawn_by_signal` describe it; the approval path in the
+     `question_ends_with_turn`, `approval_hook_records_lifecycle`,
+     `approval_withdrawn_by_signal`, and `approval_prompt_beside_card`
+     describe it; the approval path in the
      helper and the card name no provider. The id branches that remain
      elsewhere are listed in ADR 0004, "Capabilities".
   5. Worktrees: `worktree_placement` gives the agent a toggle in project

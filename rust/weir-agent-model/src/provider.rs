@@ -156,6 +156,12 @@ pub enum Capability {
     /// card: no hook of the agent's waits on the helper, so nothing else would
     /// end the card before its timeout.
     ApprovalWithdrawnBySignal,
+    /// The agent shows its own prompt for a permission request while Weir
+    /// holds it, so the prompt above the decision bar answers it as well as
+    /// the card does, whichever comes first. A provider that shows none until
+    /// the request is handed over leaves it out, and its bar names the card
+    /// alone.
+    ApprovalPromptBesideCard,
 }
 
 /// What the platform needs to know about a provider without linking its

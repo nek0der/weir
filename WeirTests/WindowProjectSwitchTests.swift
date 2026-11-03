@@ -628,6 +628,19 @@ extension WindowProjectSwitchTests {
         #expect(fixture.primary.approvalCard.presentedApproval(in: approvals)?.id == request.id)
     }
 
+    @Test func aCardOpenedFromADecisionBar_closesWithTheSwitch() {
+        let fixture = Fixture()
+        let approvals = ApprovalPresentationStore()
+        fixture.tidiesAsTheAppDoes()
+        let request = ApprovalPresentation.test(deadlineMilliseconds: 0)
+        approvals.receive([request])
+        fixture.primary.approvalCard.present(request, from: approvals, openedFromPane: UUID(), focusesClose: true)
+
+        fixture.choose(fixture.bTab, in: fixture.primary)
+
+        #expect(fixture.primary.approvalCard.presentedApproval(in: approvals) == nil)
+    }
+
     @Test func theProjectViewsInvariant_holdsAfterEverySwitch() throws {
         let fixture = Fixture()
         let scratch = fixture.session.openTab(container: .loose, in: fixture.primary.id, intent: .person, selects: false)

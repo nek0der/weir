@@ -37,6 +37,9 @@ pub(crate) fn descriptor() -> &'static ProviderDescriptor {
             Capability::WorktreeEvents,
             Capability::WorktreePlacement,
             Capability::ApprovalHook,
+            // Its permission dialog comes up while the hook still holds the
+            // request.
+            Capability::ApprovalPromptBesideCard,
             Capability::Subagents,
             Capability::TurnSnapshot,
             // Estimated from the transcript on Stop; see `cache`.

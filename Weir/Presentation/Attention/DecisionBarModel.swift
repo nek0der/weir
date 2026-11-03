@@ -439,7 +439,7 @@ struct DecisionBarModel: Equatable {
                 tag: LocalizedStringResource("Approval", comment: "Decision bar tag: an approval request").resolved(in: locale),
                 tone: .waiting,
                 text: approvalSentence(action, agent: agent).resolved(in: locale),
-                instruction: instruction(for: answer, locale: locale)
+                instruction: instruction(for: answer, provider: provider, locale: locale)
             )
         case let .question(provider, answer):
             let agent = SessionRowFactText.agentName(.agent(provider), locale: locale)
@@ -448,7 +448,7 @@ struct DecisionBarModel: Equatable {
                 tone: .waiting,
                 text: LocalizedStringResource("\(agent) is asking a question.", comment: "Decision bar: a question from the agent")
                     .resolved(in: locale),
-                instruction: instruction(for: answer, locale: locale)
+                instruction: instruction(for: answer, provider: provider, locale: locale)
             )
         case let .prompt(provider, wait):
             return promptWords(wait, provider: provider, locale: locale)
@@ -500,7 +500,7 @@ struct DecisionBarModel: Equatable {
     /// response.
     private static func promptWords(_ wait: PromptWait, provider: AgentKind?, locale: Locale) -> Words {
         let agent = provider.map { SessionRowFactText.agentName(.agent($0), locale: locale) }
-        let instruction = instruction(for: .terminal, locale: locale)
+        let instruction = instruction(for: .terminal, provider: nil, locale: locale)
         switch wait {
         case let .approval(approval):
             let text = agent.map { approvalSentence(approval.action, agent: $0) } ?? LocalizedStringResource("Needs approval")
@@ -518,7 +518,7 @@ struct DecisionBarModel: Equatable {
                 tag: LocalizedStringResource("Question").resolved(in: locale),
                 tone: .waiting,
                 text: text.resolved(in: locale),
-                instruction: Self.instruction(for: .terminal, locale: locale)
+                instruction: Self.instruction(for: .terminal, provider: nil, locale: locale)
             )
         case .signIn:
             let text = agent.map {
@@ -559,12 +559,25 @@ struct DecisionBarModel: Equatable {
         }
     }
 
-    private static func instruction(for answer: DecisionBarContent.AnswerPlace, locale: Locale) -> String {
+    /// Where to answer. A request Weir holds is answered on the card, and
+    /// also at the agent's own prompt where the agent shows one meanwhile,
+    /// right above the bar (`approval_prompt_beside_card`): naming the card
+    /// alone would read as if the prompt on screen did not answer it.
+    private static func instruction(
+        for answer: DecisionBarContent.AnswerPlace,
+        provider: AgentKind?,
+        locale: Locale
+    ) -> String {
         let resource = switch answer {
+        case .card where provider.map { AgentProviderRegistry.has(ProviderCapabilityName.approvalPromptBesideCard, $0) } ?? false:
+            LocalizedStringResource(
+                "Answer in the terminal or on the card",
+                comment: "Decision bar: Weir holds the request, and the agent's own prompt in the pane answers it too"
+            )
         case .card:
             LocalizedStringResource(
-                "Answer on the approval card",
-                comment: "Decision bar: Weir still holds the request, so the card answers it"
+                "Answer on the card",
+                comment: "Decision bar: Weir holds the request, and the agent shows no prompt of its own meanwhile"
             )
         // The agent's own prompt is right above the bar, in the same pane:
         // "the terminal" names it, and which screen it is adds nothing.

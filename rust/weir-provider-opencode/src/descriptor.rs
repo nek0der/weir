@@ -21,6 +21,8 @@ pub(crate) fn descriptor() -> &'static ProviderDescriptor {
                 // after the fact, when its payload proves it.
                 Capability::WorktreeFinishProven,
                 Capability::ApprovalHook,
+                // Its permission prompt stays up beside the card.
+                Capability::ApprovalPromptBesideCard,
                 Capability::TurnSnapshot,
                 // Its events reach the pane after the service has begun, so the
                 // plugin saves the start at the Enter that sends the input.

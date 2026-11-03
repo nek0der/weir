@@ -32,6 +32,10 @@ struct SessionRowView: View {
     /// Opens the approval card beside the row; `nil` when the row offers
     /// no Answer….
     let onAnswer: (() -> Void)?
+    /// The window's approval card shows this row's request: the row keeps
+    /// the hover's fill, as the Needs Attention list keeps its row lit, so
+    /// the card's row is seen without the pointer on it.
+    var isCardSource = false
     /// Opens the row; `holdsCommand` for a click with ⌘ alone, which opens
     /// a row of a project no window shows in a new window.
     let onActivate: (_ holdsCommand: Bool) -> Void
@@ -141,7 +145,7 @@ struct SessionRowView: View {
         .modifier(SessionRowFace(
             height: Layout.sessionRowHeight,
             isActive: row.isActive,
-            isHovering: isHovering,
+            isHovering: isHovering || isCardSource,
             isKeyboardSelected: isKeyboardSelected
         ))
         // Not `.onTapGesture`: it waits out the double-click window that

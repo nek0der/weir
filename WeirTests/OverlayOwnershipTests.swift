@@ -57,6 +57,33 @@ struct OverlayOwnershipTests {
         #expect(card.state == ApprovalCardState())
     }
 
+    @Test func aCardOpenedFromADecisionBar_standsOnThatBar_andFollowsIt() {
+        let store = ApprovalPresentationStore()
+        let request = ApprovalPresentation.test(deadlineMilliseconds: 0)
+        store.receive([request])
+        let card = WindowApprovalCard()
+        let pane = UUID()
+        let other = UUID()
+        let bar = CGRect(x: 300, y: 700, width: 800, height: 32)
+        card.updateBarAnchor(bar, forPane: pane)
+        card.updateBarAnchor(CGRect(x: 300, y: 300, width: 800, height: 32), forPane: other)
+
+        card.present(request, from: store, openedFromPane: pane, focusesClose: true)
+        #expect(card.barAnchor() == bar)
+        // The pane resized: the card goes with its bar.
+        let resized = bar.insetBy(dx: 100, dy: 0)
+        card.updateBarAnchor(resized, forPane: pane)
+        #expect(card.barAnchor() == resized)
+
+        // Opened again from its row, it stands beside the row.
+        card.present(request, from: store)
+        #expect(card.barAnchor() == nil)
+
+        card.present(request, from: store, openedFromPane: pane)
+        card.forgetBars(notIn: [other])
+        #expect(card.barAnchor() == nil, "a pane that is gone is no anchor")
+    }
+
     @Test func everyWindowsCard_followsTheRequestsTheyShare() {
         // A settled request closes its card in each window that showed it,
         // and a row whose request is gone loses its frame there.

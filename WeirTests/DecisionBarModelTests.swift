@@ -63,7 +63,8 @@ struct DecisionBarModelTests {
         let deadline = ServiceDeadline(deadlineMs: 522_000, serviceNowMs: 0, receivedAt: SuspendingClock().now)
         for state in [ApprovalRequestState.held, .sendFailed(.deny, error: "offline")] {
             let model = Self.model(.init(items: Self.items([.approval(ApprovalFact.test(state: state, deadline: deadline))])))
-            #expect(model.instruction == "Answer on the approval card")
+            // Claude Code shows its own prompt meanwhile, right above the bar.
+            #expect(model.instruction == "Answer in the terminal or on the card")
             // No shorter form: the card is not the terminal.
             #expect(model.shortInstruction == model.instruction)
             #expect(model.heldUntil == deadline)
@@ -75,7 +76,19 @@ struct DecisionBarModelTests {
             locale: Self.japanese
         )
         #expect(editModel.text == "Codex がファイルの変更を求めています。")
-        #expect(editModel.instruction == "承認カードで回答してください")
+        // Codex shows no prompt of its own until the request is handed over.
+        #expect(editModel.instruction == "カードで回答")
+    }
+
+    @Test(arguments: [
+        (AgentKind.claude, "Answer in the terminal or on the card"),
+        (.opencode, "Answer in the terminal or on the card"),
+        (.codex, "Answer on the card")
+    ])
+    func aHeldRequest_namesTheTerminalToo_whereTheAgentShowsItsOwnPrompt(provider: AgentKind, instruction: String) {
+        let fact = ApprovalFact.test(provider: provider)
+        let model = Self.model(.init(items: Self.items([.approval(fact)], provider: provider)))
+        #expect(model.instruction == instruction)
     }
 
     /// A held approval is named by its tool as an unheld one is: WebFetch,

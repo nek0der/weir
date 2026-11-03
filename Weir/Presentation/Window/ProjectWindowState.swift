@@ -507,6 +507,7 @@ final class ProjectWindowState: Identifiable {
         for gone in restoreStrips.keys where !livePanes.contains(gone) {
             restoreStrips[gone] = nil
         }
+        approvalCard.forgetBars(notIn: livePanes)
     }
 
     /// An item a pane's bar showed, and the epoch the pane was in then
