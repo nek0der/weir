@@ -41,7 +41,7 @@ make screenshot    # Regenerate .github/assets/hero.png (builds Release first)
 make site-images   # Regenerate the site's and the documents' captures (builds Release first)
 make xcodegen      # Regenerate Weir.xcodeproj from project.yml
 make ghostty       # Build vendored libghostty
-make clean         # Remove DerivedData for this project
+make clean         # Remove DerivedData for this checkout
 ```
 
 Each target is a thin wrapper around the underlying tool (`xcodebuild`,
