@@ -62,12 +62,11 @@ final class SurfaceView: NSView {
         return stagedPaste
     }
 
-    /// One-shot flag flipped when `ghostty_surface_new` returns NULL.
-    /// `PaneHostView` observes it via KVO-free re-evaluation (the host
-    /// reads it during update) and renders an in-pane error card with
-    /// a Retry button. A successful re-run of `createSurface` clears
-    /// the flag.
-    @objc dynamic var creationFailed: Bool = false
+    /// Whether libghostty failed to make this view's surface, observable so
+    /// the failure card comes and goes with it, not on an unrelated redraw.
+    let creation = SurfaceCreationState()
+    /// Makes the surface for `createSurface`; a test injects one that fails.
+    private let makeSurface: SurfaceMaker
 
     /// IME composition buffer. Mirrors NSTextInputClient's marked text and
     /// is pushed to libghostty via ghostty_surface_preedit.
@@ -368,8 +367,9 @@ final class SurfaceView: NSView {
     /// press for (the ⌥⌘+mouseDown path was swallowed).
     var isAppKitPaneDragInProgress: Bool = false
 
-    init(ghosttyApp: GhosttyApp) {
+    init(ghosttyApp: GhosttyApp, makeSurface: @escaping SurfaceMaker = SurfaceView.newGhosttySurface) {
         self.ghosttyApp = ghosttyApp
+        self.makeSurface = makeSurface
         // CAMetalLayer rejects subsequent drawableSize updates when
         // the view is created at frame `.zero`: AppKit's renderer
         // latches the zero-sized backing on first attach and never
@@ -759,13 +759,13 @@ extension SurfaceView {
 
     // MARK: - Surface creation
 
-    /// Initialize the libghostty surface and bind it to this view.
-    /// Idempotent in spirit — buffers from a prior `createSurface`
-    /// (e.g. a re-mount where `ghostty_surface_new` returned NULL) are
-    /// freed first. `PaneHostView` calls this from `updateNSView` as a
-    /// fallback when the first `viewDidMoveToWindow` fired with a nil
-    /// window and the early-return left `surface == nil`.
+    /// Initialize the libghostty surface and bind it to this view, unless it
+    /// already has one: a second would start a second shell under the same
+    /// `userdata`, which nothing frees and whose callbacks land here. After a
+    /// NULL from libghostty there is none, so a retry runs; buffers from that
+    /// attempt are freed first.
     func createSurface() {
+        guard surface == nil else { return }
         guard let app = ghosttyApp else {
             log.fault("createSurface called with no GhosttyApp")
             return
@@ -827,20 +827,16 @@ extension SurfaceView {
 
         applyExtraEnvironment(into: &config)
 
-        guard let s = ghostty_surface_new(app.handle, &config) else {
+        guard let s = makeSurface(app.handle, config) else {
             // libghostty hands back NULL when allocation or its own
-            // init fails. The pane otherwise stays mounted but
-            // invisible — no shell, no cursor, no recovery — so the
-            // user sees only a blank pane.
-            // Flip a one-shot flag the `PaneHostView` can read to
-            // render an in-pane "Couldn’t Start the Terminal" card with
-            // a Retry button.
+            // init fails. Without the failure card and its Retry button
+            // the pane would stay blank: no shell, no cursor, no recovery.
             log.fault("ghostty_surface_new returned NULL")
-            creationFailed = true
+            creation.hasFailed = true
             return
         }
         surface = s
-        creationFailed = false
+        creation.hasFailed = false
         app.applyColorScheme(to: s)
 
         // Push the initial size now that libghostty owns the layer.

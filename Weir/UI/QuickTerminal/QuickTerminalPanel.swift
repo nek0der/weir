@@ -192,11 +192,6 @@ final class QuickTerminalContentModel {
     /// ordered-out panel, where nobody can answer it.
     var isPanelVisible = false
 
-    /// Mirrors `surfaceView.creationFailed`, which is KVO-observable but not
-    /// observable by SwiftUI, so the panel can show the same failure card
-    /// a pane does instead of an empty frame.
-    var isSurfaceCreationFailed = false
-
     @ObservationIgnored let settingsStore: SettingsStore
     @ObservationIgnored let reduceTransparencyResolver: ReduceTransparencyResolver
     @ObservationIgnored let clipboard: ClipboardConfirmationCoordinator
@@ -240,10 +235,8 @@ struct QuickTerminalContent: View {
                 QuickTerminalSurfaceRepresentable(surfaceView: surfaceView)
                     .padding(.horizontal, QuickTerminalLayout.terminalInsetHorizontal)
                     .padding(.vertical, QuickTerminalLayout.terminalInsetVertical)
-                if model.isSurfaceCreationFailed {
+                if surfaceView.creation.hasFailed {
                     PaneCreationFailureCard(surfaceView: surfaceView)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color.black.opacity(0.55))
                 }
             }
         }
