@@ -744,7 +744,8 @@ final class AppState {
 
 }
 
-@main
+/// Started by `WeirLaunch`, which runs the bare test host instead under
+/// the test runner.
 struct WeirApp: App {
     @NSApplicationDelegateAdaptor(WeirAppDelegate.self) private var appDelegate
     @State private var state: AppState
