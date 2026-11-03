@@ -63,7 +63,7 @@ enum ReviewAgents {
         registry: any PaneSurfaceProviding
     ) async -> String? {
         guard let surfaceTTY = registry.paneSurface(for: paneID)?.ttyName else { return nil }
-        return await offMain {
+        return await OffPoolWork.run {
             // The surface's own foreground first: it costs a `sysctl` and
             // it is what says whether the tmux scan is worth starting.
             let surfaceForeground = ReviewTerminalProbe.foregroundProcess(on: surfaceTTY)?.name
@@ -86,7 +86,7 @@ enum ReviewAgents {
         guard !Task.isCancelled else { return nil }
         let surfaces = paneIDs.compactMap { paneID in registry.paneSurface(for: paneID)?.ttyName.map { (paneID, $0) } }
         let ttys = surfaces.map(\.1)
-        let names = await offMain { ttys.map { ReviewTerminalProbe.foregroundProcess(on: $0)?.name } }
+        let names = await OffPoolWork.run { ttys.map { ReviewTerminalProbe.foregroundProcess(on: $0)?.name } }
         guard !Task.isCancelled else { return nil }
         var foregrounds: [UUID: String] = [:]
         var hosted: [(paneID: UUID, tty: String)] = []
@@ -99,24 +99,12 @@ enum ReviewAgents {
         }
         guard !hosted.isEmpty else { return foregrounds }
         let hostedTTYs = hosted.map(\.tty)
-        let inTmux = await offMain { ReviewTerminalProbe.hostedForegrounds(surfaceTTYs: hostedTTYs) }
+        let inTmux = await OffPoolWork.run { ReviewTerminalProbe.hostedForegrounds(surfaceTTYs: hostedTTYs) }
         guard !Task.isCancelled else { return nil }
         for (paneID, tty) in hosted {
             foregrounds[paneID] = inTmux[tty]
         }
         return foregrounds
-    }
-
-    /// `work` on a dispatch queue rather than `Task.detached`: it waits on
-    /// a `sysctl` or a child process, and blocking a cooperative-pool thread
-    /// every two seconds is how the whole concurrency runtime runs out of
-    /// threads.
-    private nonisolated static func offMain<Value: Sendable>(_ work: @escaping @Sendable () -> Value) async -> Value {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                continuation.resume(returning: work())
-            }
-        }
     }
 
     static func insert(

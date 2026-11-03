@@ -1,7 +1,8 @@
 // AgentIntegrationServiceRegistrarTests.swift
-// Weir — registration decisions and crash-recovery marker coverage.
+// Weir — registration decisions, crash-recovery markers, and recovery from a service that does not answer.
 
 import Foundation
+import ServiceManagement
 import Testing
 @testable import Weir
 
@@ -260,5 +261,370 @@ struct AgentIntegrationServiceRegistrarTests {
             runningArtifact: status == .enabled ? .response(running) : .notApplicable,
             marker: marker
         )
+    }
+}
+
+@MainActor
+@Suite("Agent integration service recovery")
+struct AgentIntegrationServiceRecoveryTests {
+    private let current = AgentIntegrationServiceArtifact(
+        serviceExecutableSHA256: "service-current",
+        launchAgentPropertyListSHA256: "plist-current"
+    )
+
+    @Test func unreachablePolicy_backsOffThenReplacesOnceThenWaits() {
+        let start = SuspendingClock.now
+        var policy = AgentIntegrationUnreachableServicePolicy()
+        var elapsed = Duration.zero
+        var steps: [AgentIntegrationUnreachableServicePolicy.Step] = []
+        for _ in 0..<7 {
+            let step = policy.step(at: start + elapsed, isRetryPending: false)
+            steps.append(step)
+            if case let .retry(delay) = step {
+                elapsed += delay
+            }
+        }
+        #expect(steps == [
+            .retry(after: .seconds(2)), .retry(after: .seconds(4)), .retry(after: .seconds(8)),
+            .retry(after: .seconds(16)), .retry(after: .seconds(32)), .replace, .wait
+        ])
+    }
+
+    @Test func unreachablePolicy_observationsCloseTogether_doNotBringTheReplacementForward() {
+        let start = SuspendingClock.now
+        var policy = AgentIntegrationUnreachableServicePolicy()
+        #expect(policy.step(at: start, isRetryPending: false) == .retry(after: .seconds(2)))
+        for second in 1...59 {
+            #expect(policy.step(at: start + .seconds(second), isRetryPending: true) == .wait)
+        }
+        #expect(policy.step(at: start + .seconds(60), isRetryPending: true) == .replace)
+    }
+
+    @Test func unreachablePolicy_afterAnEarlyReplacement_setsNoMoreTimers() {
+        let start = SuspendingClock.now
+        var policy = AgentIntegrationUnreachableServicePolicy()
+        #expect(policy.step(at: start, isRetryPending: false) == .retry(after: .seconds(2)))
+        #expect(policy.step(at: start + .seconds(60), isRetryPending: false) == .replace)
+        #expect(policy.step(at: start + .seconds(61), isRetryPending: false) == .wait)
+    }
+
+    @Test func unreachablePolicy_reset_restoresTheReplacement() {
+        let start = SuspendingClock.now
+        var policy = AgentIntegrationUnreachableServicePolicy()
+        _ = policy.step(at: start, isRetryPending: false)
+        #expect(policy.step(at: start + .seconds(60), isRetryPending: false) == .replace)
+        policy.reset()
+        #expect(policy.step(at: start + .seconds(61), isRetryPending: false) == .retry(after: .seconds(2)))
+        #expect(policy.step(at: start + .seconds(121), isRetryPending: false) == .replace)
+    }
+
+    @Test func registrationFailure_readsTheDocumentedCodes() {
+        func failure(_ code: Int32, domain: String = SMAppServiceErrorDomain) -> AgentIntegrationRegistrationFailure {
+            AgentIntegrationRegistrationFailure(NSError(domain: domain, code: Int(code)))
+        }
+        #expect(failure(Int32(kSMErrorAlreadyRegistered)) == .alreadyRegistered)
+        #expect(failure(Int32(kSMErrorLaunchDeniedByUser)) == .deniedByUser)
+        #expect(failure(Int32(kSMErrorJobPlistNotFound)) == .missingFromBundle)
+        #expect(failure(Int32(kSMErrorInvalidSignature)) == .other)
+        #expect(failure(Int32(kSMErrorLaunchDeniedByUser), domain: NSPOSIXErrorDomain) == .other)
+    }
+
+    @Test func bundleLocation_refusesOnlyADiskImageOrATranslocatedCopy() throws {
+        #expect(AgentIntegrationBundleLocation(volumeDeviceModel: "Disk Image", isVolumeReadOnly: true, volumePath: "/Volumes/Weir") ==
+            .diskImage)
+        #expect(AgentIntegrationBundleLocation(
+            volumeDeviceModel: nil,
+            isVolumeReadOnly: true,
+            volumePath: "/private/var/folders/xy/abc/T/AppTranslocation/6E3B4C1A-0000-4000-8000-000000000000"
+        ) == .translocated)
+        // An external disk Weir is installed on, read-only or not.
+        #expect(AgentIntegrationBundleLocation(volumeDeviceModel: "Portable SSD", isVolumeReadOnly: true, volumePath: "/Volumes/Archive") ==
+            .installed)
+        // A writable folder that only happens to carry the name.
+        #expect(AgentIntegrationBundleLocation(
+            volumeDeviceModel: nil,
+            isVolumeReadOnly: false,
+            volumePath: "/Users/someone/AppTranslocation"
+        ) == .installed)
+        try withTempDir { directory in
+            #expect(AgentIntegrationBundleLocation(of: directory) == .installed)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func reconcile_unreachableService_retriesWithBackoffThenReplacesOnce() async throws {
+        try await withTempDir { directory in
+            let system = FakeServiceSystem(artifact: current)
+            try writeMarker(.ready, in: directory)
+            let registrar = system.registrar(directory: directory)
+            registrar.start { _ in }
+            await registrar.waitUntilIdle()
+
+            #expect(system.sleeps == [2, 4, 8, 16, 32].map { .seconds($0) })
+            #expect(system.unregisterCount == 1)
+            #expect(system.registerCount == 1)
+            #expect(registrar.issue?.reason == .reconciliationFailed)
+
+            // After the one replacement, an activation observes once more
+            // and schedules nothing.
+            registrar.appDidBecomeActive()
+            await registrar.waitUntilIdle()
+            #expect(system.sleeps.count == 5)
+            #expect(system.unregisterCount == 1)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func reconcile_serviceAnswersAgain_keepsItAndForgetsTheFailures() async throws {
+        try await withTempDir { directory in
+            let system = FakeServiceSystem(artifact: current)
+            system.answersAfterSleeps = 2
+            try writeMarker(.ready, in: directory)
+            let registrar = system.registrar(directory: directory)
+            var readiness: [Bool] = []
+            registrar.start { readiness.append($0) }
+            await registrar.waitUntilIdle()
+
+            #expect(system.sleeps == [.seconds(2), .seconds(4)])
+            #expect(system.unregisterCount == 0)
+            #expect(registrar.isReady)
+            #expect(readiness == [true])
+            #expect(registrar.issue == nil)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func reconcile_activationsCloseTogether_doNotReplaceEarly() async throws {
+        try await withTempDir { directory in
+            let system = FakeServiceSystem(artifact: current)
+            system.holdsSleeps = true
+            try writeMarker(.ready, in: directory)
+            let registrar = system.registrar(directory: directory)
+            registrar.start { _ in }
+            await pollUntil { system.sleeps.count == 1 }
+            for activation in 1...10 {
+                system.advance(by: .seconds(1))
+                registrar.appDidBecomeActive()
+                await pollUntil { system.observationCount == activation + 1 && !system.isObserving }
+                await Task.yield()
+            }
+            #expect(system.observationCount == 11)
+            #expect(system.unregisterCount == 0)
+            #expect(system.sleeps.count == 1)
+            system.releaseSleeps()
+            await registrar.waitUntilIdle()
+        }
+    }
+
+    /// A timer set before the replacement must not run it again after it
+    /// failed: only the person brings the next attempt.
+    @Test(.timeLimit(.minutes(1)))
+    func replace_failed_isNotRetriedByATimerSetBeforeIt() async throws {
+        try await withTempDir { directory in
+            let system = FakeServiceSystem(artifact: current)
+            system.holdsSleeps = true
+            system.unregisterError = AgentIntegrationError.requestFailed("unregister failed")
+            try writeMarker(.ready, in: directory)
+            let registrar = system.registrar(directory: directory)
+            registrar.start { _ in }
+            await pollUntil { system.sleeps.count == 1 }
+
+            system.advance(by: .seconds(60))
+            registrar.appDidBecomeActive()
+            await pollUntil { system.unregisterCount == 1 && !system.isObserving }
+            await registrar.waitUntilIdle()
+            #expect(marker(in: directory)?.phase == .replacing)
+
+            system.releaseSleeps()
+            await pollUntil(timeout: .milliseconds(500)) { system.unregisterCount > 1 }
+            #expect(system.unregisterCount == 1)
+            #expect(registrar.issue?.reason == .reconciliationFailed)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func retry_whileAReconcileRuns_runsAnotherAfterIt() async throws {
+        try await withTempDir { directory in
+            let system = FakeServiceSystem(artifact: current)
+            system.holdsObservation = true
+            try writeMarker(.ready, in: directory)
+            let registrar = system.registrar(directory: directory)
+            registrar.start { _ in }
+            await pollUntil { system.isObserving }
+            registrar.retry()
+            system.answersAfterSleeps = 0
+            system.releaseObservation()
+            await registrar.waitUntilIdle()
+            #expect(system.observationCount == 2)
+            #expect(registrar.isReady)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func register_deniedByUser_asksForLoginItemsAndKeepsTheRegistration() async throws {
+        try await withTempDir { directory in
+            let system = FakeServiceSystem(artifact: current)
+            system.status = .notRegistered
+            system.registerError = NSError(domain: SMAppServiceErrorDomain, code: Int(kSMErrorLaunchDeniedByUser))
+            let registrar = system.registrar(directory: directory)
+            registrar.start { _ in }
+            await registrar.waitUntilIdle()
+            #expect(registrar.issue?.reason == .requiresApproval)
+            #expect(marker(in: directory)?.phase == .registered)
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func register_fromADiskImage_isRefusedButAHealthyServiceIsKept() async throws {
+        try await withTempDir { directory in
+            let system = FakeServiceSystem(artifact: current)
+            system.location = .diskImage
+            system.status = .notRegistered
+            let registrar = system.registrar(directory: directory)
+            registrar.start { _ in }
+            await registrar.waitUntilIdle()
+            #expect(registrar.issue?.reason == .temporaryLocation)
+            #expect(system.registerCount == 0)
+            #expect(marker(in: directory) == nil)
+
+            system.status = .enabled
+            system.answersAfterSleeps = 0
+            try writeMarker(.ready, in: directory)
+            registrar.appDidBecomeActive()
+            await registrar.waitUntilIdle()
+            #expect(registrar.isReady)
+        }
+    }
+
+    /// A replacement refused on a disk image leaves the service registered
+    /// and the marker current, so a later activation observes it again and
+    /// finds it still unreachable. The issue must stay the disk image's,
+    /// whose alert has no Retry, rather than turn back into the generic one.
+    @Test(.timeLimit(.minutes(1)))
+    func reconcile_fromADiskImage_afterTheRefusedReplacement_staysATemporaryLocation() async throws {
+        try await withTempDir { directory in
+            let system = FakeServiceSystem(artifact: current)
+            system.location = .diskImage
+            try writeMarker(.ready, in: directory)
+            let registrar = system.registrar(directory: directory)
+            registrar.start { _ in }
+            await registrar.waitUntilIdle()
+            #expect(registrar.issue?.reason == .temporaryLocation)
+            #expect(system.unregisterCount == 0)
+
+            registrar.appDidBecomeActive()
+            await registrar.waitUntilIdle()
+            #expect(registrar.issue?.reason == .temporaryLocation)
+            #expect(system.unregisterCount == 0)
+            #expect(system.registerCount == 0)
+        }
+    }
+
+    private func writeMarker(_ phase: AgentIntegrationRegistrationMarker.Phase, in directory: URL) throws {
+        try store(in: directory).write(AgentIntegrationRegistrationMarker(phase: phase, artifact: current, appVersion: "2"))
+    }
+
+    private func marker(in directory: URL) -> AgentIntegrationRegistrationMarker? {
+        store(in: directory).load()
+    }
+
+    private func store(in directory: URL) -> AgentIntegrationRegistrationMarkerStore {
+        AgentIntegrationRegistrationMarkerStore(fileURL: directory
+            .appendingPathComponent("agent-integration", isDirectory: true)
+            .appendingPathComponent("service-registration.json"))
+    }
+}
+
+/// A stand-in for `SMAppService`, the bundle, the running service, and the
+/// clock. The service does not answer until `answersAfterSleeps` retry
+/// delays have passed (never, by default). A sleep passes at once and moves
+/// the clock on, unless `holdsSleeps` keeps it waiting.
+@MainActor
+private final class FakeServiceSystem {
+    let artifact: AgentIntegrationServiceArtifact
+    var location = AgentIntegrationBundleLocation.installed
+    var status = AgentIntegrationRegistrationStatus.enabled
+    var registerError: (any Error)?
+    var answersAfterSleeps = Int.max
+    var holdsSleeps = false
+    var holdsObservation = false
+    private(set) var registerCount = 0
+    private(set) var unregisterCount = 0
+    private(set) var observationCount = 0
+    private(set) var isObserving = false
+    private(set) var sleeps: [Duration] = []
+    private var elapsed = Duration.zero
+    private let start = SuspendingClock.now
+    private var heldObservation: CheckedContinuation<Void, Never>?
+    private var heldSleeps: [CheckedContinuation<Void, Never>] = []
+    var unregisterError: (any Error)?
+
+    init(artifact: AgentIntegrationServiceArtifact) {
+        self.artifact = artifact
+    }
+
+    func advance(by duration: Duration) {
+        elapsed += duration
+    }
+
+    /// Lets every held sleep pass, without moving the clock.
+    func releaseSleeps() {
+        holdsSleeps = false
+        heldSleeps.forEach { $0.resume() }
+        heldSleeps = []
+    }
+
+    func releaseObservation() {
+        holdsObservation = false
+        heldObservation?.resume()
+        heldObservation = nil
+    }
+
+    func registrar(directory: URL) -> AgentIntegrationServiceRegistrar {
+        AgentIntegrationServiceRegistrar(
+            applicationSupportDirectory: directory,
+            appVersion: "2",
+            environment: AgentIntegrationServiceEnvironment(
+                inspectBundle: { [self] in await (artifact, location) },
+                status: { [self] in status },
+                register: { [self] in
+                    registerCount += 1
+                    if let registerError {
+                        throw registerError
+                    }
+                    status = .enabled
+                },
+                unregister: { [self] in
+                    unregisterCount += 1
+                    if let unregisterError {
+                        throw unregisterError
+                    }
+                },
+                runningArtifact: { [self] in try await observe() },
+                now: { [self] in MainActor.assumeIsolated { start + elapsed } },
+                sleep: { [self] duration in await sleep(duration) },
+                registersWithSystem: false
+            )
+        )
+    }
+
+    private func observe() async throws -> AgentIntegrationServiceArtifact? {
+        observationCount += 1
+        isObserving = true
+        defer { isObserving = false }
+        if holdsObservation {
+            await withCheckedContinuation { heldObservation = $0 }
+        }
+        guard sleeps.count >= answersAfterSleeps else { throw AgentIntegrationError.timeout }
+        return artifact
+    }
+
+    private func sleep(_ duration: Duration) async {
+        sleeps.append(duration)
+        if holdsSleeps {
+            await withCheckedContinuation { heldSleeps.append($0) }
+            return
+        }
+        elapsed += duration
     }
 }

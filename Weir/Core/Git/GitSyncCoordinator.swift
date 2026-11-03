@@ -239,13 +239,13 @@ private final class ProjectSync {
         session.projects[index].trouble = trouble
     }
 
-    /// Whether `url` is a folder on disk, asked off the main actor: a
-    /// volume that stopped answering holds the caller.
+    /// Whether `url` is a folder on disk, asked through `OffPoolWork`: a
+    /// volume that stopped answering holds the thread that asks.
     private static func folderExists(_ url: URL) async -> Bool {
-        await Task.detached {
+        await OffPoolWork.run {
             var isDirectory: ObjCBool = false
             return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
-        }.value
+        }
     }
 
     // MARK: - refetch sub-steps

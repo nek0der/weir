@@ -360,4 +360,40 @@ struct ApprovalPresentationStoreTests {
         #expect(!store.opensCard(handed.key))
         #expect(!store.opensCard(ApprovalKey(epoch: epoch, runID: UUID(), requestID: UUID())))
     }
+
+    /// A stop while the observer waits for the service's reply ends the wait
+    /// at once, rather than holding a thread for the subscription's minute.
+    @Test(.timeLimit(.minutes(1)))
+    func observe_canceledWhileOpening_releasesThreadWithinOneSecond() async throws {
+        let service = HeldXPCService(holding: .everything)
+        try await expectStopEndsTheObserver(waitingOn: service)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func observe_canceledWhileSubscribed_releasesThreadWithinOneSecond() async throws {
+        let artifact = try AgentIntegrationServiceArtifact.bundled(in: Bundle.main.bundleURL)
+        let service = HeldXPCService(holding: .afterOpening(artifact))
+        try await expectStopEndsTheObserver(waitingOn: service)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func observe_stoppedRightAfterStart_ends() async {
+        let service = HeldXPCService(holding: .everything)
+        let store = ApprovalPresentationStore(controllerClient: { try service.client() })
+        store.start()
+        await store.stop()?.value
+        #expect(!store.isRunning)
+    }
+
+    private func expectStopEndsTheObserver(waitingOn service: HeldXPCService) async throws {
+        let store = ApprovalPresentationStore(controllerClient: { try service.client() })
+        store.start()
+        await pollUntil(timeout: .seconds(10)) { service.heldCount == 1 }
+        try #require(service.heldCount == 1)
+
+        let clock = ContinuousClock()
+        let stoppedAt = clock.now
+        await store.stop()?.value
+        #expect(stoppedAt.duration(to: clock.now) < .seconds(1))
+    }
 }

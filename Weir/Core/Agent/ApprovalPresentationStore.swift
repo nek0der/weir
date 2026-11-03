@@ -162,6 +162,11 @@ final class ApprovalPresentationStore {
     /// Reads the service clock for the wake refresh. Injected for the same
     /// reason as `decisionSender`.
     private let serviceClockReader: @Sendable () async throws -> ApprovalControllerConnection.ServiceClockReading
+    /// Makes the client the subscription runs on. Injected so a test can
+    /// hand in one whose service never answers; the default reaches the
+    /// bundled service, waiting long enough for the subscription's own
+    /// minute-long wait.
+    private let controllerClient: @Sendable () throws -> AgentIntegrationXPCClient
     /// The agent runs as the projection last reported them, for where each
     /// request's agent is attached (`panes(for:in:)`). Set by the app, which
     /// owns `AttentionState`; until then no run is known and the session
@@ -172,10 +177,13 @@ final class ApprovalPresentationStore {
         decisionSender: @escaping @Sendable (ApprovalPresentation, ApprovalResolution) async throws -> Void
             = ApprovalControllerConnection.sendDecision,
         serviceClockReader: @escaping @Sendable () async throws -> ApprovalControllerConnection.ServiceClockReading
-            = ApprovalControllerConnection.readServiceClock
+            = ApprovalControllerConnection.readServiceClock,
+        controllerClient: @escaping @Sendable () throws -> AgentIntegrationXPCClient
+            = { try AgentIntegrationXPCClient(role: .controller, timeoutSeconds: 70) }
     ) {
         self.decisionSender = decisionSender
         self.serviceClockReader = serviceClockReader
+        self.controllerClient = controllerClient
     }
 
     isolated deinit {
@@ -216,11 +224,18 @@ final class ApprovalPresentationStore {
         guard observerTask == nil else { return }
         let generation = UUID()
         observerGeneration = generation
-        observerTask = Task { await Self.observe(store: self, generation: generation) }
+        let controllerClient = controllerClient
+        observerTask = Task {
+            await Self.observe(store: self, generation: generation, controllerClient: controllerClient)
+        }
     }
 
-    func stop() {
-        observerTask?.cancel()
+    /// Returns the observer it canceled, so a test can wait for it to end
+    /// rather than for a stretch of time.
+    @discardableResult
+    func stop() -> Task<Void, Never>? {
+        let canceled = observerTask
+        canceled?.cancel()
         observerTask = nil
         observerGeneration = UUID()
         pending = []
@@ -241,6 +256,7 @@ final class ApprovalPresentationStore {
         settledIDs = []
         failedReleaseIDs = []
         onRequestsChanged()
+        return canceled
     }
 
     func resolve(_ approval: ApprovalPresentation, _ resolution: ApprovalResolution) {
@@ -584,12 +600,16 @@ final class ApprovalPresentationStore {
 
     private nonisolated static func observe(
         store: ApprovalPresentationStore,
-        generation: UUID
+        generation: UUID,
+        controllerClient: @escaping @Sendable () throws -> AgentIntegrationXPCClient
     ) async {
         while !Task.isCancelled {
             do {
-                try await observeConnection(store: store, generation: generation)
+                try await observeConnection(store: store, generation: generation, controllerClient: controllerClient)
             } catch {
+                // A stop ends the wait by invalidating the connection, which
+                // is not a disconnect worth reporting.
+                guard !Task.isCancelled else { return }
                 log.error("Approval subscription disconnected: \(String(describing: error), privacy: .private)")
                 await store.connectionDidDisconnect(generation: generation)
                 try? await Task.sleep(for: .seconds(2))
@@ -597,35 +617,49 @@ final class ApprovalPresentationStore {
         }
     }
 
+    /// Follows one connection until it fails or the task is canceled. Each
+    /// exchange blocks for up to the subscription's minute, so it runs
+    /// through `OffPoolWork`, and a cancellation invalidates the connection
+    /// to end the wait at once rather than holding a thread for that minute.
     private nonisolated static func observeConnection(
         store: ApprovalPresentationStore,
-        generation: UUID
+        generation: UUID,
+        controllerClient: @Sendable () throws -> AgentIntegrationXPCClient
     ) async throws {
-        let (client, epoch) = try ApprovalControllerConnection.openSession(timeoutSeconds: 70)
-        var response = try AgentIntegrationApprovalWire.object(from: client.exchange(
-            AgentIntegrationApprovalWire.snapshot(epoch: epoch)
-        ))
-        while !Task.isCancelled {
-            let receivedAt = SuspendingClock.now
-            // Read just before the lookups, so a request that left the list
-            // since the last pass is looked up rather than missed.
-            let trackedIDs = await store.ledger.trackedIDs
-            let projection = try ApprovalControllerConnection.projection(
-                from: response,
-                epoch: epoch,
-                receivedAt: receivedAt,
-                trackedIDs: trackedIDs
-            ) { runID, requestID in
-                try ApprovalControllerConnection.fetch(client, epoch: epoch, runID: runID, requestID: requestID)
+        let client = try controllerClient()
+        try await withTaskCancellationHandler {
+            let epoch = try await OffPoolWork.run(qos: .userInitiated) {
+                try ApprovalControllerConnection.epoch(openingSessionOn: client)
             }
-            await store.replacePending(projection, epoch: epoch, generation: generation)
-            response = try AgentIntegrationApprovalWire.object(from: client.exchange(
-                AgentIntegrationApprovalWire.subscribe(
+            var request = try AgentIntegrationApprovalWire.snapshot(epoch: epoch)
+            while !Task.isCancelled {
+                // The clock is read as the reply arrives, which is where the
+                // service's deadlines are measured from.
+                let (response, receivedAt) = try await OffPoolWork.run(qos: .userInitiated) { [request] in
+                    try (client.exchange(request), SuspendingClock.now)
+                }
+                // Read just before the lookups, so a request that left the
+                // list since the last pass is looked up rather than missed.
+                let trackedIDs = await store.ledger.trackedIDs
+                let projection = try await OffPoolWork.run(qos: .userInitiated) {
+                    try ApprovalControllerConnection.projection(
+                        from: AgentIntegrationApprovalWire.object(from: response),
+                        epoch: epoch,
+                        receivedAt: receivedAt,
+                        trackedIDs: trackedIDs
+                    ) { runID, requestID in
+                        try ApprovalControllerConnection.fetch(client, epoch: epoch, runID: runID, requestID: requestID)
+                    }
+                }
+                await store.replacePending(projection, epoch: epoch, generation: generation)
+                request = try AgentIntegrationApprovalWire.subscribe(
                     epoch: epoch,
                     afterSequence: projection.sequence,
                     maximumWaitMilliseconds: 60000
                 )
-            ))
+            }
+        } onCancel: {
+            client.invalidate()
         }
     }
 

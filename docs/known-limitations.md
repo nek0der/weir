@@ -28,6 +28,16 @@ as they are fixed or confirmed.
   in a build signed with a Team ID. An ad-hoc signed Debug build (the default
   for `make build`) leaves every approval to the agent's own terminal prompt.
   `CONTRIBUTING.md` explains how to sign a development build.
+- **Native approvals may be off while Weir runs from its disk image or a
+  translocated copy.** Opened straight from the disk image, or from a copy
+  macOS translocated, Weir does not register or replace the approval service,
+  and its alert offers no Retry. A service that an installed copy registered
+  is still used, but when there is none, or it stops answering, every approval
+  goes to the agent's own prompt until Weir is moved to the Applications
+  folder and opened from there.
+- **A service that stops answering loses its pending requests.** When the
+  registered approval service has not answered for a minute, Weir replaces
+  it once. The requests it held go to each agent's own prompt.
 - **Claude Code shows its own prompt while Weir holds its request.** Weir holds
   every request until it is answered on the card or handed to the terminal
   ("Answer in terminal"), wherever its pane is. Claude Code draws its own

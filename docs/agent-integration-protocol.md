@@ -42,9 +42,12 @@ at most 128 request records.
 The platform host owns transport creation and peer authentication. macOS
 carries each encoded request and response as one bounded XPC `Data` value over
 role-specific Mach service endpoints. It does not add stream framing inside
-XPC. Other operating systems may use different local transports, provided
-they preserve message boundaries, trusted principals, limits, ordering, and
-failure behavior.
+XPC. The macOS host runs each requester exchange on a thread of its own, at
+most 256 at once; the service refuses one beyond that, and the Hook Helper
+then makes no decision, so the provider keeps its native permission flow.
+Other operating systems may use different local transports, provided they
+preserve message boundaries, trusted principals, limits, ordering, and failure
+behavior.
 
 ## Trusted principals
 

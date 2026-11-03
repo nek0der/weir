@@ -40,11 +40,18 @@ enum ApprovalControllerConnection {
         } else {
             try AgentIntegrationXPCClient(role: .controller)
         }
+        return try (client, epoch(openingSessionOn: client))
+    }
+
+    /// Opens a controller session on `client` and returns the service's
+    /// epoch. Apart from `openSession` so a caller can hold the client
+    /// while the open blocks, and invalidate it to end the wait.
+    static func epoch(openingSessionOn client: AgentIntegrationXPCClient) throws -> UUID {
         try validateCurrentService(client.openSession())
         let hello = try AgentIntegrationApprovalWire.object(from: client.exchange(
             AgentIntegrationApprovalWire.hello(clientVersion: "weir-controller-v1")
         ))
-        return try (client, AgentIntegrationApprovalWire.epoch(from: hello))
+        return try AgentIntegrationApprovalWire.epoch(from: hello)
     }
 
     /// Reads a snapshot or subscribe result. Pending requests are read in
@@ -165,7 +172,15 @@ enum ApprovalControllerConnection {
     /// `already_terminal` error carries only a code and a message. Also
     /// throws `.recordMissing` when the service restarted since, because the
     /// request belonged to a broker that no longer exists.
+    /// Blocks on XPC, so it runs through `OffPoolWork`, ahead of other
+    /// background work because the person is waiting on it.
     static func sendDecision(_ approval: ApprovalPresentation, _ resolution: ApprovalResolution) async throws {
+        try await OffPoolWork.run(qos: .userInitiated) {
+            try sendDecisionBlocking(approval, resolution)
+        }
+    }
+
+    private static func sendDecisionBlocking(_ approval: ApprovalPresentation, _ resolution: ApprovalResolution) throws {
         let (client, currentEpoch) = try openSession()
         // A restarted service has a new broker that never held this request,
         // so retrying cannot reach it.
@@ -269,6 +284,10 @@ enum ApprovalControllerConnection {
     }
 
     static func readServiceClock() async throws -> ServiceClockReading {
+        try await OffPoolWork.run(qos: .userInitiated) { try readServiceClockBlocking() }
+    }
+
+    private static func readServiceClockBlocking() throws -> ServiceClockReading {
         let (client, epoch) = try openSession()
         let response = try AgentIntegrationApprovalWire.object(from: client.exchange(
             AgentIntegrationApprovalWire.snapshot(epoch: epoch)

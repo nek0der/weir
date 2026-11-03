@@ -20558,6 +20558,22 @@
         }
       }
     },
+    "Weir is running from a disk image or a temporary copy. Move it to the Applications folder, then open it again.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weir is running from a disk image or a temporary copy. Move it to the Applications folder, then open it again."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weir がディスクイメージか一時的なコピーから開かれています。「アプリケーション」フォルダーに移動してから、もう一度開いてください。"
+          }
+        }
+      }
+    },
     "Native Approvals Unavailable": {
       "localizations": {
         "ja": {

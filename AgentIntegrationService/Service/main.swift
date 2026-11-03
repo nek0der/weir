@@ -56,15 +56,43 @@ private final class AgentIntegrationConnection: NSObject, AgentIntegrationXPCPro
         // deadline: run there, it would hold back the withdrawal that the
         // invalidation exists for (`shouldAcceptNewConnection`).
         let exchange = PendingExchange(session: session, request: request, reply: reply)
-        Self.exchangeQueue.async {
-            exchange.run()
+        guard runID != nil else {
+            // The controller's longest wait is a minute-long subscribe, and
+            // the queue stays concurrent so a resolve on another connection
+            // never waits behind it.
+            Self.exchangeQueue.async {
+                exchange.run()
+            }
+            return
         }
+        // A requester's wait gets a thread of its own. On a dispatch queue,
+        // enough hooks waiting at once would use up the workers the
+        // controller's exchanges need too. Admitted before the thread
+        // starts, so a flood is refused rather than met with threads; a
+        // refused helper leaves the request to the agent's own prompt.
+        guard Self.requesterThreads.admit() else {
+            reply(nil, AgentIntegrationError.requestFailed("The approval service is busy.") as NSError)
+            return
+        }
+        let thread = Thread {
+            exchange.run()
+            Self.requesterThreads.release()
+        }
+        thread.name = "com.nekoder.weir.approval-requester"
+        thread.qualityOfService = .userInitiated
+        thread.start()
     }
 
     private static let exchangeQueue = DispatchQueue(
         label: "com.nekoder.weir.approval-exchange",
         qos: .userInitiated,
         attributes: .concurrent
+    )
+
+    /// Twice the broker's records: every record pending with its wait, and
+    /// as many short exchanges besides.
+    private static let requesterThreads = ThreadAdmission(
+        limit: 2 * AgentIntegrationConfiguration.maximumRecords
     )
 }
 

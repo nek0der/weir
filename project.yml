@@ -271,6 +271,7 @@ targets:
       - path: AgentIntegrationService/Shared
       - path: AgentIntegrationService/ProviderBridge
       - path: AgentIntegrationService/Service/RustApprovalHost.swift
+      - path: AgentIntegrationService/Service/ThreadAdmission.swift
       - path: AgentIntegrationService/Resources/com.nekoder.weir.agent-integration-service.plist
         buildPhase:
           copyFiles:
