@@ -16,7 +16,9 @@ across app restarts, badge agent state, and re-route
   Claude Code takes the last `--settings` and ignores the rest, so
   when the user passes one of their own, the shim merges the two
   first: their keys win, and the per-event hook arrays concatenate so
-  both sets run.
+  both sets run. A value that is neither JSON nor a readable JSON file is
+  passed on as it is, and the shim says on stderr that this `claude` runs
+  without Weir's hooks.
 - `weir-hook` — the hook command Claude Code calls. It is a wrapper that
   execs the Hook Helper's `hook claude` subcommand, which runs the Rust
   receiver in-process. The receiver reads `WEIR_PANE_ID` (the UUID of the
@@ -70,7 +72,7 @@ sets them:
 | `WEIR_CWD_EVENTS_DIR` | Directory to write cwd-change records into |
 | `WEIR_USAGE_DIR` | Directory the status line relay writes the plan usage into |
 | `WEIR_CLAUDE_USER_SETTINGS` | Set by the shim: the person's own `--settings` value (inline JSON or an absolute path), which our flag replaced, so the status line relay finds their status line in it. Unset at the shim's start, so a nested `claude` does not take its parent's |
-| `WEIR_REAL_CLAUDE` | Optional override path to the real `claude`, taken before any search (a test's stub) |
+| `WEIR_REAL_CLAUDE` | Optional override path to the real `claude`, taken before any search (a test's stub); outside an app bundle only |
 | `WEIR_FOUND_CLAUDE` | The `claude` the new worktree sheet found, from the login shell's `PATH`, the known locations, or the last `PATH` a pane of the same project had, in that order (`AgentCatalog.detectInstallations`). Given only to the shell of the pane that the sheet's launch starts (`WorkspaceSession.StagedLaunch`), never to a restored one. The shim takes it when that pane's own `PATH` has no `claude`, before the known locations, while it still names an executable file, and removes it from what it hands on, so the agent and a tmux server never carry it. The pane's shell keeps it until the pane closes, as the same fallback for a later `claude` typed there |
 | `WEIR_CLAUDE_KNOWN_LOCATIONS` | Newline-separated places to look when the `PATH` has no `claude`, in order; one may hold a `*`. The agent catalog's list (`AgentCatalog.knownLocationsEnvironment`), so what the new worktree sheet offers is what the shim finds. A `*` folder is tried newest version first. The folder of an agent found off the `PATH`, here or through `WEIR_FOUND_CLAUDE`, goes at the end of `PATH`; when it is a `#!/usr/bin/env node` script with a `node` beside it (an npm install under nvm), the shim starts it on that `node` rather than the first on `PATH` (`weir_find_known_agent` and `weir_node_beside` in `agent-shim/runtime-common.sh`) |
 | `WEIR_DISABLE_CLAUDE_RESUME` | `1` to run the real `claude` with no `--settings` override, so no hook fires |

@@ -95,9 +95,9 @@ git -C "$workdir" add README.md
 git -C "$workdir" -c user.name=fixture -c user.email=fixture@example.com commit -q -m "add README"
 
 # The user's own shells may already carry an installed Weir's shim on
-# PATH, and a shim treats whatever `command -v` finds next as the real
-# binary. Resolve the agent outside every shim directory and hand it over
-# explicitly so the Debug shim is the only one in the chain.
+# PATH. The Debug shim passes over every shim folder when it looks for the
+# real binary, and takes no override from inside its bundle, so we only
+# check here that there is one for it to find.
 real_agent=""
 IFS=: read -r -a path_entries <<< "$PATH"
 for entry in "${path_entries[@]}"; do
@@ -108,8 +108,6 @@ for entry in "${path_entries[@]}"; do
   fi
 done
 [[ -n "$real_agent" ]] || { echo "error: $provider not found on PATH outside the shim directories" >&2; exit 1; }
-real_variable="WEIR_REAL_CLAUDE"
-[[ "$provider" == "codex" ]] && real_variable="WEIR_REAL_CODEX"
 
 pane_id="$(uuidgen)"
 session="rec-$provider-$case_name"
@@ -124,7 +122,6 @@ env_args=(
   "WEIR_CODEX_AGENT_STATES_DIR=$scratch/codex-agent-states"
   "WEIR_CODEX_SESSIONS_DIR=$scratch/codex-sessions"
   "PATH=$shim_dir:$PATH"
-  "$real_variable=$real_agent"
 )
 if [[ ${#extra_env[@]} -gt 0 ]]; then
   env_args+=("${extra_env[@]}")

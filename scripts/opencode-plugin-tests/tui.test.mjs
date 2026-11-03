@@ -15,6 +15,7 @@ import plugin, {
   NOT_RECORDED_EXIT,
   SHOWN_TRIES,
   focusRequestPath,
+  hookHelperPath,
   hookTimeLimit,
   isSessionTitle,
   autoAcceptsFrom,
@@ -1766,4 +1767,18 @@ test("a bootstrap at work holds back no report", async () => {
 test("the plugin has the shape OpenCode's loader asks for", () => {
   assert.equal(plugin.id, "weir")
   assert.equal(typeof plugin.setup, "function")
+})
+
+test("the helper override is a test's, taken only outside an app bundle", () => {
+  const override = "/elsewhere/AgentIntegrationHookHelper"
+  const bundle = "/Applications/Weir.app/Contents/Resources/opencode-shim"
+  assert.equal(
+    hookHelperPath({ WEIR_OPENCODE_HOOK_DIR: bundle, WEIR_HOOK_HELPER: override }),
+    "/Applications/Weir.app/Contents/MacOS/AgentIntegrationHookHelper",
+  )
+  assert.equal(hookHelperPath({ WEIR_OPENCODE_HOOK_DIR: "/src/Weir/Resources/opencode-shim", WEIR_HOOK_HELPER: override }), override)
+  assert.equal(
+    hookHelperPath({ WEIR_OPENCODE_HOOK_DIR: "/src/Weir/Resources/opencode-shim" }),
+    "/src/Weir/MacOS/AgentIntegrationHookHelper",
+  )
 })

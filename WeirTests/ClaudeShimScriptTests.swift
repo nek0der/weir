@@ -19,10 +19,13 @@ struct ClaudeShimScriptTests {
         hookNamespace: String? = nil,
         setsTemporaryDirectory: Bool = true,
         prepareTemporaryDirectory: (URL) throws -> Void = { _ in },
+        temporaryDirectory: (URL) throws -> URL = { $0 },
+        shim: (URL) throws -> URL = { _ in try ShimHarness.shim("claude") },
         sourceLocation: SourceLocation = #_sourceLocation
     ) throws -> [String] {
         try withTempDir { dir in
             try prepareTemporaryDirectory(dir)
+            let shim = try shim(dir)
             let stub = dir.appendingPathComponent("fake-claude")
             // The settings payload is pretty-printed JSON, which is why the
             // argv is recorded NUL-separated.
@@ -33,10 +36,8 @@ struct ClaudeShimScriptTests {
             environment["WEIR_CLAUDE_SETTINGS_TEMPLATE"] = try ShimHarness.claudeSettingsTemplate()
             environment["WEIR_REAL_CLAUDE"] = stub.path
             environment["WEIR_CLAUDE_HOOK_NAMESPACE"] = hookNamespace
-            if !setsTemporaryDirectory {
-                environment["TMPDIR"] = nil
-            }
-            let process = try ShimHarness.run(ShimHarness.shim("claude"), args, environment: environment)
+            environment["TMPDIR"] = setsTemporaryDirectory ? try temporaryDirectory(dir).path : nil
+            let process = try ShimHarness.run(shim, args, environment: environment)
             #expect(process.terminationStatus == 0, sourceLocation: sourceLocation)
 
             return ShimHarness.recordedArgv(argvFile) ?? []
@@ -164,6 +165,105 @@ struct ClaudeShimScriptTests {
         }
         #expect(sessionStartGroups(payload).count == 1)
         #expect((payload?["env"] as? [String: Any])?["FROM_FILE"] as? String == "1")
+    }
+
+    /// The merge used to write both documents into the link folder, so with
+    /// that folder refused it failed, and Claude started on the person's
+    /// settings alone, without a word and without any of Weir's hooks.
+    @Test func userSettings_areMergedWhenTheLinkFolderIsUnusable() throws {
+        try withTempDir { elsewhere in
+            let theirs = #"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/bin/true"}]}]}}"#
+            let argv = try runShim(["--settings", theirs], hookNamespace: "planted") { dir in
+                try FileManager.default.createSymbolicLink(
+                    at: dir.appendingPathComponent("weir-claude-shim-planted"),
+                    withDestinationURL: elsewhere
+                )
+            }
+            let groups = try sessionStartGroups(settingsPayload(in: argv))
+            #expect(groups.count == 2)
+            let commands = groups.compactMap { ($0["hooks"] as? [[String: Any]])?.first?["command"] as? String }
+            #expect(commands.first == "/bin/true")
+            #expect(commands.last?.hasSuffix("/claude-shim/weir-hook") == true)
+            let permission = try #require(settingsPayload(in: argv)?["hooks"] as? [String: Any])["PermissionRequest"]
+            #expect(permission != nil)
+        }
+    }
+
+    /// Claude Code runs a hook's command under `sh -c`. A path holding what
+    /// the shell, JSON, or the template's sed would read as their own
+    /// (`'`, a space, `&`, `|`, `"`, `\`) still names the hook, whether it
+    /// is the link in the temporary folder or, with that folder refused, the
+    /// hook's own path.
+    @Test(arguments: [true, false])
+    func hookPaths_needingQuotes_stillRunTheHook(isLinkFolderUsable: Bool) throws {
+        try withTempDir { outer in
+            let awkward = outer.appendingPathComponent(#"R&D |"it's" \x"#)
+            let shimFolder = awkward.appendingPathComponent("claude-shim")
+            let fileManager = FileManager.default
+            try fileManager.createDirectory(at: awkward, withIntermediateDirectories: true)
+            try fileManager.copyItem(at: ShimHarness.shim("claude").deletingLastPathComponent(), to: shimFolder)
+            // A hook that says it ran, in place of the one that would reach
+            // the helper.
+            let ran = outer.appendingPathComponent("ran")
+            let hook = shimFolder.appendingPathComponent("weir-hook")
+            try fileManager.removeItem(at: hook)
+            try ShimHarness.writeExecutable("#!/bin/sh\n: > '\(ran.path)'\n", at: hook)
+            if !isLinkFolderUsable {
+                try fileManager.createSymbolicLink(
+                    at: awkward.appendingPathComponent("weir-claude-shim-awkward"),
+                    withDestinationURL: outer
+                )
+            }
+
+            let argv = try runShim(
+                [],
+                hookNamespace: "awkward",
+                temporaryDirectory: { _ in awkward },
+                shim: { _ in shimFolder.appendingPathComponent("claude") }
+            )
+            let command = try sessionStartCommand(argv)
+            #expect(command.contains("weir-claude-shim-awkward") == isLinkFolderUsable)
+
+            let shell = Process()
+            shell.executableURL = URL(fileURLWithPath: "/bin/sh")
+            shell.arguments = ["-c", command]
+            shell.standardInput = FileHandle.nullDevice
+            try shell.run()
+            #expect(shell.waitUntilExit(within: 10))
+            #expect(shell.terminationStatus == 0)
+            #expect(fileManager.fileExists(atPath: ran.path))
+        }
+    }
+
+    /// A settings file is read by the merge, not passed to it: its text may
+    /// be larger than one argument can hold (`ARG_MAX` is 1 MiB), though
+    /// the document it holds is small.
+    @Test func userSettingsFile_largerThanAnArgument_isMerged() throws {
+        let payload = try withTempDir { dir -> [String: Any]? in
+            let file = dir.appendingPathComponent("theirs.json")
+            let text = String(repeating: " ", count: 1_100_000) + #"{"env":{"FROM_FILE":"1"}}"#
+            try text.write(to: file, atomically: true, encoding: .utf8)
+            return try settingsPayload(in: runShim(["--settings", file.path]))
+        }
+        #expect(sessionStartGroups(payload).count == 1)
+        #expect((payload?["env"] as? [String: Any])?["FROM_FILE"] as? String == "1")
+    }
+
+    /// A control character in the link folder's path is one no escaping
+    /// carries into the settings. Claude starts as it would without us,
+    /// rather than on a document it would refuse.
+    @Test func hookPath_thatCannotBeWritten_startsClaudeWithoutOurSettings() throws {
+        let argv = try runShim(
+            ["--version"],
+            prepareTemporaryDirectory: { dir in
+                try FileManager.default.createDirectory(
+                    at: dir.appendingPathComponent("a\tb"),
+                    withIntermediateDirectories: true
+                )
+            },
+            temporaryDirectory: { $0.appendingPathComponent("a\tb") }
+        )
+        #expect(argv == ["--version"])
     }
 
     @Test("passes an unmergeable user value straight through")

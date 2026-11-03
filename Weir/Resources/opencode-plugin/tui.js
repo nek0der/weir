@@ -1182,11 +1182,23 @@ export function autoAcceptsFrom(argv) {
   return isOn
 }
 
+/**
+ * The Hook Helper beside the shim folder. `WEIR_HOOK_HELPER` is a test's, taken only
+ * outside an app bundle, as the shell wrappers take it: a bundle's helper is the signed
+ * one beside it, and nothing in the pane's environment chooses another.
+ */
+export function hookHelperPath(pane) {
+  const hookDirectory = pane.WEIR_OPENCODE_HOOK_DIR
+  const bundled = join(dirname(dirname(hookDirectory)), "MacOS", "AgentIntegrationHookHelper")
+  if (/\.app\/Contents\/Resources\//.test(hookDirectory)) return bundled
+  return pane.WEIR_HOOK_HELPER ?? bundled
+}
+
 function realIO(pane) {
   const hookDirectory = pane.WEIR_OPENCODE_HOOK_DIR
   const env = { ...process.env, ...pane }
   const hook = join(hookDirectory, "weir-hook")
-  const helper = pane.WEIR_HOOK_HELPER ?? join(dirname(dirname(hookDirectory)), "MacOS", "AgentIntegrationHookHelper")
+  const helper = hookHelperPath(pane)
   const runHook = (args, body, limit, runEnv) =>
     runChild("/bin/sh", [hook, ...args], body, limit, { ...env, ...runEnv, WEIR_HOOK_TIME_LIMIT_MS: hookTimeLimit(limit) })
       .result

@@ -12,7 +12,7 @@
 # directly with no --settings override.
 #
 # Locate the real claude: WEIR_REAL_CLAUDE (an explicit override, a
-# test's stub), then the PATH without our own directory, then
+# test's stub, taken outside an app bundle only), then the PATH without our own directory, then
 # WEIR_FOUND_CLAUDE (the one the new workspace sheet found), then the
 # agent catalog's known locations.
 
@@ -24,6 +24,13 @@ case "$self" in
   *) self="$PWD/$self" ;;
 esac
 self_dir="$(cd -- "$(dirname -- "$self")" && pwd -P)"
+# The overrides the test suites use (the real claude, the settings template,
+# the Hook Helper) are taken only outside an app bundle, where they run this
+# script from the source tree. A bundle carries its own of each, and nothing
+# in the environment chooses another.
+case "$self_dir" in
+  *.app/Contents/Resources/*) unset WEIR_REAL_CLAUDE WEIR_CLAUDE_SETTINGS_TEMPLATE WEIR_HOOK_HELPER ;;
+esac
 runtime_common="$self_dir/../agent-shim/runtime-common.sh"
 if [ -r "$runtime_common" ]; then
   . "$runtime_common"
@@ -206,12 +213,11 @@ fi
 wt_pretool_hook="$self_dir/weir-pretool-worktree-hook"
 approval_helper="$self_dir/../../MacOS/AgentIntegrationHookHelper"
 
-# Claude Code passes each `command` field to `sh -c` and any space in
-# the path turns into argv tokens — even JSON quoting / single-quote
-# wrapping inside the field gets stripped before exec. Our shim path
-# typically contains `Weir Dev.app` or `Weir.app`, so we side-
-# step the issue by exposing the hooks under a no-space TMPDIR
-# symlink. Re-created on every invocation; cheap and idempotent. The app
+# Claude Code passes each `command` field to `sh -c`, and our shim path
+# typically contains `Weir Dev.app`, so we expose the hooks under a
+# no-space TMPDIR symlink: the command stays a bare path, and the status
+# line relay below can be offered. Without the links the paths are quoted
+# instead (`template_value`). Re-created on every invocation; cheap and idempotent. The app
 # identity keeps concurrently installed Dev and Release builds from changing
 # the live target underneath each other's sessions.
 hook_namespace="${WEIR_CLAUDE_HOOK_NAMESPACE:-default}"
@@ -238,9 +244,7 @@ if [ -n "$link_base" ]; then
   fi
 fi
 
-# Fall back to the original path if symlink creation failed; better
-# to fire a busted hook (and log a stderr message) than to silently
-# drop SessionStart records.
+# Fall back to the original path if symlink creation failed.
 hook_link="$hook"
 if [ -n "$link_dir" ]; then
   hook_link="$link_dir/weir-hook"
@@ -282,13 +286,34 @@ if [ ! -f "$template" ]; then
   # bundled template went missing.
   exec_claude "$@"
 fi
-# `sed`'s replacement uses `|` as delimiter so the (path-typed) hook
-# arguments don't need escaping.
-settings_json=$(sed \
-  -e "s|@@HOOK@@|$hook_link|g" \
-  -e "s|@@WORKTREE_PRETOOL_HOOK@@|$wt_pretool_hook_link|g" \
-  -e "s|@@APPROVAL_HELPER@@|$approval_helper_link|g" \
+# A path goes into the template through three readers, and each needs it
+# escaped in its own way. Claude Code runs a hook's command under `sh -c`, so
+# a path with anything past the plain characters is single-quoted (the
+# fallback paths above, inside `Weir Dev.app`, are the usual case). The
+# command is a JSON string, so `\` and `"` are escaped next. Last, sed reads
+# `\`, `&`, and our `|` delimiter in a replacement as its own.
+template_value() {
+  case "$1" in
+    *[!A-Za-z0-9_./+:@%,=-]*)
+      tv_word="'$(printf '%s' "$1" | sed "s/'/'\\\\''/g")'"
+      ;;
+    *) tv_word="$1" ;;
+  esac
+  printf '%s' "$tv_word" | LC_ALL=C sed -e 's/[\\"]/\\&/g' | LC_ALL=C sed -e 's/[\\&|]/\\&/g'
+}
+settings_json=$(LC_ALL=C sed \
+  -e "s|@@HOOK@@|$(template_value "$hook_link")|g" \
+  -e "s|@@WORKTREE_PRETOOL_HOOK@@|$(template_value "$wt_pretool_hook_link")|g" \
+  -e "s|@@APPROVAL_HELPER@@|$(template_value "$approval_helper_link")|g" \
   "$template")
+# What the escaping cannot carry, a control character or bytes that are not
+# UTF-8 in one of the paths, leaves a document Claude would refuse. We check
+# it once and start Claude as it would start without us rather than hand it
+# that, and say so.
+if ! printf '%s' "$settings_json" | plutil -convert xml1 -o /dev/null - 2>/dev/null; then
+  printf 'weir: a hook path here cannot be written into the settings, so this claude runs without Weir'"'"'s hooks\n' >&2
+  exec_claude "$@"
+fi
 
 # Expose our own pid as `WEIR_CLAUDE_PID` so the hook can stamp the
 # state.json. Weir uses this for the 30-second PID sweep that
@@ -320,40 +345,32 @@ is_inline_settings() {
 # as a file. The merge itself is JavaScript because the two objects have to
 # be combined per hook event, which `plutil` cannot express; `osascript`
 # ships with macOS, and this path only runs when a `--settings` is present.
+# Both reach it as arguments, not through files of ours or the script's text,
+# so the merge needs no folder (the link folder above may be unusable) and no
+# path is read as JavaScript. Ours and an inline value of theirs are arguments
+# already; a file of theirs goes as its path, which the script reads, since
+# its text may be larger than an argument can hold.
 merge_settings() {
-  ms_ours="$link_dir/merge-$$-ours.json"
-  ms_theirs="$link_dir/merge-$$-theirs.json"
-  ms_result=""
-  # Single guarded block rather than early returns, so the two scratch
-  # files are removed on every path out of here instead of by the caller.
-  if printf '%s' "$1" > "$ms_ours" 2>/dev/null &&
-    { if is_inline_settings "$2"; then
-      printf '%s' "$2" > "$ms_theirs" 2>/dev/null
-    else
-      cat -- "$2" > "$ms_theirs" 2>/dev/null
-    fi; }
-  then
-    ms_result=$(osascript -l JavaScript -e '
+  ms_kind="file"
+  is_inline_settings "$2" && ms_kind="inline"
+  ms_result=$(osascript -l JavaScript -e '
 ObjC.import("Foundation");
-function rd(p) {
-  return ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError(
-    p, $.NSUTF8StringEncoding, null));
-}
-var ours = JSON.parse(rd("'"$ms_ours"'"));
-var theirs = JSON.parse(rd("'"$ms_theirs"'"));
-var out = {};
-// Their keys win: an explicit choice of theirs outranks our default.
-for (var k in theirs) out[k] = theirs[k];
-for (var k in ours) if (!(k in out)) out[k] = ours[k];
-// Hooks are the exception — both sets have to run, so the per-event
-// arrays concatenate with theirs first.
-var merged = {}, th = theirs.hooks || {}, oh = ours.hooks || {};
-for (var k in th) merged[k] = th[k];
-for (var k in oh) merged[k] = (th[k] || []).concat(oh[k]);
-out.hooks = merged;
-JSON.stringify(out);' 2>/dev/null)
-  fi
-  rm -f "$ms_ours" "$ms_theirs" 2>/dev/null
+function run(argv) {
+  var ours = JSON.parse(argv[0]);
+  var theirs = JSON.parse(argv[2] === "inline" ? argv[1] : ObjC.unwrap(
+    $.NSString.stringWithContentsOfFileEncodingError(argv[1], $.NSUTF8StringEncoding, null)));
+  var out = {};
+  // Their keys win: an explicit choice of theirs outranks our default.
+  for (var k in theirs) out[k] = theirs[k];
+  for (var k in ours) if (!(k in out)) out[k] = ours[k];
+  // Hooks are the exception — both sets have to run, so the per-event
+  // arrays concatenate with theirs first.
+  var merged = {}, th = theirs.hooks || {}, oh = ours.hooks || {};
+  for (var k in th) merged[k] = th[k];
+  for (var k in oh) merged[k] = (th[k] || []).concat(oh[k]);
+  out.hooks = merged;
+  return JSON.stringify(out);
+}' -- "$1" "$2" "$ms_kind" 2>/dev/null)
   [ -n "$ms_result" ] && printf '%s' "$ms_result"
 }
 
@@ -383,7 +400,9 @@ if [ "$have_user_settings" = 1 ]; then
   merged_settings="$(merge_settings "$settings_json" "$user_settings" || true)"
   if [ -z "$merged_settings" ]; then
     # Unreadable or malformed. Launching their claude with their own
-    # settings beats replacing them with ours, so we stay out of the way.
+    # settings beats replacing them with ours, so we stay out of the way,
+    # and say so: without our hooks the pane shows nothing of this session.
+    printf 'weir: could not read --settings as JSON, so this claude runs without Weir'"'"'s hooks\n' >&2
     exec_claude "$@"
   fi
   settings_json="$merged_settings"
@@ -430,13 +449,13 @@ fi
 # since Claude Code keeps a row even for a status line that prints nothing.
 # The helper writes the setting into the settings document; anything short
 # of a complete answer leaves the document as it was. The command runs under
-# `sh -c`, so a helper reachable only by a path with a space in it is not
-# offered as one. The arguments after the helper are pinned in
+# `sh -c`, and the helper writes the path into it as it is, so a helper
+# reachable only by a path that needs quoting is not offered as one. The arguments after the helper are pinned in
 # rust/fixtures/contract/shared-values.json: the Rust side knows its own
 # relay by them and never runs it as the person's.
 if [ -x "$approval_helper" ]; then
   case "$approval_helper_link" in
-    *' '*) ;;
+    *[!A-Za-z0-9_./+:@%,=-]*) ;;
     *)
       with_status_line=$(printf '%s' "$settings_json" |
         "$approval_helper" statusline claude settings "$approval_helper_link statusline claude" 2>/dev/null) &&

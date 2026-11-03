@@ -91,7 +91,7 @@ Weir sets.
 | `WEIR_OPENCODE_LAUNCH_PROMPT` | Set by the shim: `1` when `--prompt` sends an input with no key press to tell whose it is |
 | `WEIR_OPENCODE_LAUNCH_PREPARATION` | Set by the shim when `--prompt` carries an input: the generation of the turn start it saved before OpenCode ran, since no Enter comes for the plugin to save one. Absent when the save failed or took over ten seconds |
 | `WEIR_OPENCODE_PID` | Set by the shim: its own PID, which becomes the agent's at the exec |
-| `WEIR_REAL_OPENCODE` | Optional override path to the real `opencode`, taken before any search (a test's stub) |
+| `WEIR_REAL_OPENCODE` | Optional override path to the real `opencode`, taken before any search (a test's stub); outside an app bundle only |
 | `WEIR_FOUND_OPENCODE` | The `opencode` the new worktree sheet found, as `WEIR_FOUND_CODEX` in [`codex-shim/README.md`](../codex-shim/README.md) |
 | `WEIR_OPENCODE_KNOWN_LOCATIONS` | Newline-separated places to look when the `PATH` has no `opencode`, as `WEIR_CODEX_KNOWN_LOCATIONS` |
 

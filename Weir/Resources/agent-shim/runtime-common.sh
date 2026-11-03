@@ -224,8 +224,14 @@ weir_ensure_run_id() {
   # We mint the launch order here rather than inherit an enclosing agent's.
   # The signed helper supplies a monotonic clock shared across processes.
   # Source-tree fixtures and older bundles may have no helper yet.
+  # WEIR_HOOK_HELPER is a test's, taken only outside an app bundle, as the
+  # `weir-hook` wrappers take it.
   unset WEIR_AGENT_LAUNCH_ORDER
-  lro_helper="${WEIR_HOOK_HELPER:-${self_dir:-}/../../MacOS/AgentIntegrationHookHelper}"
+  lro_helper="${self_dir:-}/../../MacOS/AgentIntegrationHookHelper"
+  case "${self_dir:-}" in
+    *.app/Contents/Resources/*) ;;
+    *) lro_helper="${WEIR_HOOK_HELPER:-$lro_helper}" ;;
+  esac
   if [ -x "$lro_helper" ]; then
     lro_order=$("$lro_helper" launch-order </dev/null 2>/dev/null || true)
     case "$lro_order" in

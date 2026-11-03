@@ -63,7 +63,7 @@ truth for the values Weir sets.
 | `WEIR_ANTIGRAVITY_WORKSPACE` | Set by the shim: the launch's folder. Hooks run in the plugin's folder, so the dispatch script returns here |
 | `WEIR_ANTIGRAVITY_PID` | Set by the shim: its own PID, which becomes the agent's at the exec |
 | `WEIR_AGENT_TMUX_HOST_MODE` | Set by the shim to `manual` inside the person's own tmux |
-| `WEIR_REAL_ANTIGRAVITY` | Optional override path to the real `agy`, taken before any search (a test's stub) |
+| `WEIR_REAL_ANTIGRAVITY` | Optional override path to the real `agy`, taken before any search (a test's stub); outside an app bundle only |
 | `WEIR_FOUND_ANTIGRAVITY` | The `agy` the new worktree sheet found, as `WEIR_FOUND_CODEX` in [`codex-shim/README.md`](../codex-shim/README.md) |
 | `WEIR_ANTIGRAVITY_KNOWN_LOCATIONS` | Newline-separated places to look when the `PATH` has no `agy`, as `WEIR_CODEX_KNOWN_LOCATIONS` |
 

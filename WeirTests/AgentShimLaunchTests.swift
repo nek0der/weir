@@ -19,11 +19,12 @@ struct AgentShimLaunchTests {
         scratch: URL,
         path: String = "/usr/bin:/bin",
         environment: [String: String] = [:],
-        directory: URL? = nil
+        directory: URL? = nil,
+        shim: URL? = nil
     ) throws -> Int32? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = try [AgentCatalogFixture.shim(for: kind).path]
+        process.arguments = try [(shim ?? AgentCatalogFixture.shim(for: kind)).path]
         process.environment = AgentCatalog.knownLocationsEnvironment(home: home.path, entries: AgentCatalogFixture.homeEntries)
             .merging(["PATH": path, "HOME": home.path, "TMPDIR": scratch.path]) { _, new in new }
             .merging(environment) { _, new in new }
@@ -191,6 +192,80 @@ struct AgentShimLaunchTests {
                     "\(entry.kind)"
                 )
                 #expect(Self.recorded(record).first == override.path, "\(entry.kind)")
+            }
+        }
+    }
+
+    /// The overrides are a test's. A shim in an app bundle takes none of
+    /// them: the agent it starts is the one the PATH has, whatever
+    /// `WEIR_REAL_*` names. The same copy outside a bundle takes it.
+    @Test(arguments: [true, false])
+    func onDisk_theOverride_isTakenOnlyOutsideABundle(isAppBundle: Bool) throws {
+        for entry in AgentCatalogFixture.homeEntries {
+            try withTempDir { root in
+                let home = root.appendingPathComponent("home")
+                let record = root.appendingPathComponent("launched")
+                let onPath = root.appendingPathComponent("tools/\(entry.kind.launchCommand)")
+                try Self.makeRecordingAgent(onPath, record: record)
+                let override = root.appendingPathComponent("override/agent")
+                try Self.makeRecordingAgent(override, record: record)
+                let contents = try ShimHarness.bundleContents(in: root, isAppBundle: isAppBundle)
+                let source = try AgentCatalogFixture.shim(for: entry.kind)
+                let shim = contents.appendingPathComponent("Resources")
+                    .appendingPathComponent(source.deletingLastPathComponent().lastPathComponent)
+                    .appendingPathComponent(source.lastPathComponent)
+                let path = "\(onPath.deletingLastPathComponent().path):/usr/bin:/bin"
+                let variable = "WEIR_REAL_\(entry.kind.rawValue.uppercased())"
+
+                #expect(
+                    try Self.startShim(
+                        entry.kind, home: home, scratch: root, path: path, environment: [variable: override.path], shim: shim
+                    ) == 0,
+                    "\(entry.kind)"
+                )
+                #expect(Self.recorded(record).first == (isAppBundle ? onPath : override).path, "\(entry.kind)")
+            }
+        }
+    }
+
+    /// Every hook wrapper runs the Hook Helper beside the bundle. Inside one,
+    /// `WEIR_HOOK_HELPER` does not choose another; outside, it does.
+    @Test(arguments: [true, false])
+    func hookWrappers_takeTheHelperOverride_onlyOutsideABundle(isAppBundle: Bool) throws {
+        try withTempDir { root in
+            let contents = try ShimHarness.bundleContents(in: root, isAppBundle: isAppBundle)
+            let record = root.appendingPathComponent("helper")
+            let bundled = contents.appendingPathComponent("MacOS/AgentIntegrationHookHelper")
+            try AgentCatalogFixture.makeExecutable(bundled, script: "#!/bin/sh\nprintf bundled > \"\(record.path)\"\n")
+            let override = root.appendingPathComponent("override/AgentIntegrationHookHelper")
+            try AgentCatalogFixture.makeExecutable(override, script: "#!/bin/sh\nprintf override > \"\(record.path)\"\n")
+            let resources = contents.appendingPathComponent("Resources")
+            let wrappers = try FileManager.default.contentsOfDirectory(atPath: resources.path)
+                .filter { $0.hasSuffix("-shim") }
+                .flatMap { folder in
+                    ["weir-hook", "weir-pretool-worktree-hook"]
+                        .map { resources.appendingPathComponent(folder).appendingPathComponent($0) }
+                }
+                .filter { FileManager.default.fileExists(atPath: $0.path) }
+            #expect(wrappers.count == AgentKind.allCases.count + 2)
+
+            for wrapper in wrappers {
+                try? FileManager.default.removeItem(at: record)
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/bin/sh")
+                process.arguments = [wrapper.path]
+                process.environment = IsolatedProcessEnvironment.make([
+                    "PATH": ShimHarness.systemPath,
+                    "HOME": root.path,
+                    "WEIR_HOOK_HELPER": override.path
+                ])
+                process.standardInput = FileHandle.nullDevice
+                process.standardOutput = FileHandle.nullDevice
+                process.standardError = FileHandle.nullDevice
+                try process.run()
+                #expect(process.waitUntilExit(within: 10), "\(wrapper.path)")
+                let ran = try? String(contentsOf: record, encoding: .utf8)
+                #expect(ran == (isAppBundle ? "bundled" : "override"), "\(wrapper.path)")
             }
         }
     }

@@ -29,6 +29,36 @@ enum ShimHarness {
             .appendingPathComponent("rust/weir-provider-claude/resources/settings.template.json").path
     }
 
+    /// A copy of the shim folders laid out as the app bundle holds them, in
+    /// `dir`: each agent's `<id>-shim` and plugin folder beside `agent-shim`
+    /// under `Weir.app/Contents/Resources`, and Claude's settings template
+    /// beside its shim, where the build puts it. A shim in a bundle takes
+    /// none of the test overrides, so this is how a test runs one there.
+    /// With `isAppBundle` false the folder is named `Weir` instead: the same
+    /// layout, outside a bundle. Returns the `Contents` folder.
+    static func bundleContents(
+        in dir: URL,
+        isAppBundle: Bool = true,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) throws -> URL {
+        let source = try root(sourceLocation: sourceLocation).appendingPathComponent("Weir/Resources")
+        let contents = dir.appendingPathComponent(isAppBundle ? "Weir.app/Contents" : "Weir/Contents")
+        let resources = contents.appendingPathComponent("Resources")
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: resources, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: contents.appendingPathComponent("MacOS"), withIntermediateDirectories: true)
+        for name in try fileManager.contentsOfDirectory(atPath: source.path)
+            where name == "agent-shim" || name.hasSuffix("-shim") || name.hasSuffix("-plugin")
+        {
+            try fileManager.copyItem(at: source.appendingPathComponent(name), to: resources.appendingPathComponent(name))
+        }
+        try fileManager.copyItem(
+            at: URL(fileURLWithPath: claudeSettingsTemplate(sourceLocation: sourceLocation)),
+            to: resources.appendingPathComponent("claude-shim/settings.template.json")
+        )
+        return contents
+    }
+
     /// The environment every shim run starts from, with `dir` as its home
     /// and temporary folder so nothing it writes lands outside the test's.
     static func environment(in dir: URL) -> [String: String] {
