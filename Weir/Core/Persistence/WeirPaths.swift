@@ -55,10 +55,11 @@ enum WeirPaths {
     /// Absolute URL of the per-build Application Support directory.
     /// Created on demand by the caller (`SecureFileWrite.ensureUserOnlyDirectory`).
     /// Under the test host it is a folder of this process in the temporary
-    /// directory instead: the host app runs its whole launch during a test
-    /// run and saves its session, and `TestWriteGuard` refuses a
-    /// `SecureFileWrite` change inside `~/Library`. A fresh folder per run
-    /// also keeps one run's saved session from being restored into the next.
+    /// directory instead: a test that builds a store without injecting its
+    /// folder lands here rather than in the person's data, and
+    /// `TestWriteGuard` refuses a `SecureFileWrite` change inside
+    /// `~/Library`. A fresh folder per run also keeps one run's files from
+    /// being read by the next.
     static func applicationSupportDirectory() -> URL {
         if isRunningInTests {
             return testRunDirectory
