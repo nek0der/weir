@@ -5,9 +5,9 @@
 # invocation to add flags to is what lets that whole indirection go.
 #
 # Locate the real codex: WEIR_REAL_CODEX (an explicit override, a
-# test's stub), then the PATH without our own directory, then
-# WEIR_FOUND_CODEX (the one the new workspace sheet found), then the
-# agent catalog's known locations.
+# test's stub, taken outside an app bundle only), then the PATH without
+# our own directory, then WEIR_FOUND_CODEX (the one the new workspace
+# sheet found), then the agent catalog's known locations.
 
 set -u
 
@@ -17,6 +17,13 @@ case "$self" in
   *) self="$PWD/$self" ;;
 esac
 self_dir="$(cd -- "$(dirname -- "$self")" && pwd -P)"
+# The overrides the test suites use (the real codex, the Hook Helper) are
+# taken only outside an app bundle, where they run this script from the source
+# tree. A bundle carries its own of each, and nothing in the environment
+# chooses another.
+case "$self_dir" in
+  *.app/Contents/Resources/*) unset WEIR_REAL_CODEX WEIR_HOOK_HELPER ;;
+esac
 runtime_common="$self_dir/../agent-shim/runtime-common.sh"
 if [ -r "$runtime_common" ]; then
   . "$runtime_common"

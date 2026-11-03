@@ -4,9 +4,9 @@
 # for a launch through here, and name this launch's run for it.
 #
 # Locate the real agy: WEIR_REAL_ANTIGRAVITY (an explicit override, a test's
-# stub), then the PATH without our own directory, then WEIR_FOUND_ANTIGRAVITY
-# (the one the new workspace sheet found), then the agent catalog's known
-# locations.
+# stub, taken outside an app bundle only), then the PATH without our own
+# directory, then WEIR_FOUND_ANTIGRAVITY (the one the new workspace sheet
+# found), then the agent catalog's known locations.
 
 set -u
 
@@ -16,6 +16,13 @@ case "$self" in
   *) self="$PWD/$self" ;;
 esac
 self_dir="$(cd -- "$(dirname -- "$self")" && pwd -P)"
+# The overrides the test suites use (the real agy, the Hook Helper) are
+# taken only outside an app bundle, where they run this script from the source
+# tree. A bundle carries its own of each, and nothing in the environment
+# chooses another.
+case "$self_dir" in
+  *.app/Contents/Resources/*) unset WEIR_REAL_ANTIGRAVITY WEIR_HOOK_HELPER ;;
+esac
 runtime_common="$self_dir/../agent-shim/runtime-common.sh"
 if [ -r "$runtime_common" ]; then
   . "$runtime_common"

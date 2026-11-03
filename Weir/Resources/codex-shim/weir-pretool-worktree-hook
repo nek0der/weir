@@ -19,8 +19,14 @@ done
 hook_dir="$(CDPATH='' cd -- "$(dirname -- "$hook_path")" 2>/dev/null && pwd -P)"
 
 # WEIR_HOOK_HELPER exists for the test suites, which run this script
-# from the source tree where no bundle surrounds it.
-helper="${WEIR_HOOK_HELPER:-$hook_dir/../../MacOS/AgentIntegrationHookHelper}"
+# from the source tree where no bundle surrounds it. Inside a bundle the
+# helper is the signed one beside it, and nothing in the environment
+# chooses another.
+helper="$hook_dir/../../MacOS/AgentIntegrationHookHelper"
+case "$hook_dir" in
+  *.app/Contents/Resources/*) ;;
+  *) helper="${WEIR_HOOK_HELPER:-$helper}" ;;
+esac
 if [ ! -x "$helper" ]; then
   . "$hook_dir/../agent-shim/runtime-common.sh"
   weir_hook_helper_missing "$helper"

@@ -171,7 +171,9 @@ struct StatusLineRelayTests {
 struct ClaudeShimStatusLineTests {
     /// The shim run from a bundle's layout, which it needs to find the
     /// helper (`Contents/MacOS` beside `Contents/Resources`), with a stub in
-    /// place of the real claude. Returns the settings it passed.
+    /// place of the real claude. A bundle takes no override of the real
+    /// claude, so the stub is the one on the PATH. Returns the settings it
+    /// passed.
     private func shimSettings(
         _ arguments: [String],
         userStatusLine: [String: Any]? = nil,
@@ -183,33 +185,19 @@ struct ClaudeShimStatusLineTests {
             try JSONSerialization.data(withJSONObject: ["statusLine": userStatusLine])
                 .write(to: config.appendingPathComponent("settings.json"))
         }
-        let contents = dir.appendingPathComponent("Weir.app/Contents")
-        let resources = contents.appendingPathComponent("Resources")
-        let shimFolder = resources.appendingPathComponent("claude-shim")
-        let macOS = contents.appendingPathComponent("MacOS")
-        let fileManager = FileManager.default
-        for folder in [shimFolder, resources.appendingPathComponent("agent-shim"), macOS] {
-            try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
-        }
-        let source = try ShimHarness.shim("claude").deletingLastPathComponent()
-        for name in ["claude", "weir-hook"] {
-            try fileManager.copyItem(at: source.appendingPathComponent(name), to: shimFolder.appendingPathComponent(name))
-        }
-        try fileManager.copyItem(
-            at: source.deletingLastPathComponent().appendingPathComponent("agent-shim/runtime-common.sh"),
-            to: resources.appendingPathComponent("agent-shim/runtime-common.sh")
-        )
-        try fileManager.createSymbolicLink(
-            at: macOS.appendingPathComponent("AgentIntegrationHookHelper"),
+        let contents = try ShimHarness.bundleContents(in: dir)
+        let shimFolder = contents.appendingPathComponent("Resources/claude-shim")
+        try FileManager.default.createSymbolicLink(
+            at: contents.appendingPathComponent("MacOS/AgentIntegrationHookHelper"),
             withDestinationURL: #require(HookHelperFixture.helperURL)
         )
 
         let argvFile = dir.appendingPathComponent("argv.txt")
-        let stub = dir.appendingPathComponent("fake-claude")
-        try ShimHarness.writeExecutable(ShimHarness.argvRecorder(into: argvFile), at: stub)
+        let bin = dir.appendingPathComponent("bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try ShimHarness.writeExecutable(ShimHarness.argvRecorder(into: argvFile), at: bin.appendingPathComponent("claude"))
         var environment = ShimHarness.environment(in: dir)
-        environment["WEIR_CLAUDE_SETTINGS_TEMPLATE"] = try ShimHarness.claudeSettingsTemplate()
-        environment["WEIR_REAL_CLAUDE"] = stub.path
+        environment["PATH"] = "\(bin.path):\(ShimHarness.systemPath)"
         environment["CLAUDE_CONFIG_DIR"] = dir.appendingPathComponent("config").path
         let process = try ShimHarness.run(
             shimFolder.appendingPathComponent("claude"),
