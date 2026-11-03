@@ -54,6 +54,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Only the agents whose hooks the shim hands over at launch, on the command
+# line or in a settings file, are recorded here. Antigravity and OpenCode
+# take their hooks from a plugin the shim places in the person's own folder,
+# so their payloads are what that plugin passes to `weir-hook`
+# (`rust/fixtures/README.md`).
 case "$provider" in
   claude | codex) ;;
   *) usage ;;

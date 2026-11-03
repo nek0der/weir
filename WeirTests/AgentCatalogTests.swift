@@ -9,7 +9,10 @@ import Testing
 
 struct AgentCatalogTests {
     @Test func everyAgent_hasOneEntry_inTheMenusOrder() {
-        #expect(AgentCatalog.entries.map(\.kind) == [.claude, .codex, .antigravity, .opencode])
+        #expect(AgentCatalog.entries.map(\.kind) == AgentKind.allCases)
+        // The menu's order as people see it, so a reorder of either list
+        // fails here rather than only moving both.
+        #expect(AgentKind.allCases == [.claude, .codex, .antigravity, .opencode])
         #expect(Set(AgentCatalog.entries.map(\.kind)) == Set(AgentKind.allCases))
         for kind in AgentKind.allCases {
             let entry = AgentCatalog.entry(for: kind)

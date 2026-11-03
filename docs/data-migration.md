@@ -300,6 +300,15 @@ key skips it:
   `routeClaudeWorktrees` and `routeCodexWorktrees` do for the others
   (`Project` in `SidebarItem.swift`). A file without it reads as `true`. The
   build before carries it through as an unknown field of the project.
+- A project's `worktreeRouting` (`containers[].project.worktreeRouting`) is
+  an object that maps each agent the person turned routing off for, by
+  provider id, to `false` (`{"claude": false}`); an agent absent from it is
+  routed. The three `route…Worktrees` keys are still written beside it, on
+  or off, so a build from before it reads a person's `false` rather than its
+  default. On reading, each of those keys that is present wins over the
+  object: a build from before the object changes the key and carries the
+  object through unchanged, so the key holds the newer value. A file with
+  neither reads as every agent routed, as before.
 - A window record's `sidebar` (`windows[].sidebar`) is how that window's
   sidebar lists the projects: `projectOrder`, the project IDs in the order
   the person left them; `collapsedProjects`, the IDs of the folded headers;
@@ -654,7 +663,8 @@ file and ignores them.
 
 Each project's `routing` also gains `antigravity`, from the project's
 `routeAntigravityWorktrees` (`WorktreeRouting.swift`). The hook of a build
-before looks up only its own agents.
+before looks up only its own agents. The keys are the agents whose descriptor
+declares `worktree_placement`, which are the three the file named before.
 
 ### Run records
 

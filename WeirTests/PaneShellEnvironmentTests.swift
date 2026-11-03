@@ -1,7 +1,7 @@
 // PaneShellEnvironmentTests.swift
 // Weir — pins the env every pty inherits regardless of which agent runs
-// in it. The behavior lived in `ClaudeShimLocator`, which resolves its
-// paths from `Bundle.main` and so could not be exercised from a test
+// in it. The behavior lived in what was Claude's shim locator, which resolved
+// its paths from `Bundle.main` and so could not be exercised from a test
 // bundle at all; taking the values as arguments is what makes these
 // assertions possible.
 
@@ -24,7 +24,7 @@ struct PaneShellEnvironmentTests {
         let env = PaneShellEnvironment.variables(
             paneID: nil, shimDirectories: [], zdotdir: nil, basePath: base
         )
-        for key in ["PATH", "WEIR_PANE_ID", "ZDOTDIR", "WEIR_AGENT_TMUX", "WEIR_AGENT_TMUX_SOCKET"] {
+        for key in ["PATH", "WEIR_SHIM_DIRS", "WEIR_PANE_ID", "ZDOTDIR", "WEIR_AGENT_TMUX", "WEIR_AGENT_TMUX_SOCKET"] {
             #expect(env[key] == nil, "\(key)")
         }
     }
@@ -38,6 +38,8 @@ struct PaneShellEnvironmentTests {
             basePath: base
         )
         #expect(env["PATH"] == "/a:/b:\(base)")
+        // The same directories, in the same order, for `zdotdir/.zshrc`.
+        #expect(env["WEIR_SHIM_DIRS"] == "/a:/b")
     }
 
     @Test("carries the pane id and the startup-file redirect")

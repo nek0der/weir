@@ -8,6 +8,7 @@
 import Foundation
 import Testing
 @testable import Weir
+@testable import WeirDomain
 
 @Suite("AgentInstallRecipe")
 struct AgentInstallRecipeTests {
@@ -40,31 +41,57 @@ struct AgentInstallRecipeTests {
         #expect(codex.values.contains("/usage") == false)
     }
 
+    /// The variables of `kind`'s recipe its shim reads before the agent
+    /// starts, which a tmux session therefore never needs.
+    private static func readBeforeStart(_ kind: AgentKind) -> Set<String> {
+        switch kind {
+        case .claude: ["WEIR_CLAUDE_HOOK_NAMESPACE"]
+        case .codex: ["WEIR_CODEX_HOOK_ARGS"]
+        case .antigravity, .opencode: []
+        }
+    }
+
     /// A variable a shim does not hand to tmux takes the server's value, and a
     /// Dev agent on a Release server would then write into Release's folders.
-    /// The two left out are read before the agent starts, so tmux never needs them.
-    @Test("a tmux-hosted agent gets every variable its recipe exports", .disabled(if: !RepoFixture.hasLocalRepo), arguments: [
-        ("claude", "claude-shim/claude", ["WEIR_CLAUDE_HOOK_NAMESPACE"]),
-        ("codex", "codex-shim/codex", ["WEIR_CODEX_HOOK_ARGS"])
-    ])
-    func hostedEnvironment_coversTheRecipe(provider: String, shim: String, readBeforeStart: [String]) throws {
+    /// A shim that never hosts its agent in tmux names no such list.
+    @Test(
+        "a tmux-hosted agent gets every variable its recipe exports",
+        .disabled(if: !RepoFixture.hasLocalRepo),
+        arguments: AgentKind.allCases
+    )
+    func hostedEnvironment_coversTheRecipe(kind: AgentKind) throws {
         let root = try #require(RepoFixture.weirRoot)
         let script = try String(
-            contentsOf: root.appending(path: "Weir/Resources/\(shim)"),
+            contentsOf: root.appending(path: "Weir/Resources/\(AgentShimLocator(kind).shimDirectoryName)/\(kind.launchCommand)"),
             encoding: .utf8
         )
-        let line = try #require(script.split(separator: "\n").first { $0.hasPrefix("hosted_env_names=") })
+        let recipe = try #require(AgentProviderRegistry.recipes[kind.rawValue])
+        let names = recipe.environment.map(\.name)
+        #expect(!names.isEmpty)
+        guard let line = script.split(separator: "\n").first(where: { $0.hasPrefix("hosted_env_names=") }) else {
+            #expect(!script.contains("weir_exec_agent"), "a shim that hands off to tmux names what the session gets")
+            return
+        }
         let hosted = Set(
             line.dropFirst("hosted_env_names=".count)
                 .trimmingCharacters(in: ["\""])
                 .split(separator: " ")
                 .map(String.init)
         )
-        let recipe = try #require(AgentProviderRegistry.recipes[provider])
+        #expect(Set(names).subtracting(Self.readBeforeStart(kind)).subtracting(hosted).isEmpty)
+    }
 
-        let names = recipe.environment.map(\.name)
-        #expect(!names.isEmpty)
-        #expect(Set(names).subtracting(readBeforeStart).subtracting(hosted).isEmpty)
+    /// A pane's agent variables are merged locator by locator in `AgentKind`'s
+    /// order and Codex's installer after them all, where it once came right
+    /// after Codex's locator. That gives the same environment while no other
+    /// recipe names a variable of Codex's.
+    @Test("no other agent's recipe names a variable of Codex's")
+    func codexRecipe_sharesNoVariable() throws {
+        let codex = try Set(#require(AgentProviderRegistry.recipes["codex"]).environment.map(\.name))
+        for kind in AgentKind.allCases where kind != .codex {
+            let names = try Set(#require(AgentProviderRegistry.recipes[kind.rawValue]).environment.map(\.name))
+            #expect(names.isDisjoint(with: codex), "\(kind)")
+        }
     }
 
     @Test("only the provider whose hook takes arguments names a variable for them")
@@ -116,7 +143,7 @@ struct AgentInstallRecipeTests {
             AgentProviderRegistry.directories(under: WeirPaths.applicationSupportDirectory())["claude"]
         )
 
-        let environment = ClaudeShimLocator.environment(forPaneID: nil, writesRecords: true)
+        let environment = AgentShimLocator(.claude).environment(writesRecords: true)
 
         #expect(environment["WEIR_AGENT_STATES_DIR"] == directories.state.path)
         #expect(environment["WEIR_SESSIONS_DIR"] == directories.sessions.path)
@@ -130,7 +157,7 @@ struct AgentInstallRecipeTests {
         // Named and empty, so a value inherited from the Weir pane that
         // launched the demo does not reach the hook; the namespace stays so
         // the shim keeps its links apart from that build's.
-        let environment = ClaudeShimLocator.environment(forPaneID: UUID(), writesRecords: false)
+        let environment = AgentShimLocator(.claude).environment(writesRecords: false)
 
         #expect(environment["WEIR_AGENT_STATES_DIR"] == "")
         #expect(environment["WEIR_SESSIONS_DIR"] == "")

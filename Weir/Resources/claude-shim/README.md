@@ -62,7 +62,8 @@ sets them:
 | `WEIR_PANE_ID` | UUID of the launching split-tree leaf; not current ownership inside tmux |
 | `WEIR_AGENT_RUN_ID` | Minted by the shim: UUID of this Claude invocation; lifecycle-state filename key |
 | `WEIR_AGENT_TMUX_HOST_MODE` | Set by the shim: `weirHosted` for automatic hosting, `manual` inside the user's own tmux |
-| `WEIR_SHIM_DIR` | This directory, so `zdotdir/.zshrc` can re-prepend it |
+| `WEIR_SHIM_DIR` | This directory, so `zdotdir/.zshrc` can re-prepend it in a shell an earlier build started |
+| `WEIR_SHIM_DIRS` | Every agent's shim directory, colon-separated, in the order they lead `PATH`; `zdotdir/.zshrc` re-prepends each in that order |
 | `WEIR_CLAUDE_HOOK_NAMESPACE` | Bundle identity used to keep the no-space hook link separate between Dev and Release builds |
 | `WEIR_SESSIONS_DIR` | Directory to write session records into |
 | `WEIR_AGENT_STATES_DIR` | Directory to write agent-state records into |
@@ -75,7 +76,7 @@ sets them:
 | `WEIR_DISABLE_CLAUDE_RESUME` | `1` to run the real `claude` with no `--settings` override, so no hook fires |
 | `WEIR_INITIAL_PROMPT_FILE` | A new session's first instruction: a 0600 file the first launch that starts a session takes, deletes, and passes after `--` (see below); unset for no instruction |
 
-`PaneShellEnvironment` and `ClaudeShimLocator` are the source of truth
+`PaneShellEnvironment` and `AgentShimLocator` are the source of truth
 for the values Weir sets. The exceptions are `WEIR_INITIAL_PROMPT_FILE`
 and `WEIR_FOUND_CLAUDE`, which only a pane with a staged launch gets
 (`PaneHostRepresentable.launch`).

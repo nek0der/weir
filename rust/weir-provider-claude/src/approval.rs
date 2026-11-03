@@ -4,14 +4,10 @@
 use crate::descriptor::install_recipe;
 use serde_json::{Value, json};
 use weir_agent_model::{
-    ApprovalDecision, ApprovalQuestion, ApprovalQuestionOption, ApprovalRequest,
-    MAX_HOOK_INPUT_BYTES, NormalizeError, ProviderId, ProviderOutput, QuestionTurn,
-    QuestionTurnPhase, RecipePlaceholder, parse_object,
+    APPROVAL_TIMEOUT_MS, ApprovalDecision, ApprovalQuestion, ApprovalQuestionOption,
+    ApprovalRequest, MAX_HOOK_INPUT_BYTES, NormalizeError, ProviderId, ProviderOutput,
+    QuestionTurn, QuestionTurnPhase, RecipePlaceholder, parse_object,
 };
-
-/// How long the hook helper waits for a decision, below Claude's own hook
-/// timeout so the helper answers before the provider gives up on it.
-pub const APPROVAL_TIMEOUT_MS: u64 = 570_000;
 
 /// The tool whose permission request is a question for the user.
 pub(crate) const QUESTION_TOOL: &str = "AskUserQuestion";

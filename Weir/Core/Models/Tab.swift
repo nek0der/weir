@@ -222,6 +222,8 @@ struct Tab: Codable, Equatable, Identifiable {
 
     /// Folds an older file's two fields into one map, dropping a provider
     /// that had nothing so an empty entry is never mistaken for a reading.
+    /// Claude and Codex alone, and never another agent: the maps replaced
+    /// these fields before any other agent was added, so no file names one.
     private static func legacyByProvider<Value>(
         claude: [UUID: Value]?,
         codex: [UUID: Value]?

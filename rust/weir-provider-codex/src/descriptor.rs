@@ -45,6 +45,11 @@ pub(crate) fn descriptor() -> &'static ProviderDescriptor {
                 Capability::ApprovalHook,
                 Capability::Subagents,
                 Capability::TurnSnapshot,
+                // Its TUI answers a question; the hook output has no answer
+                // shape for one.
+                Capability::QuestionAnsweredByAgent,
+                // Its `PermissionRequest` goes to the approval helper alone.
+                Capability::ApprovalHookRecordsLifecycle,
             ]),
             // Codex emits no Stop when it is killed mid-turn, so the host
             // polls its pid often enough for the badge to clear promptly.

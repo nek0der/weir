@@ -4,12 +4,12 @@
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
-use support::{PANE, RUN};
+use support::{PANE, RUN, recipe_variable};
 use weir_agent_hook::{HookEnv, HookOutcome, HookRuntime, NoSnapshots, TURNS_DIRECTORY, run_hook};
 use weir_agent_model::{
-    ChangeSummary, DeniedAction, LOCK_FILE_SUFFIX, PermissionMode, PromptKind, RecordedPromptKind,
-    RunRecord, RunState, SnapshotStatus, TurnPhase, TurnRecord, TurnUsage, cwd_event_file_name,
-    run_record_file_name, session_hint_file_name,
+    ChangeSummary, DeniedAction, LOCK_FILE_SUFFIX, PermissionMode, PromptKind, RecipePlaceholder,
+    RecordedPromptKind, RunRecord, RunState, SnapshotStatus, TurnPhase, TurnRecord, TurnUsage,
+    cwd_event_file_name, run_record_file_name, session_hint_file_name,
 };
 
 mod support;
@@ -47,24 +47,15 @@ impl Scratch {
                 self.root.join("hook.log").display().to_string(),
             ),
         ];
-        let prefix = if provider == "claude" {
-            "WEIR"
-        } else {
-            "WEIR_CODEX"
-        };
-        pairs.push((
-            format!("{prefix}_AGENT_STATES_DIR"),
-            self.root.join("states").display().to_string(),
-        ));
-        pairs.push((
-            format!("{prefix}_SESSIONS_DIR"),
-            self.root.join("sessions").display().to_string(),
-        ));
-        if provider == "claude" {
-            pairs.push((
-                "WEIR_CWD_EVENTS_DIR".to_owned(),
-                self.root.join("cwd").display().to_string(),
-            ));
+        // The names the provider's recipe gives, as its shim exports them.
+        for (placeholder, directory) in [
+            (RecipePlaceholder::StateDirectory, "states"),
+            (RecipePlaceholder::SessionDirectory, "sessions"),
+            (RecipePlaceholder::CwdEventsDirectory, "cwd"),
+        ] {
+            if let Some(name) = recipe_variable(provider, placeholder) {
+                pairs.push((name, self.root.join(directory).display().to_string()));
+            }
         }
         // The shim exports the agent pid; without it the runtime walks the
         // process tree, which would make the result depend on what ran the

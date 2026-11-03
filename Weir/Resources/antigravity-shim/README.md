@@ -49,7 +49,7 @@ ours. `--continue` names no conversation, so the first request supplies it.
 ## Environment contract
 
 Set by Weir before spawning the pty, except the rows that say the shim sets
-them. `PaneShellEnvironment` and `AntigravityShimLocator` are the source of
+them. `PaneShellEnvironment` and `AgentShimLocator` are the source of
 truth for the values Weir sets.
 
 | Variable | Meaning |

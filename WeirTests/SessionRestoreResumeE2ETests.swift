@@ -79,16 +79,7 @@ struct SessionRestoreResumeE2ETests {
 
     /// The command the surface mount reads for `kind`'s agent in the pane.
     private static func resumeCommand(_ kind: AgentKind, for tab: Tab, paneID: UUID) -> String? {
-        switch kind {
-        case .claude:
-            AgentResumeCommandBuilder<ClaudeAgent>.initialCommand(for: tab, paneID: paneID)
-        case .codex:
-            AgentResumeCommandBuilder<CodexAgent>.initialCommand(for: tab, paneID: paneID)
-        case .antigravity:
-            AgentResumeCommandBuilder<AntigravityAgent>.initialCommand(for: tab, paneID: paneID)
-        case .opencode:
-            AgentResumeCommandBuilder<OpenCodeAgent>.initialCommand(for: tab, paneID: paneID)
-        }
+        AgentResumeCommandBuilder.initialCommand(kind, for: tab, paneID: paneID)
     }
 
     // MARK: - End to end
@@ -123,7 +114,7 @@ struct SessionRestoreResumeE2ETests {
                 Hint(kind: .claude, sessionId: "bad id; rm -rf /", cwd: nil)
             ])
 
-            let command = AgentResumeCommandBuilder<ClaudeAgent>.initialCommand(for: tab, paneID: paneID)
+            let command = AgentResumeCommandBuilder.initialCommand(.claude, for: tab, paneID: paneID)
             #expect(command == nil)
         }
     }
@@ -139,8 +130,8 @@ struct SessionRestoreResumeE2ETests {
                 Hint(kind: .codex, sessionId: "codex-1", cwd: nil)
             ])
 
-            let codexCommand = AgentResumeCommandBuilder<CodexAgent>.initialCommand(for: tab, paneID: paneID)
-            let claudeCommand = AgentResumeCommandBuilder<ClaudeAgent>.initialCommand(for: tab, paneID: paneID)
+            let codexCommand = AgentResumeCommandBuilder.initialCommand(.codex, for: tab, paneID: paneID)
+            let claudeCommand = AgentResumeCommandBuilder.initialCommand(.claude, for: tab, paneID: paneID)
             #expect(codexCommand == nil)
             #expect(claudeCommand?.contains("claude --resume claude-1") == true)
         }
@@ -153,8 +144,8 @@ struct SessionRestoreResumeE2ETests {
         try withTempDir { root in
             let (tab, paneID) = try relaunch(in: root, hints: [])
 
-            let claudeCommand = AgentResumeCommandBuilder<ClaudeAgent>.initialCommand(for: tab, paneID: paneID)
-            let codexCommand = AgentResumeCommandBuilder<CodexAgent>.initialCommand(for: tab, paneID: paneID)
+            let claudeCommand = AgentResumeCommandBuilder.initialCommand(.claude, for: tab, paneID: paneID)
+            let codexCommand = AgentResumeCommandBuilder.initialCommand(.codex, for: tab, paneID: paneID)
             #expect(claudeCommand == nil)
             #expect(codexCommand == nil)
         }
@@ -178,6 +169,6 @@ struct SessionRestoreResumeE2ETests {
 
         let restoredTab = try #require(restored.activeTab(in: restored.primaryWindowID))
         #expect(restoredTab.agentSessions[.claude]?[paneID]?.sessionId == "claude-1")
-        #expect(AgentResumeCommandBuilder<ClaudeAgent>.initialCommand(for: restoredTab, paneID: paneID) == nil)
+        #expect(AgentResumeCommandBuilder.initialCommand(.claude, for: restoredTab, paneID: paneID) == nil)
     }
 }

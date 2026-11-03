@@ -327,13 +327,8 @@ final class WeirNotificationManager {
     /// rate limited.
     func scheduleUsageLimitReset(for provider: AgentKind, at date: Date) {
         let locale = appLocale()
-        let name = switch provider {
-        // Product names, the same in every language.
-        case .claude: "Claude"
-        case .codex: "Codex"
-        case .antigravity: "Antigravity"
-        case .opencode: "OpenCode"
-        }
+        // The product's name as the menus give it, the same in every language.
+        let name = AgentCatalog.entry(for: provider).displayName
         let content = UNMutableNotificationContent()
         content.title = LocalizedStringResource(
             "\(name) usage limit has reset",

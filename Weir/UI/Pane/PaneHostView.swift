@@ -276,21 +276,13 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
             recordsPanePath: session.writesUserFiles,
             projectID: session.tab(containing: paneID)?.container.projectID
         )
-        for (k, v) in ClaudeShimLocator.environment(forPaneID: paneID, writesRecords: session.writesUserFiles) {
-            env[k] = v
+        for kind in AgentKind.allCases {
+            env.merge(AgentShimLocator(kind).environment(writesRecords: session.writesUserFiles)) { _, new in new }
         }
-        for (k, v) in CodexShimLocator.environment() {
-            env[k] = v
-        }
-        for (k, v) in CodexHookInstaller.shared.environment(writesRecords: session.writesUserFiles) {
-            env[k] = v
-        }
-        for (k, v) in AntigravityShimLocator.environment(writesRecords: session.writesUserFiles) {
-            env[k] = v
-        }
-        for (k, v) in OpenCodeShimLocator.environment(writesRecords: session.writesUserFiles) {
-            env[k] = v
-        }
+        // After every locator rather than beside Codex's: no other agent's
+        // recipe names a variable of Codex's (`AgentInstallRecipeTests`), so
+        // the place in the order changes nothing.
+        env.merge(CodexHookInstaller.shared.environment(writesRecords: session.writesUserFiles)) { _, new in new }
         let launch = Self.launch(session: session, paneID: paneID)
         // The first instruction's file and the agent's executable, which
         // only a staged launch has: a restored pane gets neither.
@@ -539,16 +531,7 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
     /// pane reattaching to tmux, whose agent is already running in there.
     static func resolveRestoredResume(tab: Tab?, paneID: UUID) -> AgentResume? {
         guard let tab, TmuxReattachCommandBuilder.initialCommand(for: tab, paneID: paneID) == nil else { return nil }
-        if let claude = ClaudeResumeCommandBuilder.resume(for: tab, paneID: paneID) {
-            return claude
-        }
-        if let codex = CodexResumeCommandBuilder.resume(for: tab, paneID: paneID) {
-            return codex
-        }
-        if let antigravity = AgentResumeCommandBuilder<AntigravityAgent>.resume(for: tab, paneID: paneID) {
-            return antigravity
-        }
-        return AgentResumeCommandBuilder<OpenCodeAgent>.resume(for: tab, paneID: paneID)
+        return AgentResumeCommandBuilder.firstResume(for: tab, paneID: paneID)
     }
 
     /// Stage the saved scrollback path for replay and clear it from the

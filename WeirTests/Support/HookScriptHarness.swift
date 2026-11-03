@@ -3,10 +3,13 @@
 
 import Foundation
 import Testing
+@testable import Weir
 
-/// The agents whose shim hands hook calls to the Hook Helper. Both wrappers
-/// exec the same helper, so what differs between them is data: the
-/// variables their shim exports and the payloads their agent sends.
+/// The agents whose shim hands hook calls to the Hook Helper and whose
+/// payloads these suites send. Every wrapper execs the same helper, so what
+/// differs between them is data: the variables their provider's recipe names,
+/// which are read from it rather than copied here, and the payloads their
+/// agent sends.
 enum HookAgent: String, CaseIterable, Sendable, CustomTestStringConvertible {
     case claude
     case codex
@@ -15,37 +18,33 @@ enum HookAgent: String, CaseIterable, Sendable, CustomTestStringConvertible {
         rawValue
     }
 
-    /// The variable naming the folder the run records land in.
+    /// The variable the provider's recipe names for `placeholder`, as its shim
+    /// exports it; `nil` when the recipe names none.
+    private func recipeVariable(_ placeholder: AgentInstallRecipe.Placeholder) -> String? {
+        AgentProviderRegistry.recipes[rawValue]?.environment.first { $0.value == placeholder }?.name
+    }
+
+    /// The variable naming the folder the run records land in. Empty only
+    /// when the registry cannot be read, which every test here then fails on.
     var statesVariable: String {
-        switch self {
-        case .claude: "WEIR_AGENT_STATES_DIR"
-        case .codex: "WEIR_CODEX_AGENT_STATES_DIR"
-        }
+        recipeVariable(.stateDirectory) ?? ""
     }
 
     /// The variable naming the folder the resume hints land in.
     var sessionsVariable: String {
-        switch self {
-        case .claude: "WEIR_SESSIONS_DIR"
-        case .codex: "WEIR_CODEX_SESSIONS_DIR"
-        }
+        recipeVariable(.sessionDirectory) ?? ""
     }
 
     /// The variable naming the folder working-directory events land in.
-    /// Only Claude reports a change of directory, so Codex has none.
+    /// Only Claude reports a change of directory, so Codex's recipe names none.
     var cwdEventsVariable: String? {
-        switch self {
-        case .claude: "WEIR_CWD_EVENTS_DIR"
-        case .codex: nil
-        }
+        recipeVariable(.cwdEventsDirectory)
     }
 
-    /// The pid the shim exports before it execs the agent.
+    /// The pid the shim exports before it execs the agent, which the hook
+    /// reads as `WEIR_<PROVIDER>_PID`.
     var pidVariable: String {
-        switch self {
-        case .claude: "WEIR_CLAUDE_PID"
-        case .codex: "WEIR_CODEX_PID"
-        }
+        "WEIR_\(rawValue.uppercased())_PID"
     }
 
     /// A conversation id of the shape this agent sends.

@@ -43,6 +43,28 @@ enum RustProviderBridge {
     /// rather than a copy of it. The set is empty for a provider this build
     /// does not have.
     static func processNames(provider: String) throws -> Set<String> {
+        guard let descriptor = try descriptor(provider: provider) else { return [] }
+        guard let names = descriptor["processNames"] as? [String]
+        else { throw AgentIntegrationError.invalidResponse }
+        return Set(names)
+    }
+
+    /// The capabilities `provider`'s descriptor declares, in their Rust
+    /// names (`question_ends_with_turn`), so the helper branches on what a
+    /// provider does rather than on its id. Empty for a provider this build
+    /// does not have, and when the registry cannot be read: a capability
+    /// assumed would act on a request the provider does not send that way.
+    static func capabilities(provider: String) -> Set<String> {
+        // `try?`: no registry reads as no capability, the default above.
+        guard let descriptor = try? descriptor(provider: provider),
+              let capabilities = descriptor["capabilities"] as? [String]
+        else { return [] }
+        return Set(capabilities)
+    }
+
+    /// `provider`'s descriptor as the Rust registry serializes it, or `nil`
+    /// when this build does not have the provider.
+    private static func descriptor(provider: String) throws -> [String: Any]? {
         var out: UnsafeMutablePointer<UInt8>?
         var outCount = 0
         let status = weir_projection_providers_v1(&out, &outCount)
@@ -56,10 +78,9 @@ enum RustProviderBridge {
         let body = Data(bytes: out, count: outCount)
         guard let registry = try JSONSerialization.jsonObject(with: body) as? [String: Any]
         else { throw AgentIntegrationError.invalidResponse }
-        guard let descriptor = registry[provider] else { return [] }
-        guard let names = (descriptor as? [String: Any])?["processNames"] as? [String]
-        else { throw AgentIntegrationError.invalidResponse }
-        return Set(names)
+        guard let descriptor = registry[provider] else { return nil }
+        guard let fields = descriptor as? [String: Any] else { throw AgentIntegrationError.invalidResponse }
+        return fields
     }
 
     /// A turn that failed, as the provider's crate reads it from a line of its
@@ -141,15 +162,6 @@ enum RustProviderBridge {
         }
     }
 
-    /// The outcome the hook runtime reports for one call.
-    struct HookOutcome: Equatable {
-        let outcome: String
-        let exitCode: Int32
-        let message: String?
-        /// What the hook prints, when the provider cancels a call that way.
-        var stdout: String?
-    }
-
     /// Runs one lifecycle or worktree hook call in-process. `environment` is
     /// what the hook runtime reads the shim's variables from, so a test can
     /// point it at a scratch directory. `observationClock` supplies this
@@ -161,7 +173,7 @@ enum RustProviderBridge {
         payload: Data,
         environment: [String: String],
         observationClock: () -> UInt64 = { DispatchTime.now().uptimeNanoseconds }
-    ) throws -> HookOutcome {
+    ) throws -> RustHookOutcome {
         var environment = environment
         environment["WEIR_HOOK_OBSERVED_ORDER"] = String(observationClock())
         let environmentJSON = try JSONSerialization.data(withJSONObject: environment)
@@ -176,17 +188,9 @@ enum RustProviderBridge {
                 )
             }
         }
-        guard let body,
-              let object = try JSONSerialization.jsonObject(with: body) as? [String: Any],
-              let outcome = object["outcome"] as? String,
-              let exitCode = object["exit_code"] as? Int
+        guard let body, let outcome = try? JSONDecoder().decode(RustHookOutcome.self, from: body)
         else { throw AgentIntegrationError.invalidResponse }
-        return HookOutcome(
-            outcome: outcome,
-            exitCode: Int32(exitCode),
-            message: object["message"] as? String,
-            stdout: object["stdout"] as? String
-        )
+        return outcome
     }
 
     /// The input pointer-length pairs one ABI call receives, plus the output
@@ -251,24 +255,85 @@ enum RustProviderBridge {
     }
 }
 
+/// The outcome the hook runtime reports for one call, as the bridge
+/// spells it (`weir_hook_run_v1`).
+struct RustHookOutcome: Decodable, Equatable {
+    /// What happened to the call. A word this build does not know is
+    /// kept as it came, so a newer runtime's outcome still decodes and
+    /// is only never taken for one of these.
+    enum Kind: Equatable {
+        case applied
+        case notInWeir
+        case rejected
+        case unknownProvider
+        case notRecorded
+        case intercepted
+        case other(String)
+
+        init(_ word: String) {
+            self = switch word {
+            case "applied": .applied
+            case "not_in_weir": .notInWeir
+            case "rejected": .rejected
+            case "unknown_provider": .unknownProvider
+            case "not_recorded": .notRecorded
+            case "intercepted": .intercepted
+            default: .other(word)
+            }
+        }
+    }
+
+    let outcome: Kind
+    let exitCode: Int32
+    let message: String?
+    /// What the hook prints, when the provider cancels a call that way.
+    var stdout: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case outcome
+        case exitCode = "exit_code"
+        case message
+        case stdout
+    }
+
+    init(outcome: Kind, exitCode: Int32, message: String?, stdout: String? = nil) {
+        self.outcome = outcome
+        self.exitCode = exitCode
+        self.message = message
+        self.stdout = stdout
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        outcome = try Kind(container.decode(String.self, forKey: .outcome))
+        exitCode = try container.decode(Int32.self, forKey: .exitCode)
+        // A value of another type reads as none, as the dictionary read
+        // this replaced took it, rather than failing the whole outcome.
+        message = try? container.decodeIfPresent(String.self, forKey: .message)
+        stdout = try? container.decodeIfPresent(String.self, forKey: .stdout)
+    }
+}
+
 extension AgentQuestionTurnCompletion {
-    /// The completion of the question Claude asks in `payload`.
+    /// The completion of the question `provider` asks in `payload`.
     init?(
+        provider: String,
         payload: Data, environment: [String: String],
         requestedAt: UInt64? = nil, bootSessionID: String? = nil
     ) {
-        guard let turn = try? RustProviderBridge.questionTurn(provider: "claude", payload: payload) else {
+        guard let turn = try? RustProviderBridge.questionTurn(provider: provider, payload: payload) else {
             return nil
         }
         self.init(turn: turn, environment: environment, requestedAt: requestedAt, bootSessionID: bootSessionID)
     }
 
-    /// Records that the turn Claude ends in `payload` has ended.
+    /// Records that the turn `provider` ends in `payload` has ended.
     static func record(
+        provider: String,
         payload: Data, environment: [String: String],
         completedAt: UInt64 = mach_absolute_time(), bootSessionID: String? = nil
     ) throws {
-        guard let turn = try RustProviderBridge.questionTurn(provider: "claude", payload: payload) else { return }
+        guard let turn = try RustProviderBridge.questionTurn(provider: provider, payload: payload) else { return }
         try record(turn: turn, environment: environment, completedAt: completedAt, bootSessionID: bootSessionID)
     }
 }

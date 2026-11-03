@@ -11,6 +11,7 @@
 import Foundation
 import Testing
 @testable import Weir
+@testable import WeirDomain
 
 @MainActor
 @Suite(
@@ -61,8 +62,7 @@ struct WorktreeRoutingHookTests {
             worktrees: [],
             worktreePlacement: .siblingPrefixed,
             bootstrap: [.shorthand("touch bootstrapped.txt")],
-            routeClaudeWorktrees: routeClaude,
-            routeCodexWorktrees: true
+            worktreeRouting: [.claude: routeClaude]
         )
         SessionStore(directory: scratch.support).saveSynchronously(SessionSnapshot(
             projects: [project],

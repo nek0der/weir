@@ -1,5 +1,6 @@
 {
   "maximumDecisionBytes": 8192,
+  "maximumHookInputBytes": 1048576,
   "maximumProjectionInputBytes": 16777216,
   "worktreeRoutingFileName": "worktree-routing.json",
   "paneIdentifierVariable": "WEIR_PANE_ID",

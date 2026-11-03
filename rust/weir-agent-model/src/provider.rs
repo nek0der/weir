@@ -137,6 +137,25 @@ pub enum Capability {
     /// began reaches us after the agent may have started on it. A turn no such
     /// call came before has no start, rather than a late one taken for its start.
     TurnBeginPrepared,
+    /// A question the agent asks through its approval hook is answered at the
+    /// agent's own prompt, never on Weir's card: the card cannot give the
+    /// agent its answer back, so Weir does not hold one.
+    QuestionAnsweredByAgent,
+    /// A question's approval request ends when the turn it was asked in ends,
+    /// which the helper watches for between short waits for the decision: the
+    /// agent's permission request carries no call id, so a question answered
+    /// at the agent's own prompt is known only by its turn moving on, and the
+    /// helper records that end itself (`question-turn-ended`).
+    QuestionEndsWithTurn,
+    /// The agent calls the approval helper instead of its lifecycle hook for a
+    /// permission request, so a request the helper does not answer is written
+    /// to the run's record by the helper itself.
+    ApprovalHookRecordsLifecycle,
+    /// A request is withdrawn by a SIGTERM to the approval helper, sent when
+    /// the person answers at the agent's own prompt, which stays up beside the
+    /// card: no hook of the agent's waits on the helper, so nothing else would
+    /// end the card before its timeout.
+    ApprovalWithdrawnBySignal,
 }
 
 /// What the platform needs to know about a provider without linking its

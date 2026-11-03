@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use weir_agent_hook::{
     GitSnapshots, HookEnv, HookOutcome, HookRuntime, NoSnapshots, TURNS_DIRECTORY, run_hook,
 };
-use weir_agent_model::TurnRecord;
+use weir_agent_model::{RecipePlaceholder, TurnRecord};
 
 mod git_runner;
 
@@ -77,23 +77,32 @@ pub fn turn_env(states: &Path, call: &str) -> HookEnv {
     provider_env("claude", states, call)
 }
 
+/// The variable `provider`'s install recipe names for `placeholder`, which is
+/// what its shim exports and so what the runtime reads; `None` when the recipe
+/// names none (Codex has no working-directory events).
+pub fn recipe_variable(provider: &str, placeholder: RecipePlaceholder) -> Option<String> {
+    weir_agent_hook::adapter_for(provider)
+        .expect("an installed provider")
+        .install_recipe()
+        .environment
+        .into_iter()
+        .find(|variable| variable.value == placeholder)
+        .map(|variable| variable.name)
+}
+
 /// Returns `turn_env` for `provider`'s pane, whose shim names its own
 /// directories.
 pub fn provider_env(provider: &str, states: &Path, call: &str) -> HookEnv {
-    let prefix = if provider == "claude" {
-        "WEIR"
-    } else {
-        "WEIR_CODEX"
-    };
+    let variable = |placeholder| recipe_variable(provider, placeholder).expect("a recipe variable");
     HookEnv::from_pairs([
         ("WEIR_PANE_ID".to_owned(), PANE.to_owned()),
         ("WEIR_AGENT_RUN_ID".to_owned(), RUN.to_owned()),
         (
-            format!("{prefix}_AGENT_STATES_DIR"),
+            variable(RecipePlaceholder::StateDirectory),
             states.to_str().expect("path").to_owned(),
         ),
         (
-            format!("{prefix}_SESSIONS_DIR"),
+            variable(RecipePlaceholder::SessionDirectory),
             states
                 .with_file_name("sessions")
                 .to_str()

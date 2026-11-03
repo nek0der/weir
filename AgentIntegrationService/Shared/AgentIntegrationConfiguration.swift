@@ -7,6 +7,12 @@ import Security
 enum AgentIntegrationConfiguration {
     static let maximumXPCRequestBytes = 1024 * 1024
     static let maximumXPCResponseBytes = 64 * 1024
+    /// The most of a hook payload the Hook Helper reads from standard input:
+    /// the bound the provider adapters take (`MAX_HOOK_INPUT_BYTES`), which
+    /// `rust/fixtures/contract/shared-values.json` holds for both sides. The
+    /// same number as the XPC request limit today, and named apart because
+    /// a lifecycle hook opens no connection, so the two can change alone.
+    static let maximumHookInputBytes = 1024 * 1024
     static let maximumRecords = 128
 
     #if DEBUG

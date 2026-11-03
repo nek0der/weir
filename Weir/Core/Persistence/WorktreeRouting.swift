@@ -66,7 +66,16 @@ enum WorktreeRoutingPlacementKind: String, Codable {
 
 extension WorktreeRouting {
     /// Derives the routing from the projects a session is about to save.
-    init(projects: [Project]) {
+    /// Each agent with a toggle (`hasPlacement`) is named, routed or not, so
+    /// the file says every answer the hook can be asked for; an agent with
+    /// none is left out, which the hook reads as routed. An agent the project
+    /// keeps out is named too, whatever `hasPlacement` says, so a stored "off"
+    /// reaches the hook even when the descriptors cannot be read.
+    init(
+        projects: [Project],
+        hasPlacement: (AgentKind) -> Bool = { AgentProviderRegistry.hasWorktreePlacement($0) }
+    ) {
+        let toggled = AgentKind.allCases.filter(hasPlacement)
         self.init(
             schemaVersion: Self.currentVersion,
             projects: projects.map { project in
@@ -76,11 +85,9 @@ extension WorktreeRouting {
                     bootstrap: project.bootstrap.map {
                         Step(command: $0.cmd, cwd: $0.cwd)
                     },
-                    routing: [
-                        AgentKind.claude.rawValue: project.routeClaudeWorktrees,
-                        AgentKind.codex.rawValue: project.routeCodexWorktrees,
-                        AgentKind.antigravity.rawValue: project.routeAntigravityWorktrees
-                    ],
+                    routing: Dictionary(uniqueKeysWithValues: AgentKind.allCases
+                        .filter { toggled.contains($0) || !project.routesWorktrees(for: $0) }
+                        .map { kind in (kind.rawValue, project.routesWorktrees(for: kind)) }),
                     worktrees: project.worktrees.map(\.workingDirectory.standardizedFileURL.path),
                     checks: project.checkCommands
                 )

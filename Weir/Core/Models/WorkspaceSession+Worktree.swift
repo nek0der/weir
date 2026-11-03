@@ -59,46 +59,24 @@ extension WorkspaceSession {
         projects[pi].ignoredFilesToCopy = patterns
     }
 
-    /// Flip the per-project "route Claude's `git worktree add`" toggle.
-    /// The hook receiver reads the saved value from `state.json`; flipping
-    /// to false makes future Claude `git worktree add` invocations
-    /// passthrough (Claude lands worktrees at its own default path
-    /// instead of our placement-derived one).
+    /// Flips the project's routing toggle of `kind`. The hook reads the
+    /// saved value from the routing file written beside `state.json`
+    /// (`WorktreeRouting`); flipping to false makes that agent's future
+    /// `git worktree add` pass through, so it lands at the agent's own
+    /// default path instead of the placement. Only an agent Weir can stop
+    /// before it runs the command has a toggle (`hasPlacement`); for any
+    /// other this does nothing, as there is no routing of it to turn off.
     @MainActor
-    func setProjectRouteClaudeWorktrees(_ projectID: UUID, to enabled: Bool) {
+    func setProjectRoutesWorktrees(
+        _ projectID: UUID,
+        for kind: AgentKind,
+        to enabled: Bool,
+        hasPlacement: (AgentKind) -> Bool = { AgentProviderRegistry.hasWorktreePlacement($0) }
+    ) {
+        guard hasPlacement(kind) else { return }
         guard let pi = projects.firstIndex(where: { $0.id == projectID }) else { return }
-        guard projects[pi].routeClaudeWorktrees != enabled else { return }
-        projects[pi].routeClaudeWorktrees = enabled
-    }
-
-    /// Codex-side mirror of `setProjectRouteClaudeWorktrees`. Each
-    /// agent has its own toggle so a user can route one CLI but not
-    /// the other.
-    @MainActor
-    func setProjectRouteCodexWorktrees(_ projectID: UUID, to enabled: Bool) {
-        guard let pi = projects.firstIndex(where: { $0.id == projectID }) else { return }
-        guard projects[pi].routeCodexWorktrees != enabled else { return }
-        projects[pi].routeCodexWorktrees = enabled
-    }
-
-    /// The same for the Antigravity CLI.
-    @MainActor
-    func setProjectRouteAntigravityWorktrees(_ projectID: UUID, to enabled: Bool) {
-        guard let pi = projects.firstIndex(where: { $0.id == projectID }) else { return }
-        guard projects[pi].routeAntigravityWorktrees != enabled else { return }
-        projects[pi].routeAntigravityWorktrees = enabled
-    }
-
-    /// Flips the project's routing toggle of `kind`, through the field that keeps it.
-    /// A kind with no field of its own has no toggle to flip.
-    @MainActor
-    func setProjectRoutesWorktrees(_ projectID: UUID, for kind: AgentKind, to enabled: Bool) {
-        switch kind {
-        case .claude: setProjectRouteClaudeWorktrees(projectID, to: enabled)
-        case .codex: setProjectRouteCodexWorktrees(projectID, to: enabled)
-        case .antigravity: setProjectRouteAntigravityWorktrees(projectID, to: enabled)
-        case .opencode: break
-        }
+        guard projects[pi].routesWorktrees(for: kind) != enabled else { return }
+        projects[pi].setRoutesWorktrees(enabled, for: kind)
     }
 
     /// Append a freshly-created git worktree to a project's sidebar

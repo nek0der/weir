@@ -4,6 +4,7 @@
 import Foundation
 import Testing
 @testable import Weir
+@testable import WeirDomain
 
 struct ProjectBootstrapTests {
 
@@ -28,8 +29,9 @@ struct ProjectBootstrapTests {
         let project = try JSONDecoder().decode(Project.self, from: Data(legacy.utf8))
         #expect(project.name == "Test")
         #expect(project.bootstrap.isEmpty)
-        #expect(project.routeClaudeWorktrees)
-        #expect(project.routeCodexWorktrees)
+        for kind in AgentKind.allCases {
+            #expect(project.routesWorktrees(for: kind))
+        }
     }
 
     @Test
@@ -129,11 +131,10 @@ struct ProjectBootstrapTests {
         let project = Project(
             name: "Test",
             rootURL: URL(fileURLWithPath: "/tmp/test"),
-            routeClaudeWorktrees: claude,
-            routeCodexWorktrees: codex
+            worktreeRouting: [.claude: claude, .codex: codex]
         )
         let decoded = try JSONDecoder().decode(Project.self, from: JSONEncoder().encode(project))
-        #expect(decoded.routeClaudeWorktrees == claude)
-        #expect(decoded.routeCodexWorktrees == codex)
+        #expect(decoded.routesWorktrees(for: .claude) == claude)
+        #expect(decoded.routesWorktrees(for: .codex) == codex)
     }
 }

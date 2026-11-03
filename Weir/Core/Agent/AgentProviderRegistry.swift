@@ -42,6 +42,26 @@ enum AgentProviderRegistry {
         descriptors[kind.rawValue]?.capabilities.contains(capability) == true
     }
 
+    /// Whether `kind` has a worktree routing toggle (`worktree_placement`).
+    ///
+    /// With no registry to read, the agents that had a toggle before the
+    /// capability named them keep it. "Decide nothing" is the wrong answer
+    /// here: the routing file would leave their keys out, which the hook reads
+    /// as routed, and a person's "off" would stop reaching it. Those three
+    /// are a fixed record of that time, not a list a new agent joins.
+    static func hasWorktreePlacement(
+        _ kind: AgentKind,
+        isRegistryEmpty: Bool = descriptors.isEmpty,
+        has: (String, AgentKind) -> Bool = has
+    ) -> Bool {
+        guard !isRegistryEmpty else { return placementWithoutRegistry.contains(kind) }
+        return has(ProviderCapabilityName.worktreePlacement, kind)
+    }
+
+    /// The agents that had a routing toggle when the capability replaced a
+    /// list of them (`hasWorktreePlacement`).
+    static let placementWithoutRegistry: Set<AgentKind> = [.claude, .codex, .antigravity]
+
     /// The executable names a provider runs as, as its descriptor declares.
     /// Empty for an unknown provider, so nothing matches it.
     static func processNames(for kind: AgentKind) -> [String] {

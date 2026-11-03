@@ -15,6 +15,14 @@ use weir_agent_model::{
 /// the shape, and reaching across for it would point the dependency the wrong way.
 /// The shim reads it from beside itself at run time, so the application's
 /// build copies this file into the bundle.
+///
+/// JSON holds no comments, so the timeouts it sets are explained here: the
+/// prompt's hook and the turn's end (`Stop`, `StopFailure`) get 600 seconds,
+/// as each takes a snapshot of the worktree that a large one makes slow; the
+/// permission request gets 600 too, which the helper's wait
+/// (`APPROVAL_TIMEOUT_MS`) stays under; and `Elicitation` and
+/// `ElicitationResult` get 10, because Claude draws the dialog only once the
+/// hook has returned.
 const SETTINGS_TEMPLATE: &str = include_str!("../resources/settings.template.json");
 
 pub(crate) fn descriptor() -> &'static ProviderDescriptor {
@@ -36,6 +44,9 @@ pub(crate) fn descriptor() -> &'static ProviderDescriptor {
             // No hook reports an Esc, a Ctrl+C, or a "No" at Claude Code's
             // own prompt; its status report going idle does.
             Capability::ProgramStatusIdleStopsTurn,
+            // `PermissionRequest` has no `tool_use_id`, so an
+            // `AskUserQuestion` answered in the TUI is known by its turn.
+            Capability::QuestionEndsWithTurn,
         ]),
         // The Claude receiver historically ran a slow sweep; Codex needs a
         // faster one because it emits no Stop when killed mid-turn.

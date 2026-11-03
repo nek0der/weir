@@ -16,8 +16,9 @@ mapped hook events to a per-run state record, wrote resume hints and cwd events,
 captured turn snapshots, and intercepted `git worktree add`. The application
 side consists of four Swift trackers plus attention, notification, and cleanup
 rules. The Swift twin files under `Core/Claude` and `Core/Codex` are already
-generic over `AgentSpec`; the real duplication is the event-to-state rule set
-that exists once per shell script, and the provider-specific approval
+generic over `AgentSpec` (a protocol since replaced by one resume builder
+that takes an `AgentKind`); the real duplication is the event-to-state rule
+set that exists once per shell script, and the provider-specific approval
 translation in `AgentApprovalHookAdapter.swift`.
 
 This change implements the crate layout, provider adapters, approval
@@ -202,7 +203,17 @@ A transcript tail is at most 4 MiB and is read only from a regular file.
 
 ### Capabilities
 
-The core and the UI branch on capabilities, never on provider ids.
+The core branches on capabilities, never on provider ids, and so do the Hook
+Helper and the approval card. The app keys its interface by `AgentKind`, whose
+`switch`es the compiler checks, and branches on an id only where a provider is
+set up differently, not where it behaves differently: the shim's variable names
+(`AgentShimLocator`), Codex's hook installer and the usage it reads from its
+app server, Codex's failure watcher in the Hook Helper, and the title a Claude
+pane's terminal writes while a run reports (`GhosttyEventCoordinator`). Two
+compatibility cases name agents too: the three `route…Worktrees` keys a
+project still writes for older builds, and the same three agents keeping their
+routing toggle when the descriptors cannot be read
+(`AgentProviderRegistry.hasWorktreePlacement`).
 
 | Capability | Meaning | Claude | Codex | Antigravity | OpenCode |
 | --- | --- | --- | --- | --- | --- |
@@ -211,6 +222,8 @@ The core and the UI branch on capabilities, never on provider ids.
 | `resume_defers_to_other_live_session` | Resume yields to another provider's live session in the pane. | no | yes | yes | yes |
 | `cwd_events` | The provider reports working-directory changes. | yes | no | no | no |
 | `worktree_events` | The provider reports worktree creation. | yes | yes | yes | yes |
+| `worktree_placement` | A `git worktree add` can be stopped before it runs and sent to the project's placement; the project settings give it a toggle. | yes | yes | yes | no |
+| `worktree_finish_proven` | A `git worktree add` already run is proven by its payload alone, and gets the setup when it lands at the placement. | no | no | no | yes |
 | `approval_hook` | Approval is answered by a hook process. | yes | yes | no | yes |
 | `approval_protocol` | Approval is requested over a connection. | no | no | no | no |
 | `subagents` | The provider emits subagent events. | yes | yes | yes | no |
@@ -221,6 +234,10 @@ The core and the UI branch on capabilities, never on provider ids.
 | `program_status_announces_failure` | An `error` status report is a failure of its own until the next report. | no | no | yes | no |
 | `program_status_auth_settles` | A `blocked` status report of kind `auth` is a wait only once it has stood for a while. | no | no | yes | no |
 | `turn_begin_prepared` | A turn's start is saved by a call of its own before the input is sent. | no | no | no | yes |
+| `question_answered_by_agent` | A question asked through the approval hook is answered at the agent's own prompt; Weir does not hold it. | no | yes | no | no |
+| `question_ends_with_turn` | A question's request ends with the turn it was asked in, which the Hook Helper watches for. | yes | no | no | no |
+| `approval_hook_records_lifecycle` | The agent calls the Hook Helper instead of its lifecycle hook for a permission request, so the helper records one it does not answer. | no | yes | no | no |
+| `approval_withdrawn_by_signal` | A SIGTERM to the Hook Helper, sent when the person answers at the agent's own prompt, withdraws the request. | no | no | no | yes |
 
 ### Event vocabulary
 
@@ -651,7 +668,7 @@ per-project toggle as the other providers. A resume is
 The acceptance line "Adding a provider changes no source file in
 `weir-agent-model` or `weir-agent-core`" did not hold. `agy` needed two new
 optional methods on `ProviderAdapter` (`session_started_if_unseen`,
-`worktree_block_output`) and two new capabilities
+`worktree_reroute_output`) and two new capabilities
 (`ProgramStatusAnnouncesPermission`, `ProgramStatusAnnouncesFailure`), and the
 projection had to honor them. Each describes a way a provider can behave that
 the first two did not show: a resume with no start, a hook whose non-zero status

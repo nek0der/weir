@@ -39,4 +39,8 @@ fi
 # only its turns are not.
 WEIR_HOOK_INVOCATION_ID="$(/usr/bin/uuidgen 2>/dev/null)"
 export WEIR_HOOK_INVOCATION_ID
-exec "$helper" hook opencode "$@"
+# The provider is named by the folder, `<provider id>-shim`, so every agent's
+# wrapper says the same here; whatever the agent passes follows it.
+provider="${hook_dir##*/}"
+provider="${provider%-shim}"
+exec "$helper" hook "$provider" "$@"
