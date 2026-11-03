@@ -52,13 +52,22 @@ enum ReviewRowMetrics {
 
     /// Width of the frozen strip: change band, comment marker, both numbers.
     static func gutterTotal(numberWidth: CGFloat) -> CGFloat {
-        bandWidth + gutterWidth + numberWidth * 2 + 8
+        bandWidth + gutterWidth + numberWidth * 2 + numberGap + signWidth
     }
+
+    /// The space between the old and the new number. Counted apart from
+    /// `signWidth`: taken out of it, the sign drew over the new number's
+    /// last digit.
+    static let numberGap: CGFloat = 4
+
+    /// The padding after the numbers, which is also where a changed line's
+    /// `+` or `−` goes when the fill cannot say it (`ReviewRowPainter.kindGlyph`).
+    static let signWidth: CGFloat = 8
 
     /// The same, for one column of the side-by-side layout, which carries only
     /// its own side's number.
     static func sideGutterTotal(numberWidth: CGFloat) -> CGFloat {
-        bandWidth + gutterWidth + numberWidth + 8
+        bandWidth + gutterWidth + numberWidth + signWidth
     }
 
     /// The hairline between the two columns.
@@ -366,6 +375,7 @@ final class ReviewGutterView: NSView {
         if commentCounts[line.id] ?? 0 > 0, selection.endLineID != line.id {
             ReviewRowPainter.drawCommentDot(in: ReviewRowPainter.markerRect(in: strip))
         }
+        ReviewRowPainter.drawKindGlyph(for: line, in: strip, gutterEnd: strip.maxX, isSelected: isSelected)
         let emphasis: NSColor = isSelected ? .labelColor : .secondaryLabelColor
         ReviewRowPainter.draw(
             line.oldLine.map(String.init) ?? "",
@@ -378,7 +388,7 @@ final class ReviewGutterView: NSView {
         ReviewRowPainter.draw(
             line.newLine.map(String.init) ?? "",
             in: NSRect(
-                x: metrics.bandWidth + metrics.gutterWidth + numberWidth + 4, y: strip.minY,
+                x: metrics.bandWidth + metrics.gutterWidth + numberWidth + metrics.numberGap, y: strip.minY,
                 width: numberWidth, height: strip.height
             ),
             font: metrics.font, color: emphasis, alignment: .right

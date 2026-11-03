@@ -14,12 +14,31 @@ struct ReviewIntralineHighlights: Equatable, Sendable {
     /// and moving every file's ranges into one table each time walked them
     /// all again.
     var bands: [Int: [Int: [NSRange]]] = [:]
+    /// The lines that end in a carriage return where the line they are
+    /// paired with does not, and so are drawn with a mark at their end.
+    /// Without it a file Git saw converted to CRLF read as every line
+    /// replaced by an identical one.
+    var lineEndingIDs: Set<Int> = []
+    /// `lineEndingIDs` for the other files, kept the way `bands` keeps them.
+    var lineEndingBands: [Int: Set<Int>] = [:]
 
     subscript(lineID: Int) -> [NSRange] {
         if let slot = ReviewStackIDs.slot(of: lineID) {
             return bands[slot]?[lineID - ReviewStackIDs.offset(forSlot: slot)] ?? []
         }
         return rangesByLineID[lineID] ?? []
+    }
+
+    /// Whether any line, in any file, is drawn with the mark.
+    var marksAnyLineEnding: Bool {
+        !lineEndingIDs.isEmpty || !lineEndingBands.isEmpty
+    }
+
+    func marksLineEnding(of lineID: Int) -> Bool {
+        if let slot = ReviewStackIDs.slot(of: lineID) {
+            return lineEndingBands[slot]?.contains(lineID - ReviewStackIDs.offset(forSlot: slot)) ?? false
+        }
+        return lineEndingIDs.contains(lineID)
     }
 }
 
@@ -31,6 +50,8 @@ struct ReviewIntralinePair: Sendable {
     let oldText: String
     let newLineID: Int
     let newText: String
+    var oldEndsInCarriageReturn = false
+    var newEndsInCarriageReturn = false
 }
 
 enum ReviewIntralineDiff {
@@ -56,7 +77,9 @@ enum ReviewIntralineDiff {
                 oldLineID: old.id,
                 oldText: old.text,
                 newLineID: new.id,
-                newText: new.text
+                newText: new.text,
+                oldEndsInCarriageReturn: old.endsInCarriageReturn,
+                newEndsInCarriageReturn: new.endsInCarriageReturn
             )
         }
     }
@@ -71,7 +94,14 @@ enum ReviewIntralineDiff {
         var remainingUTF16Units = maxFileUTF16Units
         var remainingWork = maxFileWork
         var result: [Int: [NSRange]] = [:]
+        var lineEndingIDs: Set<Int> = []
         for pair in pairs {
+            // Outside the budgets: comparing two flags costs nothing, and a
+            // conversion of every line ending is exactly the large file the
+            // budgets give up on.
+            if pair.oldEndsInCarriageReturn != pair.newEndsInCarriageReturn {
+                lineEndingIDs.insert(pair.oldEndsInCarriageReturn ? pair.oldLineID : pair.newLineID)
+            }
             guard remainingUTF16Units > 0, remainingWork > 0,
                   let ranges = ranges(
                       old: pair.oldText,
@@ -87,7 +117,7 @@ enum ReviewIntralineDiff {
                 result[pair.newLineID] = ranges.new
             }
         }
-        return ReviewIntralineHighlights(rangesByLineID: result)
+        return ReviewIntralineHighlights(rangesByLineID: result, lineEndingIDs: lineEndingIDs)
     }
 
     private struct Token: Hashable, Sendable {
@@ -173,10 +203,15 @@ enum ReviewIntralineDiff {
         let removedMeaningful = zip(oldMiddle, oldChanged).count { !$0.0.isWhitespace && $0.1 }
         let insertedMeaningful = zip(newMiddle, newChanged).count { !$0.0.isWhitespace && $0.1 }
         let meaningfulCommon = min(oldMeaningful - removedMeaningful, newMeaningful - insertedMeaningful)
-        guard common > 0,
-              meaningfulCommon > 0,
-              meaningfulCommon * 2 >= max(oldMeaningful, newMeaningful)
-        else { return nil }
+        // Two lines of nothing but whitespace have no spine to share, and
+        // their change — four spaces become a tab — is invisible without the
+        // inner fill, since the text draws the same either way.
+        let isWhitespaceOnly = oldMeaningful == 0 && newMeaningful == 0
+        guard isWhitespaceOnly || (
+            common > 0
+                && meaningfulCommon > 0
+                && meaningfulCommon * 2 >= max(oldMeaningful, newMeaningful)
+        ) else { return nil }
         let oldRanges = mergedRanges(tokens: oldMiddle, changed: oldChanged)
         let newRanges = mergedRanges(tokens: newMiddle, changed: newChanged)
         guard oldRanges.count <= maxRangesPerLine, newRanges.count <= maxRangesPerLine else { return nil }

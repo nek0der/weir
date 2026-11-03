@@ -161,8 +161,19 @@ struct ReviewFile: Identifiable, Hashable, Codable {
     var oldPath: String?
     let layer: ReviewLayer
     let status: ReviewFileStatus
+    /// Whether Git named the file in bytes that are not UTF-8, so `path` is
+    /// only a likeness of the name: listed, but never handed back to Git.
+    ///
+    /// Not persisted. A file like this cannot be opened, so no comment is
+    /// ever written on one, and leaving it out of the coding keys keeps the
+    /// stored comment shape as it was.
+    var isNameUndecodable = false
     var id: String {
         layer.rawValue + ":" + path
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case path, oldPath, layer, status
     }
 }
 
@@ -241,6 +252,10 @@ struct ReviewLine: Identifiable, Equatable {
     /// to the other would tell the agent to look at everything between them.
     /// This is what a selection is held inside.
     var hunkIndex: Int?
+    /// Whether the line ended in a carriage return, which `text` leaves out
+    /// (`ReviewDiffParser.lines(of:)`). Only a patch line carries it; the
+    /// review marks it where the line it is paired with ends differently.
+    var endsInCarriageReturn = false
     var isCommentable: Bool {
         !isExpansion && (oldLine != nil || newLine != nil)
     }
@@ -499,8 +514,9 @@ struct ReviewComment: Identifiable, Codable, Equatable {
 extension ReviewLine {
     /// Where a code line sits, as VoiceOver reads it: an added line by its
     /// new number, a removed one by its old, a context line by both. The
-    /// kind is said in words, since on screen only the line's fill tells
-    /// an added line from a removed one.
+    /// kind is said in words, since on screen the line's fill and band tell
+    /// an added line from a removed one, and a + or − before the code only
+    /// on a selected line or with "Differentiate without color" on.
     func spokenPosition(locale: Locale) -> String {
         switch (kind, oldLine, newLine) {
         case let (.added, _, new?):

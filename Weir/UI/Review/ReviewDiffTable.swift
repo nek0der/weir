@@ -534,6 +534,9 @@ struct ReviewDiffTable: NSViewRepresentable {
     /// Read here and handed to the painter: the rows are AppKit, and the
     /// system accent they used instead is not the one the picker sets.
     @Environment(\.weirAccent) private var accent
+    /// Handed to the painter the same way, for the signs it draws where the
+    /// fill alone told added from removed (`ReviewRowPainter.kindGlyph`).
+    @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiatesWithoutColor
 
     /// The stack's rows, which the table draws.
     var rows: [ReviewRow] {
@@ -725,9 +728,14 @@ struct ReviewDiffTable: NSViewRepresentable {
         // second one to update would otherwise be told the accent was already
         // current. Rows that take their tint when they are built are pooled,
         // so this is a reload rather than a redraw.
-        let hasNewAccent = coordinator.appliedAccent != accent
+        ReviewRowPainter.setDifferentiatesWithoutColor(differentiatesWithoutColor)
+        // Folded into the accent's reload: the signs are drawn by the same
+        // pooled rows and the same floating gutter.
+        let hasNewLook = coordinator.appliedAccent != accent
+            || coordinator.appliedDifferentiatesWithoutColor != differentiatesWithoutColor
         coordinator.appliedAccent = accent
-        if hasNewAccent {
+        coordinator.appliedDifferentiatesWithoutColor = differentiatesWithoutColor
+        if hasNewLook {
             coordinator.invalidateGutter()
         }
         // The same reload for a language switch: the rows resolve their words
@@ -741,7 +749,7 @@ struct ReviewDiffTable: NSViewRepresentable {
         // Side by side sizes its column to the viewport, so there is nothing
         // to scroll to and a scroller would sit there permanently disabled.
         scroll.hasHorizontalScroller = layout == .unified
-        if previousKey != contentKey || table.numberOfRows != rows.count || hasNewAccent || hasNewLocale {
+        if previousKey != contentKey || table.numberOfRows != rows.count || hasNewLook || hasNewLocale {
             let hadComposer = coordinator.hasComposerRow
             coordinator.appliedKey = contentKey
             coordinator.applyColumnWidth(to: table)

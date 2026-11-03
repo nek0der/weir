@@ -151,7 +151,7 @@ enum ReviewGit {
     /// and an add: what changed after a review range.
     static func pathsChanged(from: String, to: String, root: URL) async throws -> Set<String> {
         let data = try await command(["diff", "--name-only", "--no-renames", "-z", from, to], root: root)
-        return Set(data.split(separator: 0).compactMap { String(data: Data($0), encoding: .utf8) })
+        return try Set(splitPaths(data))
     }
 
     /// What changed between two recorded trees, counted as the receipt
@@ -240,8 +240,10 @@ enum ReviewGit {
         // Untracked files are in no tree and no index, so they are listed
         // rather than diffed.
         if scope.layers.contains(.untracked) {
-            let untracked = try await splitPaths(command(["ls-files", "--others", "--exclude-standard", "-z"], root: root))
-            result += untracked.map { ReviewFile(path: $0, layer: .untracked, status: .untracked) }
+            let untracked = try await splitNames(command(["ls-files", "--others", "--exclude-standard", "-z"], root: root))
+            result += untracked.map {
+                ReviewFile(path: $0.text, layer: .untracked, status: .untracked, isNameUndecodable: !$0.isDecodable)
+            }
         }
         guard result.count <= maxFiles else { throw ReviewError.tooLarge }
         // Unmerged paths may occur as both U and M, and in both layers. Keyed
@@ -370,34 +372,68 @@ enum ReviewGit {
     }
 
     static func parseNames(_ data: Data, layer: ReviewLayer) throws -> [ReviewFile] {
-        let fields = try splitPaths(data)
+        let fields = try splitNames(data)
         var result: [ReviewFile] = []
         var index = 0
         while index < fields.count {
-            let status = ReviewFileStatus(gitField: fields[index])
+            let status = ReviewFileStatus(gitField: fields[index].text)
             index += 1
             guard index < fields.count else { throw ReviewError.invalidDiff }
             let first = fields[index]
             index += 1
             if status == .renamed || status == .copied {
                 guard index < fields.count else { throw ReviewError.invalidDiff }
-                result.append(ReviewFile(path: fields[index], oldPath: first, layer: layer, status: status))
+                let path = fields[index]
+                result.append(ReviewFile(
+                    path: path.text,
+                    oldPath: first.text,
+                    layer: layer,
+                    status: status,
+                    isNameUndecodable: !path.isDecodable || !first.isDecodable
+                ))
                 index += 1
             } else {
-                result.append(ReviewFile(path: first, layer: layer, status: status))
+                result.append(ReviewFile(path: first.text, layer: layer, status: status, isNameUndecodable: !first.isDecodable))
             }
         }
         return result
     }
 
-    /// Git's NUL-separated paths (`-z`). Internal only for `ReviewGit`'s own
-    /// extensions; no other layer reads Git output through it.
-    static func splitPaths(_ data: Data) throws -> [String] {
+    /// One NUL-separated field of Git's output, and whether its bytes were
+    /// UTF-8.
+    struct GitName: Equatable {
+        let text: String
+        let isDecodable: Bool
+    }
+
+    /// Git's NUL-separated paths (`-z`), each decoded whatever its bytes.
+    ///
+    /// Git hands paths over as the bytes the file system holds, and a
+    /// repository can track a name that is not UTF-8 — one written by an
+    /// older Windows tool in its own code page. Refusing the whole output for
+    /// that one name emptied the review's file list and took the changes
+    /// panel's totals with it. The bytes that do not decode become U+FFFD, so
+    /// the name still says where it is wrong, and `isDecodable` tells the
+    /// caller that the text is no longer a path Git would recognize. Two
+    /// names that differ only in those bytes read the same, and the list
+    /// shows one of them: a rarer loss than the whole list.
+    static func splitNames(_ data: Data) throws -> [GitName] {
         guard data.isEmpty || data.last == 0 else { throw ReviewError.invalidDiff }
-        return try data.split(separator: 0).map {
-            guard let path = String(data: $0, encoding: .utf8) else { throw ReviewError.unsupported }
-            return path
+        return data.split(separator: 0).map {
+            if let text = String(data: $0, encoding: .utf8) {
+                return GitName(text: text, isDecodable: true)
+            }
+            // Lossy on purpose, for the reason above.
+            // swiftlint:disable:next optional_data_string_conversion
+            return GitName(text: String(decoding: $0, as: UTF8.self), isDecodable: false)
         }
+    }
+
+    /// `splitNames` as text alone, for a caller that only compares or counts
+    /// the names. Internal only for `ReviewGit`'s own extensions; no other
+    /// layer reads Git output through it.
+    static func splitPaths(_ data: Data) throws -> [String] {
+        try splitNames(data).map(\.text)
     }
 
     /// Whether the file's diff still hashes to what it did, without building
@@ -415,7 +451,7 @@ enum ReviewGit {
         scope: ReviewScope = .uncommitted
     ) async throws -> String {
         try Task.checkCancellation()
-        guard file.status != .unmerged else { return "" }
+        guard file.status != .unmerged, !file.isNameUndecodable else { return "" }
         return try await patchFingerprint(file, root: root, scope: scope).fingerprint
     }
 
@@ -444,6 +480,16 @@ enum ReviewGit {
                 fingerprint: "",
                 lines: [],
                 notice: LocalizedStringResource("Resolve merge conflicts before reviewing this file.")
+            )
+        }
+        // The decoded name is not the file's name, so Git asked for it would
+        // answer about no file at all, or about another one.
+        if file.isNameUndecodable {
+            return ReviewDiff(
+                file: file,
+                fingerprint: "",
+                lines: [],
+                notice: LocalizedStringResource("This file’s name isn’t UTF-8, so it can’t be opened here.")
             )
         }
         return try await patchFingerprint(file, root: root, scope: scope).diff()
@@ -524,10 +570,7 @@ enum ReviewGit {
         let fingerprint = ReviewDiff.hash(selectedData)
         return PatchSnapshot(fingerprint: fingerprint) {
             let lines = try ReviewDiffParser.parse(selectedPatch)
-            let hasSpecialMode = lines.contains {
-                $0.kind == .fileHeader && ($0.text.hasSuffix(" 160000") || $0.text.hasSuffix(" 120000"))
-            }
-            if hasSpecialMode {
+            if ReviewDiffParser.hasNonTextMode(lines) {
                 return ReviewDiff(
                     file: file,
                     fingerprint: fingerprint,
@@ -636,6 +679,7 @@ enum ReviewGit {
         root: URL,
         scope: ReviewScope = .uncommitted
     ) async -> [String] {
+        guard !file.isNameUndecodable else { return [] }
         let data: Data?
         if file.layer == .turns {
             // The tree the range ended at; `./` for the same reason as below.

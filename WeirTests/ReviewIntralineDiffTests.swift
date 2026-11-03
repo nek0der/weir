@@ -42,6 +42,32 @@ struct ReviewIntralineDiffTests {
         ).rangesByLineID.isEmpty)
     }
 
+    @Test func aChangeOfWhitespaceAlone_isHighlighted() {
+        let highlights = compute(old: "    ", new: "\t")
+        #expect(text(in: "    ", ranges: highlights[1]) == ["    "])
+        #expect(text(in: "\t", ranges: highlights[2]) == ["\t"])
+        #expect(text(in: "  ", ranges: compute(old: "", new: "  ")[2]) == ["  "])
+    }
+
+    @Test func differentLineEndings_markTheLineThatEndsInTheReturn() {
+        let gained = ReviewIntralineDiff.compute([
+            ReviewIntralinePair(oldLineID: 1, oldText: "a", newLineID: 2, newText: "a", newEndsInCarriageReturn: true)
+        ])
+        #expect(gained.lineEndingIDs == [2])
+        #expect(gained.rangesByLineID.isEmpty)
+        let lost = ReviewIntralineDiff.compute([
+            ReviewIntralinePair(oldLineID: 1, oldText: "a", newLineID: 2, newText: "b", oldEndsInCarriageReturn: true)
+        ])
+        #expect(lost.lineEndingIDs == [1])
+        let both = ReviewIntralineDiff.compute([
+            ReviewIntralinePair(
+                oldLineID: 1, oldText: "a", newLineID: 2, newText: "a b",
+                oldEndsInCarriageReturn: true, newEndsInCarriageReturn: true
+            )
+        ])
+        #expect(both.lineEndingIDs.isEmpty)
+    }
+
     @Test func canonicalUnicodeChangeStaysVisibleAndOnGraphemeBoundaries() {
         let old = "x\u{e9}y"
         let new = "xe\u{301}y"

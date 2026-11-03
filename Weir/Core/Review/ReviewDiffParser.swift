@@ -23,8 +23,41 @@ enum ReviewDiffParser {
     /// must not reach a terminal at all is replaced, so what is drawn and what
     /// is quoted are the same text.
     static func lines(of text: String) -> [String] {
+        endedLines(of: text).map(\.text)
+    }
+
+    /// `lines(of:)`, with whether each line ended in the carriage return it
+    /// lost. The return is still taken off the text, for the reasons above;
+    /// the flag is what lets a change that only converted line endings be
+    /// shown as one, rather than as a line replaced by itself.
+    private static func endedLines(of text: String) -> [(text: String, endsInCarriageReturn: Bool)] {
         text.components(separatedBy: "\n").map {
-            ReviewText.neutralized($0.hasSuffix("\r") ? String($0.dropLast()) : $0)
+            let endsInCarriageReturn = $0.hasSuffix("\r")
+            return (ReviewText.neutralized(endsInCarriageReturn ? String($0.dropLast()) : $0), endsInCarriageReturn)
+        }
+    }
+
+    /// The file modes Git marks a symlink and a submodule with.
+    private static let nonTextModes: Set<Substring> = ["120000", "160000"]
+
+    /// Whether a side of the patch is a symlink or a submodule, whose "lines"
+    /// are a link target or a commit rather than text anyone wrote.
+    ///
+    /// Read from the extended header lines that carry a mode, never from the
+    /// end of any header line: the `diff --git` line ends in the path, so a
+    /// text file named `notes 120000` was refused as a symlink.
+    static func hasNonTextMode(_ lines: [ReviewLine]) -> Bool {
+        lines.contains { line in
+            guard line.kind == .fileHeader else { return false }
+            let text = line.text
+            for prefix in ["old mode ", "new mode ", "new file mode ", "deleted file mode "] where text.hasPrefix(prefix) {
+                return nonTextModes.contains(text.dropFirst(prefix.count))
+            }
+            // `index <old>..<new> <mode>`, the mode present when both sides
+            // share it.
+            guard text.hasPrefix("index ") else { return false }
+            let fields = text.split(separator: " ", omittingEmptySubsequences: false)
+            return fields.count == 3 && nonTextModes.contains(fields[2])
         }
     }
 
@@ -41,8 +74,8 @@ enum ReviewDiffParser {
         // one hunk answers with the same number and a reader's run can be held
         // inside it.
         var hunkIndex: Int?
-        let lines = Self.lines(of: patch).dropLast(patch.hasSuffix("\n") ? 1 : 0)
-        for line in lines {
+        let lines = endedLines(of: patch).dropLast(patch.hasSuffix("\n") ? 1 : 0)
+        for (line, endsInCarriageReturn) in lines {
             guard rows.count < maxRows else { throw ReviewError.tooLarge }
             if line.hasPrefix("@@ ") {
                 guard oldRemaining == 0, newRemaining == 0 else {
@@ -93,7 +126,8 @@ enum ReviewDiffParser {
                     id: rows.count,
                     kind: marker == "+" ? .added : (marker == "-" ? .removed : .context),
                     text: String(String.UnicodeScalarView(line.unicodeScalars.dropFirst())),
-                    oldLine: consumesOld ? oldLine : nil, newLine: consumesNew ? newLine : nil, hunkIndex: hunkIndex
+                    oldLine: consumesOld ? oldLine : nil, newLine: consumesNew ? newLine : nil, hunkIndex: hunkIndex,
+                    endsInCarriageReturn: endsInCarriageReturn
                 ))
                 if consumesOld {
                     oldLine += 1

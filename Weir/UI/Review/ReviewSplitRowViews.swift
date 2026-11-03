@@ -97,12 +97,18 @@ final class ReviewSplitCodeRowView: NSView {
         setAccessibilityLabel(position)
         // A static text element is read from its value, not its label.
         setAccessibilityValue(position)
-        let hasIntraline = [pair.old, pair.new].compactMap(\.self).contains {
-            !intralineHighlights[$0.id].isEmpty
+        let lines = [pair.old, pair.new].compactMap(\.self)
+        var help: [String] = []
+        if lines.contains(where: { !intralineHighlights[$0.id].isEmpty }) {
+            help.append(LocalizedStringResource("Changed characters are highlighted.").resolved(in: context.locale))
         }
-        setAccessibilityHelp(
-            hasIntraline ? LocalizedStringResource("Changed characters are highlighted.").resolved(in: context.locale) : nil
-        )
+        if lines.contains(where: { intralineHighlights.marksLineEnding(of: $0.id) }) {
+            help.append(LocalizedStringResource(
+                "This line ends in a carriage return; the line it is paired with does not.",
+                comment: "VoiceOver, review: a changed line whose only or extra difference is its line ending"
+            ).resolved(in: context.locale))
+        }
+        setAccessibilityHelp(help.isEmpty ? nil : help.joined(separator: " "))
         needsDisplay = true
         window?.invalidateCursorRects(for: self)
     }
@@ -215,6 +221,12 @@ final class ReviewSplitCodeRowView: NSView {
         } else if commentCounts[line.id] ?? 0 > 0 {
             ReviewRowPainter.drawCommentDot(in: marker)
         }
+        ReviewRowPainter.drawKindGlyph(
+            for: line,
+            in: rect,
+            gutterEnd: rect.minX + metrics.sideGutterTotal(numberWidth: numberWidth),
+            isSelected: isSelected
+        )
 
         let emphasis: NSColor = isSelected ? .labelColor : .secondaryLabelColor
         ReviewRowPainter.draw(
@@ -238,6 +250,7 @@ final class ReviewSplitCodeRowView: NSView {
             language: language,
             match: match,
             intralineRanges: intralineHighlights[line.id],
+            marksLineEnding: intralineHighlights.marksLineEnding(of: line.id),
             selectedRange: textSelection.range(in: line, at: rowIndex, on: side)
         )
     }

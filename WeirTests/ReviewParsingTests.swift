@@ -29,6 +29,25 @@ struct ReviewParsingTests {
         }
     }
 
+    @Test func nonTextModesAreReadFromTheLinesThatCarryAMode() throws {
+        func refuses(_ header: String) throws -> Bool {
+            try ReviewDiffParser.hasNonTextMode(ReviewDiffParser.parse(header + "@@ -1 +1 @@\n-a\n+b\n"))
+        }
+        // The path ends in the number, and the file is text.
+        #expect(try !refuses("diff --git a/notes 120000 b/notes 120000\nindex 1..2 100644\n--- a/notes 120000\n+++ b/notes 120000\n"))
+        #expect(try !refuses("diff --git a/pin 160000 b/pin 160000\nrename from x 120000\nrename to pin 160000\n"))
+        for header in [
+            "diff --git a/l b/l\nindex 1..2 120000\n",
+            "diff --git a/s b/s\nindex 1..2 160000\n",
+            "diff --git a/l b/l\nnew file mode 120000\nindex 0..2\n",
+            "diff --git a/l b/l\ndeleted file mode 160000\nindex 1..0\n",
+            "diff --git a/l b/l\nold mode 100644\nnew mode 120000\n"
+        ] {
+            #expect(try refuses(header), "Not refused: \(header)")
+        }
+        #expect(try !refuses("diff --git a/x b/x\nold mode 100644\nnew mode 100755\nindex 1..2\n"))
+    }
+
     @Test func nameStatusKeepsUnusualPathsAndRenames() throws {
         let names = Data("R100\0old\tname\0new\nname\0M\0日本語\0".utf8)
         let files = try ReviewGit.parseNames(names, layer: .staged)
@@ -39,6 +58,30 @@ struct ReviewParsingTests {
         // downstream has to know that a rename's status is two fields glued
         // together.
         #expect(files[0].status == .renamed, "Rename status kept its score")
+    }
+
+    @Test func aNameThatIsNotUTF8_keepsTheOthersAndIsMarked() throws {
+        let latin1 = Data("caf".utf8) + Data([0xE9])
+        let names = try ReviewGit.parseNames(
+            Data("M\0a.txt\0A\0".utf8) + latin1 + Data("\0R090\0".utf8) + latin1 + Data("\0b.txt\0".utf8),
+            layer: .unstaged
+        )
+        try #require(names.count == 3)
+        #expect(names[0].path == "a.txt" && !names[0].isNameUndecodable)
+        #expect(names[1].path == "caf\u{FFFD}" && names[1].isNameUndecodable)
+        // A rename from an undecodable name cannot be asked about either.
+        #expect(names[2].path == "b.txt" && names[2].oldPath == "caf\u{FFFD}" && names[2].isNameUndecodable)
+        let stats = try ReviewGit.parseNumstat(Data("1\t0\t".utf8) + latin1 + Data("\u{0}2\t1\ta.txt\0".utf8))
+        #expect(stats.map(\.0) == ["caf\u{FFFD}", "a.txt"])
+    }
+
+    /// Not persisted, so a stored comment's file reads back the same as one
+    /// written before the flag existed.
+    @Test func theUndecodableMarkIsNotStored() throws {
+        let file = ReviewFile(path: "x", layer: .staged, status: .modified, isNameUndecodable: true)
+        let encoded = try JSONEncoder().encode(file)
+        #expect(!(String(data: encoded, encoding: .utf8) ?? "").contains("Undecodable"))
+        #expect(try !JSONDecoder().decode(ReviewFile.self, from: encoded).isNameUndecodable)
     }
 
     @Test func filePatchKeepsARenameApartFromAnotherFile() throws {

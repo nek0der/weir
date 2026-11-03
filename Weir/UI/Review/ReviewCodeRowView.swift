@@ -62,6 +62,7 @@ final class ReviewCodeRowView: NSView {
         language: ReviewSyntax.Language? = nil,
         match: String = "",
         intralineRanges: [NSRange] = [],
+        marksLineEnding: Bool = false,
         selectedRange: NSRange? = nil,
         locale: Locale
     ) {
@@ -81,6 +82,7 @@ final class ReviewCodeRowView: NSView {
             ),
             intralineRanges: intralineRanges,
             intralineKind: line.kind,
+            marksLineEnding: marksLineEnding,
             selectedRange: selectedRange
         ) {
             code.attributedStringValue = styled
@@ -93,9 +95,17 @@ final class ReviewCodeRowView: NSView {
         // Where the line sits, for the reader who cannot see the gutter,
         // and whether it was added or removed, which only its fill shows.
         code.setAccessibilityLabel(line.spokenPosition(locale: locale))
-        code.setAccessibilityHelp(
-            intralineRanges.isEmpty ? nil : LocalizedStringResource("Changed characters are highlighted.").resolved(in: locale)
-        )
+        var help: [String] = []
+        if !intralineRanges.isEmpty {
+            help.append(LocalizedStringResource("Changed characters are highlighted.").resolved(in: locale))
+        }
+        if marksLineEnding {
+            help.append(LocalizedStringResource(
+                "This line ends in a carriage return; the line it is paired with does not.",
+                comment: "VoiceOver, review: a changed line whose only or extra difference is its line ending"
+            ).resolved(in: locale))
+        }
+        code.setAccessibilityHelp(help.isEmpty ? nil : help.joined(separator: " "))
         window?.invalidateCursorRects(for: self)
     }
 
