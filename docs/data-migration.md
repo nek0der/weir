@@ -1,18 +1,24 @@
 # Migrating saved data
 
 Weir keeps its state in files under `~/Library/Application Support/Weir/`
-(`Weir Dev/` for a Debug build), and keeps a few more in each repository's
-Git directory. When the shape of a versioned file changes, its version goes
-up and Weir brings the file forward at launch. This document describes how
-that works, lists every file the supervision window's release changes or adds,
-and says how to go back one release after a migration.
+(`Weir Dev/` for a Debug build), and keeps a few more in each repository's Git
+directory. When the shape of a versioned file changes, its version goes up and
+Weir brings the file forward at launch. This document describes how that works,
+lists every file changed or added since 0.1.9, the last release before the
+supervision window arrived in 0.1.10, and says how to go back to 0.1.9 after a
+migration.
 
 Paths below are relative to the Application Support folder unless they name a
 Git directory.
 
-Two names for older builds recur below. "The previous release" is the last
-release before the supervision window. "The build before" is the build of this
-release that came just before the change being described.
+"The build before" is the build that came just before the change being
+described, and "the current build" is the one this document describes.
+
+Releases before 0.1.14 were named Limpid. They keep their files in
+`Application Support/Limpid/` (`Limpid Dev/` for a Debug build) and their refs
+under `refs/limpid/`. Weir neither reads nor moves them. Going back past 0.1.14
+therefore means restoring inside `Limpid/`, and what Weir saved since is not
+there.
 
 ## How it works
 
@@ -127,7 +133,7 @@ release that came just before the change being described.
 | `reviews/<hash>.json` | version 1 → 2 | `reviews/<hash>.json.pre-v2` |
 | `notifications.json` | two optional fields, no version | none |
 | `worktree-routing.json` | still version 1, two optional fields, and a third agent in `routing` | none |
-| Run records (`agent-states/`, `codex-agent-states/`) | still schema 3, twelve optional fields | none |
+| Run records (`agent-states/`, `codex-agent-states/`) | still schema 3, optional fields only (`RunRecord`) | none |
 | Antigravity's run records and resume hints (`antigravity-agent-states/`, `antigravity-sessions/`) | new | — |
 | OpenCode's run records and resume hints (`opencode-agent-states/`, `opencode-sessions/`) | new | — |
 | Saved turn starts (`opencode-agent-states/turn-preparations/`) | new: at most one per run, gone once a turn takes it | — |
@@ -139,6 +145,8 @@ release that came just before the change being described.
 | `restore-pending-stops.json` | new | — |
 | `usage/claude.json`, `usage/antigravity.json` | new: each agent's plan usage as its status line last reported it, for the usage panel | — |
 | `pane-path-<project ID>.txt` | new: the `PATH` the last shell of a pane of that project ended up with, where an agent is looked up for that project | — |
+| `tab-focus/<run>.json`, and its `<run>.json.<nonce>.answer` | new: Weir's request that an OpenCode pane show one of its sessions, and the plugin's answer (`AgentTabFocus.swift`) | — |
+| `opencode-agent-states/pane-env/<random>` | new: the pane's `WEIR_*` variables for the OpenCode plugin, 0600, swept after a day | — |
 | Codex's `~/.codex/config.toml` (the person's own) | our tables and markers are taken out | none |
 | Antigravity's plugin (`~/.gemini/config/plugins/weir`) | new | — |
 | OpenCode's plugin (`~/.config/opencode/plugins/weir`) | new | — |
@@ -152,12 +160,13 @@ The step is `SessionSnapshotV5`
 - Groups are no longer written. Their tabs become scratch tabs, after the
   scratch tabs that were there, in group order and then tab order. Each tab
   keeps its group's name as a prefix to its title ("prod · ssh"), the group's
-  color as a mark on the tab, and the group's working-directory default for
-  the tab's new panes. A group that recorded no default, or recorded it as
-  `null`, had "continue where the active tab is", and its tabs keep that:
-  their new panes start in the folder the tab was last in, not where it
-  opened. So do the tabs of a group whose default names no mode. A tab of a group that no longer exists becomes a plain scratch
-  tab. The groups' folding and last-used tab are dropped.
+  color as a mark on the tab, and the group's working-directory default for the
+  tab's new panes. A group that recorded no default, or recorded it as `null`,
+  had "continue where the active tab is", and its tabs keep that: their new
+  panes start in the folder the tab was last in, not where it opened. So do the
+  tabs of a group whose default names no mode. A tab of a group that no longer
+  exists becomes a plain scratch tab. The groups' folding and last-used tab are
+  dropped.
 - What the window showed and how it was laid out moves from the root of the
   file into the first entry of `windows`, on the project its selection was
   in. That window starts with the sidebar at its default width. The tab
@@ -196,15 +205,14 @@ it comes off the tab. Otherwise it would name the row again at once.
 
 The build before carries both keys as unknown fields on the worktree and the
 project, writes them back unchanged, and names the row by its tabs. A row
-renamed in the build before keeps that name on a tab, so back in this build
-the row's own name, if it has one, goes ahead of it. The
-previous release never reads a version 6 file (see "Going back to an earlier
-build"); its worktree and project decoders would pass over both keys. The
-`state.json.pre-v6` copy holds no row names, so a name given in this release
-is not in it.
+renamed in the build before keeps that name on a tab, so back in this build the
+row's own name, if it has one, goes ahead of it. 0.1.9 never reads a version 6
+file (see "Going back to an earlier build"); its worktree and project decoders
+would pass over both keys. The `state.json.pre-v6` copy holds no row names, so a
+name given in the current build is not in it.
 
 Version 6 reads some values it never writes, so that a file another build of
-this release wrote still opens:
+the current build wrote still opens:
 
 - A container of a kind it does not know (a group, or a newer build's) is
   passed over and logged rather than failing the file
@@ -252,7 +260,7 @@ key skips it:
 - A tab's `conversationName`, the name of the first agent conversation that
   ran in it, names the tab's session row (`Tab.swift`). A file without it
   reads as a tab no agent has named. A build without it skips the key, and
-  drops it if that build saves the session. This release then names the tab
+  drops it if that build saves the session. The current build then names the tab
   again only while its agent still runs. A Codex conversation's name, and
   its agent badge, now carry Codex's `conversationId`, which earlier builds
   left out. A name saved without one still follows its conversation, by its
@@ -370,8 +378,8 @@ Some keys of version 6 are still read but no longer written new:
   no longer takes an instruction, so this build writes no new entry. It
   still reads the ones a restored tab has, carries them when a pane moves,
   saves them, and hands each to its pane's first agent launch, so an
-  instruction staged before the update is not lost. The release after this
-  one removes the key from `Tab.CodingKeys`, after which it is skipped.
+  instruction staged before the update is not lost. A later release removes
+  the key from `Tab.CodingKeys`, after which it is skipped.
   `InitialPromptFile`, the shim's `weir_take_initial_prompt`, and the
   `unsetenv` and `removeOrphans` calls in `WeirApp` go with it. The build
   before reads and writes the key as this build does.
@@ -406,14 +414,14 @@ Some keys of version 6 are still written but no longer read:
     finds the chrome of the window that last left the project. They are
     written for that build only, so that going back to it does not open every
     project at the default widths.
-  - They can be dropped from the writing side in the release after this one,
-    once going back means going back past the build before. A view without
+  - They can be dropped from the writing side once going back means going
+    back past the build before. They are still written. A view without
     them already reads (`ProjectView.init(from:)` uses `decodeIfPresent`),
     so dropping them needs no version bump. They then move to the list
     above, as keys passed over and not written again.
 
-A saved `antigravity` or `opencode` agent adds no version either. The build before opens a
-file that names it and loses only what belongs to that agent:
+A saved `antigravity` or `opencode` agent adds no version either. The build
+before opens a file that names it and loses only what belongs to that agent:
 
 - A tab's `agentSessions` and `agentBadges` skip the provider they do not know
   (`Tab.decodeByProvider`), and the next save drops those entries. The tab's
@@ -421,16 +429,16 @@ file that names it and loses only what belongs to that agent:
 - A tab's `conversationName` of that agent reads as none, and the next save
   drops it. An entry of `conversationTabNames` of that agent is passed over,
   and the next save drops it too.
-- `settings.json` keeps `newSession.lastOpen` and a project's `open` as
-  strings. A value of `antigravity` or `opencode` reads as no choice there, and is written
-  back only until the sheet records another.
+- `settings.json` keeps `newSession.lastOpen` and a project's `open` as strings.
+  A value of `antigravity` or `opencode` reads as no choice there, and is
+  written back only until the sheet records another.
 
-The previous release reads version 5 only. A version 6 file fails to decode
+0.1.9 reads version 5 only. A version 6 file fails to decode
 there before its version is even compared, because version 6 drops keys that
 version 5 requires. The first one its decoder reaches is a project's
 `isExpanded` (`containers[0].project.isExpanded`), and the root's selection
 keys (`activeContainerID`, `sidebarWidth`, `sidebarHidden`) are gone as well.
-The previous release sets the file aside as
+0.1.9 sets the file aside as
 `state.json.bak-decode-failed-<unix>` and opens a fresh window.
 
 ### `settings.json`: schema 1 to 2
@@ -453,7 +461,7 @@ is brought back in line. The renamed actions keep their stored names
 (`reviewChanges`, `reviewTurn`, `nextSection`, `previousSection`), so their
 bindings carry over unchanged.
 
-New Workspace… (`newSession`), which only earlier builds of this release had,
+New Workspace… (`newSession`), which only development builds before 0.1.10 had,
 is folded into New Worktree… (`newWorktree`), whose default is now ⌘N
 (`KeyboardSettings.foldActions`, run first by `normalize`, so on every load):
 
@@ -468,9 +476,8 @@ is folded into New Worktree… (`newWorktree`), whose default is now ⌘N
 - Nothing is left under `newSession`, so a second run changes nothing. A
   build that still has New Workspace… finds no binding for it and gives it
   its default, ⌘N, unless `newWorktree` holds ⌘N.
-- A schema 1 file never had `newSession`. Its `newWorktree` binding (the
-  previous release's default was ⌥⌘N) stays as it was; with none,
-  `newWorktree` gets ⌘N.
+- A schema 1 file never had `newSession`. Its `newWorktree` binding (0.1.9's
+  default was ⌥⌘N) stays as it was; with none, `newWorktree` gets ⌘N.
 - The move from schema 1 also notes a key whose meaning changed: when the
   file has no choice of its own for `newWorktree` (no binding, not
   unassigned) and Create Worktree Now ends up on ⌥⌘N,
@@ -479,11 +486,11 @@ is folded into New Worktree… (`newWorktree`), whose default is now ⌘N
   Now, while it is still on ⌥⌘N, opens the New Worktree… sheet once with a
   note saying the keys now create at once and the sheet is ⌘N, and the
   entry is then removed. The list is written only while it is not empty.
-  The previous release carries it through `KeyboardSettings.unknownFields`.
-  A new install, which has no settings file of the previous release, and a
+  0.1.9 carries it through `KeyboardSettings.unknownFields`.
+  A new install, which has no settings file of 0.1.9, and a
   schema 2 file never get it.
 - A person who kept New Workspace… on its default ⌘N and bound New
-  Worktree… to other keys, which only earlier builds of this release allowed,
+  Worktree… to other keys, which only development builds before 0.1.10 allowed,
   is not told that ⌘N now does nothing: the file holds nothing that says
   ⌘N was in use.
 
@@ -537,7 +544,7 @@ The new worktree sheet keeps what it opened and how it made a worktree in
   default is ⌥⌘N. A person's own binding on ⌥⌘N wins, and the default starts
   unbound, as for any new action.
 
-The keys an earlier build of this release wrote for the sheet,
+The keys a development build before 0.1.10 wrote for the sheet,
 `newSession.lastAgent` and `newSession.projects[path].agent` and `.location`,
 are read only to choose the first selection while `open` is not set
 (`"none"`, that build's terminal, reads as the shell). They are written back
@@ -545,7 +552,7 @@ as they were read and never changed, so going back finds them. Both sections
 carry keys they do not know (`unknownFields`), so the build before keeps the
 new keys through a round trip, and this build keeps the old ones.
 
-The previous release reads a schema 2 file and keeps its values. It carries
+0.1.9 reads a schema 2 file and keeps its values. It carries
 the following as unknown fields: the sections it does not know (`review`,
 `general`, `newSession`), the new keys in `advanced` (`turnRetention`,
 `approvalHoldWhileHidden`), and the keyboard's `retired`, `unbound`, and
@@ -583,10 +590,10 @@ scope).
   `null` `viewed` or `lastFileID` reads as none, as it did in version 1.
 
 A version 2 comment whose only scopes are `turn:<tree>` also reads as legacy
-(`ReviewComment.isLegacy`). Earlier builds of this release wrote that scope
+(`ReviewComment.isLegacy`). Development builds before 0.1.10 wrote that scope
 for the per-pane "This turn" review. The `turn` layer it names still decodes.
 
-The previous release reads version 1 only. It sets a version 2 draft aside as
+0.1.9 reads version 1 only. It sets a version 2 draft aside as
 `<hash>.json.bak-decode-failed-<unix>` and starts that review empty.
 
 A draft holding a range of an Antigravity conversation is a shape the build
@@ -647,7 +654,7 @@ aside as `notifications.json.bak-read-failed-<unix>` or
 `.bak-decode-failed-<unix>`. When it cannot be moved, it is left in place and
 saving stops for that launch.
 
-The previous release ignores the two fields and drops them when it next
+0.1.9 ignores the two fields and drops them when it next
 saves. Those rows then name their place by the recorded label.
 
 A row's `event` can name `antigravity` as its agent. The build before cannot
@@ -658,83 +665,84 @@ title and body recorded with it, and the next save drops the event.
 
 Written beside `state.json` by every save, for the hook. Still version 1.
 Each project now also lists its worktrees and its check commands
-(`worktrees`, `checks`, both optional). The previous release's hook reads the
+(`worktrees`, `checks`, both optional). 0.1.9's hook reads the
 file and ignores them.
 
 Each project's `routing` also gains `antigravity`, from the project's
 `routeAntigravityWorktrees` (`WorktreeRouting.swift`). The hook of a build
 before looks up only its own agents. The keys are the agents whose descriptor
-declares `worktree_placement`, which are the three the file named before.
+declares `worktree_placement` (Claude, Codex, and Antigravity), and any agent
+the project turned off. Builds up to 0.1.15 named only `claude` and `codex`.
 
 ### Run records
 
 The hook's run records (`agent-states/<id>.state.json` for Claude,
 `codex-agent-states/<id>.state.json` for Codex, and
 `antigravity-agent-states/<id>.state.json` for Antigravity, new with its resume
-hints in `antigravity-sessions/`) stay at schema 3 and gain nine optional
-fields. An earlier build has no Antigravity provider, so it neither reads nor
-deletes those two folders. The first five are `worktreeRoot`, `currentTurnId`,
-`usageLimit`, and, while a run waits at its prompt, `waitKind` (`approval` or
-`question`) and `tool` (the tool it waits to use). A record without the last
-two is worded from its `detail`, as before. The previous release carries
-fields it does not know through its records' unknown fields, so a rewrite
-keeps them. For `waitKind` and `tool` that can mislead: the previous release
-carries them past the wait they described. After going back and forth, a
-later wait can therefore read as the earlier one's kind until this release
-writes the record again.
+hints in `antigravity-sessions/`) stay at schema 3, and every field they gained
+is optional (`RunRecord` in `weir-agent-model` lists them all). The nine below
+change how a record reads. `killedByLimpidAt` became `killedByWeirAt` in 0.1.14
+with no alias, so a Limpid record's mark is carried as an unknown field. An
+earlier build has no Antigravity provider, so it neither reads nor deletes those
+two folders. The first five are `worktreeRoot`, `currentTurnId`, `usageLimit`,
+and, while a run waits at its prompt, `waitKind` (`approval` or `question`) and
+`tool` (the tool it waits to use). A record without the last two is worded from
+its `detail`, as before. 0.1.9 carries fields it does not know
+through its records' unknown fields, so a rewrite keeps them. For `waitKind` and
+`tool` that can mislead: 0.1.9 carries them past the wait they
+described. After going back and forth, a later wait can therefore read as the
+earlier one's kind until the current build writes the record again.
 
-The sixth, `outsideTurnRest`, is set while a run works outside a turn. It
-holds the rest state (`idle` or `finished`) that the idle prompt returns the
-run to (ADR 0004, "Work outside a turn"). The previous release carries it the
-same way, but that release never ends such work. A record it rewrites
-therefore keeps the field until this release writes the record again. A
-record without the field returns to `finished`. A run that the previous
-release left running after a late tool has no `outsideTurnRest`, and this
-release ends it at the next idle prompt as `finished`.
+The sixth, `outsideTurnRest`, is set while a run works outside a turn. It holds
+the rest state (`idle` or `finished`) that the idle prompt returns the run to
+(`docs/provider-adapters.md`, "Work outside a turn"). 0.1.9 carries it the same
+way, but that release never ends such work. A record it rewrites therefore keeps
+the field until the current build writes the record again. A record without the
+field returns to `finished`. A run that 0.1.9 left running after a late tool has
+no `outsideTurnRest`, and the current build ends it at the next idle prompt as
+`finished`.
 
 The seventh, `hasPrompt`, says whether the session holds a conversation. It is
-`true` once a prompt is given in the run or when the session resumed one. It
-is `false` for a session started anew (or cleared) that has had no prompt
-since. A relaunch quietly retires a run whose record says `false`, since
-there is no transcript for a resume to find. A record without the
-field, written by the previous release or brought forward from schema 2, is
-read as "could be either", and its conversation is resumed as before. The
-previous release carries the field through its unknown fields but never sets
-it. A record this release wrote as `false` therefore stays `false` past a
-prompt the previous release took. A relaunch in this release then retires
-that run rather than resuming it, unless this release has written the record
-since.
+`true` once a prompt is given in the run or when the session resumed one. It is
+`false` for a session started anew (or cleared) that has had no prompt since. A
+relaunch quietly retires a run whose record says `false`, since there is no
+transcript for a resume to find. A record without the field, written by 0.1.9 or
+brought forward from schema 2, is read as "could be either", and its
+conversation is resumed as before. 0.1.9 carries the field through its unknown
+fields but never sets it. A record the current build wrote as `false` therefore
+stays `false` past a prompt 0.1.9 took. A relaunch in the current build then
+retires that run rather than resuming it, unless the current build has written
+the record since.
 
 The eighth, `transcriptPath`, is set only while a Claude or Antigravity run is
-in a turn or waits on its question or permission prompt. For Claude it names
-the transcript that the turn's `UserPromptSubmit`, the question's `PreToolUse`,
-or the permission prompt's `Notification` named, and for Antigravity the one
-its turn's first `PreInvocation` or the question's `PreToolUse` named. Esc at either prompt, and Esc or
-Ctrl+C at work, send no hook, so the app reads the stop from Claude's own
-status report, or a declined wait from that transcript, and shows the turn
-stopped (ADR 0004, "Work outside a turn"). The app then writes that end into
-the record itself, under the record lock: `finished`, with `runStartedAt`,
-`waitKind`, `tool`, and `transcriptPath` cleared, `lastHookEvent`
-`wait_declined` or `interrupted`, and the episode token kept, and it ends the
-turn record `interrupted` with what the transcript says the turn used. Codex
-records never have the field. A record without it keeps its wait or its
-work until the next hook moves it, as before, and an idle prompt, if one
-comes a minute later, ends work the person stopped. The previous release
-carries the field through its unknown fields past the turn, but this release
-reads the path only for a run in a turn or one that waits, and the transcript
-is the same session's, so a carried path names the right file.
+in a turn or waits on its question or permission prompt. For Claude it names the
+transcript that the turn's `UserPromptSubmit`, the question's `PreToolUse`, or
+the permission prompt's `Notification` named, and for Antigravity the one its
+turn's first `PreInvocation` or the question's `PreToolUse` named. Esc at either
+prompt, and Esc or Ctrl+C at work, send no hook, so the app reads the stop from
+Claude's own status report, or a declined wait from that transcript, and shows
+the turn stopped (`docs/provider-adapters.md`, "Work outside a turn"). The app
+then writes that end into the record itself, under the record lock: `finished`,
+with `runStartedAt`, `waitKind`, `tool`, and `transcriptPath` cleared,
+`lastHookEvent` `wait_declined` or `interrupted`, and the episode token kept,
+and it ends the turn record `interrupted` with what the transcript says the turn
+used. Codex records never have the field. A record without it keeps its wait or
+its work until the next hook moves it, as before, and an idle prompt, if one
+comes a minute later, ends work the person stopped. 0.1.9 carries the field
+through its unknown fields past the turn, but the current build reads the path
+only for a run in a turn or one that waits, and the transcript is the same
+session's, so a carried path names the right file.
 
 The ninth, `backgroundWork`, counts what the agent left running when its last
-turn ended (`shells`, `subagents`, `others`), as Claude's `Stop` lists it.
-Codex records never have the field. It is read leniently: a shape this
-release cannot read costs the count, never the record. A record without it
-shows nothing running. The previous release carries the field through its
-unknown fields but never clears it, so a record it rewrites after a later
-prompt keeps a count the next turn no longer describes. After a stop the
-previous release wrote, this release can show that stale count until it
-writes the record again at its next write.
+turn ended (`shells`, `subagents`, `others`), as Claude's `Stop` lists it. Codex
+records never have the field. It is read leniently: a shape the current build
+cannot read costs the count, never the record. A record without it shows nothing
+running. 0.1.9 carries the field through its unknown fields but never clears it,
+so a record it rewrites after a later prompt keeps a count the next turn no
+longer describes. After a stop 0.1.9 wrote, the current build can show that
+stale count until it writes the record again at its next write.
 
-A record this release cannot read, one with a later schema version above
+A record the current build cannot read, one with a later schema version above
 all, is left as it is, and the hook writes nothing for the run until a build
 that reads it does. Earlier releases wrote such a record over from revision 1,
 and the app, which had already taken a higher revision, then passed over every
@@ -768,7 +776,7 @@ it as the instruction. A prompt led by a reminder longer than the head reads
 as an automatic message rather than as the person's words. A kind this build
 does not know is kept as it came and written back, and reads as the person's
 words; the record stays writable. The kind `goal`, of a turn Codex began
-itself for the person's `/goal`, is new: the previous release reads it as
+itself for the person's `/goal`, is new: 0.1.9 reads it as
 the person's words and shows the goal's objective without saying it is a
 goal. A build that does not know the field keeps it through the record's
 unknown fields.
@@ -800,8 +808,8 @@ Retention (`TurnRetentionLimits`, Settings → Advanced):
 The projection chooses which turns go, and `TurnGarbageCollector` deletes
 each record and its refs together.
 
-The previous release neither reads nor deletes turn records and their refs.
-They stay as they are until this release runs again. The previous release's
+0.1.9 neither reads nor deletes turn records and their refs.
+They stay as they are until the current build runs again. 0.1.9's
 hook records no turns meanwhile.
 
 ### `turn-reads.json` and `viewed-lines.json`
@@ -866,7 +874,7 @@ since its deleted turns' spans and restores' moves are not a reading to
 take again. Turns go back to not viewed. When the file cannot be moved, it
 is left in place and saving stops for that launch.
 
-The previous release does not know either file and leaves them alone.
+0.1.9 does not know either file and leaves them alone.
 
 ### `stops.json`
 
@@ -909,8 +917,8 @@ when the file is this build's version. A file that cannot be read is dropped
 and written again on the next change. The last launch's stops are then lost,
 and their panes stay plain shells.
 
-The previous release does not know the file and leaves it alone. It lists no
-stop after a relaunch, and the file stays as this release last wrote it.
+0.1.9 does not know the file and leaves it alone. It lists no
+stop after a relaunch, and the file stays as the current build last wrote it.
 
 An Antigravity stop is an entry the build before cannot read, so that build
 drops it alone, as above.
@@ -935,7 +943,7 @@ again before every pass and at quit, even if the list has not changed since.
 A file that cannot be read, or that comes from a newer build, holds no hints.
 Such a session may be offered again, and the person can end it again.
 
-The previous release does not know the file and leaves it alone. A session
+0.1.9 does not know the file and leaves it alone. A session
 ended this way may be resumed there, as it would have been before.
 
 ### `turn-deletions.json`
@@ -965,7 +973,7 @@ A file that cannot be read, or that comes from a newer build, holds no turns.
 A turn deleted unheard is then reported without its span, as before the file
 was kept.
 
-The previous release does not know the file and leaves it alone.
+0.1.9 does not know the file and leaves it alone.
 
 ### `restore-pending-stops.json`
 
@@ -1005,23 +1013,25 @@ notices. An undo cut short whose operation is read later is then not told at
 launch. A restore still offers its Undo in its record; a discard's undo is
 lost.
 
-The previous release does not know the file and leaves it alone.
+0.1.9 does not know the file and leaves it alone.
 
 ### Codex's `config.toml`
 
-Not Weir's file: the person's own `~/.codex/config.toml`, which Codex
-edits too (`CodexUserConfig`, `CodexHookInstaller`). Earlier builds kept a
+Not Weir's file: the person's own `~/.codex/config.toml`, which Codex edits too
+(`CodexUserConfig`, `CodexHookInstaller`). Earlier builds kept a
 `[hooks.state."<key>"]` table in it for each hook they passed Codex, with two
-keys, `enabled = true` and `trusted_hash`, between `# BEGIN weir …` and
-`# END weir`. This release passes that trust in the `-c` flags that carry
-the hooks, and at launch takes out what the earlier builds wrote:
+keys, `enabled = true` and `trusted_hash`, between `# BEGIN weir …` and `# END
+weir` (`# BEGIN limpid …` and `# END limpid` before 0.1.14). The current build
+passes that trust in the `-c` flags that carry the hooks, and at launch takes
+out what the earlier builds wrote:
 
 - In a table whose header is one Weir wrote (`/<session-flags>/config.toml`
   keys for the events Weir subscribes to), wherever it stands in the file,
   the `enabled` and `trusted_hash` lines go. The header goes too when only
   blank lines are left under it; a key Codex added to it, or a comment,
   keeps it. A trust table with any other key stays, even of the same form.
-- Both markers go. A table Codex appended between them (a folder trust it
+- Both `weir` markers go. The `limpid` markers stay, since only the `weir`
+  ones are matched. A table Codex appended between them (a folder trust it
   recorded lands there, after the last table in the file) stays.
 - Where two blank lines would end up in a row, one goes; at the end of the
   file, the blank lines before what was removed go.
@@ -1041,7 +1051,7 @@ build.
 
 An earlier build writes its tables back on its next launch. That is
 harmless here: a hash in the flags takes the place of the one in the file,
-and this release takes the tables out again at its next launch.
+and the current build takes the tables out again at its next launch.
 
 ### Antigravity's plugin
 
@@ -1056,31 +1066,32 @@ The plugin stays when you go back. An earlier build places nothing and does
 not run this shim, so `WEIR_ANTIGRAVITY_HOOK_DIR` is unset in its panes, as it
 is outside Weir, and the plugin's hook only gives `agy` the default reply.
 `agy plugin disable weir` stops it. So does removing the folder, until the next
-`agy` run in a pane of this release.
+`agy` run in a pane of the current build.
 
 ### OpenCode's plugin
 
-Not in the Application Support folder: only the interface in a pane knows whose a
-session on OpenCode's shared service is, so the shim of a Weir pane places a plugin at
-`~/.config/opencode/plugins/weir`, under `XDG_CONFIG_HOME` when that is set, or under
-`OPENCODE_CONFIG_DIR` when the person sets it
-(`Weir/Resources/opencode-shim/opencode`), marked by a `.weir-managed` file inside it.
-The shim places it again when the mark is lower than the one this build ships, and leaves
-alone a folder without the mark. Weir takes no copy, as every file in the folder is its
-own.
+Not in the Application Support folder: only the interface in a pane knows whose
+a session on OpenCode's shared service is, so the shim of a Weir pane places a
+plugin at `~/.config/opencode/plugins/weir`, under `XDG_CONFIG_HOME` when that
+is set, or under `OPENCODE_CONFIG_DIR` when the person sets it
+(`Weir/Resources/opencode-shim/opencode`), marked by a `.weir-managed` file
+inside it. The shim places it again when the mark is lower than the one this
+build ships, and leaves alone a folder without the mark. Weir takes no copy, as
+every file in the folder is its own.
 
-The plugin stays when you go back. An earlier build places nothing and does not run this
-shim, so `WEIR_OPENCODE_HOOK_DIR` is unset in its panes, as it is outside Weir, and the
-plugin does nothing.
+The plugin stays when you go back. An earlier build places nothing and does not
+run this shim, so `WEIR_OPENCODE_HOOK_DIR` is unset in its panes, as it is
+outside Weir, and the plugin does nothing.
 
 ### New fields on a run record and a stop
 
-Run records gain `modelUpstream`, `agentProfile`, and `failureKind`, all optional and read
-leniently, for every provider but only OpenCode writes them. A `usageLimit` in a record or
-in `stops.json` gains `scope` and `label`. A limit without `scope` reads as what it was,
-by its `window`: the weekly limits of one Claude model hold that model, and any other holds
-the account. `stops.json` gains the reasons `signInRequired` and `modelUnavailable`. The
-build before passes unknown record fields through and reads an unknown stop reason as an
+Run records gain `modelUpstream`, `agentProfile`, and `failureKind`, all
+optional and read leniently, for every provider but only OpenCode writes them. A
+`usageLimit` in a record or in `stops.json` gains `scope` and `label`. A limit
+without `scope` reads as what it was, by its `window`: the weekly limits of one
+Claude model hold that model, and any other holds the account. `stops.json`
+gains the reasons `signInRequired` and `modelUnavailable`. The build before
+passes unknown record fields through and reads an unknown stop reason as an
 entry it cannot use, as it does for an Antigravity stop.
 
 ### Git directories
@@ -1115,19 +1126,20 @@ In each repository Weir works in:
     wrong (`detail`) and from where another writer's save was moved aside
     (`keptAt`). Journals from earlier development builds put that place into
     the reason (`keptAside:<place>`). They are still read, and are written
-    the new way when next written. No release wrote a journal, so no
-    released build reads the new form.
-- `<git-dir>/weir/turn-<pane>.<pid>.index` and `turn-<pane>.<pid>.end.index` are the
-  private indexes the snapshots are taken through, each gone when its capture ends;
-  the real index is never touched. The next capture in the pane removes what a killed one
-  left, and the shared `turn-<pane>.index` and `turn-<pane>.end.index` of earlier builds.
-  So does the hook when the session ends.
-- `refs/weir/turn/<pane>`, which the previous release moved at every prompt
+    the new way when next written. Only development builds before 0.1.10
+    wrote `keptAside:<place>`; every release writes the new form.
+- `<git-dir>/weir/turn-<pane>.<pid>.index` and `turn-<pane>.<pid>.end.index` are
+  the private indexes the snapshots are taken through, each gone when its
+  capture ends; the real index is never touched. The next capture in the pane
+  removes what a killed one left, and the shared `turn-<pane>.index` and
+  `turn-<pane>.end.index` of earlier builds. So does the hook when the session
+  ends.
+- `refs/weir/turn/<pane>`, which 0.1.9 moved at every prompt
   for its "This turn" review, is no longer written. When a session ends, the
   hook still removes it, along with the `turn-<pane>.read.index` that review
   wrote.
 
-The previous release writes its per-pane ref again while it runs, and does
+0.1.9 writes its per-pane ref again while it runs, and does
 not touch the refs and files above.
 
 ## Going back to an earlier build
@@ -1145,7 +1157,7 @@ not touch the refs and files above.
      review whose comments you want in the earlier build
 3. Start the earlier build.
 
-What changed in this release after the migration is not in the copies: tabs
+What changed in the current build after the migration is not in the copies: tabs
 opened since, settings changed since, comments written since.
 
 If a migration failed instead, the original is the `state.json.bak-*` file
@@ -1161,18 +1173,18 @@ Without step 2:
   a quick terminal hotkey that was on ⌘⏎ is off;
 - it sets each version 2 review draft aside and starts that review empty.
 
-Coming back to this release, `state.json` and the drafts the earlier build
+Coming back to the current build, `state.json` and the drafts the earlier build
 wrote migrate again. A new copy (`.pre-v<N>.<unix>`) is taken when the
 original changed.
 
-- If you started the earlier build without step 2, the session this release
-  saved is in the `state.json.bak-decode-failed-<unix>` file the earlier
-  build left. Quit, and rename it back to `state.json` before starting this
-  release. That replaces what the earlier build saved since.
+- If you started the earlier build without step 2, the session the current build
+  saved is in the `state.json.bak-decode-failed-<unix>` file the earlier build
+  left. Quit, and rename it back to `state.json` before starting the current
+  build. That replaces what the earlier build saved since.
 - A draft the earlier build set aside as `.bak-decode-failed-` can be renamed
-  back to `reviews/<hash>.json` before this release opens that review. That
+  back to `reviews/<hash>.json` before the current build opens that review. That
   replaces any draft the earlier build wrote there since.
-- From this release on, a draft from a newer build is set aside as
+- From 0.1.10 on, a draft from a newer build is set aside as
   `.bak-newer-version-`. It can be put back the same way once the newer build
   runs again.
 

@@ -1,45 +1,51 @@
-# ADR 0003: Agent Integration Service Reconciliation
+# ADR 0003: Agent integration service reconciliation
 
 - Status: Accepted.
 - Date: 2026-09-13.
+- Amends: [ADR 0001](0001-agent-integration-service.md), by saying how the
+  service is kept or replaced when the app starts.
+- Amended: 2026-10-23. `.notFound` before a registration call now registers.
+  The first revision treated every `.notFound` as an error, which blocked the
+  first registration on a machine that had never had the service. The rest
+  of the decision is unchanged.
+- Amended: 2026-11-03. Rewritten for readability; the decision is unchanged.
 
 ## Context
 
-The approval service outlives the Weir GUI. Ordinary quit and relaunch must
-therefore preserve its process, epoch, and pending requests. A Sparkle update,
-rollback, or interrupted replacement can instead leave an `SMAppService`
-registration or process associated with a different bundled executable.
+The approval service outlives the Weir app. An ordinary quit and relaunch must
+keep its process, its epoch, and its pending requests. A Sparkle update, a
+rollback, or an interrupted replacement can instead leave an `SMAppService`
+registration, or a running process, that belongs to a different bundled
+executable.
 
-`SMAppService.Status` reports eligibility and approval state but not the version,
-path, or process identity of the registered artifact. `BundleProgram` supports
-application relocation, so an absolute bundle path is also the wrong identity.
-Apple requires changed property lists and executables to be re-registered and
-recommends unregistering a changed executable first. The asynchronous unregister
-completion is the boundary after which the old process has been killed and
-re-registration is safe.
+`SMAppService.Status` reports eligibility and approval, not the version, path,
+or process identity of what is registered. `BundleProgram` lets the app move,
+so an absolute bundle path is the wrong identity too. Apple requires a changed
+property list or executable to be registered again, and recommends
+unregistering a changed executable first. The asynchronous unregister
+completion is the point after which the old process is gone and registering
+again is safe.
 
 ## Decision
 
-Weir fingerprints the SHA-256 content of its bundled service executable and
-LaunchAgent property list. The service computes the same identity at process
-startup and retains it in memory. It returns the identity through the controller
-session bootstrap, after XPC has authenticated the service's Team ID and signing
-identifier. Before registration, the app separately validates the bundled service
-and Hook Helper signatures against its current Team ID and their expected signing
-identifiers.
-
-An atomic `0600` marker under the build-specific Application Support directory
-records `replacing`, `registered`, or `ready`, the artifact identity, and the
-app build version. The marker proves only that this app started a registration
-attempt; it is not an authentication credential. A healthy registration is
-retained only when the status is `.enabled`, the authenticated running artifact
-matches the bundle, and the marker names that artifact. A matching `registered`
-marker is completed as `ready` after authentication, which covers a process
-exit immediately after registration. `replacing` means that the unregister or
-the registration was not known to have completed. A replacing, missing,
-corrupt, or mismatched marker causes one deliberate repair.
-
-Reconciliation applies the following actions:
+- **The artifact's identity is its content.** Weir fingerprints the SHA-256
+  of its bundled service executable and LaunchAgent property list. The
+  service computes the same identity when it starts and returns it in the
+  controller session's bootstrap, after XPC has authenticated the service's
+  Team ID and signing identifier. Before registering, the app separately checks
+  the bundled service's and Hook Helper's signatures against its own Team ID
+  and their expected signing identifiers.
+- **A marker records what this app last started.** An atomic `0600` file
+  under the build's Application Support folder holds `replacing`,
+  `registered`, or `ready`, the artifact identity, and the app's build
+  version. It proves only that this app started a registration attempt; it is
+  never a credential.
+- **A healthy registration is kept only on full agreement.** The status is
+  `.enabled`, the authenticated running artifact matches the bundle, and the
+  marker names that artifact. A matching `registered` marker is completed as
+  `ready` after authentication, which covers a process that exited right after
+  registering. A `replacing`, missing, corrupt, or mismatched marker causes one
+  deliberate repair.
 
 | Status and evidence | Action |
 | --- | --- |
@@ -47,47 +53,45 @@ Reconciliation applies the following actions:
 | `.enabled` with matching running artifact and `registered` or `ready` marker | Keep the service process, PID, epoch, and pending requests; complete the marker as `ready`. |
 | `.enabled` with any artifact or marker mismatch | Write `replacing`, await asynchronous unregister completion, register, write `registered`, authenticate, then write `ready`. |
 | `.enabled` with an unreachable controller and current `registered` or `ready` marker | Keep the service and pending requests, disable controller observation, and retry. A marker mismatch remains explicit replacement evidence. |
-| `.requiresApproval` | Keep the registration, disable native routing, and direct the user to Login Items. Retry when the app becomes active. |
+| `.requiresApproval` | Keep the registration, disable native routing, and direct the person to Login Items. Retry when the app becomes active. |
 | `.notFound` after a registration call | Disable native routing and expose a recoverable error. Do not register again in the same pass. |
 | Unknown status | Disable native routing and expose a recoverable error. Do not treat it as unregistered. |
 
-An earlier revision of this table treated every `.notFound` as an error. That
-blocked the first registration on a machine that had never had the service,
-so `.notFound` before a registration call now registers, as the first row says.
+The same comparison handles upgrades, downgrades, and rollbacks. Moving an
+unchanged app does not replace the service, because paths are not part of the
+identity. Each place an attempt can stop is covered:
 
-The same content comparison handles upgrades, downgrades, and rollbacks. Moving
-an unchanged app does not replace the service because paths are excluded from the
-identity. If execution stops before unregister, `replacing` forces repair even
-when launchd has lazily started a current executable against an older registered
-property list. If it stops after unregister and before register, the next launch
-observes `.notRegistered`. If it stops after writing `registered` and before
-`ready`, the matching authenticated artifact completes the interrupted attempt
-without resetting a pending Login Items approval. A slow unregister keeps
-reconciliation in flight and never proceeds to registration until the OS
-completion callback.
+- Before the unregister, `replacing` forces a repair, even when launchd has
+  lazily started a current executable against an older registered property
+  list.
+- After the unregister and before the register, the next launch sees
+  `.notRegistered`.
+- After `registered` and before `ready`, the matching authenticated artifact
+  completes the attempt without resetting a pending Login Items approval.
+- A slow unregister keeps reconciliation waiting. It never registers before
+  the system's completion callback.
 
 Controller observation starts only after the replacement has been
-authenticated and stops on a later reconciliation failure. Codex uses one
-stable Helper command for every pane. The signed Helper independently compares
-the authenticated service artifact with its own bundle on every request and
-publishes Codex's lifecycle fallback when it emits no approval decision. For
-Claude, the Helper also emits no decision on failure, so the provider retains
-its native permission flow. Restarting the service changes the Rust-owned
-epoch; requests and controller actions from the prior epoch cannot authorize
-the new process.
+authenticated, and stops on a later reconciliation failure. The Hook Helper
+checks too: on every request it compares the authenticated service artifact
+with its own bundle. When it emits no approval decision, Codex gets its
+lifecycle fallback, and Claude keeps its own permission prompt. Restarting
+the service changes the Rust-owned epoch, so requests and controller actions
+from the earlier epoch cannot authorize the new process.
 
 ## Consequences
 
-An update that changes the service loses its in-memory pending requests, but every
-requester fails closed and no old decision crosses the epoch boundary. Ordinary
-launches do not restart a healthy service. Corrupting or deleting the marker can
-cause one safe extra restart but cannot establish trust.
-
-Debug and Release use separate identifiers, endpoints, property lists, markers,
-and Application Support directories. Multiple concurrently running copies of the
-same production identity are unsupported because macOS provides one registration
-for that per-user label. Update verification must use one disposable production
-copy at a time and restore the prior registration and data state exactly.
+- An update that changes the service loses its in-memory pending requests.
+  Every requester fails closed, and no old decision crosses the epoch
+  boundary. Ordinary launches do not restart a healthy service.
+- Corrupting or deleting the marker can cause one safe extra restart. It
+  cannot establish trust.
+- Debug and Release use separate identifiers, endpoints, property lists,
+  markers, and Application Support folders. Several running copies of the
+  same production identity are unsupported, because macOS keeps one
+  registration per per-user label. Checking an update uses one disposable
+  production copy at a time, and the person checking restores the earlier
+  registration and data exactly afterwards.
 
 ## References
 

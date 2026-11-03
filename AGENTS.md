@@ -136,6 +136,8 @@ Most of the style is enforced by `make lint` (`cargo fmt`, Clippy,
 ## 4. Architecture pointers
 
 Short index of load-bearing files. Skim these before touching their domain.
+Why the agent integration and the verification channel are shaped as they
+are is in `docs/adr/`.
 
 - `Weir/Core/Settings/GhosttyConfigBridge.swift` — four-layer config model
   and the forced-override keys handed to `libghostty`.
@@ -227,6 +229,13 @@ Short index of load-bearing files. Skim these before touching their domain.
   `.agents/skills/` (each linked from `.claude/skills/`). `.agents/skills/README.md`
   says what belongs in one and how to keep one true; a change to what a skill
   describes updates the skill in the same pull request.
+- **Decision records**: an ADR under `docs/adr/` records a decision that is
+  hard to reverse and whose reason the code does not show. Read an area's
+  ADRs before changing its shape. An ADR changes only when a decision
+  changes; `docs/README.md`, "Decision records", says how.
+- **Documents**: `docs/README.md` lists every document and the subject each
+  one is the home of, and says how one is written. A change to what a
+  document describes updates it in the same pull request.
 - **Localization is a hard requirement**: any new user-facing string must be
   added to `Localizable.xcstrings` with both `en` and `ja` translations. An
   English-only entry is considered incomplete.

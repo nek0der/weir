@@ -69,8 +69,9 @@
         /// same pull request adds its handler in `AutomationController`, a
         /// subcommand in `scripts/weir-automation.py`, a check in
         /// `scripts/check-automation.py`, a test in `AutomationChannelTests`
-        /// where the logic allows one, its row in the ADR's operations table,
-        /// and its use in the `verify-in-app` skill when agents need it.
+        /// where the logic allows one, its row in the operations table of
+        /// `docs/verification-channel.md`, and its use in the `verify-in-app`
+        /// skill when agents need it.
         enum Operation: String, Codable, Sendable {
             case hello
             case state

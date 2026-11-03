@@ -7,8 +7,8 @@ OpenCode runs its sessions on a background service that every terminal on the Ma
 shares, so a hook in the service could not tell which pane a session belongs to. Only
 the terminal interface in the pane can, so the report comes from a plugin there.
 OpenCode reads its interface plugins from its own folder, so the shim places ours
-there, and the plugin reports only for a launch through the shim. `ADR 0004`,
-"Adding OpenCode", says why the other ways did not work.
+there, and the plugin reports only for a launch through the shim.
+`docs/provider-adapters.md`, "OpenCode", says why the other ways did not work.
 
 ## Files
 

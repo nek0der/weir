@@ -786,7 +786,8 @@ build that reads a newer file degrades cleanly.
      the recipes the app asks for all read. The rules (`project`,
      `on_launch`, `on_terminate`) branch on capabilities, so they need no
      change unless the agent behaves in a way no capability describes yet, as
-     Antigravity and OpenCode did (ADR 0004).
+     Antigravity and OpenCode did (`docs/provider-adapters.md`, "Providers
+     that needed more than the contract").
   2. Swift: a case in `AgentKind` (`Core/Domain/AgentKind.swift`). The
      compiler then asks for its launch command and its resume arguments
      there, its badge and menu `switch`es, and the shim's record export in
@@ -803,7 +804,7 @@ build that reads a newer file degrades cleanly.
      `approval_withdrawn_by_signal`, and `approval_prompt_beside_card`
      describe it; the approval path in the
      helper and the card name no provider. The id branches that remain
-     elsewhere are listed in ADR 0004, "Capabilities".
+     elsewhere are listed in `docs/provider-adapters.md`, "Capabilities".
   5. Worktrees: `worktree_placement` gives the agent a toggle in project
      settings and a key in the routing file, and `worktree_finish_proven`
      gives a worktree the agent added itself the setup once it lands at the
@@ -812,8 +813,9 @@ build that reads a newer file degrades cleanly.
   6. Words: the agent's product names are its descriptor's `display_name`
      and its catalog entry's; anything user-facing beyond them goes through
      `Localizable.xcstrings` in en and ja. The documents that name every
-     agent need it too: `README.md` and `README.ja.md`, ADR 0004's
-     capability table and a section on adding it, the shim's own `README.md`,
+     agent need it too: `README.md` and `README.ja.md`, the capability table
+     in `docs/provider-adapters.md` (and a section there when the agent needs
+     more than the contract), the shim's own `README.md`,
      `docs/user-guide.md`, `docs/known-limitations.md`,
      `docs/agent-integration-protocol.md`, `docs/data-migration.md` for
      anything it stores, and the site: `site/src/site.ts` and the pages under
@@ -829,3 +831,7 @@ build that reads a newer file degrades cleanly.
 - [`AGENTS.md`](AGENTS.md) §3 — Swift conventions a linter can't enforce
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — PR conventions, branch
   prefixes, commit message style
+- [`docs/adr/`](docs/adr/) — why the agent integration and the verification
+  channel are shaped as they are
+- [`docs/README.md`](docs/README.md) — every document under `docs/` and
+  what each one is the home of

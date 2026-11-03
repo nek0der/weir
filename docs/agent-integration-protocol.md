@@ -1,13 +1,17 @@
-# Agent Integration Protocol
+# Agent integration protocol
 
 This document defines the provider-neutral contract between the Hook Helper,
 the Agent Integration Service, and the native application. Provider hook
 schemas, provider response JSON, and operating-system lifecycle and transport
 APIs are adapters outside this boundary.
+[ADR 0001](adr/0001-agent-integration-service.md) says why the service exists,
+and [ADR 0002](adr/0002-portable-agent-integration-core.md) which language
+owns its rules. [`provider-adapters.md`](provider-adapters.md) says how a
+provider's hooks become events.
 
-## Status and scope
+## Scope
 
-Protocol major version 1 currently implements:
+Protocol major version 1 implements:
 
 - `hello` and service-epoch negotiation.
 - `approval.submit`, `approval.get`, `approval.wait`,
@@ -17,7 +21,7 @@ Protocol major version 1 currently implements:
 - Typed errors and bounded length-prefixed JSON frames.
 
 Attachment bootstrap capabilities, lifecycle events, and approval persistence
-are not part of the current implementation. Release service registration is a
+are not part of the protocol. Release service registration is a
 macOS host responsibility outside this provider-neutral protocol.
 
 ## Transport and framing
@@ -219,13 +223,17 @@ Pending
   |-- resolve(delegate) ---> Resolved(delegate)
   |-- resolve(answer) -----> Resolved(answer)
   |-- requester cancel ----> Canceled
+  |-- requester gone ------> Canceled
   `-- deadline ------------> Expired
 ```
 
 Terminal states are immutable. The broker serializes resolve, cancel, and
 expiry. Only the first valid transition is accepted. Repeating the identical
 accepted decision is idempotent; a different later decision returns
-`already_terminal`. The deadline is checked during every operation, so a late
+`already_terminal`. When a requester's connection is gone, the service host
+withdraws every pending request of its run
+(`weir_approval_service_withdraw_requester_v1`), so no card waits on an answer
+nobody would read. The deadline is checked during every operation, so a late
 allow is rejected even if no timer callback has run.
 
 The supported decisions are:
@@ -286,8 +294,10 @@ field is a defensive case rather than a supported mix of versions.
 
 For Claude Code, `allow_once` maps to
 `hookSpecificOutput.decision.behavior = "allow"`, and `deny` maps to
-`"deny"`. Returning no decision delegates to Claude Code's normal permission
-flow. A `PermissionRequest` hook exit code alone does not grant or deny.
+`"deny"`. `answer`, for Claude's question tool only, maps to `"allow"` with
+`updatedInput`: the whole original tool input with `answers` set. Returning no
+decision delegates to Claude Code's normal permission flow. A
+`PermissionRequest` hook exit code alone does not grant or deny.
 
 Current Codex hook schemas likewise accept `allow` or `deny` in
 `hookSpecificOutput.decision.behavior`; no decision leaves the native path in
@@ -295,12 +305,17 @@ control. Current Codex fields such as `updatedInput`, `updatedPermissions`, and
 `interrupt` are reserved and fail closed when supplied, so version 1 does not
 emit them.
 
+For OpenCode, the plugin replies through OpenCode's client: `allow_once` is
+`{"decision": "once"}` and `deny` is `{"decision": "reject"}`, with the message
+when there is one. Every other decision writes nothing, which leaves the
+request to OpenCode's own prompt, still on screen.
+
 If transport, peer authentication, framing, schema validation, service state,
 or waiting fails, the Hook Helper emits no allow decision. When the provider
 has a native interactive approval path, the helper delegates to it. Provider
 behavior in non-interactive sessions remains provider-owned.
 
-## Current implementation boundary
+## Where it is implemented
 
 `weir-agent-core` contains the portable approval broker.
 `weir-agent-protocol` contains wire types, framing, the authenticated stream
@@ -314,16 +329,16 @@ services and applies code-signing requirements before accepting connections.
 Debug and Release use different labels, service names, bundle identifiers, and
 property lists. Signed Debug and Release apps reconcile their isolated services
 on launch; the Debug environment command can refresh, inspect, or unregister its
-development service. The signed Hook Helper translates Claude and Codex
-`PermissionRequest` JSON and delegates on every integration failure. Codex uses
-that stable helper command in every pane. The helper verifies the authenticated
-service artifact against its own app bundle, and publishes the lifecycle
-fallback when it delegates. The application consumes the controller
-subscription. It holds pending requests for its approval card and its
-attention list only after it authenticates the running service as the
-currently bundled and registered artifact. The XPC session bootstrap includes
-that artifact identity as an additive optional field. On the first update, a
-service from an older build therefore fails closed and is replaced.
+development service. The signed Hook Helper translates Claude Code's, Codex's,
+and OpenCode's permission requests and delegates on every integration failure.
+Codex uses that stable helper command in every pane. The helper verifies the
+authenticated service artifact against its own app bundle, and publishes the
+lifecycle fallback when it delegates. The application consumes the controller
+subscription. It holds pending requests for its approval card and its attention
+list only after it authenticates the running service as the currently bundled
+and registered artifact. The XPC session bootstrap includes that artifact
+identity as an additive optional field. On the first update, a service from an
+older build therefore fails closed and is replaced.
 
 ## Turn records
 
@@ -334,8 +349,8 @@ and the application share their shape, which `weir-agent-model`
 (`turn.rs`, `TurnRecord`) owns.
 
 A provider whose descriptor has the `turn_snapshot` capability (Claude Code,
-Codex, Antigravity, and OpenCode today) records turns. Its hook events map to provider-neutral
-events, and those decide what is written (`turn_step` in
+Codex, Antigravity, and OpenCode today) records turns. Its hook events map to
+provider-neutral events, and those decide what is written (`turn_step` in
 `weir-agent-core`):
 
 | Provider hook | Event | Effect on the turn |
@@ -344,7 +359,7 @@ events, and those decide what is written (`turn_step` in
 | `Stop` | `TurnFinished` | ends the turn as `finished` with an end snapshot and the difference, and the tokens it used read from the transcript (`usage`); for Codex, also every check it ran (`checks`, `checkCount`, `lastCheck`) |
 | Claude `StopFailure`, a failed Codex turn Weir's watcher reports from the rollout (the usage limit among others) | `Failed` | ends it as `failed`; Claude's reads `usage` as `Stop` does |
 | Codex `Interrupt` | `Interrupted` | ends it as `interrupted`, with `usage` and the checks read from the rollout as `Stop` reads them; a command still running when the turn stopped is not counted |
-| Claude `Notification` (`idle_prompt`) | `AwaitingPrompt` | for a run working after its turn's `Stop`, takes that turn's end snapshot and difference again and keeps how it ended; for a turn open at least 55 seconds, ends it as `interrupted`, a turn waiting on a question or permission only when the transcript shows the awaited call ended: every call of the latest assistant message has a result, or an interrupt line follows it (`awaited_call_ended`); otherwise nothing (docs/adr/0004-provider-adapter-contract.md, "Work outside a turn") |
+| Claude `Notification` (`idle_prompt`) | `AwaitingPrompt` | for a run working after its turn's `Stop`, takes that turn's end snapshot and difference again and keeps how it ended; for a turn open at least 55 seconds, ends it as `interrupted`, a turn waiting on a question or permission only when the transcript shows the awaited call ended: every call of the latest assistant message has a result, or an interrupt line follows it (`awaited_call_ended`); otherwise nothing ([`provider-adapters.md`](provider-adapters.md), "Work outside a turn") |
 | Claude `PostToolUse` / `PostToolUseFailure` of a check command | — | sets the turn's `lastCheck`, adds a mark to `checks`, and counts it in `checkCount` (and in `failureCount` when it failed) |
 
 Antigravity (`agy` 1.4.12) maps onto the same events differently, because it
@@ -354,7 +369,9 @@ adds `hook_event_name` from the argument each plugin hook passes.
 | `agy` signal | Event | Effect |
 |---|---|---|
 | the shim's `WeirLaunch`, sent before `agy` starts | `SessionStarted`, `resume` with `--conversation` and `startup` otherwise | a run rests from the launch, since `agy` sends `SessionStart` only with the first prompt and none for a resume |
+| `SessionStart`, with the first prompt | `SessionStarted` | names the conversation |
 | `PreToolUse` | `ToolStarted`, or `WaitingForInput` for `ask_question` | names the tool and its `CommandLine`, `Path`, or `AbsolutePath` |
+| `PostToolUse` | `ToolFinished` | ends the tool |
 | `PreInvocation` numbered 0 | `PromptSubmitted` | begins a turn, kept as `<conversation>#<initialNumSteps>`, whose reading runs from that step to the next input of the person's, and keeps a command with no result with no exit status; a request the transcript shows no person began records as a turn with no prompt |
 | `Stop` | `TurnFinished`, or `Failed` when it carries `error` | ends the turn |
 | OSC 7501 `idle` | none (`Capability::ProgramStatusIdleStopsTurn`) | ends a turn stopped with Esc or Ctrl+C, or a "No" at its prompt, which send no hook, as `interrupted` |
@@ -369,16 +386,19 @@ JSON, since `agy` fails the tool on any other result. A `git worktree add` aimed
 at another folder gets a `deny` whose reason gives the command to run instead
 (`ProviderAdapter::worktree_reroute_output`).
 
-OpenCode (2.2.5) reports through a plugin in the pane's terminal interface, as its
-sessions run on a shared service where no hook knows the pane. The plugin runs
-`weir-hook` for each event of a session this pane sent input to, in order, with
-OpenCode's event as the payload's `data`.
+OpenCode (2.2.5) reports through a plugin in the pane's terminal interface, as
+its sessions run on a shared service where no hook knows the pane. The plugin
+runs `weir-hook` for each event of a session this pane sent input to, in order,
+with OpenCode's event as the payload's `data`.
 
 | Plugin's report | Event | Effect |
 |---|---|---|
 | `weir.prepare`, at the Enter that sends an input | none (`ProviderAdapter::turn_preparation`) | saves the turn's start under a generation, and writes no record |
 | `weir.launch`, as the interface starts | `SessionStarted`, `resume` with `--session` and `startup` otherwise | a run rests from the launch |
 | `weir.session`, when the pane moves to a session it sent input to | `SessionStarted` | names the session on the record and the resume hint |
+| `weir.shown`, when the pane moves to another of its sessions | `Extension`, with `session_settings` | says which run is on screen, on the launch's run (`pane_shown_run_id`, `pane_shows_home`) |
+| `weir.title`, when a session of the pane gets a name | `Extension`, with `session_settings.session_title` | names the tab and the pane header |
+| `weir.closed`, when the tab of a session at rest closes | `SessionEnded` | ends the run, as a tab closed |
 | `session.execution.started` | `PromptSubmitted` | begins a turn from the start its `preparation` names, or with none; an input only for `/compact` begins none |
 | `session.tool.called` | `ToolStarted` | names the tool and its command or file |
 | `session.tool.success`, `session.tool.failed` | `ToolFinished` | records a check from `metadata.exit`, as a command that fails is a tool that worked |
@@ -393,9 +413,9 @@ OpenCode's event as the payload's `data`.
 | `session.step.started`, when its settings change | extension | the model, its service, effort, and role (`session_settings`) |
 
 The plugin asks the helper with `permission-request opencode`, and replies
-`once` or `reject` through OpenCode's client. No answer leaves the person to OpenCode's
-own prompt, which stays up throughout; an answer there ends the helper, which withdraws
-the card.
+`once` or `reject` through OpenCode's client. No answer leaves the person to
+OpenCode's own prompt, which stays up throughout; an answer there ends the
+helper, which withdraws the card.
 
 Codex begins some turns itself, with no `UserPromptSubmit`: those its `/goal`
 starts and continues. Every hook inside a Codex turn names it (`turn_id` on
@@ -470,23 +490,21 @@ The files live in the provider's state directory, under `turns/`:
 - `<turn-id>.turn.json`, schema 1: `turnId`, `provider`, `conversation` (the
   provider's session ID, or the run ID marked `isFallback` when the provider
   reported none), `runId`, `paneId`, `displayNumber`, `promptHead`,
-  `promptKind`, `replyHead`, `conversationTitle`, `startedAt`,
-  `finishedAt`, `phase`, `gitContext`, the `begin` and `end` snapshot
-  states, the untracked files each snapshot left out for their size
-  (`skippedBegin`, `skippedEnd`), `changes`, `durationSeconds`,
-  `addedBytes`, `lastCheck`, the turn's last 16 check runs (`checks`, each
-  an `exitCode` and `isFiltered`), how many it ran in all (`checkCount`)
-  and how many of those failed (`failureCount`),
+  `promptKind`, `replyHead`, `conversationTitle`, `startedAt`, `finishedAt`,
+  `phase`, `gitContext`, the `begin` and `end` snapshot states, the untracked
+  files each snapshot left out for their size (`skippedBegin`, `skippedEnd`),
+  `changes`, `durationSeconds`, `addedBytes`, `lastCheck`, the turn's last 16
+  check runs (`checks`, each an `exitCode` and `isFiltered`), how many it ran in
+  all (`checkCount`) and how many of those failed (`failureCount`),
   `areChecksPartial` when the turn may have run checks those leave out,
   `deniedActions` (the first eight actions the provider refused in the turn
-  without asking the person, each an `action` and a `reason`) and
-  `deniedCount` (how many it refused in all),
-  `providerTurnId`, `usage` (`inputTokens`,
-  `cacheWriteTokens`, `cacheReadTokens`, `outputTokens`, and `isPartial`
-  when part of the turn could not be read), and `appliedEvents`. Fields a version does not model are kept
-  and written back. A record a reader cannot write back exactly as it read
-  it, including any newer schema, is left alone: never rewritten, never
-  deleted.
+  without asking the person, each an `action` and a `reason`) and `deniedCount`
+  (how many it refused in all), `providerTurnId`, `usage` (`inputTokens`,
+  `cacheWriteTokens`, `cacheReadTokens`, `outputTokens`, and `isPartial` when
+  part of the turn could not be read), and `appliedEvents`. Fields a version
+  does not model are kept and written back. A record a reader cannot write back
+  exactly as it read it, including any newer schema, is left alone: never
+  rewritten, never deleted.
 
   `startedAt`, like the run record's `runStartedAt`, is when the prompt's
   hook was through waiting for the worktree lock, or when the hook was
@@ -506,16 +524,17 @@ The files live in the provider's state directory, under `turns/`:
   reminders left out however long they were. For any other kind, it holds
   the prompt as it came, which the application never shows.
 
-  `replyHead` is what the agent said as the turn ended: the first paragraph
-  with words of the stop's `last_assistant_message`, which both providers
-  send, on one line and cut to 400 characters (`reply_head`). Headings, code
-  blocks, and rules are passed over, a list reads as its items joined with
-  " · ", and strong emphasis, code spans, and link addresses are taken out.
-  A paragraph that ends in a colon is followed by the next, which it only
-  leads into. Only a stop sets it. The stop that ends a turn after a stop hook replaces
-  it, and clears it when its own reply has no words. Any other end (a
-  failure, an interrupt, an idle prompt's retake) keeps it, and a turn no
-  stop ended has none.
+  `replyHead` is what the agent said as the turn ended: the first paragraph with
+  words of the reply the provider reports with the turn's end (Claude's and
+  Codex's `last_assistant_message`, Antigravity's transcript, OpenCode's
+  execution reply), on
+  one line and cut to 400 characters (`reply_head`). Headings, code blocks, and
+  rules are passed over, a list reads as its items joined with " · ", and strong
+  emphasis, code spans, and link addresses are taken out. A paragraph that ends
+  in a colon is followed by the next, which it only leads into. Only a stop sets
+  it. The stop that ends a turn after a stop hook replaces it, and clears it
+  when its own reply has no words. Any other end (a failure, an interrupt, an
+  idle prompt's retake) keeps it, and a turn no stop ended has none.
 
   `conversationTitle` is the conversation's title when the turn began or
   last ended: the provider's session title, else the title it generated.
@@ -595,10 +614,8 @@ after the turn's record is. Each snapshot tree is pinned in the repository by
 `refs/weir/turns/<turn-id>/begin` and `/end`, which go with the record when
 the retention sweep deletes it.
 
-Earlier builds also moved a per-pane `refs/weir/turn/<pane>` at every
-prompt, for a review of "This turn" that no build offers now. The Hook Helper
-no longer writes it; it still removes it, with the private index files, when
-the session ends.
+The Hook Helper removes any `refs/weir/turn/<pane>` an earlier build left,
+with the private index files, when the session ends.
 
 Whether a turn is read is decided by the application, not stored in the
 record. A turn that changed no files is read once its pane is seen, and one

@@ -52,7 +52,8 @@ tools that `make` and people use, not inside the skill.
 - **Size**: `SKILL.md` stays under 500 lines; longer detail goes in a linked
   file, and a linked file never links further.
 - **Language**: English, like the rest of the repository.
-- **No dates or versions** that will go stale; say what is true of the code.
+- **No dates**; say what is true of the code. A fact about another program
+  names the version it was seen on, as `docs/README.md` says.
 
 ## Keeping them true
 

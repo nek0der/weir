@@ -23,14 +23,14 @@ as they are fixed or confirmed.
   in a build signed with a Team ID. An ad-hoc signed Debug build (the default
   for `make build`) leaves every approval to the agent's own terminal prompt.
   `CONTRIBUTING.md` explains how to sign a development build.
-- **Claude Code shows its own prompt while Weir holds its request.** Weir
-  holds every request until it is answered on the card or handed to the
-  terminal ("Answer in terminal"), wherever its pane is. Claude Code draws
-  its own permission dialog in the pane meanwhile, and whichever is
-  answered first counts; a request answered "Yes" there keeps its card
-  until the turn ends. OpenCode does the same: its prompt is up beside the
-  card, and an answer at either withdraws the other. Codex shows no prompt
-  until the request is handed to it. When Weir is not in front, the menu bar can answer a short shell
+- **Claude Code shows its own prompt while Weir holds its request.** Weir holds
+  every request until it is answered on the card or handed to the terminal
+  ("Answer in terminal"), wherever its pane is. Claude Code draws its own
+  permission dialog in the pane meanwhile, and whichever is answered first
+  counts; a request answered "Yes" there keeps its card until the turn ends.
+  OpenCode does the same: its prompt is up beside the card, and an answer at
+  either withdraws the other. Codex shows no prompt until the request is handed
+  to it. When Weir is not in front, the menu bar can answer a short shell
   command that is not high-impact; any other request opens Weir.
 - **Codex questions are answered in the terminal.** While Codex waits on a
   question, Weir shows "Needs answer" with the first question's words, but
@@ -163,16 +163,17 @@ as they are fixed or confirmed.
   the command is plain.** Weir changes the folder in the command before the
   agent's own permission checks, so a command with more after it (`&& cd ...`),
   quoting, or an option Weir does not know runs as written, in the folder the
-  agent named. So does one whose branch gets a folder that already holds something,
-  such as another branch whose name gives the same folder. Its setup steps run after the command. If the turn stops before the
-  agent reports the command finished, or it reports that before Git has listed
-  the worktree, as a command moved to the background can, the worktree goes
-  without them. With Codex, the agent's next try within the hour runs them, unless
-  Weir had already waited five minutes for the checkout. That next try also runs
-  them a second time if you refused the command and then made the same worktree
-  from the new worktree sheet. They can start before a slow `post-checkout` hook of
-  your own has finished, when the command was moved to the background, and in an
-  empty folder after `--no-checkout`.
+  agent named. So does one whose branch gets a folder that already holds
+  something, such as another branch whose name gives the same folder. Its setup
+  steps run after the command. If the turn stops before the agent reports the
+  command finished, or it reports that before Git has listed the worktree, as a
+  command moved to the background can, the worktree goes without them. With
+  Codex, the agent's next try within the hour runs them, unless Weir had already
+  waited five minutes for the checkout. That next try also runs them a second
+  time if you refused the command and then made the same worktree from the new
+  worktree sheet. They can start before a slow `post-checkout` hook of your own
+  has finished, when the command was moved to the background, and in an empty
+  folder after `--no-checkout`.
 - **The new worktree sheet takes no first prompt.** A tab that an earlier
   build opened in the background with one, and that has not been shown
   since, still hands the prompt to its agent the first time it is shown. If
@@ -183,16 +184,16 @@ as they are fixed or confirmed.
   but GitLab may stop keeping that ref for a merge request closed long ago.
   A local branch with the request's branch name is used only when it is
   already at the request's commit; otherwise the worktree gets `pr/<number>`.
-- **Carrying uncommitted changes into a new worktree** stops before anything
-  is made when the worktree they are in has a merge, rebase, cherry-pick, or
-  revert under way, has conflicts to resolve, uses a sparse checkout or a
-  split index, has files marked skip-worktree or assume-unchanged or added
-  with `git add -N`, changes a submodule or a repository inside it, or has
-  a folder with ignored files where a tracked file was, and when the
-  changes conflict with the new worktree's starting point. It needs Git
-  2.40 or later. If a file would come out of the new worktree with other
-  bytes than it has (a line-ending setting or a filter), nothing is moved. Empty folders do not come along, nor do files Git ignores
-  (those come only through the copy that Project Settings names), and
+- **Carrying uncommitted changes into a new worktree** stops before anything is
+  made when the worktree they are in has a merge, rebase, cherry-pick, or revert
+  under way, has conflicts to resolve, uses a sparse checkout or a split index,
+  has files marked skip-worktree or assume-unchanged or added with `git add -N`,
+  changes a submodule or a repository inside it, or has a folder with ignored
+  files where a tracked file was, and when the changes conflict with the new
+  worktree's starting point. It needs Git 2.40 or later. If a file would come
+  out of the new worktree with other bytes than it has (a line-ending setting or
+  a filter), nothing is moved. Empty folders do not come along, nor do files Git
+  ignores (those come only through the copy that Project Settings names), and
   changes inside a submodule stay where they are.
 - **A worktree that changes while its changes are carried keeps them.** If
   an agent or an editor writes in it, or Git holds its index, in the moment
@@ -377,123 +378,138 @@ These describe the Antigravity CLI (`agy`) 1.4.12.
 
 These describe OpenCode 2.2.5.
 
-- **Weir places a plugin in OpenCode's own folder.** The first `opencode` run in a
-  Weir pane places one at `~/.config/opencode/plugins/weir` (or in `plugins/weir`
-  under `OPENCODE_CONFIG_DIR` when that is set), marked by a
-  `.weir-managed` file. A folder there without the mark is left alone, and OpenCode
-  then reports nothing to Weir. The plugin does nothing outside a Weir pane. It relies
-  on an interface API OpenCode may change. If part of it is gone, the plugin does
-  nothing, and the pane is an ordinary, unwatched OpenCode.
-- **Only the interface is watched.** `opencode run`, `serve`, `acp`, and `mini` go
-  straight through, and a launch with `--server` goes unwatched, since that server's
-  folders are not this Mac's to snapshot.
-- **A turn may have no start.** Weir saves a turn's start at the Enter that sends the
-  input, or, for a `--prompt` launch, before OpenCode starts. A slash command chosen
-  from its menu (where Enter picks the command), a rebound submit key, and a turn the
-  agent goes on to by itself come with no saved start, and show no change summary or
-  Restore Code. A slash
-  command typed out, the menu closed, goes through Enter like any input. So does a save that takes over ten
-  seconds, in a very large repository, which sends the input anyway. A restore in the
-  moment between Enter and the turn's start is not noticed, and that turn's change
-  summary then counts it.
+- **Weir places a plugin in OpenCode's own folder.** The first `opencode` run in
+  a Weir pane places one at `~/.config/opencode/plugins/weir` (or in
+  `plugins/weir` under `OPENCODE_CONFIG_DIR` when that is set), marked by a
+  `.weir-managed` file. A folder there without the mark is left alone, and
+  OpenCode then reports nothing to Weir. The plugin does nothing outside a Weir
+  pane. It relies on an interface API OpenCode may change. If part of it is
+  gone, the plugin does nothing, and the pane is an ordinary, unwatched
+  OpenCode.
+- **Only the interface is watched.** `opencode run`, `serve`, `acp`, and `mini`
+  go straight through, and a launch with `--server` goes unwatched, since that
+  server's folders are not this Mac's to snapshot.
+- **A turn may have no start.** Weir saves a turn's start at the Enter that
+  sends the input, or, for a `--prompt` launch, before OpenCode starts. A slash
+  command chosen from its menu (where Enter picks the command), a rebound submit
+  key, and a turn the agent goes on to by itself come with no saved start, and
+  show no change summary or Restore Code. A slash command typed out, the menu
+  closed, goes through Enter like any input. So does a save that takes over ten
+  seconds, in a very large repository, which sends the input anyway. A restore
+  in the moment between Enter and the turn's start is not noticed, and that
+  turn's change summary then counts it.
 - **Closing a pane or quitting stops what this pane began, unless the process is
-  killed.** Closing the Weir tab sends `SIGHUP`, and Ctrl+C or `/exit` runs the plugin's cleanup;
-  either way the plugin ends the turn's record as stopped at once, so the pane shows no
-  failure, and asks the service to stop the executions this pane began, waiting up to two
-  seconds. A later input another pane sent to the same session is that
-  pane's. `SIGKILL` or a crash of the interface leaves every session of the pane running on
-  the service with nothing watching, which is OpenCode's own behavior. Weir shows each that was
-  at work as stopped, though it may not have.
-- **The service can restart unfinished work.** When OpenCode's service starts, it
-  takes up any execution that never finished, and a command in it can run again. That
-  is OpenCode's own recovery, and it runs outside Weir.
-- **A command run outside any interface's session gets the service's environment.**
-  Weir keeps its own variables out of the interface, and so out of a session it shows and
-  of a service it starts. A service started earlier some other way keeps what it had,
-  which reaches only a session no interface has shown.
-- **Each tab is watched as its own session, and shares one working tree.** Every session
-  tab this pane has to do with gets a run of its own, so a wait, a failure, or a finish
-  behind the tab on screen is not lost. Sessions running at once in one tree each count the
-  other's edits in their changes, as Git cannot say whose an edit was, and restoring such
-  a turn takes the other's edits back too.
-- **The pane's badge shows one state.** With several sessions in a pane, the bar's badge
-  shows the most urgent of them. Each still has its own row in **Needs Attention**.
-- **Which tab is on screen is read twice a second.** Moving between tabs sends no event,
-  so the header and what counts as seen can be up to half a second behind, plus the hook
-  that writes it, longer while its record is busy. One that cannot be written is tried
-  again ten times, then every half minute until it is.
-- **The home screen is no session.** Until a new tab has its first input, the header goes
-  on naming the session before it, though nothing counts as seen and **Review** will not
-  paste there.
-- **Going to a session brings its tab forward, a moment later.** ⌘J, the decision bar, a card's **Show Tab**,
-  and a notification ask OpenCode's interface for the tab, which looks about ten times a
-  second and opens one closed since. A request older than three seconds is ignored, so
-  it cannot pull you away from where you went since.
-- **Review confirms its conversation just before pasting, not as it pastes.** It asks
-  OpenCode's interface to bring the conversation forward and what is on screen, up to
-  four seconds, and refuses rather than paste into another one. The paste follows a read
-  milliseconds old. Switching tabs inside those milliseconds still sends it to the tab you went to.
-- **Closing one of OpenCode's tabs does not stop its execution.** That is OpenCode's behavior. Its turn
-  ends when it ends, and it still stops when you close the pane. A closed tab holding a
-  question stays a wait until you go to it, which opens the tab again.
-- **The tab bar is OpenCode's across all its windows.** Two panes running OpenCode list
-  the same tabs, and closing one closes it in both. Opening another pane's session here
-  gives it a run in this pane too, which shows it at rest while that pane works.
-- **Approvals show in both places.** The approval card appears and OpenCode's own
-  prompt stays up, and answering one withdraws the other. A request from a tab behind the
-  one on screen waits there; going to it, or **Answer in terminal**, brings its tab forward.
-  **Allow always** is only at
-  OpenCode's prompt. Its questions are answered in the terminal. A native approval
-  needs the approval service, as for the others.
-- **A slash command or a rebound key is told apart by a recent key press.** An input
-  that does not come through Enter counts as this pane's when a key was pressed here in
-  the last three seconds and the pane showed that session before it. Two panes on one
-  session could be mixed up in that moment.
-- **An input sent while a session works joins the turn that is running.** OpenCode
-  delivers it, sent with Enter or queued, into the execution under way, and starts no
-  execution of its own for it. That turn, and its change summary, belong to the pane
-  that started it, even when another pane sent the input; the pane that sent it records
-  no turn.
-- **Runs without asking shows for `--auto`.** OpenCode's `--auto` approves whatever a
-  permission does not deny, and the header warns of it. `session.permissions` set to
-  auto-accept in a config file does the same, but a plugin cannot read OpenCode's config,
-  so that one shows no warning.
-- **`/undo` and `/redo` make no turn.** OpenCode reverts files outside any turn, so the
-  turns before keep their changes as recorded, undone edits included, and so does the
-  range of changes not yet viewed.
-- **Switching agent between turns shows at the next step.** The header names the agent
-  (`build`, `plan`) from the first step of the next turn, not when you switch.
-- **Enter waits for the turn's start.** If the prompt or the session on screen changes
-  in that moment, nothing is sent, and a notice asks you to press Enter again.
-- **No plan usage, cost, or context share.** The plan's limits belong to whoever serves
-  the model, not to OpenCode, so **Plan Usage** has no OpenCode section. A cost of 0 in
-  its reports can mean free, unpriced, or not reported, so Weir shows none. Tokens are
-  the sum of each step, a subagent's and an automatic compaction's included; a title's
-  are not.
-- **Your data goes where its model is.** OpenCode's free models may use what they
-  receive to improve the model (its [Zen documentation](https://opencode.ai/docs/zen/)
-  has the list), and `OPENCODE_DISABLE_FREE_MODELS=1` hides them. Review pastes repository
-  content into the pane's agent, which sends it to whatever model that agent runs.
-- **A limit is read only from what OpenCode names.** Its error's type says which limit
-  it is, and the reset comes only when it gives a delay. Only its free tier's limit
-  has been seen for real; the others come from its source. A limit on a model or a
-  service marks no other row, and its stop offers **Resume** rather than **Notify When
-  It Resets**, since you can go on by changing model. (Claude's weekly limit of one
-  model keeps the notification.) A rate limit that OpenCode gives up on is an ordinary
-  stop.
-- **The name of a session follows OpenCode's.** OpenCode names a session a moment after
-  it begins, and renames it as it likes; Weir takes each name as it is given, between
-  turns too, for a session this pane has to do with.
-- **No worktree placement.** The interface cannot stop or change a tool before it runs,
-  so an agent's `git worktree add` runs as written, in the folder it names, and the
-  project's placement is not applied. When the command is a plain
-  `git worktree add -b <branch> <folder>` and nothing else, it exits 0, and that folder is
-  the one the placement gives the branch, the project's bootstrap runs afterward. In any other folder it does not run, and the sidebar lists
-  that worktree the next time Weir refreshes the project's worktrees, for instance when
-  Weir comes back to the front. A subagent's `git worktree add` gets no bootstrap either,
-  as only the session's own tools reach Weir. Project Settings has no switch for OpenCode
-  under Agent Worktrees, as there is nothing to route; a note there says why, and that its
-  worktrees get the setup only in the project's location.
+  killed.** Closing the Weir tab sends `SIGHUP`, and Ctrl+C or `/exit` runs the
+  plugin's cleanup; either way the plugin ends the turn's record as stopped at
+  once, so the pane shows no failure, and asks the service to stop the
+  executions this pane began, waiting up to two seconds. A later input another
+  pane sent to the same session is that pane's. `SIGKILL` or a crash of the
+  interface leaves every session of the pane running on the service with nothing
+  watching, which is OpenCode's own behavior. Weir shows each that was at work
+  as stopped, though it may not have.
+- **The service can restart unfinished work.** When OpenCode's service starts,
+  it takes up any execution that never finished, and a command in it can run
+  again. That is OpenCode's own recovery, and it runs outside Weir.
+- **A command run outside any interface's session gets the service's
+  environment.** Weir keeps its own variables out of the interface, and so out
+  of a session it shows and of a service it starts. A service started earlier
+  some other way keeps what it had, which reaches only a session no interface
+  has shown.
+- **Each tab is watched as its own session, and shares one working tree.** Every
+  session tab this pane has to do with gets a run of its own, so a wait, a
+  failure, or a finish behind the tab on screen is not lost. Sessions running at
+  once in one tree each count the other's edits in their changes, as Git cannot
+  say whose an edit was, and restoring such a turn takes the other's edits back
+  too.
+- **The pane's badge shows one state.** With several sessions in a pane, the
+  bar's badge shows the most urgent of them. Each still has its own row in
+  **Needs Attention**.
+- **Which tab is on screen is read twice a second.** Moving between tabs sends
+  no event, so the header and what counts as seen can be up to half a second
+  behind, plus the hook that writes it, longer while its record is busy. One
+  that cannot be written is tried again ten times, then every half minute until
+  it is.
+- **The home screen is no session.** Until a new tab has its first input, the
+  header goes on naming the session before it, though nothing counts as seen and
+  **Review** will not paste there.
+- **Going to a session brings its tab forward, a moment later.** ⌘J, the
+  decision bar, a card's **Show Tab**, and a notification ask OpenCode's
+  interface for the tab, which looks about ten times a second and opens one
+  closed since. A request older than three seconds is ignored, so it cannot pull
+  you away from where you went since.
+- **Review confirms its conversation just before pasting, not as it pastes.** It
+  asks OpenCode's interface to bring the conversation forward and what is on
+  screen, up to four seconds, and refuses rather than paste into another one.
+  The paste follows a read milliseconds old. Switching tabs inside those
+  milliseconds still sends it to the tab you went to.
+- **Closing one of OpenCode's tabs does not stop its execution.** That is
+  OpenCode's behavior. Its turn ends when it ends, and it still stops when you
+  close the pane. A closed tab holding a question stays a wait until you go to
+  it, which opens the tab again.
+- **The tab bar is OpenCode's across all its windows.** Two panes running
+  OpenCode list the same tabs, and closing one closes it in both. Opening
+  another pane's session here gives it a run in this pane too, which shows it at
+  rest while that pane works.
+- **Approvals show in both places.** The approval card appears and OpenCode's
+  own prompt stays up, and answering one withdraws the other. A request from a
+  tab behind the one on screen waits there; going to it, or **Answer in
+  terminal**, brings its tab forward. **Allow always** is only at OpenCode's
+  prompt. Its questions are answered in the terminal. A native approval needs
+  the approval service, as for the others.
+- **A slash command or a rebound key is told apart by a recent key press.** An
+  input that does not come through Enter counts as this pane's when a key was
+  pressed here in the last three seconds and the pane showed that session before
+  it. Two panes on one session could be mixed up in that moment.
+- **An input sent while a session works joins the turn that is running.**
+  OpenCode delivers it, sent with Enter or queued, into the execution under way,
+  and starts no execution of its own for it. That turn, and its change summary,
+  belong to the pane that started it, even when another pane sent the input; the
+  pane that sent it records no turn.
+- **Runs without asking shows for `--auto`.** OpenCode's `--auto` approves
+  whatever a permission does not deny, and the header warns of it.
+  `session.permissions` set to auto-accept in a config file does the same, but a
+  plugin cannot read OpenCode's config, so that one shows no warning.
+- **`/undo` and `/redo` make no turn.** OpenCode reverts files outside any turn,
+  so the turns before keep their changes as recorded, undone edits included, and
+  so does the range of changes not yet viewed.
+- **Switching agent between turns shows at the next step.** The header names the
+  agent (`build`, `plan`) from the first step of the next turn, not when you
+  switch.
+- **Enter waits for the turn's start.** If the prompt or the session on screen
+  changes in that moment, nothing is sent, and a notice asks you to press Enter
+  again.
+- **No plan usage, cost, or context share.** The plan's limits belong to whoever
+  serves the model, not to OpenCode, so **Plan Usage** has no OpenCode section.
+  A cost of 0 in its reports can mean free, unpriced, or not reported, so Weir
+  shows none. Tokens are the sum of each step, a subagent's and an automatic
+  compaction's included; a title's are not.
+- **Your data goes where its model is.** OpenCode's free models may use what
+  they receive to improve the model (its [Zen
+  documentation](https://opencode.ai/docs/zen/) has the list), and
+  `OPENCODE_DISABLE_FREE_MODELS=1` hides them. Review pastes repository content
+  into the pane's agent, which sends it to whatever model that agent runs.
+- **A limit is read only from what OpenCode names.** Its error's type says which
+  limit it is, and the reset comes only when it gives a delay. Only its free
+  tier's limit has been seen for real; the others come from its source. A limit
+  on a model or a service marks no other row, and its stop offers **Resume**
+  rather than **Notify When It Resets**, since you can go on by changing model.
+  (Claude's weekly limit of one model keeps the notification.) A rate limit that
+  OpenCode gives up on is an ordinary stop.
+- **The name of a session follows OpenCode's.** OpenCode names a session a
+  moment after it begins, and renames it as it likes; Weir takes each name as it
+  is given, between turns too, for a session this pane has to do with.
+- **No worktree placement.** The interface cannot stop or change a tool before
+  it runs, so an agent's `git worktree add` runs as written, in the folder it
+  names, and the project's placement is not applied. When the command is a plain
+  `git worktree add -b <branch> <folder>` and nothing else, it exits 0, and that
+  folder is the one the placement gives the branch, the project's bootstrap runs
+  afterward. In any other folder it does not run, and the sidebar lists that
+  worktree the next time Weir refreshes the project's worktrees, for instance
+  when Weir comes back to the front. A subagent's `git worktree add` gets no
+  bootstrap either, as only the session's own tools reach Weir. Project Settings
+  has no switch for OpenCode under Agent Worktrees, as there is nothing to
+  route; a note there says why, and that its worktrees get the setup only in the
+  project's location.
 
 ## For contributors: not yet confirmed on a real machine
 

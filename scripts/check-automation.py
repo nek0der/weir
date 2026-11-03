@@ -430,8 +430,8 @@ def person_drafts(run, checks):
     checks.section("the person's unsent text (--keys)")
     ref = run.panes()[0]["ref"]
     # Keys from outside land in the pane with the keyboard. A pane given the
-    # keyboard has been seen to lose it again a moment later (open question,
-    # ADR 0005), so focus is asked until it holds.
+    # keyboard has been seen to lose it again a moment later (not solved yet,
+    # docs/verification-channel.md), so focus is asked until it holds.
     def focus_holds():
         run.call({"op": "focus", "pane": ref})
         time.sleep(0.3)
@@ -730,7 +730,8 @@ def main():
         if args.keys:
             # Early, on the run's first pane as it started: after the commands
             # section has split and closed panes, a pane given the keyboard
-            # has been seen to lose it again (open question, ADR 0005).
+            # has been seen to lose it again (not solved yet,
+            # docs/verification-channel.md).
             sections += [person_drafts, captures]
         sections += [layers, commands, settings, typing, channel_drafts, paste, waiting, disconnects, command_line, tmux]
         if args.agents:
