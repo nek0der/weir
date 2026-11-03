@@ -676,6 +676,28 @@ int32_t weir_stopped_turn_end_v1(const uint8_t *request,
                                  uint8_t **out,
                                  size_t *out_len);
 
+// Sweeps the files no record needs from each of the agents' directories:
+// a lock sidecar whose file is gone (removed under its lock), a temporary
+// file a killed writer left an hour ago or more, and a turn counter no
+// remaining turn uses, a day after it was last written
+// (`weir_agent_hook::sweep_leftovers`). `directories` is a JSON array of
+// absolute paths; each is swept on its own, not its subdirectories, and
+// one that cannot be listed is skipped. The body is
+// `{"sidecars":n,"temporaries":n,"counters":n}`, what was removed.
+//
+// Lists and reads whole directories, so the caller keeps it off the main
+// thread.
+//
+// # Safety
+//
+// The input pointer must be readable for its length (or null with length
+// zero), and the output pointers must be writable. On `WEIR_TURN_OK` the
+// caller owns the body and frees it with `weir_approval_bytes_free_v1`.
+int32_t weir_leftover_sweep_v1(const uint8_t *directories,
+                               size_t directories_len,
+                               uint8_t **out,
+                               size_t *out_len);
+
 // Runs the status line relay on one input: keeps the plan usage it reports
 // and names the person's own status line command. The request is
 // `{"provider","input","environment"}`; the body is `{"command":...}`, null

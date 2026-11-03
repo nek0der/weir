@@ -25,7 +25,9 @@ pub use providers::{
 pub use restore::{
     weir_discard_hunks_v1, weir_restore_recover_v1, weir_restore_turn_v1, weir_restore_undo_v1,
 };
-pub use turns::{weir_stopped_turn_end_v1, weir_turn_gc_apply_v1, weir_turn_result};
+pub use turns::{
+    weir_leftover_sweep_v1, weir_stopped_turn_end_v1, weir_turn_gc_apply_v1, weir_turn_result,
+};
 pub use usage::{
     weir_plan_usage_answer_v1, weir_status_line_run_v1, weir_status_line_setting_v1,
     weir_usage_result,

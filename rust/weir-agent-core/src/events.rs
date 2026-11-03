@@ -110,7 +110,7 @@ fn route_worktrees(state: &mut ProjectionState, input: &ProjectionInput) -> Vec<
         // A file still being written is not an event yet. Reading one would
         // parse half a record and then delete it before the writer could
         // rename, losing the event outright. The hook names its temporary
-        // with a leading dot and a pid suffix; the shell receiver it replaced
+        // with a leading dot; the shell receiver it replaced
         // used a `.tmp` extension, and both writers can still be on disk.
         .filter(|file| {
             !file.file_name.starts_with('.')

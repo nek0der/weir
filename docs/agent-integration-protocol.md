@@ -571,7 +571,24 @@ The files live in the provider's state directory, under `turns/`:
   than guessed at.
 
 - `<hash>.counter`, one per conversation, from which turns are numbered. The
-  number only grows, so a deleted turn's number is never given again.
+  number only grows, so a deleted turn's number is never given again while
+  any turn of the conversation is left. Once none is, the app removes the
+  counter a day after it was last written, and a resumed conversation
+  numbers from T1 again.
+
+Beside the records are the lock sidecars every writer takes (`<file>.flock`)
+and, after a writer was killed mid-write, its temporary file
+(`.<file>.tmp-<uuid>`, or `.<file>.tmp.<pid>` from an earlier hook). The
+app removes, once per launch, a sidecar whose file is gone, under its lock, and
+a temporary an hour old. A writer that opened a sidecar before it was removed
+sees, once it holds the lock, that the path names another file, and locks
+that one instead.
+
+A hook call that finds a run record this build cannot read (a newer build's,
+or one damaged) leaves it as it is and writes nothing for the event, as it
+does for such a turn record. When the run record cannot be written, a turn
+record the call began for it is removed again, since no run record names it;
+a turn the earlier run record already names is kept.
 
 The run record names the run's current turn in `currentTurnId`, written only
 after the turn's record is. Each snapshot tree is pinned in the repository by

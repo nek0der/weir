@@ -208,7 +208,12 @@ pub fn end_stopped_turn(
             Ok(()) => (StoppedTurnEnd::Ended, pin),
             Err(error) => {
                 log.line(&format!("write {}: {error}", record_path.display()));
-                (StoppedTurnEnd::Failed, None)
+                // The turn the record named stays, with the end `commit`
+                // wrote, so its tree is pinned all the same.
+                (
+                    StoppedTurnEnd::Failed,
+                    turns.take_back(previous.as_ref(), &next, pin),
+                )
             }
         }
     });

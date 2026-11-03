@@ -724,15 +724,23 @@ prompt keeps a count the next turn no longer describes. After a stop the
 previous release wrote, this release can show that stale count until it
 writes the record again at its next write.
 
+A record this release cannot read, one with a later schema version above
+all, is left as it is, and the hook writes nothing for the run until a build
+that reads it does. Earlier releases wrote such a record over from revision 1,
+and the app, which had already taken a higher revision, then passed over every
+later write of the run.
+
 ### Turn records
 
 New. Each agent's hook writes one record per turn in the provider's state
 directory, `agent-states/turns/<turn-id>.turn.json`,
 `codex-agent-states/turns/<turn-id>.turn.json`, or
 `antigravity-agent-states/turns/<turn-id>.turn.json` (schema 1). It numbers a
-conversation's turns from `turns/<hash>.counter`, which only grows. In the
-repository, `refs/weir/turns/<turn-id>/begin` and `/end` pin the turn's two
-snapshot trees. `docs/agent-integration-protocol.md` describes the record.
+conversation's turns from `turns/<hash>.counter`, which only grows while any
+turn of the conversation remains. Once none does, the app removes the counter
+a day after it was last written, and the conversation numbers from T1 again.
+In the repository, `refs/weir/turns/<turn-id>/begin` and `/end` pin the turn's
+two snapshot trees. `docs/agent-integration-protocol.md` describes the record.
 
 A turn of Antigravity keeps `<conversation>#<first step>` as its
 `providerTurnId`, which is where its reading of the transcript starts. A record

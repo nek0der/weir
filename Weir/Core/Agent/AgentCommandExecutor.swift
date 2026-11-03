@@ -55,6 +55,20 @@ struct AgentDirectories {
         }
     }
 
+    /// Every directory of `owners` the hooks and the app write records into,
+    /// for the sweep of the files no record needs: a lock sidecar whose file
+    /// is gone, a temporary a killed writer left, a counter no turn numbers
+    /// from (`WeirTurnBridge.sweepLeftovers`). The bridge removes files
+    /// itself, past `SecureFileWrite`, so a test run is held here to the
+    /// folders the guard permits.
+    static func leftoverSweep(of owners: [AgentDirectories]) -> [URL] {
+        let all = owners.flatMap { owner in
+            [owner.state, owner.sessions, owner.retired]
+                + [owner.cwdEvents, owner.worktreeEvents, owner.turns].compactMap(\.self)
+        }
+        return Set(all).filter { TestWriteGuard.permits($0) }.sorted { $0.path < $1.path }
+    }
+
     /// The file `pane`'s entry in the per-pane store `kind` lives in.
     func paneStoreURL(_ kind: AgentPaneStoreKind, pane: UUID) -> URL? {
         paneStore(kind).map { $0.directory.appendingPathComponent(pane.uuidString + $0.suffix) }

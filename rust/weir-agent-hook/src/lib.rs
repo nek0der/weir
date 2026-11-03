@@ -16,6 +16,7 @@ mod declined_waits;
 mod env;
 mod git;
 mod hunks;
+mod leftovers;
 mod preparations;
 mod process;
 mod records;
@@ -32,6 +33,7 @@ pub mod worktree_lock;
 pub use declined_waits::DeclinedWaits;
 pub use env::{HookEnv, PANE_ID_VARIABLE, ResolvedDirectories};
 pub use git::{GitSnapshots, LARGE_FILE_BYTES, NoSnapshots, SnapshotRunner, TurnSide};
+pub use leftovers::{LeftoverSweep, sweep_leftovers};
 pub use records::{HookLog, atomic_write, ensure_user_only_directory, with_record_lock};
 pub use status_line::{run_status_line, status_line_setting};
 pub use stopped_turns::{StoppedTurnEnd, StoppedTurnRequest, end_stopped_turn};
@@ -830,6 +832,17 @@ fn identity(
     (context, apply_context)
 }
 
+/// The record a write under the lock replaces (`read_record_to_replace`),
+/// logging why when there is one this build must not replace.
+fn previous_to_replace(path: &Path, log: &HookLog) -> Result<Option<RunRecord>, String> {
+    records::read_record_to_replace(path).inspect_err(|reason| {
+        log.line(&format!(
+            "record not written: {} is not readable here: {reason}",
+            path.display()
+        ));
+    })
+}
+
 fn write_record(path: &Path, record: &RunRecord, log: &HookLog) -> bool {
     match record.encode() {
         Ok(bytes) => match atomic_write(path, &bytes) {
@@ -1296,7 +1309,9 @@ impl EventWriter<'_> {
             records::RECORD_LOCK_ATTEMPTS
         };
         let outcome = records::with_record_lock_attempts(record_path, attempts, || {
-            let previous = records::read_record(record_path);
+            let Ok(previous) = previous_to_replace(record_path, log) else {
+                return (RecordWrites::default(), None);
+            };
             let moved_on = judged.moved_on(
                 event,
                 before.as_ref(),
@@ -1320,8 +1335,17 @@ impl EventWriter<'_> {
             let pin = prepared.and_then(|prepared| {
                 turns.commit(prepared, previous.as_ref(), writes.run.as_mut())
             });
-            if let Some(record) = &writes.run {
-                let _ = write_record(record_path, record, log);
+            // The run record is what names a turn just begun. Without it
+            // the turn would be nobody's: never ended, and held from the
+            // retention sweep as running for as long as the run lives. It
+            // goes with the failed write, and nothing follows from a state
+            // that is not on disk, except the pin of a turn that stays: its
+            // record holds the tree, which `git gc` would otherwise take.
+            if let Some(record) = &writes.run
+                && !write_record(record_path, record, log)
+            {
+                let pin = turns.take_back(previous.as_ref(), record, pin);
+                return (RecordWrites::default(), pin);
             }
             (writes, pin)
         });

@@ -1,5 +1,5 @@
 // WeirTurnBridge.swift
-// Weir — Swift entry point for deleting turns and ending stopped turns through the Rust bridge.
+// Weir — Swift entry point for deleting turns, ending stopped turns, and sweeping leftovers through the Rust bridge.
 
 import Foundation
 import WeirRustBridge
@@ -58,6 +58,13 @@ struct TurnDeletion: Decodable, Equatable, Sendable {
     }
 }
 
+/// What one leftover sweep removed, for the log.
+struct LeftoverSweep: Decodable, Equatable, Sendable {
+    let sidecars: Int
+    let temporaries: Int
+    let counters: Int
+}
+
 /// Calls the turn work that lives in Rust, beside the hook that writes what
 /// it removes.
 enum WeirTurnBridge {
@@ -86,6 +93,29 @@ enum WeirTurnBridge {
         defer { weir_approval_bytes_free_v1(out, outCount) }
         guard status == Int32(WEIR_TURN_OK.rawValue) else { throw WeirTurnBridgeError.rust(status) }
         return try JSONDecoder().decode([TurnDeletion].self, from: Data(bytes: out, count: outCount))
+    }
+
+    /// Sweeps the files no record needs from each of `directories`: lock
+    /// sidecars whose file is gone, temporaries a killed writer left, and
+    /// counters no turn numbers from. Lists whole directories, so it is
+    /// called off the main actor (`TurnGarbageCollector`).
+    static func sweepLeftovers(in directories: [URL]) throws -> LeftoverSweep {
+        let body = try JSONEncoder().encode(directories.map(\.path))
+        var out: UnsafeMutablePointer<UInt8>?
+        var outCount = 0
+        let status = body.withUnsafeBytes { buffer in
+            weir_leftover_sweep_v1(
+                buffer.bindMemory(to: UInt8.self).baseAddress,
+                buffer.count,
+                &out,
+                &outCount
+            )
+        }
+        guard let out else { throw WeirTurnBridgeError.rust(status) }
+        // The bytes are ours whatever the status turned out to be.
+        defer { weir_approval_bytes_free_v1(out, outCount) }
+        guard status == Int32(WEIR_TURN_OK.rawValue) else { throw WeirTurnBridgeError.rust(status) }
+        return try JSONDecoder().decode(LeftoverSweep.self, from: Data(bytes: out, count: outCount))
     }
 
     /// Ends the turn `request` names, which the person stopped and no hook
