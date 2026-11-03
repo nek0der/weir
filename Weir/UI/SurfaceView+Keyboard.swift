@@ -345,7 +345,14 @@ extension SurfaceView {
         // of setting NSCursor globally, so AppKit keeps the topmost overlay's
         // pointer style while still updating a stationary pane-drag cue.
         invalidateSurfaceCursorRectsInWindow()
-        forward(event, action: GHOSTTY_ACTION_PRESS)
+        // A modifier's release arrives here too. Sending it as a press
+        // would leave the key held for a program that asked for key
+        // releases, and in libghostty until the pane lost focus.
+        guard let action = Self.modifierKeyAction(
+            keyCode: event.keyCode,
+            modifierFlags: event.modifierFlags
+        ) else { return }
+        forward(event, action: action)
     }
 
     @discardableResult
