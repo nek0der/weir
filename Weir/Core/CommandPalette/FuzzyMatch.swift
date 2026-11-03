@@ -1,6 +1,6 @@
 // FuzzyMatch.swift
-// Weir — Smith-Waterman-inspired fuzzy matching with bonuses for
-// word-start, consecutive, CamelCase, and exact-case matches.
+// Weir — subsequence fuzzy matching, scored with bonuses for word-start,
+// consecutive, CamelCase, and exact-case matches and a penalty for gaps.
 
 import Foundation
 
@@ -29,7 +29,6 @@ enum FuzzyMatch {
     /// Returns nil when the query cannot be matched against the candidate.
     /// Empty query matches everything with score 0.
     static func score(query: String, candidate: String) -> Result? {
-        // swiftlint:disable:previous cyclomatic_complexity
         if query.isEmpty {
             return Result(score: 0, matchedIndices: [])
         }
@@ -48,83 +47,108 @@ enum FuzzyMatch {
             return nil
         }
 
-        // scores[i][j] = best score aligning query[0..<i] ending at candidate[j-1].
-        // diagonal[i][j] = diagonal score (last move was a match) — tracks consecutive.
-        var scores = [[Int]](repeating: [Int](repeating: 0, count: cLen + 1), count: qLen + 1)
-        var diagonal = [[Int]](repeating: [Int](repeating: 0, count: cLen + 1), count: qLen + 1)
+        // scores[i][j] = best score aligning all of query[0..<i] within
+        // candidate[0..<j]; matches[i][j] = the same, with query[i-1]
+        // matched at candidate[j-1]. nil means no such alignment exists.
+        // We keep no Smith-Waterman floor: a floor lets a character score
+        // with no alignment of the ones before it, and the best cell of the
+        // last row then cannot be traced back to every query character, so
+        // a real subsequence came back as no match. Without it a long gap
+        // only lowers the score, and any cell with a score is a full
+        // alignment.
+        var scores = [[Int?]](repeating: [Int?](repeating: nil, count: cLen + 1), count: qLen + 1)
+        var matches = [[Int?]](repeating: [Int?](repeating: nil, count: cLen + 1), count: qLen + 1)
+        // Whether matches[i][j] is best reached by matching query[i-2] at
+        // candidate[j-2] too. The consecutive bonus belongs to that path
+        // alone: asking only whether some match ends just before credited
+        // the run to an alignment that skipped there.
+        var extendsARun = [[Bool]](repeating: [Bool](repeating: false, count: cLen + 1), count: qLen + 1)
+        for j in 0...cLen {
+            scores[0][j] = 0
+        }
 
         for i in 1...qLen {
-            // We need every query char to match, so row-minimum stays 0
-            // (Smith-Waterman floor) but we track whether full alignment
-            // is possible.
-            for j in 1...cLen {
-                if q[i - 1] == cLower[j - 1] {
-                    var bonus = baseMatch
-
-                    // Word-start: preceded by separator or is the first character.
-                    if j == 1 || separators.contains(cOriginal[j - 2]) {
-                        bonus += wordStartBonus
+            for j in i...cLen {
+                if q[i - 1] == cLower[j - 1], let previous = scores[i - 1][j - 1] {
+                    let bonus = matchBonus(query: qOriginal[i - 1], candidate: cOriginal, at: j - 1)
+                    let fresh = previous + bonus
+                    if let run = matches[i - 1][j - 1].map({ $0 + bonus + consecutiveBonus }), run > fresh {
+                        matches[i][j] = run
+                        extendsARun[i][j] = true
+                    } else {
+                        matches[i][j] = fresh
                     }
-
-                    // CamelCase: lowercase → uppercase boundary.
-                    if j > 1, cOriginal[j - 2].isLowercase, cOriginal[j - 1].isUppercase {
-                        bonus += camelCaseBonus
-                    }
-
-                    // Exact case match.
-                    if qOriginal[i - 1] == cOriginal[j - 1] {
-                        bonus += exactCaseBonus
-                    }
-
-                    // Consecutive: previous query char matched at j-1.
-                    let prev = diagonal[i - 1][j - 1]
-                    if prev > 0 {
-                        bonus += consecutiveBonus
-                    }
-
-                    let matchScore = max(0, scores[i - 1][j - 1] + bonus)
-                    diagonal[i][j] = matchScore
-                    scores[i][j] = max(scores[i][j - 1] + gapPenalty, matchScore)
-                    scores[i][j] = max(scores[i][j], 0)
+                }
+                let skipped = scores[i][j - 1].map { $0 + gapPenalty }
+                if let skipped, let match = matches[i][j] {
+                    scores[i][j] = max(skipped, match)
                 } else {
-                    diagonal[i][j] = 0
-                    scores[i][j] = max(0, scores[i][j - 1] + gapPenalty)
+                    scores[i][j] = skipped ?? matches[i][j]
                 }
             }
         }
 
-        // Find the best score in the last query row.
-        var bestScore = 0
-        var bestJ = 0
-        for j in 1...cLen where scores[qLen][j] > bestScore {
-            bestScore = scores[qLen][j]
-            bestJ = j
-        }
-
-        if bestScore == 0 {
-            return nil
-        }
-
-        // Traceback to recover matched indices.
-        var matched: [Int] = []
-        var i = qLen
-        var j = bestJ
-        while i > 0, j > 0 {
-            if q[i - 1] == cLower[j - 1], diagonal[i][j] > 0 {
-                matched.append(j - 1)
-                i -= 1
-                j -= 1
-            } else {
-                j -= 1
+        // The characters after the last match cost nothing, so we take the
+        // best cell of the last row rather than its rightmost one.
+        var best: (score: Int, j: Int)?
+        for j in qLen...cLen {
+            if let score = scores[qLen][j], score > best?.score ?? Int.min {
+                best = (score, j)
             }
         }
-
-        // All query chars must be consumed.
-        if i > 0 {
+        guard let best else {
             return nil
         }
 
-        matched.reverse()
-        return Result(score: bestScore, matchedIndices: matched)
+        let matched = traceback(from: (qLen, best.j), scores: scores, matches: matches, extendsARun: extendsARun)
+        return Result(score: best.score, matchedIndices: matched)
+    }
+
+    /// The candidate indices the best alignment ending at `cell` matched.
+    /// Every cell with a score came from a match or from the cell to its
+    /// left, so this always consumes every query character. A match that
+    /// extends a run must be preceded by the match just before it, which
+    /// its score counted.
+    private static func traceback(
+        from cell: (i: Int, j: Int),
+        scores: [[Int?]],
+        matches: [[Int?]],
+        extendsARun: [[Bool]]
+    ) -> [Int] {
+        var matched: [Int] = []
+        var (i, j) = cell
+        var mustMatch = false
+        while i > 0 {
+            if mustMatch || (matches[i][j] != nil && matches[i][j] == scores[i][j]) {
+                matched.append(j - 1)
+                mustMatch = extendsARun[i][j]
+                i -= 1
+            }
+            j -= 1
+        }
+        return matched.reversed()
+    }
+
+    /// What matching `query` at `candidate[index]` is worth, by where it
+    /// falls in the candidate. The consecutive bonus depends on the path, so
+    /// the caller adds it.
+    private static func matchBonus(query: Character, candidate: [Character], at index: Int) -> Int {
+        var bonus = baseMatch
+
+        // Word-start: preceded by separator or is the first character.
+        if index == 0 || separators.contains(candidate[index - 1]) {
+            bonus += wordStartBonus
+        }
+
+        // CamelCase: lowercase → uppercase boundary.
+        if index > 0, candidate[index - 1].isLowercase, candidate[index].isUppercase {
+            bonus += camelCaseBonus
+        }
+
+        // Exact case match.
+        if query == candidate[index] {
+            bonus += exactCaseBonus
+        }
+        return bonus
     }
 }

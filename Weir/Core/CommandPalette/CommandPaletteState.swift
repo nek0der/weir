@@ -98,15 +98,51 @@ final class CommandPaletteState {
                 else { return nil }
                 let frecency = (frecencyStore?.score(for: item.id) ?? 0) * 10
                 let combined = best.score + Int(frecency)
-                let titleScore = titleResult?.score
-                let aliasScore = aliasResult?.score ?? 0
-                let titleWonOrTied = titleScore.map { $0 >= aliasScore } ?? false
+                // A score can be below zero (a long gap), so a missing alias
+                // is no score at all rather than zero.
+                let titleWonOrTied = titleResult.map { title in
+                    aliasResult.map { title.score >= $0.score } ?? true
+                } ?? false
                 let indices = titleWonOrTied ? best.matchedIndices : []
                 return ScoredItem(item: item, matchedIndices: indices, score: combined)
             }
             .sorted { $0.score > $1.score }
         }
+        results = Self.inDisplayOrder(results)
         selectedIndex = 0
+    }
+
+    /// One category's run of `results`, as the dropdown heads and lists it.
+    struct Section {
+        let category: CommandPaletteCategory
+        /// The index in `results` of the section's first row.
+        let startIndex: Int
+        let items: [ScoredItem]
+    }
+
+    /// `results` cut where the category changes. They are already in
+    /// category order (`inDisplayOrder`), so a row's place here is its
+    /// place in `results`, which Return runs by `selectedIndex`.
+    var sections: [Section] {
+        var sections: [Section] = []
+        var start = 0
+        while start < results.count {
+            let category = results[start].item.category
+            let end = results[start...].firstIndex { $0.item.category != category } ?? results.count
+            sections.append(Section(category: category, startIndex: start, items: Array(results[start..<end])))
+            start = end
+        }
+        return sections
+    }
+
+    /// The rows in the order the dropdown shows them: by category, and by
+    /// rank within one. We keep this order in `results` itself, because the
+    /// highlight and Return both go by an index into it, and a list drawn
+    /// in another order runs a row that is not the highlighted one.
+    static func inDisplayOrder(_ rows: [ScoredItem]) -> [ScoredItem] {
+        rows.enumerated()
+            .sorted { ($0.element.item.category, $0.offset) < ($1.element.item.category, $1.offset) }
+            .map(\.element)
     }
 
     func moveSelection(up: Bool) {

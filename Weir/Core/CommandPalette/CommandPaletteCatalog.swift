@@ -23,6 +23,9 @@ enum CommandPaletteCatalog {
         /// Move Project Up and Down move.
         let hasShownProject: Bool
         let hasClosedTabs: Bool
+        /// Find has a search to open: the active tab's, or the review's
+        /// while it is in front, though the window may have no tab left.
+        let canFind: Bool
         let hasActiveSearch: Bool
         let hasWaitingAttention: Bool
         let canReview: Bool
@@ -122,7 +125,10 @@ enum CommandPaletteCatalog {
         let isProjectActive = (supervision.projectID ?? selection?.activeContainerID.projectID) != nil
         let hasClosedTabs = !session.closedTabStack.isEmpty
         let focusedPaneID = activeTab?.splitTree.effectiveFocusedLeafID
-        let hasActiveSearch = focusedPaneID.map { session.paneSearchStates[$0] != nil } ?? false
+        // As the menu decides (`SettingsAwareFindCommands`): while the review
+        // is in front, Find, Find Next, and Find Previous go to its own search.
+        let hasActiveSearch = supervision.arePanesHidden
+            || focusedPaneID.map { session.paneSearchStates[$0] != nil } ?? false
         let hasWaitingAttention = dependencies.attention.hasAttentionItems()
 
         let context = ActionEnabledContext(
@@ -134,6 +140,7 @@ enum CommandPaletteCatalog {
             isProjectActive: isProjectActive,
             hasShownProject: supervision.projectID != nil,
             hasClosedTabs: hasClosedTabs,
+            canFind: hasActiveTab || supervision.arePanesHidden,
             hasActiveSearch: hasActiveSearch,
             hasWaitingAttention: hasWaitingAttention,
             // The review tab opens from any tab, and says why when there is
@@ -395,7 +402,7 @@ enum CommandPaletteCatalog {
         case .nextTab, .previousTab: context.canCycleTab
         case .nextSession, .previousSession: context.canCycleSession
         case .nextAttention, .previousAttention: context.hasWaitingAttention
-        case .find: context.hasActiveTab
+        case .find: context.canFind
         case .findNext, .findPrevious: context.hasActiveSearch
         case .nextPrompt, .previousPrompt: context.hasActiveTab
         case .splitRight, .splitDown: context.hasActiveTab
