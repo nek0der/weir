@@ -80,11 +80,38 @@ struct CommandPaletteTests {
             #expect(Self.isEnabled(action, in: review) == false, "\(action)")
         }
         #expect(Self.isEnabled(.find, in: review) == true)
+        // As in the menu, Find Next and Find Previous go to the review's own
+        // search, though no pane has one open.
+        #expect(Self.isEnabled(.findNext, in: terminal) == false)
+        #expect(Self.isEnabled(.findNext, in: review) == true)
+        #expect(Self.isEnabled(.findPrevious, in: review) == true)
 
         window.review?.isShown = false
         #expect(!window.arePanesHidden)
         let back = try Self.items(session, supervision: SupervisionPaletteFacts(window: window, session: session))
         #expect(Self.isEnabled(.splitRight, in: back) == true)
+    }
+
+    /// Show Current Diff opens the review in a window with no terminal tab,
+    /// and the menu's Find goes to the review there, so the palette's does.
+    @Test func find_isOnForTheReview_inAWindowWithNoTab() throws {
+        let (session, _) = WorkspaceSessionFixture.withProject(name: "weir")
+        let window = ProjectWindowState(selection: session.primarySelection)
+        let empty = try Self.items(session, supervision: SupervisionPaletteFacts(window: window, session: session))
+        #expect(Self.isEnabled(.find, in: empty) == false)
+
+        window.review = ReviewTabState(
+            root: "/repo",
+            selection: .uncommitted(includesChangesOutsideTurns: false),
+            fixedPoint: ReviewTabFixedPoint(),
+            agentPaneID: nil,
+            destinationPaneID: nil,
+            opening: UUID()
+        )
+        let review = try Self.items(session, supervision: SupervisionPaletteFacts(window: window, session: session))
+        for action: WeirShortcutAction in [.find, .findNext, .findPrevious] {
+            #expect(Self.isEnabled(action, in: review) == true, "\(action)")
+        }
     }
 
     /// "#" opens on the projects in the window's sidebar order, and each
@@ -356,6 +383,70 @@ struct CommandPaletteTests {
 
         #expect(try subtitle(waiting)?.contains("Other Worktrees") == false)
         #expect(try subtitle(other)?.hasPrefix("Other Worktrees · ") == true)
+    }
+
+    // MARK: - Order
+
+    /// The highlighted row is the one Return runs: `selectedIndex` counts
+    /// the rows in the order the dropdown draws them, section by section.
+    /// The catalog lists the actions before the tabs, and the dropdown
+    /// heads Navigate first, so a list kept in rank order ran New Tab while
+    /// the first tab was highlighted.
+    @Test("the rows run in the order they are shown", arguments: ["", "b", "t", "#", ">"])
+    func theRows_runInTheOrderTheyAreShown(query: String) throws {
+        let (session, project) = WorkspaceSessionFixture.withProject(name: "bench")
+        session.openTab(container: .project(project.id), title: "build")
+        let state = CommandPaletteState(locale: Locale(identifier: "en"), windowID: session.primaryWindowID)
+        state.allItems = try Self.items(session)
+        state.applyFilter(query: query, frecencyStore: nil)
+        #expect(!state.results.isEmpty)
+
+        let drawn = state.sections.flatMap { section in
+            section.items.enumerated().map { (index: section.startIndex + $0.offset, id: $0.element.id) }
+        }
+        #expect(drawn.map(\.index) == Array(state.results.indices))
+        #expect(drawn.map(\.id) == state.results.map(\.id))
+        #expect(state.sections.map(\.category) == state.sections.map(\.category).sorted())
+        #expect(Set(state.sections.map(\.category)).count == state.sections.count)
+
+        while state.selectedIndex < state.results.count - 1 {
+            state.moveSelection(up: false)
+            let shown = try #require(drawn.first { $0.index == state.selectedIndex })
+            #expect(shown.id == state.results[state.selectedIndex].id)
+        }
+    }
+
+    /// With no query, the first row is the window's tab under Navigate,
+    /// as the dropdown draws it, not the first action the catalog lists.
+    @Test func anEmptyQuery_startsOnTheFirstRowShown() throws {
+        let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
+        session.update(tab.id) { $0.titleOverride = "build" }
+        let state = CommandPaletteState(locale: Locale(identifier: "en"), windowID: session.primaryWindowID)
+        state.allItems = try Self.items(session)
+        #expect(state.allItems.first?.category == .actions)
+        state.applyFilter(query: "", frecencyStore: nil)
+        #expect(state.results[state.selectedIndex].item.title == "build")
+        #expect(state.sections.first?.items.first?.item.title == "build")
+    }
+
+    /// A match far apart scores below zero, and its row still shows the
+    /// characters it matched.
+    @Test func aMatchFarApart_stillShowsItsCharacters() throws {
+        let title = "a" + String(repeating: "x", count: 40) + "b"
+        let state = CommandPaletteState(locale: Locale(identifier: "en"), windowID: WindowID())
+        state.allItems = [CommandPaletteItem(
+            id: "far",
+            category: .navigate,
+            title: title,
+            subtitle: nil,
+            icon: "terminal",
+            shortcutDisplay: nil,
+            action: .insertPrefix(.help)
+        )]
+        state.applyFilter(query: "ab", frecencyStore: nil)
+        let row = try #require(state.results.first)
+        #expect(row.score < 0)
+        #expect(row.matchedIndices == [0, 41])
     }
 
     // MARK: - State lifecycle

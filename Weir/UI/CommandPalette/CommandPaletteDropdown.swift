@@ -36,21 +36,16 @@ struct CommandPaletteDropdown: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    let grouped = groupedResults()
-                    if grouped.isEmpty, !state.query.isEmpty {
+                    let sections = state.sections
+                    if sections.isEmpty, !state.query.isEmpty {
                         emptyState
                     } else {
-                        ForEach(grouped, id: \.category) { section in
-                            sectionHeader(section.category, isFirst: section.category == grouped.first?.category)
+                        ForEach(sections, id: \.category) { section in
+                            sectionHeader(section.category, isFirst: section.startIndex == 0)
                             ForEach(Array(section.items.enumerated()), id: \.element.id) { offset, scored in
-                                let gi = globalIndex(
-                                    for: offset,
-                                    in: section.category,
-                                    allSections: grouped
-                                )
                                 CommandPaletteRow(
                                     item: scored.item,
-                                    isSelected: gi == state.selectedIndex,
+                                    isSelected: section.startIndex + offset == state.selectedIndex,
                                     matchedIndices: scored.matchedIndices,
                                     onTap: { execute(scored.item.action, opensInNewWindow: $0) }
                                 )
@@ -84,30 +79,6 @@ struct CommandPaletteDropdown: View {
             .foregroundStyle(SupervisionTokens.muted.color)
             .padding(WeirLayout.Supervision.paletteHeadingInsets(isFirst: isFirst))
             .accessibilityAddTraits(.isHeader)
-    }
-
-    // MARK: - Grouping
-
-    private struct Section {
-        let category: CommandPaletteCategory
-        let items: [CommandPaletteState.ScoredItem]
-    }
-
-    private func groupedResults() -> [Section] {
-        Dictionary(grouping: state.results) { $0.item.category }
-            .map { Section(category: $0.key, items: $0.value) }
-            .sorted { $0.category < $1.category }
-    }
-
-    private func globalIndex(for offset: Int, in category: CommandPaletteCategory, allSections: [Section]) -> Int {
-        var index = 0
-        for section in allSections {
-            if section.category == category {
-                return index + offset
-            }
-            index += section.items.count
-        }
-        return index + offset
     }
 
     /// A click with ⌘ held opens another project's row in a new window,

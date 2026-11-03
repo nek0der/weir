@@ -18,10 +18,11 @@ enum SupervisionWindowActions {
     /// These are the palette's rows whose keys the window's menu runs itself, since
     /// Core cannot name what they act on: ⌘[ ⌘] over the session rows, ⇧⌘[ ⇧⌘]
     /// through the review tab, ⌘W ⌥⌘W closing the review tab while it
-    /// is in front, and the pane commands, which do nothing while it is.
+    /// is in front, Find going to the review's search while it is, and the
+    /// pane commands, which do nothing while it is.
     /// We run them here as the menu runs them, so a row and its key never do
-    /// two things. It returns false for any other row, and for a close with
-    /// no review in front, which the shared dispatch then runs in the
+    /// two things. It returns false for any other row, and for a close or a
+    /// Find with no review in front, which the shared dispatch then runs in the
     /// window.
     static func runPaletteShortcut(_ action: WeirShortcutAction, in window: ProjectWindowState, state: AppState) -> Bool {
         // A pane command while the review is in front does nothing, as its
@@ -51,6 +52,19 @@ enum SupervisionWindowActions {
             return true
         case .closeSurface, .closeTab:
             return ReviewTabActions.closeIfInFront(stores: state.reviewTabStores)
+        // Find goes to the review while it is in front, as the menu sends it,
+        // not to the pane hidden behind it.
+        case .find, .findNext, .findPrevious:
+            guard window.arePanesHidden else { return false }
+            ReviewPresentationCommand.find(
+                action,
+                session: state.session,
+                isReviewShown: true,
+                registry: state.registry,
+                commands: state.windowRegistry,
+                window: window.id
+            )
+            return true
         default:
             return false
         }
