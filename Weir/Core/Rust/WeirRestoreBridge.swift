@@ -251,7 +251,8 @@ enum RestoreStage: Decodable, Equatable, Sendable {
 struct RestoreRecovery: Decodable, Equatable, Sendable {
     /// Every journal of the worktree that could be read, oldest first.
     let journals: [RestoreJournal]
-    /// The operations this reading settled.
+    /// The operations this reading settled, and those an operation settled
+    /// before it began since the last reading that named them.
     let settled: [String]
     /// Whether `journals` leaves out some that are there but could not be
     /// read: the ones it has were settled and dropped all the same, and

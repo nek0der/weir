@@ -100,7 +100,9 @@ pub unsafe extern "C" fn weir_discard_hunks_v1(
 /// short, and drops the journals past their lifetime. The body is
 /// `{"journals":[…],"settled":[…],"isIncomplete":…}`: every journal of the
 /// worktree that could be read, oldest first, the operations this call
-/// settled, and whether some journals are there but could not be read.
+/// settled with those a restore, a discard, or an undo settled before it
+/// began since the last call that named them, and whether some journals
+/// are there but could not be read.
 /// Those keep no other from being settled or dropped, and stay as they are;
 /// when the list is incomplete the caller keeps what it knew of the rest
 /// rather than read them as gone. Called at launch and before showing a

@@ -803,19 +803,19 @@ what was viewed of the changes outside turns, and the spans of deleted turns.
 Each line also moves an auxiliary ref, `refs/weir/reviewed/<hash>`, in the
 conversation's repository.
 
-`viewed-lines.json` also keeps, under `restoreMoves`, how each applied
-restore moved the viewed lines, keyed by its operation, so that Undo Restore
-puts them back after a relaunch too. An entry lives as long as the restore's
-journal can be undone, which has no time limit, and keeps its moves in the
-line's history past its 20 entries. A restore superseded by a later turn
-keeps its entry too, as its journal stays. When a whole reading of the
-worktree's journals lists the restore as undone, by whatever undo, its moves
-are taken back, except a move a later move of its line stands over. The entry
-is dropped when that reading lists the restore as aborted, or when the reading
-of its own worktree no longer lists it while the worktree is there; a worktree
-Weir cannot find (a volume not mounted) reads as one with no journal, and
-its entries stay. A restore at any other stage keeps its entry. A reading that
-could not read some journals settles nothing. A move also goes once it is
+`viewed-lines.json` also keeps, under `restoreMoves`, how each applied restore
+moved the viewed lines, keyed by its operation, so that Undo Restore puts them
+back after a relaunch too. An entry lives as long as the restore's journal can
+be undone, which has no time limit while the undo can apply, and keeps its
+moves in the line's history past its 20 entries. A restore superseded by a
+later turn keeps its entry too, as its journal stays. When a whole reading of
+the worktree's journals lists the restore as undone, by whatever undo, its
+moves are taken back, except a move a later move of its line stands over. The
+entry is dropped when that reading lists the restore as aborted, or when the
+reading of its own worktree no longer lists it while the worktree is there; a
+worktree Weir cannot find (a volume not mounted) reads as one with no journal,
+and its entries stay. A restore at any other stage keeps its entry. A reading
+that could not read some journals settles nothing. A move also goes once it is
 taken back on its own ("Unmark as Viewed"), or with its line. Each entry
 records the worktree (`root`), which entries from earlier development builds
 lack; those go only when a reading lists them. Each entry still records `at`:
@@ -1076,7 +1076,16 @@ In each repository Weir works in:
   and `refs/weir/undo-<kind>/<op>`, and lists the refs an operation may
   hold under `<common-dir>/weir/restore-refs/`.
   - A journal is kept 30 days once nothing can take it back. A restore that
-    can still be undone is kept however old it is.
+    can still be undone is kept however old it is. One whose undo a commit,
+    a reset, or a checkout has refused since (HEAD or the branch is not
+    where the restore left it) goes once it is 30 days old, at a reading
+    that finds it so. A reading while HEAD is back where the restore left
+    it keeps the journal.
+  - `settled.untold` beside the journals lists, one id a line, the
+    operations a restore, a discard, or an undo settled after a crash
+    before it began. The next reading of the worktree's journals names
+    them as settled, so the app tells of them as it does at launch, and
+    removes the file. A build without it leaves the file as it is.
   - A journal's age is checked when Weir reads the worktree's journals: at
     launch, and after each restore, discard, or undo there. In a worktree
     where nobody restores, a journal therefore stays past its 30 days until

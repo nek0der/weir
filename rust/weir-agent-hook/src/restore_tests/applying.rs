@@ -50,6 +50,7 @@ fn restore_journals_before_writing() {
     // A hook that starts waiting once the journal is written stops the
     // restore before its first path: the journal is all there is.
     let seams = Seams {
+        before_lock: &nothing,
         after_journal: &|| place_waiting_marker(&repo),
         after_write: &nothing,
         in_write: &nothing_at,
@@ -495,6 +496,7 @@ fn a_save_after_the_plan_is_not_written_over() {
     let repo = Repo::new("saved");
     let turn = busy_turn(&repo);
     let seams = Seams {
+        before_lock: &nothing,
         after_journal: &|| repo.write("a.txt", "saved meanwhile\n"),
         after_write: &nothing,
         in_write: &nothing_at,
@@ -525,6 +527,7 @@ fn a_stop_with_a_path_holding_neither_side_is_partly_applied() {
     let repo = Repo::new("neither");
     let turn = busy_turn(&repo);
     let seams = Seams {
+        before_lock: &nothing,
         after_journal: &|| {
             repo.write("a.txt", "half written\n");
             place_waiting_marker(&repo);
@@ -719,4 +722,122 @@ fn a_rename_only_in_case_is_refused_where_case_is_one_name() {
     } else {
         assert_eq!(finished(outcome).stage, RestoreStage::Applied);
     }
+}
+
+/// The turns are read, and their trees diffed, before the lock; under it
+/// only what was written since is read again. A turn that ends while the
+/// restore waits for the lock counts as if all were read under it: the
+/// file it made goes with the restore.
+#[test]
+fn a_turn_that_ends_before_the_lock_is_read_again_under_it() {
+    let repo = Repo::new("late-turn");
+    let turn = busy_turn(&repo);
+    let seams = Seams {
+        before_lock: &|| {
+            let _ = repo.turn(|repo| repo.write("late.txt", "late\n"));
+        },
+        after_journal: &nothing,
+        after_write: &nothing,
+        in_write: &nothing_at,
+        in_rollback: &nothing_at,
+    };
+
+    let journal = finished(outcome(restore_turn_inner(
+        &repo.request(&turn),
+        NOW,
+        &seams,
+    )));
+
+    assert_eq!(journal.stage, RestoreStage::Applied);
+    assert_eq!(repo.read("late.txt"), None);
+    assert!(journal.recorded_untracked.contains(&"late.txt".to_owned()));
+}
+
+/// Under the lock, a history read before it is diffed again only for the
+/// turns written since.
+#[test]
+fn only_turns_written_since_the_first_reading_are_diffed_again() {
+    let repo = Repo::new("made-cache");
+    let first = repo.turn(|repo| repo.write("one.txt", "1\n"));
+    let _ = repo.turn(|repo| repo.write("two.txt", "2\n"));
+    let directories = repo.request(&first).state_directories;
+    let since = find_turn(&directories, &first).unwrap();
+    let worktree = repo.worktree();
+
+    let mut made = super::made::MadeByTurns::read(&directories, &worktree, Some(&since));
+    let paths = made.since(&directories, &worktree, &since);
+    assert_eq!(made.diffed, 0);
+    assert_eq!(
+        paths,
+        HashSet::from([b"one.txt".to_vec(), b"two.txt".to_vec()])
+    );
+
+    let _ = repo.turn(|repo| repo.write("three.txt", "3\n"));
+    let paths = made.since(&directories, &worktree, &since);
+    assert_eq!(made.diffed, 1);
+    assert!(paths.contains(b"three.txt".as_slice()));
+}
+
+/// The journal is not written again batch by batch while the paths are:
+/// it says `Planned` until they are all written, which recovery settles by
+/// what the paths hold.
+#[test]
+fn the_journal_is_not_rewritten_while_the_paths_are_written() {
+    let repo = Repo::new("no-progress");
+    let turn = repo.turn(|repo| {
+        for index in 0..(WRITE_BATCH * 2) {
+            repo.write(&format!("many/{index}.txt"), "x\n");
+        }
+    });
+    repo.write("a.txt", "a\nlater\n");
+    let stages = std::cell::RefCell::new(Vec::new());
+    let seams = Seams {
+        before_lock: &nothing,
+        after_journal: &nothing,
+        after_write: &nothing,
+        in_write: &|_| {
+            let worktree = repo.worktree();
+            for journal in worktree.readable_journals().0 {
+                stages.borrow_mut().push(journal.stage);
+            }
+        },
+        in_rollback: &nothing_at,
+    };
+
+    let journal = finished(outcome(restore_turn_inner(
+        &repo.request(&turn),
+        NOW,
+        &seams,
+    )));
+
+    assert_eq!(journal.stage, RestoreStage::Applied);
+    let stages = stages.into_inner();
+    assert!(!stages.is_empty());
+    assert!(stages.iter().all(|stage| *stage == RestoreStage::Planned));
+}
+
+/// A turn whose begin was read before the lock and whose end was written
+/// after is read again under it, by its record's new stamp.
+#[test]
+fn a_turn_that_ends_after_the_first_reading_is_read_again() {
+    let repo = Repo::new("made-rewritten");
+    let first = repo.turn(|repo| repo.write("one.txt", "1\n"));
+    repo.hook(
+        format!(
+            r#"{{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"go","cwd":"{}"}}"#,
+            repo.path.display()
+        )
+        .as_bytes(),
+    );
+    let directories = repo.request(&first).state_directories;
+    let since = find_turn(&directories, &first).unwrap();
+    let worktree = repo.worktree();
+    let mut made = super::made::MadeByTurns::read(&directories, &worktree, Some(&since));
+
+    repo.write("late.txt", "late\n");
+    repo.hook(br#"{"hook_event_name":"Stop","session_id":"s1"}"#);
+    let paths = made.since(&directories, &worktree, &since);
+
+    assert_eq!(made.diffed, 1);
+    assert!(paths.contains(b"late.txt".as_slice()));
 }

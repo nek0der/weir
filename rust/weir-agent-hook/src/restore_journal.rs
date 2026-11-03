@@ -5,19 +5,28 @@
 
 use super::{Refusal, Worktree, git_failed, is_op_id, is_there};
 use crate::records::{atomic_write, ensure_user_only_directory};
+use std::cell::OnceCell;
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use weir_agent_model::{
-    FailedPath, RESTORE_DIRECTORY, RESTORE_JOURNAL_FILE_SUFFIX, RestoreJournal, RestoreOperation,
-    RestoreStage, StageReason, parse_utc_seconds,
+    FailedPath, RESTORE_DIRECTORY, RESTORE_JOURNAL_FILE_SUFFIX, RestoreContext, RestoreJournal,
+    RestoreOperation, RestoreStage, StageReason, parse_utc_seconds,
 };
 
 /// How long a journal that `may_expire` is kept: an operation nothing can
-/// take back, or a discard applied whole. A restore still to be undone is
-/// kept however old. Its refs go with it, and each pins a whole tree.
+/// take back, a discard applied whole, or one whose undo can no longer
+/// apply. One its undo can still apply to is kept however old. Its refs go
+/// with it, and each pins a whole tree.
 pub(super) const JOURNAL_LIFETIME_SECS: u64 = 30 * 24 * 60 * 60;
+
+/// The file, beside the journals, that lists the operations a restore, a
+/// discard, or an undo settled before it began: one id a line. The app
+/// hears of a settled operation only from a reading (`recover`), which
+/// tells these once and removes the file. Not a journal: its name does not
+/// end as one does.
+const UNTOLD_FILE: &str = "settled.untold";
 
 impl Worktree {
     pub(super) fn journal_directory(&self) -> PathBuf {
@@ -82,6 +91,57 @@ impl Worktree {
         (journals, failure)
     }
 
+    /// Settles what a crash cut short, before an operation writes anything,
+    /// and keeps the ids for the next reading to tell (`take_untold`).
+    /// Under the lock.
+    pub(super) fn settle_before_operation(&self, now: &str) {
+        let settled = self.settle_interrupted(now);
+        if settled.is_empty() {
+            return;
+        }
+        let mut untold = self.untold();
+        for op_id in settled {
+            if !untold.contains(&op_id) {
+                untold.push(op_id);
+            }
+        }
+        let mut bytes = untold.join("\n");
+        bytes.push('\n');
+        if let Err(error) = atomic_write(&self.untold_path(), bytes.as_bytes()) {
+            // The operations stay settled; only their notice is lost.
+            eprintln!(
+                "restore: the operations settled before this one could not be noted: {error}"
+            );
+        }
+    }
+
+    pub(super) fn untold_path(&self) -> PathBuf {
+        self.journal_directory().join(UNTOLD_FILE)
+    }
+
+    /// The operations settled since the last reading that told them.
+    fn untold(&self) -> Vec<String> {
+        fs::read_to_string(self.untold_path())
+            .map(|text| {
+                text.lines()
+                    .filter(|line| is_op_id(line))
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The operations settled since the last reading that told them, which
+    /// this reading tells: none when the file could not be removed, as they
+    /// would be told again. Under the lock.
+    pub(super) fn take_untold(&self) -> Vec<String> {
+        let untold = self.untold();
+        match fs::remove_file(self.untold_path()) {
+            Ok(()) => untold,
+            Err(_) => Vec::new(),
+        }
+    }
+
     /// Writes `journal`, with every tree it names pinned first: a journal
     /// that something may read again never names a tree `git gc` can take.
     /// One nothing can take back is read for its record only, and its refs
@@ -135,16 +195,18 @@ impl Worktree {
     }
 
     /// Drops the journals, and their refs, past `JOURNAL_LIFETIME_SECS`
-    /// that nothing can take back. A restore still to be undone keeps its
-    /// record however old. Under the lock, so an undo never loses the
-    /// journal it read. The journal goes first, so no journal is left with
-    /// its trees let go; refs a crash leaves are swept after.
+    /// that nothing can take back, or whose undo can no longer apply. One
+    /// its undo can still apply to keeps its record however old. Under the
+    /// lock, so an undo never loses the journal it read, and HEAD and the
+    /// branch are read under it too. The journal goes first, so no journal
+    /// is left with its trees let go; refs a crash leaves are swept after.
     pub(super) fn prune(&self, now: &str) {
+        let current = Current::new(self);
         // One that could not be read stays for a later call; the refs are
         // swept all the same, as they go by the files that name them.
         for journal in self.readable_journals().0 {
             if journal.is_writable()
-                && is_expired(&journal, now)
+                && is_expired(&journal, now, &current)
                 && fs::remove_file(self.journal_path(&journal.op_id)).is_ok()
             {
                 self.release_refs(&journal.op_id);
@@ -230,14 +292,35 @@ pub(super) fn is_whole(stage: &RestoreStage) -> bool {
     }
 }
 
-/// Whether `journal` may go once past its lifetime: final, or a discard
-/// applied whole and never undone. A restore still to be undone keeps its
-/// record however old; a discard's undo is its hunk's in the review,
-/// which no window shows again after it closes, so a whole discard is kept
-/// as long as a finished operation and no longer. A restore or a discard
-/// that stopped partway is what is left to set right, and its refs are
-/// how: it stays. An undo that stopped partway is final, and goes.
-pub(super) fn may_expire(journal: &RestoreJournal) -> bool {
+/// HEAD and the branch of a worktree as they are now, read once, when a
+/// journal first asks.
+pub(super) struct Current<'a> {
+    worktree: &'a Worktree,
+    context: OnceCell<RestoreContext>,
+}
+
+impl<'a> Current<'a> {
+    pub(super) fn new(worktree: &'a Worktree) -> Self {
+        Self {
+            worktree,
+            context: OnceCell::new(),
+        }
+    }
+
+    fn context(&self) -> &RestoreContext {
+        self.context.get_or_init(|| self.worktree.context())
+    }
+}
+
+/// Whether `journal` may go once past its lifetime: final, a discard
+/// applied whole and never undone, or an operation its undo can no longer
+/// apply to. A restore still to be undone keeps its record however old; a
+/// discard's undo is its hunk's in the review, which no window shows again
+/// after it closes, so a whole discard is kept as long as a finished
+/// operation and no longer. A restore or a discard that stopped partway is
+/// what is left to set right, and its refs are how: it stays while its
+/// undo can apply. An undo that stopped partway is final, and goes.
+pub(super) fn may_expire(journal: &RestoreJournal, current: &Current<'_>) -> bool {
     // Its record is where a save it kept aside is named: it stays while
     // the save does.
     if kept_aside_remains(journal) {
@@ -247,6 +330,31 @@ pub(super) fn may_expire(journal: &RestoreJournal) -> bool {
         || (journal.operation == RestoreOperation::Discard
             && journal.undoes.is_none()
             && is_whole(&journal.stage))
+        || is_past_undo(journal, current)
+}
+
+/// Whether the undo of `journal` is refused for good as things stand: a
+/// commit, a reset, or a checkout moved HEAD or the branch since the
+/// operation ran (`undo_restore` refuses with `HeadMoved` or
+/// `BranchChanged`). HEAD can come back (a reset to the commit before), so
+/// this is asked only of a journal past its lifetime, and only what git
+/// answered counts: a HEAD or a branch git could not read (an unborn
+/// branch, a detached HEAD, or git failing) is no move.
+fn is_past_undo(journal: &RestoreJournal, current: &Current<'_>) -> bool {
+    if journal.undoes.is_some()
+        || !matches!(
+            journal.stage,
+            RestoreStage::Applied | RestoreStage::PartiallyApplied { .. }
+        )
+    {
+        return false;
+    }
+    let before = &journal.context_before;
+    let now = current.context();
+    let has_moved = |now: &Option<String>, before: &Option<String>| {
+        now.as_ref().is_some_and(|now| Some(now) != before.as_ref())
+    };
+    has_moved(&now.head, &before.head) || has_moved(&now.branch, &before.branch)
 }
 
 /// Adds to `undo`, whole, the saves `restored` kept aside that are still
@@ -310,10 +418,11 @@ pub(super) fn kept_aside_remains(journal: &RestoreJournal) -> bool {
         .any(|place| is_there(&Path::new(&journal.root).join(place)))
 }
 
-/// Whether `journal` may go and is past its lifetime.
-pub(super) fn is_expired(journal: &RestoreJournal, now: &str) -> bool {
+/// Whether `journal` is past its lifetime and may go. The age first: only
+/// an old journal reads HEAD and the branch.
+pub(super) fn is_expired(journal: &RestoreJournal, now: &str, current: &Current<'_>) -> bool {
     let age = parse_utc_seconds(now)
         .zip(parse_utc_seconds(&journal.at))
         .map(|(now, at)| now.saturating_sub(at));
-    may_expire(journal) && age.is_some_and(|age| age > JOURNAL_LIFETIME_SECS)
+    age.is_some_and(|age| age > JOURNAL_LIFETIME_SECS) && may_expire(journal, current)
 }

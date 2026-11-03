@@ -79,6 +79,12 @@ final class RestoreCoordinator {
     /// (`ViewedLineStore.settleRestoreMoves`). An incomplete reading is not
     /// told, as a journal it left out may be one it could not read.
     @ObservationIgnored var onWholeReading: (@MainActor (_ root: String, _ journals: [RestoreJournal]) -> Void)?
+    /// Hears what a reading after an operation found settled, told as the
+    /// launch's finds are (`recover(roots:)`). A restore, a discard, or an
+    /// undo first settles what a crash cut short, and Rust names those in
+    /// the next reading only, which is the one after the operation; one
+    /// left unread there would never be told.
+    @ObservationIgnored var onSettled: (@MainActor (RecoveryReport) -> Void)?
 
     @ObservationIgnored private let stateDirectories: [RestoreStateDirectory]
     @ObservationIgnored private let runner: RestoreRunner
@@ -95,9 +101,10 @@ final class RestoreCoordinator {
     /// notice waits here, and in `pendingStopsURL` across a relaunch, until
     /// a launch reading lists the operation (it is told once, and goes), a
     /// whole reading does not (pruned, expired, or gone), or it is past a
-    /// journal's lifetime. Only launch readings (`recover(roots:)`) tell it,
-    /// as only they reach the launch toast; one read after an operation
-    /// leaves it for the next launch.
+    /// journal's lifetime. Only the readings that reach the launch toast
+    /// tell it: the launch's (`recover(roots:)`), and one after an operation
+    /// that names operations settled (`onSettled`). Any other reading leaves
+    /// it for the next launch.
     @ObservationIgnored private var pendingStops: [RestorePendingStop]
     /// Where `pendingStops` are kept between launches; `nil` keeps them in
     /// memory only, as demo mode and tests do.
@@ -330,34 +337,57 @@ final class RestoreCoordinator {
             // read, and says so: its finds are told now, and the worktree
             // is read again for the rest.
             take(recovery, of: root)
-            let settled = Set(recovery.settled)
-            // A discard is told whether it was cut short or ended as the app
-            // quit: the review that offered its undo closed with the app,
-            // and the toast is its only way back.
-            let settledToTell = recovery.journals.filter { journal in
-                settled.contains(journal.opID)
-                    && (journal.stage.isInterrupted
-                        || (journal.operation == .discard && journal.undoes == nil && journal.stage.isWhole))
-            }
-            report.stops += settledToTell
-                .filter { $0.undoes == nil && $0.isUndoable }
-                .map { RecoveredStop(settled: $0, undoable: $0) }
-            // Rust names an undo as settled only in the reading that settled
-            // it, so one is queued once and told once; were it named again,
-            // it would be queued again.
-            report.stops += resolvePendingStops(
-                readOf: root,
-                recovery,
-                settledUndos: settledToTell.filter { $0.undoes != nil }
-            )
-            report.keptAside += recovery.journals
-                .filter { settled.contains($0.opID) }
-                .flatMap(\.stage.keptAside)
+            let found = found(in: recovery, of: root)
+            report.stops += found.stops
+            report.keptAside += found.keptAside
             if recovery.isIncomplete || recovery.journals.contains(where: \.stage.isUnfinished) {
                 report.unsettledRoots.append(root)
             }
         }
         return report
+    }
+
+    /// What the reading `recovery` of `root`, already taken in, settled
+    /// that is told: the operations a crash cut short, the saves they
+    /// moved aside, and the launch notices it settles.
+    private func found(in recovery: RestoreRecovery, of root: String) -> RecoveryReport {
+        var report = RecoveryReport()
+        let settled = Set(recovery.settled)
+        // A discard is told whether it was cut short or ended as the app
+        // quit: the review that offered its undo closed with the app,
+        // and the toast is its only way back.
+        let settledToTell = recovery.journals.filter { journal in
+            settled.contains(journal.opID)
+                && (journal.stage.isInterrupted
+                    || (journal.operation == .discard && journal.undoes == nil && journal.stage.isWhole))
+        }
+        report.stops += settledToTell
+            .filter { $0.undoes == nil && $0.isUndoable }
+            .map { RecoveredStop(settled: $0, undoable: $0) }
+        // Rust names an undo as settled only in the reading that settled
+        // it, so one is queued once and told once; were it named again,
+        // it would be queued again.
+        report.stops += resolvePendingStops(
+            readOf: root,
+            recovery,
+            settledUndos: settledToTell.filter { $0.undoes != nil }
+        )
+        report.keptAside += recovery.journals
+            .filter { settled.contains($0.opID) }
+            .flatMap(\.stage.keptAside)
+        return report
+    }
+
+    /// Tells what a reading after an operation, already taken in, names as
+    /// settled (`onSettled`). A reading that names none tells nothing, and
+    /// with no one to hear, nothing is taken: the launch notices it would
+    /// settle wait for a reading that tells them.
+    private func tellSettled(by recovery: RestoreRecovery, of root: String) {
+        guard !recovery.settled.isEmpty, let onSettled else { return }
+        let found = found(in: recovery, of: root)
+        if !found.interrupted.isEmpty || !found.keptAside.isEmpty {
+            onSettled(found)
+        }
     }
 
     /// The launch notices that the reading `recovery` of `root`, already
@@ -480,6 +510,7 @@ final class RestoreCoordinator {
             remember(written)
         }
         take(recovery, of: root)
+        tellSettled(by: recovery, of: root)
         if recovery.isIncomplete {
             rereadLater(root)
         }
@@ -496,6 +527,7 @@ final class RestoreCoordinator {
                 if let recovery = await runner.recover(root: root) {
                     guard !Task.isCancelled else { return }
                     take(recovery, of: root)
+                    tellSettled(by: recovery, of: root)
                     // An incomplete one is taken in, and read again.
                     if !recovery.isIncomplete {
                         rereads[root] = nil
