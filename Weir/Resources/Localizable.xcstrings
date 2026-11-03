@@ -20255,13 +20255,13 @@
         }
       }
     },
-    "libghostty couldn’t allocate this pane. Choose Retry to try again.": {
+    "This pane has no shell yet.\nRetry starts one.": {
       "comment": "Pane surface NULL recovery body",
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "libghostty がこのペインを確保できませんでした。「再試行」をクリックしてください。"
+            "value": "このペインにはまだシェルがありません。\n「再試行」で起動します。"
           }
         }
       }

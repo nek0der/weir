@@ -66,10 +66,8 @@ struct PaneHostView: View {
                     window: window.id,
                     size: geo.size
                 )
-                if surfaceView.creationFailed {
+                if surfaceView.creation.hasFailed {
                     PaneCreationFailureCard(surfaceView: surfaceView)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color.black.opacity(0.55))
                 }
                 // Drag-source veil: while this pane is the one being
                 // ⌥⌘-dragged, lay a translucent white sheet over the
@@ -91,8 +89,10 @@ struct PaneHostView: View {
 /// Shown inside a pane whose backing libghostty surface failed to
 /// allocate (`ghostty_surface_new` returned NULL). One Retry button so
 /// the user is not trapped staring at a black rectangle — a successful
-/// re-run clears `creationFailed` and the card vanishes on the next
-/// SwiftUI tick. The quick terminal shows the same card over its panel.
+/// re-run clears `creation.hasFailed`, which the host observes, so the
+/// card goes with it. A press while a surface exists makes no second one
+/// (`createSurface` keeps the one it has). The quick terminal shows the
+/// same card over its panel.
 struct PaneCreationFailureCard: View {
     let surfaceView: SurfaceView
 
@@ -105,8 +105,9 @@ struct PaneCreationFailureCard: View {
                 .accessibilityHidden(true)
             Text("Couldn’t Start the Terminal", comment: "Pane surface NULL recovery title")
                 .font(.supervision(.icon, weight: .semibold))
+            // One sentence per line, so neither language breaks inside a word.
             Text(
-                "libghostty couldn’t allocate this pane. Choose Retry to try again.",
+                "This pane has no shell yet.\nRetry starts one.",
                 comment: "Pane surface NULL recovery body"
             )
             .font(.supervision(.row))
@@ -118,9 +119,14 @@ struct PaneCreationFailureCard: View {
             } label: {
                 Text("Retry", comment: "Pane surface NULL recovery retry button")
             }
-            .controlSize(.small)
+            .buttonStyle(.bordered)
+            .padding(.top, WeirLayout.Supervision.spaceS)
         }
         .padding(WeirLayout.Supervision.spaceXL)
+        // Opaque, on the window's own ground: a dimming veil over the empty
+        // terminal turned it a muddy gray that the text sank into.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.background)
         .pointerStyle(.default)
     }
 }

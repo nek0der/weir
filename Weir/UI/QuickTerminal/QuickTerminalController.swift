@@ -47,10 +47,6 @@ final class QuickTerminalController {
     /// once focus has moved to another Weir window.
     @ObservationIgnored private var previousApp: NSRunningApplication?
 
-    /// Follows `creationFailed` on the current surface so the panel can
-    /// show the failure card. Dropped with the surface.
-    @ObservationIgnored private var creationObservation: NSKeyValueObservation?
-
     /// Position the panel was shown at. A settings change while the panel
     /// is up must not make it slide out toward a different edge.
     @ObservationIgnored private var shownPosition: QuickTerminalPosition = .top
@@ -299,8 +295,6 @@ final class QuickTerminalController {
         // view leaves the hierarchy; the controller's own reference is the
         // last to go. The next show starts a fresh shell.
         content.surfaceView = nil
-        creationObservation = nil
-        content.isSurfaceCreationFailed = false
         content.clipboard.cancelPending(for: view)
         view.onSecureInputFocusChange = nil
         secureInputManager.remove(view)
@@ -314,7 +308,7 @@ final class QuickTerminalController {
     func prepareSurface() {
         // A surface libghostty failed to allocate would otherwise come back
         // as the same empty panel on every summon; try it again instead.
-        if let existing = content.surfaceView, existing.creationFailed, existing.window != nil {
+        if let existing = content.surfaceView, existing.creation.hasFailed, existing.window != nil {
             existing.createSurface()
         }
         guard content.surfaceView == nil else { return }
@@ -333,13 +327,6 @@ final class QuickTerminalController {
             settingsStore.appLocale
         }
         content.surfaceView = view
-        // `creationFailed` is set on the main thread by `createSurface`,
-        // which is where KVO delivers the change.
-        creationObservation = view.observe(\.creationFailed, options: [.initial, .new]) { [weak content] view, _ in
-            MainActor.assumeIsolated {
-                content?.isSurfaceCreationFailed = view.creationFailed
-            }
-        }
     }
 
     // MARK: - Observation
