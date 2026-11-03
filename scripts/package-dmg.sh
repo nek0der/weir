@@ -45,18 +45,30 @@ codesign --verify --strict --verbose=2 "${APP_PATH}" >/dev/null 2>&1 || {
   exit 1
 }
 
+# Gatekeeper accepts some Developer ID apps it finds no ticket for (code
+# signed before notarization was required, and older macOS releases), so
+# "accepted" alone does not say the app is notarized. The source line does:
+# only a ticket gives "Notarized Developer ID".
 spctl_status="$(spctl --assess --type execute --verbose "${APP_PATH}" 2>&1 || true)"
-if ! echo "${spctl_status}" | grep -q "accepted"; then
+if [[ "$(head -1 <<<"${spctl_status}")" != *": accepted" ]] \
+  || ! grep -qx "source=Notarized Developer ID" <<<"${spctl_status}"; then
   echo "✗ App is not notarized or stapled." >&2
   echo "  spctl said: ${spctl_status}" >&2
   echo "  Run notarization on Weir.app first." >&2
   exit 1
 fi
-echo "✓ App is notarized: $(echo "${spctl_status}" | head -1)"
+echo "✓ App is notarized: $(head -1 <<<"${spctl_status}")"
 
 # -- Read version from Info.plist ---------------------------------------------
 
-VERSION="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "${APP_PATH}/Contents/Info.plist" 2>/dev/null || echo "0.0.0")"
+# The version names the dmg and its volume, and the release takes the dmg by
+# that name. A plist we cannot read, or a build setting left unexpanded, must
+# stop here rather than produce a dmg named for a version that never existed.
+VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "${APP_PATH}/Contents/Info.plist" 2>/dev/null || true)"
+if [[ ! "${VERSION}" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
+  echo "✗ Could not read a version from ${APP_PATH}/Contents/Info.plist (got '${VERSION}')." >&2
+  exit 1
+fi
 echo "✓ Version: ${VERSION}"
 
 # -- Build the dmg -------------------------------------------------------------

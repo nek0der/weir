@@ -885,9 +885,8 @@ struct WeirApp: App {
             CommandGroup(after: .appInfo) {
                 // Debug routes through the mock pipeline so design
                 // tweaks reach both entry points without a real
-                // Sparkle round-trip. Both branches share a single
-                // busy-state disable via `UpdateStateModel.isBusy` so
-                // the user can't kick off concurrent pipelines.
+                // Sparkle round-trip. Both branches share one disable,
+                // `UpdateStateModel.disablesCheckForUpdates`.
                 CheckForUpdatesMenuItem(updaterStack: updaterStack)
             }
             // Replace the auto-generated "Settings…" item with one

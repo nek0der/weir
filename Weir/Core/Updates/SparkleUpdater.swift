@@ -131,6 +131,12 @@ enum UpdateState {
 final class UpdateStateModel {
     var state: UpdateState = .idle
 
+    /// Counts the times Check for Updates was chosen while an update was
+    /// shown inline. The window in front opens its update popover on each
+    /// change, so the choice brings the update forward instead of doing
+    /// nothing (`WeirUpdateDriver.showUpdateInFocus`).
+    var focusRequests = 0
+
     /// Convenience: display item attached to the current state, if any,
     /// without case-matching. The driver reads it.
     var pendingItem: UpdateDisplayItem? {
@@ -155,12 +161,9 @@ final class UpdateStateModel {
     }
 
     /// True while an update operation is actively in flight (network
-    /// fetch, download, extract, install). The Settings "Check Now…"
-    /// and App-menu "Check for Updates…" buttons disable on this so
-    /// the user can't kick off a second concurrent pipeline. Terminal
-    /// states (.available / .readyToInstall awaiting user choice,
-    /// .notFound / .installed / .error) leave the buttons clickable
-    /// so the user can re-check at will.
+    /// fetch, download, extract, install). Terminal states (.available /
+    /// .readyToInstall awaiting user choice, .notFound / .installed /
+    /// .error) are not busy.
     var isBusy: Bool {
         switch state {
         case .checking, .downloading, .extracting, .installing:
@@ -168,6 +171,24 @@ final class UpdateStateModel {
         case .idle, .available, .readyToInstall, .installed, .notFound, .error:
             false
         }
+    }
+
+    /// Whether Check for Updates is off. Sparkle answers a check made
+    /// while it shows an update by bringing that update forward, so a
+    /// real check stays on through a download or an install and is off
+    /// only while checking, which Sparkle ignores. The Debug mock has no
+    /// such guard and would start a second pipeline, so it is off
+    /// whenever `isBusy`.
+    var disablesCheckForUpdates: Bool {
+        #if DEBUG
+            isBusy
+        #else
+            if case .checking = state {
+                true
+            } else {
+                false
+            }
+        #endif
     }
 }
 

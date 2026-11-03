@@ -6,8 +6,8 @@ import SwiftUI
 /// SwiftUI menu item suitable for placement in
 /// `CommandGroup(after: .appInfo)`. Both Debug (mock pipeline) and
 /// Release (real `checkForUpdates()`) flow through here; the button
-/// disables itself whenever `UpdateStateModel.isBusy` is true so
-/// concurrent pipelines can't be launched from the menu.
+/// disables itself on `UpdateStateModel.disablesCheckForUpdates`, which
+/// keeps it on while Sparkle can answer it.
 ///
 /// We don't gate on Sparkle's `canCheckForUpdates` because that flag
 /// has been observed to stick at `false` after a failed appcast fetch
@@ -28,6 +28,6 @@ struct CheckForUpdatesMenuItem: View {
         // environment, so we observe it directly via Bindable rather
         // than `@Environment`. The closure-style read keeps SwiftUI's
         // dependency tracking honest.
-        .disabled(updaterStack.stateModel.isBusy)
+        .disabled(updaterStack.stateModel.disablesCheckForUpdates)
     }
 }
