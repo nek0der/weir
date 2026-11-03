@@ -63,6 +63,20 @@ as they are fixed or confirmed.
   `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` set. There the row keeps saying
   "Needs approval" until the next prompt in that pane or the end of the
   turn.
+- **Quitting hands every open request to the agent's prompt.** As Weir
+  quits, each request it still holds goes to the agent's own prompt, and an
+  answer chosen just before the quit is sent as it is; the agent gets one
+  decision either way. Weir gives the approval service a few seconds for
+  this. A request that does not go through in that time stays with the
+  service, and Codex then shows no prompt until its deadline, about nine and
+  a half minutes later. Opening Weir again shows it on its card.
+- **A Codex request made after Weir quits waits without a prompt.** The
+  approval service keeps running after Weir quits, so an agent left running
+  under tmux can still ask. The service does not know that no Weir is there
+  to show the request, so Codex shows no prompt until its deadline, about
+  nine and a half minutes later. Claude Code and OpenCode show their own
+  prompts meanwhile, and the first answer counts. Opening Weir again shows
+  the request on its card.
 - **No time left is shown after an approval goes to the terminal.** Once a
   request is handed to the agent's own prompt, the agent decides how long it
   waits, and Weir cannot read that time.

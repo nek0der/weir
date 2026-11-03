@@ -150,7 +150,8 @@ struct ApprovalDelegationTests {
         #expect(store.resolvingIDs.isEmpty)
         #expect(await sent.count == 0)
         #expect(store.ledger.entry(for: request)?.state == .held)
-        #expect(store.requestsToHandOverAtQuit == [request])
+        #expect(store.decisionsToSendAtQuit.map(\.approval) == [request])
+        #expect(store.decisionsToSendAtQuit.map(\.resolution) == [.delegate])
     }
 
     @Test func withoutHolding_everyRequestGoesToTheTerminal() async {
@@ -168,7 +169,7 @@ struct ApprovalDelegationTests {
             Issue.record("expected the request to be with the TUI")
             return
         }
-        #expect(store.requestsToHandOverAtQuit.isEmpty)
+        #expect(store.decisionsToSendAtQuit.isEmpty)
     }
 
     @Test func aRequestTheBrokerIsAnswering_isNotHandedOver() async {
@@ -181,13 +182,46 @@ struct ApprovalDelegationTests {
         store.resolve(request, .allowOnce)
 
         store.handOverHeldRequests()
-        #expect(store.requestsToHandOverAtQuit.isEmpty)
         gate.open()
         await store.waitUntilResolved(request)
 
         // Only the person's answer went out.
         #expect(await sent.count == 1)
         #expect(store.ledger.entry(for: request)?.state == .answered(.allowOnce))
+    }
+
+    /// The send of the person's answer may not have started before the quit
+    /// took the main thread. The quit sends that answer again rather than a
+    /// hand-over, so whichever reaches the broker first, the agent gets the
+    /// person's decision and no other.
+    @Test func atQuit_anAnswerStillOnItsWay_goesAgainAsItIs() async {
+        let gate = Gate<Void>()
+        let (store, request) = Self.store { _, _ in await gate.wait() }
+        store.resolve(request, .allowOnce)
+        await gate.waitUntilRequested()
+
+        #expect(store.decisionsToSendAtQuit.map(\.approval) == [request])
+        #expect(store.decisionsToSendAtQuit.map(\.resolution) == [.allowOnce])
+
+        gate.open()
+        await store.waitUntilResolved(request)
+        #expect(store.decisionsToSendAtQuit.isEmpty, "the answer landed")
+    }
+
+    @Test func atQuit_anAnswerThatFailedToSend_isHandedOver() async {
+        let (store, request) = Self.store { _, _ in throw Offline() }
+        store.resolve(request, .allowOnce)
+        await store.waitUntilResolved(request)
+
+        #expect(store.decisionsToSendAtQuit.map(\.approval) == [request])
+        #expect(store.decisionsToSendAtQuit.map(\.resolution) == [.delegate])
+    }
+
+    @Test func atQuit_aRequestThatTimedOut_getsNothing() {
+        let (store, request) = Self.store { _, _ in }
+        store.ledger.settle(id: request.id, by: .expired, now: SuspendingClock.now)
+
+        #expect(store.decisionsToSendAtQuit.isEmpty)
     }
 
     @Test func aFailedHandOver_staysForThePersonAndIsNotResent() async {

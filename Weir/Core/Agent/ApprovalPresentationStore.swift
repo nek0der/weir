@@ -98,6 +98,13 @@ final class ApprovalPresentationStore {
     /// not evict, not from every record it holds: consumed results stay
     /// until a slot is needed, so the full count stays at the limit.
     private(set) var isNearCapacity = false
+    /// The requests a decision is on its way for. Only the send that added
+    /// a request takes it out, when the send returns: a dropped connection,
+    /// a stop, or a projection that no longer lists the request says
+    /// nothing about whether the decision landed, and opening the guard
+    /// early would let a second decision go for the same request, such as a
+    /// release that hands over a request the person had just allowed. The
+    /// XPC send times out, so the guard does not outlive it for long.
     private(set) var resolvingIDs: Set<String> = []
     /// The request whose most recent user decision failed to reach the broker.
     /// Optional because nothing has failed yet, or a later resolve cleared it.
@@ -221,7 +228,7 @@ final class ApprovalPresentationStore {
         // The ledger outlives a stop (`ApprovalLedger.serviceDidStop`).
         ledger.serviceDidStop()
         isNearCapacity = false
-        resolvingIDs = []
+        // `resolvingIDs` stays with the sends still in flight.
         firstSeenAtByID = [:]
         observedEpoch = nil
         // A draft lives as long as its request is known (`isKnown`).
@@ -353,13 +360,29 @@ final class ApprovalPresentationStore {
         }
     }
 
-    /// The requests Weir holds and nobody is answering, for the hand-over as
-    /// the app quits (`ApprovalControllerConnection.handOverBeforeQuit`).
-    /// Without it an agent outside the app (under tmux) would wait out the
-    /// rest of its deadline for a card nobody can open.
-    var requestsToHandOverAtQuit: [ApprovalPresentation] {
-        pending.filter { approval in
-            ledger.entry(for: approval)?.state.acceptsDecision == true && !resolvingIDs.contains(approval.id)
+    /// The one decision each request Weir holds gets as the app quits
+    /// (`ApprovalControllerConnection.sendBeforeQuit`). A request nobody
+    /// answered, or whose answer failed to send, is handed to the agent's
+    /// own prompt: without it an agent outside the app (under tmux) would
+    /// wait out the rest of its deadline for a card nobody can open. A
+    /// decision still on its way is sent again as it is, the person's own
+    /// answer rather than a hand-over: its send may not have started before
+    /// the quit took the main thread, and the broker keeps the first
+    /// decision that reaches it and refuses the second, so the agent never
+    /// gets two. A request already settled, handed over, or timed out has
+    /// had its decision.
+    var decisionsToSendAtQuit: [(approval: ApprovalPresentation, resolution: ApprovalResolution)] {
+        pending.compactMap { approval in
+            switch ledger.entry(for: approval)?.state {
+            case let .sending(resolution, _):
+                (approval, resolution)
+            case .held, .sendFailed:
+                // A held request with a release in flight gets the same
+                // hand-over the release is sending.
+                (approval, .delegate)
+            case .handedToTerminal, .timedOut, .withdrawn, .unknownResult, .answered, nil:
+                nil
+            }
         }
     }
 
@@ -724,8 +747,8 @@ final class ApprovalPresentationStore {
         // tracked requests ended, and a new epoch carries over the ones
         // still waiting at the agent's prompt (`ApprovalLedger.outliveEpoch`).
         // Clearing it here would lose requests still waiting at the TUI over
-        // a transient XPC failure.
-        resolvingIDs = []
+        // a transient XPC failure. `resolvingIDs` stays too, with the sends
+        // still in flight.
         // A card follows the ledger, which outlives a dropped connection,
         // and keeps its place: the anchors of the requests the ledger holds
         // stay, and `hasRow` already drops the arrow.
@@ -750,7 +773,6 @@ final class ApprovalPresentationStore {
         }
         pending = approvals
         serviceDeadlines = serviceDeadlines.filter { entry in approvals.contains { $0.id == entry.key } }
-        resolvingIDs.formIntersection(approvals.map(\.id))
         // Kept past the pending list while the ledger holds the request, for
         // the end of its episode (`endFinishedEpisodes`).
         observedActiveTurnIDs = observedActiveTurnIDs.filter { id in
