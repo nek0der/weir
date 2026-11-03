@@ -51,6 +51,7 @@ private struct NewWorktreeSheetHost: ViewModifier {
                 .environment(session)
                 .environment(window)
                 .environment(launches)
+                .environment(state.installedAgents)
                 .environment(state.attention)
                 .environment(\.locale, locale)
                 .weirAccentPropagated(weirAccent)
@@ -96,7 +97,8 @@ private struct NewWorktreeSheetHost: ViewModifier {
     /// a window that shows no project.
     private func createWorktreeAtOnce() {
         guard !window.isCreatingWorktreeAtOnce, window.selection.shownProjectID != nil else { return }
-        let stores = NewSessionStores(session: session, launches: launches, settingsStore: state.settingsStore)
+        var stores = NewSessionStores(session: session, launches: launches, settingsStore: state.settingsStore)
+        stores.installedAgents = state.installedAgents
         let locale = locale
         AccessibilityNotification.Announcement(LocalizedStringResource(
             "Creating the worktree…",

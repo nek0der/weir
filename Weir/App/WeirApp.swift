@@ -229,6 +229,9 @@ final class AppState {
     /// The new sessions between their worktree and their agent: the setup
     /// running, or the stage that failed.
     let sessionLaunches = SessionLaunchStore()
+    /// The agents found on this Mac, for each project, which the pane
+    /// strip's "+" and the plan usage panel name.
+    let installedAgents = InstalledAgentsStore()
     /// The stops kept until their conversation is back, across launches.
     /// Demo mode keeps them in memory only.
     let stopLedger = StopLedgerStore(writesFiles: AppState.writesUserFilesAtLaunch)
@@ -605,11 +608,12 @@ final class AppState {
     }
 
     private func startAppVisibilityObserver() {
-        let refreshers = (gitSync, prStatusSyncer, agentIntegrationServiceRegistrar)
+        let refreshers = (gitSync, prStatusSyncer, agentIntegrationServiceRegistrar, installedAgents)
         appVisibilityObserver = AppVisibilityObserver(registry: windowRegistry) {
             refreshers.0?.appDidBecomeActive()
             refreshers.1?.appDidBecomeActive()
             refreshers.2.appDidBecomeActive()
+            Task { await refreshers.3.refreshKnown() }
         }
     }
 

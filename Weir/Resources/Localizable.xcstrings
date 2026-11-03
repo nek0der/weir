@@ -14739,19 +14739,36 @@
         }
       }
     },
-    "Runs in the same folder. Editing at the same time may cause conflicts.": {
-      "comment": "Pane strip + menu: under the Claude and Codex items",
+    "An agent is already working in this folder. Editing at the same time may cause conflicts.": {
+      "comment": "Pane strip + menu: one line under the items, while an agent already works in the folder the new tab opens in",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Runs in the same folder. Editing at the same time may cause conflicts."
+            "value": "An agent is already working in this folder. Editing at the same time may cause conflicts."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "同じフォルダーで実行されます。同時に編集すると、変更が競合することがあります。"
+            "value": "このフォルダーではエージェントが実行中です。\n同時に編集すると、競合することがあります。"
+          }
+        }
+      }
+    },
+    "No agents found. Weir lists %@ found on your PATH.": {
+      "comment": "Pane strip + menu: one line under the shell item when no agent was found on this Mac; the argument is every agent Weir supports, as a list (Claude, Codex, and OpenCode)",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No agents found. Weir lists %@ found on your PATH."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エージェントが見つかりません。PATH にある %@ を表示します。"
           }
         }
       }

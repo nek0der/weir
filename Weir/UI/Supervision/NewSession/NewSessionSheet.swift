@@ -18,6 +18,7 @@ struct NewSessionSheet: View {
     let request: NewSessionSheetRequest
     @Environment(WorkspaceSession.self) private var session
     @Environment(SessionLaunchStore.self) private var launches
+    @Environment(InstalledAgentsStore.self) private var installedAgents
     /// The window the sheet was opened in, whose selection the new
     /// worktree lands in. Handed to the sheet by the window, which
     /// presents it.
@@ -817,6 +818,7 @@ extension NewSessionSheet {
     private var stores: NewSessionStores {
         var stores = NewSessionStores(session: session, launches: launches, settingsStore: settingsStore)
         stores.pullRequests = prStatusSyncer?.pullRequests
+        stores.installedAgents = installedAgents
         return stores
     }
 

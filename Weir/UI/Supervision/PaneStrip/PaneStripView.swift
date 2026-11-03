@@ -550,6 +550,7 @@ private extension View {
 private struct AddTabButton: View {
     let container: ContainerID
     @Environment(WorkspaceSession.self) private var session
+    @Environment(InstalledAgentsStore.self) private var installedAgents
     @Environment(\.locale) private var locale
 
     var body: some View {
@@ -569,5 +570,16 @@ private struct AddTabButton: View {
         // the strip's inset.
         .offset(x: WeirLayout.Supervision.paneStripAddGlyphOutset)
         .accessibilityLabel(Text(name))
+        // The menu opens at once on what was found, so the agents are
+        // looked for as the strip shows, and again as the pointer comes
+        // to the "+": an agent installed in one of Weir's own panes is then
+        // in the menu without Weir going behind and back.
+        .task(id: container.projectID) {
+            await installedAgents.refresh(projectID: container.projectID)
+        }
+        .onHover { isHovering in
+            guard isHovering else { return }
+            Task { await installedAgents.refresh(projectID: container.projectID) }
+        }
     }
 }
