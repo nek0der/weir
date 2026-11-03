@@ -326,7 +326,8 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
 
     /// A fresh surface view with the configuration every terminal shares,
     /// panes and the quick terminal alike: the scrollbar preference from
-    /// the live config and the demo-mode prompt mask over `environment`.
+    /// the live config, and in demo mode the demo shell's environment over
+    /// `environment`.
     @MainActor
     static func makeSurfaceView(
         ghosttyApp: GhosttyApp,
@@ -334,26 +335,18 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
     ) -> SurfaceView {
         let view = SurfaceView(ghosttyApp: ghosttyApp)
         view.isScrollbarEnabled = ghosttyApp.isScrollbarEnabled
-        var env = environment
         if DemoFixture.isDemoActive {
-            // Stop the demo shell prompt from baking a real user@host into
-            // the hero screenshot. PROMPT/PS1 replace the default prompt;
-            // HOST/HOSTNAME cover a prompt the user's own shell config builds
-            // from them, since zsh's %m reads HOST. They are "localhost"
-            // rather than a made-up name because the shell integration also
-            // sends them as the host of its OSC 7 working-directory reports,
-            // and libghostty drops a report whose host is neither this
-            // machine's name nor "localhost" — every demo pane then had no
-            // working directory.
-            env["USER"] = "demo"
-            env["HOSTNAME"] = "localhost"
-            env["HOST"] = "localhost"
-            env["PROMPT"] = "demo@weir %1~ %% "
-            env["PS1"] = "demo@weir \\W $ "
-            // Where the capture script waits for this pane's scene (`DemoFixture.scene`).
-            env["WEIR_DEMO_PANES_READY"] = ProcessInfo.processInfo.environment["WEIR_DEMO_PANES_READY"] ?? ""
+            // The demo's own shell (`GhosttyConfigBridge` names it) reads
+            // the bundled startup file instead of the person's and writes no
+            // history, as the scenes are typed into it.
+            view.extraEnvironment = DemoFixture.shellEnvironment(
+                over: environment,
+                startupDirectory: DemoFixture.shellStartupDirectoryURL,
+                panesReady: ProcessInfo.processInfo.environment["WEIR_DEMO_PANES_READY"] ?? ""
+            )
+        } else {
+            view.extraEnvironment = environment
         }
-        view.extraEnvironment = env
         return view
     }
 

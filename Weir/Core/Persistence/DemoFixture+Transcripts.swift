@@ -84,7 +84,7 @@ extension DemoFixture {
 
     /// Tells the capture script this pane's scene is on screen. A shell can
     /// take seconds to start on a busy Mac, and until the scene runs the pane
-    /// shows the contributor's own prompt and the command being typed.
+    /// shows the demo shell's own prompt and the command being typed.
     private static let reportsPrinted = "{ [ -z \"$WEIR_DEMO_PANES_READY\" ] || : > \"$WEIR_DEMO_PANES_READY/$$\"; }"
 
     /// A line as `%b` reads it inside single quotes: a backslash doubled, a

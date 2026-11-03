@@ -257,6 +257,7 @@ targets:
           - "Resources/ghostty"
           - "Resources/terminfo"
           - "Resources/claude-shim"
+          - "Resources/demo-shell"
           - "Resources/codex-shim"
           - "Resources/antigravity-shim"
           - "Resources/antigravity-plugin"
@@ -295,6 +296,10 @@ targets:
       # this directory to `PATH` for every pty it spawns so `claude`
       # invocations are intercepted.
       - path: Weir/Resources/claude-shim
+        type: folder
+      # The startup file demo mode's shells read in place of the
+      # contributor's. It keeps no history (`DemoFixture.shellEnvironment`).
+      - path: Weir/Resources/demo-shell
         type: folder
       # Bundle the Codex shim + hook receiver, on the same terms: this
       # directory is prepended to `PATH` too, so `codex` invocations are

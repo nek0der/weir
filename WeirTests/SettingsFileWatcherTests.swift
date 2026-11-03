@@ -12,6 +12,20 @@ import Testing
 @MainActor
 struct SettingsFileWatcherTests {
 
+    /// Demo mode's store keeps its settings for the run: there is nothing to
+    /// watch, and the folder watching needs is the person's to make.
+    @Test func aStoreThatWritesNoFile_isNotWatched_andItsFolderNotMade() throws {
+        try withTempDir { dir in
+            let folder = dir.appendingPathComponent("Weir Dev", isDirectory: true)
+            let store = SettingsStore(directory: folder, writesFiles: false)
+            let watcher = SettingsFileWatcher(store: store)
+            watcher.start()
+            defer { watcher.stop() }
+            #expect(watcher.currentDirFD == -1)
+            #expect(!FileManager.default.fileExists(atPath: folder.path))
+        }
+    }
+
     @Test("cancel closes the watched directory fd")
     func cancelClosesFD() async throws {
         try await withTempDir { dir in

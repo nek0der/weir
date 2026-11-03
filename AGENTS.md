@@ -258,7 +258,9 @@ Short index of load-bearing files. Skim these before touching their domain.
   one project folded) with staged agents, turns, Git facts, and pane
   output, in one 1440×900 window with the Changes panel open).
   Persistence is short-circuited while the variable is set, so the
-  user's real `state.json` is not touched. Demo mode also skips the
+  user's real `state.json` is not touched. Its panes run a zsh of their
+  own (`DemoFixture+Shell.swift`) that reads none of the user's startup
+  files and keeps no history. Demo mode also skips the
   approval service, so a demo run does not replace the running app's
   service and agents use their native prompts. It starts no updater
   either. `WEIR_DEMO_APPEARANCE=dark` shows it in the dark look, and

@@ -26,6 +26,12 @@ enum AgentTabFocus {
         let rootSessionId: String?
     }
 
+    /// The folder requests go under: none in demo mode, which writes none of the
+    /// person's files and whose agents have no plugin to read one.
+    static var defaultRoot: URL? {
+        DemoFixture.isDemoActive ? nil : WeirPaths.applicationSupportDirectory()
+    }
+
     /// Where a request goes, beside the provider directories the plugin knows its own
     /// place among (`focusRequestPath` in the plugin).
     static func requestURL(channel: UUID, under root: URL = WeirPaths.applicationSupportDirectory()) -> URL {
@@ -39,23 +45,26 @@ enum AgentTabFocus {
         return request.deletingLastPathComponent().appendingPathComponent("\(request.lastPathComponent).\(nonce).answer")
     }
 
-    /// Asks the pane to show `runtime`'s session. Nothing to name, or nothing written,
-    /// leaves the pane as it is, and whoever needs the session on screen finds that out.
-    static func request(_ runtime: AgentRuntimePresentation, under root: URL = WeirPaths.applicationSupportDirectory()) {
-        guard let channel = runtime.tabChannel, let sessionID = runtime.sessionID else { return }
+    /// Asks the pane to show `runtime`'s session. Nothing to name, nowhere to write, or
+    /// nothing written, leaves the pane as it is, and whoever needs the session on
+    /// screen finds that out.
+    static func request(_ runtime: AgentRuntimePresentation, under root: URL? = defaultRoot) {
+        guard let root, let channel = runtime.tabChannel, let sessionID = runtime.sessionID else { return }
         write(sessionID: sessionID, nonce: nil, channel: channel, root: root)
     }
 
     /// Asks the pane what it shows, bringing `sessionID` forward first if one is named,
     /// and waits for the answer. True when the session is in front as of a read the
     /// plugin made just now: `sessionID`, or with none named, any session but a
-    /// subagent's view, whose prompt is not that of the session it belongs to.
+    /// subagent's view, whose prompt is not that of the session it belongs to. False with
+    /// nowhere to ask.
     static func confirm(
         sessionID: String?,
         channel: UUID,
         limit: Duration,
-        under root: URL = WeirPaths.applicationSupportDirectory()
+        under root: URL? = defaultRoot
     ) async -> Bool {
+        guard let root else { return false }
         let nonce = UUID().uuidString
         let answerURL = answerURL(nonce: nonce, channel: channel, under: root)
         defer { try? FileManager.default.removeItem(at: answerURL) }
