@@ -81,64 +81,66 @@ struct WorkspaceSessionWorktreeTests {
     /// failure (its message: `WorktreeErrorsTests`). What it had made of the
     /// worktree is removed, so a retry does not stop on a folder that is
     /// already there; the branch made for it stays.
-    @Test func createGitWorktree_whenGitRunsPastItsDeadline_removesWhatItMade() async {
+    @Test func createGitWorktree_whenGitRunsPastItsDeadline_removesWhatItMade() async throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
         let git = FakeGit()
         git.nextCreateError = .timedOut(seconds: 600)
         git.leavesFolderOnError = true
-        let path = WorktreeFixture.freshPath()
-        defer { try? FileManager.default.removeItem(at: path) }
-        let thrown = await WorktreeFixture.failure(CreateWorktreeError.self) {
-            try await session.createGitWorktree(
-                projectID: project.id,
-                path: path,
-                baseBranch: "main",
-                newBranchName: "feature-t",
-                openTab: false,
-                git: git
-            )
+        try await withTempDir { dir in
+            let path = dir.appendingPathComponent("worktree")
+            let thrown = await WorktreeFixture.failure(CreateWorktreeError.self) {
+                try await session.createGitWorktree(
+                    projectID: project.id,
+                    path: path,
+                    baseBranch: "main",
+                    newBranchName: "feature-t",
+                    openTab: false,
+                    git: git
+                )
+            }
+            guard case let .timedOut(seconds, branch, leftover)? = thrown else {
+                Issue.record("expected a timeout, got \(String(describing: thrown))")
+                return
+            }
+            #expect(seconds == 600)
+            #expect(branch == "feature-t")
+            #expect(leftover == nil)
+            #expect(!FileManager.default.fileExists(atPath: path.path))
+            #expect(git.removeCalls.map(\.force) == [true])
+            #expect(git.removeCalls.first?.path == path)
+            #expect(git.pruneCalls == [project.rootURL])
         }
-        guard case let .timedOut(seconds, branch, leftover)? = thrown else {
-            Issue.record("expected a timeout, got \(String(describing: thrown))")
-            return
-        }
-        #expect(seconds == 600)
-        #expect(branch == "feature-t")
-        #expect(leftover == nil)
-        #expect(!FileManager.default.fileExists(atPath: path.path))
-        #expect(git.removeCalls.map(\.force) == [true])
-        #expect(git.removeCalls.first?.path == path)
-        #expect(git.pruneCalls == [project.rootURL])
     }
 
     /// Past its deadline, git left something running that outlived
     /// SIGKILL: the folder is kept, so a retry stops on it rather than
     /// making a worktree there that process could still write into.
-    @Test func createGitWorktree_whenGitLeavesProcessesRunning_keepsTheFolder() async {
+    @Test func createGitWorktree_whenGitLeavesProcessesRunning_keepsTheFolder() async throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
         let git = FakeGit()
         git.nextCreateError = .timedOut(seconds: 600, hasProcessesLeft: true)
         git.leavesFolderOnError = true
-        let path = WorktreeFixture.freshPath()
-        defer { try? FileManager.default.removeItem(at: path) }
-        let thrown = await WorktreeFixture.failure(CreateWorktreeError.self) {
-            try await session.createGitWorktree(
-                projectID: project.id,
-                path: path,
-                baseBranch: "main",
-                newBranchName: "feature-t",
-                openTab: false,
-                git: git
-            )
+        try await withTempDir { dir in
+            let path = dir.appendingPathComponent("worktree")
+            let thrown = await WorktreeFixture.failure(CreateWorktreeError.self) {
+                try await session.createGitWorktree(
+                    projectID: project.id,
+                    path: path,
+                    baseBranch: "main",
+                    newBranchName: "feature-t",
+                    openTab: false,
+                    git: git
+                )
+            }
+            guard case let .timedOut(_, branch, leftover)? = thrown else {
+                Issue.record("expected a timeout, got \(String(describing: thrown))")
+                return
+            }
+            #expect(branch == "feature-t")
+            #expect(leftover == path)
+            #expect(FileManager.default.fileExists(atPath: path.path))
+            #expect(git.removeCalls.isEmpty)
         }
-        guard case let .timedOut(_, branch, leftover)? = thrown else {
-            Issue.record("expected a timeout, got \(String(describing: thrown))")
-            return
-        }
-        #expect(branch == "feature-t")
-        #expect(leftover == path)
-        #expect(FileManager.default.fileExists(atPath: path.path))
-        #expect(git.removeCalls.isEmpty)
     }
 
     @Test("createGitWorktree: unknown project id throws projectNotFound")
@@ -164,27 +166,28 @@ struct WorkspaceSessionWorktreeTests {
     func createGitWorktree_whenPathExists_throwsAndDoesNotInvokeGit() async throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
         // Create the directory first so the guard fires.
-        let collidingPath = WorktreeFixture.freshPath()
-        try FileManager.default.createDirectory(at: collidingPath, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: collidingPath) }
-        let git = FakeGit()
+        try await withTempDir { dir in
+            let collidingPath = dir.appendingPathComponent("worktree")
+            try FileManager.default.createDirectory(at: collidingPath, withIntermediateDirectories: true)
+            let git = FakeGit()
 
-        let error = await WorktreeFixture.failure(CreateWorktreeError.self) {
-            try await session.createGitWorktree(
-                projectID: project.id,
-                path: collidingPath,
-                baseBranch: "main",
-                newBranchName: nil,
-                openTab: false,
-                git: git
-            )
+            let error = await WorktreeFixture.failure(CreateWorktreeError.self) {
+                try await session.createGitWorktree(
+                    projectID: project.id,
+                    path: collidingPath,
+                    baseBranch: "main",
+                    newBranchName: nil,
+                    openTab: false,
+                    git: git
+                )
+            }
+            if case let .pathAlreadyExists(path)? = error {
+                #expect(path == collidingPath)
+            } else {
+                Issue.record("expected .pathAlreadyExists, got \(String(describing: error))")
+            }
+            #expect(git.createCalls.isEmpty)
         }
-        if case let .pathAlreadyExists(path)? = error {
-            #expect(path == collidingPath)
-        } else {
-            Issue.record("expected .pathAlreadyExists, got \(String(describing: error))")
-        }
-        #expect(git.createCalls.isEmpty)
     }
 
     @Test("createGitWorktree: git failure surfaces stderr through gitFailed")

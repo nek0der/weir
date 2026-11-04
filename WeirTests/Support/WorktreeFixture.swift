@@ -36,7 +36,9 @@ enum WorktreeFixture {
 
     /// A folder for a worktree that does not exist yet, under the temporary
     /// directory, so a creation's "path already exists" guard never fires
-    /// for the path a test means to succeed.
+    /// for the path a test means to succeed. Only for a path nothing makes:
+    /// a test whose code makes the folder takes one inside `withTempDir`
+    /// instead, which removes it even when the test throws.
     static func freshPath() -> URL {
         FileManager.default.temporaryDirectory.appendingPathComponent("weir-worktree-\(UUID().uuidString)")
     }

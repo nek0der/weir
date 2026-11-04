@@ -12,7 +12,7 @@ struct TurnRetentionSettingsTests {
     /// hundred, however the file wrote them.
     @Test(arguments: [(0, 5, 1, 20), (1, 20, 1, 20), (90, 500, 90, 500), (365, 10000, 90, 500)])
     func retention_staysWithinItsRange(writtenDays: Int, writtenTurns: Int, readDays: Int, readTurns: Int) throws {
-        var object = try WeirSettingsJSON.object(.default)
+        var object = try JSONObjectFixture.object(encoding: WeirSettings.default)
         var advanced = try #require(object["advanced"] as? [String: Any])
         advanced["turnRetention"] = ["days": writtenDays, "turns": writtenTurns]
         object["advanced"] = advanced

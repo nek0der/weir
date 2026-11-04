@@ -6,6 +6,7 @@
 
 import Foundation
 import Testing
+@testable import Weir
 
 @Suite("Codex shim", .tags(.smoke), .disabled(if: !RepoFixture.hasLocalRepo, "no local git"), .timeLimit(.minutes(1)))
 struct CodexShimScriptTests {
@@ -296,16 +297,13 @@ struct CodexShimScriptTests {
         #expect(zip(unsets, unsets.dropFirst()).contains { $0 == ("-u", "CODEX_HOME") }, "\(argv)")
         // What the session's command does with it, on a server whose
         // environment holds another pane's home.
-        let probe = Process()
-        let output = Pipe()
-        probe.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        probe.arguments = unsets + ["/bin/sh", "-c", "printf %s \"${CODEX_HOME-unset}\""]
-        probe.environment = IsolatedProcessEnvironment.make(["CODEX_HOME": "/work/a/.codex", "PATH": "/usr/bin:/bin"])
-        probe.standardOutput = output
-        try probe.run()
-        #expect(probe.waitUntilExit(within: 10))
-        let seen = String(bytes: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)
-        #expect(seen == "unset")
+        let probe = try TestProcess.run(
+            URL(fileURLWithPath: "/usr/bin/env"),
+            arguments: unsets + ["/bin/sh", "-c", "printf %s \"${CODEX_HOME-unset}\""],
+            environment: IsolatedProcessEnvironment.make(["CODEX_HOME": "/work/a/.codex", "PATH": "/usr/bin:/bin"])
+        )
+        #expect(probe.ending == .exited)
+        #expect(probe.stdoutText == "unset")
 
         // A pane that sets it passes it, and unsets nothing of the kind.
         guard case let .tmux(given) = try runShimHosted([], environment: ["CODEX_HOME": "/opt/codex"]) else {

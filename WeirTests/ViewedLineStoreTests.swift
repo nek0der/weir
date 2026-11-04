@@ -182,11 +182,16 @@ struct ViewedLineStoreTests {
             #expect(store.line(of: aborted)?.history.count == ViewedLine.historyLimit + 1)
 
             try store.settleRestoreMoves(readOf: { $0 == repo.path || $0 == unmounted }, listing: [
-                Self.journal("OP-ABORTED", #"{"kind":"aborted","reason":"externalChangeDetected"}"#),
-                Self.journal("OP-UNDONE", #"{"kind":"undone","by":"U"}"#),
-                Self.journal("OP-APPLIED", #"{"kind":"applied"}"#),
-                Self.journal("OP-WRITING", #"{"kind":"writing"}"#),
-                Self.journal("OP-NEWER", #"{"kind":"somethingNew"}"#)
+                RestoreJournalFixture.restore(
+                    #"{"kind":"aborted","reason":"externalChangeDetected"}"#,
+                    opID: "OP-ABORTED",
+                    turnID: "s1-T1",
+                    number: 1
+                ),
+                RestoreJournalFixture.restore(#"{"kind":"undone","by":"U"}"#, opID: "OP-UNDONE", turnID: "s1-T1", number: 1),
+                RestoreJournalFixture.restore(#"{"kind":"applied"}"#, opID: "OP-APPLIED", turnID: "s1-T1", number: 1),
+                RestoreJournalFixture.restore(#"{"kind":"writing"}"#, opID: "OP-WRITING", turnID: "s1-T1", number: 1),
+                RestoreJournalFixture.restore(#"{"kind":"somethingNew"}"#, opID: "OP-NEWER", turnID: "s1-T1", number: 1)
             ])
 
             // Undone from elsewhere: its line goes back.
@@ -206,13 +211,6 @@ struct ViewedLineStoreTests {
                 #expect(relaunched.takeRestoreMoves(of: opID).count == 1)
             }
         }
-    }
-
-    private static func journal(_ opID: String, _ stage: String) throws -> RestoreJournal {
-        try RestoreJournalFixture.make(
-            stageJSON: stage,
-            fields: .init(opID: opID, turnID: "s1-T1", turnNumber: 1, at: "2026-10-12T00:07:30Z")
-        )
     }
 
     /// A mark is its `markID`, and the latest mark is told by
@@ -581,10 +579,9 @@ struct ViewedLineStoreTests {
     @Test(.tags(.smoke)) func theRef_pointsAtTheTreeInTheRepository() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
-        try Data("a".utf8).write(to: repo.url.appendingPathComponent("a.txt"))
-        _ = try await GitProcess.run(["add", "a.txt"], cwd: repo.url)
-        let tree = try await GitProcess.run(["write-tree"], cwd: repo.url)
-            .stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        try repo.write("a", to: "a.txt")
+        try await repo.git(["add", "a.txt"])
+        let tree = try await repo.git(["write-tree"])
         let refs = ViewedLineRefs()
         let snapshot = SnapshotTree(tree: tree, root: repo.url.path)
         let ref = ViewedLineRefs.refName(of: Fixture.conversation)
@@ -608,8 +605,8 @@ struct ViewedLineStoreTests {
         }
         let refs = ViewedLineRefs()
         let ref = ViewedLineRefs.refName(of: Fixture.conversation)
-        let firstTree = try await GitProcess.run(["write-tree"], cwd: first.url).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        let secondTree = try await GitProcess.run(["write-tree"], cwd: second.url).stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        let firstTree = try await first.git(["write-tree"])
+        let secondTree = try await second.git(["write-tree"])
         let from = SnapshotTree(tree: firstTree, root: first.url.path)
 
         refs.move(Fixture.conversation, from: nil, to: from)

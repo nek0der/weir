@@ -40,11 +40,11 @@ struct HookScriptTests {
     func promptSnapshot_isPrivateAndSessionEndCleansIt(agent: HookAgent) async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
-        try Data("before prompt\n".utf8).write(to: repo.url.appendingPathComponent("pending.txt"))
+        try repo.write("before prompt\n", to: "pending.txt")
         let status = try await repo.git(["status", "--porcelain"])
         let expectedRoot = try await repo.git(["rev-parse", "--show-toplevel"])
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let expectedTree = try scratchTree(in: repo.url)
+        let expectedTree = try await scratchTree(in: repo.url)
         let indexURL = repo.url.appendingPathComponent(".git/index")
         let indexMTime = try #require(
             try (FileManager.default.attributesOfItem(atPath: indexURL.path)[.modificationDate]) as? Date
@@ -196,20 +196,21 @@ struct HookScriptTests {
             // relocated system binary on launch (exit 137).
             let fakeAgent = dir.appendingPathComponent(agent.rawValue)
             try FileManager.default.createSymbolicLink(at: fakeAgent, withDestinationURL: URL(fileURLWithPath: "/bin/sh"))
-            let process = Process()
-            process.executableURL = fakeAgent
+            var environment = agent.environment(in: dir, paneID: paneID)
+            environment["WEIR_HOOK_HELPER"] = try #require(HookHelperFixture.helperURL).path
             // The trailing `true` keeps the shell from exec'ing the hook in
             // place, which would drop the agent-named process out of the very
             // chain the walk has to climb.
-            process.arguments = try ["-c", "/bin/sh '\(agent.wrapper().path)'; true"]
-            var environment = agent.environment(in: dir, paneID: paneID)
-            environment["WEIR_HOOK_HELPER"] = try #require(HookHelperFixture.helperURL).path
-            process.environment = IsolatedProcessEnvironment.make(environment)
-            try HookScriptHarness.feed(agent.payload("SessionStart"), to: process)
+            let output = try HookScriptHarness.feed(
+                agent.payload("SessionStart"),
+                to: fakeAgent,
+                arguments: ["-c", "/bin/sh '\(agent.wrapper().path)'; true"],
+                environment: IsolatedProcessEnvironment.make(environment)
+            )
 
             let url = try dir.appendingPathComponent("states/" + AgentRecordFixtures.recordFileName(paneID))
             let record = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
-            #expect(record?["pid"] as? String == String(process.processIdentifier))
+            #expect(record?["pid"] as? String == String(output.pid))
         }
     }
 
@@ -286,23 +287,19 @@ struct HookScriptTests {
     @Test("fails loudly when the helper is missing", arguments: HookAgent.allCases)
     func wrapper_withoutHelper_failsLoudly(agent: HookAgent) throws {
         try withTempDir { dir in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = try [agent.wrapper().path]
-            process.environment = IsolatedProcessEnvironment.make([
-                "PATH": ShimHarness.systemPath,
-                "HOME": dir.path,
-                "WEIR_HOOK_HELPER": dir.appendingPathComponent("AgentIntegrationHookHelper").path,
-                "WEIR_PANE_ID": UUID().uuidString
-            ])
-            // A file rather than a pipe, so the wrapper never blocks on a
-            // full pipe while we wait for it to exit.
-            let stderrURL = dir.appendingPathComponent("stderr")
-            FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
-            process.standardError = try FileHandle(forWritingTo: stderrURL)
-            try HookScriptHarness.feed(agent.payload("SessionStart"), to: process)
-            #expect(process.terminationStatus == 1)
-            #expect(try String(contentsOf: stderrURL, encoding: .utf8).contains("Hook Helper is missing"))
+            let output = try HookScriptHarness.feed(
+                agent.payload("SessionStart"),
+                to: URL(fileURLWithPath: "/bin/sh"),
+                arguments: [agent.wrapper().path],
+                environment: IsolatedProcessEnvironment.make([
+                    "PATH": ShimHarness.systemPath,
+                    "HOME": dir.path,
+                    "WEIR_HOOK_HELPER": dir.appendingPathComponent("AgentIntegrationHookHelper").path,
+                    "WEIR_PANE_ID": UUID().uuidString
+                ])
+            )
+            #expect(output.status == 1)
+            #expect(output.stderrText.contains("Hook Helper is missing"))
         }
     }
 
@@ -424,41 +421,22 @@ struct HookScriptTests {
 
     // MARK: - Helpers
 
+    /// The status `git` exits with in `directory`, for a test that asks only
+    /// that. Synchronous, so it can run in the harness's `afterEach`; a run past
+    /// its deadline throws.
     private func gitExitStatus(_ arguments: [String], in directory: URL) throws -> Int32 {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["-C", directory.path] + arguments
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        #expect(process.waitUntilExit(within: 10))
-        return process.terminationStatus
+        try GitProcess.runSync(arguments, cwd: directory).exitCode
     }
 
     /// The tree `git add -A` would write for `repository`, built on a copy of
     /// its index so the real one is left untouched.
-    private func scratchTree(in repository: URL) throws -> String {
-        try withTempDir { directory in
+    private func scratchTree(in repository: URL) async throws -> String {
+        try await withTempDir { directory in
             let index = directory.appendingPathComponent("index")
             try FileManager.default.copyItem(at: repository.appendingPathComponent(".git/index"), to: index)
-            let environment = ProcessInfo.processInfo.environment.merging(
-                ["GIT_INDEX_FILE": index.path, "GIT_OPTIONAL_LOCKS": "0"]
-            ) { _, new in new }
-            var tree = ""
-            for arguments in [["add", "-A"], ["write-tree"]] {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-                process.arguments = ["-C", repository.path] + arguments
-                process.environment = environment
-                let output = directory.appendingPathComponent("out")
-                FileManager.default.createFile(atPath: output.path, contents: nil)
-                process.standardOutput = try FileHandle(forWritingTo: output)
-                try process.run()
-                #expect(process.waitUntilExit(within: 10))
-                #expect(process.terminationStatus == 0)
-                tree = try String(contentsOf: output, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            return tree
+            let environment = ["GIT_INDEX_FILE": index.path, "GIT_OPTIONAL_LOCKS": "0"]
+            try await TempGitRepo.git(["add", "-A"], in: repository, environment: environment)
+            return try await TempGitRepo.git(["write-tree"], in: repository, environment: environment)
         }
     }
 

@@ -51,6 +51,25 @@ enum RestoreJournalFixture {
         return try JSONDecoder().decode(RestoreJournal.self, from: Data(json.utf8))
     }
 
+    /// A restore journal whose stage is `stageJSON`. By default it is the
+    /// restore `OP` of turn 5 of conversation `s1`, dated as the restore suites
+    /// date their turns and run when it was written. The suites that check what
+    /// a restore shows and keeps start from it, each passing only the field its
+    /// test is about.
+    static func restore(
+        _ stageJSON: String,
+        opID: String = "OP",
+        turnID: String = "s1-T5",
+        number: Int? = 5,
+        at: String = "2026-10-12T00:07:30Z",
+        ranAt: String? = nil
+    ) throws -> RestoreJournal {
+        try make(
+            stageJSON: stageJSON,
+            fields: Fields(opID: opID, turnID: turnID, turnNumber: number, at: at, ranAt: ranAt)
+        )
+    }
+
     /// Returns `value` as an escaped JSON string, so a root or an ID with a
     /// quote in it still makes a journal rather than a decoding error. A string
     /// always encodes; the empty fallback only satisfies the type.

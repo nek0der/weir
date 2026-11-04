@@ -12,23 +12,27 @@ struct AntigravityShimTests {
         try AgentCatalogFixture.shimFolder("antigravity-plugin")
     }
 
-    /// Runs the shim with `home` as the home folder and a stub for `agy` that
-    /// writes its arguments and environment beside itself.
-    private func runShim(root: URL, home: URL, args: [String] = [], states: String = "/tmp/states") throws -> Process {
-        let stub = root.appendingPathComponent("real-agy")
-        try AgentCatalogFixture.makeExecutable(
-            stub,
-            script: "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"\(root.path)/args\"\nenv > \"\(root.path)/env\"\n"
-        )
+    /// Runs the shim with `home` as the home folder and a recording stub for
+    /// `agy`, which writes its arguments and environment beside itself. The
+    /// states folder is `states` when given (an empty string stands for a demo
+    /// pane, which has none) and the test's own otherwise.
+    private func runShim(
+        root: URL,
+        home: URL,
+        args: [String] = [],
+        states: String? = nil,
+        environment: [String: String] = [:]
+    ) throws -> Process {
+        let stub = try ShimHarness.recordingStub(named: "real-agy", in: root)
         return try ShimHarness.run(
             AgentCatalogFixture.shim(for: .antigravity),
             args,
-            environment: [
+            environment: ShimHarness.environment(in: root, merging: [
                 "HOME": home.path,
                 "PATH": "/usr/bin:/bin",
                 "WEIR_REAL_ANTIGRAVITY": stub.path,
-                "WEIR_ANTIGRAVITY_AGENT_STATES_DIR": states
-            ],
+                "WEIR_ANTIGRAVITY_AGENT_STATES_DIR": states ?? root.appendingPathComponent("states").path
+            ].merging(environment) { _, new in new }),
             currentDirectory: root
         )
     }
@@ -39,7 +43,7 @@ struct AntigravityShimTests {
         root: URL,
         home: URL,
         args: [String],
-        states: String = "/tmp/states"
+        states: String? = nil
     ) throws -> [String: Any]? {
         let report = root.appendingPathComponent("report")
         let helper = root.appendingPathComponent("helper")
@@ -47,26 +51,12 @@ struct AntigravityShimTests {
             helper,
             script: "#!/bin/sh\n[ \"$1\" = hook ] && cat > \"\(report.path)\"\nexit 0\n"
         )
-        let stub = root.appendingPathComponent("real-agy")
-        try AgentCatalogFixture.makeExecutable(
-            stub,
-            script: "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"\(root.path)/args\"\n"
-        )
-        let process = try ShimHarness.run(
-            AgentCatalogFixture.shim(for: .antigravity),
-            args,
-            environment: [
-                "HOME": home.path,
-                "PATH": "/usr/bin:/bin",
-                "WEIR_HOOK_HELPER": helper.path,
-                "WEIR_REAL_ANTIGRAVITY": stub.path,
-                "WEIR_ANTIGRAVITY_AGENT_STATES_DIR": states
-            ],
-            currentDirectory: root
-        )
+        let process = try runShim(root: root, home: home, args: args, states: states, environment: [
+            "WEIR_HOOK_HELPER": helper.path
+        ])
         #expect(process.terminationStatus == 0)
         guard let data = try? Data(contentsOf: report) else { return nil }
-        return try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return try JSONObjectFixture.object(data)
     }
 
     private func dispatch(
@@ -74,20 +64,14 @@ struct AntigravityShimTests {
         input: String,
         environment: [String: String] = [:]
     ) throws -> (status: Int32, output: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = try [plugin().appendingPathComponent("scripts/weir-dispatch").path] + arguments
-        process.environment = ["PATH": "/usr/bin:/bin"].merging(environment) { _, new in new }
-        let stdin = Pipe()
-        let stdout = Pipe()
-        process.standardInput = stdin
-        process.standardOutput = stdout
-        try process.run()
-        stdin.fileHandleForWriting.write(Data(input.utf8))
-        try stdin.fileHandleForWriting.close()
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return try (process.terminationStatus, #require(String(bytes: data, encoding: .utf8)))
+        let output = try TestProcess.run(
+            URL(fileURLWithPath: "/bin/sh"),
+            arguments: [plugin().appendingPathComponent("scripts/weir-dispatch").path] + arguments,
+            environment: ["PATH": "/usr/bin:/bin"].merging(environment) { _, new in new },
+            stdin: Data(input.utf8)
+        )
+        #expect(output.ending == .exited, "the dispatcher did not exit within ten seconds")
+        return try (output.status, #require(String(bytes: output.stdout, encoding: .utf8)))
     }
 
     @Test func shim_placesThePlugin_inAgysFolder_andNamesTheHook() throws {

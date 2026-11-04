@@ -44,12 +44,12 @@ struct NewSessionSettingsTests {
     /// The fetch is on until turned off, and a file that never turned it
     /// off does not gain the key.
     @Test func theFetch_isOnByDefault_andWrittenOnlyOnceOff() throws {
-        let fresh = try WeirSettingsJSON.object(.default)
+        let fresh = try JSONObjectFixture.object(encoding: WeirSettings.default)
         #expect((fresh["newSession"] as? [String: Any])?["fetchesBeforeCreate"] == nil)
         #expect(WeirSettings.default.newSession.fetchesBeforeCreate)
         var off = WeirSettings.default
         off.newSession.fetchesBeforeCreate = false
-        let written = try WeirSettingsJSON.object(off)
+        let written = try JSONObjectFixture.object(encoding: off)
         #expect((written["newSession"] as? [String: Any])?["fetchesBeforeCreate"] as? Bool == false)
         #expect(try !WeirSettingsJSON.decode(written).newSession.fetchesBeforeCreate)
     }
@@ -58,7 +58,7 @@ struct NewSessionSettingsTests {
     /// start from, and written back untouched, so going back a build finds
     /// it as it left it.
     @Test func anEarlierBuildsAgentAndLocation_areKept_asTheyWereWritten() throws {
-        var object = try WeirSettingsJSON.object(.default)
+        var object = try JSONObjectFixture.object(encoding: WeirSettings.default)
         object["newSession"] = ["lastAgent": "codex", "projects": ["/tmp/work/app": ["agent": "claude", "location": "projectFolder"]]]
         var settings = try WeirSettingsJSON.decode(object)
         #expect(settings.newSession.rememberedOpen(forProjectAt: Self.app) == [nil, nil, "claude", "codex"])
@@ -67,7 +67,7 @@ struct NewSessionSettingsTests {
             forProjectAt: Self.app
         )
         #expect(settings.newSession.rememberedOpen(forProjectAt: Self.app) == ["nothing", "nothing", "claude", "codex"])
-        let written = try WeirSettingsJSON.object(settings)
+        let written = try JSONObjectFixture.object(encoding: settings)
         let newSession = written["newSession"] as? [String: Any]
         #expect(newSession?["lastAgent"] as? String == "codex")
         let project = (newSession?["projects"] as? [String: Any])?["/tmp/work/app"] as? [String: Any]
@@ -77,7 +77,7 @@ struct NewSessionSettingsTests {
     }
 
     @Test func aProjectsChoicesThatDoNotRead_dropOnlyThemselves() throws {
-        var object = try WeirSettingsJSON.object(.default)
+        var object = try JSONObjectFixture.object(encoding: WeirSettings.default)
         object["newSession"] = [
             "lastOpen": "codex",
             "projects": [
@@ -95,12 +95,12 @@ struct NewSessionSettingsTests {
     /// keys it added are kept; what this build opens with is
     /// `WorktreeOpenChoice.initial`'s call.
     @Test func aLaterBuildsChoice_andKeys_areKept() throws {
-        var object = try WeirSettingsJSON.object(.default)
+        var object = try JSONObjectFixture.object(encoding: WeirSettings.default)
         object["newSession"] = ["lastOpen": "gemini", "laterTop": true, "projects": ["/tmp/app": ["open": "gemini", "laterKey": 1]]]
         let later = try WeirSettingsJSON.decode(object).newSession
         #expect(later.lastOpen == "gemini")
         #expect(later.projects["/tmp/app"]?.open == "gemini")
-        let written = try WeirSettingsJSON.object(WeirSettingsJSON.decode(object))
+        let written = try JSONObjectFixture.object(encoding: WeirSettingsJSON.decode(object))
         let newSession = written["newSession"] as? [String: Any]
         #expect(newSession?["laterTop"] as? Bool == true)
         let projects = newSession?["projects"] as? [String: Any]

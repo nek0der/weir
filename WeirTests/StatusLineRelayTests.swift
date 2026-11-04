@@ -23,47 +23,24 @@ struct StatusLineRelayTests {
                     "seven_day":{"used_percentage":83,"resets_at":1793822400}}}
     """#.utf8)
 
-    /// What one helper run printed and how it exited.
-    private struct HelperRun {
-        let status: Int32
-        let stdout: Data
-    }
-
-    /// Runs the helper with `arguments`, `stdin` as its input, in `dir`. The
-    /// output is a line or two, well inside a pipe's buffer, so it is read
-    /// once the helper has exited.
+    /// Runs the helper with `arguments`, `stdin` as its input, in `dir`.
     private func runHelper(
         _ arguments: [String],
         stdin: Data,
         environment: [String: String],
         in dir: URL
-    ) throws -> HelperRun {
-        let inputFile = dir.appendingPathComponent("stdin.json")
-        try stdin.write(to: inputFile)
-        let process = Process()
-        process.executableURL = HookHelperFixture.helperURL
-        process.arguments = arguments
-        process.environment = environment
-        process.currentDirectoryURL = dir
-        process.standardInput = try FileHandle(forReadingFrom: inputFile)
-        let output = Pipe()
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        #expect(process.waitUntilExit(within: 10), "the helper did not exit within ten seconds")
-        try? output.fileHandleForWriting.close()
-        let stdout = (try? output.fileHandleForReading.readToEnd()) ?? Data()
-        return HelperRun(status: process.terminationStatus, stdout: stdout)
+    ) throws -> TestProcess.Output {
+        let helper = try #require(HookHelperFixture.helperURL)
+        let output = try TestProcess.run(helper, arguments: arguments, environment: environment, stdin: stdin, cwd: dir)
+        #expect(output.ending == .exited, "the helper did not exit within ten seconds")
+        return output
     }
 
     private func environment(in dir: URL) -> [String: String] {
-        [
-            "PATH": ShimHarness.systemPath,
-            "HOME": dir.path,
-            "TMPDIR": dir.path,
+        ShimHarness.environment(in: dir, merging: [
             "CLAUDE_CONFIG_DIR": dir.appendingPathComponent("config").path,
             "WEIR_USAGE_DIR": dir.appendingPathComponent("usage").path
-        ]
+        ])
     }
 
     private func writeUserSettings(_ settings: [String: Any], in dir: URL) throws {

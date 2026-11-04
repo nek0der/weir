@@ -28,14 +28,10 @@ struct ProjectWorktreeRoutingStorageTests {
         return try JSONSerialization.data(withJSONObject: object)
     }
 
-    private static func object(_ project: Project) throws -> [String: Any] {
-        try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(project)) as? [String: Any])
-    }
-
     /// The routing an earlier build reads from `data`: each legacy key, or
     /// on when it is absent, as its decoder had it.
     private static func legacyReading(_ data: Data) throws -> [AgentKind: Bool] {
-        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let object = try JSONObjectFixture.object(data)
         return Dictionary(uniqueKeysWithValues: legacyKeys.map { ($0.kind, object[$0.key] as? Bool ?? true) })
     }
 
@@ -83,7 +79,7 @@ struct ProjectWorktreeRoutingStorageTests {
         #expect(!project.routesWorktrees(for: .claude))
         #expect(project.routesWorktrees(for: .codex))
         #expect(project.routesWorktrees(for: .antigravity))
-        let routing = try #require(Self.object(project)["worktreeRouting"] as? [String: Bool])
+        let routing = try #require(JSONObjectFixture.object(encoding: project)["worktreeRouting"] as? [String: Bool])
         #expect(routing == ["claude": false, "kiro": false])
     }
 
@@ -107,7 +103,7 @@ struct ProjectWorktreeRoutingStorageTests {
         #expect(project.routesWorktrees(for: .claude))
         #expect(project.routesWorktrees(for: .codex))
         #expect(!project.routesWorktrees(for: .antigravity))
-        #expect(try Self.object(project)["worktreeRouting"] as? [String: Bool] == ["antigravity": false])
+        #expect(try JSONObjectFixture.object(encoding: project)["worktreeRouting"] as? [String: Bool] == ["antigravity": false])
     }
 
     /// A build from before the map changes a legacy key and carries the map
@@ -156,7 +152,7 @@ struct ProjectWorktreeRoutingStorageTests {
     /// The three legacy keys are always written, on or off, beside the map,
     /// so an earlier build never falls back to its default for one.
     @Test func theLegacyKeys_areAlwaysWritten() throws {
-        let object = try Self.object(Project(name: "Test", rootURL: URL(fileURLWithPath: "/tmp/test")))
+        let object = try JSONObjectFixture.object(encoding: Project(name: "Test", rootURL: URL(fileURLWithPath: "/tmp/test")))
         for (_, key) in Self.legacyKeys {
             #expect(object[key] as? Bool == true, "\(key)")
         }

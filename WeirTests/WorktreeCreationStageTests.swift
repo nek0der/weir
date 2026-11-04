@@ -102,34 +102,34 @@ struct WorktreeCreationStageTests {
     }
 
     @Test func retryAfterSetupFailure_doesNotCreateSecondWorktree() async throws {
-        let marker = WorktreeFixture.freshPath()
-        defer { try? FileManager.default.removeItem(at: marker) }
-        let (session, project) = Self.session(bootstrap: [
-            .shorthand("echo first"),
-            .shorthand("test -f '\(marker.path)' || { echo 'missing marker' >&2; exit 3; }")
-        ])
-        let git = FakeGit()
-        git.createsDirectoryOnSuccess = true
-        let path = WorktreeFixture.freshPath()
-        defer { try? FileManager.default.removeItem(at: path) }
+        try await withTempDir { dir in
+            let marker = dir.appendingPathComponent("marker")
+            let (session, project) = Self.session(bootstrap: [
+                .shorthand("echo first"),
+                .shorthand("test -f '\(marker.path)' || { echo 'missing marker' >&2; exit 3; }")
+            ])
+            let git = FakeGit()
+            git.createsDirectoryOnSuccess = true
+            let path = dir.appendingPathComponent("worktree")
 
-        // The worktree stage ends with the row; the setup is the next one.
-        let worktree = try await session.createGitWorktree(
-            projectID: project.id, path: path, baseBranch: "main", newBranchName: "feat/x", openTab: false, git: git
-        )
-        let error = await Self.failure {
-            try await session.runSetup(projectID: project.id, worktreeID: worktree.id, path: { Self.path })
+            // The worktree stage ends with the row; the setup is the next one.
+            let worktree = try await session.createGitWorktree(
+                projectID: project.id, path: path, baseBranch: "main", newBranchName: "feat/x", openTab: false, git: git
+            )
+            let error = await Self.failure {
+                try await session.runSetup(projectID: project.id, worktreeID: worktree.id, path: { Self.path })
+            }
+            #expect(error?.stage == .setup(stepIndex: 1))
+            #expect(error?.logTail == "missing marker")
+            #expect(session.project(project.id)?.worktrees.map(\.id) == [worktree.id])
+
+            FileManager.default.createFile(atPath: marker.path, contents: nil)
+            try await session.runSetup(projectID: project.id, worktreeID: worktree.id, from: 1, path: { Self.path })
+            #expect(git.createCalls.count == 1)
+            #expect(session.project(project.id)?.worktrees.count == 1)
+            // Past the last command there is nothing to run.
+            try await session.runSetup(projectID: project.id, worktreeID: worktree.id, from: 5, path: { Self.path })
         }
-        #expect(error?.stage == .setup(stepIndex: 1))
-        #expect(error?.logTail == "missing marker")
-        #expect(session.project(project.id)?.worktrees.map(\.id) == [worktree.id])
-
-        FileManager.default.createFile(atPath: marker.path, contents: nil)
-        try await session.runSetup(projectID: project.id, worktreeID: worktree.id, from: 1, path: { Self.path })
-        #expect(git.createCalls.count == 1)
-        #expect(session.project(project.id)?.worktrees.count == 1)
-        // Past the last command there is nothing to run.
-        try await session.runSetup(projectID: project.id, worktreeID: worktree.id, from: 5, path: { Self.path })
     }
 
     @Test func aBranchNameGitWouldReadAsAnOption_isRefused_beforeGitRuns() async {

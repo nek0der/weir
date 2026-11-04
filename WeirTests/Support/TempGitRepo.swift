@@ -1,6 +1,6 @@
 // TempGitRepo.swift
-// Weir — disposable git repository under `tmp`, seeded with one empty
-// commit so `git` subcommands have a valid HEAD to compare against.
+// Weir — disposable Git repository in a scratch folder of its own, seeded
+// with one empty commit, and the way a test runs Git and writes files in it.
 
 import Foundation
 import Testing
@@ -84,20 +84,58 @@ struct TempGitRepo {
     }
 
     /// Runs `git` in `directory`, throwing what it said if it failed, and
-    /// answers its output without the trailing newline.
+    /// answers its output without the trailing newline. `environment` is
+    /// laid over the test host's environment the way `GitProcess.run` lays it
+    /// over the app's: without the variables that name a repository, in the C
+    /// locale.
+    ///
+    /// This is the way a test sets up a repository: with the Git binary and
+    /// the environment the app itself uses, never ignoring a failure, which
+    /// would leave the test checking a repository it did not set up.
     @discardableResult
-    static func git(_ arguments: [String], in directory: URL) async throws -> String {
-        let result = try await GitProcess.run(arguments, cwd: directory)
+    static func git(
+        _ arguments: [String],
+        in directory: URL,
+        environment: [String: String] = [:]
+    ) async throws -> String {
+        let result = try await GitProcess.run(arguments, cwd: directory, environment: environment)
         guard result.succeeded else {
             throw GitFailure(arguments: arguments, stderr: result.stderr)
         }
         return result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Runs `git` in this repository; see `git(_:in:)`.
+    /// Runs `git` in this repository; see `git(_:in:environment:)`.
     @discardableResult
     func git(_ arguments: [String]) async throws -> String {
         try await Self.git(arguments, in: url)
+    }
+
+    /// Stages `paths` in `directory` and commits them as `message`.
+    static func commit(_ message: String, paths: [String] = ["."], in directory: URL) async throws {
+        try await git(["add", "--"] + paths, in: directory)
+        try await git(["commit", "-q", "-m", message], in: directory)
+    }
+
+    /// Stages `paths` in this repository and commits them as `message`.
+    func commit(_ message: String, paths: [String] = ["."]) async throws {
+        try await Self.commit(message, paths: paths, in: url)
+    }
+
+    /// Writes `text` to `path` in this repository, making the folders on the
+    /// way; see `ScratchFile`.
+    func write(_ text: String, to path: String) throws {
+        try ScratchFile.write(text, to: path, in: url)
+    }
+
+    /// Writes `data` to `path` in this repository, making the folders on the way.
+    func write(_ data: Data, to path: String) throws {
+        try ScratchFile.write(data, to: path, in: url)
+    }
+
+    /// What `path` in this repository holds, as UTF-8 text.
+    func read(_ path: String) throws -> String {
+        try ScratchFile.read(path, in: url)
     }
 
     /// Adds a linked worktree on a new `branch`, beside the repository, and

@@ -99,17 +99,13 @@ struct ProjectViewTests {
         )
     }
 
-    private static func json(_ snapshot: SessionSnapshot) throws -> [String: Any] {
-        try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
-    }
-
     // MARK: - Saved and read back
 
     @Test func aProjectsView_roundTripsThroughTheSnapshot() throws {
         let fixture = Fixture()
         fixture.session.projectViews[fixture.left.id] = fixture.leftView
 
-        let json = try Self.json(fixture.session.makeSnapshot())
+        let json = try JSONObjectFixture.object(encoding: fixture.session.makeSnapshot())
         let restored = try fixture.relaunched()
 
         #expect(json["version"] as? Int == 6)
@@ -120,7 +116,7 @@ struct ProjectViewTests {
     @Test func aSnapshotWithoutProjectViews_readsAsNoMemory() throws {
         let fixture = Fixture()
         fixture.session.projectViews[fixture.left.id] = fixture.leftView
-        var json = try Self.json(fixture.session.makeSnapshot())
+        var json = try JSONObjectFixture.object(encoding: fixture.session.makeSnapshot())
         // A v6 file a build before the views wrote.
         json.removeValue(forKey: "projectViews")
         let data = try JSONSerialization.data(withJSONObject: json)
@@ -155,7 +151,7 @@ struct ProjectViewTests {
         let fixture = Fixture()
         let third = fixture.addProject("third")
         fixture.session.projectViews[fixture.left.id] = fixture.leftView
-        var json = try Self.json(fixture.session.makeSnapshot())
+        var json = try JSONObjectFixture.object(encoding: fixture.session.makeSnapshot())
         let views = try #require(json["projectViews"] as? [Any])
         // One whose width is not a number, and one with no project.
         let unreadable: [Any] = [
@@ -239,7 +235,7 @@ struct ProjectViewTests {
         // A window left `left` on a group's tab, written by a build that
         // could still make one after groups became scratch tabs.
         let group: [String: Any] = ["group": ["_0": UUID().uuidString]]
-        var json = try Self.json(snapshot)
+        var json = try JSONObjectFixture.object(encoding: snapshot)
         var tabs = try #require(json["tabs"] as? [String: Any])
         var tab = try #require(tabs[groupTab.id.uuidString] as? [String: Any])
         tab["container"] = group
@@ -423,7 +419,7 @@ struct ProjectViewTests {
 
     @Test func aViewNamingNoContainer_opensItsProjectsLastSession() throws {
         let fixture = Fixture()
-        var json = try Self.json(fixture.session.makeSnapshot())
+        var json = try JSONObjectFixture.object(encoding: fixture.session.makeSnapshot())
         json["projectViews"] = [["projectID": fixture.left.id.uuidString]]
 
         let restored = try Fixture.relaunch(JSONSerialization.data(withJSONObject: json))
@@ -463,7 +459,7 @@ struct ProjectViewTests {
         fixture.session.primarySelection.sidebarWidth = 280
         fixture.session.primarySelection.isChangesPanelPresented = true
         fixture.session.primarySelection.changesPanelWidth = 360
-        var json = try Self.json(fixture.session.makeSnapshot())
+        var json = try JSONObjectFixture.object(encoding: fixture.session.makeSnapshot())
         // As the build before wrote a view: the chrome it laid windows out by.
         json["projectViews"] = [[
             "projectID": fixture.left.id.uuidString,
@@ -499,7 +495,7 @@ struct ProjectViewTests {
         selection.changesPanelWidth = 360
 
         fixture.session.showProject(fixture.left.id, in: fixture.session.primaryWindowID, intent: .person, reason: .person)
-        let json = try Self.json(fixture.session.makeSnapshot())
+        let json = try JSONObjectFixture.object(encoding: fixture.session.makeSnapshot())
 
         // The view of the project left, as the build before reads it.
         let views = try #require(json["projectViews"] as? [[String: Any]])

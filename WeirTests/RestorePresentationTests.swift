@@ -167,36 +167,24 @@ struct RestorePresentationTests {
 
     // MARK: - How it ended
 
-    private static func journal(
-        _ stage: String,
-        number: Int = 5,
-        turnID: String = "s1-T5",
-        at: String = "2026-10-12T00:07:30Z",
-        ranAt: String? = nil
-    ) throws -> RestoreJournal {
-        try RestoreJournalFixture.make(
-            stageJSON: stage,
-            fields: .init(turnID: turnID, turnNumber: number, at: at, ranAt: ranAt)
-        )
-    }
-
     @Test func eachOutcome_endsAsTheAppTakesIt() throws {
-        let applied = try Self.journal(#"{"kind":"applied"}"#)
+        let applied = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#)
         #expect(RestoreEnding(.finished(applied)) == .applied(applied))
-        let partial = try Self.journal(#"{"kind":"partiallyApplied","reason":"externalChangeDetected","kept":["a"],"currentTree":"c"}"#)
+        let partial = try RestoreJournalFixture
+            .restore(#"{"kind":"partiallyApplied","reason":"externalChangeDetected","kept":["a"],"currentTree":"c"}"#)
         #expect(RestoreEnding(.finished(partial)) == .partial(partial, kept: ["a"], failed: []))
-        let edited = try Self.journal(#"{"kind":"aborted","reason":"externalChangeDetected"}"#)
+        let edited = try RestoreJournalFixture.restore(#"{"kind":"aborted","reason":"externalChangeDetected"}"#)
         #expect(RestoreEnding(.finished(edited)) == .canceled(.otherChanges))
-        let prompted = try Self.journal(#"{"kind":"aborted","reason":"agentStarted"}"#)
+        let prompted = try RestoreJournalFixture.restore(#"{"kind":"aborted","reason":"agentStarted"}"#)
         #expect(RestoreEnding(.finished(prompted)) == .canceled(.refused(.agentStarted)))
         #expect(RestoreEnding(.refused(.mergeInProgress)) == .canceled(.refused(.mergeInProgress)))
-        let elsewise = try Self.journal(#"{"kind":"aborted","reason":"someday"}"#)
+        let elsewise = try RestoreJournalFixture.restore(#"{"kind":"aborted","reason":"someday"}"#)
         #expect(RestoreEnding(.finished(elsewise)) == .canceled(.unknown))
         // Not known: nothing may say no file was changed.
         #expect(RestoreEnding(nil) == .unknown(opID: nil))
-        let writing = try Self.journal(#"{"kind":"writing"}"#)
+        let writing = try RestoreJournalFixture.restore(#"{"kind":"writing"}"#)
         #expect(RestoreEnding(.finished(writing)) == .unknown(opID: "OP"))
-        #expect(try RestoreEnding(.finished(Self.journal(#"{"kind":"someday"}"#))) == .unknown(opID: "OP"))
+        #expect(try RestoreEnding(.finished(RestoreJournalFixture.restore(#"{"kind":"someday"}"#))) == .unknown(opID: "OP"))
     }
 
     @Test func theStrip_saysWhetherFilesWereWritten() throws {
@@ -225,7 +213,7 @@ struct RestorePresentationTests {
         #expect(RestoreText.ended(.canceled(.refused(.renamedInPlace(["Name.txt"]))), locale: Self.japanese)
             == "復元を中止しました。このボリュームが同じ名前として扱う名前への変更（大文字と小文字だけの違いなど）があります：Name.txt。")
         // Whole, with a save moved aside: not called partial anywhere.
-        let whole = try Self.journal(#"{"kind":"partiallyApplied","reason":"keptAside","currentTree":"c","#
+        let whole = try RestoreJournalFixture.restore(#"{"kind":"partiallyApplied","reason":"keptAside","currentTree":"c","#
             + #""failed":[{"path":"a.txt","reason":"keptAside:.weir-OP/target/ready-1/a.txt"}]}"#)
         #expect(RestoreEnding(.finished(whole)) == .applied(whole))
         #expect(RestoreText.toast(
@@ -242,9 +230,9 @@ struct RestorePresentationTests {
     }
 
     @Test func theRecord_namesTheTurn_andSaysWhenOnlyPartIsThere() throws {
-        #expect(try RestoreText.record(Self.journal(#"{"kind":"applied"}"#), locale: Self.japanese) == "T5 の前に復元済み")
+        #expect(try RestoreText.record(RestoreJournalFixture.restore(#"{"kind":"applied"}"#), locale: Self.japanese) == "T5 の前に復元済み")
         let partial = #"{"kind":"partiallyApplied","reason":"interrupted","currentTree":"c"}"#
-        #expect(try RestoreText.record(Self.journal(partial), locale: Self.english) == "Partly restored to before T5")
+        #expect(try RestoreText.record(RestoreJournalFixture.restore(partial), locale: Self.english) == "Partly restored to before T5")
         let unnamed = try RestoreJournalFixture.make(stageJSON: #"{"kind":"applied"}"#, fields: .init(turnID: "T5", at: "x"))
         #expect(RestoreText.record(unnamed, locale: Self.japanese) == "コードを復元済み")
         #expect(RestoreText.recordHelp(locale: Self.english).hasPrefix("Only the working tree was restored."))
@@ -262,13 +250,13 @@ struct RestorePresentationTests {
     }
 
     @Test func theUndoResult_isKeptOnlyWhenTheUndoFellShort() throws {
-        let undone = try Self.journal(#"{"kind":"applied"}"#)
+        let undone = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#)
         #expect(RestoreCoordinator.UndoResult(.finished(undone)) == nil)
-        let partial = try Self.journal(#"{"kind":"partiallyApplied","reason":"writeFailed","currentTree":"c"}"#)
+        let partial = try RestoreJournalFixture.restore(#"{"kind":"partiallyApplied","reason":"writeFailed","currentTree":"c"}"#)
         #expect(RestoreCoordinator.UndoResult(.finished(partial)) == .partial(keptAside: []))
         // An undo that is whole with a save moved aside took the restore
         // back; a toast says where the save went.
-        let aside = try Self.journal(#"{"kind":"partiallyApplied","reason":"keptAside","currentTree":"c","#
+        let aside = try RestoreJournalFixture.restore(#"{"kind":"partiallyApplied","reason":"keptAside","currentTree":"c","#
             + #""failed":[{"path":"a.txt","reason":"keptAside:.weir-OP/target/ready-1/a.txt"}]}"#)
         #expect(RestoreCoordinator.UndoResult(.finished(aside)) == nil)
         #expect(RestoreText.keptAsideNews(.finished(aside), locale: Self.japanese)
@@ -281,10 +269,10 @@ struct RestorePresentationTests {
         // operation never does.
         #expect(RestoreCoordinator.UndoResult.refused(.agentActive(.claude)).mayChange)
         #expect(!RestoreCoordinator.UndoResult.refused(.notUndoable).mayChange)
-        let aborted = try Self.journal(#"{"kind":"aborted","reason":"externalChangeDetected"}"#)
+        let aborted = try RestoreJournalFixture.restore(#"{"kind":"aborted","reason":"externalChangeDetected"}"#)
         #expect(RestoreCoordinator.UndoResult(.finished(aborted)) == .canceled)
         #expect(RestoreCoordinator.UndoResult(.refused(.notUndoable)) == .refused(.notUndoable))
-        let writing = try Self.journal(#"{"kind":"writing"}"#)
+        let writing = try RestoreJournalFixture.restore(#"{"kind":"writing"}"#)
         #expect(RestoreCoordinator.UndoResult(.finished(writing)) == .unknown)
         #expect(RestoreCoordinator.UndoResult(nil) == .unknown)
         #expect(RestoreText.undoResult(.unknown, locale: Self.japanese).hasPrefix("復元の取り消しの結果を確認できませんでした。"))
@@ -310,7 +298,7 @@ struct RestorePresentationTests {
             TurnSummaryFixture.conversation: [Self.turn(4), Self.turn(5), Self.turn(6), Self.turn(9)],
             Self.other: [Self.turn(7, conversationID: "s2"), Self.turn(8, root: "/other", conversationID: "s2")]
         ]
-        let journal = try Self.journal(#"{"kind":"applied"}"#)
+        let journal = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#)
 
         let restored = RestoredTurns.of(journal, history: history, isRoot: Self.isRepo)
 
@@ -331,13 +319,13 @@ struct RestorePresentationTests {
             TurnSummaryFixture.conversation: [Self.turn(4), Self.turn(5), Self.turn(6), Self.turn(9)],
             Self.other: [Self.turn(7, conversationID: "s2")]
         ]
-        let applied = try Self.journal(#"{"kind":"applied"}"#)
+        let applied = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#)
         let isRoot: (String) -> (String) -> Bool = { root in { $0 == root } }
         #expect(RestoredTurns.isSuperseded(applied, history: history, isRoot: Self.isRepo))
 
         let ids = RestoredTurns.ids(journals: ["/repo": [applied]], history: history, isRoot: isRoot)
         #expect(Set(ids.map(\.rawValue)) == ["s1-T5", "s1-T6", "s2-T7"])
-        let undone = try Self.journal(#"{"kind":"undone","by":"U"}"#)
+        let undone = try RestoreJournalFixture.restore(#"{"kind":"undone","by":"U"}"#)
         #expect(RestoredTurns.ids(journals: ["/repo": [undone]], history: history, isRoot: isRoot).isEmpty)
     }
 
@@ -350,9 +338,10 @@ struct RestorePresentationTests {
             TurnSummaryFixture.conversation: [Self.turn(5), Self.turn(6)]
         ]
         let isRoot: (String) -> (String) -> Bool = { root in { $0 == root } }
-        let partial = try Self.journal(#"{"kind":"partiallyApplied","reason":"externalChangeDetected","kept":["a"],"currentTree":"c"}"#)
+        let partial = try RestoreJournalFixture
+            .restore(#"{"kind":"partiallyApplied","reason":"externalChangeDetected","kept":["a"],"currentTree":"c"}"#)
         #expect(RestoredTurns.ids(journals: ["/repo": [partial]], history: history, isRoot: isRoot).isEmpty)
-        let aside = try Self.journal(#"{"kind":"partiallyApplied","reason":"keptAside","currentTree":"c","#
+        let aside = try RestoreJournalFixture.restore(#"{"kind":"partiallyApplied","reason":"keptAside","currentTree":"c","#
             + #""failed":[{"path":"a.txt","reason":"keptAside:.weir-OP/target/ready-1/a.txt"}]}"#)
         #expect(aside.stage.isWhole)
         #expect(RestoredTurns.ids(journals: ["/repo": [aside]], history: history, isRoot: isRoot).count == 2)
@@ -363,7 +352,7 @@ struct RestorePresentationTests {
     /// (`RestoredTurns.began`): it is not taken back, and it ends the
     /// record. One a second earlier is the restore's.
     @Test func aTurnStartingInTheSecondTheRestoreRan_beganAfterIt() throws {
-        let journal = try Self.journal(#"{"kind":"applied"}"#, at: "2026-10-12T00:07:30Z")
+        let journal = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#, at: "2026-10-12T00:07:30Z")
         let justBefore = try [TurnSummaryFixture.conversation: [
             Self.turn(5),
             Self.turn(6, startedAt: "2026-10-12T00:07:29Z")
@@ -384,7 +373,7 @@ struct RestorePresentationTests {
     /// A journal whose time cannot be read ends no record, and takes back
     /// every turn from the one it went back to.
     @Test func aRestoreWithNoTimeKnown_isNeverSuperseded() throws {
-        let journal = try Self.journal(#"{"kind":"applied"}"#, at: "someday")
+        let journal = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#, at: "someday")
         let history = try [TurnSummaryFixture.conversation: [Self.turn(5), Self.turn(9)]]
         #expect(RestoredTurns.of(journal, history: history, isRoot: Self.isRepo).count == 2)
         #expect(!RestoredTurns.isSuperseded(journal, history: history, isRoot: Self.isRepo))
@@ -395,7 +384,7 @@ struct RestorePresentationTests {
     /// begun between the two began after the restore: its changes are not
     /// taken back, and it ends the record. One from before it still is.
     @Test func aTurnBegunBeforeRecoverySettledTheRestore_beganAfterIt() throws {
-        let journal = try Self.journal(#"{"kind":"applied"}"#, at: "2026-10-12T00:20:00Z", ranAt: "2026-10-12T00:07:30Z")
+        let journal = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#, at: "2026-10-12T00:20:00Z", ranAt: "2026-10-12T00:07:30Z")
         let history = try [TurnSummaryFixture.conversation: [Self.turn(5), Self.turn(6), Self.turn(9)]]
 
         #expect(Set(RestoredTurns.of(journal, history: history, isRoot: Self.isRepo).map(\.turnID.rawValue)) == ["s1-T5", "s1-T6"])
@@ -404,7 +393,7 @@ struct RestorePresentationTests {
 
     /// A journal from before `ranAt` is read by its `at`, as before.
     @Test func aJournalWithoutRanAt_ranWhenItWasWritten() throws {
-        let journal = try Self.journal(#"{"kind":"applied"}"#, at: "2026-10-12T00:20:00Z")
+        let journal = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#, at: "2026-10-12T00:20:00Z")
         #expect(journal.ranAt == "2026-10-12T00:20:00Z")
         let history = try [TurnSummaryFixture.conversation: [Self.turn(5), Self.turn(9)]]
         #expect(RestoredTurns.of(journal, history: history, isRoot: Self.isRepo).count == 2)
@@ -413,7 +402,7 @@ struct RestorePresentationTests {
 
     @Test func aRestoreWhoseTurnIsGone_tookBackNothingThatCanBeNamed() throws {
         let history = try [TurnSummaryFixture.conversation: [Self.turn(6)]]
-        let journal = try Self.journal(#"{"kind":"applied"}"#)
+        let journal = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#)
         #expect(RestoredTurns.of(journal, history: history, isRoot: Self.isRepo).isEmpty)
     }
 
@@ -424,8 +413,8 @@ struct RestorePresentationTests {
             TurnSummaryFixture.conversation: [Self.turn(4), Self.turn(5), Self.turn(6), Self.turn(9)],
             Self.other: [Self.turn(7, conversationID: "s2"), Self.turn(8, root: "/other", conversationID: "s2")]
         ]
-        let first = try Self.journal(#"{"kind":"applied"}"#)
-        let second = try Self.journal(#"{"kind":"applied"}"#, number: 4, turnID: "s1-T4", at: "2026-10-12T00:05:30Z")
+        let first = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#)
+        let second = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#, turnID: "s1-T4", number: 4, at: "2026-10-12T00:05:30Z")
         let isRoot: (String) -> (String) -> Bool = { root in { $0 == root } }
 
         let ids = RestoredTurns.ids(journals: ["/repo": [second, first]], history: history, isRoot: isRoot)
@@ -439,8 +428,8 @@ struct RestorePresentationTests {
     /// journals (an Undo, a new restore, the sweep), or the path spellings
     /// moved; otherwise the kept answer is read.
     @Test func theRestoredTurns_areWorkedOutAgain_onlyWhenASourceMoved() throws {
-        let applied = try Self.journal(#"{"kind":"applied"}"#)
-        let undone = try Self.journal(#"{"kind":"undone","by":"U"}"#)
+        let applied = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#)
+        let undone = try RestoreJournalFixture.restore(#"{"kind":"undone","by":"U"}"#)
         let key = RestoredTurnsMemo.Key(historyRevision: 1, journals: ["/repo": [applied]], pathGeneration: 0)
         var kept: RestoredTurnsMemo?
         var computed = 0

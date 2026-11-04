@@ -96,19 +96,27 @@ enum HookAgent: String, CaseIterable, Sendable, CustomTestStringConvertible {
 
 /// Runs a `HookAgent`'s wrapper with the bundled helper beside the test host.
 enum HookScriptHarness {
-    /// Feeds `payload` to `process` on stdin, then waits for it, at most ten
-    /// seconds, so a wrapper stuck on input fails its test instead of the run.
+    /// Runs `executable` with `payload` on stdin for at most ten seconds and
+    /// answers how it ended. The limit makes a wrapper stuck on input fail its
+    /// test rather than hang the run.
+    @discardableResult
     static func feed(
         _ payload: [String: Any],
-        to process: Process,
+        to executable: URL,
+        arguments: [String],
+        environment: [String: String],
+        cwd: URL? = nil,
         sourceLocation: SourceLocation = #_sourceLocation
-    ) throws {
-        let stdin = Pipe()
-        process.standardInput = stdin
-        try process.run()
-        try stdin.fileHandleForWriting.write(contentsOf: JSONSerialization.data(withJSONObject: payload))
-        try stdin.fileHandleForWriting.close()
-        #expect(process.waitUntilExit(within: 10), "the hook did not exit within ten seconds", sourceLocation: sourceLocation)
+    ) throws -> TestProcess.Output {
+        let output = try TestProcess.run(
+            executable,
+            arguments: arguments,
+            environment: environment,
+            stdin: JSONSerialization.data(withJSONObject: payload),
+            cwd: cwd
+        )
+        #expect(output.ending == .exited, "the hook did not exit within ten seconds", sourceLocation: sourceLocation)
+        return output
     }
 
     /// Replays `payloads` through `agent`'s wrapper against one pane, in
@@ -135,22 +143,24 @@ enum HookScriptHarness {
             let paneID = UUID().uuidString
             try prepare?(dir, states, paneID)
             for (eventIndex, payload) in payloads.enumerated() {
-                let process = Process()
-                process.executableURL = URL(fileURLWithPath: "/bin/sh")
-                process.arguments = [wrapper.path]
+                var environment = agent.environment(in: dir, paneID: paneID)
+                environment["WEIR_HOOK_HELPER"] = helper.path
+                environment.merge(extraEnvironment) { _, new in new }
                 // A payload without a `cwd` happened where the hook runs.
                 // That is this run's scratch folder, not the test host's
                 // own directory, so such an event can never snapshot a
                 // repository the test did not make.
-                process.currentDirectoryURL = dir
-                var environment = agent.environment(in: dir, paneID: paneID)
-                environment["WEIR_HOOK_HELPER"] = helper.path
-                environment.merge(extraEnvironment) { _, new in new }
-                process.environment = IsolatedProcessEnvironment.make(environment)
-                try feed(payload, to: process, sourceLocation: sourceLocation)
+                let output = try feed(
+                    payload,
+                    to: URL(fileURLWithPath: "/bin/sh"),
+                    arguments: [wrapper.path],
+                    environment: IsolatedProcessEnvironment.make(environment),
+                    cwd: dir,
+                    sourceLocation: sourceLocation
+                )
                 // The helper exits 0 whatever happens, so that a broken hook
                 // never blocks the agent from running.
-                #expect(process.terminationStatus == 0, sourceLocation: sourceLocation)
+                #expect(output.status == 0, sourceLocation: sourceLocation)
                 try afterEach?(dir, states, paneID, eventIndex)
             }
             let recordID = extraEnvironment["WEIR_AGENT_RUN_ID"] ?? paneID

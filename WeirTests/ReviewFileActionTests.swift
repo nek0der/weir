@@ -23,15 +23,16 @@ struct ReviewFileActionTests {
 
     @Test("A traversal or symlink outside the repository is rejected")
     func fileURL_outsideRepositoryOrSymlinkEscape_isRejected() throws {
-        try withTempDir { root in
-            let outside = root.deletingLastPathComponent()
-                .appendingPathComponent("review-file-action-outside-\(UUID().uuidString)")
+        // The repository and the file outside it share one scratch folder,
+        // so the file outside goes with it.
+        try withTempDir { scratch in
+            let root = scratch.appendingPathComponent("repository")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let outside = scratch.appendingPathComponent("outside.swift")
             try Data("outside".utf8).write(to: outside)
-            defer { try? FileManager.default.removeItem(at: outside) }
 
             let link = root.appendingPathComponent("escape.swift")
             try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
-            defer { try? FileManager.default.removeItem(at: link) }
 
             #expect(ReviewFileAction.fileURL(for: "../\(outside.lastPathComponent)", in: root) == nil)
             #expect(ReviewFileAction.fileURL(for: outside.path, in: root) == nil)

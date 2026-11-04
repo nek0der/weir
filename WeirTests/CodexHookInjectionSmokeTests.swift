@@ -26,18 +26,14 @@ private func loginShellSearchPath(environment: [String: String]) -> String? {
         ? requestedShell
         : fallbackShell
     let marker = "__WEIR_PATH__"
-    let output = Pipe()
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: shell)
-    process.arguments = ["-lic", "printf '\\n\(marker)%s\\n' \"$PATH\""]
-    process.environment = environment
-    process.standardOutput = output
-    process.standardError = FileHandle.nullDevice
-    guard (try? process.run()) != nil, process.waitUntilExit(within: 10) else { return nil }
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    guard process.terminationStatus == 0,
-          let text = String(data: data, encoding: .utf8),
-          let line = text.split(separator: "\n").last(where: { $0.hasPrefix(marker) })
+    guard let output = try? TestProcess.run(
+        URL(fileURLWithPath: shell),
+        arguments: ["-lic", "printf '\\n\(marker)%s\\n' \"$PATH\""],
+        environment: environment
+    ),
+        output.ending == .exited,
+        output.status == 0,
+        let line = output.stdoutText.split(separator: "\n").last(where: { $0.hasPrefix(marker) })
     else { return nil }
     return String(line.dropFirst(marker.count))
 }
