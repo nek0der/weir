@@ -35,7 +35,9 @@ enum WeirWindowRole {
     }
 
     /// `objc_setAssociatedObject` needs a stable raw key. A static let keeps
-    /// the address fixed for the process lifetime.
+    /// the address fixed for the process lifetime. The main actor owns the
+    /// keys, as it owns the windows they tag.
+    @MainActor
     fileprivate var associatedKey: UnsafeRawPointer {
         switch self {
         case .main: Self.mainKey
@@ -43,9 +45,9 @@ enum WeirWindowRole {
         }
     }
 
-    private nonisolated(unsafe) static let mainKey = makeKey()
-    private nonisolated(unsafe) static let settingsKey = makeKey()
-    fileprivate nonisolated(unsafe) static let updateControlKey = makeKey()
+    @MainActor private static let mainKey = makeKey()
+    @MainActor private static let settingsKey = makeKey()
+    @MainActor fileprivate static let updateControlKey = makeKey()
 
     private static func makeKey() -> UnsafeRawPointer {
         let p = UnsafeMutablePointer<UInt8>.allocate(capacity: 1)

@@ -22,7 +22,7 @@ final class WeirAppDelegate: NSObject, NSApplicationDelegate {
     /// allow quit" so a partially-initialized launch can still
     /// terminate (e.g. AppState boot failed before reaching its
     /// registration line).
-    nonisolated(unsafe) static var quitGate: (@MainActor () -> Bool)?
+    static var quitGate: (@MainActor () -> Bool)?
 
     /// Run once launching finishes: the presenter shows the windows the
     /// session restored (`AppState.presentSupervisionWindows`). `nil` only

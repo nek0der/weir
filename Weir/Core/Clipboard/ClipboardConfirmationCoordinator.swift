@@ -238,11 +238,10 @@ struct PendingClipboardRequest: Identifiable {
 @Observable
 final class ClipboardConfirmationCoordinator {
     /// Process-wide singleton. Set by `AppState.init` before any
-    /// libghostty callback can fire. We use a `nonisolated(unsafe)`
-    /// reference because the `confirm_read_clipboard_cb` lands on a
-    /// background thread and only re-enters the main actor after
-    /// reading this pointer.
-    nonisolated(unsafe) static var shared: ClipboardConfirmationCoordinator?
+    /// libghostty callback can fire. The main actor owns it: the
+    /// clipboard callbacks may land on a background thread, so they read
+    /// it only after their hop to the main actor.
+    static var shared: ClipboardConfirmationCoordinator?
 
     var pending: PendingClipboardRequest?
 

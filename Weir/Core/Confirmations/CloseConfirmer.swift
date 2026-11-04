@@ -50,7 +50,7 @@ enum CloseConfirmer {
     /// modal loop of its own; it comes at once when no confirmation is
     /// needed. `nil` (no gate registered) means "allow" so a partially-
     /// initialized launch can still tear surfaces down.
-    nonisolated(unsafe) static var gate: (@MainActor (Request, @escaping @MainActor (Bool) -> Void) -> Void)?
+    static var gate: (@MainActor (Request, @escaping @MainActor (Bool) -> Void) -> Void)?
 
     /// Runs `proceed` once the close is allowed: at once when the gate
     /// asks nothing, after the person's answer when it asks, never when

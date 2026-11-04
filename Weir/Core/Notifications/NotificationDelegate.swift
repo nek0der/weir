@@ -8,28 +8,26 @@ import WeirDomain
 @MainActor
 final class WeirNotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     /// Registry lookup the delegate uses to resolve `userInfo["paneID"]`
-    /// to the corresponding `SurfaceView`. Set by `AppState.init` —
-    /// the delegate's `willPresent` callback runs synchronously on a
-    /// system queue, so it can't reach back into AppState through the
-    /// SwiftUI environment.
-    nonisolated(unsafe) static var registry: (any PaneSurfaceProviding)?
+    /// to the corresponding `SurfaceView`. Set by `AppState.init`. The
+    /// main actor owns it: the UN callbacks may arrive on a system queue,
+    /// so they read it only after their hop to the main actor.
+    static var registry: (any PaneSurfaceProviding)?
 
     /// Tap-handler closure invoked from `didReceive` with the full
     /// routing payload the notification's `userInfo` carried —
     /// AppState walks `runtimeID → paneID → tabID → containerID` so a
     /// tmux runtime follows its current attachment and a stale record still
-    /// lands on the persisted fallback. Same `nonisolated(unsafe)` rationale
-    /// as `registry`.
-    nonisolated(unsafe) static var onTap: (@MainActor @Sendable (NotificationTapPayload) -> Void)?
+    /// lands on the persisted fallback. Main-actor owned, as `registry` is.
+    static var onTap: (@MainActor @Sendable (NotificationTapPayload) -> Void)?
 
     /// Whether the person can see where an agent's notification came from:
     /// any pane its runtime shows in, tmux attachments included,
     /// or else the pane the banner names. Decides an agent's banner: none
     /// while its source is in sight, whichever pane has the keyboard. Set
     /// by the app layer, which knows the windows. Nil until then, when the
-    /// focus test decides as it does for command notifications. Same
-    /// `nonisolated(unsafe)` rationale as `registry`.
-    nonisolated(unsafe) static var isSourceSeen: (@MainActor (_ paneID: UUID?, _ runtimeID: String?) -> Bool)?
+    /// focus test decides as it does for command notifications.
+    /// Main-actor owned, as `registry` is.
+    static var isSourceSeen: (@MainActor (_ paneID: UUID?, _ runtimeID: String?) -> Bool)?
 
     /// Brings the app forward. The app layer's, as it takes AppKit.
     private let activateApp: @MainActor () -> Void
@@ -67,18 +65,23 @@ final class WeirNotificationDelegate: NSObject, UNUserNotificationCenterDelegate
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
     ) {
-        let userInfo = notification.request.content.userInfo
-        let requireFocus = (userInfo[NotificationPayloadKey.requireFocus] as? Bool) ?? true
-        let paneIDString = userInfo[NotificationPayloadKey.paneID] as? String
-        let runtimeID = userInfo[NotificationPayloadKey.runtimeID] as? String
-        let isAgent = (userInfo[NotificationPayloadKey.kind] as? String).flatMap(NotificationEntry.Kind.init(rawValue:))?.agentState != nil
+        present(NotificationPresentationFacts(userInfo: notification.request.content.userInfo), then: completionHandler)
+    }
+
+    /// Answers `willPresent` from the facts its banner carried: no banner
+    /// while the source is in sight and the banner asked for that. The
+    /// hooks and the focus are read on the main actor, after the hop.
+    nonisolated func present(
+        _ facts: NotificationPresentationFacts,
+        then completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
+    ) {
         Task { @MainActor in
-            let isPaneInSight: Bool = if isAgent, let isSourceSeen = WeirNotificationDelegate.isSourceSeen {
-                isSourceSeen(paneIDString.flatMap(UUID.init(uuidString:)), runtimeID)
+            let isPaneInSight: Bool = if facts.isAgent, let isSourceSeen = WeirNotificationDelegate.isSourceSeen {
+                isSourceSeen(facts.paneID.flatMap(UUID.init(uuidString:)), facts.runtimeID)
             } else {
-                WeirNotificationDelegate.isPaneFocused(paneIDString: paneIDString)
+                WeirNotificationDelegate.isPaneFocused(paneIDString: facts.paneID)
             }
-            if requireFocus, isPaneInSight {
+            if facts.requireFocus, isPaneInSight {
                 completionHandler([])
             } else {
                 completionHandler([.banner, .sound])
@@ -99,7 +102,12 @@ final class WeirNotificationDelegate: NSObject, UNUserNotificationCenterDelegate
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping @Sendable () -> Void
     ) {
-        let payload = NotificationTapPayload(userInfo: response.notification.request.content.userInfo)
+        deliverTap(NotificationTapPayload(userInfo: response.notification.request.content.userInfo), then: completionHandler)
+    }
+
+    /// Answers `didReceive`: brings Weir forward and hands the payload to
+    /// `onTap`, both on the main actor, after the hop.
+    nonisolated func deliverTap(_ payload: NotificationTapPayload, then completionHandler: @escaping @Sendable () -> Void) {
         Task { @MainActor in
             // Read on the main actor, so a tap that launched the app finds
             // the handler the attention list installs once it is up.
@@ -137,6 +145,23 @@ final class WeirNotificationDelegate: NSObject, UNUserNotificationCenterDelegate
             return false
         }
         return view.holdsKeyboardFocus
+    }
+}
+
+/// What `willPresent` needs from a banner's `userInfo`, read where the
+/// callback arrives so only these values cross to the main actor.
+struct NotificationPresentationFacts {
+    let requireFocus: Bool
+    let paneID: String?
+    let runtimeID: String?
+    let isAgent: Bool
+
+    init(userInfo: [AnyHashable: Any]) {
+        self.requireFocus = (userInfo[NotificationPayloadKey.requireFocus] as? Bool) ?? true
+        self.paneID = userInfo[NotificationPayloadKey.paneID] as? String
+        self.runtimeID = userInfo[NotificationPayloadKey.runtimeID] as? String
+        self.isAgent = (userInfo[NotificationPayloadKey.kind] as? String)
+            .flatMap(NotificationEntry.Kind.init(rawValue:))?.agentState != nil
     }
 }
 
