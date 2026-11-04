@@ -467,6 +467,9 @@ struct ReviewDiffTable: NSViewRepresentable {
     var focusRequest = 0
     /// The app files open in, which the open item names.
     let fileApplication: FileApplicationResolution
+    /// Says why a file header's "Open in" could not open the file. The
+    /// surface owns the toasts; a test's table shows none.
+    var onOpenFailure: @MainActor (DisplayText) -> Void = { _ in }
     /// Opens a file at a line of its new side: the row's file in the stacked
     /// diff, `nil` for the open one. The table works out the line; the
     /// surface knows the repository and the app.

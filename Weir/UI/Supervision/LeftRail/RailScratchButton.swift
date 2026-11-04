@@ -116,7 +116,7 @@ private struct RailScratchContent: View, Equatable {
     private var actions: SessionRowActions {
         SessionRowActions(
             revealInFinder: { [session, window] in
-                NSWorkspace.shared.activateFileViewerSelecting([RailScratchModel.startFolder(session: session, window: window.id)])
+                FinderReveal.select(RailScratchModel.startFolder(session: session, window: window.id))
             },
             closeAllTabs: model.hasTabs ? {
                 TabActions.closeAllTabs(session, registry: registry, in: .loose, agentProjection: agentProjection, from: window.id)

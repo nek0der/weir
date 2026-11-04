@@ -17206,7 +17206,7 @@
       }
     },
     "Show in Finder": {
-      "comment": "Settings, General: selects the files that are not being saved in Finder",
+      "comment": "A menu item and button: selects the item in Finder",
       "localizations": {
         "ja": {
           "stringUnit": {

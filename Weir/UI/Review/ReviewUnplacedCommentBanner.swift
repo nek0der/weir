@@ -22,8 +22,7 @@ struct ReviewUnplacedCommentBanner: View {
                 tone: .error,
                 actionTitle: "Copy",
                 action: {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
+                    SystemPasteboard.copy(text)
                     reviewSession.unplacedComment = nil
                 },
                 secondaryActionTitle: "Discard",

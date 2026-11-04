@@ -58,16 +58,6 @@ struct SettingsFormRowsTests {
         #expect(RestoreDefaultSlot.label(for: "Size").resolved(in: ja) == "サイズをデフォルトに戻す")
     }
 
-    @Test func revealingAFolderYetToBeMade_showsTheNearestThatExists() {
-        let existing: Set = ["/", "/Users", "/Users/someone/repos"]
-        let target = PathRow.nearestExisting(
-            URL(fileURLWithPath: "/Users/someone/repos/app-<branch>"),
-            exists: existing.contains
-        )
-
-        #expect(target?.path == "/Users/someone/repos")
-    }
-
     // MARK: - The caption's contrast
 
     /// A settings caption (`SettingsFootnote`) on the settings window: the

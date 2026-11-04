@@ -151,6 +151,21 @@ struct ProjectMenuModelTests {
         )
     }
 
+    /// A project whose folder is gone has nothing to show in Finder: the
+    /// item stays, dimmed, as it does in the sidebar's project menu, which
+    /// asks the same. Its settings and closing it still work.
+    @Test func aProjectWhoseFolderIsGone_cannotShowItInFinder() {
+        var project = Self.project("a")
+
+        #expect(ProjectMenuModel.isEnabled(.revealInFinder, for: project))
+
+        project.trouble = .folderMissing
+
+        #expect(!ProjectMenuModel.isEnabled(.revealInFinder, for: project))
+        #expect(ProjectMenuModel.isEnabled(.settings, for: project))
+        #expect(ProjectMenuModel.isEnabled(.close, for: project))
+    }
+
     /// A window that shows no project, or one just removed, has nothing to
     /// close.
     @Test func noProject_orOneGone_offersNothingToClose() {

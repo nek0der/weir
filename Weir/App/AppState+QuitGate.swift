@@ -102,7 +102,7 @@ extension AppState {
         // window under the key sheet, or the key window itself.
         let keyWindow = NSApp.keyWindow
         let window = WindowAlert.window(
-            requested: request.window.flatMap { (windowRegistry.presenter as? ProjectWindowPresenter)?.nsWindow(for: $0) },
+            requested: request.window.flatMap { windowRegistry.nsWindow(for: $0) },
             for: request.paneIDs,
             windowOf: { registry.view(for: $0)?.window },
             fallback: keyWindow?.sheetParent ?? keyWindow

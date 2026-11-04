@@ -158,6 +158,34 @@ struct MenuItemLabelTests {
         #expect(ProjectMenuModel.ProjectItem.close.label.symbol == "xmark")
     }
 
+    /// The project's item, the shell command's row, the notice that saving
+    /// is suspended, and a reviewed file's path menu all take "Show in
+    /// Finder" from the one definition.
+    @Test func showInFinder_isReadFromOneDefinitionByEveryMenu() throws {
+        let shared = MenuItemLabel.showInFinder
+        #expect(shared.title.key == "Show in Finder")
+        #expect(shared.symbol == "folder")
+
+        let project = ProjectMenuModel.ProjectItem.revealInFinder.label
+        #expect(project.title.key == shared.title.key)
+        #expect(project.symbol == shared.symbol)
+
+        #expect(ShellCommandRow.Action.showInFinder.title.key == shared.title.key)
+
+        for identifier in ["en", "ja"] {
+            let locale = Locale(identifier: identifier)
+            #expect(SavingSuspendedText.showFiles(locale: locale) == shared.title.resolved(in: locale))
+        }
+        #expect(SavingSuspendedText.showFiles(locale: Locale(identifier: "ja")) == "Finder で表示")
+
+        try withTempDir { root in
+            let file = ReviewFile(path: "a.swift", layer: .unstaged, status: .modified)
+            let items = ReviewFileMenuModel.items(for: file, in: root, application: .macOSDefault) { _ in true }
+            let reveal = try #require(items.first { $0.action == .reveal("a.swift", root: root) })
+            #expect(reveal.title.key == shared.title.key)
+        }
+    }
+
     @Test("the palette offers the project's items where the project ▾ does, named as it names them")
     func paletteProjectRows_followTheProjectItems() throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")

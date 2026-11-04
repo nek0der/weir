@@ -526,8 +526,10 @@ struct ReviewFileRail: View {
     }
 }
 
-/// File-system actions on a rail row. Resolving at invocation time keeps
-/// moved applications and symlinks out of the view state.
+/// File-system actions on a rail row. The file's path and the app it
+/// opens in are resolved again when an item is chosen
+/// (`ReviewFileMenuModel.perform`), so an app moved or a file swapped for
+/// a link after the menu was drawn is never acted on from what the view held.
 struct ReviewFileActionsMenu: View {
     let root: URL
     let file: ReviewFile
@@ -535,52 +537,25 @@ struct ReviewFileActionsMenu: View {
     @Environment(SettingsStore.self) private var settingsStore
     @Environment(ToastCenter.self) private var toastCenter
 
-    /// `nil` for a name that is not UTF-8 as well: its `path` is only a
-    /// likeness, which names no file, or another one.
-    private var fileURL: URL? {
-        file.isNameUndecodable ? nil : ReviewFileAction.fileURL(for: file.path, in: root)
-    }
-
-    private var application: FileApplicationResolution {
-        FileOpener.application(for: settingsStore.settings.advanced.fileApplication)
-    }
-
     var body: some View {
-        Button("Copy Relative Path") {
-            copy(file.path)
-        }
-        .disabled(file.isNameUndecodable)
-        Button("Copy Absolute Path") {
-            if let fileURL {
-                copy(fileURL.path)
+        // The app as drawn names the open item; the press reads it again.
+        let drawnApplication = FileOpener.chosenApplication(in: settingsStore)
+        // The model's order is the menu's, so an item's place is its identity.
+        let items = Array(ReviewFileMenuModel.items(for: file, in: root, application: drawnApplication).enumerated())
+        ForEach(items, id: \.offset) { _, item in
+            Button(item.title) {
+                guard let action = item.action else { return }
+                ReviewFileMenuModel.perform(
+                    action,
+                    application: { FileOpener.chosenApplication(in: settingsStore) },
+                    onFailure: { message in
+                        toastCenter.showInFrontWindow(ToastItem(message: message, undo: nil))
+                    }
+                )
             }
+            .disabled(item.action == nil)
+            .accessibilityLabel(Text(item.title))
         }
-        .disabled(fileURL == nil)
-        Button(application.openActionTitle) {
-            guard let fileURL else { return }
-            Task {
-                do {
-                    try await FileOpener.open(fileURL, with: application)
-                } catch {
-                    toastCenter.showInFrontWindow(ToastItem(message: DisplayText(error: error), undo: nil))
-                }
-            }
-        }
-        .disabled(fileURL.map { !FileManager.default.fileExists(atPath: $0.path) } ?? true)
-        Button("Show in Finder") {
-            guard let fileURL else { return }
-            let target = FileManager.default.fileExists(atPath: fileURL.path)
-                ? fileURL
-                : fileURL.deletingLastPathComponent()
-            NSWorkspace.shared.activateFileViewerSelecting([target])
-        }
-        .disabled(fileURL == nil)
-    }
-
-    private func copy(_ value: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(value, forType: .string)
     }
 }
 

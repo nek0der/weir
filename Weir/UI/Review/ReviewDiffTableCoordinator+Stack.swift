@@ -186,38 +186,22 @@ extension ReviewDiffTable.Coordinator {
     }
 
     /// A file header's context menu: its path, as a row of the file list
-    /// offers it (`ReviewFileActionsMenu`).
+    /// offers it (`ReviewFileActionsMenu`), from the same model.
     func headerMenuItems(forRow row: Int) -> [NSMenuItem] {
         guard parent.rows.indices.contains(row), case let .file(header) = parent.rows[row].kind,
-              let root = parent.root,
-              // Every item is about the path, and a name that is not UTF-8
-              // has only a likeness of one (`ReviewFile.isNameUndecodable`).
-              !header.file.isNameUndecodable
+              let root = parent.root
         else { return [] }
-        let file = header.file
-        let fileURL = ReviewFileAction.fileURL(for: file.path, in: root)
-        let locale = parent.locale
-        var items = [
-            ReviewMenuItem(title: LocalizedStringResource("Copy Relative Path").resolved(in: locale)) {
-                Self.copy(file.path)
-            }
-        ]
-        if let fileURL {
-            items.append(ReviewMenuItem(title: LocalizedStringResource("Copy Absolute Path").resolved(in: locale)) {
-                Self.copy(fileURL.path)
-            })
-            items.append(ReviewMenuItem(title: LocalizedStringResource("Show in Finder").resolved(in: locale)) {
-                let target = FileManager.default.fileExists(atPath: fileURL.path) ? fileURL : fileURL.deletingLastPathComponent()
-                NSWorkspace.shared.activateFileViewerSelecting([target])
-            })
+        let drawn = parent.fileApplication
+        let onFailure = parent.onOpenFailure
+        let items = ReviewFileMenuModel.items(for: header.file, in: root, application: drawn)
+        return ReviewMenuItem.items(from: items, locale: parent.locale) { [weak self] action in
+            // The app as the surface last handed it over, read on the press.
+            ReviewFileMenuModel.perform(
+                action,
+                application: { self?.parent.fileApplication ?? drawn },
+                onFailure: onFailure
+            )
         }
-        return items
-    }
-
-    private static func copy(_ value: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(value, forType: .string)
     }
 
     /// How many of the longest lines are measured properly. The scan keeps
@@ -383,13 +367,33 @@ extension ReviewDiffTable.Coordinator {
 }
 
 /// A context-menu item that runs a closure, for menus built per row.
+/// Without one it shows dimmed: the menu enables an item by its action,
+/// so an item with none cannot be chosen.
+@MainActor
 final class ReviewMenuItem: NSMenuItem {
-    private let handler: () -> Void
+    /// `nil` for an item that shows but cannot be chosen.
+    private let handler: (@MainActor () -> Void)?
 
-    init(title: String, handler: @escaping () -> Void) {
+    init(title: String, handler: (@MainActor () -> Void)?) {
         self.handler = handler
-        super.init(title: title, action: #selector(run(_:)), keyEquivalent: "")
+        super.init(title: title, action: handler == nil ? nil : #selector(run(_:)), keyEquivalent: "")
         target = self
+        isEnabled = handler != nil
+    }
+
+    /// A file path menu's items (`ReviewFileMenuModel`) as menu items:
+    /// one that cannot be chosen gets no handler, and so shows dimmed.
+    static func items(
+        from items: [ReviewFileMenuItem],
+        locale: Locale,
+        run: @escaping @MainActor (ReviewFileMenuItem.Action) -> Void
+    ) -> [ReviewMenuItem] {
+        items.map { item in
+            ReviewMenuItem(
+                title: item.title.resolved(in: locale),
+                handler: item.action.map { action in { @MainActor in run(action) } }
+            )
+        }
     }
 
     @available(*, unavailable)
@@ -398,6 +402,6 @@ final class ReviewMenuItem: NSMenuItem {
     }
 
     @objc private func run(_: Any?) {
-        handler()
+        handler?()
     }
 }

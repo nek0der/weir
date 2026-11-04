@@ -12,10 +12,11 @@ final class SurfaceUserdataToken {
 }
 
 extension ClipboardRequestAnswerer {
-    /// What answers a request in the running app.
+    /// What answers a request in the running app. A terminal's write is
+    /// plain text like every other copy the app makes, so it takes the
+    /// same path (`SystemPasteboard`).
     static let system = ClipboardRequestAnswerer.libghostty { text in
-        NSPasteboard.general.declareTypes([.string], owner: nil)
-        NSPasteboard.general.setString(text, forType: .string)
+        _ = SystemPasteboard.copy(text)
     }
 }
 

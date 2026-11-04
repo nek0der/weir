@@ -42,7 +42,7 @@ struct IntegrationsPane: View {
     /// The folders `TmuxClientProbe.locateTmux` looks in, for the warning,
     /// so a person whose tmux is elsewhere can see that it is.
     private static let tmuxDirectories = TmuxClientProbe.tmuxCandidates
-        .map { (($0 as NSString).deletingLastPathComponent as NSString).abbreviatingWithTildeInPath }
+        .map { PathFormatting.abbreviateHome(($0 as NSString).deletingLastPathComponent) }
 
     private func changeShellCommand(_ change: @escaping () async throws -> Void) {
         isChangingShellCommand = true
@@ -66,7 +66,7 @@ struct IntegrationsPane: View {
         case .uninstall:
             changeShellCommand { try await installer.uninstall(prompt: prompt) }
         case .showInFinder:
-            NSWorkspace.shared.activateFileViewerSelecting([installer.link])
+            FinderReveal.select(installer.link)
         }
     }
 
@@ -127,8 +127,8 @@ struct IntegrationsPane: View {
                 // file is one click away, as settings.json is in Advanced.
                 if let file = configFile {
                     SettingsButtonRow {
-                        Button("Show in Finder") {
-                            NSWorkspace.shared.activateFileViewerSelecting([file])
+                        Button(MenuItemLabel.showInFinder.title) {
+                            FinderReveal.select(file)
                         }
                         .accessibilityLabel(Text("Show Ghostty config file in Finder"))
                         Button("Open File") {

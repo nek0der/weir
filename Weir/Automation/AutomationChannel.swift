@@ -60,8 +60,7 @@
                 }
                 let registry = state.windowRegistry
                 channel.postedKeyGate = AutomationPostedKeys.installGate { window in
-                    let presenter = registry.presenter as? ProjectWindowPresenter
-                    return registry.windows.contains { presenter?.nsWindow(for: $0.id) === window }
+                    registry.windows.contains { registry.nsWindow(for: $0.id) === window }
                 }
                 state.windowRegistry.keepsOffScreenPanesDrawing = true
                 SurfaceRegistry.keepsDrawingOffScreen = true

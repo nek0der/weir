@@ -102,6 +102,34 @@ enum FileOpener {
         application(for: preference) { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) }
     }
 
+    /// The application Settings chose for opening files, as it resolves
+    /// now. Every caller reads it here, so Review, terminal links, and the
+    /// setting's own warning agree on which app that is.
+    @MainActor
+    static func chosenApplication(in settingsStore: SettingsStore) -> FileApplicationResolution {
+        application(for: settingsStore.settings.advanced.fileApplication)
+    }
+
+    /// Opens `fileURL` without waiting for it, and hands a failure to
+    /// `onFailure` as the message to show. Every action that opens a file
+    /// in the app Settings chose comes here, so each one reports a failure
+    /// the same way.
+    @MainActor
+    static func open(
+        _ fileURL: URL,
+        at position: FilePosition? = nil,
+        with application: FileApplicationResolution,
+        onFailure: @escaping @MainActor (DisplayText) -> Void
+    ) {
+        Task { @MainActor in
+            do {
+                try await open(fileURL, at: position, with: application)
+            } catch {
+                onFailure(DisplayText(error: error))
+            }
+        }
+    }
+
     /// Opens `fileURL` asynchronously. With a position, the handling app is
     /// looked up first — the configured one, or the file type's default — so
     /// a default editor that takes a line number gets one too. When that

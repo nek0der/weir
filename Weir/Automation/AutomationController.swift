@@ -743,12 +743,11 @@
                 return await capture(nsWindow, request: request) { Self.settingsWindow() }
             }
             guard let window = resolveWindow(request.window, in: state) else { return .failed(request.id, "no such window") }
-            guard let presenter = state.windowRegistry.presenter as? ProjectWindowPresenter,
-                  let nsWindow = presenter.nsWindow(for: window.id)
-            else {
+            let registry = state.windowRegistry
+            guard let nsWindow = registry.nsWindow(for: window.id) else {
                 return AutomationReply(id: request.id, status: .notObservable, reason: "the window is not shown")
             }
-            return await capture(nsWindow, request: request) { presenter.nsWindow(for: window.id) }
+            return await capture(nsWindow, request: request) { registry.nsWindow(for: window.id) }
         }
 
         /// `nsWindow`'s number once the last change has had time to reach the

@@ -140,7 +140,7 @@ struct SessionRowActionsMenu: View {
         }
         if let revealInFinder = actions.revealInFinder {
             Button(action: revealInFinder) {
-                Label("Show in Finder", systemImage: "folder")
+                Label(MenuItemLabel.showInFinder)
             }
             .tint(Color.primary)
         }

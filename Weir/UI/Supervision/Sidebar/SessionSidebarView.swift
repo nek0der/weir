@@ -260,7 +260,7 @@ struct SessionSidebarView: View {
                 windowActions?.newWorktree(id)
             },
             canMakeWorktree: session.project(id).map(ShortcutAvailability.canMakeWorktree(in:)) ?? false,
-            hasFolder: session.project(id)?.isRootMissing == false,
+            hasFolder: session.project(id).map { ProjectMenuModel.isEnabled(.revealInFinder, for: $0) } ?? false,
             // ⌘N makes one in the window's own project only.
             newWorktreeShortcut: header.isCurrent ? settings.settings.keyboard.shortcut(for: .newWorktree) : nil,
             moveUpShortcut: settings.settings.keyboard.shortcut(for: .moveProjectUp),
@@ -288,7 +288,7 @@ struct SessionSidebarView: View {
             openSettings: { [window] in window.commands.send(.openProjectSettings(id)) },
             revealInFinder: {
                 if let project = session.project(id) {
-                    NSWorkspace.shared.activateFileViewerSelecting([project.rootURL])
+                    FinderReveal.select(project.rootURL)
                 }
             },
             closeProject: { [window] in window.commands.send(.closeProject(id)) },
@@ -720,7 +720,7 @@ struct SessionSidebarView: View {
                 isShownHere: window.selection.shownProjectID == project.id,
                 isShownElsewhere: other != nil
             ) ? { [window] in windowRegistry.openInNewWindow(row: row.id, in: session, from: window) } : nil,
-            revealInFinder: row.isMissing ? nil : { NSWorkspace.shared.activateFileViewerSelecting([folder]) },
+            revealInFinder: row.isMissing ? nil : { FinderReveal.select(folder) },
             openChangesPanel: row.isMissing ? nil : { [windowActions] in
                 windowActions?.openChangesPanel(row.id)
             },

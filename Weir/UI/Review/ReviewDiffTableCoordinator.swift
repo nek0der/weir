@@ -164,9 +164,7 @@ extension ReviewDiffTable {
                       layout: parent.layout
                   )
             else { return false }
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            return pasteboard.setString(payload, forType: .string)
+            return SystemPasteboard.copy(payload)
         }
 
         deinit {

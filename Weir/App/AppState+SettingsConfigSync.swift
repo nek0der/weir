@@ -112,7 +112,7 @@ extension AppState {
                     toastCenter.showInFrontWindow(ToastItem(message: message, undo: nil))
                 },
                 fileApplication: { [settingsStore] in
-                    settingsStore.settings.advanced.fileApplication
+                    FileOpener.chosenApplication(in: settingsStore)
                 },
                 locale: { [settingsStore] in
                     settingsStore.appLocale

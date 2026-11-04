@@ -52,4 +52,15 @@ extension MenuItemLabel {
     /// and the palette's row. Whether it is offered is
     /// `Tab.canMovePaneToNewTab`.
     static let movePaneToNewTab = MenuItemLabel(title: "Move Pane to New Tab", symbol: "rectangle.split.2x1")
+
+    /// The one "Show in Finder" label: the project ▾, the sidebar's project
+    /// menu, the session rows' menu, the path rows in Settings, the Ghostty
+    /// config file's button, the shell command's row, the notice that saving
+    /// is suspended, and a reviewed file's path menu all read it, so none
+    /// names or draws the action its own way. `FinderReveal` decides what it
+    /// selects.
+    static let showInFinder = MenuItemLabel(
+        title: LocalizedStringResource("Show in Finder", comment: "A menu item and button: selects the item in Finder"),
+        symbol: "folder"
+    )
 }
