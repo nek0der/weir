@@ -115,6 +115,25 @@ struct TitleBarHistoryTests {
         #expect(fixture.session.commandPaletteState == nil)
     }
 
+    /// The palette's Go Back and Go Forward step as the menu does, closing
+    /// the window's dropdown first, and ask the palette's executor to give
+    /// the keyboard back as after any row (`.handledReturningKeyboard`).
+    /// Other rows are not theirs.
+    @Test func thePalettesHistoryRows_stepAsTheMenuDoes() throws {
+        let fixture = try Fixture()
+        fixture.window.titleBarMenu = TitleBarMenuRequest(menu: .worktree, anchor: .zero)
+
+        let back = SupervisionWindowActions.runHistoryRow(.goBack, in: fixture.window, session: fixture.session)
+
+        #expect(back == .handledReturningKeyboard)
+        #expect(fixture.window.titleBarMenu == nil)
+        #expect(fixture.session.selection(fixture.window.id)?.activeTabID == fixture.tabB.id)
+        let forward = SupervisionWindowActions.runHistoryRow(.goForward, in: fixture.window, session: fixture.session)
+        #expect(forward == .handledReturningKeyboard)
+        #expect(fixture.session.selection(fixture.window.id)?.activeTabID == fixture.tabA.id)
+        #expect(SupervisionWindowActions.runHistoryRow(.find, in: fixture.window, session: fixture.session) == nil)
+    }
+
     /// A palette open in another window is that window's, and stays.
     @Test func goForward_leavesAnotherWindowsPaletteOpen() throws {
         let fixture = try Fixture()

@@ -340,8 +340,7 @@ struct SupervisionFootBarTests {
         isBusy: { _ in false },
         undoResult: { _ in nil },
         ask: { _ in },
-        canAsk: { _ in true },
-        paletteTurnNumber: { nil }
+        canAsk: { _ in true }
     )
 
     private static func bandRows() -> [ReviewTabBandRow] {

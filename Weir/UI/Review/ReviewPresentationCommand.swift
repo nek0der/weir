@@ -61,8 +61,8 @@ struct ReviewChangesMenuItem: View {
             state.windowRegistry.perform(.review, in: window)
         }
         // The review tab opens from any tab, and says why when there is
-        // nothing to read.
-        .disabled(window.flatMap { state.session.activeTab(in: $0) } == nil)
+        // nothing to read (`ShortcutAvailability`).
+        .disabled(!state.menuAvailability.isEnabled(.review))
     }
 }
 
@@ -79,12 +79,8 @@ struct ReviewLatestTurnMenuItem: View {
             state.windowRegistry.perform(.reviewLatestTurn, in: window)
         }
         .accessibilityLabel(Text(WeirShortcutAction.reviewLatestTurn.localizedTitle))
-        .disabled(isDisabled)
-    }
-
-    /// With a tab in front, the review tab always answers, with the turn or
-    /// with why there is none to read.
-    private var isDisabled: Bool {
-        window.flatMap { state.session.activeTab(in: $0) } == nil
+        // With a tab in front, the review tab always answers, with the turn
+        // or with why there is none to read (`ShortcutAvailability`).
+        .disabled(!state.menuAvailability.isEnabled(.reviewLatestTurn))
     }
 }

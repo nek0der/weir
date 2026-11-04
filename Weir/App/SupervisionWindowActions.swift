@@ -19,17 +19,21 @@ enum SupervisionWindowActions {
     /// Core cannot name what they act on: ⌘[ ⌘] over the session rows, ⇧⌘[ ⇧⌘]
     /// through the review tab, ⌘W ⌥⌘W closing the review tab while it
     /// is in front, Find going to the review's search while it is, and the
-    /// pane commands, which do nothing while it is.
+    /// pane commands, which do nothing while it is. Go Back and Go Forward
+    /// are here too, as they close the window's dropdown and palette first.
     /// We run them here as the menu runs them, so a row and its key never do
-    /// two things. It returns false for any other row, and for a close or a
-    /// Find with no review in front, which the shared dispatch then runs in the
-    /// window.
-    static func runPaletteShortcut(_ action: WeirShortcutAction, in window: ProjectWindowState, state: AppState) -> Bool {
+    /// two things. It returns `.notHandled` for any other row, and for a
+    /// close or a Find with no review in front, which the shared dispatch
+    /// then runs in the window.
+    static func runPaletteShortcut(_ action: WeirShortcutAction, in window: ProjectWindowState, state: AppState) -> PaletteRowHandling {
         // A pane command while the review is in front does nothing, as its
         // row is off (`ProjectWindowState.arePanesHidden`): the review may
         // have come to the front since the palette was built.
         if SupervisionPaletteFacts.isOffPaneCommand(action, arePanesHidden: window.arePanesHidden) {
-            return true
+            return .handled
+        }
+        if let handling = runHistoryRow(action, in: window, session: state.session) {
+            return handling
         }
         let paneVisibility = PaneVisibilityReporter(windowID: window.id, registry: state.windowRegistry)
         switch action {
@@ -40,7 +44,7 @@ enum SupervisionWindowActions {
                 session: state.session,
                 sections: state.sidebarSections(in: window)
             )
-            return true
+            return .handled
         case .nextTab, .previousTab:
             ReviewTabActions.cycleTab(
                 forward: action == .nextTab,
@@ -49,13 +53,14 @@ enum SupervisionWindowActions {
                 registry: state.registry,
                 paneVisibility: paneVisibility
             )
-            return true
+            return .handled
         case .closeSurface, .closeTab:
-            return ReviewTabActions.closeIfInFront(stores: state.reviewTabStores)
+            // The row's own window, which need not be the key one.
+            return ReviewTabActions.closeIfInFront(in: window, stores: state.reviewTabStores) ? .handled : .notHandled
         // Find goes to the review while it is in front, as the menu sends it,
         // not to the pane hidden behind it.
         case .find, .findNext, .findPrevious:
-            guard window.arePanesHidden else { return false }
+            guard window.arePanesHidden else { return .notHandled }
             ReviewPresentationCommand.find(
                 action,
                 session: state.session,
@@ -64,10 +69,30 @@ enum SupervisionWindowActions {
                 commands: state.windowRegistry,
                 window: window.id
             )
-            return true
+            return .handled
         default:
-            return false
+            return .notHandled
         }
+    }
+
+    /// Go Back and Go Forward from the palette, stepped as the menu steps
+    /// them (`goBack`, `goForward`), closing the window's dropdown and
+    /// palette first. The terminal of the place stepped to gets the keyboard
+    /// back, as after any row. `nil` for any other action.
+    static func runHistoryRow(
+        _ action: WeirShortcutAction,
+        in window: ProjectWindowState,
+        session: WorkspaceSession
+    ) -> PaletteRowHandling? {
+        switch action {
+        case .goBack:
+            goBack(in: window, session: session)
+        case .goForward:
+            goForward(in: window, session: session)
+        default:
+            return nil
+        }
+        return .handledReturningKeyboard
     }
 
     /// ⌥⌘J: the Needs Attention list, hung from its button in the title bar.
@@ -95,15 +120,16 @@ enum SupervisionWindowActions {
         window.toggleTitleBarMenu(menu, anchor: anchor, isOpenedFromKeyboard: true)
     }
 
-    /// Go Back, from the menu or the title bar's back button: one step back
-    /// in `window`'s own history: the menu's focused window, or the
-    /// window the button is in, which need not be the key one.
+    /// Go Back, from the menu, the palette, or the title bar's back button:
+    /// one step back in `window`'s own history. `window` is the menu's key
+    /// main window, the palette's own, or the one the button is in, which
+    /// need not be the key one.
     static func goBack(in window: ProjectWindowState, session: WorkspaceSession) {
         closeFloatingSurfaces(in: window, session: session)
         session.navigateBack(in: window.id, intent: .person)
     }
 
-    /// Go Forward, from the menu or the title bar's forward button.
+    /// Go Forward, from the menu, the palette, or the title bar's forward button.
     static func goForward(in window: ProjectWindowState, session: WorkspaceSession) {
         closeFloatingSurfaces(in: window, session: session)
         session.navigateForward(in: window.id, intent: .person)
@@ -328,7 +354,7 @@ enum SupervisionWindowActions {
         opensInNewWindow: Bool = false
     ) -> PaletteRowHandling {
         if case let .shortcutAction(shortcut) = action {
-            return runPaletteShortcut(shortcut, in: window, state: state) ? .handled : .notHandled
+            return runPaletteShortcut(shortcut, in: window, state: state)
         }
         if action == .restoreTurn {
             return RestoreActions.runFromPalette(window: window, state: state)
@@ -625,6 +651,7 @@ enum SupervisionWindowActions {
         return true
     }
 
+    // swiftlint:disable cyclomatic_complexity
     /// Carries out the commands that are the whole window's, and says
     /// whether `command` was one.
     static func takeCommand(_ command: WindowCommand, window: ProjectWindowState, state: AppState) -> Bool {
@@ -655,11 +682,15 @@ enum SupervisionWindowActions {
             focusSidebar(in: session, window: window)
         case .showDecisionBarMenu:
             showDecisionBarMenu(in: window, session: session)
+        case let .openCommandPalette(initialQuery):
+            state.openPalette(in: window, query: initialQuery)
         default:
             return false
         }
         return true
     }
+
+    // swiftlint:enable cyclomatic_complexity
 
     /// Opens the ⋯ of the focused pane's decision bar; nothing while the
     /// review stands where the panes were, or where the bar shows no ⋯.

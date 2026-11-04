@@ -192,7 +192,6 @@ extension PaneActions {
         _ session: WorkspaceSession,
         registry: any SurfaceViewProviding,
         source: CloseConfirmer.Source = .keyboard,
-        attention: AttentionState? = nil,
         agentProjection: AgentProjectionAdapter? = nil,
         in window: WindowID? = nil
     ) {
@@ -200,7 +199,6 @@ extension PaneActions {
             session,
             registry: registry,
             source: source,
-            attention: attention,
             agentProjection: agentProjection,
             in: session.testWindow(window)
         )

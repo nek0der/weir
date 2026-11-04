@@ -33,6 +33,16 @@ enum WorkspaceSessionFixture {
         return (session, project)
     }
 
+    /// `withProject`, its folder a Git repository on `main` as a sync would
+    /// find it, with no `git` run: for the suites about what only a
+    /// repository allows (`CheckoutName.isRepository`).
+    static func withRepository(name: String = "test") -> (session: WorkspaceSession, project: Project) {
+        let (session, project) = withProject(name: name)
+        guard let index = session.projects.firstIndex(where: { $0.id == project.id }) else { return (session, project) }
+        session.projects[index].mainBranchName = "main"
+        return (session, session.projects[index])
+    }
+
     // Tuple returns keep test destructuring idiomatic; swiftlint's
     // 2-tuple ceiling is too tight for fixture return shapes here.
     // swiftlint:disable large_tuple

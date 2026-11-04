@@ -43,12 +43,13 @@ final class AttentionState {
     /// and every view that shows a mark already reads attention.
     let promptCache = PromptCacheMonitor()
 
-    /// Walks the attention list (⌘J when `true`, ⇧⌘J when `false`). Set by
-    /// the app layer: the list lives above Core, and Core's shortcut
-    /// dispatch reaches it through here.
-    var walkAttention: ((_ forward: Bool) -> Void)?
+    /// Walks the attention list (⌘J when `true`, ⇧⌘J when `false`) from the
+    /// place `window` keeps in it, as that window's menu does. Set by the
+    /// app layer: the list lives above Core, and Core's shortcut dispatch
+    /// reaches it through here.
+    var walkAttention: ((_ forward: Bool, _ window: WindowID) -> Void)?
     /// Whether the attention list holds anything, for enabling ⌘J in the
-    /// command palette. Set by the app layer.
+    /// menu and the command palette. Set by the app layer.
     var hasAttentionItems: () -> Bool = { false }
 
     // MARK: - Mutation

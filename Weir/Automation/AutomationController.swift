@@ -141,26 +141,32 @@
 
         // MARK: - open
 
+        /// Opens a layer other than the review through the palette row of the
+        /// action that opens it, as `command` runs a row: a layer whose row is
+        /// off now (the plan usage panel with the icon bars hidden) is refused
+        /// at once, rather than sent to a window that cannot show it.
         private func open(_ request: AutomationRequest, in state: AppState) async -> AutomationReply {
             guard let layer = request.layer else { return .failed(request.id, "open needs a layer") }
-            let command: WindowCommand
-            switch layer {
-            case .review: return openReview(request, state: state)
-            case .needsAttention: command = .showNeedsAttention
-            case .allProjects: command = .toggleAllProjects
-            case .notificationHistory: command = .toggleNotificationHistory
-            case .keyboardShortcuts: command = .toggleKeyboardShortcuts
-            case .planUsage: command = .togglePlanUsage
-            }
+            guard let action = Self.action(opening: layer) else { return openReview(request, state: state) }
             guard let window = resolveWindow(request.window, in: state) else {
                 return .failed(request.id, "no such window")
             }
-            if openLayers(of: window, in: state).contains(layer) {
+            let step = Self.openStep(
+                action,
+                isOpen: openLayers(of: window, in: state).contains(layer),
+                items: { state.paletteItems(in: window) }
+            )
+            switch step {
+            case .alreadyOpen:
                 return AutomationReply(id: request.id, status: .done, reason: "already open")
+            case let .refused(reason):
+                return .failed(request.id, reason)
+            case let .run(item):
+                if let failure = send(item, request: request, in: window) {
+                    return failure
+                }
+                return AutomationReply(id: request.id, status: .done, reason: "sent; wait for layerOpen")
             }
-            guard window.commands.send(command) else { return .failed(request.id, "no view of the window took the command") }
-            revision += 1
-            return AutomationReply(id: request.id, status: .done, reason: "sent; wait for layerOpen")
         }
 
         /// Review of the named pane's uncommitted changes, opened for that pane
@@ -587,24 +593,11 @@
         /// the menu item or shortcut that runs the same action: a standard menu
         /// opens only in front, and the palette's rows are the app's commands.
         /// A row the palette shows disabled is refused, as its menu item would
-        /// be. `commands` lists the rows with their enabled state.
+        /// be, but for the actions `ShortcutAvailability` splits by surface.
+        /// `commands` lists the rows with their enabled state.
         private func command(_ request: AutomationRequest, in state: AppState) -> AutomationReply {
             guard let window = resolveWindow(request.window, in: state) else { return .failed(request.id, "no such window") }
-            let items = CommandPaletteCatalog.buildItems(
-                session: state.session,
-                settings: state.settingsStore,
-                attention: state.attention,
-                registry: state.registry,
-                supervision: SupervisionPaletteFacts(
-                    window: window,
-                    session: state.session,
-                    restoreTurnNumber: RestoreActions.paletteTarget(window: window, state: state)?.displayNumber,
-                    installedAgents: state.installedAgents,
-                    toasts: state.toastCenter
-                ),
-                window: window.id,
-                locale: state.settingsStore.appLocale
-            )
+            let items = state.paletteItems(in: window)
             if request.op == .commands {
                 var reply = AutomationReply(id: request.id, status: .done)
                 reply.commands = items.map { AutomationCommandInfo(id: $0.id, title: $0.title, isEnabled: $0.isEnabled) }
@@ -612,10 +605,21 @@
             }
             guard let name = request.name, !name.isEmpty else { return .failed(request.id, "command needs a name") }
             let id = name.contains(".") ? name : "shortcut.\(name)"
-            guard let item = items.first(where: { $0.id == id }) else {
-                return .failed(request.id, "no command \(id) in this window; commands lists them")
+            switch Self.row(id, among: items) {
+            case let .refused(reason):
+                return .failed(request.id, reason)
+            case let .runnable(item):
+                if let failure = send(item, request: request, in: window) {
+                    return failure
+                }
+                return AutomationReply(id: request.id, status: .done, reason: "ran \(id)")
             }
-            guard item.isEnabled else { return .failed(request.id, "\(id) is disabled now") }
+        }
+
+        /// Runs the palette row `item` in `window`, as the palette runs a
+        /// committed row. The reply when it did not run: a canceled request,
+        /// or no view that took it; `nil` when it ran.
+        private func send(_ item: CommandPaletteItem, request: AutomationRequest, in window: ProjectWindowState) -> AutomationReply? {
             if Task.isCancelled {
                 return AutomationReply(id: request.id, status: .cancelled)
             }
@@ -624,7 +628,7 @@
                 return .failed(request.id, "no view of the window took the command")
             }
             revision += 1
-            return AutomationReply(id: request.id, status: .done, reason: "ran \(id)")
+            return nil
         }
 
         /// Reads or changes one setting by its key, through the settings store,

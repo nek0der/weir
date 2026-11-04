@@ -23,17 +23,16 @@ enum CloseKeyCommand: Equatable {
     case nothing
 
     /// `target` is the key supervision window (`WindowRegistry.commandTarget`),
-    /// `nil` when none is.
+    /// `nil` when none is. `canClose` is whether it has something to close,
+    /// as its palette's Close row says (`ShortcutAvailability`, `.closeSurface`).
     @MainActor
-    static func decide(isQuickTerminalKey: Bool, target: ProjectWindowState?, hasActiveTab: Bool) -> Self {
+    static func decide(isQuickTerminalKey: Bool, target: ProjectWindowState?, canClose: Bool) -> Self {
         if isQuickTerminalKey {
             return .hideQuickTerminal
         }
         guard let target else { return .closeKeyWindow }
-        if target.review?.isShown == true {
-            return .closeReview
-        }
-        return hasActiveTab ? .closePaneOrTab : .nothing
+        guard canClose else { return .nothing }
+        return target.review?.isShown == true ? .closeReview : .closePaneOrTab
     }
 
     /// Whether the item is enabled.

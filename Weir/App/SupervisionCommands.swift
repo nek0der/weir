@@ -64,11 +64,13 @@ struct SupervisionCommands: Commands {
                     guard let window else { return }
                     SupervisionWindowActions.closeWindow(window, registry: state.windowRegistry, session: state.session)
                 }
-                .disabled(window == nil)
+                .disabled(!state.menuAvailability.isEnabled(.closeWindow))
             }
         }
         CommandGroup(after: .sidebar) {
             MainWindowCommandItems(state.quickTerminal) {
+                // Each item is on when its palette row is (`ShortcutAvailability`).
+                let menu = state.menuAvailability
                 ShortcutMenuButton(
                     .toggleChangesPanel,
                     label: .changesPanel(isShown: window?.selection.showsChangesPanel == true),
@@ -78,20 +80,20 @@ struct SupervisionCommands: Commands {
                     ChangesPanelActions.toggle(window, session: state.session)
                 }
                 // A window that shows nothing has no panel to show.
-                .disabled(window == nil || window?.selection.isChoosingProject == true)
+                .disabled(!menu.isEnabled(.toggleChangesPanel))
                 ShortcutMenuButton(.allProjects, in: state.settingsStore) {
                     guard let window else { return }
                     window.commands.send(.toggleAllProjects)
                 }
-                .disabled(window == nil)
+                .disabled(!menu.isEnabled(.allProjects))
                 ShortcutMenuButton(.showScratch, in: state.settingsStore) {
                     window?.commands.send(.showScratch)
                 }
-                .disabled(window == nil)
+                .disabled(!menu.isEnabled(.showScratch))
                 ShortcutMenuButton(.planUsage, in: state.settingsStore) {
                     window?.commands.send(.togglePlanUsage)
                 }
-                .disabled(window == nil || window?.areRailsHidden == true)
+                .disabled(!menu.isEnabled(.planUsage))
                 Button {
                     if let window {
                         SupervisionWindowActions.toggleIconBars(in: window)
@@ -105,53 +107,48 @@ struct SupervisionCommands: Commands {
         CommandGroup(after: .windowList) {
             MainWindowCommandItems(state.quickTerminal) {
                 Divider()
+                let menu = state.menuAvailability
                 ShortcutMenuButton(.showNeedsAttention, in: state.settingsStore) {
                     guard let window else { return }
                     SupervisionWindowActions.showNeedsAttention(in: window)
                 }
-                .disabled(window == nil)
+                .disabled(!menu.isEnabled(.showNeedsAttention))
                 ShortcutMenuButton(.showOpenTabs, in: state.settingsStore) {
                     guard let window else { return }
                     SupervisionWindowActions.showOpenTabs(in: window)
                 }
-                .disabled(window == nil || window?.selection.isChoosingProject == true)
+                .disabled(!menu.isEnabled(.showOpenTabs))
                 ShortcutMenuButton(.showProjectMenu, in: state.settingsStore) {
                     window?.commands.send(.showProjectMenu)
                 }
-                .disabled(window == nil)
+                .disabled(!menu.isEnabled(.showProjectMenu))
                 ShortcutMenuButton(.showWorktreeMenu, in: state.settingsStore) {
                     window?.commands.send(.showWorktreeMenu)
                 }
-                .disabled(!hasWorktreeMenu(window))
-                // On whenever there is a window: whether the focused pane's
-                // bar shows a ⋯ is not something the menu can watch, and
-                // the key does nothing where there is none.
+                .disabled(!menu.isEnabled(.showWorktreeMenu))
+                // On whenever there is a window, while the palette's row
+                // needs the bar's ⋯ (`ShortcutAvailability.isEnabled(_:on:)`).
                 ShortcutMenuButton(.showDecisionBarMenu, in: state.settingsStore) {
                     window?.commands.send(.showDecisionBarMenu)
                 }
-                .disabled(window == nil)
+                .disabled(!menu.isEnabled(.showDecisionBarMenu))
                 ShortcutMenuButton(.focusSidebar, in: state.settingsStore) {
                     guard let window else { return }
                     SupervisionWindowActions.focusSidebar(in: state.session, window: window)
                 }
-                .disabled(window == nil)
+                .disabled(!menu.isEnabled(.focusSidebar))
                 // Each window walks its own history.
                 ShortcutMenuButton(.goBack, in: state.settingsStore) {
                     guard let window else { return }
                     SupervisionWindowActions.goBack(in: window, session: state.session)
                 }
-                .disabled(window.map { !state.session.canNavigateBack(in: $0.id) } ?? true)
+                .disabled(!menu.isEnabled(.goBack))
                 ShortcutMenuButton(.goForward, in: state.settingsStore) {
                     guard let window else { return }
                     SupervisionWindowActions.goForward(in: window, session: state.session)
                 }
-                .disabled(window.map { !state.session.canNavigateForward(in: $0.id) } ?? true)
+                .disabled(!menu.isEnabled(.goForward))
             }
         }
-    }
-
-    /// Whether `window`'s title bar shows the worktree ▾ its item opens.
-    private func hasWorktreeMenu(_ window: ProjectWindowState?) -> Bool {
-        window?.selection.shownProjectID.flatMap { state.session.project($0) }.map(CheckoutName.hasWorktreeMenu) ?? false
     }
 }

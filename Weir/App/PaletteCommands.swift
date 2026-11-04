@@ -20,45 +20,31 @@ struct PaletteCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .toolbar) {
             MainWindowCommandItems(state.quickTerminal) {
+                // Each item is on when its palette row is (`ShortcutAvailability`),
+                // except Command Palette and Quick Open, whose rows are off in
+                // the palette they open.
+                let menu = state.menuAvailability
                 ShortcutMenuButton(.commandPalette, in: state.settingsStore) {
-                    openPalette(initialQuery: ">")
+                    guard let window else { return }
+                    state.openPalette(in: window, query: ">")
                 }
-                .disabled(window == nil)
+                .disabled(!menu.isEnabled(.commandPalette))
 
                 ShortcutMenuButton(.quickOpen, in: state.settingsStore) {
-                    openPalette(initialQuery: "")
+                    guard let window else { return }
+                    state.openPalette(in: window, query: "")
                 }
-                .disabled(window == nil)
+                .disabled(!menu.isEnabled(.quickOpen))
 
                 ShortcutMenuButton(.notificationHistory, in: state.settingsStore) {
                     guard let window else { return }
                     toggleNotificationHistory(window.notificationHistory, session: state.session)
                 }
-                .disabled(window == nil)
+                .disabled(!menu.isEnabled(.notificationHistory))
 
                 ReviewChangesMenuItem(state: state, window: window?.id)
                 ReviewLatestTurnMenuItem(state: state, window: window?.id)
             }
         }
-    }
-
-    private func openPalette(initialQuery: String) {
-        guard let window else { return }
-        CommandPaletteActions.openCommandPalette(
-            state.session,
-            in: window.id,
-            settings: state.settingsStore,
-            frecencyStore: state.frecencyStore,
-            attention: state.attention,
-            registry: state.registry,
-            initialQuery: initialQuery,
-            supervision: SupervisionPaletteFacts(
-                window: window,
-                session: state.session,
-                restoreTurnNumber: RestoreActions.paletteTarget(window: window, state: state)?.displayNumber,
-                installedAgents: state.installedAgents,
-                toasts: state.toastCenter
-            )
-        )
     }
 }

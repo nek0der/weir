@@ -385,7 +385,6 @@ private struct PaneStripTabCell: View {
                     registry: registry,
                     tabID: item.id,
                     source: .mouse,
-                    attention: attention,
                     agentProjection: agentProjection,
                     in: window.id
                 )
@@ -563,7 +562,7 @@ private struct AddTabButton: View {
         }
         // Off while the row's folder is gone, as New Tab is: the shell
         // would start somewhere else.
-        .disabled(session.isFolderMissing(container))
+        .disabled(!ShortcutAvailability.canOpenTab(in: container, session: session))
         .hoverChip(name, shortcut: nil, placement: .below)
         .heldKeyCap(.newTab, placement: .center)
         // Bare at rest, so its glyph rather than its square is what stands on

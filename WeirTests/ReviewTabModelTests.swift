@@ -287,26 +287,6 @@ struct ReviewTabModelTests {
         #expect(status(unopened, choices: []) == .noPane)
     }
 
-    /// ⌘W and ⌥⌘W close the review tab in front first, so they stay live
-    /// for one open in a workspace with no terminal tab ("Show Current
-    /// Diff" after every tab closed).
-    @Test func closeCommands_areLiveForAReviewInFront_withNoTerminalTab() {
-        var review = ReviewTabState(
-            root: Self.root,
-            selection: .uncommitted(includesChangesOutsideTurns: false),
-            fixedPoint: ReviewTabFixedPoint(),
-            agentPaneID: nil,
-            destinationPaneID: nil,
-            opening: UUID()
-        )
-        #expect(ReviewTabModel.closeCommandsAreLive(hasActiveTab: false, review: review))
-        #expect(ReviewTabModel.closeCommandsAreLive(hasActiveTab: true, review: nil))
-        #expect(!ReviewTabModel.closeCommandsAreLive(hasActiveTab: false, review: nil))
-        // Behind a terminal tab there is none to close here.
-        review.isShown = false
-        #expect(!ReviewTabModel.closeCommandsAreLive(hasActiveTab: false, review: review))
-    }
-
     /// A pane with no terminal: Insert says to choose another only where
     /// the menu has one.
     @Test func aPaneWithNoTerminal_asksForAnotherOnlyWhereThereIsOne() {

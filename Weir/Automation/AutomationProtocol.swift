@@ -42,8 +42,9 @@
         let session: String?
     }
 
-    /// The layers `open` can open. Each maps to what the app's own control for
-    /// it does, not to a `WindowCommand` passed through.
+    /// The layers `open` can open. Each but the review opens through the
+    /// palette row of its shortcut action (`AutomationController.action(opening:)`),
+    /// not through a `WindowCommand` sent as is.
     enum AutomationLayer: String, Codable, Sendable, CaseIterable {
         case needsAttention
         case allProjects

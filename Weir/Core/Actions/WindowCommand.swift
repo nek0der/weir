@@ -66,6 +66,10 @@ enum WindowCommand: Equatable {
     case renameTab(UUID)
     /// Run a row the window's command palette committed.
     case runPaletteRow(CommandPaletteExecution)
+    /// Open the window's command palette on `initialQuery` (">" for the
+    /// commands, "" for Quick Open), from a control that cannot build its
+    /// rows itself.
+    case openCommandPalette(initialQuery: String)
 }
 
 /// Delivers a `WindowCommand` to the window it is for. The app's window

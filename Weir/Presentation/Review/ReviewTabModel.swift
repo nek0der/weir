@@ -506,14 +506,6 @@ enum ReviewTabModel {
         [inserted, tab.agentPaneID].compactMap(\.self).first { livePanes.contains($0) }
     }
 
-    /// Whether ⌘W and ⌥⌘W have something to close in the window: a
-    /// terminal tab, or the review tab in front, which they close first
-    /// (`ReviewTabActions.closeIfInFront`). A review stays open with every
-    /// terminal tab closed, so the tab alone cannot say.
-    static func closeCommandsAreLive(hasActiveTab: Bool, review: ReviewTabState?) -> Bool {
-        hasActiveTab || review?.isShown == true
-    }
-
     /// Whether the tab closes after an insert that delivered every comment:
     /// only the tab the insert started in, reading the same comparison, in
     /// front. One the person put behind a terminal, opened again, or read

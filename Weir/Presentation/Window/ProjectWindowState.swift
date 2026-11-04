@@ -285,10 +285,10 @@ final class ProjectWindowState: Identifiable {
 
     /// Whether the review tab is in front, standing where the terminal
     /// was, so the window's panes are out of sight. The pane commands
-    /// (split, equalize, zoom, focus a neighbor) are off then: they would
-    /// change panes the person cannot see, and the change would only show
-    /// on going back. The menu, the palette's rows, and the palette's run
-    /// of a row ask this (`SupervisionPaletteFacts.arePanesHidden`).
+    /// (split, equalize, zoom, focus a neighbor, font size) are off then:
+    /// they would change panes the person cannot see, and the change would
+    /// only show on going back. The menu, the palette's rows, and the
+    /// palette's run of a row ask this (`SupervisionPaletteFacts.arePanesHidden`).
     var arePanesHidden: Bool {
         review?.isShown == true
     }

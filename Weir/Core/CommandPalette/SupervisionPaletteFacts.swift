@@ -43,6 +43,9 @@ struct SupervisionPaletteFacts: Equatable {
     /// Whether the focused pane's decision bar shows a ⋯ for Show
     /// Decision Bar Menu to open.
     var hasDecisionBarMenu = false
+    /// Whether ⌥⌘N is making a worktree in the window now, which leaves it
+    /// off until that one is made (`ProjectWindowState.isCreatingWorktreeAtOnce`).
+    var isCreatingWorktreeAtOnce = false
     /// The agents found on this Mac for the window's session, which the
     /// pane strip's "+" offers (`InstalledAgentsStore`); `nil` until they were
     /// looked for once, when every agent is offered (`InstalledAgentRule`).
@@ -61,15 +64,18 @@ struct SupervisionPaletteFacts: Equatable {
     }
 
     /// Whether ⇧⌘[ ⇧⌘] have a tab to step to among `tabCount` terminal
-    /// tabs: another one, or the window's review tab (`facts`). The menu
+    /// tabs: another one, or the window's review tab (`hasReviewTab`). The menu
     /// and the palette ask the same question.
-    static func canCycleTab(tabCount: Int, facts: Self) -> Bool {
-        tabCount > (facts.hasReviewTab ? 0 : 1)
+    static func canCycleTab(tabCount: Int, hasReviewTab: Bool) -> Bool {
+        tabCount > (hasReviewTab ? 0 : 1)
     }
 
     /// Whether `action` is a pane command (split, equalize, zoom, focus a
-    /// neighbor) while the window's panes are hidden, which leaves it off.
-    static func isOffPaneCommand(_ action: WeirShortcutAction, arePanesHidden: Bool) -> Bool {
-        arePanesHidden && action.category == .splits
+    /// neighbor, change the font size) while the window's panes are hidden,
+    /// which leaves it off: it would change a pane nobody sees.
+    /// `arePanesHidden` is read only for a pane command, so asking about
+    /// another action does not observe the review.
+    static func isOffPaneCommand(_ action: WeirShortcutAction, arePanesHidden: @autoclosure () -> Bool) -> Bool {
+        (action.category == .splits || action.category == .font) && arePanesHidden()
     }
 }
