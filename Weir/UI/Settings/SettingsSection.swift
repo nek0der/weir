@@ -8,29 +8,9 @@ import Foundation
 import SwiftUI
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    /// Opens Settings on the Keyboard pane: the Settings scene reads the
-    /// last section from `lastSectionDefaultsKey` when it opens.
-    static func openKeyboard() {
-        open(.keyboard)
-    }
-
-    /// Opens Settings on the General pane, where the notice that saving
-    /// stopped is (`SavingSuspendedNotice`).
-    static func openGeneral() {
-        open(.general)
-    }
-
-    /// Opens Settings on `section`: the palette's Settings rows, and the
-    /// two above.
-    static func open(_ section: Self) {
-        UserDefaults.standard.set(section.rawValue, forKey: lastSectionDefaultsKey)
-        NotificationCenter.default.post(name: .weirOpenSettings, object: nil)
-    }
-
     /// `UserDefaults` key holding the last visible section's rawValue.
-    /// `SettingsScene` reads it to pick the pane it opens on, and any
-    /// surface that wants to land on a specific pane writes it before
-    /// posting `.weirOpenSettings`.
+    /// `SettingsScene` reads it to pick the pane it opens on, and
+    /// `SettingsOpener` writes it before opening Settings on a pane.
     static let lastSectionDefaultsKey = "settings.last-section"
 
     case general

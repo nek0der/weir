@@ -18,9 +18,10 @@ struct ShortcutHelpTextTests {
     }
 
     @Test func theRailsSettingsIcon_namesCommandComma() {
-        let key = OpenSettingsCommand.shortcutDisplay
-        #expect(ShortcutHelpText.make(name: "Settings", shortcut: key, locale: Locale(identifier: "en")) == "Settings (⌘,)")
-        #expect(ShortcutHelpText.make(name: "Settings", shortcut: key, locale: Locale(identifier: "ja")) == "設定（⌘,）")
+        let name = SettingsCommand.railTitle
+        let key = StandardMenuShortcut.settings.displayString
+        #expect(ShortcutHelpText.make(name: name, shortcut: key, locale: Locale(identifier: "en")) == "Settings (⌘,)")
+        #expect(ShortcutHelpText.make(name: name, shortcut: key, locale: Locale(identifier: "ja")) == "設定（⌘,）")
     }
 
     /// The review's find bar names the field's own keys, as the pane's

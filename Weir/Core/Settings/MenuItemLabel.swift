@@ -7,9 +7,9 @@ import Foundation
 ///
 /// We keep the two together so a menu item takes both from the one place
 /// that defines its command: a `WeirShortcutAction` (`menuLabel`), the
-/// pane's zoom (`PaneZoomAction`), or the window's items below. The palette
-/// and Settings › Keyboard read the same values, so no menu names or draws
-/// a command its own way.
+/// pane's zoom (`PaneZoomAction`), Settings (`SettingsCommand`), or the
+/// window's items below. The palette and Settings › Keyboard read the same
+/// values, so no menu names or draws a command its own way.
 struct MenuItemLabel {
     let title: LocalizedStringResource
     let symbol: String

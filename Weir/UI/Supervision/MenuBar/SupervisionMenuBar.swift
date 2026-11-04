@@ -236,12 +236,13 @@ struct SupervisionMenuBarContent: View {
         }
         // The app's ⌘, and ⌘Q, which do not reach the app's menu while the
         // menu bar's window holds the keyboard and Weir is not active.
-        .onKeyPress(keys: [",", "q"]) { press in
-            guard press.modifiers == .command else { return .ignored }
-            if press.key == "," {
+        .onKeyPress(keys: Self.appMenuKeys) { press in
+            if StandardMenuShortcut.settings.isPressed(press) {
                 openSettings()
-            } else {
+            } else if StandardMenuShortcut.quit.isPressed(press) {
                 quit()
+            } else {
+                return .ignored
             }
             return .handled
         }
@@ -313,8 +314,15 @@ struct SupervisionMenuBarContent: View {
         window?.appearance = NSAppearance(named: isSystemDark ? .darkAqua : .aqua)
     }
 
+    /// The keys of the app menu's Settings… and Quit Weir, as `onKeyPress`
+    /// hears them.
+    static let appMenuKeys: Set<KeyEquivalent> = Set(
+        [StandardMenuShortcut.settings.swiftUIKeyEquivalent, StandardMenuShortcut.quit.swiftUIKeyEquivalent]
+            .compactMap(\.self)
+    )
+
     private func openSettings() {
-        MenuBarActions.openSettings(menuWindow: menuWindow) { openWindow(id: WeirApp.settingsWindowID) }
+        MenuBarActions.openSettings(menuWindow: menuWindow, opener: SettingsOpener(openWindow))
     }
 
     private func quit() {
@@ -572,7 +580,7 @@ private struct MenuBarRow: View {
 /// at the foot, so nothing stands under the rows. An AppKit menu
 /// (`PopUpMenuButton`), so the menu's own keyboard can open it on Return
 /// (`opener`) and its items show the keys the menu answers.
-private struct MenuBarMoreMenu: View {
+struct MenuBarMoreMenu: View {
     let opener: PopUpMenuOpener
     /// The menu's keyboard is on the ⋯, which the list, holding the focus,
     /// draws as a focused control.
@@ -589,20 +597,7 @@ private struct MenuBarMoreMenu: View {
                 comment: "Tooltip and VoiceOver label of a ⋯ menu (the decision bar, the notification history, the menu bar item)"
             )
         ) {
-            [
-                .item(PopUpMenuItem(title: "Open Weir", perform: onOpenWeir)),
-                .item(PopUpMenuItem(
-                    title: "Settings…",
-                    shortcut: StoredShortcut(key: ",", modifiers: [.command]),
-                    perform: onOpenSettings
-                )),
-                .separator,
-                .item(PopUpMenuItem(
-                    title: CommonText.quitApp,
-                    shortcut: StoredShortcut(key: "q", modifiers: [.command]),
-                    perform: onQuit
-                ))
-            ]
+            Self.entries(onOpenWeir: onOpenWeir, onOpenSettings: onOpenSettings, onQuit: onQuit)
         } label: {
             Image(systemName: "ellipsis")
                 .font(.supervision(.label, weight: .medium))
@@ -620,5 +615,29 @@ private struct MenuBarMoreMenu: View {
         .supervisionFocusRing(isFocused: isKeyboardOn, cornerRadius: WeirLayout.Supervision.buttonCornerRadius)
         // The control Return presses, said as the ring shows it.
         .accessibilityAddTraits(isKeyboardOn ? .isSelected : [])
+    }
+
+    /// The menu's items, Settings… and Quit Weir on the keys the app menu
+    /// gives them (`StandardMenuShortcut`), which the content's key handler
+    /// answers.
+    static func entries(
+        onOpenWeir: @escaping @MainActor () -> Void,
+        onOpenSettings: @escaping @MainActor () -> Void,
+        onQuit: @escaping @MainActor () -> Void
+    ) -> [PopUpMenuEntry] {
+        [
+            .item(PopUpMenuItem(title: "Open Weir", perform: onOpenWeir)),
+            .item(PopUpMenuItem(
+                title: SettingsCommand.menuLabel.title,
+                shortcut: StandardMenuShortcut.settings,
+                perform: onOpenSettings
+            )),
+            .separator,
+            .item(PopUpMenuItem(
+                title: CommonText.quitApp,
+                shortcut: StandardMenuShortcut.quit,
+                perform: onQuit
+            ))
+        ]
     }
 }

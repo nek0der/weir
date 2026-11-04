@@ -128,7 +128,8 @@ struct WorkspaceSessionOpenProjectTests {
                 frecencyStore: frecency,
                 toastCenter: ToastCenter(),
                 minPaneSize: 0,
-                window: session.primaryWindowID
+                window: session.primaryWindowID,
+                settingsOpener: SettingsOpenerRecorder().opener
             )
             await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) { !session.projects.isEmpty }
             // Write the palette's frecency hit now so no debounced save

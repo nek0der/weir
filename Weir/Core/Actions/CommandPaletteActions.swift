@@ -10,10 +10,6 @@ extension Notification.Name {
     /// Posted when the command palette opens so the overlay grabs focus. A
     /// broadcast: one palette is open at a time, in one window.
     static let weirCommandPaletteFocus = Notification.Name("com.nekoder.weir.commandPaletteFocus")
-
-    /// Open the Settings window from the palette. A broadcast: Settings is
-    /// the app's one scene, and whichever window's chrome hears it opens it.
-    static let weirOpenSettings = Notification.Name("com.nekoder.weir.openSettings")
 }
 
 /// What the window did with a palette row before the shared dispatch.
@@ -114,6 +110,9 @@ enum CommandPaletteActions {
         minPaneSize: PaneMinimumSize,
         agentProjection: AgentProjectionAdapter? = nil,
         window: WindowID,
+        // The Settings rows open Settings through the window's own opener,
+        // once, whichever window's palette ran them.
+        settingsOpener: SettingsOpener,
         // The rows the window runs itself: the supervision window's session
         // rows, review tab, and close keys, as its menu runs them, and the
         // rows that go to another project.
@@ -147,7 +146,8 @@ enum CommandPaletteActions {
                 window: window,
                 toastCenter: toastCenter,
                 minPaneSize: minPaneSize,
-                agentProjection: agentProjection
+                agentProjection: agentProjection,
+                settingsOpener: settingsOpener
             )
         }
 
@@ -172,7 +172,8 @@ enum CommandPaletteActions {
         window: WindowID,
         toastCenter: ToastCenter,
         minPaneSize: PaneMinimumSize,
-        agentProjection: AgentProjectionAdapter?
+        agentProjection: AgentProjectionAdapter?,
+        settingsOpener: SettingsOpener
     ) {
         switch action {
         case let .shortcutAction(shortcut):
@@ -207,13 +208,13 @@ enum CommandPaletteActions {
             Task { @MainActor in
                 await session.openProject(at: url, in: window, intent: .person)
             }
-        case .openSettings:
-            NotificationCenter.default.post(name: .weirOpenSettings, object: nil)
+        case .openSettings, .openSettingsSection:
+            openSettings(for: action, with: settingsOpener)
         case .openProjectSettings:
             commands.perform(.openProjectSettings(nil), in: window)
         case .closeProject:
             commands.perform(.closeProject(nil), in: window)
-        case .newAgentTab, .openSettingsSection, .movePaneToNewTab:
+        case .newAgentTab, .movePaneToNewTab:
             dispatchControlRow(action, session: session, window: window)
         case .restoreTurn, .toggleIconBars, .undoToast:
             break // Run by the supervision window (`SupervisionWindowActions.runPaletteAction`).
@@ -223,6 +224,17 @@ enum CommandPaletteActions {
     }
 
     // swiftlint:enable function_parameter_count
+
+    /// Runs the palette's Open Settings row, which opens on the section
+    /// Settings showed last, and its Settings: section rows, which open on
+    /// their section.
+    private static func openSettings(for action: CommandPaletteAction, with opener: SettingsOpener) {
+        if case let .openSettingsSection(section) = action {
+            opener.open(section)
+        } else {
+            opener.open()
+        }
+    }
 
     /// The rows for controls with no keyboard shortcut of their own, each as
     /// its control runs it.
@@ -234,8 +246,6 @@ enum CommandPaletteActions {
                   ShortcutAvailability.canOpenTab(in: container, session: session)
             else { return }
             TabActions.newTab(session, in: container, running: agent, window: window, intent: .person, selects: true)
-        case let .openSettingsSection(section):
-            SettingsSection.open(section)
         case .movePaneToNewTab:
             guard let paneID = session.activeTab(in: window)?.splitTree.effectiveFocusedLeafID else { return }
             TabActions.movePaneToNewTab(session, paneID: paneID, in: window, intent: .person)

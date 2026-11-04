@@ -103,7 +103,7 @@ enum SavingSuspendedText {
     }
 
     static func openSettings(locale: Locale) -> String {
-        LocalizedStringResource("Open Settings").resolved(in: locale)
+        SettingsCommand.openTitle.resolved(in: locale)
     }
 
     static func showFiles(locale: Locale) -> String {

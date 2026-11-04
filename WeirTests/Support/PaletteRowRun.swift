@@ -13,6 +13,7 @@ extension CommandPaletteActions {
         session: WorkspaceSession,
         window: WindowID,
         commands: any WindowCommandPerforming = RecordingWindowCommands(),
+        settingsOpener: SettingsOpener = SettingsOpenerRecorder().opener,
         runsInWindow: (CommandPaletteAction) -> PaletteRowHandling = { _ in .notHandled }
     ) throws {
         try withTempDir { dir in
@@ -27,6 +28,7 @@ extension CommandPaletteActions {
                 toastCenter: ToastCenter(),
                 minPaneSize: 0,
                 window: window,
+                settingsOpener: settingsOpener,
                 runsInWindow: runsInWindow
             )
             frecency.flushSynchronously()

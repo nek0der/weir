@@ -37,8 +37,10 @@ struct LibghosttyInitFailureView: View {
             .multilineTextAlignment(.center)
             .frame(maxWidth: 420)
             HStack(spacing: 12) {
-                Button("Open Settings") {
-                    openWindow(id: WeirApp.settingsWindowID)
+                Button {
+                    SettingsOpener(openWindow).open()
+                } label: {
+                    Text(SettingsCommand.openTitle)
                 }
                 Button("Show Logs in Console") {
                     revealConsole()
@@ -53,7 +55,7 @@ struct LibghosttyInitFailureView: View {
                 } label: {
                     Text(CommonText.quitApp)
                 }
-                .keyboardShortcut("q", modifiers: [.command])
+                .standardMenuShortcut(StandardMenuShortcut.quit)
                 // The one way a change takes effect: libghostty is set up
                 // once a launch.
                 Button("Relaunch Weir") {

@@ -110,10 +110,14 @@ struct LeftRailView: View {
             .heldKeyCap(.keyboardShortcuts)
             // The same scene ⌘, opens (`OpenSettingsCommand`), so a person
             // who never learned the key still finds Settings here.
-            IconControlButton(systemImage: "gearshape", name: "Settings", shortcut: OpenSettingsCommand.shortcutDisplay) {
-                openWindow(id: WeirApp.settingsWindowID)
+            IconControlButton(
+                systemImage: SettingsCommand.symbol,
+                name: SettingsCommand.railTitle,
+                shortcut: StandardMenuShortcut.settings.displayString
+            ) {
+                SettingsOpener(openWindow).open()
             }
-            .heldKeyCap(chord: .command) { "," }
+            .heldKeyCap(chord: StandardMenuShortcut.settings.modifiers) { StandardMenuShortcut.settings.displayTokens.last }
         }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
             railFrame = frame
