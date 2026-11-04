@@ -40,10 +40,14 @@ struct SessionAreaView: View {
         // unviewed turns or closes it, ⌥⌘L opens the latest turn.
         .onWindowCommand(of: window, takeCommand)
         // Any other way to another terminal tab (a new tab, a session's row,
-        // a notification) puts the review behind it, as picking it does.
+        // a notification) puts the review behind it, as picking it does; the
+        // row's last terminal tab closing brings it back in front.
         .onChange(of: window.selection.activeTabID) { oldTabID, _ in
-            guard ReviewTabActions.activeTabChangePutsReviewBehind(from: oldTabID, window: window, session: session) else { return }
-            ReviewTabActions.putBehind(window: window, session: session, registry: state.registry, paneVisibility: paneVisibility)
+            if ReviewTabActions.activeTabChangePutsReviewBehind(from: oldTabID, window: window, session: session) {
+                ReviewTabActions.putBehind(window: window, session: session, registry: state.registry, paneVisibility: paneVisibility)
+            } else if ReviewTabActions.activeTabChangeBringsReviewForward(from: oldTabID, window: window, session: session) {
+                ReviewTabActions.show(window: window)
+            }
         }
         // The review reads the session it was opened in; another session's
         // strip has no place for it. A comment being written keeps it open

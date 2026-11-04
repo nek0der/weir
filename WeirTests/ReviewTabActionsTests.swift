@@ -249,6 +249,59 @@ struct ReviewTabActionsTests {
         ))
     }
 
+    @Test func theRowsLastTerminalTabClosingInFrontOfTheReview_bringsTheReviewForward() {
+        let fixture = Fixture()
+        fixture.session.setActiveTab(fixture.first.id)
+        fixture.openReview(from: nil, isShown: false)
+        let bringsForward = { (closed: UUID) in
+            ReviewTabActions.activeTabChangeBringsReviewForward(from: closed, window: fixture.window, session: fixture.session)
+        }
+
+        fixture.session.closeTab(fixture.first.id)
+        #expect(!bringsForward(fixture.first.id), "another terminal tab is left to show")
+        fixture.session.closeTab(fixture.second.id)
+        #expect(bringsForward(fixture.second.id), "the review is the only tab left")
+
+        fixture.window.review?.isShown = true
+        #expect(!bringsForward(fixture.second.id), "the review is already in front")
+    }
+
+    @Test func aMoveToAnotherTab_leavesAReviewBehindWhereItIs() {
+        let fixture = Fixture()
+        fixture.session.setActiveTab(fixture.first.id)
+        fixture.openReview(from: nil, isShown: false)
+        fixture.session.setActiveTab(fixture.second.id)
+
+        #expect(!ReviewTabActions.activeTabChangeBringsReviewForward(
+            from: fixture.first.id,
+            window: fixture.window,
+            session: fixture.session
+        ), "the tab left is still open")
+    }
+
+    @Test func aTabPickedFromThePalette_comesInFrontOfTheReview_onlyWhileTheReviewIsInFront() {
+        let fixture = Fixture()
+        fixture.session.setActiveTab(fixture.first.id)
+        fixture.openReview(from: nil)
+        let comesInFront = { (tab: UUID) in
+            ReviewTabActions.pickedTabComesInFrontOfReview(tab, window: fixture.window, session: fixture.session)
+        }
+
+        #expect(comesInFront(fixture.first.id), "the tab under the review, already the active one")
+        #expect(comesInFront(fixture.second.id))
+        // Opened without selecting it, so the window stays on the project.
+        let scratch = fixture.session.openTab(
+            container: .loose,
+            in: fixture.session.primaryWindowID,
+            intent: .person,
+            selects: false
+        )
+        #expect(!comesInFront(scratch.id), "a tab of another row switches rows, which settles the review itself")
+
+        fixture.window.review?.isShown = false
+        #expect(!comesInFront(fixture.first.id), "with the review behind, picking the tab is an ordinary switch")
+    }
+
     @Test func closing_goesBackToTheAgentsTab_andLetsGoOfTheReview() throws {
         let fixture = Fixture()
         let agent = try #require(fixture.first.splitTree.allLeafIDs().first)
