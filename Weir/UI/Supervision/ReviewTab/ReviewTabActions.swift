@@ -381,6 +381,32 @@ enum ReviewTabActions {
         return oldTabID.map { session.tab($0) != nil } ?? true
     }
 
+    /// Whether the active tab changing from `oldTabID` brings the review tab
+    /// back in front: the tab closed was the row's last terminal tab, so the
+    /// review behind it is the only tab the strip has left. Left behind, it
+    /// would sit in the strip under the empty state, and every key that
+    /// shows or closes it reads the window as having no tab.
+    static func activeTabChangeBringsReviewForward(
+        from oldTabID: UUID?,
+        window: ProjectWindowState,
+        session: WorkspaceSession
+    ) -> Bool {
+        guard let review = window.review, !review.isShown,
+              let oldTabID, session.tab(oldTabID) == nil,
+              session.activeTab(in: window.id) == nil
+        else { return false }
+        return belongs(review, to: window.selection.activeContainerID, session: session)
+    }
+
+    /// Whether picking `tabID` from the palette puts the review behind it,
+    /// as a click on the tab's chip does (`hide(window:showing:)`): a tab of
+    /// the row the window shows, picked while the review is in front. The
+    /// tab under the review is already the active one, so selecting it alone
+    /// changes nothing and would leave the review where it was.
+    static func pickedTabComesInFrontOfReview(_ tabID: UUID, window: ProjectWindowState, session: WorkspaceSession) -> Bool {
+        window.review?.isShown == true && session.tab(tabID)?.container == window.selection.activeContainerID
+    }
+
     /// The tab, applied: the window reads it, with a session on its worktree
     /// (kept when the worktree is the same, so the open file survives a
     /// change of scope), and the presentation asked for its comparison. A

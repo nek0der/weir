@@ -367,6 +367,18 @@ enum SupervisionWindowActions {
             state.toastCenter.undo(id, in: window.id)
             return .handledReturningKeyboard
         }
+        if case let .jumpToTab(tabID) = action,
+           ReviewTabActions.pickedTabComesInFrontOfReview(tabID, window: window, session: state.session)
+        {
+            ReviewTabActions.hide(
+                window: window,
+                showing: tabID,
+                session: state.session,
+                registry: state.registry,
+                paneVisibility: PaneVisibilityReporter(windowID: window.id, registry: state.windowRegistry)
+            )
+            return .handled
+        }
         return runProjectRow(
             action,
             in: window,
