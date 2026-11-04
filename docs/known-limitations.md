@@ -8,10 +8,11 @@ as they are fixed or confirmed.
 
 ## Accessibility
 
-- **VoiceOver cannot read the terminal.** A terminal pane is announced as
-  "Terminal", but its text and cursor are not exposed. What an agent changed
-  can be read in the review tab and the Changes panel; what it printed
-  cannot.
+- **VoiceOver gets the terminal's screen only as one block of text.** A
+  terminal pane is announced as "Terminal", and its value is the text on
+  screen, but the cursor position and line boundaries are not exposed, and
+  nothing announces new output. What an agent changed can be read in the
+  review tab and the Changes panel.
 - **A hunk header's Comment and Discard buttons cannot be reached with the
   review's keys.** From the keyboard, `]` moves to the next hunk, ⇧J
   extends the selection over its lines, and `c` comments on them.
@@ -533,4 +534,5 @@ automated checks cannot provide. They still have to be checked by hand:
   ⌥⌘W;
 - that an ad-hoc signed Debug build leaves every approval to the agent's own
   prompt, as described above;
-- a full pass through the window by keyboard alone with VoiceOver.
+- a full pass through the window by keyboard alone with VoiceOver;
+- VoiceOver reading a terminal pane's screen text, described above.

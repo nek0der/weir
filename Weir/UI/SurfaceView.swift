@@ -490,31 +490,6 @@ final class SurfaceView: NSView {
         fatalError("init(coder:) is not supported")
     }
 
-    // MARK: - Accessibility
-
-    /// libghostty paints into the layer Metal-side and never publishes
-    /// the visible buffer through `NSAccessibility`. The view itself
-    /// is therefore invisible to VoiceOver — focus walks straight
-    /// past, and a VO user can't even tell that there is a terminal
-    /// here. Tag the view as a text-area role and label it "Terminal"
-    /// so chrome traversal (sidebar / title bar / pane navigation) at
-    /// least lands on a discoverable element. Reading the buffer
-    /// would need a separate `accessibilityValue` that snapshots the
-    /// scrollback through libghostty's C API — defer that to a
-    /// follow-up.
-    override func isAccessibilityElement() -> Bool {
-        true
-    }
-
-    override func accessibilityRole() -> NSAccessibility.Role? {
-        .textArea
-    }
-
-    override func accessibilityLabel() -> String? {
-        LocalizedStringResource("Terminal", comment: "VoiceOver label for the libghostty surface view")
-            .resolved(in: resolvedAppLocale)
-    }
-
     // MARK: - Layer backing
 
     override func makeBackingLayer() -> CALayer {

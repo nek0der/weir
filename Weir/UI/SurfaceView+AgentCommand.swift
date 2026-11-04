@@ -144,11 +144,17 @@ extension SurfaceView: AgentCommandTyping {
 
     /// Records a key press that reached this terminal.
     func noteKeyInput(_ event: NSEvent) {
-        switch Self.promptInputEffect(
+        noteInput(Self.promptInputEffect(
             key: event.namedKey,
             charactersIgnoringModifiers: event.charactersIgnoringModifiers,
             modifiers: event.modifierFlags
-        ) {
+        ))
+    }
+
+    /// Records input that reached this terminal, by its effect on the prompt:
+    /// a key press, or a Return an accessibility client wrote.
+    func noteInput(_ effect: PromptInputEffect) {
+        switch effect {
         case .none:
             return
         case .draft:
