@@ -36,21 +36,15 @@ struct NavigationCommands: Commands {
             _ = $0.presentedWorkingRows
             return SessionRowNavigation.rows(in: $0, session: state.session, sections: $0.presentedSections).count > 1
         } ?? false
-        Button {
+        ShortcutMenuButton(.nextSession, in: state.settingsStore) {
             guard let window else { return }
             SessionRowNavigation.cycle(forward: true, in: window, session: state.session, sections: state.sidebarSections(in: window))
-        } label: {
-            Label("Next Worktree", systemImage: "chevron.right")
         }
-        .weirShortcut(.nextSession, in: state.settingsStore)
         .disabled(!hasMultipleRows)
-        Button {
+        ShortcutMenuButton(.previousSession, in: state.settingsStore) {
             guard let window else { return }
             SessionRowNavigation.cycle(forward: false, in: window, session: state.session, sections: state.sidebarSections(in: window))
-        } label: {
-            Label("Previous Worktree", systemImage: "chevron.left")
         }
-        .weirShortcut(.previousSession, in: state.settingsStore)
         .disabled(!hasMultipleRows)
     }
 
@@ -69,15 +63,13 @@ struct NavigationCommands: Commands {
                 // libghostty silently drops the keystroke when AppKit's
                 // menu didn't fire.
                 let hasWaiting = state.attentionQueue.hasItems
-                Button("Next Action", systemImage: "arrow.right.to.line") {
+                ShortcutMenuButton(.nextAttention, in: state.settingsStore) {
                     state.attentionQueue.jump(forward: true, in: attentionWindow)
                 }
-                .weirShortcut(.nextAttention, in: state.settingsStore)
                 .disabled(!hasWaiting)
-                Button("Previous Action", systemImage: "arrow.left.to.line") {
+                ShortcutMenuButton(.previousAttention, in: state.settingsStore) {
                     state.attentionQueue.jump(forward: false, in: attentionWindow)
                 }
-                .weirShortcut(.previousAttention, in: state.settingsStore)
                 .disabled(!hasWaiting)
             }
         }

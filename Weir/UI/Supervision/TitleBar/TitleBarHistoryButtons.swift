@@ -18,10 +18,10 @@ struct TitleBarHistoryButtons: View {
     var body: some View {
         let model = TitleBarHistoryModel(session: session, window: window.id)
         HStack(spacing: WeirLayout.Supervision.titleBarHistoryButtonSpacing) {
-            button(.goBack, name: "Go Back", isEnabled: model.canGoBack) {
+            button(.goBack, isEnabled: model.canGoBack) {
                 actions?.goBack()
             }
-            button(.goForward, name: "Go Forward", isEnabled: model.canGoForward) {
+            button(.goForward, isEnabled: model.canGoForward) {
                 actions?.goForward()
             }
         }
@@ -30,11 +30,12 @@ struct TitleBarHistoryButtons: View {
 
     private func button(
         _ action: WeirShortcutAction,
-        name: LocalizedStringResource,
         isEnabled: Bool,
         perform: @escaping () -> Void
     ) -> some View {
-        Button(action: perform) {
+        // The menu item's name, as the tooltip and VoiceOver say it.
+        let name = action.localizedTitle
+        return Button(action: perform) {
             Image(systemName: action.iconName)
                 .font(.supervision(.icon, weight: .medium))
                 // The style pads the glyph on each side; the frame takes the

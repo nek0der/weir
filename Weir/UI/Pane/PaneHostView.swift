@@ -432,9 +432,7 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
             TabActions.movePaneToNewTab(session, paneID: paneID, in: window, intent: .person)
         }
         view.canMoveToNewTab = { [weak session] in
-            guard let session else { return false }
-            guard let tab = session.tab(containing: paneID) else { return false }
-            return tab.splitTree.allLeafIDs().count > 1
+            session?.tab(containing: paneID)?.canMovePaneToNewTab == true
         }
         view.canRenamePane = { [weak session] in
             session?.tab(containing: paneID) != nil

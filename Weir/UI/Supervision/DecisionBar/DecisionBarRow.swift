@@ -266,7 +266,7 @@ struct DecisionBarRow: View {
             .focusable(false)
             .help(Text(verbatim: ShortcutHelpText.make(
                 name: "Review Unviewed",
-                shortcut: settings.settings.keyboard.shortcut(for: .review)?.displayString,
+                shortcut: MenuCommand.reviewChanges.shortcut(in: settings.settings.keyboard)?.displayString,
                 locale: locale
             )))
             // This conversation's, apart from the changes panel's button,
@@ -313,7 +313,10 @@ struct DecisionBarRow: View {
             let conversation = model.reviewConversation
             // The key the menu bar's Review Changes answers, shown here as
             // every menu of Weir's shows a command's key (`MenuCommand`).
-            return PopUpMenuItem(title: "Review Unviewed", shortcut: MenuCommand.reviewChanges.shortcut(in: settings.settings.keyboard)) {
+            return PopUpMenuItem(
+                title: MenuCommand.reviewChanges.title,
+                shortcut: MenuCommand.reviewChanges.shortcut(in: settings.settings.keyboard)
+            ) {
                 actions.openReview(paneID, conversation)
             }
         case let .showPartialChanges(itemID):
@@ -375,7 +378,11 @@ struct DecisionBarRow: View {
         .heldKeyCap(chord: .command) { keyHint.isShown && shape.showsKeyHint ? nil : "⏎" }
         // Out of the ⇥ order, so ⇥ stays the terminal's for its TUI.
         .focusable(false)
-        .help(Text(verbatim: ShortcutHelpText.make(name: Self.name(action), shortcut: "⌘⏎", locale: locale)))
+        .help(Text(verbatim: ShortcutHelpText.make(
+            name: Self.name(action),
+            shortcut: StoredShortcut.primaryAction.displayString,
+            locale: locale
+        )))
         .accessibilityLabel(Text(Self.name(action)))
         .accessibilityHint(primaryHint(action))
     }

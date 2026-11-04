@@ -16,13 +16,10 @@ struct HelpCommands: Commands {
                 // Help is for whoever asks, Settings in front included: the
                 // sheet opens in the key main window, else the one the
                 // person was last in.
-                Button {
+                ShortcutMenuButton(.keyboardShortcuts, in: state.settingsStore) {
                     let window = state.windowRegistry.commandTarget ?? state.windowRegistry.backgroundCommandTarget
                     window.commands.send(.toggleKeyboardShortcuts)
-                } label: {
-                    Label("Keyboard Shortcuts", systemImage: "keyboard")
                 }
-                .weirShortcut(.keyboardShortcuts, in: state.settingsStore)
             }
         }
     }

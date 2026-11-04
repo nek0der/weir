@@ -475,11 +475,11 @@ struct ReviewStripTab: View {
                 Button(role: .destructive) {
                     reviewTabHandler?.close()
                 } label: {
-                    Label("Close", systemImage: "xmark")
+                    Label(MenuCommand.close)
                 }
                 // ⌘W closes the review only while it is in front, so the
                 // menu shows the key only then.
-                .contextMenuShortcut(tab.isShown ? MenuCommand.closePane.shortcut(in: settingsStore.settings.keyboard) : nil)
+                .contextMenuShortcut(tab.isShown ? MenuCommand.close.shortcut(in: settingsStore.settings.keyboard) : nil)
                 .tint(Color.primary)
             }
             // The close button stays its own element, so pressing the tab in

@@ -54,15 +54,12 @@ struct ReviewChangesMenuItem: View {
     let window: WindowID?
 
     var body: some View {
-        Button {
+        // The menu's name for ⌥⌘R; the buttons that open
+        // the same tab on the unviewed turns say "Review Unviewed".
+        ShortcutMenuButton(.review, in: state.settingsStore) {
             guard let window else { return }
             state.windowRegistry.perform(.review, in: window)
-        } label: {
-            // The menu's name for ⌥⌘R; the buttons that open
-            // the same tab on the unviewed turns say "Review Unviewed".
-            Label("Review", systemImage: ReviewPresentation.symbol)
         }
-        .weirShortcut(.review, in: state.settingsStore)
         // The review tab opens from any tab, and says why when there is
         // nothing to read.
         .disabled(window.flatMap { state.session.activeTab(in: $0) } == nil)
@@ -76,20 +73,13 @@ struct ReviewLatestTurnMenuItem: View {
     let window: WindowID?
 
     var body: some View {
-        Button {
+        // The pane's latest turn, which the review tab reads from its record.
+        ShortcutMenuButton(.reviewLatestTurn, in: state.settingsStore) {
             guard let window else { return }
             state.windowRegistry.perform(.reviewLatestTurn, in: window)
-        } label: {
-            Label(title, systemImage: ReviewPresentation.symbol)
         }
-        .accessibilityLabel(Text(title))
-        .weirShortcut(.reviewLatestTurn, in: state.settingsStore)
+        .accessibilityLabel(Text(WeirShortcutAction.reviewLatestTurn.localizedTitle))
         .disabled(isDisabled)
-    }
-
-    /// The pane's latest turn, which the review tab reads from its record.
-    private var title: LocalizedStringKey {
-        "Review Latest Turn"
     }
 
     /// With a tab in front, the review tab always answers, with the turn or

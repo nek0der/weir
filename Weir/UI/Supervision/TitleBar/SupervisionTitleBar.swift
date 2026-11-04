@@ -256,7 +256,7 @@ extension TitleBarMenuLabel where Trailing == EmptyView {
 /// its shortcut on the right when it has one. No icon, so the items read
 /// as commands under the list rather than more of its rows.
 struct DropdownItem: View {
-    let title: LocalizedStringKey
+    let title: Text
     /// The key that does the same, as the menu shows it ("⌘O").
     let shortcut: String?
     let action: () -> Void
@@ -265,7 +265,14 @@ struct DropdownItem: View {
     @State private var isHovering = false
 
     init(_ title: LocalizedStringKey, shortcut: String? = nil, action: @escaping () -> Void) {
-        self.title = title
+        self.title = Text(title)
+        self.shortcut = shortcut
+        self.action = action
+    }
+
+    /// An item named as its command is everywhere else it is offered.
+    init(_ title: LocalizedStringResource, shortcut: String? = nil, action: @escaping () -> Void) {
+        self.title = Text(title)
         self.shortcut = shortcut
         self.action = action
     }
@@ -273,7 +280,7 @@ struct DropdownItem: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: WeirLayout.Supervision.spaceS) {
-                Text(title)
+                title
                     .font(.supervision(.label))
                     .foregroundStyle(SupervisionTokens.text.color)
                 Spacer(minLength: WeirLayout.Supervision.spaceS)

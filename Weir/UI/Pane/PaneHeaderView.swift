@@ -53,10 +53,16 @@ struct PaneHeaderView: View {
     /// starts one dragging session.
     @State private var hasStartedPaneDrag = false
 
-    /// Whether the pane shares its tab: only then can it be zoomed or moved
-    /// to a tab of its own. A pane alone in its tab has a header too.
+    /// Whether the pane shares its tab: only then can it be zoomed. A pane
+    /// alone in its tab has a header too.
     private var isSplit: Bool {
         PaneHeaderRules.menuZoomAction(for: paneID, in: session.tab(containing: paneID)) != nil
+    }
+
+    /// Whether the pane can move to a tab of its own, as every pane menu
+    /// decides it.
+    private var canMoveToNewTab: Bool {
+        session.tab(containing: paneID)?.canMovePaneToNewTab == true
     }
 
     /// Whether this pane is the one its tab shows zoomed.
@@ -235,8 +241,10 @@ struct PaneHeaderView: View {
         // offers: a lone pane has no split to zoom out of or leave.
         .accessibilityActions {
             if isSplit {
-                Button(zoomActionTitle) { performZoomAction() }
-                Button("Move Pane to New Tab") { movePaneToNewTab() }
+                Button(zoomAction.title) { performZoomAction() }
+            }
+            if canMoveToNewTab {
+                Button(MenuItemLabel.movePaneToNewTab.title) { movePaneToNewTab() }
             }
             if let hiddenPanes {
                 Button {
@@ -246,7 +254,7 @@ struct PaneHeaderView: View {
                 }
             }
         }
-        .accessibilityAction(named: Text("Close Pane")) { onSurface { $0.onRequestCloseActivePane?() } }
+        .accessibilityAction(named: Text(MenuCommand.closePane.title)) { onSurface { $0.onRequestCloseActivePane?() } }
         .promptCacheAccessibilityAction(attention.promptCacheMark(paneID: paneID)) { _ in
             // The header's own clock, or, in the narrowest form that draws
             // none, the tab row's.
@@ -516,20 +524,6 @@ struct PaneHeaderView: View {
         PaneHeaderRules.zoomAction(isZoomed: isZoomed)
     }
 
-    private var zoomActionTitle: LocalizedStringResource {
-        switch zoomAction {
-        case .zoom: "Zoom Pane"
-        case .unzoom: "Unzoom Pane"
-        }
-    }
-
-    private var zoomActionSymbol: String {
-        switch zoomAction {
-        case .zoom: "arrow.up.left.and.arrow.down.right"
-        case .unzoom: "arrow.down.right.and.arrow.up.left"
-        }
-    }
-
     /// Zooms this pane, focusing it first so it is the one zoomed, or goes
     /// back to the split.
     private func performZoomAction() {
@@ -554,7 +548,7 @@ struct PaneHeaderView: View {
         Button {
             performZoomAction()
         } label: {
-            Image(systemName: "arrow.down.right.and.arrow.up.left")
+            Image(systemName: PaneZoomAction.unzoom.symbol)
                 .font(.supervision(WeirLayout.paneHeaderMenuFontSize, weight: .semibold))
                 .foregroundStyle(isHovering ? .secondary : .tertiary)
                 .frame(width: WeirLayout.paneHeaderMenuSlot, height: WeirLayout.paneHeaderMenuSlot)
@@ -562,8 +556,8 @@ struct PaneHeaderView: View {
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .help(Text("Unzoom Pane"))
-        .accessibilityLabel(Text("Unzoom Pane"))
+        .help(Text(PaneZoomAction.unzoom.title))
+        .accessibilityLabel(Text(PaneZoomAction.unzoom.title))
     }
 
     /// What can be done to this pane alone, reachable without knowing the
@@ -591,16 +585,19 @@ struct PaneHeaderView: View {
         let keyboard = settingsStore.settings.keyboard
         // A lone pane has no split to zoom out of or leave, so its
         // menu holds only what can be done to it.
-        let splitEntries: [PopUpMenuEntry] = isSplit ? [
+        let zoomEntries: [PopUpMenuEntry] = isSplit ? [
             .item(PopUpMenuItem(
-                title: zoomActionTitle,
-                systemImage: zoomActionSymbol,
+                title: zoomAction.title,
+                systemImage: zoomAction.symbol,
                 shortcut: MenuCommand.togglePaneZoom.shortcut(in: keyboard)
             ) {
                 performZoomAction()
             }),
-            .separator,
-            .item(PopUpMenuItem(title: "Move Pane to New Tab", systemImage: "rectangle.split.2x1") {
+            .separator
+        ] : []
+        let movePane = MenuItemLabel.movePaneToNewTab
+        let moveEntries: [PopUpMenuEntry] = canMoveToNewTab ? [
+            .item(PopUpMenuItem(title: movePane.title, systemImage: movePane.symbol) {
                 movePaneToNewTab()
             }),
             .separator
@@ -610,10 +607,10 @@ struct PaneHeaderView: View {
                 beginRename(label: label)
             }),
             .separator
-        ] + splitEntries + [
+        ] + zoomEntries + moveEntries + [
             .item(PopUpMenuItem(
-                title: "Close Pane",
-                systemImage: "xmark.square",
+                title: MenuCommand.closePane.title,
+                systemImage: MenuCommand.closePane.icon,
                 shortcut: MenuCommand.closePane.shortcut(in: keyboard),
                 isDestructive: true
             ) {

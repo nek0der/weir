@@ -237,9 +237,10 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         }
     }
 
-    /// Localized display name shown in Settings and in the (future)
-    /// command palette. Keys live in `Localizable.xcstrings` with
-    /// en + ja translations (CLAUDE.md hard requirement).
+    /// Localized display name shown in Settings › Keyboard, the command
+    /// palette, and the menu bar's item (`ShortcutMenuButton`). Keys live
+    /// in `Localizable.xcstrings` with en + ja translations (CLAUDE.md hard
+    /// requirement).
     var localizedTitle: LocalizedStringResource {
         switch self {
         case .newTab: "New Tab"
@@ -302,8 +303,8 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         }
     }
 
-    /// SF Symbol displayed next to this action in the command palette
-    /// and the Keyboard pane. A `switch` instead of a dictionary so
+    /// SF Symbol displayed next to this action in the command palette,
+    /// the Keyboard pane, and the menu bar's item. A `switch` instead of a dictionary so
     /// `WeirShortcutAction.allCases` adding a new case fails the
     /// build until the icon is picked — the prior `[Action: String]`
     /// map silently fell back to `"questionmark"`.
@@ -701,6 +702,14 @@ extension NamedKey {
 /// (one shortcut per slot) and don't fit our flat enum cleanly.
 /// The recorder rejects any attempt to bind to one of these so
 /// users can't accidentally shadow tab-jump.
+extension StoredShortcut {
+    /// ⌘⏎, which presses the decision bar's primary button and the
+    /// review's send button. Fixed rather than an action of its own, so no
+    /// binding may take it (`ReservedShortcuts`); the buttons' key hints and
+    /// tooltips write it from here.
+    static let primaryAction = StoredShortcut(key: "return", modifiers: [.command])
+}
+
 enum ReservedShortcuts {
     static let triggers: Set<String> = {
         var set: Set<String> = []
@@ -720,7 +729,7 @@ enum ReservedShortcuts {
         // past the terminal rather than a keybind, which would emit
         // `=ignore` and swallow the key even where the bar has nothing
         // to press. A binding here would steal it.
-        set.insert(StoredShortcut(key: "return", modifiers: [.command]).ghosttyTrigger)
+        set.insert(StoredShortcut.primaryAction.ghosttyTrigger)
         set.formUnion(numberJumpTriggers)
         return set
     }()

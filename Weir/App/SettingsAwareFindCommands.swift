@@ -43,29 +43,20 @@ struct SettingsAwareFindCommands: Commands {
             // main window would search a pane the user cannot see.
             MainWindowCommandItems(state.quickTerminal) {
                 Section {
-                    Button {
+                    ShortcutMenuButton(.find, in: state.settingsStore) {
                         if let settingsSearchFocusAction {
                             settingsSearchFocusAction()
                         } else {
                             performFind(.find)
                         }
-                    } label: {
-                        Label("Find…", systemImage: "magnifyingglass")
                     }
-                    .weirShortcut(.find, in: state.settingsStore)
-                    Button {
+                    ShortcutMenuButton(.findNext, in: state.settingsStore) {
                         performFind(.findNext)
-                    } label: {
-                        Label("Find Next", systemImage: "chevron.down")
                     }
-                    .weirShortcut(.findNext, in: state.settingsStore)
                     .disabled(!hasActiveSearch && !isReviewShown)
-                    Button {
+                    ShortcutMenuButton(.findPrevious, in: state.settingsStore) {
                         performFind(.findPrevious)
-                    } label: {
-                        Label("Find Previous", systemImage: "chevron.up")
                     }
-                    .weirShortcut(.findPrevious, in: state.settingsStore)
                     .disabled(!hasActiveSearch && !isReviewShown)
                 }
                 .disabled(settingsSearchFocusAction == nil && activeTab == nil && !isReviewShown)

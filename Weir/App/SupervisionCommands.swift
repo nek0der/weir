@@ -27,14 +27,13 @@ struct SupervisionCommands: Commands {
             MainWindowCommandItems(state.quickTerminal) {
                 // With no main window key too: with every window closed,
                 // it still opens a new one.
-                Button("New Window", systemImage: WeirShortcutAction.newWindow.iconName) {
+                ShortcutMenuButton(.newWindow, in: state.settingsStore) {
                     SupervisionWindowActions.newWindow(from: window, session: state.session, registry: state.windowRegistry)
                 }
-                .weirShortcut(.newWindow, in: state.settingsStore)
                 // Opens a project rather than acting in a window's contents,
                 // so it stays live with Settings in front, from the window
                 // the person was last in (as New Window does).
-                Button("Open Folder…", systemImage: WeirShortcutAction.openFolder.iconName) {
+                ShortcutMenuButton(.openFolder, in: state.settingsStore) {
                     SupervisionWindowActions.openFolder(
                         from: window ?? state.windowRegistry.backgroundCommandTarget,
                         session: state.session,
@@ -42,62 +41,63 @@ struct SupervisionCommands: Commands {
                         frecency: state.frecencyStore
                     )
                 }
-                .weirShortcut(.openFolder, in: state.settingsStore)
                 // The project ▾'s and the palette's own, for whoever
                 // looks in the menu first: the same commands, so the
                 // sheet and the confirmation are the ones those open.
                 Divider()
-                Button("Project Settings…", systemImage: "gearshape") {
+                Button {
                     guard let window else { return }
                     window.commands.send(.openProjectSettings(nil))
+                } label: {
+                    Label(ProjectMenuModel.ProjectItem.settings.label)
                 }
                 .disabled(!hasProjectItems)
-                Button("Close Project…", systemImage: "xmark") {
+                Button {
                     guard let window else { return }
                     window.commands.send(.closeProject(nil))
+                } label: {
+                    Label(ProjectMenuModel.ProjectItem.close.label)
                 }
                 .disabled(!hasProjectItems)
                 Divider()
-                Button("Close Window", systemImage: WeirShortcutAction.closeWindow.iconName) {
+                ShortcutMenuButton(.closeWindow, in: state.settingsStore) {
                     guard let window else { return }
                     SupervisionWindowActions.closeWindow(window, registry: state.windowRegistry, session: state.session)
                 }
-                .weirShortcut(.closeWindow, in: state.settingsStore)
                 .disabled(window == nil)
             }
         }
         CommandGroup(after: .sidebar) {
             MainWindowCommandItems(state.quickTerminal) {
-                Button(
-                    window?.selection.showsChangesPanel == true ? "Hide Changes" : "Show Changes",
-                    systemImage: WeirShortcutAction.toggleChangesPanel.iconName
+                ShortcutMenuButton(
+                    .toggleChangesPanel,
+                    label: .changesPanel(isShown: window?.selection.showsChangesPanel == true),
+                    in: state.settingsStore
                 ) {
                     guard let window else { return }
                     ChangesPanelActions.toggle(window, session: state.session)
                 }
-                .weirShortcut(.toggleChangesPanel, in: state.settingsStore)
                 // A window that shows nothing has no panel to show.
                 .disabled(window == nil || window?.selection.isChoosingProject == true)
-                Button("All Projects", systemImage: WeirShortcutAction.allProjects.iconName) {
+                ShortcutMenuButton(.allProjects, in: state.settingsStore) {
                     guard let window else { return }
                     window.commands.send(.toggleAllProjects)
                 }
-                .weirShortcut(.allProjects, in: state.settingsStore)
                 .disabled(window == nil)
-                Button("Scratch", systemImage: WeirShortcutAction.showScratch.iconName) {
+                ShortcutMenuButton(.showScratch, in: state.settingsStore) {
                     window?.commands.send(.showScratch)
                 }
-                .weirShortcut(.showScratch, in: state.settingsStore)
                 .disabled(window == nil)
-                Button("Plan Usage", systemImage: WeirShortcutAction.planUsage.iconName) {
+                ShortcutMenuButton(.planUsage, in: state.settingsStore) {
                     window?.commands.send(.togglePlanUsage)
                 }
-                .weirShortcut(.planUsage, in: state.settingsStore)
                 .disabled(window == nil || window?.areRailsHidden == true)
-                Button(window?.areRailsHidden == true ? "Show Icon Bars" : "Hide Icon Bars") {
+                Button {
                     if let window {
                         SupervisionWindowActions.toggleIconBars(in: window)
                     }
+                } label: {
+                    Label(MenuItemLabel.iconBars(areHidden: window?.areRailsHidden == true))
                 }
                 .disabled(window == nil)
             }
@@ -105,54 +105,46 @@ struct SupervisionCommands: Commands {
         CommandGroup(after: .windowList) {
             MainWindowCommandItems(state.quickTerminal) {
                 Divider()
-                Button("Show Needs Attention", systemImage: WeirShortcutAction.showNeedsAttention.iconName) {
+                ShortcutMenuButton(.showNeedsAttention, in: state.settingsStore) {
                     guard let window else { return }
                     SupervisionWindowActions.showNeedsAttention(in: window)
                 }
-                .weirShortcut(.showNeedsAttention, in: state.settingsStore)
                 .disabled(window == nil)
-                Button("Show Open Tabs", systemImage: WeirShortcutAction.showOpenTabs.iconName) {
+                ShortcutMenuButton(.showOpenTabs, in: state.settingsStore) {
                     guard let window else { return }
                     SupervisionWindowActions.showOpenTabs(in: window)
                 }
-                .weirShortcut(.showOpenTabs, in: state.settingsStore)
                 .disabled(window == nil || window?.selection.isChoosingProject == true)
-                Button("Show Project Menu", systemImage: WeirShortcutAction.showProjectMenu.iconName) {
+                ShortcutMenuButton(.showProjectMenu, in: state.settingsStore) {
                     window?.commands.send(.showProjectMenu)
                 }
-                .weirShortcut(.showProjectMenu, in: state.settingsStore)
                 .disabled(window == nil)
-                Button("Show Worktree Menu", systemImage: WeirShortcutAction.showWorktreeMenu.iconName) {
+                ShortcutMenuButton(.showWorktreeMenu, in: state.settingsStore) {
                     window?.commands.send(.showWorktreeMenu)
                 }
-                .weirShortcut(.showWorktreeMenu, in: state.settingsStore)
                 .disabled(!hasWorktreeMenu(window))
                 // On whenever there is a window: whether the focused pane's
                 // bar shows a ⋯ is not something the menu can watch, and
                 // the key does nothing where there is none.
-                Button("Show Decision Bar Menu", systemImage: WeirShortcutAction.showDecisionBarMenu.iconName) {
+                ShortcutMenuButton(.showDecisionBarMenu, in: state.settingsStore) {
                     window?.commands.send(.showDecisionBarMenu)
                 }
-                .weirShortcut(.showDecisionBarMenu, in: state.settingsStore)
                 .disabled(window == nil)
-                Button("Focus Sidebar", systemImage: WeirShortcutAction.focusSidebar.iconName) {
+                ShortcutMenuButton(.focusSidebar, in: state.settingsStore) {
                     guard let window else { return }
                     SupervisionWindowActions.focusSidebar(in: state.session, window: window)
                 }
-                .weirShortcut(.focusSidebar, in: state.settingsStore)
                 .disabled(window == nil)
                 // Each window walks its own history.
-                Button("Go Back", systemImage: WeirShortcutAction.goBack.iconName) {
+                ShortcutMenuButton(.goBack, in: state.settingsStore) {
                     guard let window else { return }
                     SupervisionWindowActions.goBack(in: window, session: state.session)
                 }
-                .weirShortcut(.goBack, in: state.settingsStore)
                 .disabled(window.map { !state.session.canNavigateBack(in: $0.id) } ?? true)
-                Button("Go Forward", systemImage: WeirShortcutAction.goForward.iconName) {
+                ShortcutMenuButton(.goForward, in: state.settingsStore) {
                     guard let window else { return }
                     SupervisionWindowActions.goForward(in: window, session: state.session)
                 }
-                .weirShortcut(.goForward, in: state.settingsStore)
                 .disabled(window.map { !state.session.canNavigateForward(in: $0.id) } ?? true)
             }
         }

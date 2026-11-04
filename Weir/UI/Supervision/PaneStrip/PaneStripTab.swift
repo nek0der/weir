@@ -122,8 +122,8 @@ struct PaneStripTab: View {
         .accessibilityAddTraits(item.isActive ? .isSelected : [])
         .accessibilityAction { onActivate() }
         .accessibilityActions {
-            Button("Rename…") { isEditing = true }
-            Button("Close Tab", action: onClose)
+            Button(MenuCommand.renameTab.title) { isEditing = true }
+            Button(MenuCommand.closeTab.title, action: onClose)
         }
     }
 
@@ -140,19 +140,20 @@ struct PaneStripTab: View {
             .accessibilityHidden(!isShown)
     }
 
-    /// The menu the tab list's rows have, with the same keys shown.
+    /// The menu the tab list's rows have, with the same keys shown, and
+    /// the names the menu bar gives the commands those keys perform.
     @ViewBuilder private var menu: some View {
         let keyboard = settingsStore.settings.keyboard
         Button {
             isEditing = true
         } label: {
-            Label("Rename…", systemImage: "pencil")
+            Label(MenuCommand.renameTab)
         }
         .contextMenuShortcut(MenuCommand.renameTab.shortcut(in: keyboard))
         .tint(Color.primary)
         Divider()
         Button(role: .destructive, action: onClose) {
-            Label("Close", systemImage: "xmark")
+            Label(MenuCommand.closeTab)
         }
         .contextMenuShortcut(MenuCommand.closeTab.shortcut(in: keyboard))
         .tint(Color.primary)

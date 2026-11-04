@@ -22,6 +22,7 @@ struct MenuShortcutTests {
             .splitDown: .action(.splitDown),
             .togglePaneZoom: .action(.toggleSplitZoom),
             .closePane: .action(.closeSurface),
+            .close: .action(.closeSurface),
             .renameTab: .action(.renameTab),
             .closeTab: .action(.closeTab),
             .newWorktree: .action(.newWorktree),

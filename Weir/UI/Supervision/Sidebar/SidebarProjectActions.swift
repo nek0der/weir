@@ -87,8 +87,6 @@ enum SidebarProjectActionText {
         "Remove Missing Worktrees",
         comment: "Sidebar project header menu: removes from the sidebar every worktree whose folder is gone, and closes their tabs"
     )
-    /// The title bar's own words for the same sheet.
-    static let settings = LocalizedStringResource("Project Settings…")
     static let bringForward = LocalizedStringResource(
         "Bring Other Window Forward",
         comment: "Sidebar project header, VoiceOver action: brings forward the window that shows the project"
@@ -175,17 +173,18 @@ struct SidebarProjectActionsMenu: View {
             }
             .tint(Color.primary)
         }
+        // The title bar's own words and symbols for the same commands.
         Button(action: actions.openSettings) {
-            Label { Text(SidebarProjectActionText.settings) } icon: { Image(systemName: "gearshape") }
+            Label(ProjectMenuModel.ProjectItem.settings.label)
         }
         .tint(Color.primary)
         Button(action: actions.revealInFinder) {
-            Label("Show in Finder", systemImage: "folder")
+            Label(ProjectMenuModel.ProjectItem.revealInFinder.label)
         }
         .disabled(!actions.hasFolder)
         .tint(Color.primary)
         Button(role: .destructive, action: actions.closeProject) {
-            Label("Close Project…", systemImage: "xmark")
+            Label(ProjectMenuModel.ProjectItem.close.label)
         }
         .tint(Color.primary)
     }
