@@ -59,7 +59,7 @@ enum TmuxPaneJob: Equatable, Sendable {
         of names: [String],
         inPane paneID: UUID,
         presence: TmuxPanePresence,
-        read: (TmuxBinding) async -> Self = { binding in await Task.detached { TmuxPaneJob.read(binding) }.value }
+        read: (TmuxBinding) async -> Self = { binding in await OffPoolWork.run { TmuxPaneJob.read(binding) } }
     ) async -> Self {
         await inFront(
             of: names,
@@ -86,7 +86,7 @@ enum TmuxPaneJob: Equatable, Sendable {
 
     /// `read` against the machine: the located tmux, addressed by the
     /// client's socket, and the kernel's process table. Blocks on tmux for
-    /// up to `queryTimeout`, so it is called off the main actor.
+    /// up to `queryTimeout`, so it is called through `OffPoolWork`.
     static func read(_ binding: TmuxBinding) -> Self {
         guard let tmuxPath = TmuxClientProbe.locateTmux() else { return .unknown }
         return read(

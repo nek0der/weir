@@ -4,6 +4,9 @@
 - Date: 2026-09-13.
 - Amends: [ADR 0001](0001-agent-integration-service.md), by saying how the
   service is kept or replaced when the app starts.
+- Amended by: [ADR 0007](0007-unreachable-service-and-temporary-locations.md),
+  which bounds the retry for an unreachable service and refuses to register
+  from a temporary location.
 - Amended: 2026-10-23. `.notFound` before a registration call now registers.
   The first revision treated every `.notFound` as an error, which blocked the
   first registration on a machine that had never had the service. The rest

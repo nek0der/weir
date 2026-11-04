@@ -66,20 +66,36 @@ or mismatched, the app waits for an asynchronous unregister to complete before
 it registers and authenticates the replacement.
 
 When `SMAppService` reports `.requiresApproval`, the app leaves the
-registration intact and directs the user to Login Items. Before the first registration on a machine, `SMAppService`
-reports `.notFound` rather than `.notRegistered`, because Background Task
-Management has no record for the label yet. The app has already validated the
-bundled service at that point, so it registers instead of reporting a missing
-service. `.notFound` after a registration call, signing failures, and other
-reconciliation failures disable controller observation. A transient
-controller failure with a current marker leaves the registered service and its
-pending requests intact and schedules another observation. A slow unregister
-reports an error but stays in flight until its completion callback, and
-registration never races that callback. The app attempts recovery when the
-user returns to it or chooses Retry. A rollback takes the same fingerprint-mismatch path.
-Moving an unchanged app keeps the service, because absolute bundle paths are
-not part of its identity. Running separate production copies at the same time
-is unsupported, because they share one production LaunchAgent registration.
+registration intact and directs the user to Login Items. Before the first
+registration on a machine, `SMAppService` reports `.notFound` rather than
+`.notRegistered`, because Background Task Management has no record for the
+label yet. The app has already validated the bundled service at that point, so
+it registers instead of reporting a missing service. `.notFound` after a
+registration call, signing failures, and other reconciliation failures disable
+controller observation. A transient controller failure with a current marker
+leaves the registered service and its pending requests intact and schedules
+another observation, on a backoff of 2 to 32 seconds. A service still
+unreachable a minute later is replaced once, and after that the app asks again
+only when the user returns to it or chooses Retry
+([ADR 0007](../docs/adr/0007-unreachable-service-and-temporary-locations.md)).
+A slow unregister reports an error but stays in flight until its completion
+callback, and registration never races that callback. For any other failure,
+the app attempts recovery when the user returns to it or chooses Retry. A
+rollback takes the same fingerprint-mismatch path. Moving an unchanged app
+keeps the service, because absolute bundle paths are not part of its identity.
+Running separate production copies at the same time is unsupported, because
+they share one production LaunchAgent registration.
+
+The app does not register the service while it runs from a disk image or a
+translocated copy, and asks the user to move it to the Applications folder. It
+recognizes a disk image by its volume's DiskArbitration device model, "Disk
+Image", and a translocated copy by a read-only mount whose path has an
+`AppTranslocation` component, so an installed copy on an external or read-only
+disk is still registered.
+
+A `register()` that fails with `kSMErrorLaunchDeniedByUser` directs the user to
+Login Items, and `kSMErrorAlreadyRegistered` goes on to authenticate the
+service.
 
 Production cleanup must target only `com.nekoder.weir.agent-integration-service` with
 the signed disposable app that registered it. Never use a global background-item

@@ -502,7 +502,7 @@ conversation again as its surface mounts (`AgentResumeCommandBuilder`).
 | `Weir/Core/Settings/GhosttyConfigBridge.swift` | Generates the libghostty config string and the forced-override keys |
 | `Weir/UI/Terminal/GhosttyApp.swift` | Wraps `ghostty_app_t`, runtime callbacks, lifecycle |
 | `Weir/Core/Rust/WeirRustBridge.swift` | The typed Swift entry point for the versioned Rust C ABI |
-| `Weir/Core/Agent/AgentIntegrationServiceRegistrar.swift` | Registering, verifying, and replacing the bundled LaunchAgent on launch, plus the Debug-only `WEIR_AGENT_SERVICE_CONTROL` commands |
+| `Weir/Core/Agent/AgentIntegrationServiceRegistrar.swift` | Registering, verifying, and replacing the bundled LaunchAgent on launch, the bounded retry for a service that does not answer ([ADR 0007](docs/adr/0007-unreachable-service-and-temporary-locations.md)), plus the Debug-only `WEIR_AGENT_SERVICE_CONTROL` commands |
 | `AgentIntegrationService/Service/main.swift` | Role-separated XPC listeners and authenticated principal creation |
 | `AgentIntegrationService/Service/RustApprovalHost.swift` | Ownership-safe Swift wrapper around the Rust approval service and session C ABI |
 | `AgentIntegrationService/Shared/AgentIntegrationConfiguration.swift` | Debug/Release identifiers and Team ID-bound peer requirements |
@@ -600,6 +600,17 @@ own the fine-grained Rust dependency graph. The script places Cargo output in
 DerivedData and replaces the linked static library only when its contents
 change. A new Rust module is therefore never missed, and unchanged Swift
 targets are not forced to relink.
+
+### Blocking work
+
+Work that waits on another process or the kernel, such as a semaphore on an
+XPC reply, a child process, or a static code check, is awaited through
+`OffPoolWork.run` (`Core/Concurrency`), which runs the work on a dispatch
+queue. `Task.detached` and a `nonisolated` async function would run it on
+Swift's cooperative pool, which has one thread per core and adds none for a
+thread that blocks, so a few such waits stall every task in the app. A caller
+that blocks for long ends the wait itself on cancellation: the approval
+controller (`ApprovalPresentationStore`) invalidates its XPC connection.
 
 ### Forced-override Ghostty config keys
 

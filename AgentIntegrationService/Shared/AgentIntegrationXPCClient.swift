@@ -3,29 +3,48 @@
 
 import Foundation
 
-final class AgentIntegrationXPCClient {
+/// `@unchecked Sendable` because `NSXPCConnection` is not marked `Sendable`.
+/// It is safe: the client holds only constants, `NSXPCConnection` may be
+/// messaged and invalidated from any thread, and each call keeps its result
+/// in a box of its own behind a lock. That lets the app block on a call off
+/// the cooperative pool and invalidate it from a cancellation handler.
+final class AgentIntegrationXPCClient: @unchecked Sendable {
     private let connection: NSXPCConnection
     private let timeoutSeconds: Int
 
-    init(role: AgentIntegrationRole, timeoutSeconds: Int = 5) throws {
-        guard timeoutSeconds > 0 else {
-            throw AgentIntegrationError.invalidArguments("The XPC timeout must be positive.")
-        }
+    convenience init(role: AgentIntegrationRole, timeoutSeconds: Int = 5) throws {
         let machService = switch role {
         case .requester: AgentIntegrationConfiguration.requesterMachService
         case .controller: AgentIntegrationConfiguration.controllerMachService
         }
         let connection = NSXPCConnection(machServiceName: machService, options: [])
-        connection.remoteObjectInterface = NSXPCInterface(with: (any AgentIntegrationXPCProtocol).self)
         try connection.setCodeSigningRequirement(AgentIntegrationSigning.requirement(
             peerIdentifiers: [AgentIntegrationConfiguration.serviceIdentifier]
         ))
+        try self.init(connection: connection, timeoutSeconds: timeoutSeconds)
+    }
+
+    /// A client on a connection whose peer the caller has already made
+    /// sure of: `init(role:)` requires the service's signature, and a test
+    /// connects to an anonymous listener in its own process.
+    init(connection: NSXPCConnection, timeoutSeconds: Int = 5) throws {
+        guard timeoutSeconds > 0 else {
+            throw AgentIntegrationError.invalidArguments("The XPC timeout must be positive.")
+        }
+        connection.remoteObjectInterface = NSXPCInterface(with: (any AgentIntegrationXPCProtocol).self)
         connection.activate()
         self.connection = connection
         self.timeoutSeconds = timeoutSeconds
     }
 
     deinit {
+        connection.invalidate()
+    }
+
+    /// Ends the connection. A call blocked waiting for its reply fails at
+    /// once, because invalidating runs the error handler of every
+    /// outstanding call, and any later call fails as soon as it is made.
+    func invalidate() {
         connection.invalidate()
     }
 

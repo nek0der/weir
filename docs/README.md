@@ -31,6 +31,7 @@ follow.
 | [0004 Provider adapter contract](adr/0004-provider-adapter-contract.md) | Accepted |
 | [0005 Agent verification surface](adr/0005-agent-verification-surface.md) | Accepted |
 | [0006 Keys posted to a background run](adr/0006-keys-posted-to-a-background-run.md) | Accepted |
+| [0007 Unreachable service and temporary locations](adr/0007-unreachable-service-and-temporary-locations.md) | Accepted |
 
 ## Keeping them true
 

@@ -20,7 +20,7 @@ The card does not open by itself. Choose **Answer…** in any of these places to
 
 A request you sent to the terminal with **Answer in terminal** is answered in the agent's own prompt.
 
-If every approval goes to the prompt, check that Weir's service is on in **System Settings → General → Login Items & Extensions**. A build you made yourself without a Team ID has no approval service.
+If every approval goes to the prompt, check that Weir's service is on in **System Settings → General → Login Items & Extensions**. Weir does not register the service while it runs from its disk image or from a temporary copy macOS made of it, so move Weir to the Applications folder and open it from there.
 
 ## The sidebar keeps saying an agent is running or needs approval
 
