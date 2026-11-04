@@ -180,6 +180,22 @@ run_case "allow-list suppresses a neutral lazygit mention" pass bash -c '
   echo "// we do not run real tools like lazygit here" > src/demo.swift
   echo "src/demo.swift:lazygit" > .forbidden-terms-allow
 '
+# An entry no line needs fails: once the line it covered is gone, the entry
+# would let the term back into that file unreviewed.
+run_case "allow-list entry that no line needs fails" fail bash -c '
+  echo "hello world" > README.md
+  echo "src/demo.swift:lazygit" > .forbidden-terms-allow
+'
+# Two entries covering one line are both in use, though the first suppresses it.
+run_case "two allow-list entries on one line are both in use" pass bash -c '
+  echo "Kitty (https://github.com/kovidgoyal/kitty)" > THIRD-PARTY-NOTICES
+  printf "THIRD-PARTY-NOTICES:Kitty\nTHIRD-PARTY-NOTICES:kitty\n" > .forbidden-terms-allow
+'
+# Comments and blank lines are not entries, so they are never unused.
+run_case "allow-list with only comments passes a clean tree" pass bash -c '
+  echo "hello world" > README.md
+  printf "# a note\n\n" > .forbidden-terms-allow
+'
 
 # Vendored upstream path: pattern matches inside `Weir/Resources/ghostty/
 # shell-integration/` must be ignored — the guardrail hard-codes this exclude.

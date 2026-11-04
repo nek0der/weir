@@ -92,7 +92,7 @@ enum ReviewHunkDiscardRules {
         /// A turn ended in the same second as the range's end turn, at
         /// another tree: the record keeps seconds, so whether it ended
         /// after the range cannot be told, and the discard is refused
-        /// rather than guess (`ReviewHunkDiscardRules.isLaterOrderUnknown`).
+        /// rather than guess (`ReviewHunkDiscardRules.LaterReading.isOrderUnknown`).
         case undecidable
         /// They changed the file; the number is the range's last turn's,
         /// `nil` for a range across conversations, whose last number names
@@ -179,7 +179,7 @@ enum ReviewHunkDiscardRules {
     /// numbered higher ended later: a conversation runs one turn at a time.
     /// So one of `last`'s own conversation numbered after it is later
     /// though it ended in `last`'s second; left out, it would read as a tie
-    /// of unknown order (`isLaterOrderUnknown`) and refuse every hunk.
+    /// of unknown order (`LaterReading.isOrderUnknown`) and refuse every hunk.
     static func laterTurn(after last: TurnSummary, in turns: [TurnSummary], isRoot: (String) -> Bool) -> TurnSummary? {
         let since = WorktreeTimeline.endDate(last)
         let endedAfterLast = { (turn: TurnSummary) in
@@ -198,26 +198,21 @@ enum ReviewHunkDiscardRules {
             }
     }
 
-    /// Whether the turn whose end the file holds after the range is not
-    /// known: another turn of the worktree ended in the same second as the
-    /// one that ended last (`laterTurn`, or `last` when none did), at
-    /// another tree, and the record keeps seconds, so which came first is
-    /// not known. Two later turns tied this way are as unknown as a
-    /// later turn tied with `last`: picking either one compares against a
-    /// tree the file may have moved on from. The discard is refused then,
-    /// which is the safe side: a discard written against such a tree would
-    /// take out what the other turn wrote. One that ended at the same tree
-    /// changed nothing after it.
-    static func isLaterOrderUnknown(after last: TurnSummary, in turns: [TurnSummary], isRoot: (String) -> Bool) -> Bool {
-        later(after: last, in: turns, isRoot: isRoot).isOrderUnknown
-    }
-
     /// This is what turns say of the file after a range: the turn that ended last
-    /// after it (`laterTurn`) and whether its order is not known
-    /// (`isLaterOrderUnknown`), read in one go so the later turn is looked
-    /// for once.
+    /// after it (`laterTurn`) and whether its order is not known, read in one
+    /// go so the later turn is looked for once.
     struct LaterReading: Equatable {
         let turn: TurnSummary?
+        /// Whether the turn whose end the file holds after the range is not
+        /// known: another turn of the worktree ended in the same second as
+        /// the one that ended last (`laterTurn`, or `last` when none did), at
+        /// another tree, and the record keeps seconds, so which came first is
+        /// not known. Two later turns tied this way are as unknown as a
+        /// later turn tied with `last`: picking either one compares against a
+        /// tree the file may have moved on from. The discard is refused then,
+        /// which is the safe side: a discard written against such a tree
+        /// would take out what the other turn wrote. One that ended at the
+        /// same tree changed nothing after it.
         let isOrderUnknown: Bool
     }
 

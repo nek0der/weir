@@ -33,7 +33,6 @@ struct WorktreeCreationStageTests {
             )
         }
         #expect(error?.stage == .creatingWorktree)
-        #expect(error?.leavesWorktree == false)
         #expect(error?.logTail == "fatal: a branch named 'feat/x' already exists")
         guard case .gitFailed = error else {
             Issue.record("a branch that was never made was reported as left behind: \(String(describing: error))")
@@ -122,7 +121,6 @@ struct WorktreeCreationStageTests {
             try await session.runSetup(projectID: project.id, worktreeID: worktree.id, path: { Self.path })
         }
         #expect(error?.stage == .setup(stepIndex: 1))
-        #expect(error?.leavesWorktree == true)
         #expect(error?.logTail == "missing marker")
         #expect(session.project(project.id)?.worktrees.map(\.id) == [worktree.id])
 

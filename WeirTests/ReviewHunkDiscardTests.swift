@@ -338,7 +338,7 @@ struct ReviewHunkDiscardTests {
     func whichTurnTheFileHoldsAfterTheRange_isUnknown_onlyForATieAtTwoTrees(_ order: Order) throws {
         let turns = try Self.turns(order.turns)
         let root = order.root
-        #expect(ReviewHunkDiscardRules.isLaterOrderUnknown(after: turns[order.end], in: turns) { $0 == root } == order.isUnknown)
+        #expect(ReviewHunkDiscardRules.later(after: turns[order.end], in: turns) { $0 == root }.isOrderUnknown == order.isUnknown)
     }
 
     /// What turns say after a range is read once per history revision and

@@ -536,7 +536,7 @@ extension WorkspaceSession {
         do {
             result = try await withWorktreeMutationGated(pendingID) {
                 try await gitResult(leavingBranch: newBranch, keeping: path) {
-                    try await git.createWorktree(repoRoot: repoRoot, path: path, baseBranch: checkout, newBranchName: nil)
+                    try await git.createWorktree(repoRoot: repoRoot, path: path, baseBranch: checkout)
                 }
             }
         } catch let CreateWorktreeError.timedOut(seconds, branch, kept) {

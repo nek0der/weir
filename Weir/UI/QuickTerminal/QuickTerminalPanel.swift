@@ -229,7 +229,7 @@ struct QuickTerminalContent: View {
         ZStack {
             QuickTerminalBackdrop(
                 appearance: model.settingsStore.settings.appearance,
-                reduceTransparency: model.reduceTransparencyResolver.shouldReduceTransparency
+                reducesTransparency: model.reduceTransparencyResolver.shouldReduceTransparency
             )
             if let surfaceView = model.surfaceView {
                 QuickTerminalSurfaceRepresentable(surfaceView: surfaceView)
@@ -273,10 +273,10 @@ struct QuickTerminalContent: View {
 /// behind-window vibrancy under it is `QuickTerminalRootView`.
 private struct QuickTerminalBackdrop: View {
     let appearance: AppearanceSettings
-    let reduceTransparency: Bool
+    let reducesTransparency: Bool
 
     var body: some View {
-        if reduceTransparency {
+        if reducesTransparency {
             Color(nsColor: .windowBackgroundColor)
         } else {
             WeirColor.terminalColumnBackground.opacity(appearance.backgroundOpacity * 0.5)

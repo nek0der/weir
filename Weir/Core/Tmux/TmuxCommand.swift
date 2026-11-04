@@ -27,7 +27,7 @@ enum TmuxCommandResult: Equatable {
     case launchFailed
     case failed(Int32)
     case timedOut
-    case cancelled
+    case canceled
     case invalidOutput
     case outputLimit
 }
@@ -49,7 +49,7 @@ final class TmuxCommand: Sendable {
         timeout: TimeInterval = TmuxTiming.queryTimeout,
         outputLimit: Int = TmuxTiming.outputLimit
     ) -> TmuxCommandResult {
-        guard !stop.isRequested else { return .cancelled }
+        guard !stop.isRequested else { return .canceled }
         // A second run of the same instance is refused: its cancellation
         // would reach a run it was not meant for.
         let isSecondRun = hasStarted.withLock { started in
@@ -84,7 +84,7 @@ final class TmuxCommand: Sendable {
     /// behind still held its output gave no whole answer in time.
     private static func result(of output: DrainedOutput, status: Int32) -> TmuxCommandResult {
         switch output.ending {
-        case .stopped: return .cancelled
+        case .stopped: return .canceled
         case .timedOut: return .timedOut
         case .outputLimit: return .outputLimit
         case .exited: break

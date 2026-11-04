@@ -69,7 +69,7 @@ Weir is pre-alpha. Settings and data formats may change between releases.
 
 Pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md), and [SECURITY.md](SECURITY.md) to report a vulnerability. Questions and ideas go in [Discussions](https://github.com/nek0der/weir/discussions).
 
-## Acknowledgements
+## Acknowledgments
 
 Built on [Ghostty](https://github.com/ghostty-org/ghostty) (libghostty) and [Sparkle](https://github.com/sparkle-project/Sparkle). The full list is in [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES).
 

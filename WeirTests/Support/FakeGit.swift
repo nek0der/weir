@@ -18,7 +18,6 @@ final class FakeGit: GitRunning, Sendable {
         let repoRoot: URL
         let path: URL
         let baseBranch: String
-        let newBranchName: String?
     }
 
     struct RemoveCall {
@@ -189,15 +188,13 @@ final class FakeGit: GitRunning, Sendable {
     func createWorktree(
         repoRoot: URL,
         path: URL,
-        baseBranch: String,
-        newBranchName: String?
+        baseBranch: String
     ) async throws -> GitResult {
         let (result, error, leavesFolder) = state.withLock {
             $0.createCalls.append(.init(
                 repoRoot: repoRoot,
                 path: path,
-                baseBranch: baseBranch,
-                newBranchName: newBranchName
+                baseBranch: baseBranch
             ))
             $0.operations.append("worktree add")
             return ($0.nextCreateResult, $0.nextCreateError, $0.leavesFolderOnError)

@@ -66,15 +66,16 @@ extension ReviewSession {
         return next
     }
 
-    /// Which file to open when the surface has none, or `nil` for the first
-    /// changed file.
+    /// Which file to open in `scope` when the surface names none, or `nil`
+    /// for the first changed file.
     ///
-    /// Only ever a file the current list carries: the worktree moves between
-    /// readings, and a remembered id can name a file that is committed, reset,
-    /// or in the scope's other half by now.
-    var resumeFileID: String? {
-        guard let lastFileID, files.contains(where: { $0.id == lastFileID }) else { return nil }
-        return lastFileID
+    /// Read for the scope being loaded, not the one on screen, and only ever
+    /// a file of `files`: the worktree moves between readings, and a
+    /// remembered id can name a file that is committed, reset, or in the
+    /// scope's other half by now.
+    func resumeFile(in scope: ReviewScope, among files: [ReviewFile]) -> ReviewFile? {
+        guard let id = lastFileIDs[scope.scopeID] else { return nil }
+        return files.first { $0.id == id }
     }
 
     /// The message no operation may clear while it holds.

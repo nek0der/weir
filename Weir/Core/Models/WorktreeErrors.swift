@@ -48,12 +48,6 @@ enum CreateWorktreeError: WeirLocalizedError {
         }
     }
 
-    /// Whether the worktree and its row were made before this failure:
-    /// the stages after the worktree's.
-    var leavesWorktree: Bool {
-        stage != .creatingWorktree
-    }
-
     /// What the failed stage printed last: git's or the setup step's own
     /// words, for the decision bar.
     var logTail: String {

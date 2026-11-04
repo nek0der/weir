@@ -55,12 +55,11 @@ struct WorkspaceSessionWorktreeTests {
         #expect(branch.name == "feature-y")
         #expect(branch.startPoint == "main")
         let call = try #require(git.createCalls.first)
-        #expect(call.newBranchName == nil)
         #expect(call.baseBranch == "feature-y")
     }
 
-    @Test("createGitWorktree: omits the branch name when the input is whitespace")
-    func createGitWorktree_whenNewBranchNameIsBlank_passesNilToGit() async throws {
+    @Test("createGitWorktree: makes no branch when the input is whitespace")
+    func createGitWorktree_whenNewBranchNameIsBlank_makesNoBranch() async throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
         let git = FakeGit()
         _ = try await session.createGitWorktree(
@@ -72,7 +71,7 @@ struct WorkspaceSessionWorktreeTests {
             git: git
         )
         let call = try #require(git.createCalls.first)
-        #expect(call.newBranchName == nil)
+        #expect(call.baseBranch == "main")
         #expect(git.branchCalls.isEmpty)
     }
 

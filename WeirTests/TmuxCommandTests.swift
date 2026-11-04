@@ -49,16 +49,16 @@ struct TmuxCommandTests {
     }
 
     @Test func cancellationBeforeAndDuringLaunch_isDistinct() {
-        let cancelled = TmuxCommand()
-        cancelled.cancel()
-        #expect(cancelled.run(executable: "/usr/bin/true", arguments: []) == .cancelled)
+        let canceled = TmuxCommand()
+        canceled.cancel()
+        #expect(canceled.run(executable: "/usr/bin/true", arguments: []) == .canceled)
         let running = TmuxCommand()
         let cancel = DispatchWorkItem { @Sendable in running.cancel() }
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.05, execute: cancel)
         // Neither the child nor the timeout may end the run before the
         // cancel does. Under the short default timeout, a cancel that a busy
         // machine ran late lost to it, and the run said `.timedOut`.
-        #expect(running.run(executable: "/bin/sleep", arguments: ["60"], timeout: 60) == .cancelled)
+        #expect(running.run(executable: "/bin/sleep", arguments: ["60"], timeout: 60) == .canceled)
     }
 
     @Test func outputLimitAndInvalidEncoding_areNotPartialSuccess() {

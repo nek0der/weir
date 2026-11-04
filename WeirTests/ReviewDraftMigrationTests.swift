@@ -217,7 +217,7 @@ struct ReviewDraftMigrationTests {
             #expect(record.stage == .written)
             #expect(record.migratedSHA256 != migrated.migratedSHA256)
             let saved = try Data(contentsOf: file)
-            #expect(record.migratedSHA256 == SHA256.hash(data: saved).map { String(format: "%02x", $0) }.joined())
+            #expect(record.migratedSHA256 == SHA256.hash(data: saved).hexString)
             _ = try store.load(root: Self.root)
             #expect(MigrationBackup.readLedger(for: file) == record)
         }

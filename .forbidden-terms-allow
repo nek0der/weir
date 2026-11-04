@@ -18,10 +18,6 @@ THIRD-PARTY-NOTICES:microsoft/vscode-codicons
 # The attribution-coverage manifest lists "Kitty" as a component to verify.
 scripts/check-notices-coverage.sh:Kitty
 
-# Neutral reference: the demo fixture explains why it deliberately does NOT run
-# real CLI tools (output drifts, may be absent) — not a comparison or clone.
-Weir/Core/Persistence/DemoFixture.swift:lazygit
-
 # Opening a file at a line needs the editor's own identifiers: its bundle
 # identifier to recognize it and its registered URL scheme to hand it the line.
 # These are interfaces the editor publishes, not a comparison or clone note.

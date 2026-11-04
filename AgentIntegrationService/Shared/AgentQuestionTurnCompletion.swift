@@ -146,7 +146,7 @@ struct AgentQuestionTurnCompletion {
         // Provider identifiers never become path components. The receipt
         // retains the scope identifiers so the digest is not our evidence.
         let key = Data("\(sessionID.utf8.count):\(sessionID)\(scope)".utf8)
-        let name = SHA256.hash(data: key).map { String(format: "%02x", $0) }.joined()
+        let name = SHA256.hash(data: key).hexString
         let url = URL(fileURLWithPath: directory, isDirectory: true)
             .appendingPathComponent("question-turns", isDirectory: true)
             .appendingPathComponent(name + ".json")

@@ -166,7 +166,7 @@ struct InlineRenameField: View {
 
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.colorSchemeContrast) private var contrast
-    @FocusState private var fieldFocused: Bool
+    @FocusState private var isFieldFocused: Bool
     /// The text being typed. Seeded from `name` each time an edit
     /// starts and never drawn outside one.
     @State private var draft: String = ""
@@ -276,7 +276,7 @@ struct InlineRenameField: View {
                 if Self.abandonsWhenClosedByOwner(isEditing: editing, didFinalize: didFinalize) {
                     didFinalize = true
                     removeEditingHooks()
-                    fieldFocused = false
+                    isFieldFocused = false
                 }
             }
             .onChange(of: isEnabled) { _, enabled in
@@ -314,7 +314,7 @@ struct InlineRenameField: View {
         TextField("", text: $draft, prompt: prompt.map { Text(verbatim: $0) })
             .textFieldStyle(.plain)
             .accessibilityLabel(Text(fieldName))
-            .focused($fieldFocused)
+            .focused($isFieldFocused)
             .onSubmit { finalize(commit: true) }
             .onExitCommand { finalize(commit: false) }
             .onAppear {
@@ -330,7 +330,7 @@ struct InlineRenameField: View {
                 KeyboardHandoff.afterResponderSettles {
                     // The edit may have ended while we waited.
                     guard isEditing, !didFinalize else { return }
-                    fieldFocused = true
+                    isFieldFocused = true
                     installOutsideClickMonitor()
                 }
             }
@@ -340,7 +340,7 @@ struct InlineRenameField: View {
                 // an edit is open) sizes from the name until it seeds again.
                 isDraftSeeded = false
             }
-            .onChange(of: fieldFocused) { _, focused in
+            .onChange(of: isFieldFocused) { _, focused in
                 if Self.commitsOnFocusLoss(isFocused: focused, didFinalize: didFinalize) {
                     finalize(commit: true)
                 }
@@ -389,7 +389,7 @@ struct InlineRenameField: View {
         // ended. A field kept on screen a moment longer, as a floating panel
         // fading out keeps it, must not still hold the keyboard when the
         // owner hands it back to the terminal.
-        fieldFocused = false
+        isFieldFocused = false
         isEditing = false
     }
 

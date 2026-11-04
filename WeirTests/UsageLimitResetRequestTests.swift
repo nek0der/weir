@@ -25,7 +25,7 @@ struct UsageLimitResetRequestTests {
 
     private final class Recorder {
         var scheduled: [(AgentKind, Date)] = []
-        var cancelled: [AgentKind] = []
+        var canceled: [AgentKind] = []
     }
 
     private static func sync(
@@ -39,7 +39,7 @@ struct UsageLimitResetRequestTests {
             isEnabled: { isEnabled },
             now: { now.value },
             schedule: { recorder.scheduled.append(($0, $1)) },
-            cancel: { recorder.cancelled.append($0) }
+            cancel: { recorder.canceled.append($0) }
         )
     }
 
@@ -177,13 +177,13 @@ struct UsageLimitResetRequestTests {
             sync.requestIfOffered(limited, now: Self.now)
         }
         #expect(recorder.scheduled.map(\.1) == [Self.reset])
-        recorder.cancelled = []
+        recorder.canceled = []
 
         items.value = []
         sync.refresh()
         #expect(sync.requested.isEmpty)
         #expect(sync.pending.isEmpty)
-        #expect(recorder.cancelled == [.claude])
+        #expect(recorder.canceled == [.claude])
     }
 
     @Test func sync_withdrawsWhatAnEarlierLaunchLeftThenSchedulesWhatHolds() {
@@ -194,9 +194,9 @@ struct UsageLimitResetRequestTests {
             isEnabled: { true },
             now: { Self.now },
             schedule: { recorder.scheduled.append(($0, $1)) },
-            cancel: { recorder.cancelled.append($0) }
+            cancel: { recorder.canceled.append($0) }
         )
-        #expect(Set(recorder.cancelled) == Set(AgentKind.allCases))
+        #expect(Set(recorder.canceled) == Set(AgentKind.allCases))
         #expect(recorder.scheduled.map(\.0) == [.claude])
     }
 
@@ -211,7 +211,7 @@ struct UsageLimitResetRequestTests {
             isEnabled: { isEnabled.value },
             now: { Self.now },
             schedule: { recorder.scheduled.append(($0, $1)) },
-            cancel: { recorder.cancelled.append($0) }
+            cancel: { recorder.canceled.append($0) }
         )
         #expect(recorder.scheduled.map(\.1) == [first])
 
@@ -222,10 +222,10 @@ struct UsageLimitResetRequestTests {
         sync.refresh()
         #expect(recorder.scheduled.map(\.1) == [first, second])
 
-        recorder.cancelled = []
+        recorder.canceled = []
         isEnabled.value = false
         sync.refresh()
-        #expect(recorder.cancelled == [.claude])
+        #expect(recorder.canceled == [.claude])
         #expect(sync.pending.isEmpty)
     }
 
@@ -280,11 +280,11 @@ struct UsageLimitResetRequestTests {
         let limited = Self.stop(UsageLimit(resetAt: Self.reset))
         let sync = Self.sync(Recorded([limited]), now: clock, recorder: recorder)
         sync.requestIfOffered(limited, now: Self.now)
-        recorder.cancelled = []
+        recorder.canceled = []
 
         clock.value = Self.reset.addingTimeInterval(1)
         sync.refresh()
-        #expect(recorder.cancelled.isEmpty)
+        #expect(recorder.canceled.isEmpty)
         #expect(sync.requested.isEmpty)
     }
 

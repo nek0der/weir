@@ -227,10 +227,8 @@ final class ReviewSession {
         do {
             let (latestFiles, latestStats) = try await listSnapshot(scope: targetScope)
             guard listGeneration == token, diffGeneration == token else { return .superseded }
-            // The file last open in the scope being loaded, not the one on
-            // screen until now.
             let selected = latestFiles.first { $0.id == selectedFileID }
-                ?? latestFiles.first { $0.id == lastFileIDs[targetScope.scopeID] }
+                ?? resumeFile(in: targetScope, among: latestFiles)
                 ?? latestFiles.first
             let read = await beginStackRead(selected, scope: targetScope)
             let loadedDiff = try await loadDiff(

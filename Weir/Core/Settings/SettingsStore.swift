@@ -137,7 +137,7 @@ final class SettingsStore {
                 settings = normalized
             }
             guard settings != oldValue else { return }
-            guard !suppressNextSave else { return }
+            guard !shouldSuppressNextSave else { return }
             scheduleSave()
         }
     }
@@ -153,7 +153,7 @@ final class SettingsStore {
     /// disk and the OS would fire another watcher event, creating a
     /// reload ↔ write feedback loop.
     @ObservationIgnored
-    private var suppressNextSave: Bool = false
+    private var shouldSuppressNextSave: Bool = false
 
     /// False in demo mode: nothing this store does reaches the file, and
     /// nothing watches it for edits (`SettingsFileWatcher.start`).
@@ -686,9 +686,9 @@ final class SettingsStore {
         pendingMigration = result.pendingMigration
         let fresh = result.settings
         guard fresh != settings else { return }
-        suppressNextSave = true
+        shouldSuppressNextSave = true
         settings = fresh
-        suppressNextSave = false
+        shouldSuppressNextSave = false
     }
 
 }

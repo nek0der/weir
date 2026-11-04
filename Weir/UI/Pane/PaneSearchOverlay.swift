@@ -22,7 +22,7 @@ struct PaneSearchOverlay: View {
     let inactiveOpacity: Double
     let onClose: () -> Void
 
-    @State private var fieldFocused = false
+    @State private var isFieldFocused = false
     @State private var focusTask: Task<Void, Never>?
     @State private var debounceTask: Task<Void, Never>?
     @State private var lastDispatchedNeedle: String?
@@ -53,7 +53,7 @@ struct PaneSearchOverlay: View {
             focusTask = Task { @MainActor in
                 await KeyboardHandoff.responderSettled()
                 guard !Task.isCancelled, isInteractive else { return }
-                fieldFocused = true
+                isFieldFocused = true
             }
             // Cover the case where libghostty's START_SEARCH hands a
             // pre-populated needle (e.g. selection hand-off). The
@@ -78,12 +78,12 @@ struct PaneSearchOverlay: View {
                 return
             }
             focusTask?.cancel()
-            fieldFocused = false
+            isFieldFocused = false
             debounceTask?.cancel()
         }
         .onReceive(NotificationCenter.default.publisher(for: .weirSearchFocus)) { note in
             guard isInteractive, (note.object as? UUID) == paneID else { return }
-            fieldFocused = true
+            isFieldFocused = true
         }
     }
 
@@ -156,7 +156,7 @@ struct PaneSearchOverlay: View {
     private func searchField(width: CGFloat?, showsCounter: Bool) -> some View {
         PaneSearchTextField(
             text: $state.needle,
-            isFocused: $fieldFocused,
+            isFocused: $isFieldFocused,
             onChange: { scheduleSearch(needle: $0) },
             onSubmit: { isBackward in
                 guard isInteractive else { return }

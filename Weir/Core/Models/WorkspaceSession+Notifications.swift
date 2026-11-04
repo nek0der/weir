@@ -45,8 +45,4 @@ extension WorkspaceSession {
             sum + tab.splitTree.allLeafIDs().reduce(0) { $0 + (tab.paneStates[$1]?.unreadCount ?? 0) }
         }
     }
-
-    var windowHasUnread: Bool {
-        windowUnreadCount > 0
-    }
 }
