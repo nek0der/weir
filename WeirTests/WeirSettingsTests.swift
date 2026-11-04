@@ -387,7 +387,7 @@ struct WeirSettingsTests {
     }
 
     @Test func aFileWrittenBeforeThem_readsTheDefaults() throws {
-        var object = try WeirSettingsJSON.object(.default)
+        var object = try JSONObjectFixture.object(encoding: WeirSettings.default)
         object.removeValue(forKey: "general")
         object.removeValue(forKey: "newSession")
         var advanced = try #require(object["advanced"] as? [String: Any])
@@ -414,14 +414,14 @@ struct WeirSettingsTests {
     }
 
     @Test func keysALaterBuildAdded_toTheNewSections_areWrittenBack() throws {
-        var object = try WeirSettingsJSON.object(.default)
+        var object = try JSONObjectFixture.object(encoding: WeirSettings.default)
         object["general"] = ["showMenuBarExtra": false, "laterKey": 1]
         object["newSession"] = ["laterKey": "x"]
         var advanced = try #require(object["advanced"] as? [String: Any])
         advanced["turnRetention"] = ["days": 20, "turns": 100, "laterKey": true]
         object["advanced"] = advanced
 
-        let written = try WeirSettingsJSON.object(WeirSettingsJSON.decode(object))
+        let written = try JSONObjectFixture.object(encoding: WeirSettingsJSON.decode(object))
 
         #expect((written["general"] as? [String: Any])?["laterKey"] as? Int == 1)
         #expect((written["newSession"] as? [String: Any])?["laterKey"] as? String == "x")
@@ -457,14 +457,10 @@ struct WeirSettingsTests {
     }
 }
 
-/// A settings file as the JSON object it is written as, for tests that
-/// take a key out or put one in before reading it back.
+/// A settings file read back from the JSON object a test took a key out of
+/// or put one into; `JSONObjectFixture.object(encoding:)` makes the object.
 enum WeirSettingsJSON {
     static func decode(_ object: [String: Any]) throws -> WeirSettings {
         try JSONDecoder().decode(WeirSettings.self, from: JSONSerialization.data(withJSONObject: object))
-    }
-
-    static func object(_ settings: WeirSettings) throws -> [String: Any] {
-        try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(settings)) as? [String: Any])
     }
 }

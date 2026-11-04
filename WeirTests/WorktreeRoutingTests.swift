@@ -14,11 +14,6 @@ import Testing
 @MainActor
 @Suite("WorktreeRouting")
 struct WorktreeRoutingTests {
-    private func object(_ routing: WorktreeRouting) throws -> [String: Any] {
-        let data = try PersistenceCoders.makeEncoder().encode(routing)
-        return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-    }
-
     private func project(
         root: URL,
         placement: WorktreePlacement = .siblingPrefixed,
@@ -47,7 +42,7 @@ struct WorktreeRoutingTests {
                 codex: false
             )
         ])
-        let json = try object(routing)
+        let json = try JSONObjectFixture.object(encoding: routing, with: PersistenceCoders.makeEncoder())
 
         #expect(json["schemaVersion"] as? Int == 1)
         let projects = try #require(json["projects"] as? [[String: Any]])
@@ -82,7 +77,11 @@ struct WorktreeRoutingTests {
         let defaults = project(root: URL(fileURLWithPath: "/tmp/other"))
 
         let projects = try #require(
-            try object(WorktreeRouting(projects: [mine, defaults]))["projects"] as? [[String: Any]]
+            try JSONObjectFixture
+                .object(
+                    encoding: WorktreeRouting(projects: [mine, defaults]),
+                    with: PersistenceCoders.makeEncoder()
+                )["projects"] as? [[String: Any]]
         )
 
         #expect(json(projects[0], "checks") == ["just check"])
@@ -105,7 +104,8 @@ struct WorktreeRoutingTests {
             )
         ])
         let placement = try #require(
-            try (object(routing)["projects"] as? [[String: Any]])?.first?["placement"] as? [String: Any]
+            try (JSONObjectFixture.object(encoding: routing, with: PersistenceCoders.makeEncoder())["projects"] as? [[String: Any]])?
+                .first?["placement"] as? [String: Any]
         )
         #expect(placement["kind"] as? String == "custom")
         #expect(placement["parent"] as? String == "/tmp/worktrees")

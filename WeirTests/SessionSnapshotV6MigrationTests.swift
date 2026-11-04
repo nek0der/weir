@@ -105,12 +105,6 @@ struct SessionSnapshotV6MigrationTests {
         return try PersistenceCoders.makeDecoder().decode(SessionSnapshot.self, from: data)
     }
 
-    /// The migrated session as the store writes it: the step's result
-    /// decoded and encoded again (`SessionStore.loadMigrated`).
-    private static func written(_ snapshot: SessionSnapshot) throws -> [String: Any] {
-        try #require(JSONSerialization.jsonObject(with: PersistenceCoders.makeEncoder().encode(snapshot)) as? [String: Any])
-    }
-
     // MARK: - Groups
 
     @Test func groups_becomeScratchTabs_withPrefixColorCwd() throws {
@@ -271,7 +265,7 @@ struct SessionSnapshotV6MigrationTests {
         let record = try #require(snapshot.windows.first)
 
         #expect(record.sidebarWidth == 304)
-        let object = try Self.written(snapshot)
+        let object = try JSONObjectFixture.object(encoding: snapshot, with: PersistenceCoders.makeEncoder())
         let written = try #require((object["windows"] as? [[String: Any]])?.first)
         #expect(written["tabOrientation"] == nil)
         #expect(written["tabColumnWidth"] == nil)
@@ -311,7 +305,8 @@ struct SessionSnapshotV6MigrationTests {
         #expect(later.sidebarWidth == 280)
         // A later window that had its tabs in the column is written with
         // neither the column nor its width.
-        let written = try #require(Self.written(snapshot)["windows"] as? [[String: Any]])
+        let written = try #require(JSONObjectFixture
+            .object(encoding: snapshot, with: PersistenceCoders.makeEncoder())["windows"] as? [[String: Any]])
         #expect(written.allSatisfy { $0["tabOrientation"] == nil && $0["tabColumnWidth"] == nil })
     }
 

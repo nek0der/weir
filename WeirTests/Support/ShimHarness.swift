@@ -65,6 +65,57 @@ enum ShimHarness {
         ["PATH": systemPath, "HOME": dir.path, "TMPDIR": dir.path]
     }
 
+    /// `environment(in:)` with `extra` laid over it, `extra` winning, for what a
+    /// shim needs on top: a home of the test's own inside `dir`, say, or the
+    /// variables that point the shim at its stubs and its states folder.
+    static func environment(in dir: URL, merging extra: [String: String]) -> [String: String] {
+        environment(in: dir).merging(extra) { _, extra in extra }
+    }
+
+    /// A stand-in agent at `url` that records how it was started in three files
+    /// in `dir`: its arguments in `args`, as `argvRecorder` writes them; its `$0`
+    /// and `PATH`, one a line, in `launched`; and its environment, as
+    /// `/usr/bin/env` prints it, in `env`. Stubs that record into one folder share
+    /// these files, so a test of which of two agents a shim started reads one record.
+    static func recordingStub(at url: URL, recordingIn dir: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let launched = launchRecord(in: dir).path
+        let environment = dir.appendingPathComponent("env").path
+        try writeExecutable(
+            argvRecorder(
+                into: argvRecord(in: dir),
+                // By its full path: the `PATH` a test hands the shim need
+                // not lead to `env`.
+                then: "printf '%s\\n%s\\n' \"$0\" \"$PATH\" > \"\(launched)\"\n/usr/bin/env > \"\(environment)\""
+            ),
+            at: url
+        )
+    }
+
+    /// `recordingStub(at:recordingIn:)` for a stub named `name` in `dir`,
+    /// recording into `dir` too; answers the stub's path.
+    static func recordingStub(named name: String, in dir: URL) throws -> URL {
+        let url = dir.appendingPathComponent(name)
+        try recordingStub(at: url, recordingIn: dir)
+        return url
+    }
+
+    /// Where a recording stub in `dir` writes its arguments.
+    static func argvRecord(in dir: URL) -> URL {
+        dir.appendingPathComponent("args")
+    }
+
+    /// Where a recording stub in `dir` writes its `$0` and `PATH`.
+    static func launchRecord(in dir: URL) -> URL {
+        dir.appendingPathComponent("launched")
+    }
+
+    /// The `$0` and `PATH` a recording stub in `dir` was started with, empty
+    /// when none ran.
+    static func launched(in dir: URL) -> [String] {
+        ((try? String(contentsOf: launchRecord(in: dir), encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+    }
+
     /// A shell script that records its arguments in `argvFile`, then runs
     /// `then`. NUL-separated, so an argument carrying spaces or newlines (a
     /// settings payload, a `-c` value, a prompt) stays one argument.

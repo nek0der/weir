@@ -125,11 +125,7 @@ struct HeldKeyHintsStoreTests {
     func turnedOff_takesTheKeysDown() async {
         let hints = HeldKeyHints()
         hints.modifiersChanged(to: [.command]) { ([.command], true) }
-        var waited = 0
-        while hints.shownChord == nil, waited < 100 {
-            try? await Task.sleep(for: .milliseconds(50))
-            waited += 1
-        }
+        await pollUntil(timeout: .seconds(5), interval: .milliseconds(50)) { hints.shownChord != nil }
         #expect(hints.shownChord == [.command])
         hints.turnedOff()
         #expect(hints.shownChord == nil)

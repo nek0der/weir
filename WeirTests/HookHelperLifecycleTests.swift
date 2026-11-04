@@ -40,26 +40,14 @@ struct HookHelperLifecycleTests {
         environment: [String: String]
     ) throws -> (status: Int32, stderr: String) {
         let helper = try #require(HookHelperFixture.helperURL)
-        let process = Process()
-        process.executableURL = helper
-        process.arguments = arguments
         // The wrapper mints an id for every call; run directly, the helper
         // gets one here, or it records the run but logs that its turn could
         // not be told apart from a retry.
         var environment = environment
         environment["WEIR_HOOK_INVOCATION_ID"] = environment["WEIR_HOOK_INVOCATION_ID"] ?? UUID().uuidString
-        process.environment = environment
-        let stdin = Pipe()
-        let stderr = Pipe()
-        process.standardInput = stdin
-        process.standardError = stderr
-        process.standardOutput = FileHandle.nullDevice
-        try process.run()
-        try stdin.fileHandleForWriting.write(contentsOf: payload)
-        try stdin.fileHandleForWriting.close()
-        #expect(process.waitUntilExit(within: 10), "the helper did not exit within ten seconds")
-        let text = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        return (process.terminationStatus, text)
+        let output = try TestProcess.run(helper, arguments: arguments, environment: environment, stdin: payload)
+        #expect(output.ending == .exited, "the helper did not exit within ten seconds")
+        return (output.status, output.stderrText)
     }
 
     private func record(in directory: URL) throws -> [String: Any]? {

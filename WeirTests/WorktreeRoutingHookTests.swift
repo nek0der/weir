@@ -23,31 +23,41 @@ import Testing
     .disabled(if: HookHelperFixture.helperURL == nil, "no hook helper beside the test host")
 )
 struct WorktreeRoutingHookTests {
-    /// A scratch root holding the repository and the support directory the
-    /// routing file is written into. The worktree lands beside the
-    /// repository, so the root has to contain both.
+    /// The repository and the support directory the routing file is written
+    /// into, both in the repository's scratch folder. The worktree lands
+    /// beside the repository, so that folder holds it too, and `cleanup`
+    /// takes all three away.
     private struct Scratch {
-        let root: URL
-        let repo: URL
+        let git: TempGitRepo
         let support: URL
 
+        var root: URL {
+            git.scratch
+        }
+
+        var repo: URL {
+            git.url
+        }
+
         static func make() async throws -> Scratch {
-            let root = FileManager.default.temporaryDirectory
-                .appendingPathComponent("weir-routing-\(UUID().uuidString)")
-            let repo = root.appendingPathComponent("repo")
-            let support = root.appendingPathComponent("support")
-            try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+            let git = try await TempGitRepo.make()
+            let support = git.scratch.appendingPathComponent("support")
             try FileManager.default.createDirectory(
                 at: support.appendingPathComponent("agent-states"),
                 withIntermediateDirectories: true
             )
-            try await TempGitRepo.initialize(repo)
-            try await TempGitRepo.git(["commit", "-q", "--allow-empty", "-m", "init"], in: repo)
-            return Scratch(root: root, repo: repo, support: support)
+            return Scratch(git: git, support: support)
+        }
+
+        /// The folder the sibling-prefixed placement gives a worktree whose folder
+        /// leaf is `leaf`: beside the repository, named with the repository's name
+        /// as a prefix.
+        func sibling(_ leaf: String) -> URL {
+            root.appendingPathComponent("\(repo.lastPathComponent)-\(leaf)")
         }
 
         func cleanup() {
-            try? FileManager.default.removeItem(at: root)
+            git.cleanup()
         }
     }
 
@@ -87,26 +97,21 @@ struct WorktreeRoutingHookTests {
             "cwd": scratch.repo.path,
             "tool_input": ["command": command]
         ])
-        let process = Process()
-        process.executableURL = hook.executable
-        process.arguments = hook.arguments
-        process.environment = IsolatedProcessEnvironment.make(hook.environment.merging([
-            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
-            "HOME": scratch.root.path,
-            "WEIR_PANE_ID": UUID().uuidString,
-            "WEIR_TURN_SNAPSHOT": "0"
-        ]) { own, _ in own })
-        let stdin = Pipe()
-        let stdout = Pipe()
-        process.standardInput = stdin
-        process.standardOutput = stdout
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        try stdin.fileHandleForWriting.write(contentsOf: payload)
-        try stdin.fileHandleForWriting.close()
-        #expect(process.waitUntilExit(within: 30), "the hook did not exit within thirty seconds")
-        #expect(process.terminationStatus == 0, "a hook that stops the tool is no route")
-        return String(bytes: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let output = try TestProcess.run(
+            hook.executable,
+            arguments: hook.arguments,
+            environment: IsolatedProcessEnvironment.make(hook.environment.merging([
+                "PATH": ShimHarness.systemPath,
+                "HOME": scratch.root.path,
+                "WEIR_PANE_ID": UUID().uuidString,
+                "WEIR_TURN_SNAPSHOT": "0"
+            ]) { own, _ in own }),
+            stdin: payload,
+            timeout: .seconds(30)
+        )
+        #expect(output.ending == .exited, "the hook did not exit within thirty seconds")
+        #expect(output.status == 0, "a hook that stops the tool is no route")
+        return output.stdoutText
     }
 
     /// The command `hook` gives the tool in place of the agent's, `nil` when
@@ -176,7 +181,7 @@ struct WorktreeRoutingHookTests {
         writeRouting(scratch, routeClaude: true)
 
         let hook = try helperHook(scratch)
-        let worktree = scratch.root.appendingPathComponent("repo-feature-alpha")
+        let worktree = scratch.sibling("feature-alpha")
 
         try await route(hook, scratch, branch: "feature/alpha")
 
@@ -201,7 +206,7 @@ struct WorktreeRoutingHookTests {
         #expect(try reroutedCommand(helperHook(scratch), scratch, branch: "feature/alpha") != nil)
 
         #expect(!FileManager.default.fileExists(
-            atPath: scratch.root.appendingPathComponent("repo-feature-alpha").path
+            atPath: scratch.sibling("feature-alpha").path
         ))
         #expect(try event(in: states(scratch, provider: "claude")) == nil)
     }
@@ -215,8 +220,8 @@ struct WorktreeRoutingHookTests {
         let hook = try helperHook(scratch)
         for branch in ["feature/alpha", "fix/alpha"] {
             try await route(hook, scratch, branch: branch)
-            let folder = "repo-\(BranchNameSuggester.folderLeaf(of: branch))"
-            #expect(FileManager.default.fileExists(atPath: scratch.root.appendingPathComponent(folder).path), "\(branch)")
+            let folder = scratch.sibling(BranchNameSuggester.folderLeaf(of: branch))
+            #expect(FileManager.default.fileExists(atPath: folder.path), "\(branch)")
         }
     }
 
@@ -246,7 +251,7 @@ struct WorktreeRoutingHookTests {
         // renamed would fail open and silently ignore the opt-out.
         #expect(try reroutedCommand(helperHook(scratch), scratch, branch: "feature/beta") == nil)
         #expect(!FileManager.default.fileExists(
-            atPath: scratch.root.appendingPathComponent("repo-beta").path
+            atPath: scratch.sibling("beta").path
         ))
     }
 }

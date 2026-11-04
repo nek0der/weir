@@ -11,7 +11,7 @@ struct ReviewTurnsGitTests {
     /// Writes the files, stages everything, and answers the tree.
     private static func snapshot(_ files: [String: String], in repo: TempGitRepo) async throws -> String {
         for (path, text) in files {
-            try Data(text.utf8).write(to: repo.url.appendingPathComponent(path))
+            try repo.write(text, to: path)
         }
         try await repo.git(["add", "-A"])
         return try await repo.git(["write-tree"])
@@ -43,8 +43,8 @@ struct ReviewTurnsGitTests {
         let scope = ReviewScope.turns(range)
 
         // Later work, which the range does not show.
-        try Data("one\ntwo\nthree\n".utf8).write(to: repo.url.appendingPathComponent("a.swift"))
-        try Data("new\n".utf8).write(to: repo.url.appendingPathComponent("b.swift"))
+        try repo.write("one\ntwo\nthree\n", to: "a.swift")
+        try repo.write("new\n", to: "b.swift")
 
         let files = try await ReviewGit.files(at: repo.url, scope: scope)
         #expect(files == [ReviewFile(path: "a.swift", layer: .turns, status: .modified)])
@@ -80,7 +80,7 @@ struct ReviewTurnsGitTests {
             Self.turn(2, begin: secondBegin, end: secondEnd, root: repo.url)
         ]
         // And one after the last turn ended.
-        try Data("later\n".utf8).write(to: repo.url.appendingPathComponent("c.swift"))
+        try repo.write("later\n", to: "c.swift")
 
         let outside = await Self.outsideTurns(turns, in: repo)
 
@@ -130,7 +130,7 @@ struct ReviewTurnsGitTests {
         let firstEnd = try await Self.snapshot(["a.swift": "one\ntwo\n"], in: repo)
         let runningBegin = try await Self.snapshot(["b.swift": "by hand\n"], in: repo)
         // The agent of the running turn writes this.
-        try Data("agent\n".utf8).write(to: repo.url.appendingPathComponent("c.swift"))
+        try repo.write("agent\n", to: "c.swift")
         let turns = try [
             Self.turn(1, begin: firstBegin, end: firstEnd, root: repo.url),
             Self.turn(2, begin: runningBegin, end: nil, root: repo.url, phase: "started")
@@ -173,7 +173,7 @@ struct ReviewTurnsGitTests {
         ]
         // The person commits the work, then edits once more.
         try await repo.git(["commit", "-q", "-m", "work"])
-        try Data("later\n".utf8).write(to: repo.url.appendingPathComponent("c.swift"))
+        try repo.write("later\n", to: "c.swift")
 
         let outside = await Self.outsideTurns(turns, in: repo)
         #expect(outside == ["c.swift"], "history is not something to look at before a pull request")
@@ -200,7 +200,7 @@ struct ReviewTurnsGitTests {
             "docs/guide.txt": "guide\n"
         ], in: repo)
         try await repo.git(["rm", "-q", "--cached", "kept.txt", "edited.txt", "link.txt", "docs-link"])
-        try Data("new\n".utf8).write(to: repo.url.appendingPathComponent("edited.txt"))
+        try repo.write("new\n", to: "edited.txt")
         let turns = try [Self.turn(1, begin: begin, end: end, root: repo.url)]
         let objects = try await repo.git(["count-objects"])
 
@@ -230,7 +230,7 @@ struct ReviewTurnsGitTests {
         #expect(kept.untrackedHashes["kept.txt"] == other)
 
         // Touched: hashed again, and the same contents as the tree held.
-        try Data("same\n".utf8).write(to: repo.url.appendingPathComponent("kept.txt"))
+        try repo.write("same\n", to: "kept.txt")
         let touched = try await ReviewGit.pathsChanged(since: tree, at: repo.url, known: ["kept.txt": other])
         #expect(touched.paths.isEmpty)
         #expect(touched.untrackedHashes["kept.txt"]?.contents == held.contents)
@@ -254,14 +254,14 @@ struct ReviewTurnsGitTests {
     @Test func contentFingerprints_differWithTheContents_andWriteNothing() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
-        try Data("one\n".utf8).write(to: repo.url.appendingPathComponent("a.txt"))
+        try repo.write("one\n", to: "a.txt")
         try FileManager.default.createSymbolicLink(atPath: repo.url.appendingPathComponent("link").path, withDestinationPath: "a.txt")
         let objects = try await repo.git(["count-objects"])
 
         try FileManager.default.createDirectory(at: repo.url.appendingPathComponent("sub"), withIntermediateDirectories: true)
         let paths: Set = ["a.txt", "link", "gone.txt", "sub"]
         let before = try await ReviewGit.contentFingerprints(of: paths, at: repo.url)
-        try Data("two\n".utf8).write(to: repo.url.appendingPathComponent("a.txt"))
+        try repo.write("two\n", to: "a.txt")
         let after = try await ReviewGit.contentFingerprints(of: paths, at: repo.url)
 
         #expect(before["a.txt"]?.contents != after["a.txt"]?.contents)

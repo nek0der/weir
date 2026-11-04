@@ -8,8 +8,8 @@ import WeirDomain
 
 @Suite("OpenCode shim")
 struct OpenCodeShimTests {
-    /// Runs the shim with a stub for `opencode` that writes its arguments and
-    /// environment beside itself.
+    /// Runs the shim with a recording stub for `opencode`, which writes its
+    /// arguments and environment beside itself.
     private func runShim(
         root: URL,
         home: URL,
@@ -18,31 +18,19 @@ struct OpenCodeShimTests {
         environment: [String: String] = [:],
         limit: TimeInterval = 10
     ) throws -> Process {
-        let stub = root.appendingPathComponent("real-opencode")
-        try AgentCatalogFixture.makeExecutable(
-            stub,
-            script: """
-            #!/bin/sh
-            printf '%s\\n' "$@" > "\(root.path)/args"
-            env > "\(root.path)/env"
-            """
-        )
+        let stub = try ShimHarness.recordingStub(named: "real-opencode", in: root)
         return try ShimHarness.run(
             AgentCatalogFixture.shim(for: .opencode),
             args,
-            environment: [
+            environment: ShimHarness.environment(in: root, merging: [
                 "HOME": home.path,
                 "PATH": "/usr/bin:/bin",
                 "WEIR_REAL_OPENCODE": stub.path,
                 "WEIR_OPENCODE_AGENT_STATES_DIR": states ?? root.appendingPathComponent("states").path
-            ].merging(environment) { _, new in new },
+            ].merging(environment) { _, new in new }),
             currentDirectory: root,
             limit: limit
         )
-    }
-
-    private func read(_ name: String, in root: URL) throws -> String {
-        try String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
     }
 
     /// What the shim kept for the plugin, one `NAME=value` a line.
@@ -152,7 +140,7 @@ struct OpenCodeShimTests {
             let home = root.appendingPathComponent("home")
             _ = try runShim(root: root, home: home, states: "")
             #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent(".config").path))
-            #expect(try !read("env", in: root).contains("WEIR_"))
+            #expect(try !ScratchFile.read("env", in: root).contains("WEIR_"))
         }
     }
 
@@ -162,8 +150,8 @@ struct OpenCodeShimTests {
             let home = root.appendingPathComponent("home")
             let process = try runShim(root: root, home: home, args: args)
             #expect(process.terminationStatus == 0)
-            #expect(try read("args", in: root) == args.joined(separator: "\n") + "\n")
-            #expect(try !read("env", in: root).contains("WEIR_"))
+            #expect(ShimHarness.recordedArgv(ShimHarness.argvRecord(in: root)) == args)
+            #expect(try !ScratchFile.read("env", in: root).contains("WEIR_"))
             #expect(!FileManager.default.fileExists(atPath: placed(in: home).path))
         }
     }
@@ -187,7 +175,7 @@ struct OpenCodeShimTests {
                     "PATH": "\(elsewhere.path):/usr/bin:/bin"
                 ]
             )
-            let interface = try read("env", in: root)
+            let interface = try ScratchFile.read("env", in: root)
             let weirNames = interface.split(separator: "\n").filter { $0.hasPrefix("WEIR_") }.map { $0.prefix { $0 != "=" } }
             #expect(weirNames == ["WEIR_OPENCODE_PANE_ENV"])
             #expect(!interface.contains("ZDOTDIR"))
@@ -204,7 +192,7 @@ struct OpenCodeShimTests {
         try withTempDir { root in
             let home = root.appendingPathComponent("home")
             _ = try runShim(root: root, home: home, environment: ["ZDOTDIR": "/Users/me/.config/zsh"])
-            #expect(try read("env", in: root).contains("ZDOTDIR=/Users/me/.config/zsh"))
+            #expect(try ScratchFile.read("env", in: root).contains("ZDOTDIR=/Users/me/.config/zsh"))
         }
     }
 
@@ -213,7 +201,7 @@ struct OpenCodeShimTests {
         try withTempDir { root in
             let home = root.appendingPathComponent("home")
             _ = try runShim(root: root, home: home, environment: ["PATH": path])
-            #expect(try read("env", in: root).split(separator: "\n").contains("PATH=\(path)"))
+            #expect(try ScratchFile.read("env", in: root).split(separator: "\n").contains("PATH=\(path)"))
         }
     }
 
@@ -251,8 +239,8 @@ struct OpenCodeShimTests {
         try withTempDir { root in
             let home = root.appendingPathComponent("home")
             _ = try runShim(root: root, home: home, args: args)
-            #expect(try read("args", in: root) == args.joined(separator: "\n") + "\n")
-            #expect(try !read("env", in: root).contains("WEIR_"))
+            #expect(ShimHarness.recordedArgv(ShimHarness.argvRecord(in: root)) == args)
+            #expect(try !ScratchFile.read("env", in: root).contains("WEIR_"))
         }
     }
 
@@ -293,8 +281,7 @@ struct OpenCodeShimTests {
     }
 
     private func hookBody(in root: URL) throws -> [String: Any] {
-        let data = try Data(contentsOf: root.appendingPathComponent("hook-body"))
-        return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        try JSONObjectFixture.object(Data(contentsOf: root.appendingPathComponent("hook-body")))
     }
 
     /// OpenCode sends a `--prompt` input by itself as its interface comes up, with
@@ -318,10 +305,10 @@ struct OpenCodeShimTests {
                     .first { $0.hasPrefix("WEIR_AGENT_RUN_ID=") }?
                     .dropFirst("WEIR_AGENT_RUN_ID=".count)
             )
-            #expect(try read("hook-call", in: root) == "hook opencode\n8000\n\(run)\n")
+            #expect(try ScratchFile.read("hook-call", in: root) == "hook opencode\n8000\n\(run)\n")
             #expect(!exists("ran-after-opencode", in: root))
             #expect(try paneEnvironment(in: root).contains("WEIR_OPENCODE_LAUNCH_PREPARATION=\(generation)"))
-            #expect(try !read("env", in: root).contains("WEIR_OPENCODE_LAUNCH_PREPARATION"))
+            #expect(try !ScratchFile.read("env", in: root).contains("WEIR_OPENCODE_LAUNCH_PREPARATION"))
         }
     }
 

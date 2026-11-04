@@ -392,15 +392,17 @@ struct TmuxClientProbeSmokeTests {
     @Test("a real tmux keeps a format's tabs with no UTF-8 locale")
     func clientArguments_cLocale_keepsTheFieldsParseable() throws {
         let tmux = try #require(installedTmux)
-        let socket = "/private/tmp/weir-locale-\(UUID().uuidString.prefix(8)).sock"
-        defer { _ = try? run(tmux, ["-S", socket, "kill-server"]) }
-        _ = try run(tmux, ["-S", socket, "-f", "/dev/null", "new-session", "-d", "-s", "locale", "sleep 120"])
-        let output = try TestProcess.run(
-            URL(fileURLWithPath: tmux),
-            arguments: TmuxClientProbe.clientArguments(socketPath: socket) + TmuxTopology.paneArguments,
-            environment: ["LC_ALL": "C", "LC_CTYPE": "C", "LANG": "C"]
-        )
-        #expect(TmuxTopology.parsePanes(output.stdoutText, socketPath: socket).count == 1)
+        try withShortTempDir { dir in
+            let socket = dir.appendingPathComponent("s").path
+            defer { _ = try? run(tmux, ["-S", socket, "kill-server"]) }
+            _ = try run(tmux, ["-S", socket, "-f", "/dev/null", "new-session", "-d", "-s", "locale", "sleep 120"])
+            let output = try TestProcess.run(
+                URL(fileURLWithPath: tmux),
+                arguments: TmuxClientProbe.clientArguments(socketPath: socket) + TmuxTopology.paneArguments,
+                environment: ["LC_ALL": "C", "LC_CTYPE": "C", "LANG": "C"]
+            )
+            #expect(TmuxTopology.parsePanes(output.stdoutText, socketPath: socket).count == 1)
+        }
     }
 
     /// The format string is the whole contract with tmux, and a typo in
@@ -409,26 +411,26 @@ struct TmuxClientProbeSmokeTests {
     @Test("a real tmux answers in the shape the parser expects")
     func listClients_realServer_parsesIntoABinding() async throws {
         let tmux = try #require(installedTmux)
-        // `sun_path` caps a unix socket at 104 bytes on macOS, so this
-        // cannot live under the test's temp directory.
-        let socket = "/tmp/weir-probe-\(ProcessInfo.processInfo.processIdentifier).sock"
-        defer { _ = try? run(tmux, ["-S", socket, "kill-server"]) }
+        try await withShortTempDir { dir in
+            let socket = dir.appendingPathComponent("s").path
+            defer { _ = try? run(tmux, ["-S", socket, "kill-server"]) }
 
-        _ = try run(tmux, ["-S", socket, "-f", "/dev/null", "new-session", "-d", "-s", "probe", "sleep 120"])
-        let client = try attachClient(tmux: tmux, socket: socket, session: "probe")
-        defer { client.terminate() }
-        // Until the client has attached, rather than a fixed wait.
-        await pollUntil(timeout: .seconds(10), interval: .milliseconds(100)) {
-            let output = (try? run(tmux, ["-S", socket] + TmuxClientProbe.listClientsArguments)) ?? ""
-            return !TmuxClientProbe.parseClients(output, socketPath: socket).isEmpty
+            _ = try run(tmux, ["-S", socket, "-f", "/dev/null", "new-session", "-d", "-s", "probe", "sleep 120"])
+            let client = try attachClient(tmux: tmux, socket: socket, session: "probe")
+            defer { client.terminate() }
+            // Until the client has attached, rather than a fixed wait.
+            await pollUntil(timeout: .seconds(10), interval: .milliseconds(100)) {
+                let output = (try? run(tmux, ["-S", socket] + TmuxClientProbe.listClientsArguments)) ?? ""
+                return !TmuxClientProbe.parseClients(output, socketPath: socket).isEmpty
+            }
+
+            let output = try run(tmux, ["-S", socket] + TmuxClientProbe.listClientsArguments)
+            let bindings = TmuxClientProbe.parseClients(output, socketPath: socket)
+            #expect(bindings.count == 1, "raw: \(output.debugDescription)")
+            #expect(bindings.values.first?.sessionName == "probe")
+            #expect(bindings.values.first?.sessionID.hasPrefix("$") == true)
+            #expect(bindings.keys.first?.hasPrefix("/dev/") == true)
         }
-
-        let output = try run(tmux, ["-S", socket] + TmuxClientProbe.listClientsArguments)
-        let bindings = TmuxClientProbe.parseClients(output, socketPath: socket)
-        #expect(bindings.count == 1, "raw: \(output.debugDescription)")
-        #expect(bindings.values.first?.sessionName == "probe")
-        #expect(bindings.values.first?.sessionID.hasPrefix("$") == true)
-        #expect(bindings.keys.first?.hasPrefix("/dev/") == true)
     }
 
     /// The end-to-end read: discover the socket, ask the server, and
@@ -437,39 +439,33 @@ struct TmuxClientProbeSmokeTests {
     @Test("discovers a running server and reports its client")
     func attachedClients_runningServer_findsTheBinding() async throws {
         let tmux = try #require(installedTmux)
-        // `sun_path` caps a socket at 104 bytes, so the server directory
-        // stands in for `${TMUX_TMPDIR}/tmux-<uid>` under /tmp.
-        let dir = URL(
-            fileURLWithPath: "/tmp/weir-srv-\(ProcessInfo.processInfo.processIdentifier)",
-            isDirectory: true
-        )
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let socket = dir.appendingPathComponent("default").path
-        defer {
-            _ = try? run(tmux, ["-S", socket, "kill-server"])
-            try? FileManager.default.removeItem(at: dir)
-        }
+        // The short folder stands in for `${TMUX_TMPDIR}/tmux-<uid>`.
+        try await withShortTempDir { dir in
+            let socket = dir.appendingPathComponent("default").path
+            defer { _ = try? run(tmux, ["-S", socket, "kill-server"]) }
 
-        _ = try run(tmux, ["-S", socket, "-f", "/dev/null", "new-session", "-d", "-s", "srv", "sleep 120"])
-        let client = try attachClient(tmux: tmux, socket: socket, session: "srv")
-        defer { client.terminate() }
-        // Until the client has attached, rather than a fixed wait.
-        await pollUntil(timeout: .seconds(10), interval: .milliseconds(100)) {
-            !TmuxClientProbe.attachedClients(tmuxPath: tmux, serverDirectory: dir).isEmpty
-        }
+            _ = try run(tmux, ["-S", socket, "-f", "/dev/null", "new-session", "-d", "-s", "srv", "sleep 120"])
+            let client = try attachClient(tmux: tmux, socket: socket, session: "srv")
+            defer { client.terminate() }
+            // Until the client has attached, rather than a fixed wait.
+            await pollUntil(timeout: .seconds(10), interval: .milliseconds(100)) {
+                !TmuxClientProbe.attachedClients(tmuxPath: tmux, serverDirectory: dir).isEmpty
+            }
 
-        let clients = TmuxClientProbe.attachedClients(tmuxPath: tmux, serverDirectory: dir)
-        #expect(clients.count == 1)
-        #expect(clients.values.first?.sessionName == "srv")
-        // `/tmp` is a symlink to `/private/tmp` on macOS, and directory
-        // enumeration hands back the resolved form while Foundation
-        // standardizes it back. Both address the same socket, so compare
-        // them through the same normalization rather than picking one.
-        let found = try #require(clients.values.first?.socketPath)
-        #expect(
-            URL(fileURLWithPath: found).resolvingSymlinksInPath().path
-                == URL(fileURLWithPath: socket).resolvingSymlinksInPath().path
-        )
+            let clients = TmuxClientProbe.attachedClients(tmuxPath: tmux, serverDirectory: dir)
+            #expect(clients.count == 1)
+            #expect(clients.values.first?.sessionName == "srv")
+            // The temporary directory is reached through a symlink on macOS
+            // (`/var` to `/private/var`): directory enumeration hands back the
+            // resolved form, while Foundation standardizes a path to the symlinked one.
+            // Both address the same socket, so compare them through the same
+            // normalization rather than picking one.
+            let found = try #require(clients.values.first?.socketPath)
+            #expect(
+                URL(fileURLWithPath: found).resolvingSymlinksInPath().path
+                    == URL(fileURLWithPath: socket).resolvingSymlinksInPath().path
+            )
+        }
     }
 
     @Test("returns nothing when the server directory does not exist")

@@ -33,8 +33,8 @@ struct RestoreCoordinatorTests {
     /// The scene, with the agent's state directory at `states`.
     private static func scene(states: URL) async throws -> Scene {
         let repo = try await TempGitRepo.make()
-        try "a\n".write(to: repo.url.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
-        try "b\n".write(to: repo.url.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+        try repo.write("a\n", to: "a.txt")
+        try repo.write("b\n", to: "b.txt")
         try await repo.git(["add", "a.txt", "b.txt"])
         try await repo.git(["commit", "-q", "-m", "a"])
         let root = try await repo.git(["rev-parse", "--show-toplevel"])

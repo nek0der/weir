@@ -22,28 +22,15 @@ struct AgentShimLaunchTests {
         directory: URL? = nil,
         shim: URL? = nil
     ) throws -> Int32? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = try [(shim ?? AgentCatalogFixture.shim(for: kind)).path]
-        process.environment = AgentCatalog.knownLocationsEnvironment(home: home.path, entries: AgentCatalogFixture.homeEntries)
-            .merging(["PATH": path, "HOME": home.path, "TMPDIR": scratch.path]) { _, new in new }
-            .merging(environment) { _, new in new }
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        process.currentDirectoryURL = directory
-        try process.run()
-        return process.waitUntilExit(within: 10) ? process.terminationStatus : nil
-    }
-
-    /// A stand-in agent at `url` that writes how it was started, its `$0`
-    /// and its `PATH`, to `record`.
-    private static func makeRecordingAgent(_ url: URL, record: URL) throws {
-        try AgentCatalogFixture.makeExecutable(url, script: "#!/bin/sh\nprintf '%s\\n%s\\n' \"$0\" \"$PATH\" > \"\(record.path)\"\n")
-    }
-
-    /// The `$0` and `PATH` a recording agent wrote, empty when none ran.
-    private static func recorded(_ record: URL) -> [String] {
-        ((try? String(contentsOf: record, encoding: .utf8)) ?? "").split(separator: "\n").map(String.init)
+        let output = try TestProcess.run(
+            URL(fileURLWithPath: "/bin/sh"),
+            arguments: [(shim ?? AgentCatalogFixture.shim(for: kind)).path],
+            environment: AgentCatalog.knownLocationsEnvironment(home: home.path, entries: AgentCatalogFixture.homeEntries)
+                .merging(["PATH": path, "HOME": home.path, "TMPDIR": scratch.path]) { _, new in new }
+                .merging(environment) { _, new in new },
+            cwd: directory
+        )
+        return output.ending == .exited ? output.status : nil
     }
 
     /// An agent the sheet offers because it sits where a version manager
@@ -57,14 +44,13 @@ struct AgentShimLaunchTests {
                     let home = root.appendingPathComponent("home")
                     let agent = URL(fileURLWithPath: AgentCatalog.homeExpanded(location, home: home.path)
                         .replacingOccurrences(of: "/*/", with: "/v22.3.0/"))
-                    let record = root.appendingPathComponent("launched")
-                    try Self.makeRecordingAgent(agent, record: record)
+                    try ShimHarness.recordingStub(at: agent, recordingIn: root)
                     #expect(AgentCatalogFixture.installedOnDisk(paths: ["/usr/bin:/bin"], home: home) == [entry.kind], "\(location)")
 
                     #expect(try Self.startShim(entry.kind, home: home, scratch: root) == 0, "\(location)")
                     // Its folder joins the PATH, after what the PATH had.
                     #expect(
-                        Self.recorded(record) == [agent.path, "/usr/bin:/bin:\(agent.deletingLastPathComponent().path)"],
+                        ShimHarness.launched(in: root) == [agent.path, "/usr/bin:/bin:\(agent.deletingLastPathComponent().path)"],
                         "\(location)"
                     )
                 }
@@ -80,14 +66,13 @@ struct AgentShimLaunchTests {
             try withTempDir { root in
                 let home = root.appendingPathComponent("home")
                 let onPath = root.appendingPathComponent("tools/\(entry.kind.launchCommand)")
-                let record = root.appendingPathComponent("launched")
-                try Self.makeRecordingAgent(onPath, record: record)
+                try ShimHarness.recordingStub(at: onPath, recordingIn: root)
                 let known = try URL(fileURLWithPath: AgentCatalog.homeExpanded(#require(entry.knownLocations.first), home: home.path))
-                try Self.makeRecordingAgent(known, record: record)
+                try ShimHarness.recordingStub(at: known, recordingIn: root)
                 let path = "\(onPath.deletingLastPathComponent().path):/usr/bin:/bin"
 
                 #expect(try Self.startShim(entry.kind, home: home, scratch: root, path: path) == 0, "\(entry.kind)")
-                #expect(Self.recorded(record) == [onPath.path, path], "\(entry.kind)")
+                #expect(ShimHarness.launched(in: root) == [onPath.path, path], "\(entry.kind)")
             }
         }
     }
@@ -106,8 +91,7 @@ struct AgentShimLaunchTests {
                 let command = entry.kind.launchCommand
                 let tools = root.appendingPathComponent("tools")
                 let agent = tools.appendingPathComponent(command)
-                let record = root.appendingPathComponent("launched")
-                try Self.makeRecordingAgent(agent, record: record)
+                try ShimHarness.recordingStub(at: agent, recordingIn: root)
 
                 let shim = try AgentCatalogFixture.shim(for: entry.kind)
                 let folder = shim.deletingLastPathComponent()
@@ -138,8 +122,8 @@ struct AgentShimLaunchTests {
                     let expected = entry.kind == .opencode
                         ? (directory == nil ? "\(tools.path):/usr/bin:/bin" : "/usr/bin:\(tools.path):/bin")
                         : path
-                    #expect(Self.recorded(record) == [agent.path, expected], "\(entry.kind) \(path)")
-                    try manager.removeItem(at: record)
+                    #expect(ShimHarness.launched(in: root) == [agent.path, expected], "\(entry.kind) \(path)")
+                    try manager.removeItem(at: ShimHarness.launchRecord(in: root))
                 }
             }
         }
@@ -177,13 +161,12 @@ struct AgentShimLaunchTests {
         for entry in AgentCatalogFixture.homeEntries {
             try withTempDir { root in
                 let home = root.appendingPathComponent("home")
-                let record = root.appendingPathComponent("launched")
                 let onPath = root.appendingPathComponent("tools/\(entry.kind.launchCommand)")
-                try Self.makeRecordingAgent(onPath, record: record)
+                try ShimHarness.recordingStub(at: onPath, recordingIn: root)
                 let known = try URL(fileURLWithPath: AgentCatalog.homeExpanded(#require(entry.knownLocations.first), home: home.path))
-                try Self.makeRecordingAgent(known, record: record)
+                try ShimHarness.recordingStub(at: known, recordingIn: root)
                 let override = root.appendingPathComponent("override/agent")
-                try Self.makeRecordingAgent(override, record: record)
+                try ShimHarness.recordingStub(at: override, recordingIn: root)
                 let path = "\(onPath.deletingLastPathComponent().path):/usr/bin:/bin"
                 let variable = "WEIR_REAL_\(entry.kind.rawValue.uppercased())"
 
@@ -191,7 +174,7 @@ struct AgentShimLaunchTests {
                     try Self.startShim(entry.kind, home: home, scratch: root, path: path, environment: [variable: override.path]) == 0,
                     "\(entry.kind)"
                 )
-                #expect(Self.recorded(record).first == override.path, "\(entry.kind)")
+                #expect(ShimHarness.launched(in: root).first == override.path, "\(entry.kind)")
             }
         }
     }
@@ -204,11 +187,10 @@ struct AgentShimLaunchTests {
         for entry in AgentCatalogFixture.homeEntries {
             try withTempDir { root in
                 let home = root.appendingPathComponent("home")
-                let record = root.appendingPathComponent("launched")
                 let onPath = root.appendingPathComponent("tools/\(entry.kind.launchCommand)")
-                try Self.makeRecordingAgent(onPath, record: record)
+                try ShimHarness.recordingStub(at: onPath, recordingIn: root)
                 let override = root.appendingPathComponent("override/agent")
-                try Self.makeRecordingAgent(override, record: record)
+                try ShimHarness.recordingStub(at: override, recordingIn: root)
                 let contents = try ShimHarness.bundleContents(in: root, isAppBundle: isAppBundle)
                 let source = try AgentCatalogFixture.shim(for: entry.kind)
                 let shim = contents.appendingPathComponent("Resources")
@@ -223,7 +205,7 @@ struct AgentShimLaunchTests {
                     ) == 0,
                     "\(entry.kind)"
                 )
-                #expect(Self.recorded(record).first == (isAppBundle ? onPath : override).path, "\(entry.kind)")
+                #expect(ShimHarness.launched(in: root).first == (isAppBundle ? onPath : override).path, "\(entry.kind)")
             }
         }
     }
@@ -317,11 +299,10 @@ struct AgentShimLaunchTests {
                 // pin or direnv chose it) starts that one, as its terminal
                 // would, and leaves the PATH as it was.
                 let own = root.appendingPathComponent("project-b/bin/\(kind.launchCommand)")
-                let launched = root.appendingPathComponent("launched")
-                try Self.makeRecordingAgent(own, record: launched)
+                try ShimHarness.recordingStub(at: own, recordingIn: root)
                 let paneB = "\(own.deletingLastPathComponent().path):/usr/bin:/bin"
                 #expect(try Self.startShim(kind, home: home, scratch: root, path: paneB, environment: staged.environment) == 0)
-                #expect(Self.recorded(launched) == [own.path, paneB], "\(kind)")
+                #expect(ShimHarness.launched(in: root) == [own.path, paneB], "\(kind)")
             }
         }
     }
@@ -355,14 +336,13 @@ struct AgentShimLaunchTests {
         for entry in AgentCatalogFixture.homeEntries {
             try withTempDir { root in
                 let home = root.appendingPathComponent("home")
-                let record = root.appendingPathComponent("launched")
                 let known = try URL(fileURLWithPath: AgentCatalog.homeExpanded(#require(entry.knownLocations.first), home: home.path))
-                try Self.makeRecordingAgent(known, record: record)
+                try ShimHarness.recordingStub(at: known, recordingIn: root)
                 let gone = root.appendingPathComponent("gone/\(entry.kind.launchCommand)").path
                 let environment = [entry.foundExecutableVariable: gone]
 
                 #expect(try Self.startShim(entry.kind, home: home, scratch: root, environment: environment) == 0)
-                #expect(Self.recorded(record).first == known.path, "\(entry.kind)")
+                #expect(ShimHarness.launched(in: root).first == known.path, "\(entry.kind)")
             }
         }
     }
@@ -376,13 +356,12 @@ struct AgentShimLaunchTests {
                 let home = root.appendingPathComponent("home")
                 let locations = entry.knownLocations.map { AgentCatalog.homeExpanded($0, home: home.path) }
                 try FileManager.default.createDirectory(atPath: locations[0], withIntermediateDirectories: true)
-                let record = root.appendingPathComponent("launched")
                 let agent = URL(fileURLWithPath: locations[1].replacingOccurrences(of: "/*/", with: "/v22.3.0/"))
-                try Self.makeRecordingAgent(agent, record: record)
+                try ShimHarness.recordingStub(at: agent, recordingIn: root)
                 #expect(AgentCatalogFixture.installedOnDisk(paths: ["/usr/bin:/bin"], home: home) == [entry.kind], "\(entry.kind)")
 
                 #expect(try Self.startShim(entry.kind, home: home, scratch: root) == 0, "\(entry.kind)")
-                #expect(Self.recorded(record).first == agent.path, "\(entry.kind)")
+                #expect(ShimHarness.launched(in: root).first == agent.path, "\(entry.kind)")
             }
         }
     }
@@ -395,15 +374,14 @@ struct AgentShimLaunchTests {
         for kind in AgentKind.allCases {
             try withTempDir { root in
                 let home = root.appendingPathComponent("my home [v]")
-                let record = root.appendingPathComponent("launched")
                 let agent = home.appendingPathComponent(".nvm/versions/node/v22.3.0/bin/\(kind.launchCommand)")
-                try Self.makeRecordingAgent(agent, record: record)
+                try ShimHarness.recordingStub(at: agent, recordingIn: root)
                 let decoy = root.appendingPathComponent("my home v/.nvm/versions/node/v99.0.0/bin/\(kind.launchCommand)")
-                try Self.makeRecordingAgent(decoy, record: record)
+                try ShimHarness.recordingStub(at: decoy, recordingIn: root)
                 #expect(AgentCatalogFixture.installedOnDisk(paths: ["/usr/bin:/bin"], home: home) == [kind], "\(kind)")
 
                 #expect(try Self.startShim(kind, home: home, scratch: root) == 0, "\(kind)")
-                #expect(Self.recorded(record).first == agent.path, "\(kind)")
+                #expect(ShimHarness.launched(in: root).first == agent.path, "\(kind)")
             }
         }
     }
@@ -414,15 +392,17 @@ struct AgentShimLaunchTests {
         for kind in AgentKind.allCases {
             try withTempDir { root in
                 let home = root.appendingPathComponent("home")
-                let record = root.appendingPathComponent("launched")
                 let versions = home.appendingPathComponent(".nvm/versions/node")
                 for version in ["v9.0.0", "v18.20.0", "v22.3.0", "v22.10.1"] {
-                    try Self.makeRecordingAgent(versions.appendingPathComponent("\(version)/bin/\(kind.launchCommand)"), record: record)
+                    try ShimHarness.recordingStub(
+                        at: versions.appendingPathComponent("\(version)/bin/\(kind.launchCommand)"),
+                        recordingIn: root
+                    )
                 }
 
                 #expect(try Self.startShim(kind, home: home, scratch: root) == 0, "\(kind)")
                 #expect(
-                    Self.recorded(record).first == versions.appendingPathComponent("v22.10.1/bin/\(kind.launchCommand)").path,
+                    ShimHarness.launched(in: root).first == versions.appendingPathComponent("v22.10.1/bin/\(kind.launchCommand)").path,
                     "\(kind)"
                 )
             }

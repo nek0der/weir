@@ -10,14 +10,10 @@ struct VersionedDocumentMigratorTests {
         try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
 
-    private static func object(_ data: Data) throws -> [String: Any] {
-        try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-    }
-
     /// A step that bumps the version and records that it ran.
     private static func bump(from version: Int) -> DocumentMigrationStep {
         DocumentMigrationStep(fromVersion: version) { data in
-            var object = try object(data)
+            var object = try JSONObjectFixture.object(data)
             object["version"] = version + 1
             object["ran", default: [Int]()] = ((object["ran"] as? [Int]) ?? []) + [version]
             return try json(object)
@@ -53,7 +49,7 @@ struct VersionedDocumentMigratorTests {
             return
         }
         #expect(from == 2)
-        let result = try Self.object(data)
+        let result = try JSONObjectFixture.object(data)
         #expect(result["version"] as? Int == 4)
         #expect(result["ran"] as? [Int] == [2, 3])
     }

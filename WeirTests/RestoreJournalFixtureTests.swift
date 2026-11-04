@@ -42,4 +42,26 @@ struct RestoreJournalFixtureTests {
         #expect(journal.at == "2026-10-13T00:00:01Z")
         #expect(journal.ranAt == "2026-10-13T00:00:00Z")
     }
+
+    /// The journal the restore suites start from is a restore of turn 5 of
+    /// `s1`, run when it was written; each field a test passes replaces its default.
+    @Test func theTurnsRestore_isTurnFiveOfS1_untilAFieldIsGiven() throws {
+        let journal = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#)
+        #expect(journal.opID == "OP")
+        #expect(journal.operation == .restore)
+        #expect(journal.turnID == TurnID("s1-T5"))
+        #expect(journal.turnNumber == 5)
+        #expect(journal.at == "2026-10-12T00:07:30Z")
+        #expect(journal.ranAt == journal.at)
+
+        let given = try RestoreJournalFixture.restore(
+            #"{"kind":"applied"}"#,
+            opID: "U", turnID: "s1-T1", number: nil, at: "2026-10-12T00:20:00Z", ranAt: "2026-10-12T00:07:30Z"
+        )
+        #expect(given.opID == "U")
+        #expect(given.turnID == TurnID("s1-T1"))
+        #expect(given.turnNumber == nil)
+        #expect(given.at == "2026-10-12T00:20:00Z")
+        #expect(given.ranAt == "2026-10-12T00:07:30Z")
+    }
 }

@@ -612,7 +612,7 @@ struct ReviewStackLoaderTests {
         defer { repo.cleanup() }
         let manual = repo.url.appendingPathComponent("manual.swift")
         try Data("let handEdited = true\n".utf8).write(to: manual)
-        try Data("let other = 1\n".utf8).write(to: repo.url.appendingPathComponent("other.swift"))
+        try repo.write("let other = 1\n", to: "other.swift")
         let session = ReviewSession(
             writer: ReviewDraftWriter(root: repo.url, drafts: RecordingReviewDraftStore()),
             git: LiveReviewRepository()

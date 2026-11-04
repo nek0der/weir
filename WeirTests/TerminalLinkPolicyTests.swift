@@ -231,9 +231,7 @@ struct TerminalLinkPolicyTests {
     }
 
     private func makeFile(_ relativePath: String, in dir: URL) throws -> URL {
-        let file = dir.appendingPathComponent(relativePath)
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("x".utf8).write(to: file)
-        return file
+        try ScratchFile.write("x", to: relativePath, in: dir)
+        return dir.appendingPathComponent(relativePath)
     }
 }

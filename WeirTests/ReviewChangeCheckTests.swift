@@ -21,13 +21,6 @@ struct ReviewChangeCheckTests {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
         let git = LiveReviewRepository()
-        func write(_ path: String, _ text: String) throws {
-            try Data(text.utf8).write(to: repo.url.appendingPathComponent(path))
-        }
-        func run(_ arguments: [String]) async throws {
-            let result = try await GitProcess.run(arguments, cwd: repo.url)
-            try #require(result.succeeded, "git \(arguments.joined(separator: " ")): \(result.stderr)")
-        }
         /// Git's reads are stopped at a timeout a full parallel run can reach,
         /// which says nothing about the states, so a read that failed goes
         /// again, and one that keeps failing is reported as what it is.
@@ -53,12 +46,12 @@ struct ReviewChangeCheckTests {
             }
             return states
         }
-        try write("a.swift", "let a = 1\n")
-        try write("gone.swift", "let gone = 1\n")
-        try write("c.txt", "base\n")
-        try await run(["add", "."])
-        try await run(["commit", "-m", "files"])
-        try write("a.swift", "let a = 2\n")
+        try repo.write("let a = 1\n", to: "a.swift")
+        try repo.write("let gone = 1\n", to: "gone.swift")
+        try repo.write("base\n", to: "c.txt")
+        try await repo.git(["add", "."])
+        try await repo.git(["commit", "-m", "files"])
+        try repo.write("let a = 2\n", to: "a.swift")
         let paths: Set = ["a.swift", "gone.swift", "c.txt"]
         var states = await take(paths)
 
@@ -72,12 +65,12 @@ struct ReviewChangeCheckTests {
         states = await take(paths)
         // `cp -p`: the same size and modification time, other bytes.
         let modified = try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate]
-        try write("a.swift", "let a = 3\n")
+        try repo.write("let a = 3\n", to: "a.swift")
         try FileManager.default.setAttributes([.modificationDate: modified as Any], ofItemAtPath: file.path)
         #expect(await changed(states, "a.swift"))
 
         states = await take(paths)
-        try await run(["add", "a.swift"])
+        try await repo.git(["add", "a.swift"])
         #expect(await changed(states, "a.swift"), "a stage")
 
         states = await take(paths)
@@ -85,22 +78,22 @@ struct ReviewChangeCheckTests {
         #expect(await changed(states, "gone.swift"), "a tracked file deleted")
 
         // A conflict, then its resolution.
-        try await run(["checkout", "-q", "-b", "other"])
-        try write("c.txt", "other\n")
-        try await run(["commit", "-qam", "other"])
-        try await run(["checkout", "-q", "main"])
-        try write("c.txt", "main\n")
-        try await run(["commit", "-qam", "main"])
+        try await repo.git(["checkout", "-q", "-b", "other"])
+        try repo.write("other\n", to: "c.txt")
+        try await repo.git(["commit", "-qam", "other"])
+        try await repo.git(["checkout", "-q", "main"])
+        try repo.write("main\n", to: "c.txt")
+        try await repo.git(["commit", "-qam", "main"])
         // Fails by design: it stops at the conflict.
-        _ = try await GitProcess.run(["merge", "other"], cwd: repo.url)
+        await #expect(throws: TempGitRepo.GitFailure.self) { try await repo.git(["merge", "other"]) }
         states = await take(paths)
         #expect(states["c.txt"]?.index?.split(separator: ";").count == 3, "three stages")
-        try write("c.txt", "resolved\n")
-        try await run(["add", "c.txt"])
+        try repo.write("resolved\n", to: "c.txt")
+        try await repo.git(["add", "c.txt"])
         #expect(await changed(states, "c.txt"))
 
         states = await take(paths)
-        try await run(["commit", "-qm", "merged"])
+        try await repo.git(["commit", "-qm", "merged"])
         #expect(await changed(states, "c.txt"), "HEAD moved")
     }
 
@@ -115,7 +108,7 @@ struct ReviewChangeCheckTests {
         var expected: [String: String] = [:]
         for (index, path) in paths.enumerated() {
             let data = Data("content \(index)\n".utf8)
-            try data.write(to: repo.url.appendingPathComponent(path))
+            try repo.write(data, to: path)
             expected[path] = Self.blobID(data)
         }
         #expect(paths.joined(separator: "\n").utf8.count > 64 * 1024)
@@ -131,9 +124,9 @@ struct ReviewChangeCheckTests {
         defer { repo.cleanup() }
         let paths = (0..<70).map { "f\($0).txt" }
         for path in paths {
-            try Data("\(path)\n".utf8).write(to: repo.url.appendingPathComponent(path))
+            try repo.write("\(path)\n", to: path)
         }
-        _ = try await GitProcess.run(["add", "."], cwd: repo.url)
+        try await repo.git(["add", "."])
 
         let few = try await ReviewGit.indexEntries(Set(paths.prefix(3)), root: repo.url)
         let all = try await ReviewGit.indexEntries(Set(paths), root: repo.url)
@@ -169,9 +162,6 @@ struct ReviewChangeCheckTests {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
         let git = LiveReviewRepository()
-        func run(_ arguments: [String]) async throws {
-            _ = try await GitProcess.run(arguments, cwd: repo.url)
-        }
         func changed(_ path: String, from states: [String: ReviewReadState], scope: ReviewScope = .uncommitted) async throws -> Bool {
             let state = try #require(states[path])
             // Unwrapped by hand: `#require` on an optional Bool is ambiguous
@@ -183,18 +173,18 @@ struct ReviewChangeCheckTests {
             return answer
         }
         for name in ["a.txt", "b.txt"] {
-            try Data("same\n".utf8).write(to: repo.url.appendingPathComponent(name))
+            try repo.write("same\n", to: name)
         }
-        try await run(["add", "a.txt", "b.txt"])
-        try await run(["commit", "-qm", "files"])
-        try await run(["branch", "base"])
-        try Data("untracked\n".utf8).write(to: repo.url.appendingPathComponent("u.txt"))
+        try await repo.git(["add", "a.txt", "b.txt"])
+        try await repo.git(["commit", "-qm", "files"])
+        try await repo.git(["branch", "base"])
+        try repo.write("untracked\n", to: "u.txt")
         let link = repo.url.appendingPathComponent("l")
         try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "a.txt")
 
         var states = await ReviewChangeCheck.take(["u.txt", "l"], git: git, root: repo.url, scope: .uncommitted)
         #expect(try await !changed("u.txt", from: states))
-        try await run(["add", "u.txt"])
+        try await repo.git(["add", "u.txt"])
         #expect(try await changed("u.txt", from: states), "untracked, then added")
 
         states = await ReviewChangeCheck.take(["l"], git: git, root: repo.url, scope: .uncommitted)
@@ -202,12 +192,12 @@ struct ReviewChangeCheckTests {
         try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "b.txt")
         #expect(try await changed("l", from: states), "a link pointed at an identical file is still another link")
 
-        try Data("more\n".utf8).write(to: repo.url.appendingPathComponent("a.txt"))
-        try await run(["commit", "-qam", "more"])
+        try repo.write("more\n", to: "a.txt")
+        try await repo.git(["commit", "-qam", "more"])
         let branch = ReviewScope.branch(base: "base")
         states = await ReviewChangeCheck.take(["a.txt"], git: git, root: repo.url, scope: branch)
         #expect(try await !changed("a.txt", from: states, scope: branch))
-        try await run(["branch", "-f", "base", "HEAD"])
+        try await repo.git(["branch", "-f", "base", "HEAD"])
         #expect(try await changed("a.txt", from: states, scope: branch), "the merge base moved")
     }
 
@@ -215,13 +205,10 @@ struct ReviewChangeCheckTests {
         try await withTempDir { outside in
             let repo = try await TempGitRepo.make()
             defer { repo.cleanup() }
-            try Data("outside\n".utf8).write(to: outside.appendingPathComponent("f.txt"))
-            func write(_ path: String, _ text: String) throws {
-                try Data(text.utf8).write(to: repo.url.appendingPathComponent(path))
-            }
-            try write("small.txt", "small\n")
-            try write("large.txt", String(repeating: "x", count: 100))
-            try write("locked.txt", "locked\n")
+            try ScratchFile.write("outside\n", to: "f.txt", in: outside)
+            try repo.write("small\n", to: "small.txt")
+            try repo.write(String(repeating: "x", count: 100), to: "large.txt")
+            try repo.write("locked\n", to: "locked.txt")
             try FileManager.default.createDirectory(at: repo.url.appendingPathComponent("folder"), withIntermediateDirectories: true)
             try FileManager.default.createSymbolicLink(
                 atPath: repo.url.appendingPathComponent("away").path,
@@ -255,9 +242,9 @@ struct ReviewChangeCheckTests {
         defer { repo.cleanup() }
         let paths = (0..<5).map { "f\($0).txt" }
         for path in paths {
-            try Data("\(path)\n".utf8).write(to: repo.url.appendingPathComponent(path))
+            try repo.write("\(path)\n", to: path)
         }
-        _ = try await GitProcess.run(["add", "."], cwd: repo.url)
+        try await repo.git(["add", "."])
 
         let whole = try await ReviewGit.indexEntries(Set(paths), root: repo.url, byName: 2)
         let batched = try await ReviewGit.indexEntries(Set(paths), root: repo.url, byName: 2, wholeIndexLimitBytes: 10)

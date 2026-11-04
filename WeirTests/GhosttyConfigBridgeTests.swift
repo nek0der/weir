@@ -172,18 +172,14 @@ struct GhosttyConfigBridgeTests {
         let database = URL(fileURLWithPath: resourcesDir)
             .deletingLastPathComponent()
             .appendingPathComponent("terminfo")
-        let output = Pipe()
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/infocmp")
-        process.arguments = ["-x", "-A", database.path, "xterm-ghostty"]
-        process.standardOutput = output
-        process.standardError = output
-        try process.run()
-        #expect(process.waitUntilExit(within: 10), "infocmp did not finish")
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        let text = try #require(String(bytes: data, encoding: .utf8))
+        let output = try TestProcess.run(
+            URL(fileURLWithPath: "/usr/bin/infocmp"),
+            arguments: ["-x", "-A", database.path, "xterm-ghostty"]
+        )
+        #expect(output.ending == .exited, "infocmp did not finish")
+        let text = try #require(String(bytes: output.stdout, encoding: .utf8))
 
-        #expect(process.terminationStatus == 0)
+        #expect(output.status == 0, "\(output.stderrText)")
         #expect(text.contains("Smulx="))
         #expect(text.contains("Setulc="))
     }

@@ -157,11 +157,11 @@ struct NewSessionCarryTests {
     @Test func create_movesTheChangesIntoTheNewWorktree() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
-        try Data("one\n".utf8).write(to: repo.url.appendingPathComponent("a.txt"))
+        try repo.write("one\n", to: "a.txt")
         try await repo.git(["add", "a.txt"])
         try await repo.git(["commit", "-q", "-m", "a"])
-        try Data("two\n".utf8).write(to: repo.url.appendingPathComponent("a.txt"))
-        try Data("new\n".utf8).write(to: repo.url.appendingPathComponent("b.txt"))
+        try repo.write("two\n", to: "a.txt")
+        try repo.write("new\n", to: "b.txt")
 
         try await withTempDir { dir in
             var form = try await Self.form(repo, settings: dir)
@@ -188,7 +188,7 @@ struct NewSessionCarryTests {
     @Test func create_withChangesThatConflict_makesNothing_andLeavesTheSource() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
-        try Data("one\n".utf8).write(to: repo.url.appendingPathComponent("a.txt"))
+        try repo.write("one\n", to: "a.txt")
         try await repo.git(["add", "a.txt"])
         try await repo.git(["commit", "-q", "-m", "a"])
         // A branch whose commit changes the same line, checked out nowhere.
@@ -196,7 +196,7 @@ struct NewSessionCarryTests {
         try Data("theirs\n".utf8).write(to: theirs.appendingPathComponent("a.txt"))
         try await TempGitRepo.git(["commit", "-q", "-am", "theirs"], in: theirs)
         try await repo.git(["branch", "theirs-copy", "theirs-wt"])
-        try Data("mine\n".utf8).write(to: repo.url.appendingPathComponent("a.txt"))
+        try repo.write("mine\n", to: "a.txt")
         let before = try await repo.git(["status", "--porcelain"])
 
         try await withTempDir { dir in

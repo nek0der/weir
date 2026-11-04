@@ -12,15 +12,6 @@ struct RestoreOutcomePresentationTests {
     private static let opID = "6F1C2A40-8C1E-4B7A-9D55-2E0B6A3C9F10"
     private static let other = ConversationKey(provider: .claude, conversationID: "s2", isFallback: false)
 
-    private static func journal(
-        _ stage: String,
-        opID: String = opID,
-        number: Int? = 5,
-        at: String = "2026-10-12T00:07:30Z"
-    ) throws -> RestoreJournal {
-        try RestoreJournalFixture.make(stageJSON: stage, fields: .init(opID: opID, turnID: "s1-T5", turnNumber: number, at: at))
-    }
-
     private static func turn(_ number: Int, root: String = "/repo", conversationID: String = "s1") throws -> TurnSummary {
         try TurnSummaryFixture.restorable(number, root: root, conversationID: conversationID)
     }
@@ -57,7 +48,7 @@ struct RestoreOutcomePresentationTests {
     // MARK: - A restore's end
 
     @Test func applied_namesTheTurnsTakenBack_theDoneLine_andTheToast() throws {
-        let journal = try Self.journal(Self.applied)
+        let journal = try RestoreJournalFixture.restore(Self.applied, opID: Self.opID)
         guard case let .applied(applied) = try Self.finish(.applied(journal)) else {
             Issue.record("an applied restore is taken as applied")
             return
@@ -77,7 +68,7 @@ struct RestoreOutcomePresentationTests {
     }
 
     @Test func applied_withSavesMovedAside_namesWhereInTheToast() throws {
-        let journal = try Self.journal(Self.keptAside)
+        let journal = try RestoreJournalFixture.restore(Self.keptAside, opID: Self.opID)
         guard case let .applied(applied) = try Self.finish(.applied(journal)) else {
             Issue.record("a whole restore that moved saves aside is applied")
             return
@@ -93,7 +84,7 @@ struct RestoreOutcomePresentationTests {
     /// rather than a wrong number, but its lines still move and its "Done"
     /// line, which offers the undo, is still handed over.
     @Test func applied_withNoTurnNumber_showsNoToast_butStillMovesTheLines() throws {
-        let journal = try Self.journal(Self.applied, number: nil)
+        let journal = try RestoreJournalFixture.restore(Self.applied, opID: Self.opID, number: nil)
         guard case let .applied(applied) = try Self.finish(.applied(journal)) else {
             Issue.record("an applied restore is taken as applied")
             return
@@ -104,7 +95,7 @@ struct RestoreOutcomePresentationTests {
     }
 
     @Test func applied_underAnOperationNotNamedByAUUID_hasAToastNothingFindsAgain() throws {
-        let journal = try Self.journal(Self.applied, opID: "OP")
+        let journal = try RestoreJournalFixture.restore(Self.applied, opID: "OP")
         guard case let .applied(applied) = try Self.finish(.applied(journal)) else {
             Issue.record("an applied restore is taken as applied")
             return
@@ -116,7 +107,10 @@ struct RestoreOutcomePresentationTests {
     /// Part of it is in the working tree: the strip stays and says what,
     /// and nothing moves a line or offers "Done".
     @Test func partial_keepsTheStrip_sayingWhatStayed() throws {
-        let journal = try Self.journal(#"{"kind":"partiallyApplied","reason":"writeFailed","currentTree":"c"}"#)
+        let journal = try RestoreJournalFixture.restore(
+            #"{"kind":"partiallyApplied","reason":"writeFailed","currentTree":"c"}"#,
+            opID: Self.opID
+        )
         let finish = try Self.finish(.partial(journal, kept: ["a.txt"], failed: ["b"]))
         #expect(finish == .explain(RestoreText.ended(.partial(kept: ["a.txt"], failed: ["b"]), locale: Self.english)))
         // Recorded or not, a partial restore's strip says what it left.
@@ -148,8 +142,8 @@ struct RestoreOutcomePresentationTests {
     // MARK: - An undo's end
 
     @Test func anUndoTakenBackWhole_namesTheRestore_andItsToast_withNothingNewToTell() throws {
-        let journal = try Self.journal(Self.applied)
-        let undoJournal = try Self.journal(Self.applied, opID: "U")
+        let journal = try RestoreJournalFixture.restore(Self.applied, opID: Self.opID)
+        let undoJournal = try RestoreJournalFixture.restore(Self.applied, opID: "U")
         let undone = try #require(RestoreOutcomePresentation.undo(.finished(undoJournal), of: journal, locale: Self.english))
         #expect(undone.opID == Self.opID)
         #expect(undone.toastID == UUID(uuidString: Self.opID))
@@ -159,12 +153,12 @@ struct RestoreOutcomePresentationTests {
     /// Saves the undo moved aside are told once; those the restore already
     /// moved, which its toast or strip told, are not told again.
     @Test func anUndoThatMovedSavesAside_tellsOnlyTheNewOnes() throws {
-        let restore = try Self.journal(Self.applied)
-        let undoJournal = try Self.journal(Self.keptAside, opID: "U")
+        let restore = try RestoreJournalFixture.restore(Self.applied, opID: Self.opID)
+        let undoJournal = try RestoreJournalFixture.restore(Self.keptAside, opID: "U")
         let undone = try #require(RestoreOutcomePresentation.undo(.finished(undoJournal), of: restore, locale: Self.english))
         #expect(undone.news == RestoreText.keptAsideSentence(undoJournal.stage.keptAside, locale: Self.english))
 
-        let movedAlready = try Self.journal(Self.keptAside)
+        let movedAlready = try RestoreJournalFixture.restore(Self.keptAside, opID: Self.opID)
         let again = try #require(RestoreOutcomePresentation.undo(.finished(undoJournal), of: movedAlready, locale: Self.english))
         #expect(again.news == nil)
     }
@@ -172,11 +166,11 @@ struct RestoreOutcomePresentationTests {
     /// An undo that fell short, or did not run, changes nothing: the record
     /// stays and says why.
     @Test func anUndoThatFellShortOrDidNotRun_doesNothing() throws {
-        let journal = try Self.journal(Self.applied)
+        let journal = try RestoreJournalFixture.restore(Self.applied, opID: Self.opID)
         let short = try [
-            Self.journal(#"{"kind":"partiallyApplied","reason":"writeFailed","currentTree":"c"}"#, opID: "U"),
-            Self.journal(#"{"kind":"aborted","reason":"externalChangeDetected"}"#, opID: "U"),
-            Self.journal(#"{"kind":"writing"}"#, opID: "U")
+            RestoreJournalFixture.restore(#"{"kind":"partiallyApplied","reason":"writeFailed","currentTree":"c"}"#, opID: "U"),
+            RestoreJournalFixture.restore(#"{"kind":"aborted","reason":"externalChangeDetected"}"#, opID: "U"),
+            RestoreJournalFixture.restore(#"{"kind":"writing"}"#, opID: "U")
         ]
         for undo in short {
             #expect(RestoreOutcomePresentation.undo(.finished(undo), of: journal, locale: Self.english) == nil)
@@ -188,9 +182,9 @@ struct RestoreOutcomePresentationTests {
     /// Every "Done" line that offers this restore's Undo goes, shown or
     /// waiting, and no other: another restore's, or a mark's, keeps its Undo.
     @Test func anUndo_lapsesOnlyTheDoneLinesOfItsRestore() throws {
-        let journal = try Self.journal(Self.applied)
+        let journal = try RestoreJournalFixture.restore(Self.applied, opID: Self.opID)
         let undone = try #require(RestoreOutcomePresentation.undo(
-            .finished(Self.journal(Self.applied, opID: "U")),
+            .finished(RestoreJournalFixture.restore(Self.applied, opID: "U")),
             of: journal,
             locale: Self.english
         ))

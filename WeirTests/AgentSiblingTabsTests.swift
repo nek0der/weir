@@ -116,10 +116,6 @@ struct AgentSiblingTabsTests {
 
     // MARK: Focus
 
-    private static func scratch() -> URL {
-        WeirPaths.applicationSupportDirectory().appendingPathComponent(UUID().uuidString)
-    }
-
     private struct Seen: Sendable {
         var sessionID: String?
         var nonce: String?
@@ -155,63 +151,63 @@ struct AgentSiblingTabsTests {
     /// Writing a request takes away what nobody took: requests and answers older than
     /// half a minute, an earlier build's pane-named files among them. Fresh ones stay.
     @Test func writingARequestSweepsStaleFilesAndKeepsFreshOnes() throws {
-        let root = Self.scratch()
-        let directory = root.appendingPathComponent("tab-focus", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let old = Date().addingTimeInterval(-60)
-        func file(_ name: String, at date: Date) throws -> URL {
-            let url = directory.appendingPathComponent(name)
-            try Data("{}".utf8).write(to: url)
-            try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
-            return url
+        try withTempDir { root in
+            let directory = root.appendingPathComponent("tab-focus", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let old = Date().addingTimeInterval(-60)
+            func file(_ name: String, at date: Date) throws -> URL {
+                let url = directory.appendingPathComponent(name)
+                try Data("{}".utf8).write(to: url)
+                try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+                return url
+            }
+            let stale = try [
+                file("\(UUID().uuidString).json", at: old),
+                file("\(UUID().uuidString).json.N.answer", at: old),
+                file("\(UUID().uuidString.uppercased()).json", at: old)
+            ]
+            let fresh = try [
+                file("\(UUID().uuidString).json", at: Date()),
+                file("\(UUID().uuidString).json.N.answer", at: Date())
+            ]
+            let unrelated = try file("notes.txt", at: old)
+            let channel = UUID()
+            var run = Self.tab("abc", isBehind: true)
+            run.tabChannel = channel
+            AgentTabFocus.request(run, under: root)
+            for url in stale {
+                #expect(!FileManager.default.fileExists(atPath: url.path), "\(url.lastPathComponent)")
+            }
+            for url in fresh + [unrelated, AgentTabFocus.requestURL(channel: channel, under: root)] {
+                #expect(FileManager.default.fileExists(atPath: url.path), "\(url.lastPathComponent)")
+            }
         }
-        let stale = try [
-            file("\(UUID().uuidString).json", at: old),
-            file("\(UUID().uuidString).json.N.answer", at: old),
-            file("\(UUID().uuidString.uppercased()).json", at: old)
-        ]
-        let fresh = try [
-            file("\(UUID().uuidString).json", at: Date()),
-            file("\(UUID().uuidString).json.N.answer", at: Date())
-        ]
-        let unrelated = try file("notes.txt", at: old)
-        let channel = UUID()
-        var run = Self.tab("abc", isBehind: true)
-        run.tabChannel = channel
-        AgentTabFocus.request(run, under: root)
-        for url in stale {
-            #expect(!FileManager.default.fileExists(atPath: url.path), "\(url.lastPathComponent)")
-        }
-        for url in fresh + [unrelated, AgentTabFocus.requestURL(channel: channel, under: root)] {
-            #expect(FileManager.default.fileExists(atPath: url.path), "\(url.lastPathComponent)")
-        }
-        try? FileManager.default.removeItem(at: root)
     }
 
     @Test func aFocusRequestNamesOnlyTheSessionAndIsPrivate() throws {
         let pane = UUID()
-        let directory = Self.scratch()
-        AgentTabFocus.request(Self.tab("abc", isBehind: true, pane: pane), under: directory)
-        let url = AgentTabFocus.requestURL(channel: pane, under: directory)
-        let body = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
-        #expect(Set(body.keys) == ["sessionId", "at"])
-        #expect(body["sessionId"] as? String == "ses_abc")
-        let permissions = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
-        #expect(permissions?.intValue == 0o600)
-        #expect(url.lastPathComponent == "\(pane.uuidString.uppercased()).json")
-        try? FileManager.default.removeItem(at: directory)
+        try withTempDir { directory in
+            AgentTabFocus.request(Self.tab("abc", isBehind: true, pane: pane), under: directory)
+            let url = AgentTabFocus.requestURL(channel: pane, under: directory)
+            let body = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+            #expect(Set(body.keys) == ["sessionId", "at"])
+            #expect(body["sessionId"] as? String == "ses_abc")
+            let permissions = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
+            #expect(permissions?.intValue == 0o600)
+            #expect(url.lastPathComponent == "\(pane.uuidString.uppercased()).json")
+        }
     }
 
     /// tmux shows the process in another pane; its plugin reads what the launching pane names.
-    @Test func aRequestGoesToThePaneTheProcessWasLaunchedFromNotTheOneShowingIt() {
+    @Test func aRequestGoesToThePaneTheProcessWasLaunchedFromNotTheOneShowingIt() throws {
         let (launched, attached) = (UUID(), UUID())
-        let directory = Self.scratch()
-        var run = Self.tab("abc", isBehind: true, pane: attached)
-        run.tabChannel = launched
-        AgentTabFocus.request(run, under: directory)
-        #expect(FileManager.default.fileExists(atPath: AgentTabFocus.requestURL(channel: launched, under: directory).path))
-        #expect(!FileManager.default.fileExists(atPath: AgentTabFocus.requestURL(channel: attached, under: directory).path))
-        try? FileManager.default.removeItem(at: directory)
+        try withTempDir { directory in
+            var run = Self.tab("abc", isBehind: true, pane: attached)
+            run.tabChannel = launched
+            AgentTabFocus.request(run, under: directory)
+            #expect(FileManager.default.fileExists(atPath: AgentTabFocus.requestURL(channel: launched, under: directory).path))
+            #expect(!FileManager.default.fileExists(atPath: AgentTabFocus.requestURL(channel: attached, under: directory).path))
+        }
     }
 
     /// Demo mode has nowhere to write a request: nothing is asked, and nothing confirmed.
@@ -229,98 +225,103 @@ struct AgentSiblingTabsTests {
 
     /// tmux can hold OpenCode and Claude in one pane's session. What the pane hosts
     /// decides; the other's channel is not asked, and no wait is spent on it.
-    @Test func aReviewForAnotherAgentInThePaneAsksNothing() async {
+    @Test func aReviewForAnotherAgentInThePaneAsksNothing() async throws {
         let pane = UUID()
-        let root = Self.scratch()
-        let opencode = Self.tab("o", isBehind: false, pane: pane)
-        let claude = Self.tab("c", kind: .claude, isBehind: false, pane: pane)
-        let began = ContinuousClock.now
-        let shown = await ReviewSessionFocus.show(
-            conversation: nil,
-            destination: Self.destination(pane, agent: .claude),
-            runtimes: { [opencode, claude] },
-            under: root
-        )
-        #expect(shown)
-        #expect(began.duration(to: .now) < .seconds(1))
-        #expect(!FileManager.default.fileExists(atPath: AgentTabFocus.requestURL(channel: pane, under: root).path))
+        try await withTempDir { root in
+            let opencode = Self.tab("o", isBehind: false, pane: pane)
+            let claude = Self.tab("c", kind: .claude, isBehind: false, pane: pane)
+            let began = ContinuousClock.now
+            let shown = await ReviewSessionFocus.show(
+                conversation: nil,
+                destination: Self.destination(pane, agent: .claude),
+                runtimes: { [opencode, claude] },
+                under: root
+            )
+            #expect(shown)
+            #expect(began.duration(to: .now) < .seconds(1))
+            #expect(!FileManager.default.fileExists(atPath: AgentTabFocus.requestURL(channel: pane, under: root).path))
+        }
     }
 
-    @Test func aDeadProcessesRecordMakesNoReviewWait() async {
+    @Test func aDeadProcessesRecordMakesNoReviewWait() async throws {
         let pane = UUID()
-        let root = Self.scratch()
-        var dead = Self.tab("o", isBehind: false, pane: pane)
-        dead.processID = 4242
-        let began = ContinuousClock.now
-        let shown = await ReviewSessionFocus.show(
-            conversation: nil,
-            destination: Self.destination(pane),
-            runtimes: { [dead] },
-            isAlive: { _ in false },
-            under: root
-        )
-        #expect(shown)
-        #expect(began.duration(to: .now) < .seconds(1))
+        try await withTempDir { root in
+            var dead = Self.tab("o", isBehind: false, pane: pane)
+            dead.processID = 4242
+            let began = ContinuousClock.now
+            let shown = await ReviewSessionFocus.show(
+                conversation: nil,
+                destination: Self.destination(pane),
+                runtimes: { [dead] },
+                isAlive: { _ in false },
+                under: root
+            )
+            #expect(shown)
+            #expect(began.duration(to: .now) < .seconds(1))
+        }
     }
 
     /// Two tmux panes attached to one Weir pane: the one in front has the say.
-    @Test func aRunBehindAnotherTmuxPaneIsNotWhatTakesTheText() async {
+    @Test func aRunBehindAnotherTmuxPaneIsNotWhatTakesTheText() async throws {
         let pane = UUID()
-        let root = Self.scratch()
-        var behindTmux = AgentRuntimePresentation.test(
-            kind: .opencode,
-            runID: "o",
-            paneIDs: [pane],
-            tmuxLocations: [pane: TmuxPaneLocation(
-                socketPath: "/tmp/s", serverPID: "1", serverStartedAt: "1", sessionID: "$1",
-                windowID: "@1", paneID: "%1", isActive: false
-            )],
-            sessionID: "ses_o"
-        )
-        behindTmux.tabChannel = pane
-        let shown = await ReviewSessionFocus.show(
-            conversation: nil,
-            destination: Self.destination(pane),
-            runtimes: { [behindTmux] },
-            limit: .zero,
-            under: root
-        )
-        #expect(shown)
+        try await withTempDir { root in
+            var behindTmux = AgentRuntimePresentation.test(
+                kind: .opencode,
+                runID: "o",
+                paneIDs: [pane],
+                tmuxLocations: [pane: TmuxPaneLocation(
+                    socketPath: "/tmp/s", serverPID: "1", serverStartedAt: "1", sessionID: "$1",
+                    windowID: "@1", paneID: "%1", isActive: false
+                )],
+                sessionID: "ses_o"
+            )
+            behindTmux.tabChannel = pane
+            let shown = await ReviewSessionFocus.show(
+                conversation: nil,
+                destination: Self.destination(pane),
+                runtimes: { [behindTmux] },
+                limit: .zero,
+                under: root
+            )
+            #expect(shown)
+        }
     }
 
     /// A subagent's view is on screen, with no session named: it is no session to paste to.
-    @Test func aSubagentsViewIsNotAnySession() async {
+    @Test func aSubagentsViewIsNotAnySession() async throws {
         let pane = UUID()
-        let root = Self.scratch()
-        let url = AgentTabFocus.requestURL(channel: pane, under: root)
-        let plugin = Task.detached {
-            for _ in 0..<400 {
-                if let data = try? Data(contentsOf: url),
-                   let nonce = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["nonce"] as? String
-                {
-                    let body = Data(#"{"nonce":"\#(nonce)","sessionId":"ses_child","rootSessionId":"ses_a"}"#.utf8)
-                    try? body.write(to: url.deletingLastPathComponent().appendingPathComponent("\(url.lastPathComponent).\(nonce).answer"))
-                    return
+        try await withTempDir { root in
+            let url = AgentTabFocus.requestURL(channel: pane, under: root)
+            let plugin = Task.detached {
+                for _ in 0..<400 {
+                    if let data = try? Data(contentsOf: url),
+                       let nonce = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["nonce"] as? String
+                    {
+                        let body = Data(#"{"nonce":"\#(nonce)","sessionId":"ses_child","rootSessionId":"ses_a"}"#.utf8)
+                        try? body
+                            .write(to: url.deletingLastPathComponent().appendingPathComponent("\(url.lastPathComponent).\(nonce).answer"))
+                        return
+                    }
+                    try? await Task.sleep(for: .milliseconds(5))
                 }
-                try? await Task.sleep(for: .milliseconds(5))
             }
+            let shown = await AgentTabFocus.confirm(sessionID: nil, channel: pane, limit: .seconds(3), under: root)
+            await plugin.value
+            #expect(!shown)
         }
-        let shown = await AgentTabFocus.confirm(sessionID: nil, channel: pane, limit: .seconds(3), under: root)
-        await plugin.value
-        #expect(!shown)
     }
 
     /// Two confirmations at once keep their own answers.
     @Test func aConfirmationsCleanupLeavesAnothersAnswer() async throws {
         let pane = UUID()
-        let root = Self.scratch()
-        let directory = AgentTabFocus.requestURL(channel: pane, under: root).deletingLastPathComponent()
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let other = directory.appendingPathComponent("\(pane.uuidString.uppercased()).json.other.answer")
-        try Data("{}".utf8).write(to: other)
-        _ = await AgentTabFocus.confirm(sessionID: nil, channel: pane, limit: .milliseconds(30), under: root)
-        #expect(FileManager.default.fileExists(atPath: other.path))
-        try? FileManager.default.removeItem(at: root)
+        try await withTempDir { root in
+            let directory = AgentTabFocus.requestURL(channel: pane, under: root).deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let other = directory.appendingPathComponent("\(pane.uuidString.uppercased()).json.other.answer")
+            try Data("{}".utf8).write(to: other)
+            _ = await AgentTabFocus.confirm(sessionID: nil, channel: pane, limit: .milliseconds(30), under: root)
+            #expect(FileManager.default.fileExists(atPath: other.path))
+        }
     }
 
     /// The destination names the conversation the paste will go to: the reviewed one,
@@ -359,51 +360,51 @@ struct AgentSiblingTabsTests {
 
     /// One tab left, from the home screen, or the wanted one closed: the check is not
     /// skipped, and only the plugin's answer lets the paste go.
-    @Test func aReviewPastesOnlyOnThePluginsAnswer() async {
+    @Test func aReviewPastesOnlyOnThePluginsAnswer() async throws {
         let key = TurnSummaryFixture.conversation("a", provider: .opencode)
         let pane = UUID()
-        let root = Self.scratch()
-        let closed = Self.tab("a", state: .unknown, isBehind: false, pane: pane)
-        let other = Self.tab("b", isBehind: true, pane: pane)
-        func show(answer: String?, conversation: ConversationKey?) async -> (Bool, Seen) {
-            let plugin = Self.answering(channel: pane, root: root, shows: answer)
-            let shown = await ReviewSessionFocus.show(
-                conversation: conversation,
-                destination: Self.destination(pane),
-                runtimes: { [closed, other] },
-                limit: .seconds(3),
-                under: root
-            )
-            return await (shown, plugin.value)
+        try await withTempDir { root in
+            let closed = Self.tab("a", state: .unknown, isBehind: false, pane: pane)
+            let other = Self.tab("b", isBehind: true, pane: pane)
+            @MainActor func show(answer: String?, conversation: ConversationKey?) async -> (Bool, Seen) {
+                let plugin = Self.answering(channel: pane, root: root, shows: answer)
+                let shown = await ReviewSessionFocus.show(
+                    conversation: conversation,
+                    destination: Self.destination(pane),
+                    runtimes: { [closed, other] },
+                    limit: .seconds(3),
+                    under: root
+                )
+                return await (shown, plugin.value)
+            }
+            let (confirmed, request) = await show(answer: "ses_a", conversation: key)
+            #expect(confirmed, "A reopened and in front")
+            #expect(request.sessionID == "ses_a")
+            #expect(request.nonce != nil)
+            let (stillB, _) = await show(answer: "ses_b", conversation: key)
+            #expect(!stillB, "another session in front")
+            let (home, _) = await show(answer: nil, conversation: key)
+            #expect(!home, "the home screen")
+            let (anyShown, named) = await show(answer: "ses_b", conversation: nil)
+            #expect(anyShown, "no conversation of its own goes to what is on screen")
+            #expect(named.sessionID == nil)
+            let (noneShown, _) = await show(answer: nil, conversation: nil)
+            #expect(!noneShown, "but not to the home screen")
         }
-        let (confirmed, request) = await show(answer: "ses_a", conversation: key)
-        #expect(confirmed, "A reopened and in front")
-        #expect(request.sessionID == "ses_a")
-        #expect(request.nonce != nil)
-        let (stillB, _) = await show(answer: "ses_b", conversation: key)
-        #expect(!stillB, "another session in front")
-        let (home, _) = await show(answer: nil, conversation: key)
-        #expect(!home, "the home screen")
-        let (anyShown, named) = await show(answer: "ses_b", conversation: nil)
-        #expect(anyShown, "no conversation of its own goes to what is on screen")
-        #expect(named.sessionID == nil)
-        let (noneShown, _) = await show(answer: nil, conversation: nil)
-        #expect(!noneShown, "but not to the home screen")
-        try? FileManager.default.removeItem(at: root)
     }
 
-    @Test func aReviewWithNoAnswerIsRefusedInTime() async {
+    @Test func aReviewWithNoAnswerIsRefusedInTime() async throws {
         let pane = UUID()
-        let root = Self.scratch()
-        let run = Self.tab("a", isBehind: false, pane: pane)
-        let shown = await ReviewSessionFocus.show(
-            conversation: nil,
-            destination: Self.destination(pane),
-            runtimes: { [run] },
-            limit: .milliseconds(100),
-            under: root
-        )
-        #expect(!shown)
-        try? FileManager.default.removeItem(at: root)
+        try await withTempDir { root in
+            let run = Self.tab("a", isBehind: false, pane: pane)
+            let shown = await ReviewSessionFocus.show(
+                conversation: nil,
+                destination: Self.destination(pane),
+                runtimes: { [run] },
+                limit: .milliseconds(100),
+                under: root
+            )
+            #expect(!shown)
+        }
     }
 }

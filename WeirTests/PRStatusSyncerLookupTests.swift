@@ -95,9 +95,7 @@ struct PRStatusSyncerLookupTests {
     /// Waits for the scripted fetcher to have `count` lookups waiting, or
     /// for the time limit.
     private func waitForLookups(_ count: Int, sourceLocation: SourceLocation = #_sourceLocation) async throws {
-        for _ in 0..<2000 where await lookups.waitingCount < count {
-            try await Task.sleep(for: .milliseconds(1))
-        }
+        await pollUntil(timeout: .seconds(5), interval: .milliseconds(1)) { await lookups.waitingCount >= count }
         try #require(await lookups.waitingCount == count, sourceLocation: sourceLocation)
     }
 
@@ -123,9 +121,7 @@ struct PRStatusSyncerLookupTests {
         syncer.turnEnded(in: container)
         try await waitForLookups(1)
         await lookups.answer(Self.answer(number: 7))
-        for _ in 0..<2000 where store.info(for: container) == nil {
-            try await Task.sleep(for: .milliseconds(1))
-        }
+        await pollUntil(timeout: .seconds(5), interval: .milliseconds(1)) { store.info(for: container) != nil }
         #expect(store.info(for: container)?.number == 7)
         #expect(await lookups.invalidationCount == 0)
     }

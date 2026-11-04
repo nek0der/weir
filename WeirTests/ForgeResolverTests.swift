@@ -114,19 +114,13 @@ struct ForgeResolverTests {
     func forge_prefersUpstreamOverOrigin() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
-        _ = try await GitProcess.run(
-            ["remote", "add", "origin", "https://gitlab.com/me/weir.git"],
-            cwd: repo.url
-        )
+        try await repo.git(["remote", "add", "origin", "https://gitlab.com/me/weir.git"])
         let resolver = ForgeResolver(locator: ToolLocator())
         // Only `origin` so far, and the heuristic answers for it
         // without spawning a CLI.
         #expect(await resolver.forge(for: repo.url) == .gitLab)
 
-        _ = try await GitProcess.run(
-            ["remote", "add", "upstream", "https://github.com/nek0der/weir.git"],
-            cwd: repo.url
-        )
+        try await repo.git(["remote", "add", "upstream", "https://github.com/nek0der/weir.git"])
         // Still GitLab: the working-directory cache answers, which is
         // what stops every tick from re-reading remotes.
         #expect(await resolver.forge(for: repo.url) == .gitLab)

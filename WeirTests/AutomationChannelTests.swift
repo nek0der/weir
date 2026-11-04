@@ -642,16 +642,6 @@
         }
     }
 
-    /// A temporary folder with a short path: a Unix socket path is limited to
-    /// 104 bytes, which `withTempDir`'s UUID name plus a socket inside exceeds.
-    private func withShortTempDir(_ body: (URL) throws -> Void) throws {
-        let suffix = UUID().uuidString.prefix(8)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("wt-\(suffix)", isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-        defer { try? FileManager.default.removeItem(at: url) }
-        try body(url)
-    }
-
     private func mode(of url: URL) -> mode_t {
         var info = stat()
         lstat(url.path, &info)

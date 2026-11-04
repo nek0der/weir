@@ -20,8 +20,10 @@ struct GitFactsTests {
         #expect(onMain.uncommittedFiles == 0)
 
         try await repo.git(["switch", "-q", "-c", "feat/x"])
-        try await commit("a.txt", at: repo.url)
-        try await commit("b.txt", at: repo.url)
+        try repo.write("a.txt", to: "a.txt")
+        try await repo.commit("a.txt", paths: ["a.txt"])
+        try repo.write("b.txt", to: "b.txt")
+        try await repo.commit("b.txt", paths: ["b.txt"])
         let onBranch = try await read(repo.url)
         #expect(!onBranch.isOnBase)
         #expect(onBranch.commitsNotOnBase == 2)
@@ -30,14 +32,15 @@ struct GitFactsTests {
     @Test func uncommittedFiles_countEachUntrackedFile_andEachChangedOne() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
-        try await commit("tracked.txt", at: repo.url)
+        try repo.write("tracked.txt", to: "tracked.txt")
+        try await repo.commit("tracked.txt", paths: ["tracked.txt"])
 
         // Two files in a new folder are two, not the folder as one.
         let folder = repo.url.appendingPathComponent("new", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try Data("1".utf8).write(to: folder.appendingPathComponent("one.txt"))
         try Data("2".utf8).write(to: folder.appendingPathComponent("two.txt"))
-        try Data("changed".utf8).write(to: repo.url.appendingPathComponent("tracked.txt"))
+        try repo.write("changed", to: "tracked.txt")
 
         let facts = try await read(repo.url)
         #expect(facts.uncommittedFiles == 3)
@@ -55,8 +58,10 @@ struct GitFactsTests {
         try await repo.git(["fetch", "-q", "origin"])
         try await repo.git(["remote", "set-head", "origin", "main"])
         try await repo.git(["switch", "-q", "-c", "feat/x", "origin/main"])
-        try await commit("a.txt", at: repo.url)
-        try await commit("b.txt", at: repo.url)
+        try repo.write("a.txt", to: "a.txt")
+        try await repo.commit("a.txt", paths: ["a.txt"])
+        try repo.write("b.txt", to: "b.txt")
+        try await repo.commit("b.txt", paths: ["b.txt"])
 
         let unpushed = try await read(repo.url)
         #expect(unpushed.base == GitFacts.Base(ref: "origin/main"))
@@ -71,7 +76,8 @@ struct GitFactsTests {
         #expect(pushed.commitsNotOnBase == 2)
 
         // Past its upstream, counted against the upstream.
-        try await commit("c.txt", at: repo.url)
+        try repo.write("c.txt", to: "c.txt")
+        try await repo.commit("c.txt", paths: ["c.txt"])
         #expect(try await read(repo.url).unpushedCommits == 1)
 
         // The upstream deleted on the remote as its request merged: there
@@ -94,7 +100,8 @@ struct GitFactsTests {
         // Made from origin/main, the branch tracks origin/main, as an
         // agent's worktree often does.
         try await repo.git(["switch", "-q", "--track", "-c", "feat/x", "origin/main"])
-        try await commit("a.txt", at: repo.url)
+        try repo.write("a.txt", to: "a.txt")
+        try await repo.commit("a.txt", paths: ["a.txt"])
         #expect(try await read(repo.url).unpushedCommits == 1)
 
         // Pushed without -u: still ahead of its upstream, but on a remote.
@@ -114,12 +121,6 @@ struct GitFactsTests {
             throw NoFacts(folder: folder)
         }
         return facts
-    }
-
-    private func commit(_ name: String, at folder: URL) async throws {
-        try Data(name.utf8).write(to: folder.appendingPathComponent(name))
-        try await TempGitRepo.git(["add", "--", name], in: folder)
-        try await TempGitRepo.git(["commit", "-q", "-m", name], in: folder)
     }
 }
 

@@ -310,9 +310,7 @@ extension SessionLaunchStoreTests {
         let root = dir.appendingPathComponent("project")
         let fixture = try await Fixture.make(in: dir, bootstrap: bootstrap, copyByteLimit: copyByteLimit, rootURL: root)
         for (path, text) in files {
-            let url = root.appendingPathComponent(path)
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try Data(text.utf8).write(to: url)
+            try ScratchFile.write(text, to: path, in: root)
         }
         fixture.session.setProjectIgnoredFilesToCopy(fixture.project.id, to: patterns)
         fixture.git.ignored = ignored

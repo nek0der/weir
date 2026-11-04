@@ -131,10 +131,7 @@ struct ReviewDraftLifecycleTests {
                 "Saved draft missing"
             )
             // The keys an old app never wrote, taken back out of the file.
-            var draft = try #require(
-                JSONSerialization.jsonObject(with: Data(contentsOf: saved)) as? [String: Any],
-                "Draft is not an object"
-            )
+            var draft = try JSONObjectFixture.object(Data(contentsOf: saved))
             var comments = try #require(draft["comments"] as? [[String: Any]], "Draft has no comments")
             let removedDate = comments[0].removeValue(forKey: "insertedAt")
             #expect(removedDate != nil, "The draft never carried a date")
@@ -173,7 +170,7 @@ struct ReviewDraftLifecycleTests {
             try "one\ntwo\nthree\n".write(to: fileURL, atomically: true, encoding: .utf8)
             _ = try await ReviewGitFixture.checked(["add", "tracked.txt"], cwd: root)
             _ = try await ReviewGitFixture.checked(
-                ["-c", "user.email=review@example.com", "-c", "user.name=Review", "commit", "-qm", "seed"],
+                ["commit", "-qm", "seed"],
                 cwd: root
             )
             try "one\nTWO\nthree\n".write(to: fileURL, atomically: true, encoding: .utf8)
@@ -219,7 +216,7 @@ struct ReviewDraftLifecycleTests {
             try "a\n".write(to: other, atomically: true, encoding: .utf8)
             _ = try await ReviewGitFixture.checked(["add", "a-other.txt"], cwd: root)
             _ = try await ReviewGitFixture.checked(
-                ["-c", "user.email=review@example.com", "-c", "user.name=Review", "commit", "-qm", "other"],
+                ["commit", "-qm", "other"],
                 cwd: root
             )
             try "b\n".write(to: other, atomically: true, encoding: .utf8)
@@ -285,7 +282,7 @@ struct ReviewDraftLifecycleTests {
             try "alpha\nbeta\n".write(to: tracked, atomically: true, encoding: .utf8)
             _ = try await ReviewGitFixture.checked(["add", "tracked.txt"], cwd: root)
             _ = try await ReviewGitFixture.checked(
-                ["-c", "user.email=review@example.com", "-c", "user.name=Review", "commit", "-qm", "seed"],
+                ["commit", "-qm", "seed"],
                 cwd: root
             )
             try "gamma\ndelta\n".write(to: tracked, atomically: true, encoding: .utf8)

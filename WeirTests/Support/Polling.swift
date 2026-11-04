@@ -34,6 +34,25 @@ func pollUntil(
     }
 }
 
+/// `pollUntil` for a condition that has to await what it reads: an actor's
+/// state read from outside it, as a test of a scripted fake does.
+func pollUntil(
+    timeout: Duration = .seconds(2),
+    interval: Duration? = nil,
+    isolation _: isolated (any Actor)? = #isolation,
+    _ condition: () async -> Bool
+) async {
+    let clock = SuspendingClock()
+    let deadline = clock.now + timeout
+    while await !condition(), clock.now < deadline, !Task.isCancelled {
+        if let interval {
+            try? await Task.sleep(for: interval)
+        } else {
+            await Task.yield()
+        }
+    }
+}
+
 /// Waits until `condition`, which reads `@Observable` state, holds, woken by
 /// each change to what it read rather than on a clock: nothing to give up on
 /// under load. It has no deadline, so the suite needs a `.timeLimit`; the

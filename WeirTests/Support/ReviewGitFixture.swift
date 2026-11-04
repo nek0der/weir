@@ -5,8 +5,28 @@ import Foundation
 import Testing
 @testable import Weir
 
+/// Git for the review suites, kept apart from `TempGitRepo.git` on purpose.
+///
+/// The two isolate a command from the developer's setup in different ways
+/// because their code under test reads Git differently. The review reads a
+/// repository with every inherited `GIT_*` variable dropped
+/// (`ReviewGitCommand`), and what it parses is Git's printed diff, which the
+/// developer's global `diff.*` settings (a `noprefix`, say) change. So a review
+/// fixture runs with no global or system configuration at all, and a review
+/// test sets the one setting it means to check in the repository itself.
+/// `TempGitRepo` serves code that runs Git through `GitProcess`, which keeps
+/// the inherited variables that do not name a repository and with them the
+/// global configuration (a fetch needs the developer's `GIT_SSH`, a worktree
+/// add their `GIT_CONFIG_GLOBAL`), so its repositories override only the
+/// settings that trip a test and leave the rest as that code meets them.
+/// Merged into one, either set of tests would run under a setup its code
+/// never sees. The review suites still make their repositories with
+/// `TempGitRepo`, so each carries its local identity and signing settings,
+/// and a commit run here needs no `-c user.*` of its own.
 enum ReviewGitFixture {
-    /// We isolate repository identity and configuration without changing the developer's environment.
+    /// Runs `git` in `cwd` with no inherited `GIT_*` variable and no global or
+    /// system configuration, in the C locale, leaving the developer's own
+    /// environment untouched.
     static func run(
         _ arguments: [String],
         cwd: URL

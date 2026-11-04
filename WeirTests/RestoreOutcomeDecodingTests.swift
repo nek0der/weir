@@ -22,10 +22,6 @@ struct RestoreOutcomeDecodingTests {
         return try Data(contentsOf: root.appendingPathComponent("rust/fixtures/restore/\(name)"))
     }
 
-    private static func object(_ data: Data) throws -> [String: Any] {
-        try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-    }
-
     static func stageCodes() throws -> StageCodes {
         try JSONDecoder().decode(StageCodes.self, from: fixture("stage-reasons.json"))
     }
@@ -38,7 +34,7 @@ struct RestoreOutcomeDecodingTests {
     /// It also carries what a newer build may add: a field this build does
     /// not model and a path of a kind it does not name.
     private static func finished(stage: String, undoes: String? = nil) throws -> RestoreOutcome {
-        var journal = try object(fixture("journal-without-operation.json"))
+        var journal = try JSONObjectFixture.object(fixture("journal-without-operation.json"))
         journal["stage"] = try JSONSerialization.jsonObject(with: Data(stage.utf8))
         if let undoes {
             journal["undoes"] = undoes
@@ -97,7 +93,7 @@ struct RestoreOutcomeDecodingTests {
     /// journals wrote it, from the reason. A diagnostic an earlier build put
     /// in the reason is a path not written.
     @Test func aSaveKeptAside_isReadApartFromThePathsNotWritten() throws {
-        let paths = try Self.object(Self.fixture("kept-aside.json"))
+        let paths = try JSONObjectFixture.object(Self.fixture("kept-aside.json"))
         let failed = try ["writeFailed", "written", "earlier", "earlierDiagnostic"].map { try #require(paths[$0]) }
         let stage: [String: Any] = ["kind": "partiallyApplied", "reason": "writeFailed", "currentTree": "c", "failed": failed]
         let data = try JSONSerialization.data(withJSONObject: stage)

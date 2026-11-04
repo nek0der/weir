@@ -88,7 +88,7 @@ struct GitProcessSmokeTests {
     func gitBranch_takesANameThatLooksLikeAnOption_asAName() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
-        _ = try await GitProcess.run(["branch", "develop"], cwd: repo.url)
+        try await repo.git(["branch", "develop"])
         // Whatever git makes of "-D" as a name, it is not `git branch -D develop`.
         _ = try await LiveGit().createBranch(repoRoot: repo.url, name: "-D", startPoint: "develop")
         #expect(try await LiveGit().createBranch(repoRoot: repo.url, name: "kept", startPoint: "develop").succeeded)
@@ -101,16 +101,16 @@ struct GitProcessSmokeTests {
     func listLocalBranches_namesABranchByItsOwnName_besideATagOfTheSameName() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
-        _ = try await GitProcess.run(["branch", "v1"], cwd: repo.url)
-        _ = try await GitProcess.run(["tag", "v1"], cwd: repo.url)
-        _ = try await GitProcess.run(["branch", "feat/nested"], cwd: repo.url)
+        try await repo.git(["branch", "v1"])
+        try await repo.git(["tag", "v1"])
+        try await repo.git(["branch", "feat/nested"])
         let branches = try await GitProcess.listLocalBranches(repoRoot: repo.url)
         #expect(branches.contains("v1"))
         #expect(branches.contains("feat/nested"))
         #expect(!branches.contains { $0.hasPrefix("heads/") })
-        _ = try await GitProcess.run(["checkout", "-q", "v1"], cwd: repo.url)
+        try await repo.git(["checkout", "-q", "v1"])
         #expect(try await GitProcess.currentBranch(repoRoot: repo.url) == "v1")
-        _ = try await GitProcess.run(["checkout", "-q", "--detach"], cwd: repo.url)
+        try await repo.git(["checkout", "-q", "--detach"])
         #expect(try await GitProcess.currentBranch(repoRoot: repo.url) == nil)
     }
 
@@ -119,7 +119,7 @@ struct GitProcessSmokeTests {
     @Test
     func currentBranch_isNil_beforeTheFirstCommit() async throws {
         let branch: String? = try await withTempDir { directory in
-            _ = try await GitProcess.run(["init", "-q", "-b", "main"], cwd: directory)
+            try await TempGitRepo.initialize(directory)
             return try await GitProcess.currentBranch(repoRoot: directory)
         }
         #expect(branch == nil)
