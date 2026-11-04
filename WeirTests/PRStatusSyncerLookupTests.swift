@@ -11,64 +11,19 @@ import Foundation
 import Testing
 @testable import Weir
 
-/// A fetcher whose every lookup waits until the test answers it, so a test
-/// decides the order the answers land in.
-private actor ScriptedLookups: PRStatusLookups {
-    private var waiting: [CheckedContinuation<PRStatusFetcher.Lookup, Never>] = []
-    private(set) var lookupCount = 0
-    private(set) var invalidationCount = 0
-    private var runningCount = 0
-    /// The most lookups that were running at once.
-    private(set) var peakRunningCount = 0
-
-    func lookup(workingDirectory _: URL) async -> PRStatusFetcher.Lookup {
-        lookupCount += 1
-        runningCount += 1
-        peakRunningCount = max(peakRunningCount, runningCount)
-        // A test that fails while a lookup waits cancels it on the way out;
-        // answering then keeps the test from waiting out its time limit.
-        let lookup = await withTaskCancellationHandler {
-            await withCheckedContinuation { waiting.append($0) }
-        } onCancel: {
-            Task { await self.answerAll(PRStatusFetcher.Lookup(isAnswered: false)) }
-        }
-        runningCount -= 1
-        return lookup
-    }
-
-    func invalidate() {
-        invalidationCount += 1
-    }
-
-    var waitingCount: Int {
-        waiting.count
-    }
-
-    /// Answer the oldest lookup still waiting.
-    func answer(_ lookup: PRStatusFetcher.Lookup) {
-        guard !waiting.isEmpty else { return }
-        waiting.removeFirst().resume(returning: lookup)
-    }
-
-    private func answerAll(_ lookup: PRStatusFetcher.Lookup) {
-        while !waiting.isEmpty {
-            waiting.removeFirst().resume(returning: lookup)
-        }
-    }
-}
-
 @MainActor
 @Suite("PRStatusSyncer lookups", .timeLimit(.minutes(1)))
 struct PRStatusSyncerLookupTests {
     private let session: WorkspaceSession
     private let project: Project
     private let store = PRStatusStore()
-    private let lookups = ScriptedLookups()
+    private let lookups = ScriptedPRStatusLookups()
+    private let clock = ManualPRStatusClock()
     private let syncer: PRStatusSyncer
 
     init() {
         (session, project) = WorkspaceSessionFixture.withProject()
-        syncer = PRStatusSyncer(session: session, store: store, fetcher: lookups)
+        syncer = PRStatusSyncer(session: session, store: store, fetcher: lookups, clock: clock)
     }
 
     private var container: ContainerID {
@@ -116,9 +71,12 @@ struct PRStatusSyncerLookupTests {
         #expect(await lookups.peakRunningCount == 1)
     }
 
-    @Test("a turn's end looks the row up without re-reading the forge")
+    @Test("a turn's end looks the row up once the gathering ends, without re-reading the forge")
     func aTurnsEnd_looksTheRowUp() async throws {
         syncer.turnEnded(in: container)
+        await pollUntil(timeout: .seconds(5), interval: .milliseconds(1)) { clock.sleeperCount == 1 }
+        #expect(await lookups.lookupCount == 0)
+        clock.advance(by: PRStatusSyncer.quietPeriod)
         try await waitForLookups(1)
         await lookups.answer(Self.answer(number: 7))
         await pollUntil(timeout: .seconds(5), interval: .milliseconds(1)) { store.info(for: container) != nil }
@@ -208,7 +166,7 @@ struct PRStatusSyncerLookupTests {
         #expect(store.forge(for: container) == .gitHub)
     }
 
-    @Test("an answer that lands after the row was pruned does not put it back, and starts nothing more")
+    @Test("an answer that lands after the row was pruned does not put it back, and the follow-up leaves the row out")
     func refresh_rowPrunedDuringLookup_doesNotReinsert() async throws {
         let worktree = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session)
         let row = ContainerID.worktree(projectID: project.id, worktreeID: worktree.id)
@@ -220,10 +178,12 @@ struct PRStatusSyncerLookupTests {
         session.projects[index].worktrees.removeAll { $0.id == worktree.id }
         syncer.forgetGoneRows()
         await lookups.answer(Self.answer())
+        try await waitForLookups(1)
+        await lookups.answer(Self.answer())
         await first
         #expect(store.info(for: row) == nil)
         #expect(store.forge(for: row) == nil)
-        #expect(await lookups.lookupCount == 1)
+        #expect(await lookups.asked == [[container, row], [container]])
     }
 
     @Test("an answer for a row pruned and brought back while it ran is not kept")

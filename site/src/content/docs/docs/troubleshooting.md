@@ -60,6 +60,8 @@ Weir saves a turn's start when you press Enter, or before OpenCode starts for a 
 
 Install `gh` or `glab` and sign in to the project's remote. **Create PR** needs `gh`, so Weir does not create GitLab merge requests.
 
+If the status stops changing, the service's rate limit may have run out. Weir then keeps showing the last status and asks again once the limit resets.
+
 ## New Worktree cannot carry my uncommitted changes
 
 Carrying changes needs Git 2.40 or later. Weir also stops before making anything when the worktree has a merge or rebase under way, has conflicts, or uses a sparse checkout. Finish or undo that first, or make the worktree without the changes.

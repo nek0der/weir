@@ -17,7 +17,7 @@ Weir reaches the network only in these ways:
 |---|---|
 | Update checks | Fetches the update feed from GitHub once a day, and downloads a release only when you choose to install it |
 | New worktrees | Runs `git fetch` with your own Git credentials, when you start from a remote branch or a pull request. To start from a pull request, it also lists them, or looks one up by its number, with the `gh` or `glab` you installed |
-| Pull request status | Runs the `gh` or `glab` you installed, with its own credentials: when Weir comes to the front, when a turn ends, every 45 seconds while checks run, every 90 seconds for another open pull request, and every 5 minutes for a branch without one. It also runs `gh auth token` or `glab auth status` once per host to tell which service an unfamiliar host is |
+| Pull request status | Runs the `gh` or `glab` you installed, with its own credentials, once for all of a project's branches: when Weir comes to the front or a turn ends, at most once a minute, and otherwise every 45 seconds while checks run, every 90 seconds while a pull request is open, and every 5 minutes when a branch has none. A merged or closed pull request is checked at most once an hour. When the service's rate limit runs out, Weir stops until it resets. It also runs `gh auth token` or `glab auth status` once per host to tell which service an unfamiliar host is |
 | Create PR | Runs the `gh` you installed, when you choose it |
 | Plan Usage | Starts the `codex` you installed, and asks it for your plan's usage |
 
