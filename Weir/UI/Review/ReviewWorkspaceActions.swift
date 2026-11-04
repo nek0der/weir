@@ -22,13 +22,12 @@ extension ReviewWorkspaceView {
             toastCenter.showInFrontWindow(ToastItem(message: .localized("The file doesn’t exist."), undo: nil))
             return
         }
-        let application = FileOpener.application(for: settingsStore.settings.advanced.fileApplication)
-        Task {
-            do {
-                try await FileOpener.open(fileURL, at: FilePosition(line: line, column: nil), with: application)
-            } catch {
-                toastCenter.showInFrontWindow(ToastItem(message: DisplayText(error: error), undo: nil))
-            }
+        FileOpener.open(
+            fileURL,
+            at: FilePosition(line: line, column: nil),
+            with: FileOpener.chosenApplication(in: settingsStore)
+        ) { message in
+            toastCenter.showInFrontWindow(ToastItem(message: message, undo: nil))
         }
     }
 

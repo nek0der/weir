@@ -12,9 +12,9 @@ private let log = Logger.weir("links")
 final class TerminalLinkOpener {
     /// Shows a one-line explanation when a click does something other than
     /// open the target. A closure so this type does not own the toast view state.
-    private let notify: (DisplayText) -> Void
+    private let notify: @MainActor (DisplayText) -> Void
     /// Read at click time so a change in Settings applies to the next click.
-    private let fileApplication: () -> FileApplication?
+    private let fileApplication: () -> FileApplicationResolution
     /// The app locale, read when the confirmation is built. An `NSAlert`
     /// is outside SwiftUI's environment, so it would otherwise answer in
     /// the language the process launched with.
@@ -31,8 +31,8 @@ final class TerminalLinkOpener {
     ) -> Void
 
     init(
-        notify: @escaping (DisplayText) -> Void,
-        fileApplication: @escaping () -> FileApplication? = { nil },
+        notify: @escaping @MainActor (DisplayText) -> Void,
+        fileApplication: @escaping () -> FileApplicationResolution = { .macOSDefault },
         locale: @escaping @MainActor () -> Locale,
         presentAlert: @escaping AlertPresenter
     ) {
@@ -58,16 +58,9 @@ final class TerminalLinkOpener {
         case let .open(url):
             NSWorkspace.shared.open(url)
         case let .openFile(url, position):
-            let application = FileOpener.application(for: fileApplication())
-            Task { [notify] in
-                do {
-                    try await FileOpener.open(url, at: position, with: application)
-                } catch {
-                    notify(DisplayText(error: error))
-                }
-            }
+            FileOpener.open(url, at: position, with: fileApplication(), onFailure: notify)
         case let .reveal(url):
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+            FinderReveal.selectExactly(url)
             notify(.localized("Shown in Finder instead of opened, because it can run code."))
         case let .confirm(url):
             confirmAndOpen(url, window: window)

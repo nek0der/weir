@@ -107,19 +107,14 @@ private struct SavingSuspendedSection: View {
                 }
                 SettingsButtonRow {
                     Button(SavingSuspendedText.showFiles(locale: locale)) {
-                        Self.reveal(notice.files)
+                        // The files, or their folder when none of them is
+                        // there any more: moved out by hand, as the notice
+                        // asks.
+                        FinderReveal.select(notice.files)
                     }
                 }
             }
         }
-    }
-
-    /// Selects the files in Finder, or opens their folder when none of
-    /// them is there any more (moved out by hand, as the notice asks).
-    private static func reveal(_ files: [URL]) {
-        let present = files.filter { FileManager.default.fileExists(atPath: $0.path) }
-        let folders = files.prefix(1).map { $0.deletingLastPathComponent() }
-        NSWorkspace.shared.activateFileViewerSelecting(present.isEmpty ? folders : present)
     }
 }
 

@@ -21,7 +21,7 @@ struct AdvancedPane: View {
             Section {
                 SettingsButtonRow {
                     Button("Show settings.json in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([store.settingsFileURL])
+                        FinderReveal.select(store.settingsFileURL)
                     }
                     .accessibilityLabel(Text("Show settings.json in Finder"))
                     Button("Open in Default Editor") {

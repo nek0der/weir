@@ -78,7 +78,7 @@ struct ProjectMenuModel: Equatable {
         var label: MenuItemLabel {
             switch self {
             case .settings: MenuItemLabel(title: "Project Settings…", symbol: "gearshape")
-            case .revealInFinder: MenuItemLabel(title: "Show in Finder", symbol: "folder")
+            case .revealInFinder: .showInFinder
             case .close: MenuItemLabel(title: "Close Project…", symbol: "xmark")
             }
         }
@@ -89,6 +89,18 @@ struct ProjectMenuModel: Equatable {
     static func projectItems(for projectID: UUID?, in projects: [Project]) -> [ProjectItem] {
         guard let projectID, projects.contains(where: { $0.id == projectID }) else { return [] }
         return [.settings, .revealInFinder, .close]
+    }
+
+    /// Whether `item` can be chosen for `project`. A folder that is gone
+    /// has nothing to show in Finder. The project ▾ and the sidebar's
+    /// project menu both ask it, so the two never disagree on it.
+    static func isEnabled(_ item: ProjectItem, for project: Project) -> Bool {
+        switch item {
+        case .revealInFinder:
+            !project.isRootMissing
+        case .settings, .close:
+            true
+        }
     }
 
     /// The frecency key the palette's project rows record, so choosing a

@@ -107,7 +107,6 @@ enum SavingSuspendedText {
     }
 
     static func showFiles(locale: Locale) -> String {
-        LocalizedStringResource("Show in Finder", comment: "Settings, General: selects the files that are not being saved in Finder")
-            .resolved(in: locale)
+        MenuItemLabel.showInFinder.title.resolved(in: locale)
     }
 }

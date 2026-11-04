@@ -274,3 +274,13 @@ final class ProjectWindowPresenter: ProjectWindowPresenting {
         return kept
     }
 }
+
+extension WindowRegistry {
+    /// The AppKit window drawing `windowID`, or `nil` when none is shown
+    /// (as in tests, which set no presenter). An extension here in App
+    /// rather than in the registry's own file, since Presentation knows no
+    /// AppKit.
+    func nsWindow(for windowID: WindowID) -> NSWindow? {
+        (presenter as? ProjectWindowPresenter)?.nsWindow(for: windowID)
+    }
+}

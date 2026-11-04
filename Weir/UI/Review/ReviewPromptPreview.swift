@@ -56,8 +56,7 @@ struct ReviewPromptPreview: View {
                     // pasteboard first would take what the reader had and
                     // leave nothing behind.
                     guard !prompt.isEmpty else { return }
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(prompt, forType: .string)
+                    SystemPasteboard.copy(prompt)
                 }
                 .disabled(prompt.isEmpty)
                 .accessibilityLabel(Text("Copy"))

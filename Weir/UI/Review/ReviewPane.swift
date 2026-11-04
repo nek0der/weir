@@ -856,9 +856,10 @@ struct ReviewWorkspaceView: View {
                         }
                     },
                     focusRequest: tableFocusRequest,
-                    fileApplication: FileOpener.application(
-                        for: settingsStore.settings.advanced.fileApplication
-                    ),
+                    fileApplication: FileOpener.chosenApplication(in: settingsStore),
+                    onOpenFailure: { message in
+                        toastCenter.showInFrontWindow(ToastItem(message: message, undo: nil))
+                    },
                     onOpenLine: openInEditor(line:fileID:),
                     onExpand: { reviewSession.expand($0, $1) },
                     onResolve: { reviewSession.setResolved($0.id, true) },

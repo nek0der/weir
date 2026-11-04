@@ -54,9 +54,7 @@ struct FileApplicationSection: View {
             .task {
                 await load()
             }
-            if case .configuredApplicationMissing = FileOpener.application(
-                for: store.settings.advanced.fileApplication
-            ) {
+            if case .configuredApplicationMissing = FileOpener.chosenApplication(in: store) {
                 Label("Selected app unavailable", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(SupervisionTokens.waitingText.color)
                 SettingsFootnote("Files will open in this app automatically when it becomes available again.")

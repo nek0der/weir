@@ -562,15 +562,17 @@ final class GhosttyApp {
     /// confirmation coordinator and only commit on Allow. Falling back
     /// to the unconditional write would defeat the user's policy and
     /// let any OSC 52 sequence land bytes in the system pasteboard.
-    /// `confirm == false` is the historical "trust" path — write
-    /// straight to `NSPasteboard`.
+    /// `confirm == false` is the historical "trust" path — write at
+    /// once, through the same `ClipboardRequestAnswerer.system` an
+    /// approved write uses.
     private static let writeClipboardCallback: ghostty_runtime_write_clipboard_cb = { userdata, _, contents, count, confirm in
         guard let contents, let text = GhosttyFFI.clipboardWriteText(contents, count: count) else { return }
         if !confirm {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    NSPasteboard.general.declareTypes([.string], owner: nil)
-                    NSPasteboard.general.setString(text, forType: .string)
+                    // The same write an approved request makes, so a
+                    // trusted write and an approved one cannot differ.
+                    ClipboardRequestAnswerer.system.writePasteboard(text)
                 }
             }
             return
@@ -578,8 +580,8 @@ final class GhosttyApp {
         // confirm == true — enqueue against the coordinator. libghostty
         // does not allocate a request state for the write path (only
         // confirm_read_clipboard_cb does), so the request is an
-        // `.osc52Write`: allow() writes to NSPasteboard directly, and a
-        // refusal just drops the text.
+        // `.osc52Write`: allow() writes the text through the answerer's
+        // `writePasteboard`, and a refusal just drops the text.
         guard let userdata else { return }
         nonisolated(unsafe) let ud = userdata
         DispatchQueue.main.async {

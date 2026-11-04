@@ -1,7 +1,6 @@
 // PathRow.swift
 // Weir — one way to show a folder's path in a form row, choose it, and reveal it in Finder.
 
-import AppKit
 import SwiftUI
 
 /// A folder path as every settings row shows it: the folder icon,
@@ -24,13 +23,13 @@ struct PathRow: View {
             HStack(spacing: WeirLayout.Supervision.spaceS) {
                 if let url {
                     Button {
-                        Self.reveal(url)
+                        FinderReveal.select(url)
                     } label: {
-                        Image(systemName: "folder")
+                        Image(systemName: MenuItemLabel.showInFinder.symbol)
                     }
                     .buttonStyle(.borderless)
-                    .help(Text("Show in Finder"))
-                    .accessibilityLabel(Text("Show in Finder"))
+                    .help(Text(MenuItemLabel.showInFinder.title))
+                    .accessibilityLabel(Text(MenuItemLabel.showInFinder.title))
                     Text(verbatim: PathFormatting.abbreviateHome(url.path))
                         .font(.system(.body, design: .monospaced))
                         .foregroundStyle(.secondary)
@@ -52,31 +51,13 @@ struct PathRow: View {
         }
         .contextMenu {
             if let url {
-                Button("Show in Finder") {
-                    Self.reveal(url)
+                Button(MenuItemLabel.showInFinder.title) {
+                    FinderReveal.select(url)
                 }
                 Button("Copy Path") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(url.path, forType: .string)
+                    SystemPasteboard.copy(url.path)
                 }
             }
         }
-    }
-
-    /// Selects the folder in Finder, or the nearest folder above it that
-    /// exists.
-    static func reveal(_ url: URL) {
-        guard let target = nearestExisting(url) else { return }
-        NSWorkspace.shared.activateFileViewerSelecting([target])
-    }
-
-    nonisolated static func nearestExisting(_ url: URL, exists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> URL? {
-        var candidate = url.standardizedFileURL
-        while !exists(candidate.path) {
-            let parent = candidate.deletingLastPathComponent()
-            guard parent.path != candidate.path else { return nil }
-            candidate = parent
-        }
-        return candidate
     }
 }

@@ -17,7 +17,7 @@ struct ShellCommandRow: Equatable {
             case .install: "Install"
             case .repair: "Repair"
             case .uninstall: "Uninstall"
-            case .showInFinder: "Show in Finder"
+            case .showInFinder: MenuItemLabel.showInFinder.title
             }
         }
 

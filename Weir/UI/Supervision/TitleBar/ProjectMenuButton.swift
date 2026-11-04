@@ -270,8 +270,9 @@ struct ProjectDropdown: View {
                     case .revealInFinder:
                         DropdownItem(item.label.title) {
                             dismiss()
-                            NSWorkspace.shared.activateFileViewerSelecting([project.rootURL])
+                            FinderReveal.select(project.rootURL)
                         }
+                        .disabled(!ProjectMenuModel.isEnabled(item, for: project))
                     case .close:
                         // Apart from the two above: it is the one that
                         // takes the project out of Weir.

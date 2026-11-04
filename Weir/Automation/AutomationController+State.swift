@@ -43,8 +43,7 @@
         /// as a terminal pane or one of Weir's own controls. `nil` when the
         /// window holds it itself, or is not shown.
         func keyboard(of window: ProjectWindowState, in state: AppState) -> AutomationSnapshot.Keyboard? {
-            guard let presenter = state.windowRegistry.presenter as? ProjectWindowPresenter,
-                  let responder = presenter.nsWindow(for: window.id)?.firstResponder,
+            guard let responder = state.windowRegistry.nsWindow(for: window.id)?.firstResponder,
                   !(responder is NSWindow)
             else { return nil }
             let view = String(describing: type(of: responder))
