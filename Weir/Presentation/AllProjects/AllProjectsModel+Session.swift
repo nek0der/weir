@@ -85,10 +85,12 @@ extension AllProjectsModel {
             agentKinds: row.agentKinds,
             badgesSpokenName: badgesSpokenName(row.agentKinds, locale: sources.locale),
             windowNote: note,
-            // "Answer…" only while the ledger still holds the request, as
-            // the Needs Attention list offers it.
+            // "Answer…" as the row offers it (`AttentionItem.answerKey`):
+            // kept while the approval card is up for it; the all projects
+            // card is lit with the selected fill as its source instead
+            // (`AllProjectsCardView.isAnswering`).
             action: action(
-                answerKey: row.answerKey.flatMap { sources.approvals.entries[$0]?.presentation == nil ? nil : $0 },
+                answerKey: row.answerKey,
                 requiresTerminalAnswer: row.requiresTerminalAnswer,
                 hasPane: row.leadPaneID != nil
             ),

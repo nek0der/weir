@@ -104,12 +104,7 @@ extension SidebarListModel {
     /// The approvals and questions waiting among a project's `items`, in
     /// the list's order.
     private static func requestKeys(in items: [AttentionItem]) -> [ApprovalKey] {
-        items.compactMap { item in
-            switch item.kind {
-            case let .approval(fact), let .question(fact): fact.key
-            case .prompt, .stop, .unread: nil
-            }
-        }
+        items.compactMap(\.kind.approvalFact?.key)
     }
 }
 

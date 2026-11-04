@@ -34,7 +34,7 @@ struct RailScratchModel: Equatable {
         queue: AttentionQueue,
         runtimes: [AgentRuntimePresentation],
         approvals: ApprovalLedger,
-        isCardUp: (ApprovalKey) -> Bool,
+        isCardUp: @escaping (ApprovalKey) -> Bool,
         isHighlighted: Bool,
         shortcut: String?,
         now: Date,
@@ -57,9 +57,12 @@ struct RailScratchModel: Equatable {
         self.shortcut = shortcut
         hint = SessionRowFactText.scratchHint(startFolder: Self.startFolder(session: session, window: window), locale: locale)
         spoken = SessionRowFactText.spokenLabel(for: row, projectName: nil, now: now, locale: locale)
-        answerKey = row.answerKey.flatMap { key in
-            approvals.entries[key]?.presentation != nil && !isCardUp(key) ? key : nil
-        }
+        // By the rule every row's Answer… reads, on the item the row shows,
+        // hidden while the card is up for it (`AnswerWhileCardIsUp.hidden`).
+        answerKey = row.leadItemID.flatMap { queue.item($0) }?.answerKey(
+            isHeld: { approvals.entries[$0] != nil },
+            whileCardIsUp: .hidden(isCardUp: isCardUp)
+        )
         hasTabs = !session.tabs(in: .loose).isEmpty
     }
 }

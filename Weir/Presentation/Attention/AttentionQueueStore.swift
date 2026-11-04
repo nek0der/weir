@@ -139,7 +139,7 @@ final class AttentionQueueStore {
 
     /// The item for a request, if the list holds it.
     func item(for key: ApprovalKey) -> AttentionItem? {
-        queue.items.first { $0.id == .approval(key) || $0.id == .question(key) }
+        queue.items.first { $0.id.requestKey == key }
     }
 
     /// Applies one pass. `announces` is false until the runtimes have been

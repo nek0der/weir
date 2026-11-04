@@ -246,7 +246,7 @@ struct WindowCloseTests {
         approvals.receive([request])
         let closed = fixture.other.id
         card.updateRowAnchor(CGRect(x: 0, y: 40, width: 200, height: 20), for: request, in: approvals)
-        card.present(request, from: approvals)
+        card.present(key: request.key, from: approvals)
         toasts.show(ToastItem(message: .verbatim("Done"), undo: nil), in: closed)
 
         fixture.close(fixture.other)

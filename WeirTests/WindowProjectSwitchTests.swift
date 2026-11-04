@@ -518,9 +518,9 @@ extension WindowProjectSwitchTests {
         let request = ApprovalPresentation.test(deadlineMilliseconds: 0)
         approvals.receive([request])
         window.approvalCard.updateRowAnchor(CGRect(x: 0, y: 40, width: 200, height: 20), for: request, in: approvals)
-        window.approvalCard.present(request, from: approvals)
+        window.approvalCard.present(key: request.key, from: approvals)
         // The other window's card stood beside the Needs Attention button.
-        other.approvalCard.present(request, from: approvals, openedFrom: CGRect(x: 0, y: 0, width: 40, height: 20))
+        other.approvalCard.present(key: request.key, from: approvals, openedFrom: CGRect(x: 0, y: 0, width: 40, height: 20))
         window.titleBarMenu = TitleBarMenuRequest(menu: .project, anchor: .zero)
         window.isAllProjectsPresented = true
         fixture.session.commandPaletteState = CommandPaletteState(locale: Locale(identifier: "en"), windowID: window.id)
@@ -621,7 +621,7 @@ extension WindowProjectSwitchTests {
         fixture.tidiesAsTheAppDoes()
         let request = ApprovalPresentation.test(deadlineMilliseconds: 0)
         approvals.receive([request])
-        fixture.primary.approvalCard.present(request, from: approvals, openedFrom: CGRect(x: 0, y: 0, width: 40, height: 20))
+        fixture.primary.approvalCard.present(key: request.key, from: approvals, openedFrom: CGRect(x: 0, y: 0, width: 40, height: 20))
 
         fixture.choose(fixture.bTab, in: fixture.primary)
 
@@ -634,7 +634,7 @@ extension WindowProjectSwitchTests {
         fixture.tidiesAsTheAppDoes()
         let request = ApprovalPresentation.test(deadlineMilliseconds: 0)
         approvals.receive([request])
-        fixture.primary.approvalCard.present(request, from: approvals, openedFromPane: UUID(), focusesClose: true)
+        fixture.primary.approvalCard.present(key: request.key, from: approvals, openedFromPane: UUID(), focusesClose: true)
 
         fixture.choose(fixture.bTab, in: fixture.primary)
 

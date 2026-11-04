@@ -24,7 +24,7 @@ final class TestApprovalCard {
     }
 
     func present(_ approval: ApprovalPresentation, shouldFocusCard: Bool = true) {
-        card.present(approval, from: store, shouldFocusCard: shouldFocusCard)
+        card.present(key: approval.key, from: store, shouldFocusCard: shouldFocusCard)
     }
 
     func dismissCard() {

@@ -39,8 +39,7 @@ extension AppState {
         case let .card(key):
             // The window and pane stay as they are; a hidden one comes
             // back to show the card.
-            guard let approval = approvalPresentation.ledger.entries[key]?.presentation else { return false }
-            windowRegistry.bringBack(window).approvalCard.present(approval, from: approvalPresentation)
+            return windowRegistry.presentApprovalCardFromOutside(key: key, from: approvalPresentation)
         case let .runtime(runtimeID):
             attentionQueue.focus(runtimeID: runtimeID, from: window)
         case let .pane(paneID):
@@ -137,12 +136,9 @@ extension AppState {
     /// in sight: its own prompt, or its card, is in front of the person.
     func postRequestBanner(for id: AttentionItemID) {
         guard let item = attentionQueue.queue.items.first(where: { $0.id == id }) else { return }
-        let fact: ApprovalFact
-        switch item.kind {
-        case let .approval(requestFact), let .question(requestFact): fact = requestFact
-        case .prompt, .stop, .unread: return
-        }
-        guard let approval = approvalPresentation.ledger.entries[fact.key]?.presentation else { return }
+        guard let fact = item.kind.approvalFact,
+              let approval = approvalPresentation.ledger.entries[fact.key]?.presentation
+        else { return }
         var runtimeID: String?
         var paneID: UUID?
         if case let .runtime(id, _, pane, _, _) = item.subject {

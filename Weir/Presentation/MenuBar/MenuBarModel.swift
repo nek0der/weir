@@ -60,12 +60,14 @@ struct MenuBarModel: Equatable {
     }
 
     /// What a row says it does for VoiceOver: going to the pane in Weir,
-    /// where a request is then handed to the agent's own prompt, or
-    /// opening the card of a request that has no pane.
+    /// where a request is then handed to the agent's own prompt, opening
+    /// the card of a request that has no pane, or, for one with no pane
+    /// that Weir cannot answer on its card, only opening Weir.
     enum OpenHint: Equatable {
         case goesToPane
         case goesToPaneToAnswerInTerminal
         case opensCard
+        case opensWeir
     }
 
     struct Item: Identifiable, Equatable {
@@ -186,11 +188,18 @@ struct MenuBarModel: Equatable {
     }
 
     /// Going to an approval's or a question's pane shows it, which hands
-    /// the request to the agent's own prompt; one with no pane opens
-    /// its card instead.
+    /// the request to the agent's own prompt. One with no pane opens its
+    /// card instead, by the rule that draws the row's Answer…
+    /// (`AttentionItem.answerKey`); with no Answer…, no card opens, and the
+    /// row only opens Weir.
     private static func openHint(row: NeedsAttentionListModel.Row, isInPane: Bool) -> OpenHint {
         switch row.state {
-        case .approval, .question: isInPane ? .goesToPaneToAnswerInTerminal : .opensCard
+        case .approval, .question:
+            if isInPane {
+                .goesToPaneToAnswerInTerminal
+            } else {
+                row.action == nil ? .opensWeir : .opensCard
+            }
         // A prompt wait is always in its pane; it has no card to open.
         case .response: isInPane ? .goesToPaneToAnswerInTerminal : .goesToPane
         // A sign-in is not answered, only done in the pane.

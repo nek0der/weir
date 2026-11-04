@@ -437,8 +437,7 @@ struct AllProjectsModelTests {
         #expect(try Self.cardAction(kind, ledger: ApprovalLedger()) == expected)
     }
 
-    /// A request Weir holds, with the ledger's text for its card, is
-    /// answered on the approval card.
+    /// A request the ledger holds is answered on the approval card.
     @Test func aCardWithAHeldRequestTheLedgerHas_offersAnswer() throws {
         let request = ApprovalPresentation.test(summary: "swift test", deadlineMilliseconds: 0, hasInputCommand: true)
         let ledger = ApprovalLedger()
@@ -447,8 +446,22 @@ struct AllProjectsModelTests {
         #expect(try Self.cardAction(.approval(ApprovalFact.test(key: request.key)), ledger: ledger) == .answer(request.key))
     }
 
-    /// A held question the ledger has no text for offers neither a card it
-    /// could not fill nor the pane, as the Needs Attention list does.
+    /// A question the ledger holds offers Answer… though it has no text to
+    /// show (an empty first prompt, no summary): the card still asks it.
+    @Test func aCardWithAHeldQuestionWithNoText_offersAnswer() throws {
+        let request = ApprovalPresentation.test(
+            summary: nil,
+            questions: [ApprovalQuestion(header: nil, prompt: "", options: [], isMultiSelect: false)]
+        )
+        let ledger = ApprovalLedger()
+        ledger.observe(pending: [request], epoch: request.epoch)
+
+        #expect(try Self.cardAction(.question(ApprovalFact.test(key: request.key, isQuestion: true)), ledger: ledger)
+            == .answer(request.key))
+    }
+
+    /// A question the ledger does not hold offers neither a card it could
+    /// not fill nor the pane, as the Needs Attention list does.
     @Test func aCardWithAHeldQuestionTheLedgerLacks_offersNothing() throws {
         #expect(try Self.cardAction(.question(ApprovalFact.test(isQuestion: true)), ledger: ApprovalLedger()) == nil)
     }

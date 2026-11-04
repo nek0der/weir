@@ -171,11 +171,16 @@ struct MenuBarModelTests {
     }
 
     /// Going to a request's pane shows it, which hands the request to the
-    /// terminal; VoiceOver says so on the row.
+    /// terminal; with no pane the row opens the card, or only Weir when it
+    /// offers no Answer…. VoiceOver says which on the row.
     @Test func openHint_saysARequestIsAnsweredInTheTerminal_atItsPane() {
-        func hint(_ state: NeedsAttentionListModel.RowState, isInPane: Bool) -> MenuBarModel.OpenHint? {
+        func hint(
+            _ state: NeedsAttentionListModel.RowState,
+            isInPane: Bool,
+            action: NeedsAttentionListModel.RowAction? = .answer(Self.approvalKey)
+        ) -> MenuBarModel.OpenHint? {
             MenuBarModel(
-                rows: [Self.row(Self.approvalID, state)],
+                rows: [Self.row(Self.approvalID, state, action: action)],
                 request: { _ in nil },
                 canResume: { _ in false },
                 resetNotice: { _ in nil },
@@ -187,6 +192,11 @@ struct MenuBarModelTests {
         #expect(hint(.response, isInPane: true) == .goesToPaneToAnswerInTerminal)
         #expect(hint(.approval, isInPane: false) == .opensCard, "no pane: the row opens the card")
         #expect(hint(.question, isInPane: false) == .opensCard)
+        #expect(
+            hint(.approval, isInPane: false, action: nil) == .opensWeir,
+            "no pane and no Answer… (handed to the terminal, timed out, a Codex question): no card opens"
+        )
+        #expect(hint(.question, isInPane: false, action: nil) == .opensWeir)
         #expect(hint(.signIn, isInPane: true) == .goesToPane, "a sign-in is not answered")
         #expect(hint(.stopped, isInPane: true) == .goesToPane)
         #expect(hint(.unread, isInPane: true) == .goesToPane)

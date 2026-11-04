@@ -1,10 +1,24 @@
 // AllProjectsActions.swift
-// Weir — what the all projects sheet does: open a card's session, switching this window to its project, and close.
+// Weir — what the all projects sheet does: answer a card's request, open its session (switching this window to its project), and close.
 
 import AppKit
+import WeirDomain
 
 @MainActor
 enum AllProjectsActions {
+    /// A card's Answer…: the approval card, beside the card's button at
+    /// `actionFrame`, with this window and its pane as they are. A button
+    /// not measured yet names no opener (`ApprovalCardState.opener`), so the
+    /// card stands where it would with none rather than at the corner.
+    static func answer(
+        _ key: ApprovalKey,
+        actionFrame: CGRect,
+        in window: ProjectWindowState,
+        approvals: ApprovalPresentationStore
+    ) {
+        window.approvalCard.present(key: key, from: approvals, openedFrom: ApprovalCardState.opener(measured: actionFrame))
+    }
+
     /// Opens `card`: the pane of the item it shows, reached the same way
     /// ⌘J and the Needs Attention list reach it; otherwise its session. Either
     /// way this window switches to the card's project in place, or the

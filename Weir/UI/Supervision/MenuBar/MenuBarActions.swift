@@ -15,12 +15,7 @@ enum MenuBarActions {
     /// The ledger's entry for an approval or a question; `nil` for anything
     /// else, or a request the ledger no longer holds.
     private static func entry(_ id: AttentionItemID, stores: MenuBarStores) -> ApprovalLedger.Entry? {
-        switch id {
-        case let .approval(key), let .question(key):
-            stores.approvals.ledger.entries[key]
-        case .prompt, .stop, .unread:
-            nil
-        }
+        id.requestKey.flatMap { stores.approvals.ledger.entries[$0] }
     }
 
     /// The request behind an approval or a question, as the menu shows it.
@@ -136,33 +131,26 @@ enum MenuBarActions {
         stores.approvals.resolve(entry.presentation, resolution)
     }
 
-    /// "Answer…": Weir comes to the front with the request's card open,
-    /// as a notification opens it, in `answerWindow`, with neither the
-    /// window nor the pane changed.
+    /// "Answer…": Weir comes to the front with the request's card open, as
+    /// a notification opens it (`WindowRegistry.presentApprovalCardFromOutside`),
+    /// with neither the window nor the pane changed.
     ///
-    /// A request the card can no longer hold, read again at the press (it
+    /// A request Weir can no longer answer on the card
+    /// (`ApprovalPresentationStore.opensCard`), read again at the press (it
     /// went to the terminal, or its time ran out, after the menu was drawn),
     /// is answered only at its pane: the press goes there, as the row
-    /// itself would, and that does switch the window, as opening a pane does. The
-    /// rule that answering moves no window is the card's, and no card
-    /// opens then; doing nothing would leave the person a press that
-    /// answered nothing and a closed menu.
+    /// itself would, or, with no pane, only brings Weir to the front. Going
+    /// to the pane does switch the window, as opening a pane does. The rule
+    /// that answering moves no window is the card's, and no card opens then;
+    /// doing nothing would leave the person a press that answered nothing
+    /// and a closed menu.
     private static func answer(_ id: AttentionItemID, stores: MenuBarStores) {
-        guard let entry = entry(id, stores: stores), entry.presentation.supportsNativeAnswer,
-              entry.state.acceptsDecision
-        else {
+        guard let key = id.requestKey, stores.approvals.opensCard(key) else {
             open(id, opensInNewWindow: false, stores: stores)
             return
         }
         NSApp.activate()
-        answerWindow(registry: stores.windows).approvalCard.present(entry.presentation, from: stores.approvals)
-    }
-
-    /// The window "Answer…" opens the card in: the one commands act on,
-    /// brought back if hidden or minimized, on whatever it shows. Not a
-    /// move to the request's project (`WindowRegistry.bringBack`).
-    static func answerWindow(registry: WindowRegistry) -> ProjectWindowState {
-        registry.bringBack(nil)
+        stores.windows.presentApprovalCardFromOutside(key: key, from: stores.approvals)
     }
 
     /// A row opened: Weir comes to the front at the item's pane, as the

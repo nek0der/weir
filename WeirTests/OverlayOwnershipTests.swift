@@ -16,7 +16,7 @@ struct OverlayOwnershipTests {
         let first = WindowApprovalCard()
         let second = WindowApprovalCard()
 
-        first.present(request, from: store)
+        first.present(key: request.key, from: store)
         first.updateRowAnchor(CGRect(x: 0, y: 40, width: 200, height: 20), for: request, in: store)
         first.focusChanged(true, for: request)
 
@@ -30,7 +30,7 @@ struct OverlayOwnershipTests {
         #expect(second.rowAnchor(for: request) == nil, "a row in one window is no anchor in another")
 
         // The same request opened in the second window too: each has its own.
-        second.present(request, from: store)
+        second.present(key: request.key, from: store)
         first.dismiss()
         #expect(first.presentedApproval(in: store) == nil)
         #expect(second.presentedApproval(in: store)?.id == request.id)
@@ -44,10 +44,10 @@ struct OverlayOwnershipTests {
         let button = CGRect(x: 900, y: 10, width: 80, height: 24)
         card.updateRowAnchor(CGRect(x: 0, y: 40, width: 200, height: 20), for: request, in: store)
 
-        card.present(request, from: store, openedFrom: button)
+        card.present(key: request.key, from: store, openedFrom: button)
         #expect(card.state.openedFrom == button)
         // Opened from its row in the sidebar, it stands beside the row again.
-        card.present(request, from: store)
+        card.present(key: request.key, from: store)
         #expect(card.state.openedFrom == nil)
 
         card.clearRowAnchors()
@@ -68,7 +68,7 @@ struct OverlayOwnershipTests {
         card.updateBarAnchor(bar, forPane: pane)
         card.updateBarAnchor(CGRect(x: 300, y: 300, width: 800, height: 32), forPane: other)
 
-        card.present(request, from: store, openedFromPane: pane, focusesClose: true)
+        card.present(key: request.key, from: store, openedFromPane: pane, focusesClose: true)
         #expect(card.barAnchor() == bar)
         // The pane resized: the card goes with its bar.
         let resized = bar.insetBy(dx: 100, dy: 0)
@@ -76,10 +76,10 @@ struct OverlayOwnershipTests {
         #expect(card.barAnchor() == resized)
 
         // Opened again from its row, it stands beside the row.
-        card.present(request, from: store)
+        card.present(key: request.key, from: store)
         #expect(card.barAnchor() == nil)
 
-        card.present(request, from: store, openedFromPane: pane)
+        card.present(key: request.key, from: store, openedFromPane: pane)
         card.forgetBars(notIn: [other])
         #expect(card.barAnchor() == nil, "a pane that is gone is no anchor")
     }
@@ -97,7 +97,7 @@ struct OverlayOwnershipTests {
         let request = ApprovalPresentation.test(deadlineMilliseconds: 0)
         store.receive([request])
         for window in [registry.primary, second] {
-            window.approvalCard.present(request, from: store)
+            window.approvalCard.present(key: request.key, from: store)
             window.approvalCard.updateRowAnchor(CGRect(x: 0, y: 40, width: 200, height: 20), for: request, in: store)
         }
 

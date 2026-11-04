@@ -332,20 +332,28 @@ struct SessionSidebarModelTests {
     private static func row(
         _ items: [AttentionItem],
         requestText: [ApprovalKey: String] = [:],
+        heldRequests: Set<ApprovalKey> = [],
         lastActivity: Date? = nil,
         agents: [SessionRowFact.Input] = []
     ) -> SessionSidebarModel.Row {
         var input = SessionSidebarModel.RowInput.test(fact: .init(items: items, requestText: requestText), lastActivity: lastActivity)
         input.agents = agents
+        input.heldRequests = heldRequests
         return .test(input)
     }
 
     @Test func aRowOffersAnswer_onlyForARequestWeirCanStillAnswer() {
         let approval = ApprovalFact.test()
-        let held = Self.row(Self.items([.approval(approval)]), requestText: [approval.key: "swift test"])
+        let held = Self.row(
+            Self.items([.approval(approval)]),
+            requestText: [approval.key: "swift test"],
+            heldRequests: [approval.key]
+        )
         #expect(held.answerKey == approval.key)
         #expect(held.tone == .waiting)
         #expect(held.factText == "Waiting for approval: swift test")
+        // The ledger does not hold it: the card would have nothing to show.
+        #expect(Self.row(Self.items([.approval(approval)]), requestText: [approval.key: "swift test"]).answerKey == nil)
 
         // Codex's questions are answered in the TUI.
         let codex = ApprovalFact.test(isQuestion: true, provider: .codex, supportsNativeAnswer: false)

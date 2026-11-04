@@ -413,7 +413,14 @@ the turns, and the commands for the app to perform.
   by `ProjectWindowState.approvalCard`). The requests, the ledger, and the
   unsent answers are shared, and every window's card follows them as they
   settle (`ApprovalPresentationStore.onRequestsChanged`,
-  `WindowRegistry.settleApprovalCards`). The menu bar may allow or deny only
+  `WindowRegistry.settleApprovalCards`). Every control that opens a card
+  passes the request's key to `WindowApprovalCard.present(key:from:)`, which
+  reads the request from the ledger. A notification, the menu bar's Answer…,
+  going to a request no pane is known for, and a decision bar read the
+  request when they are used, so they go through `presentToAnswer`, which opens
+  the card only while Weir can answer the request on it
+  (`ApprovalRequestState.isAnswerableOnCard`); each row's Answer… is drawn by
+  the same rule (`AttentionItem.answerKey`). The menu bar may allow or deny only
   what `MenuBarApprovalRule` permits. The service starts only in a build
   signed with a Team ID (`AgentIntegrationServiceRegistrar`). An ad-hoc
   signed build leaves every approval to the agent's own prompt.

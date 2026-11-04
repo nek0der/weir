@@ -71,6 +71,9 @@ struct ApprovalCardModel: Equatable {
             // Kept open only to say the person's answer lost.
             self.init(actions: .none, status: .alreadyAnswered, showsTimeLeft: showsTimeLeft)
         case .withdrawn, .unknownResult:
+            // Never reached: `holdsCardOpen` closed the card on these above.
+            // Named only because the switch is exhaustive, and the ledger's
+            // rule stays the one that says when a card closes.
             return nil
         }
     }

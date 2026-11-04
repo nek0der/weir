@@ -194,12 +194,23 @@ final class ApprovalPresentationStore {
 
     /// Whether the request can be answered on its card now: open (held, or
     /// after a failed send) and a kind Weir answers, which a Codex
-    /// question is not. A notification or history row opens the card only
-    /// then, and the pane otherwise.
+    /// question is not (`ApprovalRequestState.isAnswerableOnCard`). A
+    /// notification or its history row, the menu bar's Answer…, going to a
+    /// request no pane is known for, and a decision bar open the card only
+    /// then (`WindowApprovalCard.presentToAnswer`). Otherwise a notification
+    /// and the menu bar go to the pane, and the others open nothing.
     func opensCard(_ key: ApprovalKey) -> Bool {
         guard let entry = ledger.entries[key] else { return false }
-        let approval = entry.presentation
-        return entry.state.acceptsDecision && approval.supportsNativeAnswer
+        return entry.state.isAnswerableOnCard(supportsNativeAnswer: entry.presentation.supportsNativeAnswer)
+    }
+
+    /// The request a card opened on `key` shows, while its ledger entry
+    /// still holds a card open (`ApprovalLedger.Entry.holdsCardOpen`); `nil`
+    /// otherwise. Every route that opens a card reads it through
+    /// `WindowApprovalCard.present(key:from:)`, so none looks the request up
+    /// in the ledger itself.
+    func cardRequest(for key: ApprovalKey) -> ApprovalPresentation? {
+        Self.cardRequest(in: ledger.entries[key])
     }
 
     /// Whether the store follows a running approval service. While it does,
@@ -539,7 +550,13 @@ final class ApprovalPresentationStore {
     /// stale projection can still list. `nil` once a card for it would
     /// close (`WindowApprovalCard`).
     func approvalForCard(_ id: String) -> ApprovalPresentation? {
-        guard let entry = ledger.entry(id: id), entry.holdsCardOpen else { return nil }
+        Self.cardRequest(in: ledger.entry(id: id))
+    }
+
+    /// The one reading of `ApprovalLedger.Entry.holdsCardOpen` behind both
+    /// lookups, by key and by the card's string ID.
+    private static func cardRequest(in entry: ApprovalLedger.Entry?) -> ApprovalPresentation? {
+        guard let entry, entry.holdsCardOpen else { return nil }
         return entry.presentation
     }
 

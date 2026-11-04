@@ -231,6 +231,7 @@ extension SessionSidebarModel {
         let items = sources.index.items(inPanes: panes, root: root)
         var requestText: [ApprovalKey: String] = [:]
         var commandRequests: Set<ApprovalKey> = []
+        let heldRequests = Set(items.compactMap(\.kind.approvalFact?.key).filter { approvals.entries[$0] != nil })
         for item in items {
             switch item.kind {
             case let .approval(fact):
@@ -297,7 +298,8 @@ extension SessionSidebarModel {
             branch: project == nil ? nil : CheckoutName.of(container, in: session),
             checkout: rowName.flatMap { session.rowCheckout(of: container, named: $0) },
             label: rowName?.label,
-            commandRequests: commandRequests
+            commandRequests: commandRequests,
+            heldRequests: heldRequests
         )
     }
 

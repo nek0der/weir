@@ -516,6 +516,11 @@ private struct MenuBarRow: View {
                 "Opens the approval card",
                 comment: "Menu bar row accessibility hint on a request with no pane: Weir opens its approval card"
             )
+        case .opensWeir:
+            LocalizedStringResource(
+                "Opens Weir",
+                comment: "Menu bar row accessibility hint on a request with no pane and no Answer…: Weir comes to the front with no card"
+            )
         }
     }
 

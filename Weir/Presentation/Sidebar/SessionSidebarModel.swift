@@ -197,6 +197,11 @@ struct SessionSidebarModel: Equatable {
         /// The approvals whose text is a command to run
         /// (`ApprovalRequestText.isCommand`).
         var commandRequests: Set<ApprovalKey> = []
+        /// The row's approvals and questions the ledger holds, so the card
+        /// has a request to show. Kept apart from `fact.requestText`: a
+        /// request can be held and still have no text to show (a question
+        /// whose prompt is empty), and it is still answered on the card.
+        var heldRequests: Set<ApprovalKey> = []
     }
 
     /// `usageLimits` holds each provider's agents at its limit: every row
@@ -231,7 +236,7 @@ struct SessionSidebarModel: Equatable {
                 isMainFolder: input.container.projectID != nil && input.container.worktreeID == nil,
                 isMissing: input.isMissing,
                 section: input.section,
-                answerKey: Self.answerKey(input.fact.items),
+                answerKey: Self.answerKey(input),
                 unreadCount: input.fact.items.count {
                     if case .unread = $0.kind {
                         true
@@ -314,15 +319,16 @@ struct SessionSidebarModel: Equatable {
         }
     }
 
-    /// The request the row offers to answer: the one it shows, when
-    /// Weir can still take a decision for it. Codex's questions are
-    /// answered in the TUI, so they offer none.
-    private static func answerKey(_ items: [AttentionItem]) -> ApprovalKey? {
-        guard let item = PanePriority.dominant(items), item.canAnswerInWeir else { return nil }
-        switch item.kind {
-        case let .approval(fact), let .question(fact): return fact.key
-        case .prompt, .stop, .unread: return nil
-        }
+    /// The request the row offers to answer: the one it shows, by the rule
+    /// every row's Answer… reads (`AttentionItem.answerKey`). Codex's
+    /// questions are answered in the TUI, so they offer none. The row keeps
+    /// the button while the card is up for it, and is lit instead
+    /// (`isCardSource`).
+    private static func answerKey(_ input: RowInput) -> ApprovalKey? {
+        PanePriority.dominant(input.fact.items)?.answerKey(
+            isHeld: input.heldRequests.contains,
+            whileCardIsUp: .staysOffered
+        )
     }
 
     /// Whether the approval the second line states (the row's dominant

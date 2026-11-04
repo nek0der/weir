@@ -58,12 +58,14 @@ package enum MenuBarApprovalRule {
         case .held, .sendFailed, .withdrawn, .unknownResult:
             break
         }
-        // A request no longer taking a decision (withdrawn, its result not
-        // known) is only opened, a question as much as a command.
-        guard state.acceptsDecision else { return .openPane }
+        // A question is answered on the card while the card can answer it,
+        // and otherwise only opened.
         if isQuestion {
-            return supportsNativeAnswer ? .answerInWeir : .openPane
+            return state.isAnswerableOnCard(supportsNativeAnswer: supportsNativeAnswer) ? .answerInWeir : .openPane
         }
+        // A request no longer taking a decision (withdrawn, its result not
+        // known) is only opened, as a question in these states is.
+        guard state.acceptsDecision else { return .openPane }
         // An empty command runs nothing the menu could show, and has no
         // characters to hide: it reads as a tool that runs no command.
         guard let command, !command.isEmpty else { return .notACommand }
