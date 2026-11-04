@@ -61,6 +61,13 @@ extension StoredShortcut {
         }
         return key.count == 1 ? KeyEquivalent(Character(key)) : nil
     }
+
+    /// Whether `press` is this shortcut: its key with exactly its modifiers,
+    /// for a view that answers a menu's key while the menu cannot.
+    func isPressed(_ press: KeyPress) -> Bool {
+        guard let key = swiftUIKeyEquivalent else { return false }
+        return press.key == key && press.modifiers == modifiers.swiftUIEventModifiers
+    }
 }
 
 extension NamedKey {

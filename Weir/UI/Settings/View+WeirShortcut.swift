@@ -41,6 +41,12 @@ extension View {
         applyingShortcut(shortcut)
     }
 
+    /// Bind this view to a key macOS keeps for an app menu item every app
+    /// has (`StandardMenuShortcut`), which Settings cannot rebind.
+    func standardMenuShortcut(_ shortcut: StoredShortcut) -> some View {
+        applyingShortcut(shortcut)
+    }
+
     fileprivate func applyingShortcut(_ shortcut: StoredShortcut?) -> some View {
         Group {
             if let shortcut, let key = shortcut.swiftUIKeyEquivalent {

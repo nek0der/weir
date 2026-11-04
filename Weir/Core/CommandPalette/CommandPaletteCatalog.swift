@@ -311,7 +311,13 @@ enum CommandPaletteCatalog {
     // MARK: - Settings
 
     private static func appendSettings(to items: inout [CommandPaletteItem], locale: Locale) {
-        items.append(row("Open Settings", category: .settings, icon: "gear", action: .openSettings, locale: locale))
+        items.append(row(
+            SettingsCommand.openTitle,
+            category: .settings,
+            icon: SettingsCommand.symbol,
+            action: .openSettings,
+            locale: locale
+        ))
     }
 
     /// Settings opened on each of its sections, in the sidebar's order, as

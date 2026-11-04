@@ -11,6 +11,7 @@ private struct SavingSuspendedAlertModifier: ViewModifier {
     let state: AppState
     /// Whether this window tells it: one window, not every one.
     let isShown: Bool
+    @Environment(\.openWindow) private var openWindow
 
     private var notice: SavingSuspendedNotice? {
         SavingSuspendedNotice.atLaunch(
@@ -38,7 +39,7 @@ private struct SavingSuspendedAlertModifier: ViewModifier {
         ) { _ in
             Button(SavingSuspendedText.openSettings(locale: locale)) {
                 state.dismissSavingNotice()
-                SettingsSection.openGeneral()
+                SettingsOpener(openWindow).open(.general)
             }
             Button("OK", role: .cancel) {
                 state.dismissSavingNotice()

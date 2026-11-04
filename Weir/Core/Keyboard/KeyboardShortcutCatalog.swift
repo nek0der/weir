@@ -144,7 +144,12 @@ enum KeyboardShortcutCatalog {
             id: "fixed.app",
             title: "Weir",
             entries: [
-                entry(id: "fixed.settings", title: "Settings…", tokens: ["⌘", ","], locale: locale)
+                entry(
+                    id: "fixed.settings",
+                    title: SettingsCommand.menuLabel.title,
+                    tokens: StandardMenuShortcut.settings.displayTokens,
+                    locale: locale
+                )
             ]
         ))
         if let quickTerminalHotKey {

@@ -7,9 +7,9 @@ import SwiftUI
 /// What every main window carries around its root: the overlays (toasts,
 /// the worktree suggestion, the PR card, floating panels, notification
 /// history, the approval card, the palette dropdown), the handlers for the
-/// palette's rows and the history's toggle (`WindowCommand`) and for the
-/// Settings notification, the keyboard shortcuts panel, the clipboard sheet, the
-/// session-restore alert, and the transparent title bar.
+/// palette's rows and the history's toggle (`WindowCommand`), the keyboard
+/// shortcuts panel, the clipboard sheet, the session-restore alert, and the
+/// transparent title bar.
 ///
 /// Each overlay draws this window's own: its toast,
 /// approval card, floating panels, history, the suggestion for a pane it
@@ -69,6 +69,7 @@ struct WindowChromeHost: ViewModifier {
                 minPaneSize: state.settingsStore.settings.terminal.paneMinimumSize,
                 agentProjection: state.agentProjection,
                 window: window.id,
+                settingsOpener: SettingsOpener(openWindow),
                 runsInWindow: { action in
                     actions?.runPaletteAction(action, execution.opensInNewWindow) ?? .notHandled
                 }
@@ -181,9 +182,6 @@ struct WindowChromeHost: ViewModifier {
             // The palette's rows and the notification history of this
             // window: each window has its own.
             .onWindowCommand(of: window, takeCommand)
-            .onReceive(NotificationCenter.default.publisher(for: .weirOpenSettings)) { _ in
-                openWindow(id: WeirApp.settingsWindowID)
-            }
             .sheet(item: Binding(
                 get: { mainWindowClipboardRequest },
                 set: { newValue in

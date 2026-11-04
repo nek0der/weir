@@ -5,20 +5,19 @@ import SwiftUI
 
 /// Wraps the "Settings…" menu button so we can capture
 /// `\.openWindow` (only available inside a `View`, not `App`'s
-/// body) and route ⌘, to our `Window(id:)` Settings scene.
+/// body) and route ⌘, to our `Window(id:)` Settings scene through
+/// `SettingsOpener`.
 struct OpenSettingsCommand: View {
-    /// The key, as the menu draws it: fixed, since macOS keeps ⌘, for
-    /// Settings in every app, so it is not among the keys a person rebinds.
-    /// The rail's Settings icon names it in its tooltip.
-    static let shortcutDisplay = "⌘,"
-
     @Environment(\.openWindow) private var openWindow
+
     var body: some View {
         Button {
-            openWindow(id: WeirApp.settingsWindowID)
+            SettingsOpener(openWindow).open()
         } label: {
-            Label("Settings…", systemImage: "gear")
+            Label(SettingsCommand.menuLabel)
         }
-        .keyboardShortcut(",", modifiers: .command)
+        // The key is fixed, since macOS keeps ⌘, for Settings in every app,
+        // so it is not among the keys a person rebinds.
+        .standardMenuShortcut(StandardMenuShortcut.settings)
     }
 }

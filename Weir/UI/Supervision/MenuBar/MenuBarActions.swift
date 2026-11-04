@@ -94,13 +94,13 @@ enum MenuBarActions {
         stores.windows.bringBack(nil)
     }
 
-    /// The heading's Settings…, through `openSettings`, which the view
-    /// holds (`OpenWindowAction`). The menu does not make Weir active,
-    /// so the window would open behind the app in front without it.
-    static func openSettings(menuWindow: MenuWindow, _ openSettings: () -> Void) {
+    /// The heading's Settings…, through the view's `opener`, after making
+    /// Weir active: the menu leaves another app in front, and Settings
+    /// would open behind it.
+    static func openSettings(menuWindow: MenuWindow, opener: SettingsOpener) {
         close(menuWindow)
         NSApp.activate()
-        openSettings()
+        opener.open()
     }
 
     /// The heading's Quit Weir, as the app menu's quits, through the

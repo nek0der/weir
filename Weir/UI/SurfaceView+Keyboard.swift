@@ -85,9 +85,7 @@ extension SurfaceView {
                 return false
             }
         #endif
-        if event.modifierFlags.contains(.command),
-           event.charactersIgnoringModifiers == "q"
-        {
+        if StandardMenuShortcut.quit.isPressed(in: event) {
             NSApp.terminate(nil)
             return true
         }

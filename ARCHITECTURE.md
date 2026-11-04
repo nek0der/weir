@@ -330,10 +330,13 @@ shortcuts, or the window's own rail is a `WindowCommand`
 (`WindowCommandChannel`). The view that carries a command out takes it
 (`View.onWindowCommand`). A command that no view took, or that names a window
 no longer open, is logged and reported as not run. `NotificationCenter`
-carries only what does not belong to one window: `weirOpenSettings` (the app's one Settings
-scene), `weirCommandPaletteFocus` (one palette is open at a time),
-`weirSearchFocus` (addressed to a pane), and `weirGitSyncRequested`
-(addressed to a project, for `GitSyncCoordinator`).
+carries only what does not belong to one window: `weirCommandPaletteFocus` (one
+palette is open at a time), `weirSearchFocus` (addressed to a pane), and
+`weirGitSyncRequested` (addressed to a project, for `GitSyncCoordinator`).
+Settings is not a broadcast: every menu, row, and button that opens it calls
+`SettingsOpener` (`App/SettingsOpener.swift`) with its own view's `openWindow`,
+so Settings opens once from any place, however many main windows are mounted,
+even none.
 
 Whether a keyboard command can run now in a window is one answer,
 `ShortcutAvailability` (`Core/CommandPalette/ShortcutAvailability.swift`). The

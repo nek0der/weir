@@ -15,6 +15,7 @@ struct KeyboardShortcutOverlay: View {
     /// behind a reference panel.
     let yieldsToOtherModal: Bool
     @Environment(ProjectWindowState.self) private var window
+    @Environment(\.openWindow) private var openWindow
 
     private var presentation: KeyboardShortcutPresentation {
         window.keyboardShortcuts
@@ -26,7 +27,7 @@ struct KeyboardShortcutOverlay: View {
                 maxHeight: Self.panelHeight(forWindowHeight: proxy.size.height),
                 onClose: close,
                 onCustomize: {
-                    SettingsSection.openKeyboard()
+                    SettingsOpener(openWindow).open(.keyboard)
                     close()
                 }
             )

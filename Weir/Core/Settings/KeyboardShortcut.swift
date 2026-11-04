@@ -719,7 +719,7 @@ enum ReservedShortcuts {
         // app-termination path (notification → state save) runs.
         // Letting a user remap ⌘Q to some other action would race
         // that termination path.
-        set.insert(StoredShortcut(key: "q", modifiers: [.command]).ghosttyTrigger)
+        set.insert(StandardMenuShortcut.quit.ghosttyTrigger)
         // ⇧↩ — `GhosttyConfigBridge` always emits
         // `keybind = shift+enter=text:\n` so TUIs like Claude Code
         // can distinguish ↩ from ⇧↩. A user override
@@ -753,7 +753,7 @@ enum ReservedShortcuts {
     /// hand to an action.
     static let standardMenuTriggers: Set<String> = Set(
         [
-            StoredShortcut(key: ",", modifiers: [.command]),
+            StandardMenuShortcut.settings,
             StoredShortcut(key: "h", modifiers: [.command]),
             StoredShortcut(key: "m", modifiers: [.command]),
             StoredShortcut(key: "z", modifiers: [.command]),
