@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Starts one agent session under the Debug build's shim with hook recording
-# enabled, inside a detached tmux session the caller then drives.
+# Starts one agent session under the shim of this checkout's Debug build, with
+# hook recording enabled, inside a detached tmux session the caller then drives.
 #
 # Usage: scripts/record-hook-fixtures.sh <claude|codex> <case-name> <record-root>
 #            [--tmux-hosted] [--env NAME=VALUE]... [-- <agent args>]
@@ -68,10 +68,11 @@ case "$case_name" in
 esac
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-apps=("$HOME"/Library/Developer/Xcode/DerivedData/Weir-*/Build/Products/Debug/"Weir Dev.app")
-app="${apps[0]}"
-if [[ ! -d "$app" ]]; then
-  echo "error: no Debug build found; run make build first" >&2
+# This checkout's Debug build: another worktree's would record another
+# branch's hooks.
+app="$("$repo_root/scripts/built-app-path.sh" Debug || true)"
+if [[ -z "$app" || ! -d "$app" ]]; then
+  echo "error: this checkout has no Debug build; run make build first" >&2
   exit 1
 fi
 shim_dir="$app/Contents/Resources/${provider}-shim"

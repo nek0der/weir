@@ -2,23 +2,8 @@
 
 set -euo pipefail
 
-find_cargo() {
-  if command -v cargo >/dev/null 2>&1; then
-    command -v cargo
-    return
-  fi
-
-  local candidate
-  for candidate in /opt/homebrew/opt/rustup/bin/cargo /usr/local/opt/rustup/bin/cargo; do
-    if [[ -x "$candidate" ]]; then
-      printf '%s\n' "$candidate"
-      return
-    fi
-  done
-
-  echo "error: cargo was not found; install rustup with Homebrew and initialize the pinned toolchain" >&2
-  exit 1
-}
+# shellcheck source=scripts/lib/cargo.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/cargo.sh"
 
 build_architecture="${CURRENT_ARCH:-}"
 if [[ -z "$build_architecture" || "$build_architecture" == "undefined_arch" ]]; then
@@ -52,12 +37,7 @@ esac
 : "${DERIVED_FILE_DIR:?Xcode must provide DERIVED_FILE_DIR}"
 : "${SRCROOT:?Xcode must provide SRCROOT}"
 
-cargo_bin="$(find_cargo)"
-# Homebrew installs rustup proxies beside Cargo. Xcode's restricted PATH does
-# not include that directory, but Cargo still invokes the sibling `rustc` by
-# name when it queries the compiler or builds the crate.
-cargo_bin_directory="$(dirname "$cargo_bin")"
-export PATH="$cargo_bin_directory:$PATH"
+use_cargo "to build the Rust bridge"
 # One Cargo target directory for every Xcode target that links the bridge
 # (app, approval service, hook helper), so a clean build compiles the
 # workspace once; Cargo's own lock serializes the phases when Xcode runs

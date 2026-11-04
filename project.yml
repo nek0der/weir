@@ -110,7 +110,10 @@ targets:
     dependencies:
       - sdk: Security.framework
     preBuildScripts:
-      - name: Build Rust bridge
+      # The one definition of this phase: the Hook Helper and the app repeat
+      # it through the alias below, so the three targets never drift apart.
+      - &build-rust-bridge
+        name: Build Rust bridge
         script: '"$SRCROOT/scripts/build-rust-bridge.sh"'
         # Cargo owns the complete Rust dependency graph. Invoke it on every
         # Xcode build so adding a module cannot leave a stale static library;
@@ -123,6 +126,7 @@ targets:
           - $(SRCROOT)/Cargo.lock
           - $(SRCROOT)/rust-toolchain.toml
           - $(SRCROOT)/scripts/build-rust-bridge.sh
+          - $(SRCROOT)/scripts/lib/cargo.sh
         outputFiles:
           - $(DERIVED_FILE_DIR)/weir-rust/libweir_rust_bridge.a
 
@@ -182,17 +186,8 @@ targets:
     dependencies:
       - sdk: Security.framework
     preBuildScripts:
-      - name: Build Rust bridge
-        script: '"$SRCROOT/scripts/build-rust-bridge.sh"'
-        # Same phase as the service target; see the comment there.
-        basedOnDependencyAnalysis: false
-        inputFiles:
-          - $(SRCROOT)/Cargo.toml
-          - $(SRCROOT)/Cargo.lock
-          - $(SRCROOT)/rust-toolchain.toml
-          - $(SRCROOT)/scripts/build-rust-bridge.sh
-        outputFiles:
-          - $(DERIVED_FILE_DIR)/weir-rust/libweir_rust_bridge.a
+      # The Rust bridge phase, defined once in AgentIntegrationService.
+      - *build-rust-bridge
 
   AgentIntegrationControllerProbe:
     type: tool
@@ -486,21 +481,8 @@ targets:
       - sdk: Security.framework
       - sdk: ServiceManagement.framework
     preBuildScripts:
-      - name: Build Rust bridge
-        script: '"$SRCROOT/scripts/build-rust-bridge.sh"'
-        # Cargo owns the complete Rust dependency graph. Invoke it on every
-        # Xcode build so adding a module cannot leave a stale static library;
-        # Cargo's incremental check keeps unchanged builds fast. Because the
-        # phase never skips, listing Rust sources here would not change when
-        # it runs; the inputs below only describe what the script itself reads.
-        basedOnDependencyAnalysis: false
-        inputFiles:
-          - $(SRCROOT)/Cargo.toml
-          - $(SRCROOT)/Cargo.lock
-          - $(SRCROOT)/rust-toolchain.toml
-          - $(SRCROOT)/scripts/build-rust-bridge.sh
-        outputFiles:
-          - $(DERIVED_FILE_DIR)/weir-rust/libweir_rust_bridge.a
+      # The Rust bridge phase, defined once in AgentIntegrationService.
+      - *build-rust-bridge
     postBuildScripts:
       # The settings template belongs to the provider crate, which owns its
       # shape, but the shim reads it from beside itself at run time. Copied
@@ -531,6 +513,7 @@ targets:
           - $(SRCROOT)/THIRD-PARTY-NOTICES
           - $(SRCROOT)/Cargo.lock
           - $(SRCROOT)/scripts/write-notices.sh
+          - $(SRCROOT)/scripts/lib/cargo.sh
           - $(SRCROOT)/scripts/generate-crate-notices.py
         outputFiles:
           - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/THIRD-PARTY-NOTICES

@@ -468,11 +468,15 @@ fi
 
 # Built binaries to check: WEIR_NOTICES_BINARY (colon-separated), and the
 # `make release-check` archive when it exists. Each must link libghostty.
+# RELEASE_CHECK_ARCHIVE is the Makefile's variable of that name, so an archive
+# written elsewhere with `make release-check RELEASE_CHECK_ARCHIVE=...` is
+# checked when the same variable is set here; its default is the Makefile's.
 binaries=()
 if [[ -n "${WEIR_NOTICES_BINARY:-}" ]]; then
   IFS=: read -r -a binaries <<< "$WEIR_NOTICES_BINARY"
 fi
-release_check_binary="build/ReleaseCheck/Weir.xcarchive/Products/Applications/Weir.app/Contents/MacOS/Weir"
+release_check_archive="${RELEASE_CHECK_ARCHIVE:-build/ReleaseCheck/Weir.xcarchive}"
+release_check_binary="$release_check_archive/Products/Applications/Weir.app/Contents/MacOS/Weir"
 [[ -f "$release_check_binary" ]] && binaries+=("$release_check_binary")
 
 # zlib functions libpng and FreeType call; each must stay an import from libz.

@@ -8,8 +8,9 @@
 #     (xcrun notarytool store-credentials weir-notarize-local ...)
 #
 # Usage:
-#   ./scripts/package-dmg.sh                     # auto-detect latest Release build
-#   ./scripts/package-dmg.sh /path/to/Weir.app # use a specific .app
+#   make dmg                                    # this checkout's Release build
+#   ./scripts/package-dmg.sh                    # the same, found by built-app-path.sh
+#   ./scripts/package-dmg.sh /path/to/Weir.app  # use a specific .app
 #
 # Output:
 #   dist/Weir-<version>.dmg  (notarized and stapled)
@@ -25,13 +26,14 @@ DIST_DIR="${REPO_ROOT}/dist"
 if [[ $# -ge 1 ]]; then
   APP_PATH="$1"
 else
-  # Default: the latest DerivedData Release build
-  APP_PATH="$(ls -td "${HOME}"/Library/Developer/Xcode/DerivedData/Weir-*/Build/Products/Release/Weir.app 2>/dev/null | head -1)"
+  # This checkout's Release build: the newest one under DerivedData may be
+  # another worktree's, of another branch.
+  APP_PATH="$("${REPO_ROOT}/scripts/built-app-path.sh" Release || true)"
 fi
 
 if [[ -z "${APP_PATH:-}" || ! -d "${APP_PATH}" ]]; then
-  echo "✗ Weir.app not found." >&2
-  echo "  Expected: Release build under DerivedData, or pass the path as an argument." >&2
+  echo "✗ Weir.app not found${APP_PATH:+ at ${APP_PATH}}." >&2
+  echo "  Expected: this checkout's Release build, or pass the path as an argument." >&2
   exit 1
 fi
 

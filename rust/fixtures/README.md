@@ -97,9 +97,9 @@ fn payloads_normalize_as_recorded() {
 
 ## Recording
 
-`scripts/record-hook-fixtures.sh` launches one agent session under the Debug
-build's shim with `WEIR_HOOK_RECORD_DIR` set, inside a detached tmux session
-that is then driven with `tmux send-keys`. The Hook Helper's hook runtime,
+`scripts/record-hook-fixtures.sh` launches one agent session under the shim of
+this checkout's Debug build with `WEIR_HOOK_RECORD_DIR` set, inside a detached
+tmux session that is then driven with `tmux send-keys`. The Hook Helper's hook runtime,
 the only receiver, saves every payload it receives, byte for byte, before
 doing anything else with it.
 

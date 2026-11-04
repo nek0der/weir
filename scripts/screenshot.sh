@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # scripts/screenshot.sh
-# Weir — Regenerate the README hero shot from the demo session.
+# Weir — regenerate the README hero shot from the demo session.
 # Run from the repo root. `make screenshot` builds Release and hands the
 # script that build through WEIR_SCREENSHOT_APP. Run on its own, the script
-# takes the most recent Weir.app under Xcode DerivedData (we don't rebuild
-# here so the script stays fast and decoupled from the toolchain).
+# takes this checkout's Release build, or its Debug build when there is no
+# Release one (we don't rebuild here, so the script stays fast).
 #
 # WEIR_DEMO_APPEARANCE=dark captures the dark look; WEIR_DEMO_LAYER=needs-attention,
 # all-projects, review, approval-list, or approval-card captures that layer open,
@@ -36,48 +36,34 @@ OUT_PATH="${WEIR_SCREENSHOT_OUT:-.github/assets/hero.png}"
 
 mkdir -p "$(dirname "${OUT_PATH}")"
 
-# Find the most recently built app under DerivedData. Prefer Release because
-# Debug builds are ad-hoc signed and show extra Gatekeeper noise on first
-# launch. Track modification times without parsing paths through `ls`, because
-# a DerivedData or product path may contain spaces.
-find_latest_app() {
-  local configuration="$1"
-  shift
-  local latest=""
-  local latest_mtime=0
-  local candidate
-  local mtime
-  local product
-  for product in "$@"; do
-    while IFS= read -r -d '' candidate; do
-      mtime="$(stat -f '%m' "${candidate}")"
-      if ((mtime > latest_mtime)); then
-        latest="${candidate}"
-        latest_mtime="${mtime}"
-      fi
-    done < <(find ~/Library/Developer/Xcode/DerivedData \
-      -path "*/Build/Products/${configuration}/${product}" \
-      -type d -prune -print0 2>/dev/null)
-  done
-  printf '%s' "${latest}"
+# This checkout's built app, if it has one for the configuration. We never
+# take the newest app under DerivedData: it holds one folder per worktree, so
+# that may be another branch's build.
+checkout_app() {
+  local app
+  app="$("$(dirname "${BASH_SOURCE[0]}")/built-app-path.sh" "$1" || true)"
+  if [ -n "${app}" ] && [ -d "${app}" ]; then
+    printf '%s' "${app}"
+  fi
 }
 
-# The app the caller built wins: DerivedData holds one folder per worktree, so
-# the newest app there may be another branch's build.
+# The app the caller built wins. Without one we prefer this checkout's Release
+# build, because Debug builds are ad-hoc signed and show extra Gatekeeper noise
+# on first launch.
 APP_PATH="${WEIR_SCREENSHOT_APP:-}"
 if [ -n "${APP_PATH}" ] && [ ! -d "${APP_PATH}" ]; then
   echo "error: WEIR_SCREENSHOT_APP is not an app: ${APP_PATH}" >&2
   exit 1
 fi
 if [ -z "${APP_PATH}" ]; then
-  APP_PATH="$(find_latest_app Release Weir.app)"
+  APP_PATH="$(checkout_app Release)"
 fi
 if [ -z "${APP_PATH}" ]; then
-  APP_PATH="$(find_latest_app Debug 'Weir Dev.app' Weir.app)"
+  APP_PATH="$(checkout_app Debug)"
 fi
 if [ -z "${APP_PATH}" ]; then
-  echo "error: no Weir.app found under DerivedData." >&2
-  echo "       Build first: xcodebuild -project Weir.xcodeproj -scheme Weir -configuration Release build" >&2
+  echo "error: this checkout has no built Weir.app." >&2
+  echo "       Build first: make build-release" >&2
   exit 1
 fi
 

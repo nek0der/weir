@@ -2,10 +2,10 @@
 # Weir — self-test for the checks `package-dmg.sh` makes before building a dmg.
 #
 # A real run needs a notarized Developer ID build, so each case runs a copy of
-# the script on a fake Weir.app with `codesign`, `spctl`, and `create-dmg`
-# replaced on PATH. The fake `create-dmg` stops the run, so reaching it means
-# every check before it passed, and nothing is built, submitted, or written
-# outside the temporary directory.
+# the script on a fake Weir.app with `codesign`, `spctl`, `create-dmg`, and
+# `xcodebuild` replaced on PATH. The fake `create-dmg` stops the run, so
+# reaching it means every check before it passed, and nothing is built,
+# submitted, or written outside the temporary directory.
 #
 # Run from the repo root:
 #   scripts/test-package-dmg.sh
@@ -37,8 +37,22 @@ fails=0
 # 1.2.3, and the stand-in tools, under the directory given as $1.
 make_fixture() {
   local root="$1"
-  mkdir -p "$root/scripts" "$root/bin" "$root/Weir.app/Contents/Resources"
+  mkdir -p "$root/scripts" "$root/bin" "$root/Weir.app/Contents/Resources" "$root/Weir.xcodeproj"
   cp "$SCRIPT" "$root/scripts/package-dmg.sh"
+  cp "$REPO_ROOT/scripts/built-app-path.sh" "$root/scripts/built-app-path.sh"
+  : > "$root/Weir.xcodeproj/project.pbxproj"
+  # Without an argument the script asks built-app-path.sh, which asks
+  # xcodebuild. This stand-in answers only for the fixture's own project,
+  # scheme, and Release configuration, naming the fixture's app; any other call
+  # fails, so a case that reaches the dmg step proves which build was asked for.
+  printf '#!/bin/sh
+if [ "$*" != "-project %s/Weir.xcodeproj -scheme Weir -configuration Release -showBuildSettings" ]; then
+  echo "unexpected xcodebuild call: $*" >&2
+  exit 64
+fi
+echo "    BUILT_PRODUCTS_DIR = %s"
+echo "    FULL_PRODUCT_NAME = Weir.app"
+' "$root" "$root" > "$root/bin/xcodebuild"
   plutil -create xml1 "$root/Weir.app/Contents/Info.plist"
   plutil -insert CFBundleShortVersionString -string 1.2.3 "$root/Weir.app/Contents/Info.plist"
   : > "$root/Weir.app/Contents/Resources/THIRD-PARTY-NOTICES"
@@ -62,8 +76,9 @@ run_case() {
   make_fixture "$root"
   "$@" "$root"
 
-  local output actual
-  output="$(PATH="$root/bin:$PATH" "$root/scripts/package-dmg.sh" "$root/Weir.app" 2>&1 || true)"
+  local output actual app_argument=("$root/Weir.app")
+  [[ -f "$root/no-argument" ]] && app_argument=()
+  output="$(PATH="$root/bin:$PATH" "$root/scripts/package-dmg.sh" ${app_argument[@]+"${app_argument[@]}"} 2>&1 || true)"
   if grep -q REACHED-CREATE-DMG <<<"$output"; then
     actual="reaches"
   else
@@ -93,6 +108,18 @@ unexpanded_version() {
 }
 empty_version() { plutil -replace CFBundleShortVersionString -string '' "$1/Weir.app/Contents/Info.plist"; }
 unreadable_plist() { printf 'not a plist' > "$1/Weir.app/Contents/Info.plist"; }
+# Runs the script with no app path, so it must find the checkout's own build.
+no_argument() { : > "$1/no-argument"; }
+# The same, for a checkout that has not built Release.
+no_argument_no_build() {
+  no_argument "$1"
+  rm -rf "$1/Weir.app"
+}
+# The same, for a checkout whose project has not been generated.
+no_argument_no_project() {
+  no_argument "$1"
+  rm -rf "$1/Weir.xcodeproj"
+}
 
 run_case "a notarized app with a version reaches the dmg step" reaches unchanged
 run_case "an app accepted without a notarization ticket stops" stops accepted_without_ticket
@@ -102,6 +129,9 @@ run_case "an app with no version stops" stops no_version
 run_case "an app with an unexpanded version stops" stops unexpanded_version
 run_case "an app with an empty version stops" stops empty_version
 run_case "an app whose Info.plist does not parse stops" stops unreadable_plist
+run_case "without a path, this checkout's Release app reaches the dmg step" reaches no_argument
+run_case "without a path or a Release build, it stops" stops no_argument_no_build
+run_case "without a path or a generated project, it stops" stops no_argument_no_project
 
 echo
 if [[ $fails -eq 0 ]]; then
