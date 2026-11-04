@@ -31,7 +31,7 @@ struct ReviewPane: View {
     /// `session`, once its worktree resolves to the review's own.
     @State private var reviewSession: ReviewSession?
     @State private var failure: DisplayText?
-    /// Bumped by Try Again. The open is keyed on it as well as on the
+    /// Bumped by Retry. The open is keyed on it as well as on the
     /// directory, so asking again re-runs it without the reader having to
     /// close review and come back.
     @State private var reloadToken = 0
@@ -86,8 +86,8 @@ struct ReviewPane: View {
                     // The messages that land here name a retry — "Refresh to
                     // try again". No Close beside it: the band under this
                     // carries the tab's (one place for a button).
-                    Button("Try Again") { reloadToken += 1 }
-                        .accessibilityLabel(Text("Try Again"))
+                    Button { reloadToken += 1 } label: { Text(CommonText.retry) }
+                        .accessibilityLabel(Text(CommonText.retry))
                 }
             } else if isSlowToOpen {
                 ProgressView("Loading changes…")

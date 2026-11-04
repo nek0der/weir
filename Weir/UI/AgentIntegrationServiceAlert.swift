@@ -88,8 +88,10 @@ private struct AgentIntegrationServiceAlertAnchor: View {
                         registrar.openLoginItemsSettings()
                     }
                 case .retry:
-                    Button("Retry") {
+                    Button {
                         registrar.retry()
+                    } label: {
+                        Text(CommonText.retry)
                     }
                 }
             }

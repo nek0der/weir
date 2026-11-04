@@ -216,18 +216,18 @@ struct PaneSearchOverlay: View {
            let total = state.total,
            let position = PaneSearchDirection.displayPosition(selected: selected, total: total)
         {
-            Text("\(position)/\(total)")
+            Text(CommonText.position(position, of: total))
                 .font(.supervision(.caption))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
                 // VoiceOver would read the slash; it hears a count instead.
                 .accessibilityLabel(Text("\(position) of \(total)", comment: "VoiceOver: the find bar’s current match, of how many"))
         } else if let total = state.total, total > 0 {
-            Text("-/\(total)")
+            Text(CommonText.noPosition(of: total))
                 .font(.supervision(.caption))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
-                // Matches with none current yet: "-/5" would be read as symbols.
+                // Matches with none current yet: "- / 5" would be read as symbols.
                 .accessibilityLabel(Text("\(total) matches", comment: "VoiceOver: the find bar’s matches, while none is current"))
         } else if !state.needle.isEmpty, state.total == 0 {
             Text("0")

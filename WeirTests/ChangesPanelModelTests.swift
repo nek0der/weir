@@ -338,7 +338,7 @@ struct ChangesPanelModelTests {
         #expect(ChangesPanelText.facts(row, locale: Self.english).checks.map(\.role) == [.quiet, .quiet, .failed, .plain])
         #expect(turn.lastCheck?.earlierFailures == 2, "of the runs the record holds, without a count of failures")
         #expect(try ReceiptText.check(#require(turn.lastCheck), locale: Self.english) == "✓ Tests (after 2 failures)")
-        #expect(try ReceiptText.check(#require(turn.lastCheck), locale: Self.japanese) == "✓ テスト（失敗 2 回）")
+        #expect(try ReceiptText.check(#require(turn.lastCheck), locale: Self.japanese) == "✓ テスト（失敗 2 回のあと）")
         #expect(ChangesPanelText.turnDetails(turn, showsChanges: true, locale: Self.english) == [
             "2 files +3 −1",
             "Ran tests 7 times · 2 failed",
@@ -352,7 +352,7 @@ struct ChangesPanelModelTests {
         #expect(try ChangesPanelText.usageDetails(#require(turn.usage), locale: Self.japanese).last == "キャッシュ読み込み 2,100,000（合計外）")
         #expect(ChangesPanelText.turnDetails(turn, showsChanges: false, locale: Self.japanese).prefix(2) == [
             "テスト実行 7 回 · 失敗 2 回",
-            "最新：✓ テスト（失敗 2 回）"
+            "最新：✓ テスト（失敗 2 回のあと）"
         ])
         #expect(
             ChangesPanelText.rowSpoken(row, locale: Self.english).contains("✓ Tests (after 2 failures), 84K tokens, took 11m 02s"),

@@ -48,8 +48,10 @@ struct LibghosttyInitFailureView: View {
                     state.settingsStore.restoreDefaultsForRelaunch()
                     AppRelaunch.relaunch()
                 }
-                Button("Quit Weir") {
+                Button {
                     NSApp.terminate(nil)
+                } label: {
+                    Text(CommonText.quitApp)
                 }
                 .keyboardShortcut("q", modifiers: [.command])
                 // The one way a change takes effect: libghostty is set up

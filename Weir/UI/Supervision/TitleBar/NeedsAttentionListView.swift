@@ -125,7 +125,7 @@ struct NeedsAttentionListView: View {
     private func rows(_ rows: [NeedsAttentionListModel.Row]) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
-                // The wait time steps once a minute ("just now", then 1m,
+                // The wait time steps once a minute ("now", then 1m,
                 // 2m…), so a finer tick would only redraw the same text.
                 TimelineView(.periodic(from: .now, by: 60)) { context in
                     // Inside the scroll, above the first row: the list's

@@ -117,8 +117,8 @@ struct LiveLocaleTests {
         let now = window.expiresAt.addingTimeInterval(120)
         let english = content.timeLine(now: now, locale: en).resolved(in: en)
         let japanese = content.timeLine(now: now, locale: ja).resolved(in: ja)
-        #expect(english.contains(PromptCacheFormatting.duration(120, locale: en)))
-        #expect(japanese.contains(PromptCacheFormatting.duration(120, locale: ja)))
+        #expect(english.contains(DurationText.compact(120, locale: en)))
+        #expect(japanese.contains(DurationText.compact(120, locale: ja)))
         #expect(english != japanese)
         for block in [PromptCacheCommandBlock.notAtPrompt, .notInFront, .unsubmittedInput] {
             expectTranslated(block.reason)

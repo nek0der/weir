@@ -41,12 +41,15 @@ enum CompactTimeText {
         ).resolved(in: locale)
     }
 
-    /// Less than a minute ago, where the sidebar counts no seconds.
+    /// Less than a minute ago, where the column counts no seconds: the
+    /// sidebar's time since, Needs Attention's wait, and the notification
+    /// history's time. One word for the three, which once said "now",
+    /// "just now", 「今」 and 「たった今」 for the same minute.
     static func now(locale: Locale) -> String {
         LocalizedStringResource(
             "duration.compact.now",
             defaultValue: "now",
-            comment: "Sidebar row: its agent moved less than a minute ago, in the column that says the time since"
+            comment: "Under a minute ago, in a short time column: a sidebar row, a Needs Attention row, a notification history row"
         ).resolved(in: locale)
     }
 }

@@ -344,10 +344,7 @@ struct DecisionBarModel: Equatable {
         self.content = content
         self.resetNotice = resetNotice
         countText = content.position.map { position in
-            LocalizedStringResource(
-                "\(position.index) / \(position.count)",
-                comment: "Decision bar: which of the pane's items it shows"
-            ).resolved(in: locale)
+            CommonText.position(position.index, of: position.count).resolved(in: locale)
         }
         countSpokenText = content.position.map { position in
             LocalizedStringResource(

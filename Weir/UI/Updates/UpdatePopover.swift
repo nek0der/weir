@@ -108,6 +108,16 @@ extension EnvironmentValues {
 
 // MARK: - Building blocks
 
+/// Words more than one of the popover's states say.
+private enum UpdatePopoverText {
+    /// Puts the update off, whether it is offered or downloaded: the same
+    /// dismissal, so one word and one comment for the translator.
+    static let later = LocalizedStringResource(
+        "Later",
+        comment: "Update popover: puts the offered or downloaded update off until Weir offers it again"
+    )
+}
+
 /// Reusable metadata block (version / size / date) used by Available
 /// and ReadyToInstall states.
 private struct UpdateMetadata: View {
@@ -219,7 +229,7 @@ private struct AvailableView: View {
                         reply.call(.dismiss)
                         dismiss()
                     } label: {
-                        Text("Later", comment: "Update popover: remind me later")
+                        Text(UpdatePopoverText.later)
                     }
                     .buttonStyle(.bordered)
                     Spacer(minLength: 0)
@@ -321,7 +331,7 @@ private struct ReadyToInstallView: View {
                     reply.call(.dismiss)
                     dismiss()
                 } label: {
-                    Text("Later", comment: "Update popover: defer install")
+                    Text(UpdatePopoverText.later)
                 }
                 .buttonStyle(.bordered)
                 Spacer(minLength: 0)
@@ -355,7 +365,7 @@ private struct InstallingView: View {
                 Button {
                     retry.call()
                 } label: {
-                    Text("Retry", comment: "Update popover: retry quit during install")
+                    Text(CommonText.retry)
                 }
                 .buttonStyle(.borderless)
                 .controlSize(.small)
@@ -461,7 +471,7 @@ private struct ErrorView: View {
                     acknowledgement.call()
                     dismiss()
                 } label: {
-                    Text("Close", comment: "Update popover: dismiss error")
+                    Text(CommonText.close)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -469,7 +479,7 @@ private struct ErrorView: View {
                     acknowledgement.call()
                     retry()
                 } label: {
-                    Text("Retry", comment: "Update popover: retry failed check")
+                    Text(CommonText.retry)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(accent)

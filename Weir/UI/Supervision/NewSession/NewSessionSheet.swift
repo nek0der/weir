@@ -221,10 +221,8 @@ struct NewSessionSheet: View {
         "Open After Creating",
         comment: "New worktree sheet: label of what opens in the worktree once it is made"
     )
-    private static let folderLabel = LocalizedStringResource(
-        "Placement",
-        comment: "New worktree sheet: label of where the worktree's folder goes"
-    )
+    /// The project settings' word for the same choice, so the two read alike.
+    private static let folderLabel = ProjectSettingsText.placement
     /// Every label of the leading column, which sets its width.
     static let rowLabels = [sourceLabel, branchLabel, pullRequestLabel, baseLabel, openLabel, folderLabel]
 

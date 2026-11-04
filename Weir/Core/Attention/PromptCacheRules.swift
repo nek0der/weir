@@ -117,13 +117,13 @@ struct PromptCachePanelContent: Equatable {
     /// drawn in, so its unit and the sentence around it agree.
     func timeLine(now: Date, locale: Locale) -> LocalizedStringResource {
         if isExpired {
-            let ago = PromptCacheFormatting.duration(now.timeIntervalSince(window.expiresAt), locale: locale)
+            let ago = DurationText.compact(now.timeIntervalSince(window.expiresAt), locale: locale)
             return LocalizedStringResource(
                 "Expired \(ago) ago.",
                 comment: "Expired prompt cache panel; argument: a duration such as 56m"
             )
         }
-        let remaining = PromptCacheFormatting.duration(window.expiresAt.timeIntervalSince(now), locale: locale)
+        let remaining = DurationText.compact(window.expiresAt.timeIntervalSince(now), locale: locale)
         return LocalizedStringResource(
             "Expires in \(remaining).",
             comment: "Expiring prompt cache panel; argument: a duration such as 2m"

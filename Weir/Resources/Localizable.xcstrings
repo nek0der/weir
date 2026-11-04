@@ -234,7 +234,7 @@
       }
     },
     "duration.compact.now": {
-      "comment": "Sidebar row: its agent moved less than a minute ago, in the column that says the time since",
+      "comment": "Under a minute ago, in a short time column: a sidebar row, a Needs Attention row, a notification history row",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -543,7 +543,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "テスト（失敗 %lld 回）"
+            "value": "テスト（失敗 %lld 回のあと）"
           }
         }
       }
@@ -572,7 +572,7 @@
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "テスト（絞り込み、失敗 %lld 回）"
+            "value": "テスト（絞り込み、失敗 %lld 回のあと）"
           }
         }
       }
@@ -6779,28 +6779,19 @@
         }
       }
     },
-    "%lld/%lld": {
+    "- / %lld": {
+      "comment": "The find bar's matches while none is current yet; argument: how many",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%1$lld/%2$lld"
+            "value": "- / %lld"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "%1$lld / %2$lld"
-          }
-        }
-      }
-    },
-    "-/%lld": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "-/%lld"
+            "value": "- / %lld"
           }
         }
       }
@@ -7358,6 +7349,7 @@
       }
     },
     "Close": {
+      "comment": "Button: closes the popover, strip, sheet, or pane it belongs to",
       "localizations": {
         "ja": {
           "stringUnit": {
@@ -7904,22 +7896,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "今日"
-          }
-        }
-      }
-    },
-    "Try Again": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Try Again"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "再試行"
           }
         }
       }
@@ -9117,6 +9093,7 @@
       }
     },
     "Later": {
+      "comment": "Update popover: puts the offered or downloaded update off until Weir offers it again",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -9798,7 +9775,7 @@
       }
     },
     "Placement": {
-      "comment": "Project settings sheet: the menu of where new worktrees go",
+      "comment": "Where a worktree's folder goes: the project settings sheet's menu, the new worktree sheet's row label",
       "localizations": {
         "ja": {
           "stringUnit": {
@@ -10349,7 +10326,7 @@
       }
     },
     "Retry": {
-      "comment": "Update popover: retry the failed check OR retry quitting during install",
+      "comment": "Button: runs again what just failed: a pane, the approval service, an update, a new worktree's stage, the review",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -11445,18 +11422,8 @@
         }
       }
     },
-    "just now": {
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "たった今"
-          }
-        }
-      }
-    },
-    "menuBar.quit": {
-      "comment": "Menu bar item's ⋯ menu: quits the app, as the app menu's Quit does",
+    "app.quit": {
+      "comment": "Button or menu item: quits the app, as the app menu's Quit does",
       "localizations": {
         "en": {
           "stringUnit": {
@@ -11468,34 +11435,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Weir を終了"
-          }
-        }
-      }
-    },
-    "newSession.retry": {
-      "comment": "New worktree's failed stage: runs it again",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Retry"
-          }
-        },
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "再試行"
-          }
-        }
-      }
-    },
-    "now": {
-      "comment": "Notification History compact time label for entries under one minute old.",
-      "localizations": {
-        "ja": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "たった今"
           }
         }
       }
@@ -15091,7 +15030,7 @@
       }
     },
     "%lld / %lld": {
-      "comment": "Decision bar: which of the pane's items it shows",
+      "comment": "Which one of how many is shown: the decision bar's item, the find bar's match",
       "localizations": {
         "en": {
           "stringUnit": {

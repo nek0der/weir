@@ -72,11 +72,7 @@ struct SessionLaunchBar: View {
             Button {
                 launches.retry(worktreeID: launch.worktreeID, in: session, window: window.id)
             } label: {
-                Text(LocalizedStringResource(
-                    "newSession.retry",
-                    defaultValue: "Retry",
-                    comment: "New worktree's failed stage: runs it again"
-                ))
+                Text(CommonText.retry)
             }
             .buttonStyle(SupervisionPrimaryButtonStyle())
             // Out of the ⇥ order, so ⇥ stays the terminal's for its TUI.
@@ -218,42 +214,44 @@ struct SessionLaunchBar: View {
     static func noteText(_ note: SessionLaunch.Note) -> LocalizedStringResource {
         switch note {
         case let .fetch(shortfall):
-            return NewSessionModel.shortfallText(shortfall)
+            NewSessionModel.shortfallText(shortfall)
         case .ignoredFilesNotListed:
-            return LocalizedStringResource(
+            LocalizedStringResource(
                 "Couldn’t list the files Git ignores, so none were copied.",
                 comment: "New worktree: git could not list the ignored files the copy picks from, so nothing was copied in"
             )
         case let .copyFailed(paths):
             // The list is formatted when the resource is resolved, so it
             // joins in that language's way (「、」 in Japanese, not ", ").
-            return LocalizedStringResource(
+            LocalizedStringResource(
                 "Couldn’t copy \(paths, format: .list(type: .and, width: .narrow)).",
                 comment: "New worktree: files Git ignores that could not be copied in; the argument lists their paths"
             )
         case let .copySkippedOverLimit(paths, limit):
-            let size = ByteCountFormatter.string(fromByteCount: limit, countStyle: .file)
-            return LocalizedStringResource(
-                "Didn’t copy \(paths, format: .list(type: .and, width: .narrow)): the files would come to more than \(size).",
+            // The size is formatted when the resource is resolved too, so it
+            // is written in the app's language, not the process's.
+            LocalizedStringResource(
+                // swiftlint:disable:next line_length
+                "Didn’t copy \(paths, format: .list(type: .and, width: .narrow)): the files would come to more than \(limit, format: .byteCount(style: .file)).",
                 comment: "New worktree: files Git ignores left out at the copy's limit; their paths, then the limit, as in 256 MB"
             )
         case let .carryNotApplied(source):
-            return LocalizedStringResource(
+            LocalizedStringResource(
                 "Couldn’t move the changes from \(source) into this worktree. They’re still in \(source), unchanged.",
                 comment: "New worktree: the changes could not be put here; the argument, twice, is the worktree they stay in"
             )
         case let .carryLeftInSource(source):
-            return LocalizedStringResource(
+            LocalizedStringResource(
                 "Moved the changes here. \(source) changed during the move, so its changes were also left in place.",
                 comment: "New worktree: the changes came along but were not taken out of the source; the argument is the source's branch"
             )
         case let .carryPartlyCleared(source, stash?):
-            return LocalizedStringResource(
+            LocalizedStringResource(
                 "Moved the changes here. Some couldn’t be removed from \(source), so a copy was saved as the stash “\(stash)”.",
                 comment: "New worktree: the source was cleared part way; the source's branch, then the stash entry's name"
             )
         case let .carryPartlyCleared(source, nil):
-            return LocalizedStringResource(
+            LocalizedStringResource(
                 "Moved the changes here. Some couldn’t be removed from \(source).",
                 comment: "New worktree: the source was cleared part way and no copy could be stored; the argument is the source's branch"
             )
