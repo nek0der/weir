@@ -2,6 +2,7 @@
 // Weir — the Needs Attention list: every item, in arrival order, across projects.
 
 import SwiftUI
+import WeirDomain
 
 /// The list the title bar's button opens. Pressed open, no row is
 /// selected; ⌥⌘J opens it on the first. ↑↓ move; the pointer selects the
@@ -203,23 +204,35 @@ struct NeedsAttentionListView: View {
     private func perform(_ action: NeedsAttentionListModel.RowAction, on row: NeedsAttentionListModel.Row) {
         switch action {
         case let .answer(key):
-            // Answering moves neither the window nor the pane: the card
-            // opens where it is and takes the keyboard, left of the list. The
-            // two never overlap: in a window with no room beside the list, the
-            // list closes and the card takes its place under the control.
-            guard let presentation = approvals.ledger.entries[key]?.presentation else { return }
-            let hasRoom = FloatingPanelPlacement.leftOf(
-                anchor: listFrame,
-                panelSize: CGSize(width: ApprovalCardHost.cardWidth, height: 0),
-                container: CGSize(width: listFrame.maxX, height: .greatestFiniteMagnitude)
-            ) != nil
-            if hasRoom {
-                window.approvalCard.present(presentation, from: approvals, openedFrom: listFrame, standsLeftOfOpener: true)
-            } else {
-                let anchor = window.needsAttentionAnchor
-                window.titleBarMenu = nil
-                window.approvalCard.present(presentation, from: approvals, openedFrom: anchor == .zero ? nil : anchor)
-            }
+            Self.answer(key, listFrame: listFrame, in: window, approvals: approvals)
+        }
+    }
+
+    /// A row's Answer…, with the list at `listFrame`. Answering moves
+    /// neither the window nor the pane: the card opens where it is and takes
+    /// the keyboard, left of the list. The two never overlap: in a window
+    /// with no room beside the list, the list closes and the card takes its
+    /// place under the control, but only once the card has opened, so a
+    /// press that opens none leaves the list where it was.
+    static func answer(
+        _ key: ApprovalKey,
+        listFrame: CGRect,
+        in window: ProjectWindowState,
+        approvals: ApprovalPresentationStore
+    ) {
+        let hasRoom = FloatingPanelPlacement.leftOf(
+            anchor: listFrame,
+            panelSize: CGSize(width: ApprovalCardHost.cardWidth, height: 0),
+            container: CGSize(width: listFrame.maxX, height: .greatestFiniteMagnitude)
+        ) != nil
+        if hasRoom {
+            window.approvalCard.present(key: key, from: approvals, openedFrom: listFrame, standsLeftOfOpener: true)
+        } else if window.approvalCard.present(
+            key: key,
+            from: approvals,
+            openedFrom: ApprovalCardState.opener(measured: window.needsAttentionAnchor)
+        ) {
+            window.titleBarMenu = nil
         }
     }
 }

@@ -139,6 +139,19 @@ package enum ApprovalRequestState: Equatable, Sendable {
         }
     }
 
+    /// Whether Weir can answer the request on its approval card now: it
+    /// still takes a decision (`acceptsDecision`), and it is a kind Weir
+    /// answers at all (`supportsNativeAnswer`; a Codex question is not).
+    /// The one rule behind the card opening from a notification, the menu
+    /// bar, a decision bar, or going to a request no pane is known for;
+    /// behind each row's Answer…; and behind where the decision bar says a
+    /// request is answered and whether the menu bar offers Answer… on a
+    /// question. Kept here so no caller writes the two halves again and
+    /// drops one.
+    package func isAnswerableOnCard(supportsNativeAnswer: Bool) -> Bool {
+        supportsNativeAnswer && acceptsDecision
+    }
+
     /// Whether a delivered banner for the request still leads somewhere
     /// useful: to the card while it is open, or to the pane while the TUI
     /// has it. A timed-out, settled, or lost request's banner is taken

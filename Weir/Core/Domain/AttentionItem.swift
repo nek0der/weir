@@ -13,6 +13,15 @@ package enum AttentionItemID: Hashable, Codable, Sendable {
     case prompt(EpisodeKey)
     case stop(EpisodeKey)
     case unread(TurnID)
+
+    /// The request an approval or a question names; `nil` for every other
+    /// item, which has no request behind it.
+    package var requestKey: ApprovalKey? {
+        switch self {
+        case let .approval(key), let .question(key): key
+        case .prompt, .stop, .unread: nil
+        }
+    }
 }
 
 /// Where an item happened, which is where the person goes to deal with it.
@@ -274,6 +283,12 @@ package struct ApprovalFact: Equatable, Sendable {
         self.state = state
         self.deadline = deadline
     }
+
+    /// Whether Weir can answer the request on its card now
+    /// (`ApprovalRequestState.isAnswerableOnCard(supportsNativeAnswer:)`).
+    package var isAnswerableOnCard: Bool {
+        state.isAnswerableOnCard(supportsNativeAnswer: supportsNativeAnswer)
+    }
 }
 
 package enum AttentionItemKind: Equatable, Sendable {
@@ -285,6 +300,30 @@ package enum AttentionItemKind: Equatable, Sendable {
     case prompt(PromptWait)
     case stop(StopReason)
     case unread(UnreadTurn)
+
+    /// What an approval or a question knows about its request; `nil` for
+    /// every other kind, which has no request behind it.
+    package var approvalFact: ApprovalFact? {
+        switch self {
+        case let .approval(fact), let .question(fact): fact
+        case .prompt, .stop, .unread: nil
+        }
+    }
+}
+
+/// Whether a row keeps offering "Answer…" while the card is up for the
+/// request it would open (`AttentionItem.answerKey(isHeld:whileCardIsUp:)`).
+/// Each surface chooses it, not the request, so each caller passes it.
+package enum AnswerWhileCardIsUp {
+    /// The button stays, and the row is lit as the card's source instead:
+    /// the sidebar's rows, the Needs Attention list, and the all projects
+    /// cards, which the card stands beside without covering.
+    case staysOffered
+    /// The button goes while `isCardUp` says the card shows the request:
+    /// the rail's Scratch button has no row to light as the card's source,
+    /// so a second Answer… in its menu would only point at the card already
+    /// open beside the rail.
+    case hidden(isCardUp: (ApprovalKey) -> Bool)
 }
 
 /// One entry in the attention list.
@@ -315,11 +354,27 @@ package struct AttentionItem: Identifiable, Equatable, Sendable {
     /// state: a card's buttons follow the broker, not a flag someone forgot
     /// to clear.
     package var canAnswerInWeir: Bool {
-        switch kind {
-        case let .approval(fact), let .question(fact):
-            fact.supportsNativeAnswer && fact.state.acceptsDecision
-        case .prompt, .stop, .unread:
-            false
+        kind.approvalFact?.isAnswerableOnCard ?? false
+    }
+
+    /// The request a row's "Answer…" opens the card on, or `nil` when the
+    /// row offers none: the item is a request Weir can still answer on its
+    /// card (`canAnswerInWeir`), the ledger still holds it (`isHeld`), so
+    /// the card has a request to show, and the surface does not hide the
+    /// button while the card is up for it (`whileCardIsUp`). The one rule
+    /// the sidebar, the rail, the Needs Attention list (and through its
+    /// rows the menu bar), and All Projects read; every other item offers
+    /// only the row, which goes to its pane.
+    package func answerKey(
+        isHeld: (ApprovalKey) -> Bool,
+        whileCardIsUp: AnswerWhileCardIsUp
+    ) -> ApprovalKey? {
+        guard let key = kind.approvalFact?.key, canAnswerInWeir, isHeld(key) else { return nil }
+        switch whileCardIsUp {
+        case .staysOffered:
+            return key
+        case let .hidden(isCardUp):
+            return isCardUp(key) ? nil : key
         }
     }
 }

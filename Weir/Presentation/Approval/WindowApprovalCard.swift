@@ -27,7 +27,8 @@ struct ApprovalCardState: Equatable {
     /// terminal, and the person's next keys may be meant for the terminal.
     var focusesClose = false
     /// The control the card was opened from when that was not its row (the
-    /// title bar's Needs Attention list), in global coordinates. The card
+    /// Needs Attention list or its title bar button, an all projects card's
+    /// Answer…, the rail), in global coordinates. The card
     /// stands beside it instead: the row may be off screen.
     var openedFrom: CGRect?
     /// That control is a rail button: the card opens as the rail's other
@@ -47,6 +48,14 @@ struct ApprovalCardState: Equatable {
     /// Without focus it is on screen only, and keys reach the terminal,
     /// where the person may be answering the very request the card shows.
     var isFocused = false
+
+    /// The control a card is opened from, as its view measured it
+    /// (`openedFrom`). A frame never measured is `.zero`, which names no
+    /// control: the card then stands where it would with no opener, not at
+    /// the window's corner.
+    static func opener(measured frame: CGRect) -> CGRect? {
+        frame == .zero ? nil : frame
+    }
 }
 
 /// One window's approval card and the frames of its sidebar's request rows
@@ -83,11 +92,15 @@ final class WindowApprovalCard {
         }
     }
 
-    /// Opens the card on `approval`, when its request may still show one.
+    /// Opens the card on the request `key` names, while the ledger still
+    /// holds a card open for it (`ApprovalPresentationStore.cardRequest`);
+    /// returns whether the card shows it now. The one way a card opens: a
+    /// caller passes the key and never looks the request up itself.
     /// `openedFrom` is the control the card was asked for from, when that is
     /// not the request's row (`ApprovalCardState.openedFrom`).
+    @discardableResult
     func present(
-        _ approval: ApprovalPresentation,
+        key: ApprovalKey,
         from approvals: ApprovalPresentationStore,
         shouldFocusCard: Bool = true,
         openedFrom: CGRect? = nil,
@@ -95,8 +108,8 @@ final class WindowApprovalCard {
         standsLeftOfOpener: Bool = false,
         openedFromPane: UUID? = nil,
         focusesClose: Bool = false
-    ) {
-        guard approvals.approvalForCard(approval.id) != nil else { return }
+    ) -> Bool {
+        guard let approval = approvals.cardRequest(for: key) else { return false }
         update { card in
             card.focusesClose = focusesClose
             card.openedFrom = openedFrom
@@ -113,6 +126,27 @@ final class WindowApprovalCard {
             card.presentedID = approval.id
             card.cardFocusRequestID = shouldFocusCard ? approval.id : nil
         }
+        return true
+    }
+
+    /// Opens the card on `key` only while Weir can answer the request on it
+    /// (`ApprovalPresentationStore.opensCard`); returns whether it did. For
+    /// the routes that read the request at the moment they are used, not
+    /// from what was drawn earlier: a notification, the menu bar's Answer…,
+    /// going to a request no pane is known for (⌘J or a list row), and a
+    /// decision bar. A row's Answer… was drawn by the same rule
+    /// (`AttentionItem.answerKey`) and opens through `present(key:from:)`.
+    /// A request Weir can no longer answer opens nothing here: the caller
+    /// takes the person to its pane, or there is none to take them to.
+    @discardableResult
+    func presentToAnswer(
+        key: ApprovalKey,
+        from approvals: ApprovalPresentationStore,
+        openedFromPane: UUID? = nil,
+        focusesClose: Bool = false
+    ) -> Bool {
+        guard approvals.opensCard(key) else { return false }
+        return present(key: key, from: approvals, openedFromPane: openedFromPane, focusesClose: focusesClose)
     }
 
     func dismiss() {

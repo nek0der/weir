@@ -654,9 +654,9 @@ struct SessionSidebarView: View {
     /// while the card is up for it, and the row is lit instead
     /// (`isCardSource`).
     private func answerAction(_ row: SessionSidebarModel.Row) -> (() -> Void)? {
-        guard let key = row.answerKey, let request = approvals.ledger.entries[key]?.presentation else { return nil }
+        guard let key = row.answerKey else { return nil }
         return { [window, approvals] in
-            window.approvalCard.present(request, from: approvals)
+            window.approvalCard.present(key: key, from: approvals)
         }
     }
 

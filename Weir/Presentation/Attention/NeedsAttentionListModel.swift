@@ -210,16 +210,13 @@ struct NeedsAttentionListModel: Equatable {
     }
 
     /// "Answer…" needs the request the card would show, and a broker that
-    /// still takes a decision for it. Every other item offers only the row,
-    /// which goes to its pane, where one answered at the agent's own prompt
-    /// (`AttentionItem.requiresTerminalAnswer`) is answered.
+    /// still takes a decision for it (`AttentionItem.answerKey`). The row
+    /// keeps it while the card is up, lit as the card's source. Every other
+    /// item offers only the row, which goes to its pane, where one answered
+    /// at the agent's own prompt (`AttentionItem.requiresTerminalAnswer`)
+    /// is answered.
     private static func action(for item: AttentionItem, hasRequest: (ApprovalKey) -> Bool) -> RowAction? {
-        switch item.kind {
-        case let .approval(fact), let .question(fact):
-            item.canAnswerInWeir && hasRequest(fact.key) ? .answer(fact.key) : nil
-        case .prompt, .stop, .unread:
-            nil
-        }
+        item.answerKey(isHeld: hasRequest, whileCardIsUp: .staysOffered).map(RowAction.answer)
     }
 
     private static func fact(of item: AttentionItem, request: (ApprovalKey) -> RequestText?) -> Fact {

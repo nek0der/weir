@@ -329,6 +329,10 @@ package struct DecisionBarContent: Equatable, Sendable {
     }
 
     private static func answerPlace(of fact: ApprovalFact) -> AnswerPlace {
+        // The card, by the rule every route to the card reads.
+        if fact.isAnswerableOnCard {
+            return .card(heldUntil: fact.deadline)
+        }
         // A request Weir can never answer (a Codex question) is the TUI's,
         // however Weir holds it.
         guard fact.supportsNativeAnswer else { return .terminal }
@@ -338,11 +342,10 @@ package struct DecisionBarContent: Equatable, Sendable {
             .terminal
         case .sending:
             .sending
-        case .held, .sendFailed:
-            .card(heldUntil: fact.deadline)
         case .timedOut:
             .terminalAfterTimeout
-        case .handedToTerminal, .withdrawn, .unknownResult, .answered:
+        // `held` and `sendFailed` are answerable on the card, taken above.
+        case .held, .sendFailed, .handedToTerminal, .withdrawn, .unknownResult, .answered:
             .terminal
         }
     }

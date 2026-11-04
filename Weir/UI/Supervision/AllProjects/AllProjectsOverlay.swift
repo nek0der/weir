@@ -519,8 +519,7 @@ private struct AllProjectsCardView: View {
     private func perform(_ action: AllProjectsModel.Action) {
         switch action {
         case let .answer(key):
-            guard let request = approvals.ledger.entries[key]?.presentation else { return }
-            window.approvalCard.present(request, from: approvals, openedFrom: actionFrame)
+            AllProjectsActions.answer(key, actionFrame: actionFrame, in: window, approvals: approvals)
         case .openPane:
             AllProjectsActions.open(card, from: window, stores: state.allProjectsStores)
         }

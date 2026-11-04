@@ -31,7 +31,11 @@ extension AppState: AttentionNavigating {
     }
 
     /// Opens the item's pane. A request no pane is known for opens its card
-    /// instead, the one place it can be answered from.
+    /// instead, the one place it can be answered from, but only while Weir
+    /// can still answer it there (`WindowApprovalCard.presentToAnswer`). Any
+    /// other request (handed to the terminal, timed out, sending, or a Codex
+    /// question) has no pane to go to and no card that could answer it, so
+    /// nothing opens.
     func go(to item: AttentionItem, opensTurnReview: Bool, in window: ProjectWindowState?) {
         // `presentWindow(for:from:)` returns none only for a window that
         // closed or a project gone, where the list falls back to the window
@@ -48,14 +52,7 @@ extension AppState: AttentionNavigating {
                 openReviewTab(for: turn, paneID: paneID, in: target)
             }
         case .unplaced:
-            switch item.id {
-            case let .approval(key), let .question(key):
-                if let approval = approvalPresentation.ledger.entries[key]?.presentation {
-                    target.approvalCard.present(approval, from: approvalPresentation)
-                }
-            case .prompt, .stop, .unread:
-                break
-            }
+            Self.openCard(forUnplaced: item, in: target, approvals: approvalPresentation)
         case let .sessionRow(projectID, _):
             // The row of the new session that stopped: its decision line
             // under the terminal says what failed and offers the retry.
@@ -67,6 +64,19 @@ extension AppState: AttentionNavigating {
             // The row's line under its terminal is in front, not a review.
             reviewTargetMove.toContainer(.worktree(projectID: projectID, worktreeID: worktree.id), in: target)
         }
+    }
+
+    /// Opens the card in `window` for a request no pane is known for, only
+    /// while Weir can answer the request on it
+    /// (`WindowApprovalCard.presentToAnswer`). Static so a suite with no app
+    /// behind it can test the branch `go(to:opensTurnReview:in:)` takes.
+    static func openCard(
+        forUnplaced item: AttentionItem,
+        in window: ProjectWindowState,
+        approvals: ApprovalPresentationStore
+    ) {
+        guard let key = item.id.requestKey else { return }
+        window.approvalCard.presentToAnswer(key: key, from: approvals)
     }
 
     /// "Open review when moving to an unread turn": the window's review

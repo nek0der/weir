@@ -189,9 +189,13 @@ extension WindowProjectSwitchTests {
         // The menu bar's "Answer…" for a request of `b`: the card opens over the
         // window commands act on, brought back, on the project it shows.
         fixture.registry.hide(other.id)
-        let answered = MenuBarActions.answerWindow(registry: fixture.registry)
+        let approvals = ApprovalPresentationStore()
+        let request = ApprovalPresentation.test()
+        approvals.receive([request])
 
-        #expect(answered === fixture.primary)
+        #expect(fixture.registry.presentApprovalCardFromOutside(key: request.key, from: approvals))
+        #expect(fixture.primary.approvalCard.isPresenting(request.key, in: approvals))
+        #expect(!other.approvalCard.isOpen(in: approvals))
         #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
         #expect(other.selection.shownProjectID == fixture.c.id)
         #expect(fixture.presenter.shown.isEmpty)
@@ -199,10 +203,22 @@ extension WindowProjectSwitchTests {
 
         // Minimized, the window is taken out of the Dock for the card, and
         // still not switched.
+        fixture.primary.approvalCard.dismiss()
         fixture.presenter.onScreen.remove(fixture.primary.id)
-        #expect(MenuBarActions.answerWindow(registry: fixture.registry) === fixture.primary)
+        #expect(fixture.registry.presentApprovalCardFromOutside(key: request.key, from: approvals))
+        #expect(fixture.primary.approvalCard.isPresenting(request.key, in: approvals))
         #expect(fixture.presenter.shown == [fixture.primary.id])
         #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
+
+        // A request Weir can no longer answer on the card opens nothing,
+        // and brings no window back.
+        fixture.primary.approvalCard.dismiss()
+        fixture.presenter.onScreen.remove(fixture.primary.id)
+        fixture.presenter.shown = []
+        approvals.ledger.record(.deadlinePassed, for: request.id, now: SuspendingClock.now)
+        #expect(!fixture.registry.presentApprovalCardFromOutside(key: request.key, from: approvals))
+        #expect(!fixture.primary.approvalCard.isOpen(in: approvals))
+        #expect(fixture.presenter.shown.isEmpty)
     }
 
     @Test func aMinimizedWindow_switchedFromOutside_comesOutOfTheDock() {

@@ -213,11 +213,10 @@ struct SupervisionWindowView: View {
                     stores: state.reviewTabStores
                 )
             case .approvalCard:
-                let anchor = window.needsAttentionAnchor
                 window.approvalCard.present(
-                    DemoFixture.stagedApproval,
+                    key: DemoFixture.stagedApproval.key,
                     from: state.approvalPresentation,
-                    openedFrom: anchor == .zero ? nil : anchor
+                    openedFrom: ApprovalCardState.opener(measured: window.needsAttentionAnchor)
                 )
             }
         }

@@ -570,18 +570,6 @@ enum SupervisionWindowActions {
         }
     }
 
-    /// The held request an approval or a question item names, while Weir
-    /// can still answer it on the card.
-    private static func heldRequest(_ itemID: AttentionItemID, state: AppState) -> ApprovalPresentation? {
-        switch itemID {
-        case let .approval(key), let .question(key):
-            guard state.approvalPresentation.opensCard(key) else { return nil }
-            return state.approvalPresentation.ledger.entries[key]?.presentation
-        case .prompt, .stop, .unread:
-            return nil
-        }
-    }
-
     /// "Answer…" on an approval or a question Weir holds: its card, standing
     /// on the pane's bar next to the button, pressed or reached with ⌘⏎. The
     /// keyboard lands on the card's Close, not on Deny: the key that opened
@@ -593,9 +581,13 @@ enum SupervisionWindowActions {
         window: ProjectWindowState,
         state: AppState
     ) -> Bool {
-        guard let request = heldRequest(itemID, state: state) else { return false }
-        window.approvalCard.present(request, from: state.approvalPresentation, openedFromPane: paneID, focusesClose: true)
-        return true
+        guard let key = itemID.requestKey else { return false }
+        return window.approvalCard.presentToAnswer(
+            key: key,
+            from: state.approvalPresentation,
+            openedFromPane: paneID,
+            focusesClose: true
+        )
     }
 
     /// The ⋯ "Answer in terminal" on an approval or a question Weir holds:
@@ -603,7 +595,8 @@ enum SupervisionWindowActions {
     /// that shows it, as the card's own button does. The bar stands under
     /// that pane, but the keyboard may be in another split or tmux pane.
     private static func answerInTerminal(_ itemID: AttentionItemID, window: ProjectWindowState, state: AppState) {
-        guard let request = heldRequest(itemID, state: state) else { return }
+        let approvals = state.approvalPresentation
+        guard let key = itemID.requestKey, approvals.opensCard(key), let request = approvals.cardRequest(for: key) else { return }
         state.approvalPresentation.resolve(request, .delegate)
         if let item = state.attentionQueue.item(for: request.key), item.subject.paneID != nil {
             state.attentionQueue.focus(item, from: window)

@@ -103,8 +103,7 @@ private struct RailScratchContent: View, Equatable {
     private var answerAction: (() -> Void)? {
         guard let key = model.answerKey else { return nil }
         return { [window, approvals] in
-            guard let request = approvals.ledger.entries[key]?.presentation else { return }
-            window.approvalCard.present(request, from: approvals, openedFrom: frame, isOpenedFromRail: true)
+            window.approvalCard.present(key: key, from: approvals, openedFrom: frame, isOpenedFromRail: true)
         }
     }
 
