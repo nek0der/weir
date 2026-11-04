@@ -4,13 +4,20 @@
 import Foundation
 
 /// `@unchecked Sendable` because `NSXPCConnection` is not marked `Sendable`.
-/// It is safe: the client holds only constants, `NSXPCConnection` may be
+/// It is safe: apart from `isInvalidated`, which is read and written only
+/// under `lock`, the client holds only constants, `NSXPCConnection` may be
 /// messaged and invalidated from any thread, and each call keeps its result
 /// in a box of its own behind a lock. That lets the app block on a call off
 /// the cooperative pool and invalidate it from a cancellation handler.
 final class AgentIntegrationXPCClient: @unchecked Sendable {
     private let connection: NSXPCConnection
     private let timeoutSeconds: Int
+    private let lock = NSLock()
+    /// Set by `invalidate()`. We keep it ourselves rather than leave a later
+    /// call to find out from XPC: XPC reports an invalidated connection by
+    /// running the call's error handler on its own queue, which on a busy
+    /// machine can take seconds.
+    private var isInvalidated = false
 
     convenience init(role: AgentIntegrationRole, timeoutSeconds: Int = 5) throws {
         let machService = switch role {
@@ -43,8 +50,10 @@ final class AgentIntegrationXPCClient: @unchecked Sendable {
 
     /// Ends the connection. A call blocked waiting for its reply fails at
     /// once, because invalidating runs the error handler of every
-    /// outstanding call, and any later call fails as soon as it is made.
+    /// outstanding call. Any later call fails as soon as it is made, because
+    /// it checks `isInvalidated` before it asks the connection for a proxy.
     func invalidate() {
+        lock.withLock { isInvalidated = true }
         connection.invalidate()
     }
 
@@ -76,6 +85,12 @@ final class AgentIntegrationXPCClient: @unchecked Sendable {
         timeoutSeconds: Int? = nil,
         _ body: (any AgentIntegrationXPCProtocol, @escaping (Data?, NSError?) -> Void) -> Void
     ) throws -> Data {
+        // A call that passes this check just before `invalidate()` still
+        // ends at once: it is then outstanding, and XPC runs its error
+        // handler.
+        guard !lock.withLock({ isInvalidated }) else {
+            throw AgentIntegrationError.requestFailed("The connection was invalidated.")
+        }
         let result = AgentIntegrationResultBox<Data>()
         let semaphore = DispatchSemaphore(value: 0)
         guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
