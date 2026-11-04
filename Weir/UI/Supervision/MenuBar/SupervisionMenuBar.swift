@@ -129,7 +129,7 @@ struct MenuBarLampImage: View, Equatable {
 ///
 /// The window wears the system's appearance, not the app's: the menu bar
 /// is the system's chrome, and the menus beside this one follow the OS
-/// setting (`MenuBarAppearance`). The app pins `NSApp.appearance` to its
+/// setting (`SystemAppearance`). The app pins `NSApp.appearance` to its
 /// own preference, which every window inherits; this one is handed the
 /// system's as it comes to its window, and again as the system switches.
 struct SupervisionMenuBarContent: View {
@@ -143,7 +143,7 @@ struct SupervisionMenuBarContent: View {
     /// reached and not to the one the pointer lit: scrolling under the
     /// pointer would light another row, and scroll again.
     @State private var keyboardMoves = 0
-    @State private var isSystemDark = MenuBarAppearance.isSystemDark()
+    @State private var isSystemDark = SystemAppearance.isSystemDark()
     @State private var moreMenuOpener = PopUpMenuOpener()
     @FocusState private var isFocused: Bool
 
@@ -260,9 +260,9 @@ struct SupervisionMenuBarContent: View {
         }
         // The system can post this before it has written the new style;
         // reading on the next turn sees it written.
-        .onReceive(DistributedNotificationCenter.default().publisher(for: MenuBarAppearance.themeChangedNotification)) { _ in
+        .onReceive(DistributedNotificationCenter.default().publisher(for: SystemAppearance.themeChangedNotification)) { _ in
             Task { @MainActor in
-                isSystemDark = MenuBarAppearance.isSystemDark()
+                isSystemDark = SystemAppearance.isSystemDark()
             }
         }
         .onChange(of: isSystemDark) { _, _ in
@@ -303,12 +303,12 @@ struct SupervisionMenuBarContent: View {
     }
 
     /// The scheme the menu's content draws in: the system's
-    /// (`MenuBarAppearance`), the same as its window's.
+    /// (`SystemAppearance`), the same as its window's.
     static func colorScheme(isSystemDark: Bool) -> ColorScheme {
         isSystemDark ? .dark : .light
     }
 
-    /// Hands `window` the system's appearance (`MenuBarAppearance`), over
+    /// Hands `window` the system's appearance (`SystemAppearance`), over
     /// the app's that it inherits from `NSApp.appearance`.
     private func applySystemAppearance(to window: NSWindow?) {
         window?.appearance = NSAppearance(named: isSystemDark ? .darkAqua : .aqua)

@@ -26,13 +26,16 @@ fixtures/
 
 `contract/shared-values.json` holds the values each side defines for itself
 but the other depends on: the broker's decision limit, the projection input
-limit, the routing file's name, the pane id variable, the event a Codex turn
-ends with, which run states count as at work, and the folder a branch's worktree gets under each placement. The
-bridge's `contract_tests` and the app's `SharedValuesContractTests` each
-compare their own constants with the file (the worktree folders from the hook's
-own `worktree.rs` tests, because the rule is private to that crate), so a value
-changed on one side fails that side's tests until the file, and with it the
-other side, changes too.
+limit, the longest resolved title, the routing file's name, the pane id
+variable, the event a Codex turn ends with, which run states count as at work,
+the folder a branch's worktree gets under each placement (and the branches that
+get none), the Git variables cleared before running in a repository, and the
+usage limit scopes and window names. The bridge's `contract_tests` and the
+app's `SharedValuesContractTests` each compare their own constants with the
+file (the worktree folders from the hook's own `worktree.rs` tests and the Git
+variables from its `git.rs` tests, because those are private to that crate), so
+a value changed on one side fails that side's tests until the file, and with it
+the other side, changes too.
 
 `restore/` is read by two suites: the Rust model's `restore.rs` tests check
 that what it writes equals each file, and the app's

@@ -84,7 +84,7 @@ enum CommitAndPRActions {
         let pane = if let conversation {
             ChangesPanelActions.pane(of: conversation, window: window, stores: stores.changes)
         } else {
-            stores.changes.session.activeTab(in: window.id)?.splitTree.effectiveFocusedLeafID
+            stores.changes.session.focusedPaneID(in: window.id)
         }
         Task {
             await stores.changes.openReview(.uncommitted, pane, conversation, window)
@@ -131,11 +131,6 @@ enum CommitAndPRActions {
                 locale: locale
             ))
         }
-        return .confirm(DeleteWorktreeTarget(
-            projectID: projectID,
-            worktreeID: worktreeID,
-            label: worktree.label,
-            path: worktree.workingDirectory
-        ))
+        return .confirm(DeleteWorktreeTarget(projectID: projectID, worktree: worktree))
     }
 }

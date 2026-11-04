@@ -113,9 +113,9 @@ enum StopReasonText {
             LocalizedStringResource("5-hour limit", comment: "The plan's limit over five hours, as in 5-hour limit reached")
         case PlanUsageWindow.sevenDay:
             LocalizedStringResource("Weekly limit", comment: "The plan's limit over a week, as in Weekly limit reached")
-        case "seven_day_opus":
+        case PlanUsageWindow.sevenDayOpus:
             LocalizedStringResource("Opus weekly limit", comment: "The plan's weekly limit of the Opus model; Opus is a product name")
-        case "seven_day_sonnet":
+        case PlanUsageWindow.sevenDaySonnet:
             LocalizedStringResource("Sonnet weekly limit", comment: "The plan's weekly limit of the Sonnet model; Sonnet is a product name")
         default:
             LocalizedStringResource("Usage limit", comment: "The plan's usage limit, of a kind not named, as in Usage limit reached")

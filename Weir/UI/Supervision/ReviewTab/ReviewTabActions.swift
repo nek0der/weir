@@ -61,7 +61,7 @@ enum ReviewTabActions {
             containerID: window.selection.activeContainerID,
             tabID: window.selection.activeTabID
         )
-        let paneID = stores.session.activeTab(in: window.id)?.splitTree.effectiveFocusedLeafID
+        let paneID = stores.session.focusedPaneID(in: window.id)
         let found = await window.openingReview(request) { () -> URL? in
             let root = await root(for: paneID, window: window, stores: stores)
             return isCurrent(request, window: window, session: stores.session) ? root : nil
@@ -258,7 +258,7 @@ enum ReviewTabActions {
         guard isShown else { return }
         window.review?.isShown = false
         ReviewPresentationCommand.reveal(session: session, window: window.id, paneVisibility: paneVisibility)
-        if let pane = session.activeTab(in: window.id)?.splitTree.effectiveFocusedLeafID {
+        if let pane = session.focusedPaneID(in: window.id) {
             focus(pane, registry: registry)
         }
     }

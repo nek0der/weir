@@ -95,13 +95,27 @@ enum ReviewDiffParser {
                     }
                     return value
                 }
-                oldLine = try number(1, default: 0)
-                oldRemaining = try number(2, default: 1)
-                newLine = try number(3, default: 0)
-                newRemaining = try number(4, default: 1)
+                let header = try ReviewHunkHeader(
+                    oldStart: number(1, default: 0),
+                    oldCount: number(2, default: 1),
+                    newStart: number(3, default: 0),
+                    newCount: number(4, default: 1)
+                )
+                oldLine = header.oldStart
+                oldRemaining = header.oldCount
+                newLine = header.newStart
+                newRemaining = header.newCount
                 isInHunk = true
                 hunkIndex = hunkIndex.map { $0 + 1 } ?? 0
-                rows.append(ReviewLine(id: rows.count, kind: .hunk, text: line, oldLine: nil, newLine: nil, hunkIndex: hunkIndex))
+                rows.append(ReviewLine(
+                    id: rows.count,
+                    kind: .hunk,
+                    text: line,
+                    oldLine: nil,
+                    newLine: nil,
+                    hunkIndex: hunkIndex,
+                    hunkHeader: header
+                ))
                 continue
             } else if line.hasPrefix("\\ No newline at end of file") {
                 guard isInHunk else { throw ReviewError.invalidDiff }

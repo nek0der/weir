@@ -56,11 +56,7 @@ extension AppState: AttentionNavigating {
         case let .sessionRow(projectID, _):
             // The row of the new session that stopped: its decision line
             // under the terminal says what failed and offers the retry.
-            guard let projectID,
-                  let worktree = session.project(projectID)?.worktrees.first(where: {
-                      item.subject.isSessionRow(at: $0.workingDirectory)
-                  })
-            else { return }
+            guard let projectID, let worktree = session.worktree(forSessionRow: item.subject) else { return }
             // The row's line under its terminal is in front, not a review.
             reviewTargetMove.toContainer(.worktree(projectID: projectID, worktreeID: worktree.id), in: target)
         }

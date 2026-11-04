@@ -608,11 +608,8 @@ enum SupervisionWindowActions {
     /// menu asks.
     private static func closeAllTabs(_ itemID: AttentionItemID, window: ProjectWindowState, state: AppState) -> Bool {
         guard let item = state.attentionQueue.queue.item(itemID),
-              case let .sessionRow(projectID?, root) = item.subject,
-              let project = state.session.projects.first(where: { $0.id == projectID }),
-              let worktree = project.worktrees.first(where: {
-                  $0.workingDirectory.standardizedFileURL == root.standardizedFileURL
-              })
+              case let .sessionRow(projectID?, _) = item.subject,
+              let worktree = state.session.worktree(forSessionRow: item.subject)
         else { return false }
         let container = ContainerID.worktree(projectID: projectID, worktreeID: worktree.id)
         guard !state.session.tabs(in: container).isEmpty else { return false }

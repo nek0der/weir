@@ -75,7 +75,7 @@ enum ReviewExpansionPlan {
         var result: [ReviewGap] = []
         var previousEnd: (old: Int, new: Int)?
         for line in lines where line.kind == .hunk {
-            guard let header = header(line.text) else { continue }
+            guard let header = line.hunkHeader else { continue }
             let start = previousEnd.map { $0.new + 1 } ?? 1
             if header.newStart > start {
                 result.append(ReviewGap(
@@ -209,35 +209,5 @@ enum ReviewExpansionPlan {
             newLine: number,
             isExpansion: true
         )
-    }
-
-    /// `@@ -a,b +c,d @@`, with either count omitted meaning one line.
-    ///
-    /// Read here rather than kept from the parse: the numbers are only needed
-    /// where a reader asks for more of the file, and carrying four more fields
-    /// on every line of every diff to save this is the wrong trade.
-    static func header(_ text: String) -> Header? {
-        let fields = text.split(separator: " ")
-        guard fields.count >= 3, fields[0] == "@@" else { return nil }
-        guard let old = pair(fields[1], sign: "-"), let new = pair(fields[2], sign: "+") else { return nil }
-        return Header(oldStart: old.start, oldCount: old.count, newStart: new.start, newCount: new.count)
-    }
-
-    /// Where one hunk sits on each side, which is all a gap needs to place
-    /// itself and to number the lines it holds.
-    struct Header: Equatable {
-        let oldStart: Int
-        let oldCount: Int
-        let newStart: Int
-        let newCount: Int
-    }
-
-    private static func pair(_ field: Substring, sign: Character) -> (start: Int, count: Int)? {
-        guard field.first == sign else { return nil }
-        let numbers = field.dropFirst().split(separator: ",")
-        guard let start = Int(numbers.first ?? ""), start >= 0 else { return nil }
-        guard numbers.count > 1 else { return (start, 1) }
-        guard let count = Int(numbers[1]), count >= 0 else { return nil }
-        return (start, count)
     }
 }

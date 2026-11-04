@@ -188,7 +188,8 @@ enum PlanUsageText {
     /// length with no name of its own (`minutes_1440`) is named by that
     /// length ("1-day limit").
     static func windowName(_ kind: String, locale: Locale) -> LocalizedStringResource {
-        guard kind.hasPrefix(minutesPrefix), let minutes = Int(kind.dropFirst(minutesPrefix.count)), minutes > 0 else {
+        let prefix = PlanUsageWindow.minutesPrefix
+        guard kind.hasPrefix(prefix), let minutes = Int(kind.dropFirst(prefix.count)), minutes > 0 else {
             return StopReasonText.limitName(kind)
         }
         let length = Duration.seconds(minutes * 60).formatted(
@@ -199,10 +200,6 @@ enum PlanUsageText {
             comment: "Plan usage window of a length with no name of its own; argument: the length (1d, 12h)"
         )
     }
-
-    /// How the Rust side names a window by its length alone
-    /// (`weir_provider_codex::rate_limits`).
-    private static let minutesPrefix = "minutes_"
 
     static let reset = LocalizedStringResource(
         "usage.window.reset",

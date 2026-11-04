@@ -67,13 +67,23 @@ struct VoiceOverWordingTests {
         )
     }
 
-    @Test func aHunksComment_isNamedByItsLine_notItsHeader() {
-        #expect(ReviewHunkCommentText
-            .commentLabel(header: "@@ -3,3 +5,4 @@ func foo()", locale: Self.english) == "Comment on the Hunk at Line 5")
-        #expect(ReviewHunkCommentText.commentLabel(header: "@@ -3 +5 @@", locale: Self.japanese) == "5 行目からのハンクにコメント")
-        #expect(ReviewHunkCommentText.commentLabel(header: "", locale: Self.english) == "Comment")
+    @Test func aHunksComment_isNamedByItsLine_notItsHeader() throws {
+        /// The header the parse reads off a hunk's `@@` line.
+        func header(_ line: String, _ body: String) throws -> ReviewHunkHeader? {
+            try ReviewDiffParser.parse("\(line)\n\(body)").first?.hunkHeader
+        }
+        #expect(try ReviewHunkCommentText.commentLabel(
+            header: header("@@ -3,3 +5,4 @@ func foo()", " a\n b\n+c\n d"),
+            locale: Self.english
+        ) == "Comment on the Hunk at Line 5")
         #expect(
-            ReviewHunkCommentText.commentLabel(header: "@@ -1,3 +0,0 @@", locale: Self.english) == "Comment on the Hunk at Line 1",
+            try ReviewHunkCommentText.commentLabel(header: header("@@ -3 +5 @@", " a"), locale: Self.japanese)
+                == "5 行目からのハンクにコメント"
+        )
+        #expect(ReviewHunkCommentText.commentLabel(header: nil, locale: Self.english) == "Comment")
+        #expect(
+            try ReviewHunkCommentText.commentLabel(header: header("@@ -1,3 +0,0 @@", "-a\n-b\n-c"), locale: Self.english)
+                == "Comment on the Hunk at Line 1",
             "a deleted file's hunk is named by its old side"
         )
     }

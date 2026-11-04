@@ -65,11 +65,10 @@ extension WorkspaceSession {
         case .loose:
             return nil
         case let .project(pid):
-            return projects.first(where: { $0.id == pid })?.rootURL
+            return project(pid)?.rootURL
         case let .worktree(pid, wid):
-            let project = projects.first(where: { $0.id == pid })
-            let worktree = project?.worktrees.first(where: { $0.id == wid })
-            return worktree?.workingDirectory ?? project?.rootURL
+            let project = self.project(pid)
+            return project?.worktree(wid)?.workingDirectory ?? project?.rootURL
         }
     }
 

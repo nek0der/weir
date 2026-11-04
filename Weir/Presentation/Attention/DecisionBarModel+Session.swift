@@ -37,8 +37,7 @@ extension DecisionBarModel {
     @MainActor
     init?(paneID: UUID, sources: Sources, locale: Locale) {
         let items = Self.items(in: paneID, queue: sources.queue, session: sources.session)
-        guard let agent = Self.agent(in: paneID, runtimes: sources.runtimes, session: sources.session) ?? Self.stoppedAgent(in: items)
-        else { return nil }
+        guard let agent = Self.barAgent(in: paneID, items: items, runtimes: sources.runtimes, session: sources.session) else { return nil }
         let approvalActions = Dictionary(uniqueKeysWithValues: items.compactMap { item -> (ApprovalKey, PromptApproval.Action)? in
             guard case let .approval(fact) = item.kind,
                   let request = sources.approvals.entries[fact.key]?.presentation
@@ -157,11 +156,28 @@ extension DecisionBarModel {
         return nil
     }
 
+    /// The agent a pane's bar speaks for, `nil` for a pane with no bar: the
+    /// one running there, else the one a stop among `items` (the pane's)
+    /// keeps after its run is gone. The one test the bar's model and
+    /// `hasBar` make, so ⌘⏎ is kept from the terminal exactly where a bar
+    /// is drawn.
+    @MainActor
+    static func barAgent(
+        in paneID: UUID,
+        items: [AttentionItem],
+        runtimes: [AgentRuntimePresentation],
+        session: WorkspaceSession
+    ) -> SessionRowFact.Agent? {
+        agent(in: paneID, runtimes: runtimes, session: session) ?? stoppedAgent(in: items)
+    }
+
     /// Whether the pane has a bar: an agent runs there, or a stop of one
-    /// waits. ⌘⏎ is kept from the terminal there.
+    /// waits. ⌘⏎ is kept from the terminal there. The pane's own items are
+    /// enough: the stop of a missing worktree the bar also shows is a
+    /// session row's, which names no agent.
     @MainActor
     static func hasBar(in paneID: UUID, runtimes: [AgentRuntimePresentation], session: WorkspaceSession, queue: AttentionQueue) -> Bool {
-        agent(in: paneID, runtimes: runtimes, session: session) != nil || stoppedAgent(in: queue.items(inPane: paneID)) != nil
+        barAgent(in: paneID, items: queue.items(inPane: paneID), runtimes: runtimes, session: session) != nil
     }
 
     /// The receipt of the latest turn of the conversation the pane's agent

@@ -33,7 +33,7 @@ final class AttentionQueueStore {
     func peekNext(from window: ProjectWindowState) -> (item: AttentionItem, windowProjectID: UUID?)? {
         let projectID = navigator?.projectID(of: window)
         let (_, id) = AttentionCursor.step(window.cursor, queue: queue, currentProjectID: projectID, forward: true)
-        guard let item = queue.items.first(where: { $0.id == id }) else { return nil }
+        guard let id, let item = queue.item(id) else { return nil }
         return (item, projectID)
     }
 
@@ -53,7 +53,7 @@ final class AttentionQueueStore {
         let projectID = navigator?.projectID(of: window)
         let (cursor, id) = AttentionCursor.step(window.cursor, queue: queue, currentProjectID: projectID, forward: forward)
         window.cursor = cursor
-        guard let id, let item = queue.items.first(where: { $0.id == id }) else { return }
+        guard let id, let item = queue.item(id) else { return }
         let shown = navigator?.presentWindow(for: item, from: window) ?? window
         Self.closeSheets(over: [window, shown])
         show(item, onBarIn: shown)

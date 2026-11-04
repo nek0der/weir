@@ -297,10 +297,7 @@ package struct DecisionBarContent: Equatable, Sendable {
     /// The agent waits for the next prompt, so what it last did is what the
     /// bar has to say. While it works, what it is doing says more.
     private static func isAtRest(_ agent: SessionRowFact.Agent?) -> Bool {
-        switch agent?.state {
-        case .finished, .idle: true
-        default: false
-        }
+        agent?.state.isAtPrompt ?? false
     }
 
     private static func arrivalOrder(_ items: [AttentionItem]) -> [AttentionItem] {

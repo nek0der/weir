@@ -147,11 +147,6 @@ package struct SessionRowFact: Equatable, Sendable {
             self.runtimeID = runtimeID
         }
 
-        /// Whether it runs a turn: running, or compacting.
-        var isRunningATurn: Bool {
-            state == .running || state == .compacting
-        }
-
         /// Whether it rests finished with work still running that its turn
         /// left (`backgroundWork`). Only a finished run counts: the rules
         /// pass the count to the badge only then, and a run back at work is
@@ -222,7 +217,7 @@ package struct SessionRowFact: Equatable, Sendable {
     /// asked for, and above a plain rest, so the row's mark of it and the
     /// line beside it are the same agent's.
     package static func leadAgentIndex(of agents: [Agent]) -> Int? {
-        agents.firstIndex(where: \.isRunningATurn)
+        agents.firstIndex(where: \.state.isWorking)
             ?? agents.firstIndex(where: \.isWorkingAfterTurn)
             ?? (agents.isEmpty ? nil : 0)
     }
@@ -247,7 +242,7 @@ package struct SessionRowFact: Equatable, Sendable {
             return fact(for: item, requestText: input.requestText)
         }
         let lead = leadAgentIndex(of: input.agents).map { input.agents[$0] }
-        if let agent = lead, agent.isRunningATurn {
+        if let agent = lead, agent.state.isWorking {
             return Self(
                 glyph: .running,
                 fact: agent.state == .compacting ? .compacting : .running(nonEmpty(agent.detail)),
@@ -326,11 +321,11 @@ package struct SessionRowFact: Equatable, Sendable {
     /// at the agent's prompt is the approval or question its record says,
     /// else a wait for a response we cannot name.
     package static func glyph(of kind: AttentionItemKind) -> Glyph {
-        switch kind {
-        case .question, .prompt(.question): .needsAnswer
-        case .approval, .prompt(.approval): .needsApproval
-        case .prompt(.unclassified): .needsResponse
-        case .prompt(.signIn): .needsSignIn
+        switch kind.category {
+        case .question: .needsAnswer
+        case .approval: .needsApproval
+        case .response: .needsResponse
+        case .signIn: .needsSignIn
         case .stop: .stopped
         case .unread: .unread
         }

@@ -194,10 +194,7 @@ extension NewSessionModel {
     /// branch is checked out elsewhere, or its folder is taken.
     func pullRequestPlan(_ fetch: PullRequestFetch, commit: String?) -> Plan? {
         let choice = pullRequestChoice(for: fetch.head, commit: commit)
-        let leaf = BranchNameSuggester.folderLeaf(of: choice.branch)
-        guard !leaf.isEmpty else { return nil }
-        let path = context.project.resolvedWorktreeURL(branchLeaf: leaf)
-        guard !context.folderExists(path) else { return nil }
+        guard let path = context.project.worktreeURL(forBranch: choice.branch), !context.folderExists(path) else { return nil }
         switch choice {
         case let .newBranch(name):
             return Plan(

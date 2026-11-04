@@ -16,7 +16,7 @@
 
 use serde_json::{Map, Value};
 use std::time::{Duration, UNIX_EPOCH};
-use weir_agent_model::{UsageLimit, UsageLimitScope, format_utc_seconds};
+use weir_agent_model::{PlanUsageWindow, UsageLimit, UsageLimitScope, format_utc_seconds};
 
 /// What the transcript says of the turn's failure.
 #[derive(Debug, PartialEq, Eq)]
@@ -127,10 +127,14 @@ fn finding_of(record: &Map<String, Value>) -> Finding {
             .and_then(Value::as_u64)
             .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
             .map(format_utc_seconds),
-        scope: match window.as_deref() {
-            // The weekly limits of one model stop only the sessions on it.
-            Some("seven_day_opus" | "seven_day_sonnet") => UsageLimitScope::Model,
-            _ => UsageLimitScope::Account,
+        // The weekly limits of one model stop only the sessions on it.
+        scope: if window
+            .as_deref()
+            .is_some_and(|window| PlanUsageWindow::MODEL_WEEKLY.contains(&window))
+        {
+            UsageLimitScope::Model
+        } else {
+            UsageLimitScope::Account
         },
         window,
         label: None,

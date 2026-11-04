@@ -52,7 +52,7 @@ extension ProjectWindowState {
     /// tab's focused pane, while the panes are on screen.
     func decisionBarMenuPane(in session: WorkspaceSession) -> UUID? {
         guard !arePanesHidden else { return nil }
-        return session.activeTab(in: id)?.splitTree.effectiveFocusedLeafID
+        return session.focusedPaneID(in: id)
     }
 
     /// Whether Show Decision Bar Menu has a ⋯ to open now.

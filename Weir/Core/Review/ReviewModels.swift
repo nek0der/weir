@@ -209,6 +209,23 @@ struct ReviewFileStat: Equatable {
     }
 }
 
+/// Where one hunk sits on each side, as its `@@ -a,b +c,d @@` line says,
+/// with either count omitted meaning one line. Read once, by the parse that
+/// validates the line (`ReviewDiffParser.parse`), so the expansion that
+/// places the gaps and the header's VoiceOver label read the same numbers.
+struct ReviewHunkHeader: Equatable {
+    let oldStart: Int
+    let oldCount: Int
+    let newStart: Int
+    let newCount: Int
+
+    /// The line the hunk is named by: its new side's first, or its old
+    /// side's where the new side is empty (`+0,0`, a deleted file's).
+    var firstLine: Int {
+        newStart == 0 || newCount == 0 ? oldStart : newStart
+    }
+}
+
 struct ReviewLine: Identifiable, Equatable {
     /// `fileHeader` covers Git's `diff --git` / `index` / `---` / `+++` metadata,
     /// which the reader never needs; `hunk` is the `@@` line, which we keep as a
@@ -256,6 +273,8 @@ struct ReviewLine: Identifiable, Equatable {
     /// (`ReviewDiffParser.lines(of:)`). Only a patch line carries it; the
     /// review marks it where the line it is paired with ends differently.
     var endsInCarriageReturn = false
+    /// What a `hunk` line's header says, `nil` on every other line.
+    var hunkHeader: ReviewHunkHeader?
     var isCommentable: Bool {
         !isExpansion && (oldLine != nil || newLine != nil)
     }

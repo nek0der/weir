@@ -68,7 +68,7 @@ struct SidebarPresentedSections: Equatable {
         let selected = session.selection(window).flatMap { $0.isChoosingProject ? nil : $0.activeContainerID }
         var sections: [ContainerID: SidebarSection] = [:]
         for row in SessionSidebarModel.containers(of: project) {
-            let worktree = row.worktreeID.flatMap { id in project.worktrees.first { $0.id == id } }
+            let worktree = row.worktreeID.flatMap(project.worktree)
             let tabs = index.tabs(in: row)
             sections[row] = SidebarSectionRule.section(SidebarSectionRule.Facts(
                 isMainFolder: row.worktreeID == nil,

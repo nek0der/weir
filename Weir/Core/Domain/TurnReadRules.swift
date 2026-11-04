@@ -121,7 +121,7 @@ package enum TurnReadRules {
               let conversation = runtime.conversation,
               let turns = history[conversation]
         else { return nil }
-        let prompted = turns.filter { $0.hasPrompt && $0.phase != .started }
+        let prompted = turns.filter(\.isEndedAndPrompted)
         if !prompted.isEmpty {
             return prompted
         }

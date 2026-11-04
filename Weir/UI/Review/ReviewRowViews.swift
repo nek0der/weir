@@ -418,6 +418,9 @@ final class ReviewHunkRowView: NSView {
     /// header's ground takes; its buttons take it with the rest of what the
     /// table hands over (`ReviewHosted`).
     private var surfaceOpacity: Double = 1
+    /// What the configured line's header says, for the Comment button's
+    /// VoiceOver label; `nil` until a line is configured.
+    private var hunkHeader: ReviewHunkHeader?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -490,6 +493,7 @@ final class ReviewHunkRowView: NSView {
         labelLeading?.constant = ReviewRowMetrics.gutterTotal(numberWidth: numberWidth, layout: layout)
             + ReviewRowMetrics.codeLeadingInset
         label.stringValue = line.text
+        hunkHeader = line.hunkHeader
         needsDisplay = true
         label.setAccessibilityLabel(line.text)
     }
@@ -505,7 +509,7 @@ final class ReviewHunkRowView: NSView {
         actions.rootView = ReviewHosted(environment: environment, content: ReviewHunkActionsView(
             action: action,
             isCommentable: isCommentable,
-            header: label.stringValue,
+            header: hunkHeader,
             handlers: handlers
         ))
         actions.isHidden = action == nil && !isCommentable

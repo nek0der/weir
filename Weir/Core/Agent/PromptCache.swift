@@ -112,20 +112,11 @@ enum PromptCacheStatus: Int, Equatable, Comparable {
 }
 
 extension AgentBadge {
-    /// A turn is in flight. Its request refreshes the cache, so whatever
-    /// window the badge still carries says nothing about the next message.
-    var isRunningTurn: Bool {
-        state == .running || state == .compacting
-    }
-
-    /// The agent sits at its prompt, so text typed into the pane reaches the
-    /// prompt rather than a question, an approval, or a running turn.
-    var isAwaitingPrompt: Bool {
-        state == .idle || state == .finished
-    }
-
+    /// While a turn is in flight (`AgentState.isWorking`) its request
+    /// refreshes the cache, so whatever window the badge still carries says
+    /// nothing about the next message.
     func promptCacheStatus(at now: Date) -> PromptCacheStatus {
-        PromptCacheStatus.status(window: cacheWindow, now: now, isRunningTurn: isRunningTurn)
+        PromptCacheStatus.status(window: cacheWindow, now: now, isRunningTurn: state.isWorking)
     }
 }
 

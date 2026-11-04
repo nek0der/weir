@@ -160,7 +160,7 @@ private final class ProjectSync {
     }
 
     private func currentProject() -> Project? {
-        session?.projects.first(where: { $0.id == projectID })
+        session?.project(projectID)
     }
 
     /// External entry point. Exposes `scheduleRefetch` so the
@@ -294,7 +294,7 @@ private final class ProjectSync {
             // captured snapshot) so an optimistic label update
             // landing between refetch start and now isn't clobbered.
             if inFlight.contains(old.id) {
-                let current = session.projects[pIdx].worktrees.first(where: { $0.id == old.id })
+                let current = session.projects[pIdx].worktree(old.id)
                 let kept = current ?? old
                 result.append(kept)
                 consumedPaths.insert(kept.workingDirectory.standardizedFileURL)

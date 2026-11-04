@@ -78,7 +78,7 @@ struct SessionAreaView: View {
             // The agent the review in front follows, else the focused pane.
             let paneID = window.review?.isShown == true
                 ? window.review?.agentPaneID
-                : session.activeTab(in: window.id)?.splitTree.effectiveFocusedLeafID
+                : session.focusedPaneID(in: window.id)
             Task { await ReviewTabActions.open(.latestTurn, agentPaneID: paneID, window: window, stores: state.reviewTabStores) }
         default:
             return false

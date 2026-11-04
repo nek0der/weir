@@ -207,7 +207,7 @@ extension AttentionState {
         let candidates = allRuntimes.filter { runtime in
             guard runtime.paneIDs.contains(paneID),
                   Self.isInFront(runtime, in: paneID),
-                  runtime.badge.isAwaitingPrompt,
+                  runtime.badge.state.isAtPrompt,
                   let window = runtime.badge.cacheWindow,
                   runtime.badge.promptCacheStatus(at: now) == .expired
             else { return false }
@@ -280,7 +280,7 @@ extension AttentionState {
         typist: (any AgentCommandTyping)?
     ) -> PromptCacheCommandBlock? {
         PromptCacheRules.commandBlock(
-            isAtPromptInFront: runtime.badge.isAwaitingPrompt && Self.isInFront(runtime, in: paneID),
+            isAtPromptInFront: runtime.badge.state.isAtPrompt && Self.isInFront(runtime, in: paneID),
             isAgentInFront: typist.map { Self.isAgentInFront(runtime, in: paneID, typist: $0) } ?? false,
             hasUnsubmittedInput: typist?.hasUnsubmittedInput ?? false,
             lastKeyInputAt: typist?.lastKeyInputAt,

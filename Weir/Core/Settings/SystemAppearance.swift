@@ -11,7 +11,7 @@ import Foundation
 /// asked before NSApplication has finished its appearance graph, and so it
 /// stays the system's when Weir pins its own windows to another one.
 /// The one reading for the terminals' color scheme (`GhosttyApp`) and the
-/// menu bar extra (`MenuBarAppearance`).
+/// menu bar extra's window (`SupervisionMenuBarContent`).
 enum SystemAppearance {
     static let interfaceStyleKey = "AppleInterfaceStyle"
     static let themeChangedNotification = Notification.Name("AppleInterfaceThemeChangedNotification")

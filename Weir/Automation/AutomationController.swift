@@ -580,6 +580,9 @@
                     turn = TurnWatch(isMidTurn: isMidTurn, episode: episode)
                     return nil
                 }
+                // Not `!isMidTurn`: a run that ended (`unknown`) or never
+                // started a turn (`idle`) has not ended the turn the script
+                // waits on, so only a turn's own end counts here.
                 let isTurnOver = runtime.map { $0.badge.state == .finished || $0.badge.state == .error } ?? false
                 let hasEnded = watch.observe(isMidTurn: isMidTurn, isTurnOver: isTurnOver, episode: episode)
                 turn = watch
