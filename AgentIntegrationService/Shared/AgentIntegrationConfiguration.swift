@@ -15,14 +15,27 @@ enum AgentIntegrationConfiguration {
     static let maximumHookInputBytes = 1024 * 1024
     static let maximumRecords = 128
 
+    /// The approval service's executable in the app's `Contents/MacOS`.
+    static let serviceExecutableName = "AgentIntegrationService"
+    /// The Hook Helper's executable beside it, which every hook wrapper
+    /// execs and Codex calls for an approval.
+    static let hookHelperExecutableName = "AgentIntegrationHookHelper"
+
+    /// The folder of `appBundleURL` the service and the Hook Helper are
+    /// bundled in, beside the app's own executable.
+    static func executableDirectory(inApp appBundleURL: URL) -> URL {
+        appBundleURL.appendingPathComponent("Contents/MacOS", isDirectory: true)
+    }
+
     #if DEBUG
         static let plistName = "com.nekoder.weir.agent-integration-service.dev.plist"
         static let launchAgentLabel = "com.nekoder.weir.agent-integration-service.dev"
         static let requesterMachService = "com.nekoder.weir.agent-integration-service.dev.requester"
         static let controllerMachService = "com.nekoder.weir.agent-integration-service.dev.controller"
         static let serviceIdentifier = "com.nekoder.weir.AgentIntegrationService.dev"
+        static let hookHelperIdentifier = "com.nekoder.weir.AgentIntegrationHookHelper.dev"
         static let requesterIdentifiers = [
-            "com.nekoder.weir.AgentIntegrationHookHelper.dev",
+            hookHelperIdentifier,
             "com.nekoder.weir.AgentIntegrationRequesterProbe.dev"
         ]
         static let controllerIdentifiers = [
@@ -35,7 +48,8 @@ enum AgentIntegrationConfiguration {
         static let requesterMachService = "com.nekoder.weir.agent-integration-service.requester"
         static let controllerMachService = "com.nekoder.weir.agent-integration-service.controller"
         static let serviceIdentifier = "com.nekoder.weir.AgentIntegrationService"
-        static let requesterIdentifiers = ["com.nekoder.weir.AgentIntegrationHookHelper"]
+        static let hookHelperIdentifier = "com.nekoder.weir.AgentIntegrationHookHelper"
+        static let requesterIdentifiers = [hookHelperIdentifier]
         static let controllerIdentifiers = ["com.nekoder.Weir"]
     #endif
 }

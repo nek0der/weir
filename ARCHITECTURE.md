@@ -818,10 +818,14 @@ build that reads a newer file degrades cleanly.
      Antigravity and OpenCode did (`docs/provider-adapters.md`, "Providers
      that needed more than the contract").
   2. Swift: a case in `AgentKind` (`Core/Domain/AgentKind.swift`). The
-     compiler then asks for its launch command and its resume arguments
-     there, its badge and menu `switch`es, and the shim's record export in
-     `AgentShimLocator`. Its entry in `AgentCatalog.entries`, in `AgentKind`'s
-     order, gives the new worktree sheet its name and where it installs.
+     compiler then asks for its launch command and the option its resume
+     names the session by there, and its badge's letters and colors in
+     `AgentBrand` (`UI/Design/AgentBrand.swift`). Its entry in
+     `AgentCatalog.entries`, in `AgentKind`'s order, gives the new worktree
+     sheet, the rows, and VoiceOver its name, and where it installs; every
+     name looked up there is its launch command. Its home (`~/.<id>`) comes
+     from `AgentKind.homeFolderName`, and whether its shim exports the record
+     directories from its recipe.
   3. The shim: `Weir/Resources/<id>-shim/` with the agent's launch command and
      a `weir-hook` copied from another shim (it takes its provider from the
      folder's name), listed in `project.yml` beside the others. The pane's

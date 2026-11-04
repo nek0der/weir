@@ -370,14 +370,12 @@ enum SessionRowFactText {
         }
     }
 
-    /// The agent's name in full, for VoiceOver and the tooltip.
+    /// The agent's name in full, for VoiceOver and the tooltip: the
+    /// product's name the new worktree sheet lists it by
+    /// (`AgentCatalogEntry.displayName`), the same in every language.
     static func agentName(_ badge: SessionRowFact.Badge, locale: Locale) -> String {
         switch badge {
-        // Product names, the same in every language.
-        case .agent(.claude): "Claude"
-        case .agent(.codex): "Codex"
-        case .agent(.antigravity): "Antigravity"
-        case .agent(.opencode): "OpenCode"
+        case let .agent(kind): AgentCatalog.entry(for: kind).displayName
         case .shell: LocalizedStringResource("Shell").resolved(in: locale)
         }
     }
@@ -425,11 +423,7 @@ enum SessionRowFactText {
     /// badge (`SessionAgentBadge`): its glyph is the terminal's mark.
     static func badge(_ badge: SessionRowFact.Badge, locale _: Locale) -> String {
         switch badge {
-        // Abbreviations of product names, the same in every language.
-        case .agent(.claude): "Cl"
-        case .agent(.codex): "Cx"
-        case .agent(.antigravity): "Ag"
-        case .agent(.opencode): "Op"
+        case let .agent(kind): AgentBrand.of(kind).letters
         case .shell: ""
         }
     }

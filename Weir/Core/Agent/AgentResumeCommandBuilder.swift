@@ -87,11 +87,7 @@ extension AgentKind {
     /// stop's "Start New Conversation" types. Refused, as the resume
     /// is, for a folder with a control character in its name.
     func newConversationCommand(cwd: String?) -> String? {
-        if let cwd, cwd.unicodeScalars.contains(where: \.isTypedControl) {
-            return nil
-        }
-        guard let cwd, !cwd.isEmpty else { return launchCommand }
-        return "cd \(ShellQuote.single(cwd)) && \(launchCommand)"
+        Self.typed(launchCommand, in: cwd)
     }
 
     /// The strict resume of this agent, in `cwd` when one is known: the
@@ -102,11 +98,19 @@ extension AgentKind {
     /// command would carry to the line editor as a key.
     func strictResumeCommand(sessionId: String, cwd: String? = nil) -> String? {
         guard AgentSessionIDValidator.isStrictlyValid(sessionId) else { return nil }
-        if let cwd, cwd.unicodeScalars.contains(where: \.isTypedControl) {
+        return Self.typed(strictResumeArguments(sessionId: sessionId), in: cwd)
+    }
+
+    /// `command` as a pane types it in `cwd`: after a quoted `cd` and `&&`
+    /// when a folder is given, alone when none is. `nil` for a folder with a
+    /// control character in its name, which the typed line would carry to
+    /// the line editor as a key. Both commands go through here, so a new
+    /// conversation and a resume refuse and quote a folder alike.
+    private static func typed(_ command: String, in cwd: String?) -> String? {
+        if let cwd, cwd.containsTypedControl {
             return nil
         }
-        let resume = strictResumeArguments(sessionId: sessionId)
-        guard let cwd, !cwd.isEmpty else { return resume }
-        return "cd \(ShellQuote.single(cwd)) && \(resume)"
+        guard let cwd, !cwd.isEmpty else { return command }
+        return "cd \(ShellQuote.single(cwd)) && \(command)"
     }
 }

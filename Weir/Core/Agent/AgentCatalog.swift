@@ -62,35 +62,33 @@ enum AgentCatalog {
     /// In the order the new worktree sheet's menu, the pane strip's "+", and
     /// the palette's New … Tab rows list them.
     static let entries: [AgentCatalogEntry] = [
-        AgentCatalogEntry(
-            kind: .claude,
+        makeEntry(
+            .claude,
             displayName: "Claude",
-            executables: ["claude"],
-            knownLocations: ["~/.claude/local/claude", "~/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
-                + managerLocations(of: "claude")
+            installFolders: ["~/.claude/local", "~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
         ),
-        AgentCatalogEntry(
-            kind: .codex,
-            displayName: "Codex",
-            executables: ["codex"],
-            knownLocations: ["/opt/homebrew/bin/codex", "/usr/local/bin/codex", "~/.local/bin/codex"]
-                + managerLocations(of: "codex")
-        ),
-        AgentCatalogEntry(
-            kind: .antigravity,
-            displayName: "Antigravity",
-            executables: ["agy"],
-            knownLocations: ["/opt/homebrew/bin/agy", "/usr/local/bin/agy", "~/.local/bin/agy"]
-                + managerLocations(of: "agy")
-        ),
-        AgentCatalogEntry(
-            kind: .opencode,
+        makeEntry(.codex, displayName: "Codex", installFolders: ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"]),
+        makeEntry(.antigravity, displayName: "Antigravity", installFolders: ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"]),
+        makeEntry(
+            .opencode,
             displayName: "OpenCode",
-            executables: ["opencode"],
-            knownLocations: ["/opt/homebrew/bin/opencode", "/usr/local/bin/opencode", "~/.opencode/bin/opencode", "~/.local/bin/opencode"]
-                + managerLocations(of: "opencode")
+            installFolders: ["/opt/homebrew/bin", "/usr/local/bin", "~/.opencode/bin", "~/.local/bin"]
         )
     ]
+
+    /// `kind`'s entry, every name in it the one a pane types
+    /// (`AgentKind.launchCommand`): the executable looked up, and the file
+    /// looked for in each of `installFolders` (the usual install folders, in
+    /// the order they are tried) and in each version manager's folder.
+    private static func makeEntry(_ kind: AgentKind, displayName: String, installFolders: [String]) -> AgentCatalogEntry {
+        let name = kind.launchCommand
+        return AgentCatalogEntry(
+            kind: kind,
+            displayName: displayName,
+            executables: [name],
+            knownLocations: installFolders.map { "\($0)/\(name)" } + managerLocations(of: name)
+        )
+    }
 
     /// Where the version managers that a `.zshrc` turns on put a global
     /// install: for a person who has not opened a pane in this build yet,

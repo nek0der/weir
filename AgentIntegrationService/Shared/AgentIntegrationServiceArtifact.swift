@@ -25,9 +25,8 @@ struct AgentIntegrationServiceArtifact: Codable, Equatable, Sendable {
         in appBundleURL: URL,
         plistName: String = AgentIntegrationConfiguration.plistName
     ) throws -> Self {
-        let serviceURL = appBundleURL
-            .appendingPathComponent("Contents/MacOS", isDirectory: true)
-            .appendingPathComponent("AgentIntegrationService")
+        let serviceURL = AgentIntegrationConfiguration.executableDirectory(inApp: appBundleURL)
+            .appendingPathComponent(AgentIntegrationConfiguration.serviceExecutableName)
         let propertyListURL = appBundleURL
             .appendingPathComponent("Contents/Library/LaunchAgents", isDirectory: true)
             .appendingPathComponent(plistName)

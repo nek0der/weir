@@ -39,31 +39,49 @@ struct AgentShimLocator {
     /// `export PATH="/opt/homebrew/bin:$PATH"` there would otherwise bury it
     /// behind the real agent and the hooks would never load. Claude's was
     /// named before there was a second agent, and a shell started by an
-    /// earlier build still reads it by that name.
+    /// earlier build still reads it by that name (`legacyShimDirectoryVariable`).
     var shimDirectoryVariable: String {
-        kind == .claude ? "WEIR_SHIM_DIR" : "WEIR_\(kind.rawValue.uppercased())_SHIM_DIR"
+        kind == Self.firstAgent ? Self.legacyShimDirectoryVariable : "WEIR_\(kind.rawValue.uppercased())_SHIM_DIR"
     }
 
-    /// Whether this locator exports the agent's record directories. Codex's
-    /// go out with its hook arguments from `CodexHookInstaller`, which alone
-    /// knows whether the hooks are installed; named without them, they
-    /// would tell a hook another build installed where to write.
+    /// The agent Weir had before there was a second one, whose shim
+    /// variable and record export keep the shape they had then.
+    static let firstAgent = AgentKind.claude
+
+    /// `firstAgent`'s shim variable, named before any other agent had one.
+    static let legacyShimDirectoryVariable = "WEIR_SHIM_DIR"
+
+    /// Whether this locator exports the agent's record directories: not
+    /// when its recipe has the hook's own arguments (`hook_arguments`, only
+    /// Codex's today). Those go out with the record directories from the
+    /// installer that assembles them (`CodexHookInstaller`), which alone
+    /// knows whether the hooks are installed; named without them, the
+    /// directories would tell a hook another build installed where to write.
     var exportsRecordDirectories: Bool {
-        switch kind {
-        case .codex: false
-        case .claude, .antigravity, .opencode: true
-        }
+        Self.exportsRecordDirectories(kind, recipe: AgentProviderRegistry.recipes[kind.rawValue])
     }
+
+    /// `exportsRecordDirectories` for `kind` with `recipe`. With no recipe
+    /// to read (the bridge could not be decoded), the agents whose installer
+    /// exported them before the recipe said so keep that answer, so their
+    /// locator does not go on to look for directories and log that it found
+    /// none.
+    static func exportsRecordDirectories(_ kind: AgentKind, recipe: AgentInstallRecipe?) -> Bool {
+        guard let recipe else { return !installerExportsWithoutRecipe.contains(kind) }
+        return recipe.hookArgumentsVariable == nil
+    }
+
+    /// The agents whose installer exported the record directories when the
+    /// recipe's hook arguments replaced a list of them. A fixed record of
+    /// that time, not a list a new agent joins.
+    static let installerExportsWithoutRecipe: Set<AgentKind> = [.codex]
 
     /// Whether the record directories are exported when the bundle has no
-    /// shim. Claude's always were, from before the other agents had shims;
-    /// for the others the shim is what installs the hook that reads them,
-    /// so without it there is nothing to tell.
+    /// shim. `firstAgent`'s always were, from before the other agents had
+    /// shims; for the others the shim is what installs the hook that reads
+    /// them, so without it there is nothing to tell.
     var exportsRecordsWithoutShim: Bool {
-        switch kind {
-        case .claude: true
-        case .codex, .antigravity, .opencode: false
-        }
+        kind == Self.firstAgent
     }
 
     /// The agent's half of a pane's environment: its shim directory and,

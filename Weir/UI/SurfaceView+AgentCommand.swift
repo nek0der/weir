@@ -55,7 +55,7 @@ extension SurfaceView: AgentCommandTyping {
         // a path in the command.
         guard surface != nil,
               !command.isEmpty,
-              !command.unicodeScalars.contains(where: \.isTypedControl)
+              !command.containsTypedControl
         else { return false }
         // Typed through `commitText` and `sendReturnKey` directly, which
         // `noteKeyInput(_:)` and `noteTextInput()` do not see: our own

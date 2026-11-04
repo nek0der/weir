@@ -73,8 +73,7 @@ final class CodexHookInstaller {
             return WeirPaths.applicationSupportDirectory()
                 .appendingPathComponent("codex-home-stray", isDirectory: true)
         }
-        return URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".codex", isDirectory: true)
+        return AgentProviderRegistry.defaultHome(of: .codex, under: URL(fileURLWithPath: NSHomeDirectory()))
     }
 
     // MARK: - Lifecycle
@@ -251,7 +250,7 @@ final class CodexHookInstaller {
     }
 
     static func bundledHookScript() -> URL? {
-        bundledScript(named: "weir-hook")
+        bundledScript(named: AgentCatalog.shimMarker)
     }
 
     static func bundledWorktreeHookScript() -> URL? {
@@ -273,15 +272,15 @@ final class CodexHookInstaller {
     static func bundledHookHelper() -> URL? {
         guard let executable = Bundle.main.executableURL else { return nil }
         let helper = executable.deletingLastPathComponent()
-            .appendingPathComponent("AgentIntegrationHookHelper")
+            .appendingPathComponent(AgentIntegrationConfiguration.hookHelperExecutableName)
         return FileManager.default.isExecutableFile(atPath: helper.path) ? helper : nil
     }
 
+    /// `name` in Codex's bundled shim folder, the one a pane's `PATH` leads
+    /// with (`AgentShimLocator`).
     private static func bundledScript(named name: String) -> URL? {
-        guard let resources = Bundle.main.resourceURL else { return nil }
-        let url = resources
-            .appendingPathComponent("codex-shim", isDirectory: true)
-            .appendingPathComponent(name)
+        guard let shim = AgentShimLocator(.codex).shimDirectoryURL else { return nil }
+        let url = shim.appendingPathComponent(name)
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 }

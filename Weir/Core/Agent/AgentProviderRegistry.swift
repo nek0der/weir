@@ -65,6 +65,19 @@ enum AgentProviderRegistry {
         descriptors[kind.rawValue]?.processNames ?? []
     }
 
+    /// Where `provider` keeps its own files when nothing moves them
+    /// (`CODEX_HOME` and the like): its folder in the user's `home`
+    /// (`AgentKind.homeFolderName(ofProvider:)`, which `WorktreeAdmission`
+    /// reads too).
+    static func defaultHome(of provider: String, under home: String) -> String {
+        (home as NSString).appendingPathComponent(AgentKind.homeFolderName(ofProvider: provider))
+    }
+
+    /// `defaultHome(of:under:)` for one kind, as a folder URL.
+    static func defaultHome(of kind: AgentKind, under home: URL) -> URL {
+        home.appendingPathComponent(kind.homeFolderName, isDirectory: true)
+    }
+
     /// Where the plan usage the agents report goes under `root`: one
     /// directory for every provider, since the usage panel reads them as one
     /// list (`PlanUsageStore`).
@@ -173,6 +186,12 @@ struct AgentInstallRecipe: Decodable, Sendable {
         var value: Placeholder
     }
 
+    /// The variable carrying the hook's own arguments, or nil when the
+    /// recipe asks for none (`AgentProviderRegistry.hookArgumentsVariable`).
+    var hookArgumentsVariable: String? {
+        environment.first { $0.value == .hookArguments }?.name
+    }
+
     /// What the platform substitutes. A value this build does not know is
     /// skipped rather than exported empty, because an empty directory path
     /// would send the provider's records somewhere nobody reads.
@@ -214,7 +233,7 @@ extension AgentProviderRegistry {
     /// still the provider's to declare, and reading it here is what keeps the
     /// installer from carrying a second copy that could drift.
     static func hookArgumentsVariable(for provider: String) -> String? {
-        recipes[provider]?.environment.first { $0.value == .hookArguments }?.name
+        recipes[provider]?.hookArgumentsVariable
     }
 
     /// The environment one provider's recipe asks for, with each placeholder

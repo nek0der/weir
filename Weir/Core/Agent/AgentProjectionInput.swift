@@ -105,7 +105,7 @@ extension AgentProjectionInput {
     static func resolvedHomes(of providers: some Sequence<String>, under home: String) -> [String: String] {
         var resolved: [String: String] = [:]
         for provider in providers {
-            let written = (home as NSString).appendingPathComponent("." + provider)
+            let written = AgentProviderRegistry.defaultHome(of: provider, under: home)
             guard let physical = realpath(written, nil) else { continue }
             defer { free(physical) }
             let path = String(cString: physical)

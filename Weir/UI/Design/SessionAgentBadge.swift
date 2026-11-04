@@ -75,18 +75,13 @@ struct SessionAgentBadge: View {
     /// badge's are white on `closedMark` whatever the agent, so every gone
     /// source looks alike and only the letters still name it.
     private static func foreground(_ kind: AgentKind) -> Color {
-        switch kind {
-        case .codex: SupervisionTokens.codexBadgeForeground.color
-        case .claude, .antigravity, .opencode: SupervisionTokens.badgeForeground.color
-        }
+        AgentBrand.of(kind).foreground.color
     }
 
     private static func fill(_ kind: AgentKind) -> AnyShapeStyle {
-        switch kind {
-        case .claude: AnyShapeStyle(SupervisionTokens.claude.color)
-        case .codex: AnyShapeStyle(SupervisionTokens.codex.color)
-        case .antigravity: AnyShapeStyle(antigravityFill)
-        case .opencode: AnyShapeStyle(SupervisionTokens.opencode.color)
+        switch AgentBrand.of(kind).fill {
+        case let .solid(color): AnyShapeStyle(color.color)
+        case .antigravityMesh: AnyShapeStyle(antigravityFill)
         }
     }
 
@@ -118,12 +113,7 @@ struct SessionAgentBadge: View {
     /// The fill's edge, which keeps the badge clear of a surface its fill
     /// stands too close to (`SupervisionTokens.claudeEdge`).
     private static func edge(_ kind: AgentKind) -> Color {
-        switch kind {
-        case .claude: SupervisionTokens.claudeEdge.color
-        case .codex: SupervisionTokens.codexEdge.color
-        case .antigravity: .clear
-        case .opencode: SupervisionTokens.opencodeEdge.color
-        }
+        AgentBrand.of(kind).edge?.color ?? .clear
     }
 }
 

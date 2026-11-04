@@ -91,7 +91,7 @@ package enum WorktreeAdmissionRule {
         if path.contains("/.claude/worktrees/") {
             return true
         }
-        let codexRoot = RepositoryPath.standardized(facts.homePath) + "/.codex/worktrees"
+        let codexRoot = RepositoryPath.standardized(facts.homePath) + "/\(AgentKind.codex.homeFolderName)/worktrees"
         if RepositoryPath.contains(codexRoot, path), path != codexRoot {
             return true
         }
