@@ -374,19 +374,21 @@ def repository_root():
 
 
 def debug_app_path(root):
-    """This checkout's Debug build, from xcodebuild as `make run` finds it."""
-    settings = subprocess.run(
-        ["xcodebuild", "-project", "Weir.xcodeproj", "-scheme", "Weir", "-configuration", "Debug", "-showBuildSettings"],
-        capture_output=True, text=True, cwd=root, check=True,
-    ).stdout
-    # The last of each, as the Makefile's awk reads them: the scheme prints the
-    # app's settings after those of the tools it embeds.
-    values = {}
-    for line in settings.splitlines():
-        key, separator, value = line.partition(" = ")
-        if separator and key.strip() in ("BUILT_PRODUCTS_DIR", "FULL_PRODUCT_NAME"):
-            values[key.strip()] = value.strip()
-    return os.path.join(values["BUILT_PRODUCTS_DIR"], values["FULL_PRODUCT_NAME"])
+    """This checkout's Debug build, found as `make run` finds it."""
+    return subprocess.run(
+        [os.path.join(root, "scripts", "built-app-path.sh"), "Debug"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def screencapture_window(window_number, path, timeout=30):
+    """Writes window `window_number` to `path`, without its shadow or a sound.
+
+    The window number is the one a `capture` reply names. A capture that never
+    returns, as when a Screen Recording prompt waits for an answer, stops after
+    `timeout` seconds rather than holding the caller.
+    """
+    subprocess.run(["screencapture", "-x", "-o", f"-l{window_number}", path], timeout=timeout, check=True)
 
 
 # The demo's layers (`DemoFixture.OpenLayer`), which `--layer` opens at launch.
@@ -593,7 +595,7 @@ def main():
                 if reply["status"] != "done":
                     print_json(reply)
                     return 1
-                subprocess.run(["screencapture", "-x", "-o", f"-l{reply['windowNumber']}", args.out], check=True)
+                screencapture_window(reply["windowNumber"], args.out)
                 print(args.out)
                 return 0
             if args.command == "keys":

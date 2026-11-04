@@ -146,11 +146,13 @@ class Run:
             if character in PERSON_KEY_CODES:
                 client.post_key(self.info["pid"], PERSON_KEY_CODES[character], marked=False, text=character)
 
-    def capture(self, path):
-        reply = self.call({"op": "capture"})
+    def capture(self, path, **fields):
+        """Captures to `path` the window the request's `fields` name: the run's
+        window when there are none, Settings with `settings=True`."""
+        reply = self.call({"op": "capture", **fields})
         if reply["status"] != "done":
             return reply
-        subprocess.run(["screencapture", "-x", "-o", f"-l{reply['windowNumber']}", path], timeout=30, check=True)
+        client.screencapture_window(reply["windowNumber"], path)
         return reply
 
 
@@ -567,9 +569,7 @@ def captures(run, checks):
     run.call({"op": "command", "name": "settings.section.font"})
     run.until(lambda: run.call({"op": "state"})["state"].get("settings"), 5)
     settings_path = os.path.join(run.scratch, "settings.png")
-    reply = run.call({"op": "capture", "settings": True})
-    if reply["status"] == "done":
-        subprocess.run(["screencapture", "-x", "-o", f"-l{reply['windowNumber']}", settings_path], timeout=30, check=True)
+    reply = run.capture(settings_path, settings=True)
     checks.check("a capture of Settings is written", reply["status"] == "done" and os.path.getsize(settings_path) > 10000, reply)
 
 

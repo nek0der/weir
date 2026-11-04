@@ -16,12 +16,11 @@ on, against the repository at DIR. Each pair writes a turn and pins two
 refs there; the script removes the refs and the scratch index files it made
 before it exits.
 
-The newest executable helper from a Debug build is used unless
-WEIR_HOOK_HELPER is set.
+The helper from this checkout's Debug build is used unless WEIR_HOOK_HELPER
+is set.
 """
 
 import argparse
-import glob
 import json
 import os
 import shutil
@@ -56,22 +55,18 @@ def main():
 
     configured_helper = os.environ.get("WEIR_HOOK_HELPER")
     if configured_helper:
-        helper_candidates = [os.path.abspath(os.path.expanduser(configured_helper))]
+        helper = os.path.abspath(os.path.expanduser(configured_helper))
     else:
-        helper_candidates = glob.glob(
-            os.path.expanduser(
-                "~/Library/Developer/Xcode/DerivedData/Weir-*/Build/Products/Debug/"
-                "Weir Dev.app/Contents/MacOS/AgentIntegrationHookHelper"
-            )
-        )
-    helper_candidates = [
-        path for path in helper_candidates if os.path.isfile(path) and os.access(path, os.X_OK)
-    ]
-    if not helper_candidates:
-        source = "WEIR_HOOK_HELPER" if configured_helper else "the Debug build"
+        # This checkout's Debug build: the newest one under DerivedData may be
+        # another worktree's, of another branch.
+        app = subprocess.run(
+            [os.path.join(repo, "scripts", "built-app-path.sh"), "Debug"], capture_output=True, text=True
+        ).stdout.strip()
+        helper = os.path.join(app, "Contents", "MacOS", "AgentIntegrationHookHelper") if app else ""
+    if not (os.path.isfile(helper) and os.access(helper, os.X_OK)):
+        source = "WEIR_HOOK_HELPER" if configured_helper else "this checkout's Debug build"
         print(f"error: no executable Hook Helper found from {source}; run make build first", file=sys.stderr)
         return 1
-    helper = max(helper_candidates, key=lambda path: (os.path.getmtime(path), path))
     shim_dir = os.path.join(repo, "Weir", "Resources", f"{args.provider}-shim")
     wrapper = os.path.join(shim_dir, "weir-hook")
 

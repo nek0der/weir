@@ -5,6 +5,10 @@ PROJECT := Weir.xcodeproj
 PBXPROJ := $(PROJECT)/project.pbxproj
 CONFIG  := Debug
 BUILD_DESTINATION ?= generic/platform=macOS
+# The command that prints where this checkout builds its app for the
+# configuration given: $(call built_app_path,Release). It passes PROJECT and
+# SCHEME on, so a PROJECT or SCHEME given to make still applies.
+built_app_path = scripts/built-app-path.sh $(1) $(PROJECT) $(SCHEME)
 
 # Debug is ad-hoc signed unless WEIR_DEVELOPMENT_TEAM names a Team ID. The
 # approval service authenticates its peers by Team ID, so native approvals run
@@ -21,9 +25,7 @@ DEBUG_SIGNING_STAMP := build/debug-signing
 define debug_signing_guard
 @signer='$(DEBUG_SIGNER)'; \
 	if [ "$$signer" != "$$(cat $(DEBUG_SIGNING_STAMP) 2>/dev/null || echo ad-hoc)" ]; then \
-		app=$$(xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(CONFIG) \
-			-showBuildSettings 2>/dev/null | awk -F' = ' \
-			'/ BUILT_PRODUCTS_DIR = /{d=$$2} / FULL_PRODUCT_NAME = /{n=$$2} END{print d"/"n}'); \
+		app=$$($(call built_app_path,$(CONFIG)) || true); \
 		case "$$app" in \
 			*/Build/Products/*.app) \
 				echo "Debug signing changed; removing $$app"; rm -rf "$$app";; \
@@ -33,12 +35,10 @@ define debug_signing_guard
 	mkdir -p $(dir $(DEBUG_SIGNING_STAMP)); printf '%s' "$$signer" > $(DEBUG_SIGNING_STAMP)
 endef
 
-# Resolve the built .app path from xcodebuild itself so we don't guess the
-# DerivedData hash or the Dev/Release product name.
-APP_PATH = $(shell xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration $(CONFIG) -showBuildSettings 2>/dev/null \
-  | awk -F' = ' '/ BUILT_PRODUCTS_DIR = /{d=$$2} / FULL_PRODUCT_NAME = /{n=$$2} END{print d"/"n}')
-RELEASE_APP_PATH = $(shell xcodebuild -project $(PROJECT) -scheme $(SCHEME) -configuration Release -showBuildSettings 2>/dev/null \
-  | awk -F' = ' '/ BUILT_PRODUCTS_DIR = /{d=$$2} / FULL_PRODUCT_NAME = /{n=$$2} END{print d"/"n}')
+# This checkout's built app, from the one script every caller asks, so we
+# never guess the DerivedData hash or the Dev/Release product name.
+APP_PATH = $(shell $(call built_app_path,$(CONFIG)))
+RELEASE_APP_PATH = $(shell $(call built_app_path,Release))
 
 help:
 	@echo "Weir — common targets"
@@ -179,8 +179,13 @@ rust-header:
 rust-lint: rust-fmt rust-header
 	cargo clippy --locked --workspace --all-targets -- -D warnings
 
+# Hand the script this checkout's Release app, so it never packages another
+# worktree's build. The path goes through a shell variable rather than into
+# the recipe's text, where a quote in it would end the argument. Nothing is
+# built here: the script takes only an app already signed with Developer ID
+# and notarized.
 dmg:
-	./scripts/package-dmg.sh
+	@app=$$($(call built_app_path,Release)) && ./scripts/package-dmg.sh "$$app"
 
 # Always regenerate: the explicit escape hatch for a project that drifted in
 # a way the inputs above cannot see.
@@ -201,12 +206,21 @@ site-images: build-release
 
 # Every checkout and worktree has its own DerivedData folder. A glob over
 # `Weir-*` would remove all of them and fail any build another worktree has
-# running, so we ask xcodebuild for this checkout's folder and remove only that.
+# running, so we take this checkout's folder from where it builds its app and
+# remove only that: only when the lookup answered in full, and only a folder
+# directly under DerivedData.
 clean:
-	@dir=$$(xcodebuild -project $(PROJECT) -scheme $(SCHEME) -showBuildSettings 2>/dev/null \
-		| awk -F' = ' '/ BUILD_ROOT = /{print $$2; exit}'); \
-	dir=$${dir%/Build/Products}; \
-	case "$$dir" in \
-		$(HOME)/Library/Developer/Xcode/DerivedData/Weir-*) echo "Removing $$dir"; rm -rf "$$dir";; \
-		*) echo "No DerivedData folder for this checkout: '$$dir'";; \
-	esac
+	@derived_data="$$HOME/Library/Developer/Xcode/DerivedData"; \
+	if ! app=$$($(call built_app_path,$(CONFIG))); then \
+		echo "No DerivedData folder for this checkout: its built app's path could not be read"; exit 0; \
+	fi; \
+	dir=$${app%/Build/Products/*}; \
+	case "$$app" in \
+		"$$derived_data"/Weir-*/Build/Products/*.app) ;; \
+		*) dir="";; \
+	esac; \
+	if [ -n "$$dir" ] && [ "$$(dirname "$$dir")" = "$$derived_data" ]; then \
+		echo "Removing $$dir"; rm -rf "$$dir"; \
+	else \
+		echo "No DerivedData folder for this checkout: '$$app'"; \
+	fi

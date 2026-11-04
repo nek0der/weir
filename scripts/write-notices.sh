@@ -12,17 +12,9 @@ set -euo pipefail
 output="${1:?usage: write-notices.sh <output>}"
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 
-cargo_bin="$(command -v cargo || true)"
-for candidate in /opt/homebrew/opt/rustup/bin/cargo /usr/local/opt/rustup/bin/cargo; do
-  [[ -z "$cargo_bin" && -x "$candidate" ]] && cargo_bin="$candidate"
-done
-if [[ -z "$cargo_bin" ]]; then
-  echo "error: cargo was not found; it is needed to list the Rust crates for THIRD-PARTY-NOTICES" >&2
-  exit 1
-fi
-# Cargo runs the sibling rustc by name; Xcode's PATH does not reach it.
-cargo_directory="$(dirname "$cargo_bin")"
-export PATH="$cargo_directory:$PATH"
+# shellcheck source=scripts/lib/cargo.sh
+source "$repo_root/scripts/lib/cargo.sh"
+use_cargo "to list the Rust crates for THIRD-PARTY-NOTICES"
 
 metadata_arguments=(metadata --format-version 1 --locked
   --manifest-path "$repo_root/Cargo.toml"
