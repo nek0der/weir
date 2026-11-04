@@ -9,9 +9,10 @@ import SwiftUI
 /// a person who does not drag or right-click.
 struct SidebarProjectActions {
     var newWorktree: () -> Void = {}
-    /// Whether a worktree can be made: not while the project's folder is
-    /// gone or no git runs (`Project.canMakeWorktree`), where the sheet
-    /// would only fail.
+    /// Whether a worktree can be made: not in a folder that is not a
+    /// repository, nor while the project's folder is gone or no git runs
+    /// (`ShortcutAvailability.canMakeWorktree(in:)`), where the sheet would
+    /// only fail. The File menu asks the same.
     var canMakeWorktree = true
     /// Whether the project's folder is on disk, for Show in Finder.
     var hasFolder = true

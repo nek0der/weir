@@ -26,8 +26,6 @@ struct RestoreHandler: Equatable, Sendable {
     /// Opens the strip for a turn, in its pane's bar (the bar's ⋯).
     let ask: @MainActor @Sendable (TurnID) -> Void
     let canAsk: @MainActor @Sendable (TurnID) -> Bool
-    /// The turn the palette's entry restores to, for its subtitle.
-    let paletteTurnNumber: @MainActor @Sendable () -> Int?
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.windowID == rhs.windowID

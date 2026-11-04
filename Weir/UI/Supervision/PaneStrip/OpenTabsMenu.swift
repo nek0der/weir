@@ -210,7 +210,6 @@ struct OpenTabsMenu: View {
                 registry: registry,
                 tabID: tabID,
                 source: .mouse,
-                attention: attention,
                 agentProjection: agentProjection,
                 in: window.id
             )

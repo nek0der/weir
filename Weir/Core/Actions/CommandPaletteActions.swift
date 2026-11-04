@@ -119,10 +119,13 @@ enum CommandPaletteActions {
         // rows that go to another project.
         runsInWindow: (CommandPaletteAction) -> PaletteRowHandling = { _ in .notHandled }
     ) {
-        // The palette closes whatever the row does: its state is the
-        // session's one, and left open it would stand over the next window
-        // to show it.
-        closeCommandPalette(session)
+        // The window's palette closes whatever the row does: left open it
+        // would stand over the next place the window shows. A palette open
+        // in another window is that window's, and keeps its query: a row the
+        // channel runs here is no answer to it.
+        if session.commandPaletteState?.windowID == window {
+            closeCommandPalette(session)
+        }
         // A window the session does not know runs nothing: what was asked
         // of a window that is gone is not done in another.
         guard session.selection(window) != nil else { return }
@@ -227,7 +230,9 @@ enum CommandPaletteActions {
         switch action {
         case let .newAgentTab(agent):
             // The session the strip's "+" adds to: the window's.
-            guard let container = session.selection(window)?.activeContainerID, !session.isFolderMissing(container) else { return }
+            guard let container = session.selection(window)?.activeContainerID,
+                  ShortcutAvailability.canOpenTab(in: container, session: session)
+            else { return }
             TabActions.newTab(session, in: container, running: agent, window: window, intent: .person, selects: true)
         case let .openSettingsSection(section):
             SettingsSection.open(section)

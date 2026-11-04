@@ -33,11 +33,10 @@ struct SettingsAwareFindCommands: Commands {
                     window: window.id
                 )
             }
-            let activeTab = window.flatMap { state.session.activeTab(in: $0.id) }
-            let focusedPaneID = activeTab?.splitTree.effectiveFocusedLeafID
-            let hasActiveSearch = focusedPaneID.map {
-                state.session.paneSearchStates[$0] != nil
-            } ?? false
+            // Each item is on when its palette row is (`ShortcutAvailability`):
+            // while the review is in front, Find and its steps go to the
+            // review's own search.
+            let menu = state.menuAvailability
 
             // The quick terminal has no find overlay; routing Find to the
             // main window would search a pane the user cannot see.
@@ -53,13 +52,15 @@ struct SettingsAwareFindCommands: Commands {
                     ShortcutMenuButton(.findNext, in: state.settingsStore) {
                         performFind(.findNext)
                     }
-                    .disabled(!hasActiveSearch && !isReviewShown)
+                    .disabled(!menu.isEnabled(.findNext))
                     ShortcutMenuButton(.findPrevious, in: state.settingsStore) {
                         performFind(.findPrevious)
                     }
-                    .disabled(!hasActiveSearch && !isReviewShown)
+                    .disabled(!menu.isEnabled(.findPrevious))
                 }
-                .disabled(settingsSearchFocusAction == nil && activeTab == nil && !isReviewShown)
+                // The section stays on with Settings in front, whose Find goes
+                // to its own search field.
+                .disabled(settingsSearchFocusAction == nil && !menu.isEnabled(.find))
             }
         }
     }

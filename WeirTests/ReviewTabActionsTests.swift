@@ -55,6 +55,37 @@ struct ReviewTabActionsTests {
         }
     }
 
+    /// Close and Close Tab, run from a palette row or the channel in a
+    /// window that is not the key one, close the review in front of that
+    /// window and leave the key window as it is.
+    @Test func closeIfInFront_closesTheReviewOfTheWindowAsked_notTheKeyWindows() {
+        let fixture = ActionStoresFixture(opensTab: false)
+        let key = fixture.window
+        let selection = WindowSelection()
+        fixture.session.addSelection(selection)
+        let other = fixture.windows.addWindow(selection)
+        fixture.windows.windowBecameKey(key.id)
+        #expect(fixture.windows.commandTarget === key)
+        #expect(fixture.session.activeTab(in: other.id) == nil)
+        other.review = ReviewTabState(
+            root: fixture.root,
+            selection: .uncommitted(includesChangesOutsideTurns: false),
+            fixedPoint: ReviewTabFixedPoint(),
+            agentPaneID: nil,
+            destinationPaneID: nil,
+            opening: UUID()
+        )
+        key.review = nil
+
+        #expect(ReviewTabActions.closeIfInFront(in: other, stores: fixture.review))
+
+        #expect(other.review == nil)
+        #expect(key.review == nil)
+        // The key window has no review in front, so its ⌘W closes as before.
+        #expect(!ReviewTabActions.closeIfInFront(in: key, stores: fixture.review))
+        #expect(!ReviewTabActions.closeIfInFront(in: nil, stores: fixture.review))
+    }
+
     /// An open that finds no repository, or whose person moved on, leaves
     /// no request behind: while one stands, the window is taken to be
     /// opening a review and is passed over for one another window parks.

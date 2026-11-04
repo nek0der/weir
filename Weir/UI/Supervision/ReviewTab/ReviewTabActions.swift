@@ -116,13 +116,15 @@ enum ReviewTabActions {
         stores.toasts.show(ToastItem(message: DisplayText(error: refusal), undo: nil), in: window.id)
     }
 
-    /// ⌘W and ⌥⌘W while the review tab is in front close the review: the
-    /// panes and tabs behind it are not on screen, and closing one of them
-    /// unseen would close what the person cannot see. `false`
-    /// when there is no review in front, and the key closes as before; with
-    /// no main window key (Settings is), there is no review in front.
-    static func closeIfInFront(stores: ReviewTabStores) -> Bool {
-        guard let window = stores.windows.commandTarget, window.review?.isShown == true else {
+    /// ⌘W and ⌥⌘W while the review tab is in front of `window` close the
+    /// review: the panes and tabs behind it are not on screen, and closing
+    /// one of them unseen would close what the person cannot see. `window`
+    /// is the one the command runs in: the key main window for the menu,
+    /// the row's own window for the palette and the channel. `false` when
+    /// it shows no review in front, and the key closes as before; with no
+    /// main window key (Settings is), the menu has no window to ask about.
+    static func closeIfInFront(in window: ProjectWindowState?, stores: ReviewTabStores) -> Bool {
+        guard let window, window.review?.isShown == true else {
             return false
         }
         closeAsked(

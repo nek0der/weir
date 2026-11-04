@@ -104,7 +104,6 @@ enum TabActions {
         tabID: UUID,
         source: CloseConfirmer.Source = .keyboard,
         confirm: Bool = true,
-        attention: AttentionState? = nil,
         agentProjection: AgentProjectionAdapter? = nil,
         in window: WindowID? = nil
     ) {
@@ -264,7 +263,6 @@ enum TabActions {
         _ session: WorkspaceSession,
         registry: any PaneSurfaceProviding,
         source: CloseConfirmer.Source = .keyboard,
-        attention: AttentionState? = nil,
         agentProjection: AgentProjectionAdapter? = nil,
         in window: WindowID
     ) {
@@ -274,7 +272,6 @@ enum TabActions {
             registry: registry,
             tabID: id,
             source: source,
-            attention: attention,
             agentProjection: agentProjection,
             in: window
         )
@@ -401,7 +398,7 @@ enum TabActions {
         let scope = ShortcutScope(session: session, window: window, commands: commands)
         switch action.category {
         case .file:
-            dispatchFileAction(action, in: scope, registry: registry, attention: attention, trackers: trackers)
+            dispatchFileAction(action, in: scope, registry: registry, trackers: trackers)
         case .view:
             dispatchViewAction(action, in: scope)
         case .navigation:
@@ -424,7 +421,6 @@ enum TabActions {
         _ action: WeirShortcutAction,
         in scope: ShortcutScope,
         registry: any PaneSurfaceProviding,
-        attention: AttentionState,
         trackers: SessionTrackers
     ) {
         let (session, window) = (scope.session, scope.window)
@@ -440,7 +436,6 @@ enum TabActions {
             PaneActions.closeActivePaneOrTab(
                 session,
                 registry: registry,
-                attention: attention,
                 agentProjection: trackers.projection,
                 in: window
             )
@@ -448,7 +443,6 @@ enum TabActions {
             closeActiveTab(
                 session,
                 registry: registry,
-                attention: attention,
                 agentProjection: trackers.projection,
                 in: window
             )
@@ -527,10 +521,11 @@ enum TabActions {
         case .nextSession, .previousSession: break
         case .nextTab: NavActions.cycleTab(session, forward: true, in: window, intent: .person)
         case .previousTab: NavActions.cycleTab(session, forward: false, in: window, intent: .person)
+        // The window's own place in the list, as its menu walks it.
         case .nextAttention:
-            attention.walkAttention?(true)
+            attention.walkAttention?(true, window)
         case .previousAttention:
-            attention.walkAttention?(false)
+            attention.walkAttention?(false, window)
         case .showNeedsAttention, .showOpenTabs, .showProjectMenu, .showWorktreeMenu, .showDecisionBarMenu, .focusSidebar:
             // The window carries these out, with what it knows of its controls.
             if let command = windowCommand(forNavigation: action) {
@@ -541,8 +536,10 @@ enum TabActions {
         case .moveProjectUp, .moveProjectDown:
             guard let selection = session.selection(window), let projectID = selection.shownProjectID else { break }
             selection.sidebarArrangement.move(projectID, by: action == .moveProjectUp ? -1 : 1, among: session.projects.map(\.id))
-        case .goBack: session.navigateBack(in: window, intent: .person)
-        case .goForward: session.navigateForward(in: window, intent: .person)
+        // The window steps its history before this dispatch is reached,
+        // closing its dropdown and palette first
+        // (`SupervisionWindowActions.runHistoryRow`).
+        case .goBack, .goForward: break
         default:
             log
                 .fault(

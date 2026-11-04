@@ -272,7 +272,10 @@ struct Project: Codable, Equatable, Identifiable {
     }
 
     /// Whether a new worktree could be made: not in a folder that is gone,
-    /// nor with no git to run `git worktree add`.
+    /// nor with no git to run `git worktree add`. Whether the folder is a
+    /// repository at all is the other half
+    /// (`ShortcutAvailability.canMakeWorktree(in:)`), which every control
+    /// for making one asks.
     var canMakeWorktree: Bool {
         trouble != .folderMissing && trouble != .gitUnavailable
     }

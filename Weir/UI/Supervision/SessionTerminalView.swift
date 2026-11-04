@@ -100,22 +100,19 @@ private struct SessionTerminalEmptyState: View {
     @Environment(ProjectWindowState.self) private var window
     @Environment(SettingsStore.self) private var settings
     @Environment(AttentionState.self) private var attention
-    @Environment(ReviewPresentation.self) private var reviewPresentation
     @Environment(\.surfaceRegistry) private var registry
-    @Environment(InstalledAgentsStore.self) private var installedAgents: InstalledAgentsStore?
-    @Environment(ToastCenter.self) private var toastCenter: ToastCenter?
-    @Environment(\.frecencyStore) private var frecencyStore
-    @Environment(\.restoreHandler) private var restoreHandler
     @Environment(\.locale) private var locale
 
     var body: some View {
+        // Each hint is on when its menu item is (`ShortcutAvailability`).
+        let availability = ShortcutAvailability(window: window, session: session, registry: registry, attention: attention)
         EmptySessionHints(
             message: EmptyState.noTabs.message(locale: locale),
             hints: commands.map { command in
                 EmptySessionHints.Hint(
                     command.action,
                     keyboard: settings.settings.keyboard,
-                    isEnabled: command.isEnabled,
+                    isEnabled: availability.isEnabled(command.action, on: .menu),
                     run: command.run
                 )
             }
@@ -127,53 +124,31 @@ private struct SessionTerminalEmptyState: View {
     /// shortcut fires, so there's one source of truth per command.
     private var commands: [EmptySessionCommand] {
         [
-            // Off while the row's folder is gone, as the File menu's is.
-            EmptySessionCommand(
-                action: .newTab,
-                isEnabled: session.selection(window.id).map { !session.isFolderMissing($0.activeContainerID) } ?? true
-            ) {
+            EmptySessionCommand(action: .newTab) {
                 TabActions.newTab(session, in: window.id, intent: .person)
             },
-            EmptySessionCommand(
-                action: .reopenClosedTab,
-                isEnabled: !session.closedTabStack.isEmpty
-            ) {
+            EmptySessionCommand(action: .reopenClosedTab) {
                 TabActions.reopenClosedTab(session, in: window.id, intent: .person)
             },
-            EmptySessionCommand(action: .commandPalette, isEnabled: true) {
-                guard let frecencyStore else { return }
-                CommandPaletteActions.openCommandPalette(
-                    session,
-                    in: window.id,
-                    settings: settings,
-                    frecencyStore: frecencyStore,
-                    attention: attention,
-                    registry: registry,
-                    supervision: SupervisionPaletteFacts(
-                        window: window,
-                        session: session,
-                        restoreTurnNumber: restoreHandler?.paletteTurnNumber(),
-                        installedAgents: installedAgents,
-                        toasts: toastCenter
-                    )
-                )
+            // The window opens it, as its menu item does.
+            EmptySessionCommand(action: .commandPalette) {
+                window.commands.send(.openCommandPalette(initialQuery: ">"))
             },
-            EmptySessionCommand(action: .toggleSidebar, isEnabled: true) {
+            EmptySessionCommand(action: .toggleSidebar) {
                 window.commands.send(.toggleSidebar)
             },
-            EmptySessionCommand(action: .keyboardShortcuts, isEnabled: true) {
+            EmptySessionCommand(action: .keyboardShortcuts) {
                 window.commands.send(.toggleKeyboardShortcuts)
             }
         ]
     }
 }
 
-/// One command of the empty session area: the action that names it and
-/// whose keybinding to surface, whether it's currently runnable, and the
+/// One command of the empty session area: the action that names it, whose
+/// keybinding to surface and whose enabled state to follow, and the
 /// closure to fire on click.
 private struct EmptySessionCommand {
     let action: WeirShortcutAction
-    let isEnabled: Bool
     let run: () -> Void
 }
 

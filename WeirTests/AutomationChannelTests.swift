@@ -193,6 +193,98 @@
         }
     }
 
+    /// `open` and `command` run a palette row, and refuse at once one the
+    /// palette shows off, rather than reply "sent" and leave the client
+    /// waiting for a layer that cannot open.
+    @MainActor
+    struct AutomationPaletteRowTests {
+        private func rows(
+            _ session: WorkspaceSession,
+            facts: SupervisionPaletteFacts = .empty,
+            window: WindowID? = nil
+        ) throws -> [CommandPaletteItem] {
+            try withTempDir { dir in
+                CommandPaletteCatalog.buildItems(
+                    session: session,
+                    settings: SettingsStore(directory: dir),
+                    attention: AttentionState(),
+                    supervision: facts,
+                    window: window ?? session.primaryWindowID,
+                    locale: Locale(identifier: "en")
+                )
+            }
+        }
+
+        @Test func eachLayerButReview_opensThroughItsActionsRow() {
+            #expect(AutomationController.action(opening: .needsAttention) == .showNeedsAttention)
+            #expect(AutomationController.action(opening: .allProjects) == .allProjects)
+            #expect(AutomationController.action(opening: .notificationHistory) == .notificationHistory)
+            #expect(AutomationController.action(opening: .keyboardShortcuts) == .keyboardShortcuts)
+            #expect(AutomationController.action(opening: .planUsage) == .planUsage)
+            #expect(AutomationController.action(opening: .review) == nil)
+        }
+
+        /// `open planUsage` with the icon bars hidden is refused at once, with
+        /// the reason `command` gives, rather than sent to a window that
+        /// cannot show the panel.
+        @Test func open_refusesALayerWhoseRowIsOff() throws {
+            let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+            var facts = SupervisionPaletteFacts.empty
+            let shown = try rows(session, facts: facts)
+            guard case let .run(item) = AutomationController.openStep(.planUsage, isOpen: false, items: { shown }) else {
+                Issue.record("Plan Usage opens with the rail shown")
+                return
+            }
+            #expect(item.action == .shortcutAction(.planUsage))
+
+            facts.areRailsHidden = true
+            let hidden = try rows(session, facts: facts)
+            #expect(AutomationController.openStep(.planUsage, isOpen: false, items: { hidden })
+                == .refused("shortcut.planUsage is disabled now"))
+            #expect(AutomationController.row("shortcut.nothing", among: hidden)
+                == .refused("no command shortcut.nothing in this window; commands lists them"))
+        }
+
+        /// A layer already up is not toggled shut, and the rows are not read.
+        @Test func open_leavesALayerThatIsUp() {
+            var isRead = false
+            let step = AutomationController.openStep(.allProjects, isOpen: true) {
+                isRead = true
+                return []
+            }
+            #expect(step == .alreadyOpen)
+            #expect(!isRead)
+        }
+
+        /// `open` in one window runs its row there, as that window's palette
+        /// would: a palette open in another window keeps its query, and the
+        /// window's own palette closes.
+        @Test func open_inOneWindow_leavesAnotherWindowsPaletteAndItsQuery() throws {
+            let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+            let other = WorkspaceSessionFixture.addWindow(to: session)
+            let window = session.primaryWindowID
+            let palette = CommandPaletteState(locale: Locale(identifier: "en"), windowID: other)
+            palette.query = ">split"
+            session.commandPaletteState = palette
+
+            let items = try rows(session, window: window)
+            guard case let .run(item) = AutomationController.openStep(.allProjects, isOpen: false, items: { items }) else {
+                Issue.record("All Projects opens in a window with a tab")
+                return
+            }
+            let commands = RecordingWindowCommands()
+            try CommandPaletteActions.runRowForTest(item.action, session: session, window: window, commands: commands)
+
+            #expect(session.commandPaletteState === palette)
+            #expect(palette.query == ">split")
+            #expect(commands.performed.contains { $0.command == .toggleAllProjects && $0.window == window })
+
+            session.commandPaletteState = CommandPaletteState(locale: Locale(identifier: "en"), windowID: window)
+            try CommandPaletteActions.runRowForTest(item.action, session: session, window: window, commands: commands)
+            #expect(session.commandPaletteState == nil)
+        }
+    }
+
     @MainActor
     struct AutomationTurnWatchTests {
         private struct Look {

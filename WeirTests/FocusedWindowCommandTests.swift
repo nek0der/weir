@@ -31,15 +31,15 @@ struct FocusedWindowCommandTests {
         let registry = WindowRegistry(primaryID: WindowID())
         registry.windowBecameKey(registry.primary.id)
 
-        let inSettings = CloseKeyCommand.decide(isQuickTerminalKey: false, target: nil, hasActiveTab: false)
+        let inSettings = CloseKeyCommand.decide(isQuickTerminalKey: false, target: nil, canClose: false)
         #expect(inSettings == .closeKeyWindow)
         #expect(inSettings.isLive)
 
-        let emptyWindow = CloseKeyCommand.decide(isQuickTerminalKey: false, target: registry.primary, hasActiveTab: false)
+        let emptyWindow = CloseKeyCommand.decide(isQuickTerminalKey: false, target: registry.primary, canClose: false)
         #expect(emptyWindow == .nothing)
         #expect(!emptyWindow.isLive)
 
-        let withTab = CloseKeyCommand.decide(isQuickTerminalKey: false, target: registry.primary, hasActiveTab: true)
+        let withTab = CloseKeyCommand.decide(isQuickTerminalKey: false, target: registry.primary, canClose: true)
         #expect(withTab == .closePaneOrTab)
 
         registry.primary.review = ReviewTabState(
@@ -50,9 +50,9 @@ struct FocusedWindowCommandTests {
             destinationPaneID: nil,
             opening: UUID()
         )
-        #expect(CloseKeyCommand.decide(isQuickTerminalKey: false, target: registry.primary, hasActiveTab: true) == .closeReview)
+        #expect(CloseKeyCommand.decide(isQuickTerminalKey: false, target: registry.primary, canClose: true) == .closeReview)
         // The quick terminal's panel comes first, whatever is behind it.
-        #expect(CloseKeyCommand.decide(isQuickTerminalKey: true, target: nil, hasActiveTab: false) == .hideQuickTerminal)
+        #expect(CloseKeyCommand.decide(isQuickTerminalKey: true, target: nil, canClose: false) == .hideQuickTerminal)
     }
 
     /// The item's one label has to be true of everything above: it closes
@@ -86,7 +86,7 @@ struct FocusedWindowCommandTests {
         #expect(CloseKeyCommand.decide(
             isQuickTerminalKey: false,
             target: registry.commandTarget,
-            hasActiveTab: true
+            canClose: true
         ) == .closePaneOrTab)
     }
 
@@ -105,8 +105,8 @@ struct FocusedWindowCommandTests {
 
         let target = registry.commandTarget
         #expect(target == nil)
-        #expect(!ReviewTabModel.closeCommandsAreLive(hasActiveTab: target != nil, review: target?.review))
-        #expect(CloseKeyCommand.decide(isQuickTerminalKey: false, target: target, hasActiveTab: true) == .closeKeyWindow)
+        #expect(!ShortcutAvailability.closeCommandsAreLive(hasActiveTab: target != nil, isReviewShown: target?.arePanesHidden == true))
+        #expect(CloseKeyCommand.decide(isQuickTerminalKey: false, target: target, canClose: true) == .closeKeyWindow)
         #expect(registry.backgroundCommandTarget === other)
         // ⌘J reads the key window, else the background target.
         #expect((registry.commandTarget ?? registry.backgroundCommandTarget) === other)

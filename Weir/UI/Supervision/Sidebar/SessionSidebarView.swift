@@ -259,7 +259,7 @@ struct SessionSidebarView: View {
             newWorktree: { [windowActions] in
                 windowActions?.newWorktree(id)
             },
-            canMakeWorktree: session.project(id)?.canMakeWorktree ?? false,
+            canMakeWorktree: session.project(id).map(ShortcutAvailability.canMakeWorktree(in:)) ?? false,
             hasFolder: session.project(id)?.isRootMissing == false,
             // ⌘N makes one in the window's own project only.
             newWorktreeShortcut: header.isCurrent ? settings.settings.keyboard.shortcut(for: .newWorktree) : nil,

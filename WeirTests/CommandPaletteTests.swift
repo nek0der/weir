@@ -36,18 +36,35 @@ struct CommandPaletteTests {
     // MARK: - Catalog
 
     /// The palette moves the project the window shows; with none shown
-    /// (the project chooser, or a scratch tab only), the moves are off.
-    @Test func theProjectMoves_needAShownProject() throws {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
-        session.openTab(container: .project(project.id))
-        let none = try Self.items(session, supervision: SupervisionPaletteFacts(projectID: nil, sessionRowCount: 1, hasReviewTab: false))
+    /// (the project chooser, or a scratch tab only), the moves are off; at
+    /// either end of the window's order, the move off that end is off too,
+    /// as the sidebar's Move Up and Move Down are (`ProjectOrder.canMove`).
+    @Test func theProjectMoves_needAShownProject_withSomewhereToGo() throws {
+        let fixture = ProjectWindowsFixture()
+        func rows(_ projectID: UUID?) throws -> [CommandPaletteItem] {
+            try Self.items(
+                fixture.session,
+                supervision: SupervisionPaletteFacts(projectID: projectID, sessionRowCount: 1, hasReviewTab: false)
+            )
+        }
+        let none = try rows(nil)
         #expect(Self.isEnabled(.moveProjectUp, in: none) == false)
         #expect(Self.isEnabled(.moveProjectDown, in: none) == false)
-        let shown = try Self.items(
-            session,
-            supervision: SupervisionPaletteFacts(projectID: project.id, sessionRowCount: 1, hasReviewTab: false)
-        )
-        #expect(Self.isEnabled(.moveProjectUp, in: shown) == true)
+
+        let first = try rows(fixture.a.id)
+        #expect(Self.isEnabled(.moveProjectUp, in: first) == false)
+        #expect(Self.isEnabled(.moveProjectDown, in: first) == true)
+        let middle = try rows(fixture.b.id)
+        #expect(Self.isEnabled(.moveProjectUp, in: middle) == true)
+        #expect(Self.isEnabled(.moveProjectDown, in: middle) == true)
+        let last = try rows(fixture.c.id)
+        #expect(Self.isEnabled(.moveProjectUp, in: last) == true)
+        #expect(Self.isEnabled(.moveProjectDown, in: last) == false)
+
+        // The window's own order, not the session's.
+        fixture.primary.selection.sidebarArrangement = SidebarArrangement(projectOrder: [fixture.c.id, fixture.b.id, fixture.a.id])
+        #expect(try Self.isEnabled(.moveProjectUp, in: rows(fixture.c.id)) == false)
+        #expect(try Self.isEnabled(.moveProjectDown, in: rows(fixture.a.id)) == false)
     }
 
     /// While the review stands where the terminal was, the pane commands
@@ -150,7 +167,7 @@ struct CommandPaletteTests {
 
     @Test("the window's own actions are offered")
     func catalog_offersTheWindowsOwnActions() throws {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
+        let (session, project) = WorkspaceSessionFixture.withRepository(name: "weir")
         session.openTab(container: .project(project.id))
 
         let supervision = try Self.items(
@@ -201,21 +218,40 @@ struct CommandPaletteTests {
         #expect(Self.isEnabled(.showOpenTabs, in: choosing) == false)
     }
 
-    @Test("a row adds a tab running each agent the strip's + offers, and is off with no session")
-    func catalog_newAgentTabs_followThePaneStrip() throws {
+    @Test("a row adds a tab running each agent the strip's + offers, on when New Tab is")
+    func catalog_newAgentTabs_followNewTab() throws {
         let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
-        var facts = SupervisionPaletteFacts.empty
         let ids = AgentCatalog.entries.map { CommandPaletteAction.newAgentTab($0.kind).frecencyKey }
 
-        let showing = try Self.items(session, supervision: facts)
+        let showing = try Self.items(session)
+        #expect(Self.isEnabled(.newTab, in: showing) == true)
         for id in ids {
             #expect(showing.first { $0.id == id }?.isEnabled == true, "\(id)")
         }
-        facts.isChoosingProject = true
-        let choosing = try Self.items(session, supervision: facts)
-        for id in ids {
-            #expect(choosing.first { $0.id == id }?.isEnabled == false, "\(id)")
-        }
+    }
+
+    /// A window choosing a project opens New Tab on the scratch tabs and
+    /// takes them, and an agent row opens its tab the same way, so both
+    /// rows are on there.
+    @Test func aWindowChoosingAProject_offersTheAgentRows_whichOpenTheirTabThere() throws {
+        let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+        let choosing = session.addWindow(showing: nil, layoutFrom: session.primaryWindowID)
+        let window = ProjectWindowState(selection: choosing)
+        let facts = SupervisionPaletteFacts(window: window, session: session)
+        #expect(facts.isChoosingProject)
+        let items = try Self.items(session, supervision: facts, window: choosing.windowID)
+        #expect(Self.isEnabled(.newTab, in: items) == true)
+        let agent = try #require(AgentCatalog.entries.first?.kind)
+        let row = try #require(items.first { $0.action == .newAgentTab(agent) })
+        #expect(row.isEnabled)
+
+        try CommandPaletteActions.runRowForTest(row.action, session: session, window: choosing.windowID)
+
+        #expect(!choosing.isChoosingProject)
+        let opened = try #require(session.drawnTab(in: choosing.windowID))
+        #expect(opened.container == .loose)
+        let paneID = try #require(opened.splitTree.allLeafIDs().first)
+        #expect(session.tab(opened.id)?.agentsInFront[paneID]?.kind == agent)
     }
 
     @Test("the agent rows offer the agents found on this Mac, as the strip's + does")

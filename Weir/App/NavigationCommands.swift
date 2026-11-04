@@ -26,26 +26,31 @@ struct NavigationCommands: Commands {
         window ?? state.windowRegistry.backgroundCommandTarget
     }
 
+    /// The menu bar's answer, read with the working rows the sidebar last
+    /// drew, so the menu is drawn again when they change.
+    private var rowsMenuAvailability: MenuAvailability {
+        _ = window?.presentedWorkingRows
+        return state.menuAvailability
+    }
+
     /// ⌘[ ⌘] over the window's worktrees.
     @ViewBuilder private var worktreeButtons: some View {
         // The sections the sidebar last drew: reading them afresh here would
         // rebuild the menu on every Git and forge reading, so the menu
         // follows the working rows it drew (`presentedWorkingRows`).
-        // Pressed, the keys read them afresh.
-        let hasMultipleRows = window.map {
-            _ = $0.presentedWorkingRows
-            return SessionRowNavigation.rows(in: $0, session: state.session, sections: $0.presentedSections).count > 1
-        } ?? false
+        // Pressed, the keys read them afresh. The palette's facts count the
+        // rows of those same sections (`SupervisionPaletteFacts`).
+        let menu = rowsMenuAvailability
         ShortcutMenuButton(.nextSession, in: state.settingsStore) {
             guard let window else { return }
             SessionRowNavigation.cycle(forward: true, in: window, session: state.session, sections: state.sidebarSections(in: window))
         }
-        .disabled(!hasMultipleRows)
+        .disabled(!menu.isEnabled(.nextSession))
         ShortcutMenuButton(.previousSession, in: state.settingsStore) {
             guard let window else { return }
             SessionRowNavigation.cycle(forward: false, in: window, session: state.session, sections: state.sidebarSections(in: window))
         }
-        .disabled(!hasMultipleRows)
+        .disabled(!menu.isEnabled(.previousSession))
     }
 
     var body: some Commands {
@@ -62,15 +67,17 @@ struct NavigationCommands: Commands {
                 // leak ⌘J / ⌘⇧J to the focused terminal as raw input —
                 // libghostty silently drops the keystroke when AppKit's
                 // menu didn't fire.
-                let hasWaiting = state.attentionQueue.hasItems
+                // Asked of the window ⌘J walks from, so the items stay on
+                // with Settings in front.
+                let walk = state.shortcutAvailability(in: attentionWindow)
                 ShortcutMenuButton(.nextAttention, in: state.settingsStore) {
                     state.attentionQueue.jump(forward: true, in: attentionWindow)
                 }
-                .disabled(!hasWaiting)
+                .disabled(!walk.isEnabled(.nextAttention, on: .menu))
                 ShortcutMenuButton(.previousAttention, in: state.settingsStore) {
                     state.attentionQueue.jump(forward: false, in: attentionWindow)
                 }
-                .disabled(!hasWaiting)
+                .disabled(!walk.isEnabled(.previousAttention, on: .menu))
             }
         }
     }

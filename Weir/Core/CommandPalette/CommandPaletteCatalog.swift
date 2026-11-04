@@ -7,40 +7,6 @@ import WeirDomain
 @MainActor
 enum CommandPaletteCatalog {
 
-    /// Lightweight context bundle for `isActionEnabled` — keeps the
-    /// per-action dispatch fed by one value instead of six loose flags.
-    private struct ActionEnabledContext {
-        let hasActiveTab: Bool
-        /// ⇧⌘[ ⇧⌘] have a tab to step to: another terminal tab, or the
-        /// window's review tab.
-        let canCycleTab: Bool
-        /// ⌘[ ⌘] have somewhere to go: another session row.
-        let canCycleSession: Bool
-        let isSplit: Bool
-        let reachable: (SpatialDirection) -> Bool
-        let isProjectActive: Bool
-        /// The window shows a project (not its project chooser): the one
-        /// Move Project Up and Down move.
-        let hasShownProject: Bool
-        let hasClosedTabs: Bool
-        /// Find has a search to open: the active tab's, or the review's
-        /// while it is in front, though the window may have no tab left.
-        let canFind: Bool
-        let hasActiveSearch: Bool
-        let hasWaitingAttention: Bool
-        let canReview: Bool
-        let canGoBack: Bool
-        let canGoForward: Bool
-        /// The window shows a session, whose strip Open Tabs hangs from.
-        let hasPaneStrip: Bool
-        /// The rail shows the button Plan Usage hangs from.
-        let hasRails: Bool
-        /// The title bar shows the worktree ▾.
-        let hasWorktreeMenu: Bool
-        /// The focused pane's decision bar shows its ⋯.
-        let hasDecisionBarMenu: Bool
-    }
-
     private struct ShortcutDependencies {
         let settings: SettingsStore
         let attention: AttentionState
@@ -101,71 +67,22 @@ enum CommandPaletteCatalog {
         session: WorkspaceSession,
         dependencies: ShortcutDependencies
     ) {
-        let window = dependencies.window
-        let activeTab = session.activeTab(in: window)
-        let hasActiveTab = activeTab != nil
-        let supervision = dependencies.supervision
-        // A window the session does not know has no tabs, and nothing to
-        // act on.
-        let selection = session.selection(window)
-        let tabCount = selection.map { session.tabs(in: $0.activeContainerID).count } ?? 0
-        // As the menu decides (`PaneCommands`, `NavigationCommands`): the
-        // window's review tab is one of the tabs stepped through, and ⌘[ ⌘]
-        // walk its session rows.
-        let canCycleTab = SupervisionPaletteFacts.canCycleTab(tabCount: tabCount, facts: supervision)
-        let canCycleSession = supervision.sessionRowCount > 1
-        let isSplit = activeTab?.splitTree.isSplit == true
-        // Per-direction reachability — same source of truth the Pane menu
-        // uses, so a Focus/Move action grays out in exactly the directions
-        // it can't reach (also covers zoom + single-pane via `adjacentLeaf`).
-        let reachable: (SpatialDirection) -> Bool = {
-            PaneActions.adjacentLeaf(session, registry: dependencies.registry, direction: $0, in: window) != nil
-        }
-        // The window's project, kept while a scratch tab is selected, so the
-        // palette offers what the title bar does.
-        let isProjectActive = (supervision.projectID ?? selection?.activeContainerID.projectID) != nil
-        let hasClosedTabs = !session.closedTabStack.isEmpty
-        let focusedPaneID = activeTab?.splitTree.effectiveFocusedLeafID
-        // As the menu decides (`SettingsAwareFindCommands`): while the review
-        // is in front, Find, Find Next, and Find Previous go to its own search.
-        let hasActiveSearch = supervision.arePanesHidden
-            || focusedPaneID.map { session.paneSearchStates[$0] != nil } ?? false
-        let hasWaitingAttention = dependencies.attention.hasAttentionItems()
-
-        let context = ActionEnabledContext(
-            hasActiveTab: hasActiveTab,
-            canCycleTab: canCycleTab,
-            canCycleSession: canCycleSession,
-            isSplit: isSplit,
-            reachable: reachable,
-            isProjectActive: isProjectActive,
-            hasShownProject: supervision.projectID != nil,
-            hasClosedTabs: hasClosedTabs,
-            canFind: hasActiveTab || supervision.arePanesHidden,
-            hasActiveSearch: hasActiveSearch,
-            hasWaitingAttention: hasWaitingAttention,
-            // The review tab opens from any tab, and says why when there is
-            // nothing to read.
-            canReview: hasActiveTab,
-            canGoBack: session.canNavigateBack(in: window),
-            canGoForward: session.canNavigateForward(in: window),
-            hasPaneStrip: !supervision.isChoosingProject,
-            hasRails: !supervision.areRailsHidden,
-            hasWorktreeMenu: supervision.hasWorktreeMenu,
-            hasDecisionBarMenu: supervision.hasDecisionBarMenu
+        // The menu bar asks the same of each action (`ShortcutAvailability`).
+        let availability = ShortcutAvailability(
+            session: session,
+            window: dependencies.window,
+            facts: dependencies.supervision,
+            registry: dependencies.registry,
+            attention: dependencies.attention
         )
-
         for action in WeirShortcutAction.allCases {
             let shortcut = dependencies.settings.settings.keyboard.shortcut(for: action)
-            // A pane command is off while the review hides the panes.
-            let enabled = isActionEnabled(action, context: context)
-                && !SupervisionPaletteFacts.isOffPaneCommand(action, arePanesHidden: supervision.arePanesHidden)
             items.append(row(
                 action.localizedTitle,
                 icon: action.iconName,
                 shortcutDisplay: shortcut?.displayString,
                 action: .shortcutAction(action),
-                isEnabled: enabled,
+                isEnabled: availability.isEnabled(action, on: .palette),
                 locale: dependencies.locale
             ))
         }
@@ -175,8 +92,11 @@ enum CommandPaletteCatalog {
 
     /// One row per agent the pane strip's "+" offers, in the catalog's
     /// order: the agents found on this Mac (`InstalledAgentRule`), so an
-    /// agent the "+" lists has its row and one it leaves out has none. Off
-    /// where "+" is: no session in the window, or its folder gone.
+    /// agent the "+" lists has its row and one it leaves out has none. On
+    /// when New Tab is (`ShortcutAvailability.canOpenTab`): off while the
+    /// row's folder is gone, and on in a window choosing a project, where
+    /// the tab opens on the scratch tabs and the window takes them, as ⌘T's
+    /// does (`WorkspaceSession.claimScratch(for:)`).
     private static func appendNewAgentTabs(
         to items: inout [CommandPaletteItem],
         session: WorkspaceSession,
@@ -185,7 +105,7 @@ enum CommandPaletteCatalog {
         locale: Locale
     ) {
         let container = session.selection(window)?.activeContainerID
-        let isEnabled = !supervision.isChoosingProject && container.map { !session.isFolderMissing($0) } ?? false
+        let isEnabled = container.map { ShortcutAvailability.canOpenTab(in: $0, session: session) } ?? false
         let agents = InstalledAgentRule.shown(catalog: AgentCatalog.entries.map(\.kind), installed: supervision.installedAgents)
         for agent in agents {
             items.append(row(
@@ -473,46 +393,6 @@ enum CommandPaletteCatalog {
             case .revealInFinder:
                 break
             }
-        }
-    }
-
-    // MARK: - Action availability
-
-    // swiftlint:disable:next cyclomatic_complexity
-    private static func isActionEnabled(
-        _ action: WeirShortcutAction,
-        context: ActionEnabledContext
-    ) -> Bool {
-        switch action {
-        // A window that shows no project has nowhere to make one.
-        case .newWorktree, .newWorktreeNow: context.isProjectActive
-        // The palette moves the window's own project, which it must show.
-        case .moveProjectUp, .moveProjectDown: context.hasShownProject
-        case .renameTab: context.hasActiveTab
-        case .reopenClosedTab: context.hasClosedTabs
-        case .closeSurface, .closeTab: context.hasActiveTab
-        case .nextTab, .previousTab: context.canCycleTab
-        case .nextSession, .previousSession: context.canCycleSession
-        case .nextAttention, .previousAttention: context.hasWaitingAttention
-        case .find: context.canFind
-        case .findNext, .findPrevious: context.hasActiveSearch
-        case .nextPrompt, .previousPrompt: context.hasActiveTab
-        case .splitRight, .splitDown: context.hasActiveTab
-        case .equalizeSplits, .toggleSplitZoom: context.isSplit
-        case .focusPaneLeft: context.reachable(.left)
-        case .focusPaneRight: context.reachable(.right)
-        case .focusPaneUp: context.reachable(.up)
-        case .focusPaneDown: context.reachable(.down)
-        // Review Latest Turn opens the same tab on the pane's latest turn.
-        case .review, .reviewLatestTurn: context.canReview
-        case .commandPalette, .quickOpen: false
-        case .goBack: context.canGoBack
-        case .goForward: context.canGoForward
-        case .showOpenTabs: context.hasPaneStrip
-        case .planUsage: context.hasRails
-        case .showWorktreeMenu: context.hasWorktreeMenu
-        case .showDecisionBarMenu: context.hasDecisionBarMenu
-        default: true
         }
     }
 }

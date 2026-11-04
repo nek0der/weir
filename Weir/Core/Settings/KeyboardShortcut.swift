@@ -37,12 +37,13 @@ enum WeirShortcutCategory: Int, CaseIterable, Identifiable {
 ///   1. `defaultShortcut`, `localizedTitle`, `category`, `ghosttyAction`,
 ///      `iconName`
 ///   2. `TabActions.dispatchShortcutAction` (palette dispatch)
-///   3. `CommandPaletteCatalog.isActionEnabled`
+///   3. `ShortcutAvailability.isEnabled(_:on:)`, which the menu bar and the
+///      palette both read
 ///   4. The menu bar (`WeirApp.commands` and the `Commands` types)
 ///   5. `Localizable.xcstrings` for the title, in en and ja
 ///
-/// 1 is compiler-enforced via switch exhaustiveness; 2 traps at run time
-/// in the category's dispatcher; 3–5 are manual (3 ends in a default).
+/// 1 and 3 are compiler-enforced via switch exhaustiveness; 2 traps at run
+/// time in the category's dispatcher; 4 and 5 are manual.
 /// Keep raw values when renaming a case: settings store overrides under
 /// them.
 ///

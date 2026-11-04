@@ -136,7 +136,6 @@ enum PaneActions {
         _ session: WorkspaceSession,
         registry: any PaneSurfaceProviding,
         source: CloseConfirmer.Source = .keyboard,
-        attention: AttentionState? = nil,
         agentProjection: AgentProjectionAdapter? = nil,
         in window: WindowID,
         fallsThroughToTab: Bool = false
@@ -263,7 +262,6 @@ enum PaneActions {
         _ session: WorkspaceSession,
         registry: any PaneSurfaceProviding,
         source: CloseConfirmer.Source = .keyboard,
-        attention: AttentionState? = nil,
         agentProjection: AgentProjectionAdapter? = nil,
         in window: WindowID
     ) {
@@ -274,7 +272,6 @@ enum PaneActions {
                 session,
                 registry: registry,
                 source: source,
-                attention: attention,
                 agentProjection: agentProjection,
                 in: window
             )
@@ -283,7 +280,6 @@ enum PaneActions {
                 session,
                 registry: registry,
                 source: source,
-                attention: attention,
                 agentProjection: agentProjection,
                 in: window,
                 fallsThroughToTab: true

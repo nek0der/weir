@@ -17,38 +17,15 @@ struct TabCommands: Commands {
         state.windowRegistry.commandTarget
     }
 
-    /// The tab or pane an item reads: the key main window's active tab,
-    /// none while no main window is key.
-    private var activeTab: Tab? {
-        target.flatMap { state.session.activeTab(in: $0.id) }
-    }
-
-    /// The project the key main window shows, which New Worktree… makes one
-    /// in; `nil` while it shows none or no main window is key.
-    private var shownProject: Project? {
-        target.flatMap { state.session.selection($0.id)?.shownProjectID }.flatMap { state.session.project($0) }
-    }
-
-    /// New Tab opens in the window's active row, so it is off while that
-    /// row's folder is gone (`WorkspaceSession.isFolderMissing`): the shell
-    /// would start somewhere else.
-    private var canOpenTab: Bool {
-        guard let target, let selection = state.session.selection(target.id) else { return false }
-        return !state.session.isFolderMissing(selection.activeContainerID)
-    }
-
-    /// ⌥⌘W has a terminal tab to close, or the review tab in front.
-    private var closeTabIsLive: Bool {
-        ReviewTabModel.closeCommandsAreLive(hasActiveTab: activeTab != nil, review: target?.review)
-    }
-
     /// What ⌘W does now: the one item carries the key for every window
-    /// (`CloseKeyCommand`).
+    /// (`CloseKeyCommand`). Whether the key main window has something to
+    /// close is the answer its palette's Close row reads
+    /// (`ShortcutAvailability`).
     private var closeKey: CloseKeyCommand {
         CloseKeyCommand.decide(
             isQuickTerminalKey: state.quickTerminal.isPanelKey,
             target: target,
-            hasActiveTab: activeTab != nil
+            canClose: state.menuAvailability.isEnabled(.closeSurface)
         )
     }
 
@@ -59,40 +36,43 @@ struct TabCommands: Commands {
         // terminal has the keyboard.
         CommandGroup(replacing: .newItem) {
             MainWindowCommandItems(state.quickTerminal) {
+                // Each item is on when its palette row is (`ShortcutAvailability`).
+                let menu = state.menuAvailability
                 ShortcutMenuButton(.newTab, in: state.settingsStore) {
                     guard let target else { return }
                     TabActions.newTab(state.session, in: target.id, intent: .person)
                 }
-                .disabled(!canOpenTab)
+                .disabled(!menu.isEnabled(.newTab))
                 // New Worktree… (⌘N), the one item that opens the new
                 // worktree sheet for the window's project, and ⌥⌘N, which
                 // makes one at once with the sheet's last choices.
                 // Asked of the window (`WindowCommand`) so its layout can
                 // present the sheet even when its always-mounted sidebar is
-                // disabled offscreen. Disabled when the window shows no
-                // project — the worktree concept doesn't apply to the
-                // scratch tabs. A supervision window on a scratch tab still
-                // shows its project, whose sheet opens.
+                // disabled offscreen. Both are disabled when the window shows
+                // no project, or one that cannot have a worktree made in it;
+                // ⌥⌘N is also off while the window is making one. A
+                // supervision window on a scratch tab still shows its
+                // project, whose sheet opens.
                 ShortcutMenuButton(.newWorktree, in: state.settingsStore) {
                     guard let target else { return }
                     target.commands.send(.newWorktree)
                 }
-                .disabled(shownProject?.canMakeWorktree != true)
+                .disabled(!menu.isEnabled(.newWorktree))
                 ShortcutMenuButton(.newWorktreeNow, in: state.settingsStore) {
                     guard let target else { return }
                     target.commands.send(.newWorktreeNow)
                 }
-                .disabled(shownProject?.canMakeWorktree != true || target?.isCreatingWorktreeAtOnce == true)
+                .disabled(!menu.isEnabled(.newWorktreeNow))
                 ShortcutMenuButton(.renameTab, in: state.settingsStore) {
                     guard let target else { return }
                     TabActions.renameActiveTab(state.session, in: target.id, commands: state.windowRegistry)
                 }
-                .disabled(activeTab == nil)
+                .disabled(!menu.isEnabled(.renameTab))
                 ShortcutMenuButton(.reopenClosedTab, in: state.settingsStore) {
                     guard let target else { return }
                     TabActions.reopenClosedTab(state.session, in: target.id, intent: .person)
                 }
-                .disabled(target == nil || state.session.closedTabStack.isEmpty)
+                .disabled(!menu.isEnabled(.reopenClosedTab))
             }
         }
         // SwiftUI's own Close and Close All. Our ⌘W item already closes the
@@ -119,7 +99,7 @@ struct TabCommands: Commands {
                 case .hideQuickTerminal:
                     state.quickTerminal.hide()
                 case .closeReview:
-                    _ = ReviewTabActions.closeIfInFront(stores: state.reviewTabStores)
+                    _ = ReviewTabActions.closeIfInFront(in: target, stores: state.reviewTabStores)
                 case .closePaneOrTab:
                     guard let target else { return }
                     PaneActions.closeActivePaneOrTab(
@@ -149,7 +129,7 @@ struct TabCommands: Commands {
             // panes it contains (no per-pane cascade).
             MainWindowCommandItems(state.quickTerminal) {
                 ShortcutMenuButton(.closeTab, in: state.settingsStore) {
-                    guard !ReviewTabActions.closeIfInFront(stores: state.reviewTabStores), let target else { return }
+                    guard !ReviewTabActions.closeIfInFront(in: target, stores: state.reviewTabStores), let target else { return }
                     TabActions.closeActiveTab(
                         state.session,
                         registry: state.registry,
@@ -157,7 +137,7 @@ struct TabCommands: Commands {
                         in: target.id
                     )
                 }
-                .disabled(!closeTabIsLive)
+                .disabled(!state.menuAvailability.isEnabled(.closeTab))
             }
         }
         // ── View menu ─────────────────────────────────────
@@ -167,7 +147,7 @@ struct TabCommands: Commands {
                     guard let target else { return }
                     target.commands.send(.toggleSidebar)
                 }
-                .disabled(target == nil)
+                .disabled(!state.menuAvailability.isEnabled(.toggleSidebar))
             }
         }
     }

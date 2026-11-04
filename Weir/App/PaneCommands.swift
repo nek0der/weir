@@ -24,8 +24,9 @@ struct PaneCommands: Commands {
         target.flatMap { $0.arePanesHidden ? nil : $0 }
     }
 
-    /// This is the active tab of `paneTarget`, which the pane items act on.
-    /// It is `nil` while no main window is key.
+    /// This is the active tab of `paneTarget`, whose zoom state gives the
+    /// zoom item its label. It is `nil` while no main window is key or the
+    /// review hides the panes.
     private var paneTab: Tab? {
         paneTarget.flatMap { state.session.activeTab(in: $0.id) }
     }
@@ -42,33 +43,29 @@ struct PaneCommands: Commands {
         )
     }
 
-    /// Whether there is another tab to step to, as the palette decides.
-    private var canCycleTab: Bool {
-        guard let target else { return false }
-        let facts = SupervisionPaletteFacts(window: target, session: state.session)
-        let tabCount = state.session.tabs(in: target.selection.activeContainerID).count
-        return SupervisionPaletteFacts.canCycleTab(tabCount: tabCount, facts: facts)
-    }
-
     var body: some Commands {
         CommandMenu("Pane") {
             // Splits, zoom, and focus act on the main window's active tab.
             // The quick terminal is a single pane, so the whole menu steps
             // aside while it has the keyboard.
             MainWindowCommandItems(state.quickTerminal) {
+                // Each item is on when its palette row is (`ShortcutAvailability`),
+                // and the split, zoom, and focus items are off while the
+                // review hides the panes.
+                let menu = state.menuAvailability
                 ShortcutMenuButton(.splitRight, in: state.settingsStore) {
                     split(.horizontal)
                 }
-                .disabled(paneTab == nil)
+                .disabled(!menu.isEnabled(.splitRight))
                 ShortcutMenuButton(.splitDown, in: state.settingsStore) {
                     split(.vertical)
                 }
-                .disabled(paneTab == nil)
+                .disabled(!menu.isEnabled(.splitDown))
                 ShortcutMenuButton(.equalizeSplits, in: state.settingsStore) {
                     guard let paneTarget else { return }
                     PaneActions.equalizeSplits(state.session, in: paneTarget.id)
                 }
-                .disabled(paneTab?.splitTree.isSplit != true)
+                .disabled(!menu.isEnabled(.equalizeSplits))
                 // ⌘⇧↩ is the conventional "maximize pane" chord.
                 // ⌘⇧Z would steal the system Redo shortcut. Named for what
                 // it does now, as the header's item is.
@@ -80,46 +77,44 @@ struct PaneCommands: Commands {
                     guard let paneTarget else { return }
                     PaneActions.toggleZoom(state.session, in: paneTarget.id)
                 }
-                .disabled(paneTab?.splitTree.isSplit != true)
+                .disabled(!menu.isEnabled(.toggleSplitZoom))
 
                 // ⌥⌘+arrow focuses the neighbor. Moving a pane to another
                 // slot is ⌥⌘ + drag, not a directional shortcut —
                 // see `PaneSwapDropOverlay` for the drop side.
                 Divider()
-                paneDirectionButton(.focusPaneLeft, .left, perform: focus)
-                paneDirectionButton(.focusPaneRight, .right, perform: focus)
-                paneDirectionButton(.focusPaneUp, .up, perform: focus)
-                paneDirectionButton(.focusPaneDown, .down, perform: focus)
+                paneDirectionButton(.focusPaneLeft, .left, menu: menu)
+                paneDirectionButton(.focusPaneRight, .right, menu: menu)
+                paneDirectionButton(.focusPaneUp, .up, menu: menu)
+                paneDirectionButton(.focusPaneDown, .down, menu: menu)
 
                 Divider()
                 ShortcutMenuButton(.nextTab, in: state.settingsStore) {
                     cycleTab(forward: true)
                 }
-                .disabled(!canCycleTab)
+                .disabled(!menu.isEnabled(.nextTab))
                 ShortcutMenuButton(.previousTab, in: state.settingsStore) {
                     cycleTab(forward: false)
                 }
-                .disabled(!canCycleTab)
+                .disabled(!menu.isEnabled(.previousTab))
             }
         }
     }
 
     /// One Focus menu item for `direction`, named and drawn by its shortcut
-    /// action; the item disables itself when no neighbor is
-    /// reachable that way (single source of truth: `PaneActions.adjacentLeaf`),
-    /// so an edge pane grays out the directions it can't reach rather than
+    /// action; the item is off when no neighbor is reachable that way
+    /// (`PaneActions.adjacentLeaf`, through `ShortcutAvailability`), so an
+    /// edge pane grays out the directions it can't reach rather than
     /// offering a silent no-op.
     private func paneDirectionButton(
         _ action: WeirShortcutAction,
         _ direction: SpatialDirection,
-        perform: @escaping (SpatialDirection) -> Void
+        menu: MenuAvailability
     ) -> some View {
         ShortcutMenuButton(action, in: state.settingsStore) {
-            perform(direction)
+            focus(direction)
         }
-        .disabled(paneTarget.flatMap { window in
-            PaneActions.adjacentLeaf(state.session, registry: state.registry, direction: direction, in: window.id)
-        } == nil)
+        .disabled(!menu.isEnabled(action))
     }
 
     private func focus(_ direction: SpatialDirection) {

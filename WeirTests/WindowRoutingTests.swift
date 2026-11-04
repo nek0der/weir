@@ -106,17 +106,39 @@ struct WindowRoutingTests {
         #expect(order() == [fixture.a.id, fixture.b.id, fixture.c.id], "the top stays the top")
     }
 
-    @Test func theAttentionShortcuts_walkTheList_forwardThenBack() {
+    /// ⌘J and ⇧⌘J from a window's palette, or the channel naming a
+    /// window, walk from that window's place in the list, as its menu does,
+    /// not from the window the person was last in.
+    @Test func theAttentionShortcuts_walkTheList_fromTheWindowTheyRanIn() {
         let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+        let other = WorkspaceSessionFixture.addWindow(to: session)
         let attention = AttentionState()
-        var walked: [Bool] = []
-        attention.walkAttention = { walked.append($0) }
+        var walked: [(forward: Bool, window: WindowID)] = []
+        attention.walkAttention = { walked.append(($0, $1)) }
 
         for action in [WeirShortcutAction.nextAttention, .previousAttention] {
-            dispatch(action, session: session, window: session.primaryWindowID, attention: attention)
+            dispatch(action, session: session, window: other, attention: attention)
         }
 
-        #expect(walked == [true, false])
+        #expect(walked.map(\.forward) == [true, false])
+        #expect(walked.map(\.window) == [other, other])
+    }
+
+    /// Go Back and Go Forward are the window's to run, closing its dropdown
+    /// first (`SupervisionWindowActions.runHistoryRow`): the shared
+    /// dispatch leaves the history alone, so a row never steps twice.
+    @Test func theHistoryShortcuts_areLeftToTheWindow_byTheSharedDispatch() throws {
+        let (session, tabA, _, tabB, _) = WorkspaceSessionFixture.withTwoLooseTabs()
+        let window = session.primaryWindowID
+        session.setActiveTab(tabB.id, in: window)
+        let before = try #require(session.currentNavTarget(in: window))
+        session.setActiveTab(tabA.id, in: window)
+        session.recordNavigation(from: before, in: window)
+        #expect(session.canNavigateBack(in: window))
+
+        dispatch(.goBack, session: session, window: window)
+
+        #expect(session.primarySelection.activeTabID == tabA.id)
     }
 
     @Test func aNewTabInASecondWindow_startsInThatWindowsFolder() {

@@ -319,8 +319,7 @@ enum RestoreActions {
                 guard let turn = state.agentProjection.turnHistory.turn(turnID) else { return }
                 ask(turn, window: window, state: state)
             },
-            canAsk: { [state] turnID in canAsk(turnID, state: state) },
-            paletteTurnNumber: { [window, state] in paletteTarget(window: window, state: state)?.displayNumber }
+            canAsk: { [state] turnID in canAsk(turnID, state: state) }
         )
     }
 }

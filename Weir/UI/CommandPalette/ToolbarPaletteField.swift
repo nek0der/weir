@@ -9,13 +9,6 @@ import SwiftUI
 struct ToolbarPaletteField: View {
     @Environment(WorkspaceSession.self) private var session
     @Environment(ProjectWindowState.self) private var window
-    @Environment(SettingsStore.self) private var settings
-    @Environment(AttentionState.self) private var attention
-    @Environment(\.frecencyStore) private var frecencyStore
-    @Environment(\.surfaceRegistry) private var registry
-    @Environment(\.restoreHandler) private var restoreHandler
-    @Environment(InstalledAgentsStore.self) private var installedAgents: InstalledAgentsStore?
-    @Environment(ToastCenter.self) private var toastCenter: ToastCenter?
 
     /// The palette open in this window. One open in another window leaves
     /// this field idle, so the two fields never edit the same query.
@@ -43,23 +36,10 @@ struct ToolbarPaletteField: View {
         }
     }
 
+    /// The window opens it, as its menu item does, with the rows built for
+    /// it (`AppState.openPalette`).
     private func openPalette() {
-        guard let frecencyStore else { return }
-        CommandPaletteActions.openCommandPalette(
-            session,
-            in: window.id,
-            settings: settings,
-            frecencyStore: frecencyStore,
-            attention: attention,
-            registry: registry,
-            supervision: SupervisionPaletteFacts(
-                window: window,
-                session: session,
-                restoreTurnNumber: restoreHandler?.paletteTurnNumber(),
-                installedAgents: installedAgents,
-                toasts: toastCenter
-            )
-        )
+        window.commands.send(.openCommandPalette(initialQuery: ">"))
     }
 }
 

@@ -117,14 +117,15 @@ extension AppState: AttentionNavigating {
     }
 
     /// Lets Core's shortcut dispatch and command palette reach the list,
-    /// which lives above it. Without a window to name, they act on the
-    /// command target, as menu commands do: the window the person was last
-    /// in, which is the palette's own when they used the palette.
+    /// which lives above it. They walk from the window they ran in, the
+    /// palette's or the one the channel named, as its menu would. If that
+    /// window closed meanwhile, they walk from the window the person was
+    /// last in, as the menu does while no main window is key.
     func connectAttentionNavigation() {
         attentionQueue.navigator = self
-        attention.walkAttention = { [weak self] forward in
+        attention.walkAttention = { [weak self] forward, window in
             guard let self else { return }
-            attentionQueue.jump(forward: forward, in: windowRegistry.backgroundCommandTarget)
+            attentionQueue.jump(forward: forward, in: windowRegistry.window(window) ?? windowRegistry.backgroundCommandTarget)
         }
         attention.hasAttentionItems = { [weak self] in
             self?.attentionQueue.hasItems ?? false

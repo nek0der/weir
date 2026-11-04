@@ -335,6 +335,14 @@ scene), `weirCommandPaletteFocus` (one palette is open at a time),
 `weirSearchFocus` (addressed to a pane), and `weirGitSyncRequested`
 (addressed to a project, for `GitSyncCoordinator`).
 
+Whether a keyboard command can run now in a window is one answer,
+`ShortcutAvailability` (`Core/CommandPalette/ShortcutAvailability.swift`). The
+menu bar's items, the palette's rows, the empty session's hints, and the
+verification channel's `command` and `open` all read it, so an item and its row
+are on together. Show Decision Bar Menu, Command Palette, and Quick Open are the
+only actions whose menu item and palette row answer differently, and the type
+says why.
+
 Two stores ask Git about a worktree once and share the answer with every
 window and view. `RepositoryRoots` (`Presentation/Window`) keeps each session
 folder's Git top level and matches a turn's recorded root to it.
