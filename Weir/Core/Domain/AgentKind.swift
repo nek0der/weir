@@ -29,13 +29,32 @@ package enum AgentKind: String, Codable, CaseIterable, Equatable, Sendable {
     /// its id rather than "the latest", because several panes in one folder
     /// each want their own conversation, and `--continue` or `--last` would
     /// collapse them into one. The caller checks the id
-    /// (`AgentKind.strictResumeCommand`).
+    /// (`AgentKind.strictResumeCommand`). The command is `launchCommand`, so
+    /// the resume starts what a new conversation starts: the shim.
     package func strictResumeArguments(sessionId: String) -> String {
+        "\(launchCommand) \(resumeOption) \(sessionId)"
+    }
+
+    /// The folder in the user's home a provider keeps its own files in when
+    /// nothing moves it (`CODEX_HOME` and the like): its id behind a dot, as
+    /// `ProviderDescriptor::default_home` names it on the Rust side. Taken
+    /// by id, as the descriptors are keyed.
+    package static func homeFolderName(ofProvider id: String) -> String {
+        "." + id
+    }
+
+    /// `homeFolderName(ofProvider:)` for this kind.
+    package var homeFolderName: String {
+        Self.homeFolderName(ofProvider: rawValue)
+    }
+
+    /// What names the session to resume on the agent's command line.
+    private var resumeOption: String {
         switch self {
-        case .claude: "claude --resume \(sessionId)"
-        case .codex: "codex resume \(sessionId)"
-        case .antigravity: "agy --conversation \(sessionId)"
-        case .opencode: "opencode --session \(sessionId)"
+        case .claude: "--resume"
+        case .codex: "resume"
+        case .antigravity: "--conversation"
+        case .opencode: "--session"
         }
     }
 }

@@ -381,7 +381,7 @@
                 if text.isEmpty {
                     return "typeLine needs text"
                 }
-                if text.unicodeScalars.contains(where: \.isTypedControl) {
+                if text.containsTypedControl {
                     return "typeLine takes one line without control characters; use paste for several lines"
                 }
                 return nil

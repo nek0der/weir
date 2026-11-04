@@ -26,4 +26,28 @@ struct AgentIntegrationConfigurationTests {
             AgentIntegrationConfiguration.controllerMachService
         ])
     }
+
+    /// The registrar validates the service and the Hook Helper, the artifact
+    /// hashes the service, and the Codex installer runs the Hook Helper, each
+    /// by these names in this folder: the app the tests run in has both.
+    @MainActor @Test func executables_areWhereTheConfigurationNamesThem() {
+        let directory = AgentIntegrationConfiguration.executableDirectory(inApp: Bundle.main.bundleURL)
+        #expect(directory == Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS", isDirectory: true))
+        for name in [
+            AgentIntegrationConfiguration.serviceExecutableName,
+            AgentIntegrationConfiguration.hookHelperExecutableName
+        ] {
+            #expect(FileManager.default.isExecutableFile(atPath: directory.appendingPathComponent(name).path), "\(name)")
+        }
+        #expect(AgentIntegrationConfiguration.serviceExecutableName == "AgentIntegrationService")
+        #expect(AgentIntegrationConfiguration.hookHelperExecutableName == "AgentIntegrationHookHelper")
+        #expect(CodexHookInstaller.bundledHookHelper()?.lastPathComponent == AgentIntegrationConfiguration.hookHelperExecutableName)
+    }
+
+    /// The Hook Helper's signing identifier is the first requester the
+    /// service accepts, as the registrar validated it by before it had a name.
+    @Test func hookHelperIdentifier_isTheFirstRequester() {
+        #expect(AgentIntegrationConfiguration.requesterIdentifiers.first == AgentIntegrationConfiguration.hookHelperIdentifier)
+        #expect(AgentIntegrationConfiguration.hookHelperIdentifier.hasPrefix("com.nekoder.weir.AgentIntegrationHookHelper"))
+    }
 }

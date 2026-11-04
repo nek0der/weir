@@ -43,7 +43,7 @@ enum CodexTurnFailureWatch {
     /// the size the rollout has before the session's first turn. A failure
     /// to start one costs only the detection.
     static func start(after payload: Data, environment: [String: String], helper: URL) {
-        guard environment["WEIR_AGENT_RUN_ID"]?.isEmpty == false,
+        guard environment[HookHelperEnvironment.agentRunID]?.isEmpty == false,
               let object = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
               object["hook_event_name"] as? String == "SessionStart",
               let rollout = object["transcript_path"] as? String,
@@ -70,7 +70,7 @@ enum CodexTurnFailureWatch {
     static func run(arguments: ArraySlice<String>, environment: [String: String]) {
         let arguments = Array(arguments)
         guard arguments.count == 4, let codex = pid_t(arguments[0]), let offset = UInt64(arguments[1]),
-              let runID = environment["WEIR_AGENT_RUN_ID"], !runID.isEmpty
+              let runID = environment[HookHelperEnvironment.agentRunID], !runID.isEmpty
         else { return }
         let session = arguments[2]
         let rollout = arguments[3]

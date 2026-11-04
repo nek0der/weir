@@ -91,6 +91,49 @@
             ) != nil)
         }
 
+        /// The channel and the approval service's registration read one rule:
+        /// a run is the channel's only when it asks and is not refused.
+        @Test func isAutomationRun_isAnAskedRunTheChannelDoesNotRefuse() {
+            let other = ["WEIR_AUTOMATION": "1", "CFFIXED_USER_HOME": "/tmp/somewhere"]
+            #expect(AutomationChannel.decision(environment: [:], isDemoActive: true, realHome: "/Users/a") == .notAsked)
+            #expect(AutomationChannel
+                .decision(environment: ["WEIR_AUTOMATION": "0"], isDemoActive: true, realHome: "/Users/a") == .notAsked)
+            #expect(AutomationChannel.decision(environment: ["WEIR_AUTOMATION": "1"], isDemoActive: true, realHome: "/Users/a") == .runs)
+            #expect(AutomationChannel.decision(environment: other, isDemoActive: false, realHome: "/Users/a") == .runs)
+            let refusal = AutomationChannel.dataRefusal(environment: ["WEIR_AUTOMATION": "1"], isDemoActive: false, realHome: "/Users/a")
+            #expect(AutomationChannel.decision(environment: ["WEIR_AUTOMATION": "1"], isDemoActive: false, realHome: "/Users/a")
+                == refusal.map(AutomationChannel.Decision.refused))
+
+            #expect(!AutomationChannel.isAutomationRun(environment: [:], isDemoActive: true, realHome: "/Users/a"))
+            #expect(AutomationChannel.isAutomationRun(environment: ["WEIR_AUTOMATION": "1"], isDemoActive: true, realHome: "/Users/a"))
+            #expect(AutomationChannel.isAutomationRun(environment: other, isDemoActive: false, realHome: "/Users/a"))
+            #expect(!AutomationChannel.isAutomationRun(environment: ["WEIR_AUTOMATION": "1"], isDemoActive: false, realHome: "/Users/a"))
+            #expect(!AutomationChannel.isAutomationRun(
+                environment: ["WEIR_AUTOMATION": "1", "CFFIXED_USER_HOME": "/Users/a"],
+                isDemoActive: false,
+                realHome: "/Users/a"
+            ))
+        }
+
+        /// An ordinary launch never asks the user database for the home.
+        @Test func decision_readsTheRealHomeOnlyWhenAsked() {
+            var reads = 0
+            func home() -> String? {
+                reads += 1
+                return "/Users/a"
+            }
+            // Decided outside `#expect`, which evaluates the arguments it
+            // shows, `home()` among them.
+            let unset = AutomationChannel.decision(environment: [:], isDemoActive: false, realHome: home())
+            let off = AutomationChannel.isAutomationRun(environment: ["WEIR_AUTOMATION": "0"], isDemoActive: false, realHome: home())
+            #expect(unset == .notAsked)
+            #expect(!off)
+            #expect(reads == 0)
+            let asked = AutomationChannel.isAutomationRun(environment: ["WEIR_AUTOMATION": "1"], isDemoActive: false, realHome: home())
+            #expect(!asked)
+            #expect(reads == 1)
+        }
+
         @Test func textRefusal_keepsTypeLineToOneLineOfText() {
             #expect(AutomationController.textRefusal(for: .typeLine, text: "echo hi") == nil)
             #expect(AutomationController.textRefusal(for: .typeLine, text: "") != nil)

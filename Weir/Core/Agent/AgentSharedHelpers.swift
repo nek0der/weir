@@ -79,6 +79,15 @@ extension Unicode.Scalar {
     }
 }
 
+extension StringProtocol {
+    /// Whether the text holds a scalar a line editor reads as a key
+    /// (`Unicode.Scalar.isTypedControl`): text that must not be typed into a
+    /// terminal as it is.
+    var containsTypedControl: Bool {
+        unicodeScalars.contains(where: \.isTypedControl)
+    }
+}
+
 /// POSIX single-quoting for a value a shell command line must carry as one
 /// argument, whatever it holds: a path or a tmux session name may have a
 /// space or a quote in it. The `'\''` dance is the standard way to escape

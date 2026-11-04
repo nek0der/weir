@@ -195,7 +195,7 @@ func run(input: Data) throws -> Data? {
                 timeoutMilliseconds: timeoutMilliseconds,
                 // The shim that started the agent minted it; the hook that
                 // started us inherited it.
-                agentRunID: ProcessInfo.processInfo.environment["WEIR_AGENT_RUN_ID"].flatMap(UUID.init(uuidString:))
+                agentRunID: ProcessInfo.processInfo.environment[HookHelperEnvironment.agentRunID].flatMap(UUID.init(uuidString:))
             )
         )
     ))

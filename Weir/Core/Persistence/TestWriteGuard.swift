@@ -4,6 +4,7 @@
 import Darwin
 import Foundation
 import OSLog
+import WeirDomain
 
 private let log = Logger.weir("fs.guard")
 
@@ -128,7 +129,7 @@ enum TestWriteGuard {
         return homes.flatMap { home in
             [
                 (.library, home.appendingPathComponent("Library", isDirectory: true)),
-                (.codexHome, home.appendingPathComponent(".codex", isDirectory: true))
+                (.codexHome, AgentProviderRegistry.defaultHome(of: .codex, under: home))
             ]
         }
     }()

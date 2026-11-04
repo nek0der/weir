@@ -340,7 +340,7 @@ struct StopLedgerTests: StopLedgerFixture {
 
     @Test(arguments: [("\u{7F}", true), ("\u{9B}", true), ("\t", true), ("/compact", false), ("é", false)])
     func aTypedCommand_carriesNoControlCharacter(_ text: String, _ isControl: Bool) {
-        #expect(text.unicodeScalars.contains(where: \.isTypedControl) == isControl)
+        #expect(text.containsTypedControl == isControl)
     }
 
     @Test func aDismissedStop_isNotKeptAgain_whileItsRunStillSaysSo() {

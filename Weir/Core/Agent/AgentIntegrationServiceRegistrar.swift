@@ -388,10 +388,7 @@ final class AgentIntegrationServiceRegistrar {
             // registration alone for the same reason the demo does. Decided as
             // the channel decides whether to start: a run it refuses is an
             // ordinary run on the person's data, and keeps its approvals.
-            let environment = ProcessInfo.processInfo.environment
-            let isAutomationRun = environment["WEIR_AUTOMATION"] == "1"
-                && AutomationChannel.dataRefusal(environment: environment, isDemoActive: DemoFixture.isDemoActive) == nil
-            guard !isAutomationRun else {
+            guard !AutomationChannel.isAutomationRun(environment: ProcessInfo.processInfo.environment) else {
                 Self.log.notice("Native approvals are off: automation run")
                 return
             }
@@ -700,15 +697,14 @@ extension AgentIntegrationServiceEnvironment {
         Self(
             inspectBundle: {
                 try await OffPoolWork.run {
-                    let executableDirectory = appBundleURL
-                        .appendingPathComponent("Contents/MacOS", isDirectory: true)
+                    let executableDirectory = AgentIntegrationConfiguration.executableDirectory(inApp: appBundleURL)
                     try AgentIntegrationSigning.validateStaticCode(
-                        at: executableDirectory.appendingPathComponent("AgentIntegrationService"),
+                        at: executableDirectory.appendingPathComponent(AgentIntegrationConfiguration.serviceExecutableName),
                         identifier: AgentIntegrationConfiguration.serviceIdentifier
                     )
                     try AgentIntegrationSigning.validateStaticCode(
-                        at: executableDirectory.appendingPathComponent("AgentIntegrationHookHelper"),
-                        identifier: AgentIntegrationConfiguration.requesterIdentifiers[0]
+                        at: executableDirectory.appendingPathComponent(AgentIntegrationConfiguration.hookHelperExecutableName),
+                        identifier: AgentIntegrationConfiguration.hookHelperIdentifier
                     )
                     return try (
                         AgentIntegrationServiceArtifact.bundled(in: appBundleURL),

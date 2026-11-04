@@ -34,7 +34,7 @@ enum AccessibilityTextRoute: Equatable {
     /// return, and a client may end its lines the way another platform does.
     init?(_ text: String?) {
         guard let text, !text.isEmpty else { return nil }
-        guard text.unicodeScalars.contains(where: \.isTypedControl) else {
+        guard text.containsTypedControl else {
             self = .typed(text)
             return
         }

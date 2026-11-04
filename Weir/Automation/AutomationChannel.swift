@@ -36,10 +36,14 @@
             state: AppState,
             environment: [String: String] = ProcessInfo.processInfo.environment
         ) -> AutomationChannel? {
-            guard environment["WEIR_AUTOMATION"] == "1" else { return nil }
-            if let refusal = dataRefusal(environment: environment, isDemoActive: DemoFixture.isDemoActive) {
+            switch decision(environment: environment) {
+            case .notAsked:
+                return nil
+            case let .refused(refusal):
                 log.error("automation not started: \(refusal, privacy: .public)")
                 return nil
+            case .runs:
+                break
             }
             let folder = AutomationRunFolder()
             AutomationRunFolder.removeStale(in: folder.base)
@@ -71,6 +75,45 @@
                 folder.remove()
                 return nil
             }
+        }
+
+        /// Whether the launching environment asks for the channel, and whether
+        /// the run may open it.
+        enum Decision: Equatable {
+            /// `WEIR_AUTOMATION=1` is not set.
+            case notAsked
+            /// Asked for, on the person's own data (`dataRefusal`).
+            case refused(String)
+            case runs
+        }
+
+        /// What `startIfAsked` decides for `environment`, before it opens
+        /// anything. One rule, so a run the channel refuses is an ordinary
+        /// run everywhere else too (`isAutomationRun`). The account's home is
+        /// read only once the channel is asked for, so an ordinary launch
+        /// never looks it up.
+        static func decision(
+            environment: [String: String],
+            isDemoActive: Bool = DemoFixture.isDemoActive,
+            realHome: @autoclosure () -> String? = realHomeDirectory()
+        ) -> Decision {
+            guard environment["WEIR_AUTOMATION"] == "1" else { return .notAsked }
+            if let refusal = dataRefusal(environment: environment, isDemoActive: isDemoActive, realHome: realHome()) {
+                return .refused(refusal)
+            }
+            return .runs
+        }
+
+        /// Whether this run is one the channel drives: asked for, and on data
+        /// that is not the person's. Such a run shares the bundle identifier
+        /// with the person's Weir and leaves what is theirs alone, such as the
+        /// approval service's registration.
+        static func isAutomationRun(
+            environment: [String: String],
+            isDemoActive: Bool = DemoFixture.isDemoActive,
+            realHome: @autoclosure () -> String? = realHomeDirectory()
+        ) -> Bool {
+            decision(environment: environment, isDemoActive: isDemoActive, realHome: realHome()) == .runs
         }
 
         /// Why this run may not open the channel, or `nil` when it may. A run
