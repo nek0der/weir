@@ -18,10 +18,7 @@ enum AgentProviderRegistry {
     /// compiled in.
     static let descriptors: [String: AgentProviderDescriptor] = {
         do {
-            return try JSONDecoder().decode(
-                [String: AgentProviderDescriptor].self,
-                from: WeirProjectionBridge.providers()
-            )
+            return try AgentProviderDescriptor.registry(from: WeirProjectionBridge.providers())
         } catch {
             // An empty registry means no provider has any capability, so the
             // rules decide nothing rather than deciding wrongly.
@@ -93,7 +90,7 @@ enum AgentProviderRegistry {
 
 /// How the hook runtime names the files in a provider's directories. The same
 /// for every provider, which is why it is not part of a descriptor.
-struct AgentRecordLayout: Decodable, Equatable {
+struct AgentRecordLayout: Decodable, Equatable, Sendable {
     /// What a run record's file name ends with; the rest of the name is the
     /// record's storage id.
     var runRecordSuffix: String
@@ -156,7 +153,7 @@ extension AgentProviderRegistry {
 /// What one provider needs the platform to set up for its hooks to reach
 /// Weir. Declared by the provider crate so adding one is a crate and its
 /// fixtures, not a list on this side that could disagree about a name.
-struct AgentInstallRecipe: Decodable {
+struct AgentInstallRecipe: Decodable, Sendable {
     var environment: [Variable] = []
     var settingsFragments: [SettingsFragment] = []
 
@@ -166,12 +163,12 @@ struct AgentInstallRecipe: Decodable {
     }
 
     /// Configuration the provider's crate states and the platform places.
-    struct SettingsFragment: Decodable {
+    struct SettingsFragment: Decodable, Sendable {
         var target: String
         var body: String
     }
 
-    struct Variable: Decodable {
+    struct Variable: Decodable, Sendable {
         var name: String
         var value: Placeholder
     }
@@ -179,7 +176,7 @@ struct AgentInstallRecipe: Decodable {
     /// What the platform substitutes. A value this build does not know is
     /// skipped rather than exported empty, because an empty directory path
     /// would send the provider's records somewhere nobody reads.
-    enum Placeholder: String, Decodable {
+    enum Placeholder: String, Decodable, Sendable {
         case stateDirectory = "state_directory"
         case sessionDirectory = "session_directory"
         case cwdEventsDirectory = "cwd_events_directory"

@@ -238,9 +238,11 @@ func run(input: Data) throws -> Data? {
     else {
         return nil
     }
-    var neutralDecision: [String: Any] = ["decision": decision]
-    neutralDecision["message"] = result["message"] as? String
-    neutralDecision["answers"] = result["answers"] as? [String: String]
+    let neutralDecision = AgentIntegrationApprovalWire.decisionBody(
+        decision: decision,
+        message: result["message"] as? String,
+        answers: result["answers"] as? [String: String]
+    )
     return try RustProviderBridge.approvalOutput(
         provider: provider,
         requestJSON: translated,

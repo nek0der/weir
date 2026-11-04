@@ -24,7 +24,7 @@ struct TurnRetentionTests {
 
         let report = queue.finished(asked: ["A", "B"], [
             TurnDeletion(outcome: .deleted, turnID: "A", reason: nil, roots: nil),
-            TurnDeletion(outcome: .failed, turnID: "B", reason: "refused", roots: nil)
+            TurnDeletion(outcome: .failed, turnID: "B", reason: .other("refused"), roots: nil)
         ], now: Self.now)
 
         #expect(report.gone == [TurnID("A"): Fixture.conversation])
@@ -82,7 +82,7 @@ struct TurnRetentionTests {
         let report = queue.finished(asked: ["A", "B", "C"], [
             TurnDeletion(outcome: .deleted, turnID: "A", reason: nil, roots: nil),
             TurnDeletion(outcome: .alreadyGone, turnID: "B", reason: nil, roots: nil),
-            TurnDeletion(outcome: .failed, turnID: "C", reason: "refused", roots: nil)
+            TurnDeletion(outcome: .failed, turnID: "C", reason: .other("refused"), roots: nil)
         ], now: Date())
         #expect(report.deletedIn == ["/repo": [late, early]], "a turn not deleted is not reported")
     }
@@ -381,7 +381,7 @@ struct TurnRetentionTests {
         try await withTempDir { root in
             let collector = Collector { ids in
                 switch how {
-                case "failed": return ids.map { TurnDeletion(outcome: .failed, turnID: $0, reason: "refused", roots: nil) }
+                case "failed": return ids.map { TurnDeletion(outcome: .failed, turnID: $0, reason: .other("refused"), roots: nil) }
                 case "unreadable": return ids.map { TurnDeletion(outcome: .unreadable, turnID: $0, reason: nil, roots: nil) }
                 default: throw CancellationError()
                 }

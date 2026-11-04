@@ -22,7 +22,7 @@ extension AgentProjectionAdapter {
                 from: AgentProjectionTurnSweep(limits: old, protection: protection),
                 to: AgentProjectionTurnSweep(limits: new, protection: protection)
             ))
-            let now = try JSONEncoder().encode(AnyEncodableInstant.now())
+            let now = try JSONEncoder().encode(AgentProjectionInstant.now())
             return try await Task.detached(priority: .userInitiated) {
                 try engine.turnsTaken(change: change, now: now)
             }.value

@@ -4,7 +4,14 @@
 import Foundation
 import WeirRustBridge
 
-final class RustApprovalService {
+/// The approval service every connection's session is made from.
+///
+/// `@unchecked Sendable` because the handle is the only state and never
+/// changes after `init`, and the Rust service it names keeps its broker
+/// behind a mutex (`ApprovalService`), so creating sessions and withdrawing
+/// a run's requests are safe from any thread: the listener's queue creates
+/// them, and a connection's invalidation handler withdraws on its own.
+final class RustApprovalService: @unchecked Sendable {
     fileprivate let handle: OpaquePointer
 
     init(maximumRecords: Int) throws {
@@ -27,8 +34,10 @@ final class RustApprovalService {
                 buffer.count
             )
         }
+        // The 16 bytes come from a `UUID`, so the run ID cannot be what the
+        // call refused: a null session is the bridge's own failure.
         guard let handle else {
-            throw AgentIntegrationError.rustFailure(Int32(WEIR_APPROVAL_INVALID_UUID.rawValue))
+            throw AgentIntegrationError.rustFailure(Int32(WEIR_APPROVAL_INTERNAL.rawValue))
         }
         return RustApprovalSession(service: self, handle: handle)
     }
@@ -44,7 +53,7 @@ final class RustApprovalService {
                 buffer.count
             )
         }
-        guard status == WEIR_APPROVAL_OK.rawValue else {
+        guard status == Int32(WEIR_APPROVAL_OK.rawValue) else {
             throw AgentIntegrationError.rustFailure(status)
         }
     }
@@ -57,7 +66,14 @@ final class RustApprovalService {
     }
 }
 
-final class RustApprovalSession {
+/// One connection's session.
+///
+/// `@unchecked Sendable` because both stored properties are immutable after
+/// `init`, and the Rust session serializes its own use behind a mutex
+/// (`weir_approval_session_exchange_v1`), so an exchange may run on any
+/// thread, even beside another on the same session. The service exchanges
+/// off the connection's queue for that reason (`PendingExchange`).
+final class RustApprovalSession: @unchecked Sendable {
     // The Rust session retains the shared Arc, but keeping the Swift owner alive
     // also guarantees that no foreign handle is freed out of ABI order.
     private let service: RustApprovalService
@@ -74,27 +90,18 @@ final class RustApprovalSession {
 
     func exchange(_ request: Data) throws -> Data {
         var output = weir_approval_bytes_v1(data: nil, len: 0)
-        let status = request.withUnsafeBytes { buffer in
-            weir_approval_session_exchange_v1(
-                handle,
-                buffer.bindMemory(to: UInt8.self).baseAddress,
-                buffer.count,
-                &output
-            )
+        let status = RustBytes.withBytes(request) { pointer, count in
+            weir_approval_session_exchange_v1(handle, pointer, count, &output)
         }
-        guard status == WEIR_APPROVAL_OK.rawValue else {
-            throw AgentIntegrationError.rustFailure(status)
-        }
-        guard output.len <= AgentIntegrationConfiguration.maximumXPCResponseBytes,
-              output.len == 0 || output.data != nil
-        else {
-            if let data = output.data {
-                weir_approval_bytes_free_v1(data, output.len)
+        // The size is checked before anything is copied.
+        return try RustBytes.consume(output.data, count: output.len) { buffer in
+            guard status == Int32(WEIR_APPROVAL_OK.rawValue) else {
+                throw AgentIntegrationError.rustFailure(status)
             }
-            throw AgentIntegrationError.invalidResponse
+            guard output.len <= AgentIntegrationConfiguration.maximumXPCResponseBytes,
+                  output.len == 0 || buffer != nil
+            else { throw AgentIntegrationError.invalidResponse }
+            return buffer.map { Data($0) } ?? Data()
         }
-        guard let data = output.data else { return Data() }
-        defer { weir_approval_bytes_free_v1(data, output.len) }
-        return Data(bytes: data, count: output.len)
     }
 }

@@ -9,6 +9,10 @@ import WeirRustBridge
 /// it can take is documented beside the function that returned it.
 enum WeirProjectionError: Error {
     case rust(Int32)
+    /// The call said `WEIR_PROJECTION_OK` and handed out no body. Every
+    /// projection call's contract rules that out; it is a case of its own so
+    /// the log never shows it as a status of 0.
+    case noBody
 }
 
 /// What the adapter needs of the rules' memory between passes. A protocol
@@ -73,13 +77,13 @@ enum WeirProjectionBridge {
         func pass(input: Data, now: Data) throws -> WeirProjectionPass {
             var proposal: UInt64 = 0
             let body = try WeirProjectionBridge.call { pointers in
-                WeirProjectionBridge.withBytes(now) { nowBuffer in
+                RustBytes.withBytes(now) { nowPointer, nowCount in
                     weir_projection_engine_pass_v1(
                         handle,
                         pointers.input,
                         pointers.inputCount,
-                        nowBuffer.baseAddress,
-                        nowBuffer.count,
+                        nowPointer,
+                        nowCount,
                         pointers.out,
                         pointers.outCount,
                         &proposal
@@ -105,14 +109,14 @@ enum WeirProjectionBridge {
         /// asks with is what a pass deletes.
         func turnsTaken(change: Data, now: Data) throws -> Int {
             var count: UInt64 = 0
-            let status = WeirProjectionBridge.withBytes(change) { changeBuffer in
-                WeirProjectionBridge.withBytes(now) { nowBuffer in
+            let status = RustBytes.withBytes(change) { changePointer, changeCount in
+                RustBytes.withBytes(now) { nowPointer, nowCount in
                     weir_projection_engine_turns_taken_v1(
                         handle,
-                        changeBuffer.baseAddress,
-                        changeBuffer.count,
-                        nowBuffer.baseAddress,
-                        nowBuffer.count,
+                        changePointer,
+                        changeCount,
+                        nowPointer,
+                        nowCount,
                         &count
                     )
                 }
@@ -174,12 +178,12 @@ enum WeirProjectionBridge {
     private static func lifecycle(input: Data, now: String, _ body: @escaping LifecycleCall) throws -> Data {
         let nowBytes = Data(now.utf8)
         return try call { pointers in
-            withBytes(nowBytes) { nowBuffer in
+            RustBytes.withBytes(nowBytes) { nowPointer, nowCount in
                 body(
                     pointers.input,
                     pointers.inputCount,
-                    nowBuffer.baseAddress,
-                    nowBuffer.count,
+                    nowPointer,
+                    nowCount,
                     pointers.out,
                     pointers.outCount
                 )
@@ -195,49 +199,22 @@ enum WeirProjectionBridge {
         let outCount: UnsafeMutablePointer<Int>
     }
 
-    /// Runs one call and takes ownership of its output buffer. The free is in a
-    /// `defer` before the status is inspected, because the bytes belong to us
-    /// whatever the status turned out to be.
+    /// Runs one call and takes ownership of its output buffer
+    /// (`RustBytes.call`).
     private static func call(
         _ body: (Pointers) -> Int32,
         input: () -> Data
     ) throws -> Data {
-        var out: UnsafeMutablePointer<UInt8>?
-        var outCount = 0
         let input = input()
-        let status = withUnsafeMutablePointer(to: &out) { outPointer in
-            withUnsafeMutablePointer(to: &outCount) { outCountPointer in
-                input.withUnsafeBytes { inputBuffer in
-                    body(Pointers(
-                        input: inputBuffer.bindMemory(to: UInt8.self).baseAddress,
-                        inputCount: inputBuffer.count,
-                        out: outPointer,
-                        outCount: outCountPointer
-                    ))
-                }
+        let output = RustBytes.call { out, outCount in
+            RustBytes.withBytes(input) { inputPointer, inputCount in
+                body(Pointers(input: inputPointer, inputCount: inputCount, out: out, outCount: outCount))
             }
         }
-        if let out {
-            defer { weir_approval_bytes_free_v1(out, outCount) }
-            guard status == Int32(WEIR_PROJECTION_OK.rawValue) else {
-                throw WeirProjectionError.rust(status)
-            }
-            return Data(bytes: out, count: outCount)
+        guard output.status == Int32(WEIR_PROJECTION_OK.rawValue) else {
+            throw WeirProjectionError.rust(output.status)
         }
-        throw WeirProjectionError.rust(status)
-    }
-
-    /// Scopes a byte buffer to one call. An empty value yields a null
-    /// pointer, which the call reports rather than reads.
-    private static func withBytes<T>(
-        _ data: Data,
-        _ body: (UnsafeBufferPointer<UInt8>) -> T
-    ) -> T {
-        guard !data.isEmpty else {
-            return body(UnsafeBufferPointer<UInt8>(start: nil, count: 0))
-        }
-        return data.withUnsafeBytes { buffer in
-            body(buffer.bindMemory(to: UInt8.self))
-        }
+        guard let body = output.body else { throw WeirProjectionError.noBody }
+        return body
     }
 }

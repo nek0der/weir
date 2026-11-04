@@ -31,16 +31,15 @@ enum WeirUsageBridge {
         // An answer that is not UTF-8 is not JSON, so there is nothing in it.
         guard let text = String(bytes: answer, encoding: .utf8) else { return .unreadable }
         let request = try JSONEncoder().encode(Request(provider: provider.rawValue, answer: text))
-        var out: UnsafeMutablePointer<UInt8>?
-        var outCount = 0
-        let status = request.withUnsafeBytes { buffer in
-            weir_plan_usage_answer_v1(buffer.bindMemory(to: UInt8.self).baseAddress, buffer.count, &out, &outCount)
+        let output = RustBytes.call { out, outCount in
+            RustBytes.withBytes(request) { pointer, count in
+                weir_plan_usage_answer_v1(pointer, count, out, outCount)
+            }
         }
-        guard let out else { throw WeirUsageBridgeError.rust(status) }
-        // The bytes are ours whatever the status turned out to be.
-        defer { weir_approval_bytes_free_v1(out, outCount) }
-        guard status == Int32(WEIR_USAGE_OK.rawValue) else { throw WeirUsageBridgeError.rust(status) }
-        let body = try JSONDecoder().decode(Body.self, from: Data(bytes: out, count: outCount))
+        guard output.status == Int32(WEIR_USAGE_OK.rawValue), let reply = output.body else {
+            throw WeirUsageBridgeError.rust(output.status)
+        }
+        let body = try JSONDecoder().decode(Body.self, from: reply)
         switch body.outcome {
         case .usage:
             guard let usage = body.usage else { return .unreadable }

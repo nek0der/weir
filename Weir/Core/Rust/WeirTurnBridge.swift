@@ -33,11 +33,32 @@ struct TurnDeletion: Decodable, Equatable, Sendable {
         }
     }
 
+    /// Why a turn was not deleted. Only a restore under way is acted on;
+    /// every other reason names the step that failed (moving the record,
+    /// deleting the refs), in English, for the log only.
+    enum Reason: Decodable, Equatable, Sendable {
+        /// A restore of the worktree holds its lock, so the next sweep
+        /// deletes the turn.
+        case restoreInProgress
+        case other(String)
+
+        init(from decoder: any Decoder) throws {
+            let word = try decoder.singleValueContainer().decode(String.self)
+            self = word == "restoreInProgress" ? .restoreInProgress : .other(word)
+        }
+
+        /// The reason as the bridge spelled it.
+        var text: String {
+            switch self {
+            case .restoreInProgress: "restoreInProgress"
+            case let .other(word): word
+            }
+        }
+    }
+
     let outcome: Outcome
     let turnID: String
-    /// Which step failed (moving the record, deleting the refs), English,
-    /// for the log only.
-    let reason: String?
+    let reason: Reason?
     /// The repositories that could not be reached, whose refs may remain;
     /// for the log, so they can be found by hand.
     let roots: [String]?
@@ -74,25 +95,14 @@ enum WeirTurnBridge {
     static func deleteTurns(_ turnIDs: [String], in directory: URL) throws -> [TurnDeletion] {
         let path = Data(directory.path.utf8)
         let ids = try JSONEncoder().encode(turnIDs)
-        var out: UnsafeMutablePointer<UInt8>?
-        var outCount = 0
-        let status = path.withUnsafeBytes { pathBuffer in
-            ids.withUnsafeBytes { idsBuffer in
-                weir_turn_gc_apply_v1(
-                    pathBuffer.bindMemory(to: UInt8.self).baseAddress,
-                    pathBuffer.count,
-                    idsBuffer.bindMemory(to: UInt8.self).baseAddress,
-                    idsBuffer.count,
-                    &out,
-                    &outCount
-                )
+        let body = try answer(RustBytes.call { out, outCount in
+            RustBytes.withBytes(path) { pathPointer, pathCount in
+                RustBytes.withBytes(ids) { idsPointer, idsCount in
+                    weir_turn_gc_apply_v1(pathPointer, pathCount, idsPointer, idsCount, out, outCount)
+                }
             }
-        }
-        guard let out else { throw WeirTurnBridgeError.rust(status) }
-        // The bytes are ours whatever the status turned out to be.
-        defer { weir_approval_bytes_free_v1(out, outCount) }
-        guard status == Int32(WEIR_TURN_OK.rawValue) else { throw WeirTurnBridgeError.rust(status) }
-        return try JSONDecoder().decode([TurnDeletion].self, from: Data(bytes: out, count: outCount))
+        })
+        return try JSONDecoder().decode([TurnDeletion].self, from: body)
     }
 
     /// Sweeps the files no record needs from each of `directories`: lock
@@ -100,22 +110,13 @@ enum WeirTurnBridge {
     /// counters no turn numbers from. Lists whole directories, so it is
     /// called off the main actor (`TurnGarbageCollector`).
     static func sweepLeftovers(in directories: [URL]) throws -> LeftoverSweep {
-        let body = try JSONEncoder().encode(directories.map(\.path))
-        var out: UnsafeMutablePointer<UInt8>?
-        var outCount = 0
-        let status = body.withUnsafeBytes { buffer in
-            weir_leftover_sweep_v1(
-                buffer.bindMemory(to: UInt8.self).baseAddress,
-                buffer.count,
-                &out,
-                &outCount
-            )
-        }
-        guard let out else { throw WeirTurnBridgeError.rust(status) }
-        // The bytes are ours whatever the status turned out to be.
-        defer { weir_approval_bytes_free_v1(out, outCount) }
-        guard status == Int32(WEIR_TURN_OK.rawValue) else { throw WeirTurnBridgeError.rust(status) }
-        return try JSONDecoder().decode(LeftoverSweep.self, from: Data(bytes: out, count: outCount))
+        let request = try JSONEncoder().encode(directories.map(\.path))
+        let body = try answer(RustBytes.call { out, outCount in
+            RustBytes.withBytes(request) { pointer, count in
+                weir_leftover_sweep_v1(pointer, count, out, outCount)
+            }
+        })
+        return try JSONDecoder().decode(LeftoverSweep.self, from: body)
     }
 
     /// Ends the turn `request` names, which the person stopped and no hook
@@ -127,22 +128,22 @@ enum WeirTurnBridge {
     /// and may wait a second for the transcript, so it is called off the
     /// main actor (`StoppedTurnCloser`).
     static func endStoppedTurn(_ request: StoppedTurnRequest) throws -> StoppedTurnEnd {
-        let body = try JSONEncoder().encode(request)
-        var out: UnsafeMutablePointer<UInt8>?
-        var outCount = 0
-        let status = body.withUnsafeBytes { buffer in
-            weir_stopped_turn_end_v1(
-                buffer.bindMemory(to: UInt8.self).baseAddress,
-                buffer.count,
-                &out,
-                &outCount
-            )
+        let encoded = try JSONEncoder().encode(request)
+        let body = try answer(RustBytes.call { out, outCount in
+            RustBytes.withBytes(encoded) { pointer, count in
+                weir_stopped_turn_end_v1(pointer, count, out, outCount)
+            }
+        })
+        return try JSONDecoder().decode(StoppedTurnAnswer.self, from: body).outcome
+    }
+
+    /// The body of a call that said `WEIR_TURN_OK`; any other status, or
+    /// none handed out, throws the status.
+    private static func answer(_ output: RustBytes.Output) throws -> Data {
+        guard output.status == Int32(WEIR_TURN_OK.rawValue), let body = output.body else {
+            throw WeirTurnBridgeError.rust(output.status)
         }
-        guard let out else { throw WeirTurnBridgeError.rust(status) }
-        // The bytes are ours whatever the status turned out to be.
-        defer { weir_approval_bytes_free_v1(out, outCount) }
-        guard status == Int32(WEIR_TURN_OK.rawValue) else { throw WeirTurnBridgeError.rust(status) }
-        return try JSONDecoder().decode(StoppedTurnAnswer.self, from: Data(bytes: out, count: outCount)).outcome
+        return body
     }
 
     private struct StoppedTurnAnswer: Decodable {

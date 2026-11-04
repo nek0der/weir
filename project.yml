@@ -78,6 +78,9 @@ targets:
     sources:
       - path: AgentIntegrationService/Service
       - path: AgentIntegrationService/Shared
+      # The rest of ProviderBridge is the helper's and the app's; the service
+      # needs only the one way bytes from the Rust bridge are taken and freed.
+      - path: AgentIntegrationService/ProviderBridge/RustBytes.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.nekoder.weir.AgentIntegrationService

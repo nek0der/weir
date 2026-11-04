@@ -16,7 +16,7 @@ enum AgentProjectionPass {
         /// What protected turns from the sweep, as the input carries it.
         let sweptWith: TurnProtection?
         var input: AgentProjectionInput
-        let now: [String: AnyEncodableInstant]
+        let now: AgentProjectionInstant
         /// The turn records as the last pass left them, or nil to list them.
         let unchanged: TurnRecordCache.Read?
         let turnSources: [TurnRecordCache.Source]
