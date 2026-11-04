@@ -21,11 +21,11 @@ enum PaneAttention: Equatable {
 
     /// The one that ranks first among `items`, in the app's one order.
     static func of(_ items: [AttentionItem]) -> PaneAttention? {
-        switch PanePriority.dominant(items)?.kind {
-        case .question, .prompt(.question): .needsAnswer
-        case .approval, .prompt(.approval): .needsApproval
-        case .prompt(.unclassified): .needsResponse
-        case .prompt(.signIn): .needsSignIn
+        switch PanePriority.dominant(items)?.kind.category {
+        case .question: .needsAnswer
+        case .approval: .needsApproval
+        case .response: .needsResponse
+        case .signIn: .needsSignIn
         case .stop: .stopped
         case .unread, nil: nil
         }

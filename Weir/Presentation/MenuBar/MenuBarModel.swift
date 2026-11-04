@@ -229,24 +229,3 @@ extension MenuBarModel.Request {
         )
     }
 }
-
-/// Which appearance the menu bar extra's window takes: the system's,
-/// as the menu bar is the system's chrome and the menus beside it follow
-/// the OS Appearance setting, not Weir's own Appearance preference,
-/// which `NSApp.appearance` pins every window of the app to. The system's
-/// choice is `SystemAppearance`'s reading of the global defaults.
-enum MenuBarAppearance {
-    static let interfaceStyleKey = SystemAppearance.interfaceStyleKey
-    static let themeChangedNotification = SystemAppearance.themeChangedNotification
-
-    /// Whether `interfaceStyle`, the defaults' value, is the dark appearance.
-    static func isDark(interfaceStyle: String?) -> Bool {
-        SystemAppearance.isDark(interfaceStyle: interfaceStyle)
-    }
-
-    /// Whether the system is in its dark appearance now, as `defaults`
-    /// (the standard ones, which see the global domain) say.
-    static func isSystemDark(defaults: UserDefaults = .standard) -> Bool {
-        SystemAppearance.isSystemDark(defaults: defaults)
-    }
-}

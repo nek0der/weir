@@ -166,7 +166,7 @@ enum ChangesPanelActions {
         window: ProjectWindowState,
         stores: ChangesPanelStores
     ) -> ChangesPanelModel.Input {
-        let focused = stores.session.activeTab(in: window.id)?.splitTree.effectiveFocusedLeafID
+        let focused = stores.session.focusedPaneID(in: window.id)
         let running = tabs(in: window.selection.activeContainerID, stores: stores).running
         let restored = stores.restoredTurnIDs()
         return ChangesPanelModel.Input(
@@ -332,7 +332,7 @@ enum ChangesPanelActions {
     /// The decision bar's button keeps opening its own conversation's.
     static func reviewUnviewed(window: ProjectWindowState, stores: ChangesPanelStores) {
         guard let root = root(window: window, stores: stores) else { return }
-        let focused = stores.session.activeTab(in: window.id)?.splitTree.effectiveFocusedLeafID
+        let focused = stores.session.focusedPaneID(in: window.id)
             .flatMap { stores.attention.headerRuntime(inPane: $0)?.conversation }
         let restored = stores.restoredTurnIDs()
         let conversation = ChangesPanelModel.reviewConversation(

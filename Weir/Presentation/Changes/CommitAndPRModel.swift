@@ -249,12 +249,7 @@ struct CommitAndPRModel: Equatable {
     /// the person, an approval or an answer, or stopped: what keeps "Create
     /// PR" from being pressed. An unread turn is counted apart.
     static func isWaiting(_ items: [AttentionItem]) -> Bool {
-        items.contains { item in
-            switch item.kind {
-            case .approval, .question, .prompt, .stop: true
-            case .unread: false
-            }
-        }
+        items.contains(where: \.kind.isBlocking)
     }
 
     /// What keeps "Clean Up Worktree…" from going on: commits known

@@ -84,7 +84,7 @@ package enum UnreadTurnRules {
         turns: [TurnSummary],
         isRead: (TurnSummary) -> Bool
     ) -> [UnreadTurnEntry] {
-        let unread = turns.filter { $0.phase != .started && $0.hasPrompt && !isRead($0) }
+        let unread = turns.filter { $0.isEndedAndPrompted && !isRead($0) }
         let changed = unread.filter(\.changes.mayHaveChangedFiles)
         var entries: [UnreadTurnEntry] = []
         if let first = changed.first, let last = changed.last {
@@ -120,7 +120,7 @@ package enum UnreadTurnRules {
     /// The latest turn someone prompted that has ended, which the bar at
     /// rest reports.
     package static func latestPrompted(in turns: [TurnSummary]) -> TurnSummary? {
-        turns.last { $0.hasPrompt && $0.phase != .started }
+        turns.last(where: \.isEndedAndPrompted)
     }
 
     /// The changes of a run of turns. A turn whose changes are still being

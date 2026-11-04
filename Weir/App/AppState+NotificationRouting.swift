@@ -135,7 +135,7 @@ extension AppState {
     /// the request can be answered there. None while the request's pane is
     /// in sight: its own prompt, or its card, is in front of the person.
     func postRequestBanner(for id: AttentionItemID) {
-        guard let item = attentionQueue.queue.items.first(where: { $0.id == id }) else { return }
+        guard let item = attentionQueue.queue.item(id) else { return }
         guard let fact = item.kind.approvalFact,
               let approval = approvalPresentation.ledger.entries[fact.key]?.presentation
         else { return }

@@ -304,14 +304,18 @@ enum NewSessionActions {
             // The fetched commit is the one a local branch checked out
             // elsewhere is at, or the folder for its branch is taken now.
             let choice = model.pullRequestChoice(for: fetch.head, commit: commit)
-            let path = model.context.project.resolvedWorktreeURL(branchLeaf: BranchNameSuggester.folderLeaf(of: choice.branch))
+            // `PullRequestBranchChoice.choose` never names an empty branch,
+            // so the folder is always one; the branch stands in only to keep
+            // the sentence whole.
+            let folder = model.context.project.worktreeURL(forBranch: choice.branch).map { PathFormatting.abbreviateHome($0.path) }
+                ?? choice.branch
             let message = if case .checkedOut = choice {
                 LocalizedStringResource(
                     "“\(choice.branch)” is checked out in another worktree.",
                     comment: "New worktree sheet: the local branch named is checked out in the project's folder or another worktree"
                 )
             } else {
-                LocalizedStringResource("A folder already exists at \(PathFormatting.abbreviateHome(path.path)).")
+                LocalizedStringResource("A folder already exists at \(folder).")
             }
             return .failure(CreateFailure(message: .localized(message)))
         }

@@ -330,8 +330,19 @@ extension ApprovalPresentationStore {
     /// turn's end, or a later prompt has overtaken it. The one test both the
     /// release of a pending request and the end of a ledger entry make
     /// (`releaseStaleApprovals`).
+    ///
+    /// The run reports its turn over in any state that is not mid-turn
+    /// (`AgentState.isMidTurn`). An ended session (`unknown`) counts: the
+    /// agent was quit at its dialog, and no answer will come. A run whose
+    /// record outlives it (one hosted in tmux, which gc leaves alone until
+    /// the next launch) would otherwise keep a request left to its terminal
+    /// listed for as long as Weir runs, under whatever conversation the
+    /// person started next. `unknown` is also a run not yet heard from, but
+    /// a turn's end counts only once the turn was seen under way
+    /// (`showsTurnUnderWay`), and a run seen in a turn is never unheard from
+    /// again.
     nonisolated static func turnHasEnded(_ badge: AgentBadge, since firstSeenAt: Date) -> Bool {
-        turnIsOver(badge.state) || isOvertaken(badge, since: firstSeenAt)
+        !badge.state.isMidTurn || isOvertaken(badge, since: firstSeenAt)
     }
 
     /// Whether the run took a prompt after we first saw the request, so a
@@ -355,22 +366,6 @@ extension ApprovalPresentationStore {
     nonisolated static func isOvertaken(_ badge: AgentBadge, since firstSeenAt: Date) -> Bool {
         guard let started = badge.runStartedAt else { return false }
         return started > firstSeenAt
-    }
-
-    /// Whether the run reports its turn over. An ended session (`unknown`)
-    /// counts: the agent was quit at its dialog, and no answer will come.
-    /// A run whose record outlives it (one hosted in tmux, which gc leaves
-    /// alone until the next launch) would otherwise keep a request left to
-    /// its terminal listed for as long as Weir runs, under whatever
-    /// conversation the person started next. `unknown` is also a run not
-    /// yet heard from, but a turn's end counts only once the turn was seen
-    /// under way (`showsTurnUnderWay`), and a run seen in a turn is never
-    /// unheard from again.
-    nonisolated static func turnIsOver(_ state: AgentState) -> Bool {
-        switch state {
-        case .finished, .error, .idle, .unknown: true
-        case .running, .compacting, .needsInput: false
-        }
     }
 
     /// Notes the wait each run is showing as a request's own, so the list

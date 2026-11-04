@@ -134,6 +134,14 @@ impl PlanUsageWindow {
     pub const FIVE_HOUR: &'static str = "five_hour";
     /// The shared name of the seven-day window.
     pub const SEVEN_DAY: &'static str = "seven_day";
+    /// The weekly windows of one model (Claude's), whose limit stops only the
+    /// sessions on that model.
+    pub const MODEL_WEEKLY: [&'static str; 2] = ["seven_day_opus", "seven_day_sonnet"];
+    /// What a window with no shared name is named by before its length in
+    /// minutes (`minutes_1440`). The app reads the length back from the name
+    /// (`PlanUsageWindow.minutesPrefix`); the two sides check the names
+    /// against `rust/fixtures/contract/shared-values.json`.
+    pub const MINUTES_PREFIX: &'static str = "minutes_";
 
     /// The shared name of a window `minutes` long, for a provider that gives
     /// its windows by length rather than by name (Codex). `None` for a length
@@ -145,6 +153,16 @@ impl PlanUsageWindow {
             10_080 => Some(Self::SEVEN_DAY),
             _ => None,
         }
+    }
+
+    /// The name of a window `minutes` long: its shared name, else one made
+    /// of its length (`MINUTES_PREFIX`).
+    #[must_use]
+    pub fn kind_named_for_minutes(minutes: u64) -> String {
+        Self::kind_for_minutes(minutes).map_or_else(
+            || format!("{}{minutes}", Self::MINUTES_PREFIX),
+            str::to_owned,
+        )
     }
 }
 

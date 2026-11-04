@@ -267,7 +267,6 @@ extension DemoFixture {
         /// as the hook records it on each turn once the provider has named
         /// the conversation, which it has by every staged turn's end.
         func summary(in conversation: ConversationKey, pane paneID: UUID, title: String?, root: URL, now: Date) -> TurnSummary? {
-            let format = ISO8601DateFormatter()
             let finished = now.addingTimeInterval(TimeInterval(-endedSecondsAgo))
             let started = finished.addingTimeInterval(TimeInterval(-seconds))
             let changed: [String: Any] = changes.map {
@@ -286,8 +285,8 @@ extension DemoFixture {
                 "runId": paneID.uuidString,
                 "paneId": paneID.uuidString,
                 "displayNumber": number,
-                "startedAt": format.string(from: started),
-                "finishedAt": format.string(from: finished),
+                "startedAt": AgentDateParsing.formatISO8601(started),
+                "finishedAt": AgentDateParsing.formatISO8601(finished),
                 "durationSeconds": seconds,
                 "phase": phase.rawValue,
                 "hasPrompt": true,

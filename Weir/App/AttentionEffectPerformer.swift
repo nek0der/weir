@@ -32,7 +32,7 @@ struct AttentionEffectPerformer {
     /// The state names are the ones the session rows speak, and a wait
     /// Weir does not hold is named as the row names it.
     private func announce(_ id: AttentionItemID) {
-        guard let state, let item = state.attentionQueue.queue.items.first(where: { $0.id == id }) else { return }
+        guard let state, let item = state.attentionQueue.queue.item(id) else { return }
         // The language picked in Settings, which can differ from the one
         // the process launched with.
         let locale = state.settingsStore.appLocale

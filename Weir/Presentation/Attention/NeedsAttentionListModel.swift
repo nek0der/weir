@@ -199,11 +199,11 @@ struct NeedsAttentionListModel: Equatable {
     typealias RequestText = ApprovalRequestText
 
     private static func state(of kind: AttentionItemKind) -> RowState {
-        switch kind {
-        case .approval, .prompt(.approval): .approval
-        case .prompt(.unclassified): .response
-        case .prompt(.signIn): .signIn
-        case .question, .prompt(.question): .question
+        switch kind.category {
+        case .approval: .approval
+        case .response: .response
+        case .signIn: .signIn
+        case .question: .question
         case .stop: .stopped
         case .unread: .unread
         }
@@ -357,7 +357,7 @@ extension NeedsAttentionListModel {
             // folder, which the placement prefixes with the repository's.
             // A labeled row's place adds its branch, as its sidebar row does.
             let project = projectID.flatMap { session.project($0) }
-            let worktree = project?.worktrees.first { item.subject.isSessionRow(at: $0.workingDirectory) }
+            let worktree = session.worktree(forSessionRow: item.subject)
             let row = project.flatMap { project in worktree.map { ContainerID.worktree(projectID: project.id, worktreeID: $0.id) } }
             return Names(
                 title: row.flatMap { session.rowName(of: $0)?.text } ?? worktreeRoot.lastPathComponent,

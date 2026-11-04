@@ -51,7 +51,7 @@ extension AppState {
               let conversation = runtime.conversation,
               let current = runtime.currentTurnID,
               let turn = history[conversation]?.last(where: { $0.turnID == current }),
-              turn.phase != .started, turn.hasPrompt
+              turn.isEndedAndPrompted
         else { return nil }
         return turn
     }

@@ -12,6 +12,32 @@ use std::time::{Duration, Instant};
 use weir_agent_core::SnapshotTaken;
 use weir_agent_model::{DiffStat, GitContext, SkippedFile, SnapshotStatus};
 
+/// The variables `clear_repository_variables` drops. The app clears the same
+/// ones from the Git it runs (`GitProcess.repositoryVariables`); the two sides
+/// check the list against `rust/fixtures/contract/shared-values.json`.
+pub(crate) const REPOSITORY_VARIABLES: [&str; 20] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS",
+];
+
 /// Clears what `command` would inherit from the agent that points Git away from
 /// its own folder. The hook inherits the agent's environment. The variables git
 /// itself clears before running in another repository (`git rev-parse
@@ -20,28 +46,7 @@ use weir_agent_model::{DiffStat, GitContext, SkippedFile, SnapshotStatus};
 /// exclusions of a snapshot from matching, failing every snapshot of a repository
 /// with a large file.
 pub(crate) fn clear_repository_variables(command: &mut Command) {
-    for variable in [
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_CONFIG",
-        "GIT_CONFIG_PARAMETERS",
-        "GIT_CONFIG_COUNT",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_IMPLICIT_WORK_TREE",
-        "GIT_GRAFT_FILE",
-        "GIT_INDEX_FILE",
-        "GIT_NO_REPLACE_OBJECTS",
-        "GIT_REPLACE_REF_BASE",
-        "GIT_PREFIX",
-        "GIT_SHALLOW_FILE",
-        "GIT_COMMON_DIR",
-        "GIT_NAMESPACE",
-        "GIT_LITERAL_PATHSPECS",
-        "GIT_GLOB_PATHSPECS",
-        "GIT_NOGLOB_PATHSPECS",
-        "GIT_ICASE_PATHSPECS",
-    ] {
+    for variable in REPOSITORY_VARIABLES {
         command.env_remove(variable);
     }
 }
@@ -1116,5 +1121,31 @@ mod tests {
         let mut read = Vec::new();
         file.read_to_end(&mut read).expect("read");
         assert_eq!(read, b"refs/weir/turns/a\n");
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::REPOSITORY_VARIABLES;
+    use serde_json::Value;
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    #[test]
+    fn the_repository_variables_are_the_ones_the_app_clears() {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/contract/shared-values.json");
+        let shared: Value =
+            serde_json::from_slice(&std::fs::read(path).expect("the shared values file"))
+                .expect("the shared values decode");
+        let listed: BTreeSet<&str> = shared["gitRepositoryVariables"]
+            .as_array()
+            .expect("the list")
+            .iter()
+            .map(|name| name.as_str().expect("a name"))
+            .collect();
+        let ours: BTreeSet<&str> = REPOSITORY_VARIABLES.into_iter().collect();
+        assert_eq!(ours.len(), REPOSITORY_VARIABLES.len(), "no name twice");
+        assert_eq!(ours, listed);
     }
 }

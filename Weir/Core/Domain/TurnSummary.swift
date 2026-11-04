@@ -171,6 +171,26 @@ package struct TurnSummary: Equatable, Sendable, Decodable {
         guard phase == .finished, let replyHead, !replyHead.isEmpty else { return nil }
         return replyHead
     }
+
+    /// Whether the turn is over and the person asked for it: it is not still
+    /// under way, and its record has a prompt. The turns that can be unread,
+    /// read, kept, or offered for a decision; a turn nobody prompted is
+    /// history only (`hasPrompt`).
+    package var isEndedAndPrompted: Bool {
+        phase != .started && hasPrompt
+    }
+
+    /// Whether the turn is one to review: it ended, someone prompted it
+    /// (`isEndedAndPrompted`), and it may have changed files
+    /// (`ChangeSummary.mayHaveChangedFiles`). The unread changes the
+    /// decision bar counts, the review's scopes, and the turns a restore can
+    /// go back to are these. A turn whose changes could not be taken is not
+    /// one, though a range still reads through it when it falls between two
+    /// that are: the range compares its first turn's begin with its last
+    /// turn's end. Opened from its own row, it says why (`ReviewTabModel`).
+    package var isReviewable: Bool {
+        isEndedAndPrompted && changes.mayHaveChangedFiles
+    }
 }
 
 /// Who wrote the prompt a turn began from: the person, or the agent's

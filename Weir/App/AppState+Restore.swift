@@ -52,11 +52,8 @@ extension AppState {
                     roots: [$0.badge.worktreeRoot, $0.badge.turnRoot].compactMap(\.self)
                 )
             },
-            waitingPanes: Set(attentionQueue.queue.items.compactMap { item -> UUID? in
-                switch item.kind {
-                case .approval, .question, .prompt: item.subject.paneID
-                case .stop, .unread: nil
-                }
+            waitingPanes: Set(attentionQueue.queue.items.compactMap { item in
+                item.kind.asksPerson ? item.subject.paneID : nil
             }),
             isBusy: { [restores] in restores.isBusy($0) }
         )

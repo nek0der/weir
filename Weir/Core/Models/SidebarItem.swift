@@ -280,6 +280,13 @@ struct Project: Codable, Equatable, Identifiable {
         trouble != .folderMissing && trouble != .gitUnavailable
     }
 
+    /// The worktree `id` while the project lists it. The session's lookup
+    /// (`WorkspaceSession.worktree(projectID:worktreeID:)`) reads through
+    /// this, for a caller that already holds the project.
+    func worktree(_ id: UUID) -> Worktree? {
+        worktrees.first { $0.id == id }
+    }
+
     /// Resolve the final on-disk URL for a worktree with the given
     /// (already sanitized) branch leaf, using this project's
     /// placement strategy. The worktree hook resolves the same path
@@ -299,6 +306,19 @@ struct Project: Codable, Equatable, Identifiable {
         case let .custom(parent):
             return parent.appendingPathComponent(branchLeaf)
         }
+    }
+
+    /// The folder a worktree of `branch` goes to: its leaf
+    /// (`BranchNameSuggester.folderLeaf(of:)`) placed by
+    /// `resolvedWorktreeURL(branchLeaf:)`. `nil` for an empty branch, whose
+    /// leaf would name the placement's own parent rather than a folder of
+    /// its own. The worktree hook gives none for it either
+    /// (`worktree_path`); the two sides check the case against
+    /// `rust/fixtures/contract/shared-values.json`.
+    func worktreeURL(forBranch branch: String) -> URL? {
+        let leaf = BranchNameSuggester.folderLeaf(of: branch)
+        guard !leaf.isEmpty else { return nil }
+        return resolvedWorktreeURL(branchLeaf: leaf)
     }
 }
 

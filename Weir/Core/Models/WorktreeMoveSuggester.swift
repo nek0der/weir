@@ -74,7 +74,7 @@ final class WorktreeMoveSuggester {
 
         guard let resolved = resolveSourceTab(paneID: paneID, in: session) else { return }
         let (sourceTab, sourceProjectID) = resolved
-        guard let sourceProject = session.projects.first(where: { $0.id == sourceProjectID }) else { return }
+        guard let sourceProject = session.project(sourceProjectID) else { return }
         let sourceTabID = sourceTab.id
 
         // Case A: cheap in-memory match against the active project's

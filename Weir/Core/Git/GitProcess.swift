@@ -205,7 +205,8 @@ enum GitProcess {
 
     /// The variables that name a repository, its index, or its objects, or
     /// change how its paths and config are read: the list the agent hook's
-    /// `clear_repository_variables` drops for the same reason.
+    /// `clear_repository_variables` drops for the same reason. The two sides
+    /// check it against `rust/fixtures/contract/shared-values.json`.
     static let repositoryVariables: Set<String> = [
         "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
         "GIT_OBJECT_DIRECTORY", "GIT_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",

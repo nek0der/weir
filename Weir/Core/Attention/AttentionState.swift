@@ -117,7 +117,7 @@ extension AttentionState {
     func runningAgentCount(inProject projectID: UUID, session: WorkspaceSession) -> Int {
         let leaves = Set(session.tabs.filter { $0.container.projectID == projectID }.flatMap { $0.splitTree.allLeafIDs() })
         return Set(allRuntimes.filter { runtime in
-            (runtime.badge.state == .running || runtime.badge.state == .compacting)
+            runtime.badge.state.isWorking
                 && !runtime.paneIDs.isDisjoint(with: leaves)
         }.map(\.id)).count
     }

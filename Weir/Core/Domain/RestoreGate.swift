@@ -174,7 +174,7 @@ package enum RestoreGate {
         if input.isWaiting || input.agents.contains(where: { $0.state == .needsInput }) {
             return .agentWaiting
         }
-        let working = input.agents.filter { $0.state == .running || $0.state == .compacting }
+        let working = input.agents.filter(\.state.isWorking)
         guard !working.isEmpty else { return nil }
         if working.contains(where: \.isTurnsOwn) {
             return .agentRunning(other: nil)

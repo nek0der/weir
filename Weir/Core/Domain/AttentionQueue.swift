@@ -108,11 +108,11 @@ package struct AttentionQueue: Equatable, Sendable {
     package static func counts(of items: [AttentionItem]) -> AttentionCounts {
         var counts = AttentionCounts()
         for item in items {
-            switch item.kind {
-            case .approval, .prompt(.approval): counts.approvals += 1
-            case .question, .prompt(.question): counts.questions += 1
-            case .prompt(.unclassified): counts.prompts += 1
-            case .prompt(.signIn): counts.signIns += 1
+            switch item.kind.category {
+            case .approval: counts.approvals += 1
+            case .question: counts.questions += 1
+            case .response: counts.prompts += 1
+            case .signIn: counts.signIns += 1
             case .stop: counts.stops += 1
             case .unread: counts.unread += 1
             }
@@ -167,11 +167,12 @@ package enum PanePriority {
 
     /// Lower ranks first.
     private static func rank(_ kind: AttentionItemKind) -> Int {
-        switch kind {
-        case .question, .prompt(.question): 0
+        switch kind.category {
+        case .question: 0
         // A wait at the prompt ranks as the question its record says, else
-        // with approvals, whether its record says approval or nothing.
-        case .approval, .prompt: 1
+        // with approvals, whether its record says approval, a sign-in, or
+        // nothing.
+        case .approval, .response, .signIn: 1
         case .stop: 2
         case .unread: 3
         }

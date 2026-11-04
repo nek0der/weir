@@ -12,6 +12,16 @@ struct DeleteWorktreeTarget: Identifiable, Equatable {
     let worktreeID: UUID
     let label: String
     let path: URL
+
+    /// The target of `worktree` in the project `projectID`: named and placed
+    /// as the worktree is, so the sidebar's row, its fold line, and the
+    /// changes panel's clean-up confirm it in the same words.
+    init(projectID: UUID, worktree: Worktree) {
+        self.projectID = projectID
+        worktreeID = worktree.id
+        label = worktree.label
+        path = worktree.workingDirectory
+    }
 }
 
 /// Target of "Delete Worktrees…" on the line the worktrees ready to clean

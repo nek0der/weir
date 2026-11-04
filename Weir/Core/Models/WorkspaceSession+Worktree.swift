@@ -296,7 +296,7 @@ extension WorkspaceSession {
     }
 
     func hasMissingWorktrees(projectID: UUID) -> Bool {
-        guard let p = projects.first(where: { $0.id == projectID }) else { return false }
+        guard let p = project(projectID) else { return false }
         return p.worktrees.contains(where: \.isMissing)
     }
 
@@ -316,7 +316,7 @@ extension WorkspaceSession {
     }
 
     func hasHiddenWorktrees(projectID: UUID) -> Bool {
-        guard let p = projects.first(where: { $0.id == projectID }) else { return false }
+        guard let p = project(projectID) else { return false }
         return p.worktrees.contains(where: \.isHidden)
     }
 
@@ -491,7 +491,7 @@ extension WorkspaceSession {
         intent: SelectionIntent,
         git: any GitRunning = LiveGit()
     ) async throws -> Worktree {
-        guard let project = projects.first(where: { $0.id == projectID }) else {
+        guard let project = self.project(projectID) else {
             throw CreateWorktreeError.projectNotFound
         }
         if FileManager.default.fileExists(atPath: path.path) {
@@ -687,10 +687,10 @@ extension WorkspaceSession {
         force: Bool,
         git: any GitRunning = LiveGit()
     ) async throws -> [UUID] {
-        guard let project = projects.first(where: { $0.id == projectID }) else {
+        guard let project = self.project(projectID) else {
             throw DeleteWorktreeError.projectNotFound
         }
-        guard let wt = project.worktrees.first(where: { $0.id == worktreeID }) else {
+        guard let wt = project.worktree(worktreeID) else {
             throw DeleteWorktreeError.worktreeNotFound
         }
         let result = try await withWorktreeMutationGated(worktreeID) {

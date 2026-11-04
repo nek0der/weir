@@ -207,9 +207,9 @@ struct BackgroundWorkTests {
         for state in AgentState.allCases where state != .finished {
             #expect(!Self.agent(state, BackgroundWork(shells: 1)).isWorkingAfterTurn, "\(state)")
         }
-        #expect(Self.agent(.running).isRunningATurn)
-        #expect(Self.agent(.compacting).isRunningATurn)
-        #expect(!Self.agent(.finished, BackgroundWork(shells: 1)).isRunningATurn)
+        #expect(Self.agent(.running).state.isWorking)
+        #expect(Self.agent(.compacting).state.isWorking)
+        #expect(!Self.agent(.finished, BackgroundWork(shells: 1)).state.isWorking)
     }
 
     /// A run reaches the row's rules with its work and its id.

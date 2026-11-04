@@ -103,8 +103,7 @@ enum RestoreEntryTarget {
         isRestored: (TurnSummary) -> Bool = { _ in false }
     ) -> TurnSummary? {
         let candidates = turns.filter { turn in
-            turn.phase != .started && turn.beginTree != nil && turn.changes.mayHaveChangedFiles && turn.hasPrompt
-                && !isRestored(turn)
+            turn.isReviewable && turn.beginTree != nil && !isRestored(turn)
         }
         let isViewed = { (turn: TurnSummary) in line?.isViewed(turn) ?? false }
         return candidates.first { !isViewed($0) } ?? candidates.last
@@ -133,11 +132,6 @@ struct RestoreStrip: Equatable {
     /// and holds nothing back: restoring to before the turn that stopped
     /// is one way to deal with it.
     static func yields(to items: [AttentionItem]) -> Bool {
-        items.contains { item in
-            switch item.kind {
-            case .approval, .question, .prompt: true
-            case .stop, .unread: false
-            }
-        }
+        items.contains(where: \.kind.asksPerson)
     }
 }

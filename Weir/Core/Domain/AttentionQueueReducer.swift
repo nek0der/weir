@@ -173,7 +173,7 @@ package enum AttentionQueueReducer {
                 if item.kind.isNotified {
                     effects.append(.notify(item.id))
                 }
-            } else if let current = queue.items.first(where: { $0.id == item.id }),
+            } else if let current = queue.item(item.id),
                       current.kind != item.kind || current.subject != item.subject
             {
                 queue.update(id: item.id, kind: item.kind, subject: item.subject)

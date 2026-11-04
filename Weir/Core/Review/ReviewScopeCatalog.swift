@@ -96,7 +96,7 @@ enum ReviewScopeCatalog {
         var options: [ReviewScopeOption] = [
             .unviewedTurns(unviewedTurns(turns: turns, isViewed: isViewed, isRestored: isRestored))
         ]
-        for turn in turns.reversed() where isReadable(turn) && !isRestored(turn) {
+        for turn in turns.reversed() where turn.isReviewable && !isRestored(turn) {
             if let range = ReviewTurnRange(turns: [turn]) {
                 options.append(.turn(range, prompt: turn.prompt))
             }
@@ -194,14 +194,15 @@ enum ReviewScopeCatalog {
     }
 
     /// Whether `turn` is one the unviewed turns hold: one to read
-    /// (`isReadable`) below its conversation's line. A turn a restore took
-    /// back has nothing left to read, wherever the viewed line is.
+    /// (`TurnSummary.isReviewable`) below its conversation's line. A turn a
+    /// restore took back has nothing left to read, wherever the viewed line
+    /// is.
     static func isUnviewed(
         _ turn: TurnSummary,
         isViewed: (TurnSummary) -> Bool,
         isRestored: (TurnSummary) -> Bool
     ) -> Bool {
-        isReadable(turn) && !isViewed(turn) && !isRestored(turn)
+        turn.isReviewable && !isViewed(turn) && !isRestored(turn)
     }
 
     /// The turns of the range's conversation that ended after it while it
@@ -216,15 +217,5 @@ enum ReviewScopeCatalog {
         }
         guard let last = following.lastIndex(where: { $0.endTree != nil }) else { return [] }
         return Array(following[...last])
-    }
-
-    /// Whether `turn` is one to read: it ended, someone prompted it, and it
-    /// may have changed files, as the decision bar counts unread changes. A
-    /// turn whose changes could not be taken is not one, though a range
-    /// still reads through it when it falls between two that are: the range
-    /// compares its first turn's begin with its last turn's end. Opened from
-    /// its own row, it says why (`ReviewTabModel`).
-    static func isReadable(_ turn: TurnSummary) -> Bool {
-        turn.phase != .started && turn.hasPrompt && turn.changes.mayHaveChangedFiles
     }
 }

@@ -628,7 +628,7 @@ private struct KeyboardPaneFollower: View {
     let window: ProjectWindowState
 
     private var keyboardPane: UUID? {
-        session.activeTab(in: window.id)?.splitTree.effectiveFocusedLeafID
+        session.focusedPaneID(in: window.id)
     }
 
     var body: some View {

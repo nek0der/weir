@@ -25,7 +25,7 @@ package enum UsageLimitScope: String, Codable, Equatable, Hashable, Sendable {
     /// It stays here, not in the Rust model, because the stop ledger keeps such
     /// limits too, and the ledger never passes through Rust.
     static func ofUnscoped(window: String?) -> Self {
-        ["seven_day_opus", "seven_day_sonnet"].contains(window) ? .model : .account
+        [PlanUsageWindow.sevenDayOpus, PlanUsageWindow.sevenDaySonnet].contains(window) ? .model : .account
     }
 }
 

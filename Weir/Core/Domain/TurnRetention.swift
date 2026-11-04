@@ -143,7 +143,7 @@ package struct TurnProtection: Equatable, Sendable {
         for (conversation, turns) in sources.history {
             let isLineRecent = isRecent(sources.lineMovedAt(conversation))
             let isShown = sources.shownConversations.contains(conversation)
-            for turn in turns where turn.phase != .started && turn.hasPrompt {
+            for turn in turns where turn.isEndedAndPrompted {
                 if !sources.isRead(turn) {
                     guard isShown || sources.openPanes.contains(turn.paneID.uppercased()) else { continue }
                     // A start that does not read is no evidence of age.

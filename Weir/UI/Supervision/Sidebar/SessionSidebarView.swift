@@ -511,12 +511,7 @@ struct SessionSidebarView: View {
                 // One is confirmed as its row's Delete Worktree is, by name
                 // and folder, with the Force retry when Git asks for it.
                 if worktrees.count == 1, let worktree = worktrees.first {
-                    deletingWorktree = DeleteWorktreeTarget(
-                        projectID: project.id,
-                        worktreeID: worktree.id,
-                        label: worktree.label,
-                        path: worktree.workingDirectory
-                    )
+                    deletingWorktree = DeleteWorktreeTarget(projectID: project.id, worktree: worktree)
                 } else if !worktrees.isEmpty {
                     deletingWorktrees = DeleteWorktreesTarget(
                         projectID: project.id,
@@ -644,8 +639,13 @@ struct SessionSidebarView: View {
     /// back.
     private func returnKeyboardToTerminal() {
         isFocused = false
-        guard let paneID = session.activeTab(in: window.id)?.splitTree.effectiveFocusedLeafID else { return }
-        KeyboardHandoff.returnToTerminal(paneID: paneID, registry: registry, keeper: .terminalOrTextField, timing: .nextTurn)
+        KeyboardHandoff.returnToFocusedPane(
+            in: window.id,
+            session: session,
+            registry: registry,
+            keeper: .terminalOrTextField,
+            timing: .nextTurn
+        )
     }
 
     /// Answer…: this window's card, beside the row, as Needs Attention and
@@ -750,12 +750,7 @@ struct SessionSidebarView: View {
             },
             deleteWorktree: worktree.flatMap { worktree in
                 worktree.isMissing ? nil : {
-                    deletingWorktree = DeleteWorktreeTarget(
-                        projectID: project.id,
-                        worktreeID: worktree.id,
-                        label: worktree.label,
-                        path: worktree.workingDirectory
-                    )
+                    deletingWorktree = DeleteWorktreeTarget(projectID: project.id, worktree: worktree)
                 }
             },
             closeAllTabs: hasTabs ? {

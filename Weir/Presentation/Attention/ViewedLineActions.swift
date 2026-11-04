@@ -26,7 +26,7 @@ struct ViewedLineActions {
     /// Returns whether anything was marked.
     @discardableResult
     func markViewed(_ itemID: AttentionItemID, through throughTurn: Int? = nil, inPane paneID: UUID) -> Bool {
-        guard let item = queue.items.first(where: { $0.id == itemID }),
+        guard let item = queue.item(itemID),
               case let .unread(unread) = item.kind
         else { return false }
         guard let conversation = unread.conversation else {
@@ -184,6 +184,12 @@ struct ViewedLineActions {
             guard let first = restored.map(\.displayNumber).min(),
                   let last = restored.max(by: { $0.displayNumber < $1.displayNumber })
             else { return nil }
+            // Not `TurnSummary.isReviewable`, which passes over a turn still
+            // under way: one conversation can run in two panes, and the
+            // other run's turn can be started below the restored ones
+            // (`a_later_turn_of_another_run_does_not_overtake` in
+            // `weir-agent-core`). Moving the line past it would mark viewed
+            // a turn whose changes are still to come.
             let isUnread = (history[conversation] ?? []).contains { turn in
                 turn.displayNumber < first && turn.hasPrompt && turn.changes.mayHaveChangedFiles && !lines.isViewed(turn)
             }

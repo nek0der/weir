@@ -2,12 +2,20 @@
   "maximumDecisionBytes": 8192,
   "maximumHookInputBytes": 1048576,
   "maximumProjectionInputBytes": 16777216,
+  "maximumTitleBytes": 4096,
   "worktreeRoutingFileName": "worktree-routing.json",
   "paneIdentifierVariable": "WEIR_PANE_ID",
   "atWorkStates": ["running", "needsInput", "compacting"],
   "notAtWorkStates": ["idle", "finished", "error", "unknown"],
   "claudeStatusLineRelayArguments": "statusline claude",
   "codexTurnEndEvent": "task_complete",
+  "usageLimitScopes": ["account", "upstream", "model"],
+  "usageWindows": {
+    "fiveHour": "five_hour",
+    "sevenDay": "seven_day",
+    "modelWeekly": ["seven_day_opus", "seven_day_sonnet"],
+    "minutesPrefix": "minutes_"
+  },
   "worktreeFolders": {
     "projectRoot": "/projects/repo",
     "customParent": "/elsewhere",
@@ -36,6 +44,29 @@
         "insideHidden": "/projects/repo/.worktrees/main",
         "custom": "/elsewhere/main"
       }
-    ]
-  }
+    ],
+    "noFolderBranches": [""]
+  },
+  "gitRepositoryVariables": [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+    "GIT_LITERAL_PATHSPECS",
+    "GIT_GLOB_PATHSPECS",
+    "GIT_NOGLOB_PATHSPECS",
+    "GIT_ICASE_PATHSPECS"
+  ]
 }

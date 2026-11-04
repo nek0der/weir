@@ -186,6 +186,8 @@ struct DecisionBarView: View {
     /// pane. A lone pane or a zoomed one is always drawn as focused, so the
     /// pane's own look cannot say whether the person moved away.
     private var isSelectedPane: Bool {
+        // The window's own selection, not `WorkspaceSession.focusedPaneID(in:)`,
+        // which reads none once the session stops listing a closing window.
         guard let tabID = window.selection.activeTabID else { return false }
         return session.tab(tabID)?.splitTree.effectiveFocusedLeafID == paneID
     }

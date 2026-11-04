@@ -12,11 +12,11 @@ import Testing
 @MainActor
 struct MenuBarAppearanceTests {
     @Test func theSystemsStyle_namesDark_orIsAbsentInLight() {
-        #expect(MenuBarAppearance.isDark(interfaceStyle: "Dark"))
-        #expect(MenuBarAppearance.isDark(interfaceStyle: "dark"))
-        #expect(!MenuBarAppearance.isDark(interfaceStyle: nil))
-        #expect(!MenuBarAppearance.isDark(interfaceStyle: "Light"))
-        #expect(!MenuBarAppearance.isDark(interfaceStyle: ""))
+        #expect(SystemAppearance.isDark(interfaceStyle: "Dark"))
+        #expect(SystemAppearance.isDark(interfaceStyle: "dark"))
+        #expect(!SystemAppearance.isDark(interfaceStyle: nil))
+        #expect(!SystemAppearance.isDark(interfaceStyle: "Light"))
+        #expect(!SystemAppearance.isDark(interfaceStyle: ""))
     }
 
     /// Read from the defaults handed in. In-memory ones, so the test neither
@@ -25,11 +25,11 @@ struct MenuBarAppearanceTests {
     @Test func theSystemsAppearance_isReadFromTheDefaultsGiven() throws {
         let defaults = try #require(InMemoryDefaults())
 
-        #expect(!MenuBarAppearance.isSystemDark(defaults: defaults), "light leaves the key unset")
-        defaults.set("Dark", forKey: MenuBarAppearance.interfaceStyleKey)
-        #expect(MenuBarAppearance.isSystemDark(defaults: defaults))
-        defaults.set("Light", forKey: MenuBarAppearance.interfaceStyleKey)
-        #expect(!MenuBarAppearance.isSystemDark(defaults: defaults))
+        #expect(!SystemAppearance.isSystemDark(defaults: defaults), "light leaves the key unset")
+        defaults.set("Dark", forKey: SystemAppearance.interfaceStyleKey)
+        #expect(SystemAppearance.isSystemDark(defaults: defaults))
+        defaults.set("Light", forKey: SystemAppearance.interfaceStyleKey)
+        #expect(!SystemAppearance.isSystemDark(defaults: defaults))
     }
 
     /// The menu's words are the system's labels, which mix with what shows

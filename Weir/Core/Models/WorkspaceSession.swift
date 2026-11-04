@@ -599,6 +599,13 @@ final class WorkspaceSession {
         return tabs.first(where: { $0.id == id })
     }
 
+    /// The pane the keyboard is in in `window`: its tab's focused pane, as
+    /// the split tree reads it (`SplitTree.effectiveFocusedLeafID`). `nil`
+    /// for a window that shows no tab.
+    func focusedPaneID(in window: WindowID) -> UUID? {
+        activeTab(in: window)?.splitTree.effectiveFocusedLeafID
+    }
+
     // MARK: - Container lookups (shared across views)
 
     /// Find a Project by id. Centralized so call sites don't sprinkle
@@ -609,7 +616,16 @@ final class WorkspaceSession {
 
     /// Find a Worktree inside a Project by ids.
     func worktree(projectID: UUID, worktreeID: UUID) -> Worktree? {
-        project(projectID)?.worktrees.first(where: { $0.id == worktreeID })
+        project(projectID)?.worktree(worktreeID)
+    }
+
+    /// The worktree a session row's item names: the one of its project whose
+    /// folder is the row's, compared as the stop's key compares it
+    /// (`AttentionSubject.isSessionRow(at:)`). `nil` for any other subject,
+    /// a row of no project, or a folder the project no longer lists.
+    func worktree(forSessionRow subject: AttentionSubject) -> Worktree? {
+        guard case let .sessionRow(projectID?, _) = subject else { return nil }
+        return project(projectID)?.worktrees.first { subject.isSessionRow(at: $0.workingDirectory) }
     }
 
     /// Find a Tab by id. Centralized so drop targets / actions don't
@@ -888,10 +904,9 @@ final class WorkspaceSession {
         case .loose:
             nil
         case let .project(pid):
-            projects.first(where: { $0.id == pid })?.lastActiveTabID
+            project(pid)?.lastActiveTabID
         case let .worktree(pid, wid):
-            projects.first(where: { $0.id == pid })?
-                .worktrees.first(where: { $0.id == wid })?.lastActiveTabID
+            worktree(projectID: pid, worktreeID: wid)?.lastActiveTabID
         }
     }
 
@@ -908,7 +923,7 @@ final class WorkspaceSession {
         // `setActiveTab(lastID)` would then jump the user into the
         // destination container instead of the project they clicked.
         // Filter on the tab's CURRENT container before honoring it.
-        if let lastID = projects.first(where: { $0.id == projectID })?.lastActiveTabID,
+        if let lastID = project(projectID)?.lastActiveTabID,
            tabs.contains(where: { $0.id == lastID && $0.container.projectID == projectID })
         {
             setActiveTab(lastID, in: window, intent: intent)

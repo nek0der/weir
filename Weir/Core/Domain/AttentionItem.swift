@@ -309,6 +309,56 @@ package enum AttentionItemKind: Equatable, Sendable {
         case .prompt, .stop, .unread: nil
         }
     }
+
+    /// What the item is to the person: a wait at the agent's prompt is the
+    /// approval or question its record says, else a wait for a response we
+    /// cannot name, or for a sign-in. The one sorting the glyph, the list's
+    /// row, the counts, the pane's frame, and the pane's priority read.
+    package var category: AttentionCategory {
+        switch self {
+        case .question, .prompt(.question): .question
+        case .approval, .prompt(.approval): .approval
+        case .prompt(.unclassified): .response
+        case .prompt(.signIn): .signIn
+        case .stop: .stop
+        case .unread: .unread
+        }
+    }
+
+    /// Whether the agent asks the person something now: an approval, a
+    /// question, or a wait at its own prompt. A stop asks nothing, and an
+    /// unread turn waits only to be read.
+    package var asksPerson: Bool {
+        switch self {
+        case .approval, .question, .prompt: true
+        case .stop, .unread: false
+        }
+    }
+
+    /// Whether the item holds the agent's work back until the person acts:
+    /// one that asks them (`asksPerson`), or a stop. An unread turn does
+    /// not: the agent is free to go on. `AttentionCounts.hasBlockingItems`
+    /// counts the same items.
+    package var isBlocking: Bool {
+        switch self {
+        case .approval, .question, .prompt, .stop: true
+        case .unread: false
+        }
+    }
+}
+
+/// What an attention item is to the person, as `AttentionItemKind.category`
+/// sorts it.
+package enum AttentionCategory: Equatable, Sendable, CaseIterable {
+    case question
+    case approval
+    /// A wait at the agent's prompt we cannot name as an approval or a
+    /// question.
+    case response
+    /// The agent waits for the person to sign in again.
+    case signIn
+    case stop
+    case unread
 }
 
 /// Whether a row keeps offering "Answer…" while the card is up for the

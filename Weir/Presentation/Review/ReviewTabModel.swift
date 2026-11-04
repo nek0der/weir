@@ -367,7 +367,7 @@ enum ReviewTabModel {
             // The newest turn that did something: an answer after it does
             // not hide it, and one whose changes could not be taken says why
             // rather than open the one before.
-            guard let turn = context.turns.last(where: { $0.phase != .started && $0.hasPrompt && $0.changes != .unchanged })
+            guard let turn = context.turns.last(where: { $0.isEndedAndPrompted && $0.changes != .unchanged })
             else { return .failure(.noTurn) }
             return selection(of: turn)
         case .uncommitted:
@@ -736,7 +736,7 @@ enum ReviewTabModel {
         case .uncommitted:
             let latest = tab.fixedPoint.latestEnded
             let hasUnviewedTurns = context.turns.contains { turn in
-                ReviewScopeCatalog.isReadable(turn) && !context.isViewed(turn) && turn.displayNumber <= (latest?.number ?? 0)
+                turn.isReviewable && !context.isViewed(turn) && turn.displayNumber <= (latest?.number ?? 0)
             }
             return hasUnviewedTurns || context.hasUnviewedChangesOutsideTurns ? .includingChangesOutsideTurns(through: latest) : nil
         case .unviewedTurns, .worktreeUnviewedTurns, .incompleteTurn, .branch:
@@ -812,7 +812,7 @@ enum ReviewTabModel {
         // adds one conversation's turns, and the worktree's unviewed turns
         // are opened again for the rest.
         if case let .turns(range) = selection.scope, !range.isAcrossConversations {
-            point.offersFollowingTurns = !ended.contains { $0.displayNumber > range.lastNumber && ReviewScopeCatalog.isReadable($0) }
+            point.offersFollowingTurns = !ended.contains { $0.displayNumber > range.lastNumber && $0.isReviewable }
         }
         return point
     }

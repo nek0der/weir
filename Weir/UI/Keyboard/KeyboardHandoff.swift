@@ -101,7 +101,7 @@ enum KeyboardHandoff {
         timing: Timing
     ) {
         returnToTerminal(
-            paneID: session.activeTab(in: window)?.splitTree.effectiveFocusedLeafID,
+            paneID: session.focusedPaneID(in: window),
             registry: registry,
             keeper: keeper,
             timing: timing

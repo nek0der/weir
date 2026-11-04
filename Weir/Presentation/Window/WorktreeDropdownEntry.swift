@@ -38,7 +38,7 @@ struct WorktreeDropdownEntry: Identifiable, Equatable {
             let folder: URL
             let isMissing: Bool
             if let worktreeID = listed.row.worktreeID {
-                guard let worktree = project.worktrees.first(where: { $0.id == worktreeID }) else { return nil }
+                guard let worktree = project.worktree(worktreeID) else { return nil }
                 (branch, folder, isMissing) = (CheckoutName.of(worktree), worktree.workingDirectory, worktree.isMissing)
             } else {
                 (branch, folder, isMissing) = (CheckoutName.label(of: project), project.rootURL, project.isRootMissing)

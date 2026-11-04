@@ -10,8 +10,10 @@ enum WeirRustRuntime {
 }
 
 enum WeirRustTitleResolver {
-    /// Must match the portable protocol limit enforced by Rust.
-    private static let outputCapacity = 4096
+    /// The longest title the Rust core returns (`MAX_TITLE_BYTES` in
+    /// `weir-agent-core`); the two sides check it against
+    /// `rust/fixtures/contract/shared-values.json`.
+    static let outputCapacity = 4096
 
     static func resolve(
         providerSessionTitle: String?,

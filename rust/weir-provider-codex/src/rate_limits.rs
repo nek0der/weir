@@ -105,8 +105,7 @@ fn window(slot: &str, value: &Map<String, Value>) -> Option<(u64, PlanUsageWindo
     }
     let minutes = value.get("windowDurationMins").and_then(Value::as_u64);
     let kind = match minutes {
-        Some(minutes) => PlanUsageWindow::kind_for_minutes(minutes)
-            .map_or_else(|| format!("minutes_{minutes}"), str::to_owned),
+        Some(minutes) => PlanUsageWindow::kind_named_for_minutes(minutes),
         None => slot.to_owned(),
     };
     let resets_at = value

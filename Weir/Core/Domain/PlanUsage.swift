@@ -55,8 +55,18 @@ package struct PlanUsageWindow: Equatable, Sendable {
         self.resetsAt = resetsAt
     }
 
+    /// The shared names of the windows, as the Rust model names them
+    /// (`PlanUsageWindow` in `weir-agent-model`); the two sides check them
+    /// against `rust/fixtures/contract/shared-values.json`.
     package static let fiveHour = "five_hour"
     package static let sevenDay = "seven_day"
+    /// The weekly windows of one model (Claude's), whose limit stops only
+    /// the sessions on that model.
+    package static let sevenDayOpus = "seven_day_opus"
+    package static let sevenDaySonnet = "seven_day_sonnet"
+    /// What a window with no shared name is named by before its length in
+    /// minutes (`minutes_1440`), as Codex gives such a window.
+    package static let minutesPrefix = "minutes_"
 
     /// Whether the window's reset time has passed.
     package func hasReset(at now: Date) -> Bool {

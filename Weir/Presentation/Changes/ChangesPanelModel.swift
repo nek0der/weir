@@ -423,7 +423,7 @@ enum ChangesPanelModel {
         isRestored: (TurnSummary) -> Bool = { _ in false }
     ) -> Int {
         listed(turns).count { turn in
-            ReviewScopeCatalog.isReadable(turn) && !(line?.isViewed(turn) ?? false)
+            turn.isReviewable && !(line?.isViewed(turn) ?? false)
                 && !isRestored(turn)
         }
     }
@@ -482,7 +482,7 @@ enum ChangesPanelModel {
         isViewed: (TurnSummary) -> Bool,
         isRestored: (TurnSummary) -> Bool = { _ in false }
     ) -> ConversationKey? {
-        let unviewed = timeline.filter { ReviewScopeCatalog.isReadable($0) && !isViewed($0) && !isRestored($0) }
+        let unviewed = timeline.filter { $0.isReviewable && !isViewed($0) && !isRestored($0) }
         if let focused, unviewed.contains(where: { $0.conversation == focused }) {
             return focused
         }
@@ -515,7 +515,7 @@ enum ChangesPanelModel {
             ? nil
             : (isViewed ? .markUnviewedFrom : .markViewedThrough)
         let offersRestore = status.hasCounts && turn.beginTree != nil
-        let isReadable = ReviewScopeCatalog.isReadable(turn) || (turn.phase != .started && turn.changes.isLostSnapshot)
+        let isReadable = turn.isReviewable || (turn.phase != .started && turn.changes.isLostSnapshot)
         return Row(
             turn: turn,
             status: status,

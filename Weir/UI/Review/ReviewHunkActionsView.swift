@@ -17,9 +17,10 @@ struct ReviewHunkActionsView: View {
 
     let action: ReviewHunkAction?
     let isCommentable: Bool
-    /// The hunk's `@@` line, which tells VoiceOver's list of buttons one
-    /// hunk's "Comment" from another's.
-    var header = ""
+    /// What the hunk's `@@` line says, which tells VoiceOver's list of
+    /// buttons one hunk's "Comment" from another's; `nil` before the row is
+    /// configured.
+    var header: ReviewHunkHeader?
     var handlers = Handlers()
     /// Handed over by the table, whose rows are AppKit (`ReviewHosted`).
     @Environment(\.locale) private var locale

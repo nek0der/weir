@@ -179,7 +179,7 @@ struct NeedsAttentionListView: View {
     /// item of another project opens in a new window: ⌘-click does, and
     /// VoiceOver's Open in New Window; Return never does.
     private func open(_ row: NeedsAttentionListModel.Row, _ opening: NeedsAttentionListOpening) {
-        guard let item = attentionQueue.queue.items.first(where: { $0.id == row.id }) else { return }
+        guard let item = attentionQueue.queue.item(row.id) else { return }
         selection.select(row.id)
         choose { [attentionQueue, window] in
             attentionQueue.focus(item, from: window, opensInNewWindow: opening.opensInNewWindow)

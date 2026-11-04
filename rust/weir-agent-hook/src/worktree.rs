@@ -732,6 +732,20 @@ mod tests {
                 );
             }
         }
+        let no_folder = folders["noFolderBranches"]
+            .as_array()
+            .expect("the branches");
+        assert!(!no_folder.is_empty());
+        for branch in no_folder {
+            let branch = text(branch);
+            for placement in [
+                Placement::SiblingPrefixed,
+                Placement::InsideHidden,
+                Placement::Custom(custom_parent.clone()),
+            ] {
+                assert_eq!(rules(placement).worktree_path(&branch), None, "{branch:?}");
+            }
+        }
     }
 
     #[test]

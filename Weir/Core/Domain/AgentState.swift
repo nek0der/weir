@@ -65,4 +65,26 @@ package extension AgentState {
         case .unknown, .finished, .error, .idle: false
         }
     }
+
+    /// Whether the run works a turn: running, or compacting. Not a run
+    /// waiting on the person (`needsInput`), which `isMidTurn` also counts:
+    /// what it does next waits on their answer. The one reading of "at
+    /// work" the project menu's count, the sidebar's mark, the restore's
+    /// gate, and the prompt cache's "a turn is in flight" share.
+    var isWorking: Bool {
+        switch self {
+        case .running, .compacting: true
+        case .unknown, .idle, .needsInput, .error, .finished: false
+        }
+    }
+
+    /// Whether the agent rests at its prompt, so what the person types next
+    /// starts a turn: a fresh run, or one whose turn finished. Not an
+    /// errored run, nor one no hook has reported on.
+    var isAtPrompt: Bool {
+        switch self {
+        case .idle, .finished: true
+        case .unknown, .running, .compacting, .needsInput, .error: false
+        }
+    }
 }

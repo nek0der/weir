@@ -247,7 +247,7 @@ enum CommandPaletteActions {
             else { return }
             TabActions.newTab(session, in: container, running: agent, window: window, intent: .person, selects: true)
         case .movePaneToNewTab:
-            guard let paneID = session.activeTab(in: window)?.splitTree.effectiveFocusedLeafID else { return }
+            guard let paneID = session.focusedPaneID(in: window) else { return }
             TabActions.movePaneToNewTab(session, paneID: paneID, in: window, intent: .person)
         default:
             break

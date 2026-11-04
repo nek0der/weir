@@ -319,7 +319,7 @@ struct NewSessionModel {
     var suggestedBranchName: String {
         BranchNameSuggester.suggest(today: context.today) { name in
             context.localBranches.contains(name)
-                || context.folderExists(context.project.resolvedWorktreeURL(branchLeaf: BranchNameSuggester.folderLeaf(of: name)))
+                || context.project.worktreeURL(forBranch: name).map(context.folderExists) == true
         }
     }
 
@@ -670,9 +670,7 @@ struct NewSessionModel {
 
     /// Where the worktree goes, by the project's placement setting.
     var destination: URL? {
-        let leaf = BranchNameSuggester.folderLeaf(of: checkoutBranch)
-        guard !leaf.isEmpty else { return nil }
-        return context.project.resolvedWorktreeURL(branchLeaf: leaf)
+        context.project.worktreeURL(forBranch: checkoutBranch)
     }
 
     // MARK: - Create

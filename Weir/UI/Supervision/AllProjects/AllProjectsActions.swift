@@ -42,7 +42,7 @@ enum AllProjectsActions {
             stores.frecency.record(ProjectMenuModel.frecencyKey(card.projectID))
         }
         let opensInNewWindow = opensInNewWindow && isOtherProject
-        if let id = card.leadItemID, let item = stores.attentionQueue.queue.items.first(where: { $0.id == id }) {
+        if let id = card.leadItemID, let item = stores.attentionQueue.queue.item(id) {
             stores.attentionQueue.focus(item, from: window, opensInNewWindow: opensInNewWindow)
             return
         }
