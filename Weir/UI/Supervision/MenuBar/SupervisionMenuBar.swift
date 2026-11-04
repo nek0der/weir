@@ -327,7 +327,7 @@ struct SupervisionMenuBarContent: View {
             // window, which sizes to its content: it takes the rows'
             // height, up to a limit past which they scroll.
             ScrollView {
-                // The wait time steps once a minute ("just now", then 1m,
+                // The wait time steps once a minute ("now", then 1m,
                 // 2m…), so a finer tick would only redraw the same text.
                 TimelineView(.periodic(from: .now, by: 60)) { context in
                     VStack(spacing: WeirLayout.Supervision.menuBarRowSpacing) {
@@ -598,11 +598,7 @@ private struct MenuBarMoreMenu: View {
                 )),
                 .separator,
                 .item(PopUpMenuItem(
-                    title: LocalizedStringResource(
-                        "menuBar.quit",
-                        defaultValue: "Quit Weir",
-                        comment: "Menu bar item's ⋯ menu: quits the app, as the app menu's Quit does"
-                    ),
+                    title: CommonText.quitApp,
                     shortcut: StoredShortcut(key: "q", modifiers: [.command]),
                     perform: onQuit
                 ))

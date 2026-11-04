@@ -253,7 +253,7 @@ struct RestoreStripRow: View {
             Button {
                 onClose()
             } label: {
-                Text("Close", comment: "Restore strip: closes the strip after the restore stopped")
+                Text(CommonText.close)
             }
             .buttonStyle(.supervisionSecondary)
             // Out of the ⇥ order, so ⇥ stays the terminal's for its TUI.

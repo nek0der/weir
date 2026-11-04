@@ -81,7 +81,7 @@ struct NeedsAttentionRowView: View {
                         )
                     }
                     Spacer(minLength: WeirLayout.Supervision.spaceSnug)
-                    Text(display: waitLabel)
+                    Text(verbatim: waitLabel)
                         .font(.supervision(.meta))
                         .monospacedDigit()
                         .foregroundStyle(ink.muted)
@@ -169,16 +169,19 @@ struct NeedsAttentionRowView: View {
         return lead + fact
     }
 
-    /// How long the item has waited: "just now" under a minute, then a compact
-    /// duration in the window's language ("4m", "4分").
-    private var waitLabel: DisplayText {
-        let elapsed = max(0, now.timeIntervalSince(row.arrivedAt))
+    private var waitLabel: String {
+        Self.waitLabel(arrivedAt: row.arrivedAt, now: now, locale: locale)
+    }
+
+    /// How long the item has waited: "now" under a minute, the sidebar's
+    /// word, then a compact duration in the window's language ("4m",
+    /// "4分"), rounded down so "5m" means five minutes have passed.
+    static func waitLabel(arrivedAt: Date, now: Date, locale: Locale) -> String {
+        let elapsed = max(0, now.timeIntervalSince(arrivedAt))
         if elapsed < 60 {
-            return .localized("just now")
+            return CompactTimeText.now(locale: locale)
         }
-        return .verbatim(Duration.seconds(elapsed).formatted(
-            .units(allowed: [.days, .hours, .minutes], width: .narrow, maximumUnitCount: 1).locale(locale)
-        ))
+        return DurationText.compact(elapsed, locale: locale)
     }
 
     private var glyph: StateGlyph.Kind {

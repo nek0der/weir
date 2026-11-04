@@ -292,6 +292,19 @@ extension SessionLaunchStoreTests {
         #expect(SessionLaunchBar.noteText(.ignoredFilesNotListed).resolved(in: japanese)
             == "Git が無視するファイルを一覧できなかったため、何もコピーしませんでした。")
     }
+
+    /// The copy's limit is written in the language the note is resolved in,
+    /// not the process's: 「1バイト」 in a Japanese window of a process that
+    /// started in English.
+    @Test func aCopyLimitNote_writesItsSizeInTheNotesLanguage() {
+        let note = SessionLaunch.Note.copySkippedOverLimit([".env"], limit: 1)
+        let english = SessionLaunchBar.noteText(note).resolved(in: Locale(identifier: "en"))
+        let japanese = SessionLaunchBar.noteText(note).resolved(in: Locale(identifier: "ja"))
+        let englishSize = Int64(1).formatted(.byteCount(style: .file).locale(Locale(identifier: "en")))
+        #expect(english == "Didn’t copy .env: the files would come to more than \(englishSize).")
+        #expect(english.contains("1 byte"))
+        #expect(japanese == "合計が 1バイト を超えるため、.env はコピーしませんでした。")
+    }
 }
 
 /// The files Git ignores that the project names, copied in before the

@@ -187,7 +187,7 @@ enum NotificationHistoryRowText {
     static func timeLabel(for entry: NotificationEntry, now: Date, locale: Locale) -> String {
         let delta = now.timeIntervalSince(entry.timestamp)
         if delta < 60 {
-            return LocalizedStringResource("now").resolved(in: locale)
+            return CompactTimeText.now(locale: locale)
         }
         if delta < 86400 {
             // Recent entries get a locale-aware abbreviated relative

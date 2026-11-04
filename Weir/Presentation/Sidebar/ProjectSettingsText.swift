@@ -26,11 +26,12 @@ enum ProjectSettingsText {
         )
     }
 
-    /// Where new worktrees go: 「場所」 in Japanese, as the new
-    /// workspace sheet's VoiceOver names it.
+    /// Where new worktrees go: 「場所」 in Japanese. The project settings'
+    /// menu and the new worktree sheet's row label both use it, since they
+    /// set the same thing.
     static let placement = LocalizedStringResource(
         "Placement",
-        comment: "Project settings sheet: the menu of where new worktrees go"
+        comment: "Where a worktree's folder goes: the project settings sheet's menu, the new worktree sheet's row label"
     )
 
     /// The agents whose own `git worktree add` this project's placement

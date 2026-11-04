@@ -90,12 +90,17 @@ struct ReviewFindBar: View {
         .background(WeirColor.rowActiveFill.opacity(0.5).pointerStyle(.default))
     }
 
-    /// Blank until there is something to count, so an empty field does not
-    /// answer "0" to a question nobody asked.
     private var summary: DisplayText {
-        guard search.isActive else { return .verbatim("") }
+        Self.summary(isActive: search.isActive, hitCount: hitCount, position: position)
+    }
+
+    /// Blank until there is something to count, so an empty field does not
+    /// answer "0" to a question nobody asked. The count is the pane find
+    /// bar's "3 / 10", so the two find bars read alike.
+    static func summary(isActive: Bool, hitCount: Int, position: Int) -> DisplayText {
+        guard isActive else { return .verbatim("") }
         guard hitCount > 0 else { return .localized("No matches") }
-        return .verbatim("\(position + 1)/\(hitCount)")
+        return .localized(CommonText.position(position + 1, of: hitCount))
     }
 
     /// The summary as VoiceOver says it: a count, not "2 slash 5".

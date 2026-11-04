@@ -117,7 +117,7 @@ struct PaneCreationFailureCard: View {
             Button {
                 surfaceView.createSurface()
             } label: {
-                Text("Retry", comment: "Pane surface NULL recovery retry button")
+                Text(CommonText.retry)
             }
             .buttonStyle(.bordered)
             .padding(.top, WeirLayout.Supervision.spaceS)

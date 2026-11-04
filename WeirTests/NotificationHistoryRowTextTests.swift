@@ -246,8 +246,8 @@ struct NotificationHistoryRowTextTests {
 
     @Test func voiceOver_readsWhatItIsAbout_whatCameOfIt_when_andUnread() {
         let row = lines(entry(event: .wait(agent: .claude, wait: .approval, fact: "notes.txt")), locale: ja)
-        #expect(NotificationHistoryRowText.spokenLabel(row, timeLabel: "たった今", isUnread: true, locale: ja)
-            == "notes.txt、承認待ち、たった今、未読")
+        #expect(NotificationHistoryRowText.spokenLabel(row, timeLabel: "今", isUnread: true, locale: ja)
+            == "notes.txt、承認待ち、今、未読")
         // A receipt kept as text is read as a list, its turn in words.
         let turn = NotificationHistoryRowText.Lines(
             headline: "Turn finished",
@@ -381,6 +381,10 @@ struct NotificationHistoryRowTextTests {
         let row = entry()
         let came = row.timestamp
         #expect(NotificationHistoryRowText.timeLabel(for: row, now: came.addingTimeInterval(10), locale: en) == "now")
+        // The sidebar's word for the same minute, not a second one.
+        #expect(NotificationHistoryRowText.timeLabel(for: row, now: came.addingTimeInterval(10), locale: ja) == "今")
+        #expect(NotificationHistoryRowText.timeLabel(for: row, now: came.addingTimeInterval(10), locale: ja)
+            == CompactTimeText.now(locale: ja))
         #expect(NotificationHistoryRowText.timeLabel(for: row, now: came.addingTimeInterval(5 * 60), locale: en) == "5 min. ago")
         #expect(NotificationHistoryRowText.timeLabel(for: row, now: came.addingTimeInterval(5 * 60), locale: ja) == "5 分前")
     }

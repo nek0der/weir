@@ -74,7 +74,7 @@ struct PromptCacheRulesTests {
         let expiredLines = expired.lines(now: anchor.addingTimeInterval(3600 + 56 * 60), locale: en)
             .map { $0.resolved(in: en) }
         #expect(expiredLines.count == 2)
-        #expect(expiredLines[0].contains(PromptCacheFormatting.duration(56 * 60, locale: en)))
+        #expect(expiredLines[0].contains(DurationText.compact(56 * 60, locale: en)))
         #expect(expiredLines[1].contains("573k"))
 
         let soon = try #require(PromptCacheRules.panelContent(
@@ -85,7 +85,7 @@ struct PromptCacheRulesTests {
         ))
         let soonLines = soon.lines(now: anchor.addingTimeInterval(3600 - 120), locale: en)
         #expect(soonLines == [soon.timeLine(now: anchor.addingTimeInterval(3600 - 120), locale: en)], "no size, no cost line")
-        #expect(soonLines[0].resolved(in: en).contains(PromptCacheFormatting.duration(120, locale: en)))
+        #expect(soonLines[0].resolved(in: en).contains(DurationText.compact(120, locale: en)))
         #expect(soon.costLine == nil)
     }
 
