@@ -83,7 +83,7 @@ limit of its own; the client gives up on any reply after 60 s.
 - The main actor counts the changes the channel itself made (a layer
   opened, text typed, a Return sent, a command run, a setting changed, the
   keyboard moved), and every reply carries that count.
-  Every request carries an ID its reply repeats; the client checks it.
+- Every request carries an ID its reply repeats; the client checks it.
 
 ## Operations
 
@@ -112,21 +112,19 @@ what it returns when it cannot act.
 A standard macOS menu (a `Picker`, a `Menu`, a context menu, the menu bar)
 tracks the real pointer and keyboard while it is open, so no request from
 outside opens one (ADR 0005). The channel reaches what a menu does instead,
-with two operations. `command` runs a command
-palette row, which is how Weir names its commands: the keyboard shortcut
-actions, and the palette's project, tab, and settings rows. Controls with no
-shortcut have rows of their own for the same reason, which people use too:
-`newTab.<agent>` adds a tab running the agent as the pane strip's "+" does,
-for the agents "+" offers (those found on this Mac),
-`settings.section.<section>` opens Settings on a section,
+with two operations. `command` runs a command palette row, which is how Weir
+names its commands: the keyboard shortcut actions, and the palette's project,
+tab, and settings rows. Controls with no shortcut have rows of their own for
+the same reason, which people use too: `newTab.<agent>` adds a tab running
+the agent as the pane strip's "+" does, for the agents "+" offers (those
+found on this Mac), `settings.section.<section>` opens Settings on a section,
 `pane.moveToNewTab` moves the focused pane as the pane's ⋯ does, and
 `view.toggleIconBars` hides or shows the icon bars as the View menu does.
-`setting`
-changes a setting by its key in `settings.json`, through `WeirSettings`'s own
-decoding, so a value the app would not read from the file is refused, and so
-is a key the app does not know, which the file would keep as an unknown
-field. Neither checks that a menu opens or that its item reaches the
-command; that stays a check in front. A context menu item with no palette
+`setting` changes a setting by its key in `settings.json`, through
+`WeirSettings`'s own decoding, so a value the app would not read from the file
+is refused, and so is a key the app does not know, which the file would keep
+as an unknown field. Neither checks that a menu opens or that its item reaches
+the command; that stays a check in front. A context menu item with no palette
 row cannot be run through the channel.
 
 ## Typing into a pane
@@ -210,13 +208,13 @@ the screen, so unread marks and attention behave as they would.
 
 `capture` never activates the app. It refuses a window that is hidden or
 minimized, waits 150 ms for the last change to reach the window server, and
-returns the window's number. With `settings` it does the same for the
-Settings window, which is not a project window. The client then runs
-`screencapture -l` with it. The capture runs in the client because the client's terminal already
+returns the window's number. With `settings` it does the same for the Settings
+window, which is not a project window. The client then runs `screencapture -l`
+with it. The capture runs in the client because the client's terminal already
 holds the Screen Recording grant; Weir asking for its own would put a system
 prompt in front of the person. The image shows the window's inactive chrome;
-it is for checking content, not for the hero shot, which `screenshot.sh`
-keeps taking in front.
+it is for checking content, not for the hero shot, which `screenshot.sh` keeps
+taking in front.
 
 ## Client
 
@@ -247,8 +245,8 @@ key's arrival, so the app checks again as each posted key arrives
 source's user data) and drops one bound for a terminal pane, a window with a
 sheet up, the quick terminal, Settings, or a window whose keyboard nothing
 holds; a terminal pane refuses one too. The run reports nothing back, so the
-check reads the result with `state` or `capture`. The terminal that runs it needs the
-Accessibility grant.
+check reads the result with `state` or `capture`. The terminal that runs it
+needs the Accessibility grant.
 
 `scripts/check-automation.py` (`make check-automation`) launches a fresh run,
 checks the channel against it section by section, and quits it; `--keys`
@@ -259,6 +257,26 @@ run under `$TMPDIR/wa` and refuses to guess when there is more than one
 (`--run` names it), says hello with its token, and names a pane by a UUID
 prefix, reading the run and generation from `state` first.
 
+## Checking approvals in a signed run
+
+A channel run leaves native approvals off (see "Turning it on"), so the
+approval card's round trip is checked instead in a build signed with
+`WEIR_DEVELOPMENT_TEAM` and started with `make run`, which has no channel.
+A tool that acts on a background window through accessibility drives that
+run, without full-screen control. What the pane does with each input:
+
+| Input | Effect |
+|---|---|
+| One line set as the pane's `AXSelectedText` | Types it, the way Dictation's text arrives. |
+| Several lines, or text with any control character, set the same way | Pastes it through Ghostty's own paste action. A program that asked for bracketed paste gets one block and nothing is submitted; any other program meets the paste confirmation when the text has a newline. Text with a character a paste refuses, such as an escape, is dropped whole. |
+| A line break alone, set the same way | Presses Return. A tool may send its Return key this way. |
+| A keystroke posted to the window | Reaches the pane, when the pane holds the window's keyboard. |
+| A click on the approval card | Presses the button, as a pointer click does. |
+
+Each write first commits any composition the person has open. None of this
+passes the channel's checks; the `verify-in-app` skill says what to confirm
+before each step.
+
 ## Not solved yet
 
 - After `scripts/check-automation.py`'s commands section has split and closed
@@ -266,8 +284,9 @@ prefix, reading the run and generation from `state` first.
   again within 0.3 s, and a second later the pane's view is out of its window.
   The same split, close, and focus in a fresh run do not show it, so the cause
   is not found yet; the check runs its keyboard sections first meanwhile.
-- How the computer-use tool sends keys, and whether a hiragana-mode input
-  source turns its letters into marked text.
+- Whether a hiragana-mode input source turns keystrokes that a tool outside
+  the channel posts to a run into marked text. Text set as a pane's
+  `AXSelectedText` does not go through the input source.
 - How to resolve the tmux client of a pane, so typing can reach an agent
   that runs inside tmux.
 - Which agents offer a way to send a prompt to a named session, so typing

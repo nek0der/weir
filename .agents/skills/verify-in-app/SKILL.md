@@ -1,6 +1,6 @@
 ---
 name: verify-in-app
-description: Checks a change to Weir in a real run of the Debug app without taking over the person's screen, through the verification channel (scripts/weir-automation.py, ADR 0005). Use when asked to verify, try, or see a change in the running app, to send a prompt to Claude Code, Codex, OpenCode, or Antigravity in a pane and wait for its turn, to open a layer such as Needs Attention or review, to run a menu or palette command, to change a setting and see it, or to capture the window; and to run make check-automation after changing Weir/Automation.
+description: Checks a change to Weir in a real run of the Debug app without taking over the person's screen, through the verification channel (scripts/weir-automation.py, ADR 0005). Use when asked to verify, try, or see a change in the running app, to send a prompt to Claude Code, Codex, OpenCode, or Antigravity in a pane and wait for its turn, to open a layer such as Needs Attention or review, to run a menu or palette command, to change a setting and see it, or to capture the window; to check an approval card's round trip in a signed build, which has no channel, through accessibility; and to run make check-automation after changing Weir/Automation.
 ---
 
 # Verify a change in the running app
@@ -71,8 +71,9 @@ its own data. Several worktrees can each have one at once.
      as ⌘Return does, which opens another project's row in a new window.
    - Controls with no shortcut have palette rows too: `newTab.claude` (and
      `.codex`, `.antigravity`, `.opencode`, for each agent the pane strip's
-     "+" offers on this Mac) adds a tab as "+" does, `settings.section.keyboard` (any `SettingsSection`) opens
-     Settings there, `pane.moveToNewTab` and `view.toggleIconBars`.
+     "+" offers on this Mac) adds a tab as "+" does,
+     `settings.section.keyboard` (any `SettingsSection`) opens Settings
+     there, and `pane.moveToNewTab` and `view.toggleIconBars` are rows too.
    - What a check opened shows in `state`: each window's `dropdown` (the
      title bar's and the strip's), `hasSheet`, `isSidebarShown`,
      `areIconBarsHidden`, `isChangesPanelShown`, `review` with its scope,
@@ -128,13 +129,35 @@ and the reason is what to act on.
 - A paste into a program without bracketed paste raises the paste
   confirmation (`notObservable`), which only the person can answer; `quit`
   clears it by refusing the paste.
-- Native approvals need a build signed with `WEIR_DEVELOPMENT_TEAM`, and the
-  approval service is one per user, so checks of approvals run one worktree
-  at a time, in a run started with `make run`, not with `launch`.
 - The run's panes have the person's real `HOME`: an agent started there reads
   and writes the person's agent settings and history.
-- `make run` quits only this checkout's Weir Dev; it never reaches another
-  worktree's.
+
+## Checking approvals in a signed run
+
+Native approvals need a build signed with `WEIR_DEVELOPMENT_TEAM`, started
+with `make run`, not with `launch`. The approval service is one per user, so
+these checks run one worktree at a time; `make run` quits only this
+checkout's Weir Dev and never reaches another worktree's. Native approvals
+are off in any run with the channel on, so this run is started without it.
+Drive it through accessibility, with a tool that acts on a background window
+without full-screen control:
+
+1. Look: capture the window, and confirm that the program in front of the
+   pane is the shell or agent you mean and that its prompt is empty. Input
+   through accessibility passes none of the channel's checks (`--expect`,
+   the session, the person's draft), so this look is the only check.
+2. Type the prompt: set the pane's `AXSelectedText` to it. Several lines
+   arrive as one paste, so a program without bracketed paste meets the paste
+   confirmation (see Pitfalls).
+3. Send it: set `AXSelectedText` to a line break alone, which the pane takes
+   as the Return key.
+4. Answer the request: click the approval card's button.
+
+`docs/verification-channel.md`, "Checking approvals in a signed run", has
+what the pane does with each input. This does not conflict with ADR 0006's
+rule of "keys, never text": that rule covers what the channel posts, and this
+input does not come from the channel. It reaches the pane through
+accessibility, from a tool the person granted.
 
 ## Check it worked
 
