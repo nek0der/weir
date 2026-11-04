@@ -55,6 +55,12 @@ actor ToolLocator {
     /// every tick for users who don't have the tool.
     private var cache: [String: URL?] = [:]
 
+    /// `known` answers for those names without a search, for a test that
+    /// runs a stand-in for a CLI the machine may not have.
+    init(known: [String: URL?] = [:]) {
+        cache = known
+    }
+
     /// Directories we check before falling back to a login shell.
     /// These cover the overwhelming majority of installs and cost only
     /// a `stat` each, whereas the shell fallback sources the user's

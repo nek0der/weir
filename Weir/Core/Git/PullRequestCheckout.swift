@@ -151,8 +151,19 @@ struct ForgePullRequests: PullRequestReading {
         repository.repository.map { ["--repo", $0] } ?? []
     }
 
-    /// The same as the marks' lookup sets (`PRStatusFetcher`): no prompt,
-    /// no update notice, no telemetry.
+    /// Environment that keeps a CLI to the payload we asked for, here and
+    /// in the marks' lookups (`PRStatusFetcher`).
+    ///
+    /// `gh` gets its prompt disabled: it should not prompt without a
+    /// pty, but a hidden prompt would hang us rather than fail, and
+    /// the switch is documented. Both get their update notices
+    /// silenced and `glab` its telemetry — measured on `gh` 2.94 and
+    /// `glab` 1.116, all of that lands on *stderr* and so cannot
+    /// reach the decoder, which reads `stdout` alone. We suppress it
+    /// anyway: the split is a CLI's own choice, not a contract, and
+    /// a version that moved one line to stdout would take the feature
+    /// down silently. `PRStatusFetcher.firstJSONObject` is the second
+    /// half of that same bet.
     static func quietEnvironment(for forge: ForgeKind) -> [String: String] {
         switch forge {
         case .gitHub: ["GH_PROMPT_DISABLED": "true", "GH_NO_UPDATE_NOTIFIER": "1"]

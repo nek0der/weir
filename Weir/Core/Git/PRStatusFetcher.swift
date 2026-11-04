@@ -1,18 +1,17 @@
 // PRStatusFetcher.swift
-// Weir — reads a checkout's linked pull request via the forge CLI.
+// Weir — reads the pull requests of a repository's checkouts through the forge CLI, one query for them all.
 //
 // Separate from `GitProcess` because these CLIs are optional
 // dependencies: the user may not have them installed, may not be
 // authenticated, or may be offline. Every failure mode here resolves
-// to "show nothing, and log at debug", which is a different posture
-// than the `git` path that surfaces errors interactively.
+// to "keep what the row showed, and log at debug", which is a different
+// posture than the `git` path that surfaces errors interactively.
 //
-// The two forges need separate decoders. `gh pr view --json a,b,c`
-// lets us name the fields we want and returns a flat object shaped
-// like our request. `glab mr view --output json` has no field
-// selection and returns GitLab's full API object, so we pick fields
-// out of a much larger payload. Their CI shapes differ more sharply
-// still — see `PRChecks` for why `counts` is optional.
+// One lookup covers the rows of one repository: each row's branch is read
+// with Git, the branch its request's head is on comes from the
+// repository's configuration (`PRStatusRepository`), and one GraphQL query
+// asks for all of them (`PRStatusQuery`). A host whose rate limit ran out
+// is asked nothing until it resets (`ForgeRateLimiter`).
 
 import Foundation
 import OSLog
@@ -20,11 +19,26 @@ import WeirDomain
 
 private let log = Logger.weir("git.pr")
 
-/// What `PRStatusSyncer` asks for a checkout's request through: the forge
-/// CLIs in the app, and a scripted stand-in in the tests, which have to
-/// hold one answer back to order it against another.
+/// One row a lookup is asked for: where its checkout is.
+struct PRStatusRow: Hashable {
+    let container: ContainerID
+    let workingDirectory: URL
+}
+
+/// What one lookup of a repository's rows found.
+struct PRStatusBatch {
+    var lookups: [ContainerID: PRStatusFetcher.Lookup] = [:]
+    /// Whether less than a tenth of the host's quota is left; `nil` when the
+    /// lookup asked no forge.
+    var isQuotaLow: Bool?
+}
+
+/// What `PRStatusSyncer` asks for a repository's requests through: the
+/// forge CLIs in the app, and a scripted stand-in in the tests, which have
+/// to hold one answer back to order it against another.
 protocol PRStatusLookups: Sendable {
-    func lookup(workingDirectory: URL) async -> PRStatusFetcher.Lookup
+    /// Looks up `rows`, every one of them a checkout of one repository.
+    func lookup(_ rows: [PRStatusRow]) async -> PRStatusBatch
     /// Forget what was resolved about each folder's forge, for a manual
     /// refresh: the user may have just added a remote or signed a CLI in.
     func invalidate() async
@@ -50,20 +64,63 @@ enum CheckoutHead: Equatable {
 }
 
 struct PRStatusFetcher: PRStatusLookups {
+    /// Runs `git` with these arguments in a folder.
+    typealias GitRun = @Sendable (_ arguments: [String], _ workingDirectory: URL) async -> ToolResult?
+    /// Runs a forge's CLI.
+    typealias ForgeRun = @Sendable (
+        _ executable: URL,
+        _ arguments: [String],
+        _ workingDirectory: URL,
+        _ environment: [String: String]
+    ) async -> ToolResult?
+
     private let resolver: ForgeResolver
     private let locator: ToolLocator
+    private let limiter: ForgeRateLimiter
+    private let now: @Sendable () -> Date
+    private let git: GitRun
+    private let forgeCLI: ForgeRun
 
-    init(resolver: ForgeResolver, locator: ToolLocator) {
+    /// The collaborators are injected for the tests, which run a stand-in
+    /// for the forge's CLI and step the clock the rate limit is read by.
+    init(
+        resolver: ForgeResolver,
+        locator: ToolLocator,
+        limiter: ForgeRateLimiter = ForgeRateLimiter(),
+        now: @escaping @Sendable () -> Date = { Date() },
+        git: @escaping GitRun = Self.liveGit,
+        forgeCLI: @escaping ForgeRun = Self.liveForgeCLI
+    ) {
         self.resolver = resolver
         self.locator = locator
+        self.limiter = limiter
+        self.now = now
+        self.git = git
+        self.forgeCLI = forgeCLI
     }
 
-    /// Ceiling on one CLI call. Long enough for a cold `gh` on a slow
-    /// link, short enough that a hung binary cannot hold a sync tick.
-    private static let timeout: Duration = .seconds(5)
+    /// Ceiling on one query. Longer than one `gh pr view` was given, since
+    /// it answers for every row of a repository; short enough that a hung
+    /// binary cannot hold the lookups for long.
+    private static let timeout: Duration = .seconds(10)
 
-    /// What one lookup learns: the request, and the forge whose CLI is
-    /// installed for the folder's remote whether or not a request was
+    static let liveGit: GitRun = { arguments, workingDirectory in
+        guard let result = try? await GitProcess.run(arguments, cwd: workingDirectory) else { return nil }
+        return ToolResult(exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr)
+    }
+
+    static let liveForgeCLI: ForgeRun = { executable, arguments, workingDirectory, environment in
+        await runTool(
+            executable: executable,
+            arguments: arguments,
+            workingDirectory: workingDirectory,
+            environment: environment,
+            timeout: timeout
+        )
+    }
+
+    /// What one lookup learns of a row: the request, and the forge whose
+    /// CLI is installed for the folder's remote whether or not a request was
     /// found, which is what "Create PR" needs. `isAnswered` is false
     /// when the CLI did not say whether there is a request (a timeout, the
     /// network, rate limits, credentials): now that the changes panel
@@ -80,38 +137,207 @@ struct PRStatusFetcher: PRStatusLookups {
         var forge: ForgeKind?
         var info: PRInfo?
         var isAnswered = true
-        /// The branch the CLI was asked about. The CLI reads the branch
-        /// itself, so a checkout that moves to another branch while a
-        /// lookup runs gets the old branch's request; the syncer compares
-        /// this with the branch the row shows before it keeps the answer.
+        /// The branch the forge was asked about. The checkout can move to
+        /// another branch while a lookup runs; the syncer compares this
+        /// with the branch the row shows before it keeps the answer.
         var head: CheckoutHead = .unknown
+    }
+
+    /// What the forge said of one branch's request.
+    enum Answer: Equatable {
+        case found(PRInfo)
+        case none
+        case unanswered
     }
 
     func invalidate() async {
         await resolver.invalidate()
     }
 
-    func lookup(workingDirectory: URL) async -> Lookup {
-        guard let forge = await resolver.forge(for: workingDirectory) else { return Lookup() }
+    func lookup(_ rows: [PRStatusRow]) async -> PRStatusBatch {
+        guard let directory = rows.first?.workingDirectory else { return PRStatusBatch() }
+        let noForge = PRStatusBatch(lookups: Dictionary(rows.map { ($0.container, Lookup()) }, uniquingKeysWith: { first, _ in first }))
+        guard let forge = await resolver.forge(for: directory) else { return noForge }
         guard let executable = await locator.locate(forge.executableName) else {
             log.debug("\(forge.executableName, privacy: .public) not installed")
-            return Lookup()
+            return noForge
         }
-        // Read on both sides of the CLI: the CLI reads the branch itself at
-        // some moment in between, so only a branch that held throughout is
-        // the one it answered for. A switch in between is no answer, which
-        // keeps what was known until the next lookup.
-        let head = await Self.head(of: workingDirectory)
-        let answer = await request(forge: forge, executable: executable, workingDirectory: workingDirectory)
-        guard await Self.head(of: workingDirectory) == head else {
-            log.debug("checkout changed branch during the lookup; no answer")
-            return Lookup(forge: forge, isAnswered: false)
+        // Read on both sides of the query: a checkout that switched branch
+        // in between was asked about a branch it no longer has, which is no
+        // answer, and keeps what was known until the next lookup.
+        var heads: [ContainerID: CheckoutHead] = [:]
+        for row in rows {
+            heads[row.container] = await head(of: row.workingDirectory)
         }
-        switch answer {
-        case let .found(info): return Lookup(forge: forge, info: info, head: head)
-        case .none: return Lookup(forge: forge, head: head)
-        case .unanswered: return Lookup(forge: forge, isAnswered: false, head: head)
+        let answers = await ask(forge: forge, executable: executable, directory: directory, rows: rows, heads: heads)
+        var batch = PRStatusBatch(isQuotaLow: answers.isQuotaLow)
+        for row in rows {
+            let before = heads[row.container] ?? .unknown
+            guard await head(of: row.workingDirectory) == before else {
+                log.debug("checkout changed branch during the lookup; no answer")
+                batch.lookups[row.container] = Lookup(forge: forge, isAnswered: false)
+                continue
+            }
+            let answer = answers.bySelector[row.container].flatMap { answers.answers[$0] } ?? .unanswered
+            batch.lookups[row.container] = switch answer {
+            case let .found(info): Lookup(forge: forge, info: info, head: before)
+            case .none: Lookup(forge: forge, head: before)
+            case .unanswered: Lookup(forge: forge, isAnswered: false, head: before)
+            }
         }
+        return batch
+    }
+
+    /// The rows' selectors and what the forge said of each.
+    private struct Asked {
+        var bySelector: [ContainerID: PRHeadSelector] = [:]
+        var answers: [PRHeadSelector: Answer] = [:]
+        var isQuotaLow: Bool?
+    }
+
+    /// Asks the forge about every row on a branch; a detached or unread
+    /// checkout has no branch to ask about, which `gh pr view` answered
+    /// with an error, so it stays unanswered.
+    private func ask(
+        forge: ForgeKind,
+        executable: URL,
+        directory: URL,
+        rows: [PRStatusRow],
+        heads: [ContainerID: CheckoutHead]
+    ) async -> Asked {
+        var asked = Asked()
+        let branches = heads.values.compactMap { head -> String? in
+            if case let .branch(name) = head {
+                name
+            } else {
+                nil
+            }
+        }
+        guard !branches.isEmpty else { return asked }
+        guard let repository = await readRepository(in: directory, branches: Set(branches)),
+              let base = repository.baseRepository(forge: forge)
+        else {
+            log.debug("no repository to ask the forge about")
+            return asked
+        }
+        var selectors: [PRHeadSelector] = []
+        for container in rows.map(\.container) {
+            guard case let .branch(name)? = heads[container] else { continue }
+            let selector = repository.selector(for: name, baseOwner: base.owner, forge: forge)
+            asked.bySelector[container] = selector
+            if !selectors.contains(selector) {
+                selectors.append(selector)
+            }
+        }
+        let sender = Sender(fetcher: self, executable: executable, directory: directory, base: base)
+        asked.answers = switch forge {
+        case .gitHub: await askGitHub(selectors, through: sender)
+        case .gitLab: await askGitLab(selectors, through: sender)
+        }
+        asked.isQuotaLow = await limiter.isLow(host: base.host)
+        return asked
+    }
+
+    /// Runs queries against one repository, through the host's rate limit,
+    /// and stops once the limit says to.
+    private final class Sender {
+        let fetcher: PRStatusFetcher
+        let executable: URL
+        let directory: URL
+        let base: PRStatusRepository.BaseRepository
+        /// Set once a query was held or refused for the rate limit.
+        private(set) var isStopped = false
+
+        init(fetcher: PRStatusFetcher, executable: URL, directory: URL, base: PRStatusRepository.BaseRepository) {
+            self.fetcher = fetcher
+            self.executable = executable
+            self.directory = directory
+            self.base = base
+        }
+
+        /// `nil` when the host's lookups wait for its rate limit.
+        func send(_ query: PRStatusQuery, for selectors: [PRHeadSelector]) async -> PRStatusQuery.Response? {
+            guard !isStopped else { return nil }
+            let admission = await fetcher.limiter.admit(host: base.host)
+            guard admission != .held else {
+                log.debug("lookups of this host wait for its rate limit")
+                isStopped = true
+                return nil
+            }
+            let result = await fetcher.forgeCLI(
+                executable,
+                query.arguments(host: base.host, repository: base.path),
+                directory,
+                ForgePullRequests.quietEnvironment(for: query.forge)
+            )
+            let response = query.response(result, for: selectors.filter(query.asks), baseOwner: base.owner, now: fetcher.now())
+            await fetcher.limiter.record(response.quota, host: base.host, admission: admission)
+            if response.quota.isRateLimited {
+                isStopped = true
+            }
+            return response
+        }
+    }
+
+    /// Each branch asked for its 5 newest requests, and the branches those
+    /// do not settle asked again for 30, as many as `gh pr view` reads.
+    private func askGitHub(_ selectors: [PRHeadSelector], through sender: Sender) async -> [PRHeadSelector: Answer] {
+        var answers: [PRHeadSelector: Answer] = [:]
+        var needsMore: [PRHeadSelector] = []
+        for query in PRStatusQuery.queries(for: selectors, forge: .gitHub) {
+            guard let response = await sender.send(query, for: selectors) else { break }
+            answers.merge(response.answers) { _, new in new }
+            needsMore += response.needsMore
+        }
+        let again = PRStatusQuery.queries(for: needsMore, forge: .gitHub, requestsPerBranch: PRStatusQuery.allRequests)
+        for query in again {
+            guard let response = await sender.send(query, for: needsMore) else { break }
+            answers.merge(response.answers) { _, new in new }
+        }
+        return answers
+    }
+
+    /// Each query's pages read on until the last, since one page of 100 is
+    /// shared by every branch in it.
+    private func askGitLab(_ selectors: [PRHeadSelector], through sender: Sender) async -> [PRHeadSelector: Answer] {
+        var answers: [PRHeadSelector: Answer] = [:]
+        for first in PRStatusQuery.queries(for: selectors, forge: .gitLab) {
+            var query = first
+            var requests: [GlabRequest] = []
+            var isComplete = false
+            for _ in 0..<PRStatusQuery.maxGitLabPages {
+                guard let page = await sender.send(query, for: selectors)?.gitLabPage else { break }
+                requests += page.requests
+                guard let cursor = page.nextCursor else {
+                    isComplete = true
+                    break
+                }
+                query = first.after(cursor)
+            }
+            // Nothing read at all is no answer, not "none".
+            guard isComplete || !requests.isEmpty else { continue }
+            let asked = selectors.filter(first.asks)
+            answers.merge(PRStatusQuery.gitLabAnswers(requests, for: asked, isComplete: isComplete)) { _, new in new }
+        }
+        return answers
+    }
+
+    /// The repository's configuration, read once for every row: worktrees
+    /// share it. `nil` when `git config` did not answer; exit 1 is a
+    /// repository with none of the keys.
+    private func readRepository(in directory: URL, branches: Set<String>) async -> PRStatusRepository? {
+        guard let config = await git(PRStatusRepository.configArguments, directory),
+              config.exitCode == 0 || config.exitCode == 1
+        else { return nil }
+        // A Git too old for `%(push:remotename)` fails here, and every
+        // branch then goes by its configuration alone, as `gh` does when
+        // `@{push}` does not resolve.
+        let pushes = await git(PRStatusRepository.pushArguments(branches: branches.sorted()), directory)
+        return PRStatusRepository.parse(
+            config: config.stdout,
+            pushes: pushes?.isSuccess == true ? pushes?.stdout ?? "" : "",
+            branches: branches
+        )
     }
 
     /// The branch `workingDirectory` has out, by its full name, which is
@@ -121,10 +347,8 @@ struct PRStatusFetcher: PRStatusLookups {
     /// with no commit yet, so the two would never agree for such a branch.
     /// Exit 1 is a detached HEAD; anything else that keeps git from naming
     /// one (not a repository, a git that would not run) is not known.
-    private static func head(of workingDirectory: URL) async -> CheckoutHead {
-        guard let result = try? await GitProcess.run(["symbolic-ref", "--quiet", "HEAD"], cwd: workingDirectory) else {
-            return .unknown
-        }
+    private func head(of workingDirectory: URL) async -> CheckoutHead {
+        guard let result = await git(["symbolic-ref", "--quiet", "HEAD"], workingDirectory) else { return .unknown }
         switch result.exitCode {
         case 0:
             let ref = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -135,121 +359,6 @@ struct PRStatusFetcher: PRStatusLookups {
             return .detached
         default:
             return .unknown
-        }
-    }
-
-    /// What the CLI said of the branch's request.
-    enum Answer: Equatable {
-        case found(PRInfo)
-        case none
-        case unanswered
-    }
-
-    private func request(forge: ForgeKind, executable: URL, workingDirectory: URL) async -> Answer {
-        let result = await runTool(
-            executable: executable,
-            arguments: Self.arguments(for: forge),
-            workingDirectory: workingDirectory,
-            environment: Self.quietEnvironment(for: forge),
-            timeout: Self.timeout
-        )
-        if let result, !result.isSuccess {
-            log.debug("""
-            \(forge.executableName, privacy: .public) exit \
-            \(result.exitCode, privacy: .public): \(result.stderr, privacy: .private)
-            """)
-        } else if result == nil {
-            log.debug("\(forge.executableName, privacy: .public) did not complete")
-        }
-        return Self.answer(result, forge: forge)
-    }
-
-    /// What a run of the CLI says: `nil` (a timeout, a cancel) is no
-    /// answer, and so is output we cannot read, which a newer CLI may
-    /// write: neither says a request is gone.
-    static func answer(_ result: ToolResult?, forge: ForgeKind) -> Answer {
-        guard let result else { return .unanswered }
-        guard result.isSuccess else {
-            return saysNoRequest(result.stderr, forge: forge) ? .none : .unanswered
-        }
-        return decode(stdout: result.stdout, forge: forge).map(Answer.found) ?? .unanswered
-    }
-
-    /// Whether a failed lookup says the branch has no request, the common
-    /// case for a new branch, rather than that it could not ask. gh says
-    /// so in words ("no pull requests found for branch …"); any other
-    /// failure of gh is no answer. Any failure of glab reads as no request:
-    /// a merged request that glab fails to report loses its mark and
-    /// "Clean Up Worktree…" until the next answer, which offers less, never more. "Create PR",
-    /// which a wrong "none" could offer twice, runs gh only.
-    static func saysNoRequest(_ stderr: String, forge: ForgeKind) -> Bool {
-        switch forge {
-        case .gitHub: stderr.localizedCaseInsensitiveContains("no pull requests found")
-        case .gitLab: true
-        }
-    }
-
-    private static func arguments(for forge: ForgeKind) -> [String] {
-        switch forge {
-        case .gitHub:
-            let fields = "number,state,isDraft,title,url,statusCheckRollup"
-            return ["pr", "view", "--json", fields]
-        case .gitLab:
-            return ["mr", "view", "--output", "json"]
-        }
-    }
-
-    /// Environment that keeps a CLI to the payload we asked for.
-    ///
-    /// `gh` gets its prompt disabled: it should not prompt without a
-    /// pty, but a hidden prompt would hang us rather than fail, and
-    /// the switch is documented. Both get their update notices
-    /// silenced and `glab` its telemetry — measured on `gh` 2.94 and
-    /// `glab` 1.116, all of that lands on *stderr* and so cannot
-    /// reach the decoder, which reads `stdout` alone. We suppress it
-    /// anyway: the split is a CLI's own choice, not a contract, and
-    /// a version that moved one line to stdout would take the feature
-    /// down silently. `firstJSONObject` below is the second half of
-    /// that same bet.
-    private static func quietEnvironment(for forge: ForgeKind) -> [String: String] {
-        switch forge {
-        case .gitHub:
-            ["GH_PROMPT_DISABLED": "true", "GH_NO_UPDATE_NOTIFIER": "1"]
-        case .gitLab:
-            ["GLAB_CHECK_UPDATE": "0", "GLAB_SEND_TELEMETRY": "0"]
-        }
-    }
-
-    /// Exposed for unit tests so we can exercise JSON parsing without
-    /// shelling out. Keep it stable so test fixtures stay valid.
-    static func decode(stdout: String, forge: ForgeKind) -> PRInfo? {
-        guard let data = firstJSONObject(in: stdout) else { return nil }
-        let decoder = JSONDecoder()
-        do {
-            let info = switch forge {
-            case .gitHub:
-                try decoder.decode(GhPayload.self, from: data).toPRInfo()
-            case .gitLab:
-                try decoder.decode(GlabPayload.self, from: data).toPRInfo()
-            }
-            // The PR's link opens on a click without asking, so only a web
-            // page is taken: a file or a custom scheme from a forge (or
-            // whatever answers as one) would launch its handler. Plain http
-            // stays, for a self-hosted GitLab that serves no TLS; it opens
-            // in the browser like any web page.
-            guard let scheme = info.url.scheme?.lowercased(), scheme == "https" || scheme == "http",
-                  info.url.host?.isEmpty == false
-            else {
-                log.debug("\(forge.executableName, privacy: .public) gave a link that is not a web page; ignoring the PR")
-                return nil
-            }
-            return info
-        } catch {
-            log.debug("""
-            \(forge.executableName, privacy: .public) decode failed: \
-            \(String(describing: error), privacy: .private)
-            """)
-            return nil
         }
     }
 
@@ -301,150 +410,4 @@ struct PRStatusFetcher: PRStatusLookups {
         }
         return nil
     }
-}
-
-// MARK: - GitHub payload
-
-/// Mirrors the subset of `gh pr view --json …` we request. Field names
-/// track `gh`'s camelCase exactly so we don't need a key-decoding
-/// strategy.
-private struct GhPayload: Decodable {
-    let number: Int
-    let state: String
-    let isDraft: Bool
-    let title: String
-    let url: URL
-    let statusCheckRollup: [GhStatusCheck]?
-
-    func toPRInfo() -> PRInfo {
-        PRInfo(
-            number: number,
-            state: parseState(state),
-            isDraft: isDraft,
-            title: title,
-            url: url,
-            forge: .gitHub,
-            checks: aggregateChecks(statusCheckRollup)
-        )
-    }
-
-    private func parseState(_ raw: String) -> PRState {
-        switch raw.uppercased() {
-        case "MERGED": .merged
-        case "CLOSED": .closed
-        default: .open
-        }
-    }
-
-    /// Collapse the per-context list into counts plus a single
-    /// conclusion. Returns nil for an absent or empty rollup so the
-    /// card can say "no checks" rather than "0 of 0 passed".
-    private func aggregateChecks(_ list: [GhStatusCheck]?) -> PRChecks? {
-        guard let list, !list.isEmpty else { return nil }
-        var passed = 0
-        var hasFailure = false
-        var hasPending = false
-        for check in list {
-            switch check.normalized {
-            case .success: passed += 1
-            case .failure: hasFailure = true
-            case .pending: hasPending = true
-            }
-        }
-        // Failure outranks pending: a run still going does not soften
-        // one that already went red.
-        let conclusion: PRChecksConclusion = if hasFailure {
-            .failure
-        } else if hasPending {
-            .pending
-        } else {
-            .success
-        }
-        return PRChecks(
-            conclusion: conclusion,
-            counts: PRChecks.Counts(passed: passed, total: list.count)
-        )
-    }
-}
-
-/// One row from `statusCheckRollup`. `gh` returns a mix of `CheckRun`
-/// and `StatusContext` objects — CheckRuns expose `conclusion` +
-/// `status`, StatusContexts expose `state` — so all three are decoded
-/// optionally and normalized to a single tri-state, keeping the
-/// aggregate above simple.
-///
-/// The `??` chain picks the first *present* field, which for a CheckRun
-/// is always `conclusion`: `gh` marshals it as a Go string, so a run
-/// still in flight arrives as `""` rather than absent. `""` normalizes
-/// to `.pending`, which is the same answer `status` would have given,
-/// so `status` is reached only for a shape neither forge emits today.
-private struct GhStatusCheck: Decodable {
-    let conclusion: String?
-    let state: String?
-    let status: String?
-
-    var normalized: PRChecksConclusion {
-        PRChecksConclusion(rawStatus: conclusion ?? state ?? status)
-    }
-}
-
-// MARK: - GitLab payload
-
-/// Subset of GitLab's merge-request object. `glab mr view --output
-/// json` returns the API object verbatim, so we name GitLab's
-/// snake_case fields and ignore everything else in the payload.
-private struct GlabPayload: Decodable {
-    /// GitLab exposes both a global `id` and a per-project `iid`. The
-    /// UI, the web URL, and every `glab` command all use `iid`, so
-    /// that is the number a user recognizes.
-    let iid: Int
-    let state: String
-    let draft: Bool?
-    let title: String
-    let webURL: URL
-    let headPipeline: GlabPipeline?
-
-    enum CodingKeys: String, CodingKey {
-        case iid
-        case state
-        case draft
-        case title
-        case webURL = "web_url"
-        case headPipeline = "head_pipeline"
-    }
-
-    func toPRInfo() -> PRInfo {
-        PRInfo(
-            number: iid,
-            state: parseState(state),
-            isDraft: draft ?? false,
-            title: title,
-            url: webURL,
-            forge: .gitLab,
-            checks: pipelineChecks(headPipeline)
-        )
-    }
-
-    /// GitLab states are `opened` / `closed` / `merged` / `locked`.
-    /// `locked` means the discussion is locked, not that the request
-    /// is finished, so it reads as open.
-    private func parseState(_ raw: String) -> PRState {
-        switch raw.lowercased() {
-        case "merged": .merged
-        case "closed": .closed
-        default: .open
-        }
-    }
-
-    /// GitLab gives one pipeline status and no per-job breakdown from
-    /// the CLI, so `counts` stays nil and the card phrases the
-    /// result without numbers.
-    private func pipelineChecks(_ pipeline: GlabPipeline?) -> PRChecks? {
-        guard let status = pipeline?.status else { return nil }
-        return PRChecks(conclusion: PRChecksConclusion(rawStatus: status), counts: nil)
-    }
-}
-
-private struct GlabPipeline: Decodable {
-    let status: String?
 }

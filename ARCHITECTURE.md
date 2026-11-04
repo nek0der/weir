@@ -530,7 +530,9 @@ conversation again as its surface mounts (`AgentResumeCommandBuilder`).
 | `Weir/Core/QuickTerminal/QuickTerminalHotKeyCenter.swift` | Keeps the quick terminal's global hotkey registered to match the setting, the keyboard layout, and the Settings recorders |
 | `Weir/UI/SurfaceView.swift` | The `NSView` subclass that owns the libghostty surface and its Metal layer |
 | `Weir/UI/Pane/PaneHostView.swift` | The `NSViewRepresentable` that bridges `SurfaceRegistry` and `SplitTree` |
-| `Weir/Core/Git/PRStatusSyncer.swift` | Schedules forge CLI lookups per sidebar row, at each row's own interval and as an agent's turn ends there (`TurnEndPRRefresh`), and writes them into `PRStatusStore` (no setting; whatever `gh` / `glab` can read) |
+| `Weir/Core/Git/PRStatusSyncer.swift` | Schedules forge lookups per project, at its most pressing row's interval, and when the app comes to the front or an agent's turn ends there (`TurnEndPRRefresh`), gathered for a few seconds and at most once a minute; writes them into `PRStatusStore` (no setting; whatever `gh` / `glab` can read) |
+| `Weir/Core/Git/PRStatusFetcher.swift` | One lookup of a project's rows: each row's branch from Git, its head branch as `gh pr view` reads it (`PRStatusRepository`), and one `gh api graphql` or `glab api graphql` query for them all (`PRStatusQuery`) |
+| `Weir/Core/Git/ForgeRateLimiter.swift` | Stops a host's lookups when its rate limit runs out, until the reset or a backoff, then sends one probe; tells the syncer when the quota runs low |
 | `Weir/Core/Review/ReviewSession.swift` | One view's review: its scope, list and open diff, and the comment lifecycle (written → inserted → resolved) |
 | `Weir/Core/Review/ReviewDraftWriter.swift` | The draft one worktree's reviews share: comments, read marks, and the file it restores from |
 | `Weir/Core/Review/ReviewGitCommand.swift` | Every Git read the review makes, and the patch bytes both the change poll and the diff hash |

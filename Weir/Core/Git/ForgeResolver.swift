@@ -179,24 +179,30 @@ actor ForgeResolver {
     /// The remote we should ask about and its host, or nil when the
     /// checkout has no remote at all.
     private func remote(workingDirectory: URL) async throws -> ForgeRemote? {
-        let remotes = try await remoteURLs(workingDirectory: workingDirectory)
-        guard !remotes.isEmpty else { return nil }
-        // Check the names `gh` itself prefers, in its order, so we
-        // agree with the tool we are about to invoke about which
-        // remote counts. Anything else is sorted before we pick, since
-        // dictionary order is not defined and the host we resolve has
-        // to be stable across launches.
-        for name in ["upstream", "github", "origin"] {
-            if let url = remotes[name], let host = Self.host(fromRemoteURL: url) {
-                return ForgeRemote(name: name, host: host, url: url)
-            }
+        try await Self.preferredRemote(in: remoteURLs(workingDirectory: workingDirectory))
+    }
+
+    /// The remote among `remotes` (name to URL) that a pull request of the
+    /// checkout comes from. Static so the pull request lookups, which read
+    /// the remotes with the rest of a repository's configuration in one
+    /// `git config`, choose by the same rule without reading them again.
+    static func preferredRemote(in remotes: [String: String]) -> ForgeRemote? {
+        remotesByPriority(remotes).first
+    }
+
+    /// `remotes` with a host, in the order `gh` ranks them: the names it
+    /// prefers, in its order, so we agree with the tool we are about to
+    /// invoke about which remote counts, then the rest by name, since
+    /// dictionary order is not defined and the host we resolve has to be
+    /// stable across launches.
+    static func remotesByPriority(_ remotes: [String: String]) -> [ForgeRemote] {
+        let preferred = ["upstream", "github", "origin"]
+        let names = preferred.filter { remotes[$0] != nil }
+            + remotes.keys.filter { !preferred.contains($0) }.sorted()
+        return names.compactMap { name in
+            guard let url = remotes[name], let host = host(fromRemoteURL: url) else { return nil }
+            return ForgeRemote(name: name, host: host, url: url)
         }
-        return remotes.sorted { $0.key < $1.key }
-            .lazy
-            .compactMap { remote in
-                Self.host(fromRemoteURL: remote.value).map { ForgeRemote(name: remote.key, host: $0, url: remote.value) }
-            }
-            .first
     }
 
     private func remoteURLs(workingDirectory: URL) async throws -> [String: String] {

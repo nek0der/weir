@@ -1,5 +1,5 @@
 // PRStatusSyncer.swift
-// Weir — schedules forge CLI lookups per container and writes the
+// Weir — schedules forge lookups per repository and writes the
 // results into `PRStatusStore`. Sibling to `GitSyncCoordinator` but
 // kept deliberately separate because:
 //   - `gh` / `glab` are optional dependencies; a failure here must
@@ -11,6 +11,14 @@
 //   - It has no setting: pull requests show wherever `gh`
 //     or `glab` can read them, and a CLI that is absent or signed out is
 //     found out by the lookup itself.
+//
+// The unit of a lookup is a project: its rows are the worktrees of one
+// repository, and one query answers for all of them (`PRStatusFetcher`).
+// Every lookup spends the person's forge quota, which all their tokens
+// share, so a project is looked up when its most pressing row is due,
+// coming back to the app and a turn's end are gathered for a few
+// seconds first, and a request that is merged or closed is asked about
+// at most once an hour.
 //
 // Lifecycle:
 //   - `init` takes every collaborator, and where the requests come from
@@ -29,7 +37,7 @@ private let log = Logger.weir("git.pr.sync")
 /// Where `PRStatusSyncer` learns each row's request. The app chooses it
 /// at launch (`AppState`), so the syncer reads no demo flag itself.
 enum PRStatusSource {
-    /// Asks the forge CLI for each row, on the syncer's cadence. The
+    /// Asks the forge CLI for each repository, on the syncer's cadence. The
     /// syncer builds its fetcher from these two, so the resolver a manual
     /// refresh invalidates is always the one its lookups read.
     case forgeCLI(resolver: ForgeResolver, locator: ToolLocator)
@@ -43,6 +51,24 @@ enum PRStatusSource {
     /// The forge CLIs, found through `locator`.
     static func live(locator: ToolLocator) -> PRStatusSource {
         .forgeCLI(resolver: ForgeResolver(locator: locator), locator: locator)
+    }
+}
+
+/// The time the lookups pace themselves by. A protocol so the tests step
+/// it by hand rather than wait out a debounce or an interval.
+protocol PRStatusClock: Sendable {
+    func now() -> Date
+    /// Returns after `interval`, or throws once the task is canceled.
+    func sleep(for interval: TimeInterval) async throws
+}
+
+struct SystemPRStatusClock: PRStatusClock {
+    func now() -> Date {
+        Date()
+    }
+
+    func sleep(for interval: TimeInterval) async throws {
+        try await Task.sleep(for: .seconds(interval))
     }
 }
 
@@ -62,53 +88,89 @@ final class PRStatusSyncer {
     /// forge and a manual refresh resets both. `nil` for a fixture, which
     /// asks no CLI.
     let pullRequests: (any PullRequestReading)?
+    private let clock: any PRStatusClock
 
     /// How long a row waits between recurring lookups, from what its last
-    /// one found; `nil` for a row the recurring lookups leave alone. Every
-    /// lookup costs one CLI spawn, so only what can still change soon is
-    /// asked often:
+    /// one found; `nil` for a row the recurring lookups leave alone. A
+    /// project is looked up when any of its rows is due, so its interval is
+    /// its shortest row's; only what can still change soon is asked often:
     ///
     /// - Checks running: a run that finishes in a couple of minutes should
-    ///   not read as running well after it stopped.
+    ///   not read as running well after it stopped. Not while the quota
+    ///   runs low (`isQuotaLow`), when this polling is what spends the most
+    ///   for the least, and the row waits as an open request does.
     /// - An open request: it is what a merge moves to Ready to Clean Up.
     /// - No request: one may be opened, which matters less soon.
-    /// - A merged or closed request: nothing is left to wait for. Coming back
-    ///   to the app and a turn's end still look it up, which is how a reopened
-    ///   one is found.
-    static func recurringInterval(for info: PRInfo?) -> TimeInterval? {
+    /// - A merged or closed request: nothing is left to wait for. It goes
+    ///   along with its project's lookups at most once an hour
+    ///   (`finishedInterval`), and with a turn's end in its row, which is how
+    ///   a reopened one is found.
+    static func recurringInterval(for info: PRInfo?, isQuotaLow: Bool = false) -> TimeInterval? {
         guard let info else { return noRequestInterval }
         guard info.state == .open else { return nil }
-        return info.checks?.conclusion == .pending ? pollInterval : openRequestInterval
+        return info.checks?.conclusion == .pending && !isQuotaLow ? pollInterval : openRequestInterval
     }
 
     private static let openRequestInterval: TimeInterval = 90
     private static let noRequestInterval: TimeInterval = 300
 
-    /// Per-container floor between focus-driven fetches, so rapid app
-    /// switching cannot issue one CLI call per row per switch.
-    /// `refreshNow` deliberately ignores it — see there.
-    private let perContainerMinInterval: TimeInterval = 60
+    /// The least time between two lookups of a project that coming back to
+    /// the app or a turn's end ask for, so rapid app switching or a run of
+    /// short turns cannot spend a query each. `refreshNow` deliberately
+    /// ignores it — see there.
+    static let repositoryFloor: TimeInterval = 60
 
-    /// Last attempted fetch time per container. We track attempts
-    /// (not just successes) so the floor still applies when the CLI
-    /// fails — otherwise an offline user with rapid focus churn would
-    /// spawn a process per row per alt-tab.
+    /// How long the requests of coming back to the app and of turn ends are
+    /// gathered: a lookup goes once none has come for `quietPeriod`, and at
+    /// the latest `longestWait` after the first. Several agents often end
+    /// their turns together, and switching apps comes in bursts.
+    static let quietPeriod: TimeInterval = 5
+    static let longestWait: TimeInterval = 15
+
+    /// The least time between two lookups of a row whose request is merged
+    /// or closed, short of a turn's end in it or a manual refresh.
+    static let finishedInterval: TimeInterval = 3600
+
+    /// Last attempted fetch time per row. We track attempts (not just
+    /// successes) so the floors still apply when the CLI fails.
     private var lastFetchAt: [ContainerID: Date] = [:]
+    /// Last attempted lookup time per project, for `repositoryFloor`.
+    private var lastLookupAt: [UUID: Date] = [:]
+    /// Whether each project's host was low on quota at its last lookup.
+    private var lowQuotaProjects: Set<UUID> = []
 
-    /// The containers with a lookup running, and whether another was asked
-    /// for while it ran. At most one runs per container: the triggers start
+    /// The projects with a lookup running, and what was asked of them while
+    /// it ran. At most one runs per project: the triggers start
     /// independently, and two lookups of one row in flight could answer in
     /// either order, a slow earlier one putting back the CI state a later
     /// one had replaced. A request that finds one running asks for one
     /// lookup after it rather than its own, since the running one may have
     /// asked before whatever the request is about (a push, a merge).
-    private var inFlight: [ContainerID: FollowUp] = [:]
+    private var inFlight: [UUID: FollowUp] = [:]
 
-    /// What was asked of a running lookup's container while it ran.
+    /// What was asked of a running lookup's project while it ran.
     private struct FollowUp {
         var isRequested = false
         /// Whether a manual refresh asked for it, which re-reads the forge.
         var invalidatesForges = false
+        /// The rows that have to be in it whatever their pace.
+        var forced: Set<ContainerID> = []
+    }
+
+    /// A gathered request waiting for its project's lookup: the first and
+    /// latest moment it was asked for, and the rows a turn ended in.
+    private struct PendingRequest {
+        var firstAt: Date
+        var lastAt: Date
+        var forced: Set<ContainerID>
+    }
+
+    private var pending: [UUID: PendingRequest] = [:]
+
+    /// The projects with a gathered request still waiting, for the tests
+    /// that check one was dropped rather than looked up.
+    var gatheringProjects: Set<UUID> {
+        Set(pending.keys)
     }
 
     /// The token of each container's latest lookup, taken from
@@ -138,7 +200,6 @@ final class PRStatusSyncer {
     /// How often the recurring task wakes to reconsider, the shortest
     /// `recurringInterval`: waking more often would decide nothing sooner.
     private static let pollInterval: TimeInterval = 45
-    private static let pollGranularity: Duration = .seconds(pollInterval)
 
     /// Set by `start()`, once there is something to refetch.
     private var isFollowingActivation = false
@@ -146,18 +207,26 @@ final class PRStatusSyncer {
     convenience init(
         session: WorkspaceSession,
         store: PRStatusStore,
-        source: PRStatusSource
+        source: PRStatusSource,
+        clock: any PRStatusClock = SystemPRStatusClock()
     ) {
         switch source {
         case let .forgeCLI(resolver, locator):
+            let now: @Sendable () -> Date = { clock.now() }
             self.init(
                 session: session,
                 store: store,
-                fetcher: PRStatusFetcher(resolver: resolver, locator: locator),
-                pullRequests: ForgePullRequests(resolver: resolver, locator: locator)
+                fetcher: PRStatusFetcher(
+                    resolver: resolver,
+                    locator: locator,
+                    limiter: ForgeRateLimiter(now: now),
+                    now: now
+                ),
+                pullRequests: ForgePullRequests(resolver: resolver, locator: locator),
+                clock: clock
             )
         case let .fixture(requests):
-            self.init(session: session, store: store, fetcher: nil, pullRequests: nil, fixture: requests)
+            self.init(session: session, store: store, fetcher: nil, pullRequests: nil, fixture: requests, clock: clock)
         }
     }
 
@@ -167,13 +236,15 @@ final class PRStatusSyncer {
         store: PRStatusStore,
         fetcher: (any PRStatusLookups)?,
         pullRequests: (any PullRequestReading)? = nil,
-        fixture: [ContainerID: PRInfo]? = nil
+        fixture: [ContainerID: PRInfo]? = nil,
+        clock: any PRStatusClock = SystemPRStatusClock()
     ) {
         self.session = session
         self.store = store
         self.fetcher = fetcher
         self.pullRequests = pullRequests
         self.fixture = fixture
+        self.clock = clock
     }
 
     // MARK: - Lifecycle
@@ -200,22 +271,31 @@ final class PRStatusSyncer {
 
     /// The user often comes back to Weir expecting "what I did outside is
     /// reflected" — pushing a PR, merging it on the web, approving a review.
-    /// Becoming active is a cheap signal that covers all three. A fixture
-    /// never starts this, so it is never refetched.
+    /// Becoming active is a cheap signal that covers all three. Each
+    /// project's lookup is gathered with the others asked for in the next
+    /// few seconds, and dropped when the project was looked up within
+    /// `repositoryFloor`. A fixture never starts this, so it is never
+    /// refetched.
     func appDidBecomeActive() {
-        guard isFollowingActivation else { return }
-        Task { await tick(reason: .focus) }
+        guard isFollowingActivation, let session else { return }
+        for project in session.projects {
+            requestGathered(project.id, forcing: [])
+        }
     }
 
-    /// Wake on a fixed granularity and let each row decide whether it is
+    /// Wake on a fixed granularity and let each project decide whether it is
     /// due (`isDue`), rather than sleeping for one interval: rows differ, and
     /// a row's interval moves as its request does. A wake looks up only the
-    /// rows that are due, so waking often costs no CLI.
+    /// projects that are due, so waking often costs no CLI.
     private func scheduleRecurring() {
         recurringTask?.cancel()
-        recurringTask = Task { [weak self] in
+        recurringTask = Task { [weak self, clock] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: Self.pollGranularity)
+                do {
+                    try await clock.sleep(for: Self.pollInterval)
+                } catch {
+                    return
+                }
                 // `self` is only reached after the sleep so the task
                 // does not hold the syncer alive across it.
                 guard !Task.isCancelled, let self else { return }
@@ -232,50 +312,30 @@ final class PRStatusSyncer {
     private enum Reason: String {
         case initial
         case recurring
-        case focus
     }
 
     private func tick(reason: Reason) async {
         guard let session, fetcher != nil else { return }
-        let now = Date()
-        let targets = Self.enumerableTargets(session: session)
+        let now = clock.now()
         var attempted = 0
-        for target in targets {
-            // The floor is for the one trigger whose rate the user
-            // sets: alt-tabbing back. The others pace themselves —
-            // `.recurring` *is* the pace, and `.initial` runs once.
-            //
-            // Flooring `.recurring` would also slow a row with checks
-            // running: 45s rounds against a 60s floor refetch every 90s,
-            // watching a CI run at half the rate `recurringInterval` gives.
-            if reason == .focus, !shouldFetch(container: target.container, now: now) {
-                continue
-            }
-            if reason == .recurring, !isDue(target.container, now: now) {
-                continue
-            }
-            // The other worktrees on their own, slower pace, whatever woke
-            // the tick (`Target.isOccasional`).
-            if target.isOccasional,
-               let last = lastFetchAt[target.container],
-               now.timeIntervalSince(last) < Self.occasionalInterval
-            {
+        let projects = session.projects.map(\.id)
+        for project in projects {
+            if reason == .recurring, !isDue(project, now: now) {
                 continue
             }
             // One CLI at a time per tick: the lookup is awaited unless one
-            // for the row was already running, which then runs once more
-            // instead.
-            await requestLookup(target.container, invalidatesForges: false)
+            // for the project was already running, which then runs once
+            // more instead.
+            await requestLookup(project, forcing: [], invalidatesForges: false)
             // Re-check after the await: a canceled task ends the tick
-            // rather than going on to the next row.
+            // rather than going on to the next project.
             guard !Task.isCancelled else { return }
             attempted += 1
         }
         forgetGoneRows()
-        let total = targets.count
         log.debug("""
         PR sync (\(reason.rawValue, privacy: .public)): \
-        \(attempted, privacy: .public) of \(total, privacy: .public)
+        \(attempted, privacy: .public) of \(projects.count, privacy: .public) projects
         """)
     }
 
@@ -284,14 +344,17 @@ final class PRStatusSyncer {
     func forgetGoneRows() {
         guard let session else { return }
         // Rows come and go. Recomputed rather than reusing a tick's
-        // snapshot because the tick awaited a CLI per row, and a worktree
-        // added in that window would otherwise be pruned the moment it
-        // appeared.
+        // snapshot because the tick awaited a CLI per project, and a
+        // worktree added in that window would otherwise be pruned the
+        // moment it appeared.
         let live = Set(Self.enumerableTargets(session: session).map(\.container))
+        let projects = Set(session.projects.map(\.id))
         lastFetchAt = lastFetchAt.filter { live.contains($0.key) }
         lookupTokens = lookupTokens.filter { live.contains($0.key) }
         answeredHeads = answeredHeads.filter { live.contains($0.key) }
         leftBranches = leftBranches.filter { live.contains($0.key) }
+        lastLookupAt = lastLookupAt.filter { projects.contains($0.key) }
+        lowQuotaProjects.formIntersection(projects)
         store?.prune(keeping: live)
     }
 
@@ -302,9 +365,9 @@ final class PRStatusSyncer {
         /// One of the other worktrees, folded away: a worktree Git
         /// only reported, with no tab in it. Read at most every
         /// `occasionalInterval`, here and by `GitFactsStore`: a repository
-        /// whose agents left fifty of them would otherwise run Git and the
-        /// forge's CLI fifty times a cycle for rows nobody looks at. Opening
-        /// one admits it, and it is read on the next cycle as any row is.
+        /// whose agents left fifty of them would otherwise run Git fifty
+        /// times a cycle for rows nobody looks at. Opening one admits it,
+        /// and it is read on the next cycle as any row is.
         var isOccasional = false
     }
 
@@ -329,26 +392,30 @@ final class PRStatusSyncer {
     /// standing up a syncer and its six collaborators — same reason
     /// `ForgeResolver.classify` is reachable.
     static func enumerableTargets(session: WorkspaceSession) -> [Target] {
-        session.projects.flatMap { project -> [Target] in
-            let main = Target(
-                container: .project(project.id),
-                workingDirectory: project.rootURL
-            )
-            let worktrees = project.worktrees
-                .filter(isFetchable)
-                .map { worktree in
-                    let container = ContainerID.worktree(projectID: project.id, worktreeID: worktree.id)
-                    return Target(
-                        container: container,
-                        workingDirectory: worktree.workingDirectory,
-                        isOccasional: SidebarSectionRule.isUnopened(
-                            admission: worktree.admission,
-                            hasTabs: !session.tabs(in: container).isEmpty
-                        )
+        session.projects.flatMap { targets(of: $0, in: session) }
+    }
+
+    /// `project`'s rows among `enumerableTargets`: the worktrees of one
+    /// repository, which one lookup answers for.
+    static func targets(of project: Project, in session: WorkspaceSession) -> [Target] {
+        let main = Target(
+            container: .project(project.id),
+            workingDirectory: project.rootURL
+        )
+        let worktrees = project.worktrees
+            .filter(isFetchable)
+            .map { worktree in
+                let container = ContainerID.worktree(projectID: project.id, worktreeID: worktree.id)
+                return Target(
+                    container: container,
+                    workingDirectory: worktree.workingDirectory,
+                    isOccasional: SidebarSectionRule.isUnopened(
+                        admission: worktree.admission,
+                        hasTabs: !session.tabs(in: container).isEmpty
                     )
-                }
-            return [main] + worktrees
-        }
+                )
+            }
+        return [main] + worktrees
     }
 
     /// Whether a worktree row is one `enumerableTargets` fetches for.
@@ -358,7 +425,7 @@ final class PRStatusSyncer {
 
     /// Where `container` is fetched, while it is a row `enumerableTargets`
     /// fetches for; `nil` once it is not. Looked up directly rather than
-    /// by scanning every row, since every lookup asks it twice.
+    /// by scanning every row, since every answer asks it.
     static func workingDirectory(of container: ContainerID, in session: WorkspaceSession) -> URL? {
         switch container {
         case .loose:
@@ -398,9 +465,9 @@ final class PRStatusSyncer {
 
     // MARK: - Manual refresh
 
-    /// Refetch one container immediately, ignoring the per-container
-    /// floor. That floor exists to absorb *incidental* triggers; a user
-    /// picking "Refresh" from the context menu has asked for exactly
+    /// Refetch one container's project immediately, ignoring the floors
+    /// and the gathering. Those exist to absorb *incidental* triggers; a
+    /// user picking "Refresh" from the context menu has asked for exactly
     /// one fetch, and silently doing nothing because they refreshed 40
     /// seconds ago would read as the command being broken.
     func refreshNow(container: ContainerID) {
@@ -412,69 +479,179 @@ final class PRStatusSyncer {
     /// `refreshNow`, returning once its lookup has answered, or at once
     /// when it joined one already running as that lookup's follow-up.
     func refresh(container: ContainerID) async {
+        guard let project = container.projectID else { return }
         // A manual refresh is also the moment to re-read remotes: the user
         // may have just added one, or authenticated a CLI, and this is the
         // only affordance that says "look again" out loud.
-        await requestLookup(container, invalidatesForges: true)
+        await requestLookup(project, forcing: [container], invalidatesForges: true)
     }
 
-    /// An agent's turn ended in `container`: looked up at once, as a turn is
-    /// often what opened or merged the request. Turns come at a person's pace,
-    /// and the floor would miss a merge right after an earlier lookup. The
+    /// An agent's turn ended in `container`, as a turn is often what opened
+    /// or merged the request. Gathered with the other requests of the next
+    /// few seconds, and held until `repositoryFloor` has passed rather than
+    /// dropped, so a merge right after an earlier lookup is still found. The
     /// forge is not re-read, as nothing says it changed.
     func turnEnded(in container: ContainerID) {
+        guard let project = container.projectID else { return }
+        requestGathered(project, forcing: [container])
+    }
+
+    // MARK: - Gathering
+
+    /// Ask for a lookup of `project` once the requests of the next few
+    /// seconds are in (`quietPeriod`, `longestWait`).
+    private func requestGathered(_ project: UUID, forcing rows: Set<ContainerID>) {
+        let now = clock.now()
+        if pending[project] != nil {
+            pending[project]?.lastAt = now
+            pending[project]?.forced.formUnion(rows)
+            return
+        }
+        pending[project] = PendingRequest(firstAt: now, lastAt: now, forced: rows)
         Task { [weak self] in
-            await self?.requestLookup(container, invalidatesForges: false)
+            await self?.runGathered(project)
+        }
+    }
+
+    /// Waits out the gathering and the floor of `project`'s request, then
+    /// looks it up. Reads the request again after each wait, since more may
+    /// have come in.
+    private func runGathered(_ project: UUID) async {
+        while let request = pending[project] {
+            let now = clock.now()
+            let gathered = min(
+                request.lastAt.addingTimeInterval(Self.quietPeriod),
+                request.firstAt.addingTimeInterval(Self.longestWait)
+            )
+            let floor = (lastLookupAt[project] ?? .distantPast).addingTimeInterval(Self.repositoryFloor)
+            let wakeAt: Date
+            if gathered > now {
+                wakeAt = gathered
+            } else if floor > now {
+                // Coming back to the app asks for what happened elsewhere,
+                // and a lookup within the floor already saw it. A turn's end
+                // waits instead: its turn may have merged the request after
+                // that lookup.
+                guard !request.forced.isEmpty else {
+                    pending[project] = nil
+                    return
+                }
+                wakeAt = floor
+            } else {
+                pending[project] = nil
+                await requestLookup(project, forcing: request.forced, invalidatesForges: false)
+                return
+            }
+            do {
+                try await clock.sleep(for: wakeAt.timeIntervalSince(now))
+            } catch {
+                pending[project] = nil
+                return
+            }
         }
     }
 
     // MARK: - Lookup
 
-    /// Look `container`'s request up, or, while a lookup for it is running,
+    /// The rows of `project` a lookup asks about: every row, except one of
+    /// the other worktrees read within `occasionalInterval` and a finished
+    /// request's row read within `finishedInterval`, which go at their own
+    /// slower pace, unless `forcing` names them.
+    private func rowsToLookUp(_ project: UUID, forcing: Set<ContainerID>, now: Date) -> [Target] {
+        guard let session, let model = session.project(project) else { return [] }
+        return Self.targets(of: model, in: session).filter { target in
+            if forcing.contains(target.container) {
+                return true
+            }
+            guard let last = lastFetchAt[target.container] else { return true }
+            let age = now.timeIntervalSince(last)
+            if target.isOccasional, age < Self.occasionalInterval {
+                return false
+            }
+            if let info = store?.info(for: target.container), info.state != .open, age < Self.finishedInterval {
+                return false
+            }
+            return true
+        }
+    }
+
+    /// Look `project`'s requests up, or, while a lookup for it is running,
     /// ask that one to run once more when it ends. Requests made while it
     /// runs come to one more lookup, however many there were.
     ///
     /// Returns once the lookups this call ran have answered, follow-ups
-    /// included. Each one starts only while the container is still a row
-    /// we fetch for, so a row that went away stops launching the CLI.
-    private func requestLookup(_ container: ContainerID, invalidatesForges: Bool) async {
+    /// included. Each one asks only about rows that are still ones we
+    /// fetch for, so a row that went away stops being asked about.
+    private func requestLookup(_ project: UUID, forcing: Set<ContainerID>, invalidatesForges: Bool) async {
         // The menu entry shows for a fixture's requests too, and refetches
         // nothing for them: a fixture never reaches a CLI.
         guard let fetcher else { return }
-        if inFlight[container] != nil {
-            inFlight[container]?.isRequested = true
+        if inFlight[project] != nil {
+            inFlight[project]?.isRequested = true
+            inFlight[project]?.forced.formUnion(forcing)
             if invalidatesForges {
-                inFlight[container]?.invalidatesForges = true
+                inFlight[project]?.invalidatesForges = true
             }
             return
         }
-        inFlight[container] = FollowUp()
-        defer { inFlight[container] = nil }
+        inFlight[project] = FollowUp()
+        defer { inFlight[project] = nil }
+        var forced = forcing
         var isInvalidating = invalidatesForges
-        while let session, let directory = Self.workingDirectory(of: container, in: session) {
-            nextLookupToken &+= 1
-            let token = nextLookupToken
-            lookupTokens[container] = token
-            lastFetchAt[container] = Date()
+        while true {
+            let now = clock.now()
+            let targets = rowsToLookUp(project, forcing: forced, now: now)
+            guard !targets.isEmpty else { return }
+            let tokens = beginLookup(of: targets, in: project, at: now)
             if isInvalidating {
                 await fetcher.invalidate()
             }
-            let lookup = await fetcher.lookup(workingDirectory: directory)
+            let batch = await fetcher.lookup(targets.map { PRStatusRow(container: $0.container, workingDirectory: $0.workingDirectory) })
             // A canceled task gives no answer and starts nothing more of its
             // own. A follow-up someone else asked for still runs, on a task
             // of its own: the caller that asked has already returned.
             guard !Task.isCancelled else {
-                if let followUp = inFlight[container], followUp.isRequested {
+                if let followUp = inFlight[project], followUp.isRequested {
                     Task { [weak self] in
-                        await self?.requestLookup(container, invalidatesForges: followUp.invalidatesForges)
+                        await self?.requestLookup(project, forcing: followUp.forced, invalidatesForges: followUp.invalidatesForges)
                     }
                 }
                 return
             }
-            publish(lookup, for: container, token: token)
-            guard let followUp = inFlight[container], followUp.isRequested else { return }
+            publish(batch, of: project, tokens: tokens)
+            guard let followUp = inFlight[project], followUp.isRequested else { return }
+            forced = followUp.forced
             isInvalidating = followUp.invalidatesForges
-            inFlight[container] = FollowUp()
+            inFlight[project] = FollowUp()
+        }
+    }
+
+    /// Note a lookup of `targets` starting at `now`, and answer the token of
+    /// each row's lookup (`lookupTokens`).
+    private func beginLookup(of targets: [Target], in project: UUID, at now: Date) -> [ContainerID: UInt64] {
+        var tokens: [ContainerID: UInt64] = [:]
+        for target in targets {
+            nextLookupToken &+= 1
+            tokens[target.container] = nextLookupToken
+            lookupTokens[target.container] = nextLookupToken
+            lastFetchAt[target.container] = now
+        }
+        lastLookupAt[project] = now
+        return tokens
+    }
+
+    /// Keep what `batch` says of the host's quota, and write each row's
+    /// answer; a row the batch did not answer keeps what it showed.
+    private func publish(_ batch: PRStatusBatch, of project: UUID, tokens: [ContainerID: UInt64]) {
+        if let isLow = batch.isQuotaLow {
+            if isLow {
+                lowQuotaProjects.insert(project)
+            } else {
+                lowQuotaProjects.remove(project)
+            }
+        }
+        for (container, token) in tokens {
+            publish(batch.lookups[container] ?? PRStatusFetcher.Lookup(isAnswered: false), for: container, token: token)
         }
     }
 
@@ -512,49 +689,57 @@ final class PRStatusSyncer {
     }
 
     /// Clear each row whose shown request was answered for a branch the
-    /// row no longer shows, and look those rows up again, with the rows a
-    /// branch mismatch left waiting (`leftBranches`) whose branch has moved
-    /// since.
+    /// row no longer shows, and look those rows' projects up again, with
+    /// the rows a branch mismatch left waiting (`leftBranches`) whose
+    /// branch has moved since.
     ///
     /// A checkout switched to another branch keeps its row and so its
     /// stored request, and its next lookup can be minutes away; until
     /// then the row would show the previous branch's request, number, and
     /// CI. Checked on every wake, since it compares maps and runs the CLI
-    /// only for the rows whose branch moved, once per move.
+    /// only for the projects whose rows' branch moved, once per move.
     func recheckLeftBranches() async {
         guard let session, let store, fetcher != nil else { return }
-        var due: [ContainerID] = []
+        var due: [UUID: Set<ContainerID>] = [:]
         for (container, answered) in answeredHeads where !Self.head(of: container, in: session).admits(answered) {
             forget(container, in: store)
-            due.append(container)
+            if let project = container.projectID {
+                due[project, default: []].insert(container)
+            }
         }
         for (container, shown) in leftBranches where Self.head(of: container, in: session) != shown {
             leftBranches[container] = nil
-            due.append(container)
+            if let project = container.projectID {
+                due[project, default: []].insert(container)
+            }
         }
-        for container in due {
-            await requestLookup(container, invalidatesForges: false)
+        for (project, rows) in due {
+            await requestLookup(project, forcing: rows, invalidatesForges: false)
             guard !Task.isCancelled else { return }
         }
     }
 
-    /// Whether a recurring wake looks `container` up. A lookup a turn's end or
-    /// the app's focus started can fall just short of a wake, so half a wake is
-    /// forgiven: without it, the row would wait a whole wake more for a few
-    /// seconds' difference.
-    private func isDue(_ container: ContainerID, now: Date) -> Bool {
-        Self.isDue(info: store?.info(for: container), lastFetch: lastFetchAt[container], now: now)
+    /// Whether a recurring wake looks `project` up: whether any of the rows
+    /// a lookup would ask about is due.
+    private func isDue(_ project: UUID, now: Date) -> Bool {
+        let isQuotaLow = lowQuotaProjects.contains(project)
+        return rowsToLookUp(project, forcing: [], now: now).contains { target in
+            Self.isDue(
+                info: store?.info(for: target.container),
+                lastFetch: lastFetchAt[target.container],
+                now: now,
+                isQuotaLow: isQuotaLow
+            )
+        }
     }
 
-    static func isDue(info: PRInfo?, lastFetch: Date?, now: Date) -> Bool {
-        guard let interval = recurringInterval(for: info) else { return false }
+    /// Whether a recurring wake looks a row up. A lookup a turn's end or
+    /// the app's focus started can fall just short of a wake, so half a wake
+    /// is forgiven: without it, the row would wait a whole wake more for a
+    /// few seconds' difference.
+    static func isDue(info: PRInfo?, lastFetch: Date?, now: Date, isQuotaLow: Bool = false) -> Bool {
+        guard let interval = recurringInterval(for: info, isQuotaLow: isQuotaLow) else { return false }
         guard let lastFetch else { return true }
         return now.timeIntervalSince(lastFetch) >= interval - pollInterval / 2
     }
-
-    private func shouldFetch(container: ContainerID, now: Date) -> Bool {
-        guard let last = lastFetchAt[container] else { return true }
-        return now.timeIntervalSince(last) >= perContainerMinInterval
-    }
-
 }
