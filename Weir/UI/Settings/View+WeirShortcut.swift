@@ -41,7 +41,7 @@ extension View {
         applyingShortcut(shortcut)
     }
 
-    private func applyingShortcut(_ shortcut: StoredShortcut?) -> some View {
+    fileprivate func applyingShortcut(_ shortcut: StoredShortcut?) -> some View {
         Group {
             if let shortcut, let key = shortcut.swiftUIKeyEquivalent {
                 self.keyboardShortcut(key, modifiers: shortcut.modifiers.swiftUIEventModifiers)
@@ -49,5 +49,69 @@ extension View {
                 self
             }
         }
+    }
+}
+
+extension Label where Title == Text, Icon == Image {
+    /// A menu item's name and symbol, as one command's definition gives
+    /// them (`MenuItemLabel`).
+    init(_ label: MenuItemLabel) {
+        self.init {
+            Text(label.title)
+        } icon: {
+            Image(systemName: label.symbol)
+        }
+    }
+}
+
+extension Label where Title == Text, Icon == Image? {
+    /// An item of one of Weir's own menus, named and drawn as every menu
+    /// that offers the command does (`MenuCommand`); without a symbol for
+    /// a command drawn without one.
+    init(_ command: MenuCommand) {
+        self.init {
+            Text(command.title)
+        } icon: {
+            command.icon.map { Image(systemName: $0) }
+        }
+    }
+}
+
+/// A menu bar item for one of Weir's rebindable actions: its name, its
+/// symbol, and its key all come from the action, so the menu names and
+/// draws a command as the palette and Settings › Keyboard do. An item whose
+/// name says what it does now (Zoom Pane or Unzoom Pane) passes that
+/// `label`, from the one place that defines it.
+struct ShortcutMenuButton: View {
+    let action: WeirShortcutAction
+    let label: MenuItemLabel
+    let settings: SettingsStore
+    let perform: () -> Void
+
+    init(
+        _ action: WeirShortcutAction,
+        label: MenuItemLabel? = nil,
+        in settings: SettingsStore,
+        perform: @escaping () -> Void
+    ) {
+        self.action = action
+        self.label = label ?? action.menuLabel
+        self.settings = settings
+        self.perform = perform
+    }
+
+    /// The key the item answers and shows: the person's binding for the
+    /// action, as `weirShortcut` reads it.
+    var shortcut: StoredShortcut? {
+        settings.settings.keyboard.shortcut(for: action)
+    }
+
+    var body: some View {
+        Button(action: perform) {
+            Label(label)
+        }
+        // The name the item shows now, Unzoom Pane while zoomed included.
+        .accessibilityLabel(Text(label.title))
+        .applyingShortcut(shortcut)
     }
 }

@@ -56,41 +56,30 @@ struct PaneCommands: Commands {
             // The quick terminal is a single pane, so the whole menu steps
             // aside while it has the keyboard.
             MainWindowCommandItems(state.quickTerminal) {
-                Button {
+                ShortcutMenuButton(.splitRight, in: state.settingsStore) {
                     split(.horizontal)
-                } label: {
-                    Label("Split Right", systemImage: "rectangle.split.2x1")
                 }
-                .weirShortcut(.splitRight, in: state.settingsStore)
                 .disabled(paneTab == nil)
-                Button {
+                ShortcutMenuButton(.splitDown, in: state.settingsStore) {
                     split(.vertical)
-                } label: {
-                    Label("Split Down", systemImage: "rectangle.split.1x2")
                 }
-                .weirShortcut(.splitDown, in: state.settingsStore)
                 .disabled(paneTab == nil)
-                Button {
+                ShortcutMenuButton(.equalizeSplits, in: state.settingsStore) {
                     guard let paneTarget else { return }
                     PaneActions.equalizeSplits(state.session, in: paneTarget.id)
-                } label: {
-                    Label("Equalize Splits", systemImage: "rectangle.split.2x1.slash")
                 }
-                .weirShortcut(.equalizeSplits, in: state.settingsStore)
                 .disabled(paneTab?.splitTree.isSplit != true)
-                Button {
+                // ⌘⇧↩ is the conventional "maximize pane" chord.
+                // ⌘⇧Z would steal the system Redo shortcut. Named for what
+                // it does now, as the header's item is.
+                ShortcutMenuButton(
+                    .toggleSplitZoom,
+                    label: PaneHeaderRules.zoomAction(isZoomed: paneTab?.zoomedLeafID != nil).menuLabel,
+                    in: state.settingsStore
+                ) {
                     guard let paneTarget else { return }
                     PaneActions.toggleZoom(state.session, in: paneTarget.id)
-                } label: {
-                    if paneTab?.zoomedLeafID != nil {
-                        Label("Unzoom Pane", systemImage: "arrow.down.right.and.arrow.up.left")
-                    } else {
-                        Label("Zoom Pane", systemImage: "arrow.up.left.and.arrow.down.right")
-                    }
                 }
-                // ⌘⇧↩ is the conventional "maximize pane" chord.
-                // ⌘⇧Z would steal the system Redo shortcut.
-                .weirShortcut(.toggleSplitZoom, in: state.settingsStore)
                 .disabled(paneTab?.splitTree.isSplit != true)
 
                 // ⌥⌘+arrow focuses the neighbor. Moving a pane to another
@@ -103,26 +92,20 @@ struct PaneCommands: Commands {
                 paneDirectionButton(.focusPaneDown, .down, perform: focus)
 
                 Divider()
-                Button {
+                ShortcutMenuButton(.nextTab, in: state.settingsStore) {
                     cycleTab(forward: true)
-                } label: {
-                    Label("Next Tab", systemImage: "arrow.right")
                 }
-                .weirShortcut(.nextTab, in: state.settingsStore)
                 .disabled(!canCycleTab)
-                Button {
+                ShortcutMenuButton(.previousTab, in: state.settingsStore) {
                     cycleTab(forward: false)
-                } label: {
-                    Label("Previous Tab", systemImage: "arrow.left")
                 }
-                .weirShortcut(.previousTab, in: state.settingsStore)
                 .disabled(!canCycleTab)
             }
         }
     }
 
-    /// One Focus menu item for `direction`. Title + icon come from the
-    /// shortcut action; the item disables itself when no neighbor is
+    /// One Focus menu item for `direction`, named and drawn by its shortcut
+    /// action; the item disables itself when no neighbor is
     /// reachable that way (single source of truth: `PaneActions.adjacentLeaf`),
     /// so an edge pane grays out the directions it can't reach rather than
     /// offering a silent no-op.
@@ -131,16 +114,9 @@ struct PaneCommands: Commands {
         _ direction: SpatialDirection,
         perform: @escaping (SpatialDirection) -> Void
     ) -> some View {
-        Button {
+        ShortcutMenuButton(action, in: state.settingsStore) {
             perform(direction)
-        } label: {
-            Label {
-                Text(action.localizedTitle)
-            } icon: {
-                Image(systemName: action.iconName)
-            }
         }
-        .weirShortcut(action, in: state.settingsStore)
         .disabled(paneTarget.flatMap { window in
             PaneActions.adjacentLeaf(state.session, registry: state.registry, direction: direction, in: window.id)
         } == nil)

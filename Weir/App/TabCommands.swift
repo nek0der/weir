@@ -59,13 +59,10 @@ struct TabCommands: Commands {
         // terminal has the keyboard.
         CommandGroup(replacing: .newItem) {
             MainWindowCommandItems(state.quickTerminal) {
-                Button {
+                ShortcutMenuButton(.newTab, in: state.settingsStore) {
                     guard let target else { return }
                     TabActions.newTab(state.session, in: target.id, intent: .person)
-                } label: {
-                    Label("New Tab", systemImage: "plus.rectangle")
                 }
-                .weirShortcut(.newTab, in: state.settingsStore)
                 .disabled(!canOpenTab)
                 // New Worktree… (⌘N), the one item that opens the new
                 // worktree sheet for the window's project, and ⌥⌘N, which
@@ -76,37 +73,25 @@ struct TabCommands: Commands {
                 // project — the worktree concept doesn't apply to the
                 // scratch tabs. A supervision window on a scratch tab still
                 // shows its project, whose sheet opens.
-                Button {
+                ShortcutMenuButton(.newWorktree, in: state.settingsStore) {
                     guard let target else { return }
                     target.commands.send(.newWorktree)
-                } label: {
-                    Label("New Worktree…", systemImage: ContainerSymbol.worktree)
                 }
-                .weirShortcut(.newWorktree, in: state.settingsStore)
                 .disabled(shownProject?.canMakeWorktree != true)
-                Button {
+                ShortcutMenuButton(.newWorktreeNow, in: state.settingsStore) {
                     guard let target else { return }
                     target.commands.send(.newWorktreeNow)
-                } label: {
-                    Label("Create Worktree Now", systemImage: WeirShortcutAction.newWorktreeNow.iconName)
                 }
-                .weirShortcut(.newWorktreeNow, in: state.settingsStore)
                 .disabled(shownProject?.canMakeWorktree != true || target?.isCreatingWorktreeAtOnce == true)
-                Button {
+                ShortcutMenuButton(.renameTab, in: state.settingsStore) {
                     guard let target else { return }
                     TabActions.renameActiveTab(state.session, in: target.id, commands: state.windowRegistry)
-                } label: {
-                    Label("Rename Tab", systemImage: "pencil")
                 }
-                .weirShortcut(.renameTab, in: state.settingsStore)
                 .disabled(activeTab == nil)
-                Button {
+                ShortcutMenuButton(.reopenClosedTab, in: state.settingsStore) {
                     guard let target else { return }
                     TabActions.reopenClosedTab(state.session, in: target.id, intent: .person)
-                } label: {
-                    Label("Reopen Closed Tab", systemImage: "arrow.uturn.backward.square")
                 }
-                .weirShortcut(.reopenClosedTab, in: state.settingsStore)
                 .disabled(target == nil || state.session.closedTabStack.isEmpty)
             }
         }
@@ -118,9 +103,7 @@ struct TabCommands: Commands {
         CommandGroup(replacing: .saveItem) {}
         CommandGroup(after: .newItem) {
             // ⌘W — closes the focused pane, cascades
-            // to the tab when only one pane is left. Single-icon
-            // family across the whole app (plain `xmark`) so
-            // every "close X" affordance reads as the same verb.
+            // to the tab when only one pane is left.
             // With no supervision window key it closes the key window
             // (Settings) instead, as the standard Close would. Its label
             // does not change with that: a label that switched between
@@ -129,8 +112,9 @@ struct TabCommands: Commands {
             // focused. So the one label is "Close", true of the pane, the
             // review tab, and the key window alike, and SwiftUI's own item
             // is removed above rather than left beside ours.
-            // One item, one label, one ⌘W.
-            Button {
+            // One item, one label, one ⌘W. The shortcut list's name, so the
+            // menu and Settings › Keyboard never name ⌘W two ways.
+            ShortcutMenuButton(.closeSurface, in: state.settingsStore) {
                 switch closeKey {
                 case .hideQuickTerminal:
                     state.quickTerminal.hide()
@@ -154,16 +138,7 @@ struct TabCommands: Commands {
                 case .nothing:
                     break
                 }
-            } label: {
-                // The shortcut list's name, so the menu and Settings ›
-                // Keyboard never name ⌘W two ways.
-                Label {
-                    Text(WeirShortcutAction.closeSurface.localizedTitle)
-                } icon: {
-                    Image(systemName: "xmark")
-                }
             }
-            .weirShortcut(.closeSurface, in: state.settingsStore)
             // Outside `MainWindowCommandItems`, and enabled for the quick
             // terminal even with no tab in the main window.
             // `.closeSurface` has no libghostty action, so the bridge
@@ -173,7 +148,7 @@ struct TabCommands: Commands {
             // ⌘⌥W → close the entire tab regardless of how many
             // panes it contains (no per-pane cascade).
             MainWindowCommandItems(state.quickTerminal) {
-                Button {
+                ShortcutMenuButton(.closeTab, in: state.settingsStore) {
                     guard !ReviewTabActions.closeIfInFront(stores: state.reviewTabStores), let target else { return }
                     TabActions.closeActiveTab(
                         state.session,
@@ -181,23 +156,17 @@ struct TabCommands: Commands {
                         agentProjection: state.agentProjection,
                         in: target.id
                     )
-                } label: {
-                    Label("Close Tab", systemImage: "xmark.rectangle")
                 }
-                .weirShortcut(.closeTab, in: state.settingsStore)
                 .disabled(!closeTabIsLive)
             }
         }
         // ── View menu ─────────────────────────────────────
         CommandGroup(after: .sidebar) {
             MainWindowCommandItems(state.quickTerminal) {
-                Button {
+                ShortcutMenuButton(.toggleSidebar, in: state.settingsStore) {
                     guard let target else { return }
                     target.commands.send(.toggleSidebar)
-                } label: {
-                    Label("Toggle Sidebar", systemImage: "sidebar.left")
                 }
-                .weirShortcut(.toggleSidebar, in: state.settingsStore)
                 .disabled(target == nil)
             }
         }

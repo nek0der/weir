@@ -90,12 +90,7 @@ enum CommandPaletteCatalog {
         appendToastUndo(to: &items, facts: supervision, locale: locale)
         appendSettings(to: &items, locale: locale)
         appendSettingsSections(to: &items, locale: locale)
-        // A project ID the window still holds after its project went is no
-        // project to set up or close, like the project ▾'s items.
-        if let projectID = supervision.projectID, let project = session.project(projectID) {
-            appendProjectSettings(to: &items, projectName: project.name, locale: locale)
-            appendCloseProject(to: &items, projectName: project.name, locale: locale)
-        }
+        appendProjectItems(to: &items, session: session, projectID: supervision.projectID, locale: locale)
         return items
     }
 
@@ -217,20 +212,17 @@ enum CommandPaletteCatalog {
     ) {
         // A pane alone in its tab has nowhere to move from, and a pane
         // command is off while the review hides the panes.
-        let canMovePane = session.activeTab(in: window)?.splitTree.isSplit == true && !supervision.arePanesHidden
+        let canMovePane = session.activeTab(in: window)?.canMovePaneToNewTab == true && !supervision.arePanesHidden
+        let movePane = MenuItemLabel.movePaneToNewTab
         items.append(row(
-            "Move Pane to New Tab",
-            icon: "rectangle.split.2x1",
+            movePane.title,
+            icon: movePane.symbol,
             action: .movePaneToNewTab,
             isEnabled: canMovePane,
             locale: locale
         ))
-        items.append(row(
-            supervision.areRailsHidden ? "Show Icon Bars" : "Hide Icon Bars",
-            icon: "rectangle.lefthalf.inset.filled",
-            action: .toggleIconBars,
-            locale: locale
-        ))
+        let iconBars = MenuItemLabel.iconBars(areHidden: supervision.areRailsHidden)
+        items.append(row(iconBars.title, icon: iconBars.symbol, action: .toggleIconBars, locale: locale))
     }
 
     /// A row titled `title` in `locale`, found by its English title too, and
@@ -449,24 +441,39 @@ enum CommandPaletteCatalog {
         ))
     }
 
-    /// The window's project settings: the palette's way to them in the
-    /// supervision window, where the project ▾ also has them. The detail
-    /// names the project, since the palette's other settings are the app's.
-    private static func appendProjectSettings(to items: inout [CommandPaletteItem], projectName: String, locale: Locale) {
-        items.append(row(
-            "Project Settings…",
-            category: .settings,
-            subtitle: projectName,
-            icon: "gearshape",
-            action: .openProjectSettings,
-            locale: locale
-        ))
-    }
-
-    /// Close Project…, beside the project ▾'s: it asks first, as
-    /// that one does. The detail names the project it closes.
-    private static func appendCloseProject(to items: inout [CommandPaletteItem], projectName: String, locale: Locale) {
-        items.append(row("Close Project…", subtitle: projectName, icon: "xmark", action: .closeProject, locale: locale))
+    /// The window's project's settings and Close Project…, offered when the
+    /// project ▾ and the File menu offer them (`ProjectMenuModel.projectItems`):
+    /// a project ID the window still holds after its project went is no
+    /// project to set up or close. Settings is the palette's way to them in
+    /// the supervision window, and Close Project… asks first, as the
+    /// project ▾'s does. The detail names the project, since the palette's
+    /// other settings are the app's.
+    private static func appendProjectItems(
+        to items: inout [CommandPaletteItem],
+        session: WorkspaceSession,
+        projectID: UUID?,
+        locale: Locale
+    ) {
+        guard let projectID, let project = session.project(projectID) else { return }
+        for item in ProjectMenuModel.projectItems(for: projectID, in: session.projects) {
+            let label = item.label
+            switch item {
+            case .settings:
+                items.append(row(
+                    label.title,
+                    category: .settings,
+                    subtitle: project.name,
+                    icon: label.symbol,
+                    action: .openProjectSettings,
+                    locale: locale
+                ))
+            case .close:
+                items.append(row(label.title, subtitle: project.name, icon: label.symbol, action: .closeProject, locale: locale))
+            // The palette leaves Finder to the menus that have it.
+            case .revealInFinder:
+                break
+            }
+        }
     }
 
     // MARK: - Action availability

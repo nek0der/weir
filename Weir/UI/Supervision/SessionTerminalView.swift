@@ -113,8 +113,8 @@ private struct SessionTerminalEmptyState: View {
             message: EmptyState.noTabs.message(locale: locale),
             hints: commands.map { command in
                 EmptySessionHints.Hint(
-                    title: command.title,
-                    keys: settings.settings.keyboard.shortcut(for: command.action)?.displayString,
+                    command.action,
+                    keyboard: settings.settings.keyboard,
                     isEnabled: command.isEnabled,
                     run: command.run
                 )
@@ -122,28 +122,25 @@ private struct SessionTerminalEmptyState: View {
         )
     }
 
-    /// The commands, top to bottom. We reuse the exact menu-bar
-    /// labels (already localized) and route each row through the same
-    /// action its menu item / shortcut fires, so there's one source of
-    /// truth per command.
+    /// The commands, top to bottom. Each row is named by its action, as its
+    /// menu bar item is, and routes through the same action its menu item /
+    /// shortcut fires, so there's one source of truth per command.
     private var commands: [EmptySessionCommand] {
         [
             // Off while the row's folder is gone, as the File menu's is.
             EmptySessionCommand(
-                title: "New Tab",
                 action: .newTab,
                 isEnabled: session.selection(window.id).map { !session.isFolderMissing($0.activeContainerID) } ?? true
             ) {
                 TabActions.newTab(session, in: window.id, intent: .person)
             },
             EmptySessionCommand(
-                title: "Reopen Closed Tab",
                 action: .reopenClosedTab,
                 isEnabled: !session.closedTabStack.isEmpty
             ) {
                 TabActions.reopenClosedTab(session, in: window.id, intent: .person)
             },
-            EmptySessionCommand(title: "Command Palette", action: .commandPalette, isEnabled: true) {
+            EmptySessionCommand(action: .commandPalette, isEnabled: true) {
                 guard let frecencyStore else { return }
                 CommandPaletteActions.openCommandPalette(
                     session,
@@ -161,21 +158,20 @@ private struct SessionTerminalEmptyState: View {
                     )
                 )
             },
-            EmptySessionCommand(title: "Toggle Sidebar", action: .toggleSidebar, isEnabled: true) {
+            EmptySessionCommand(action: .toggleSidebar, isEnabled: true) {
                 window.commands.send(.toggleSidebar)
             },
-            EmptySessionCommand(title: "Keyboard Shortcuts", action: .keyboardShortcuts, isEnabled: true) {
+            EmptySessionCommand(action: .keyboardShortcuts, isEnabled: true) {
                 window.commands.send(.toggleKeyboardShortcuts)
             }
         ]
     }
 }
 
-/// One command of the empty session area: a localized label, the action whose
-/// keybinding to surface, whether it's currently runnable, and the
+/// One command of the empty session area: the action that names it and
+/// whose keybinding to surface, whether it's currently runnable, and the
 /// closure to fire on click.
 private struct EmptySessionCommand {
-    let title: LocalizedStringKey
     let action: WeirShortcutAction
     let isEnabled: Bool
     let run: () -> Void
@@ -188,7 +184,7 @@ private struct EmptySessionCommand {
 /// so the list reads as one block, not as a menu.
 struct EmptySessionHints: View {
     struct Hint {
-        let title: LocalizedStringKey
+        let title: LocalizedStringResource
         /// The key as the menus write it (`⇧⌘T`), `nil` for a command
         /// the keymap gives no key.
         let keys: String?
@@ -217,6 +213,19 @@ struct EmptySessionHints: View {
         .accessibilityLabel(Text(verbatim: message))
         .padding(Layout.spaceL)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+extension EmptySessionHints.Hint {
+    /// The row for `action`: its menu bar item's name, and its key as the
+    /// person has it bound in `keyboard`.
+    init(_ action: WeirShortcutAction, keyboard: KeyboardSettings, isEnabled: Bool, run: @escaping () -> Void) {
+        self.init(
+            title: action.localizedTitle,
+            keys: keyboard.shortcut(for: action)?.displayString,
+            isEnabled: isEnabled,
+            run: run
+        )
     }
 }
 

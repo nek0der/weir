@@ -252,7 +252,7 @@ struct ProjectDropdown: View {
             }
             DropdownSeparator()
             DropdownItem(
-                "Open Folder…",
+                WeirShortcutAction.openFolder.localizedTitle,
                 shortcut: settings.settings.keyboard.shortcut(for: .openFolder)?.displayString
             ) {
                 dismiss()
@@ -263,12 +263,12 @@ struct ProjectDropdown: View {
                 ForEach(ProjectMenuModel.projectItems(for: currentProjectID, in: session.projects), id: \.self) { item in
                     switch item {
                     case .settings:
-                        DropdownItem("Project Settings…") {
+                        DropdownItem(item.label.title) {
                             dismiss()
                             onOpenSettings(currentProjectID)
                         }
                     case .revealInFinder:
-                        DropdownItem("Show in Finder") {
+                        DropdownItem(item.label.title) {
                             dismiss()
                             NSWorkspace.shared.activateFileViewerSelecting([project.rootURL])
                         }
@@ -276,7 +276,7 @@ struct ProjectDropdown: View {
                         // Apart from the two above: it is the one that
                         // takes the project out of Weir.
                         DropdownSeparator()
-                        DropdownItem("Close Project…") {
+                        DropdownItem(item.label.title) {
                             dismiss()
                             onCloseProject(currentProjectID)
                         }

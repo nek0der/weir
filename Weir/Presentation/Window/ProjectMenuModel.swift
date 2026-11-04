@@ -71,6 +71,17 @@ struct ProjectMenuModel: Equatable {
         case settings
         case revealInFinder
         case close
+
+        /// The item's name and symbol wherever it is offered: the File
+        /// menu, the palette, the sidebar's project menu, and the project ▾,
+        /// which draws the name alone.
+        var label: MenuItemLabel {
+            switch self {
+            case .settings: MenuItemLabel(title: "Project Settings…", symbol: "gearshape")
+            case .revealInFinder: MenuItemLabel(title: "Show in Finder", symbol: "folder")
+            case .close: MenuItemLabel(title: "Close Project…", symbol: "xmark")
+            }
+        }
     }
 
     /// The window's project's items, or none when the window shows no

@@ -20,29 +20,20 @@ struct PaletteCommands: Commands {
     var body: some Commands {
         CommandGroup(after: .toolbar) {
             MainWindowCommandItems(state.quickTerminal) {
-                Button {
+                ShortcutMenuButton(.commandPalette, in: state.settingsStore) {
                     openPalette(initialQuery: ">")
-                } label: {
-                    Label("Command Palette", systemImage: "text.magnifyingglass")
                 }
-                .weirShortcut(.commandPalette, in: state.settingsStore)
                 .disabled(window == nil)
 
-                Button {
+                ShortcutMenuButton(.quickOpen, in: state.settingsStore) {
                     openPalette(initialQuery: "")
-                } label: {
-                    Label("Quick Open", systemImage: "magnifyingglass")
                 }
-                .weirShortcut(.quickOpen, in: state.settingsStore)
                 .disabled(window == nil)
 
-                Button {
+                ShortcutMenuButton(.notificationHistory, in: state.settingsStore) {
                     guard let window else { return }
                     toggleNotificationHistory(window.notificationHistory, session: state.session)
-                } label: {
-                    Label("Notification History", systemImage: "bell")
                 }
-                .weirShortcut(.notificationHistory, in: state.settingsStore)
                 .disabled(window == nil)
 
                 ReviewChangesMenuItem(state: state, window: window?.id)

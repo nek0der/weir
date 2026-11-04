@@ -5,6 +5,14 @@ import Foundation
 import WeirDomain
 
 extension Tab {
+    /// Whether a pane of this tab can move to a tab of its own: only while
+    /// the tab holds more than one, since a lone pane would leave an empty
+    /// tab behind. A zoomed tab still holds its other panes. The pane
+    /// menus, the palette, and `TabActions.splitPaneOff` all ask this.
+    var canMovePaneToNewTab: Bool {
+        splitTree.allLeafIDs().count > 1
+    }
+
     /// This is the state a tab holds for one pane that goes with the pane
     /// when it moves to another tab (`TabActions.movePaneToNewTab`,
     /// `TabActions.mergePaneIntoTab`). We keep the set in one place so a

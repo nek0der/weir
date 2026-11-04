@@ -156,21 +156,13 @@ struct EmptyWindowView: View {
     }
 
     private var openFolderHint: EmptySessionHints.Hint {
-        EmptySessionHints.Hint(
-            title: "Open Folder…",
-            keys: settings.settings.keyboard.shortcut(for: .openFolder)?.displayString,
-            isEnabled: true
-        ) {
+        EmptySessionHints.Hint(.openFolder, keyboard: settings.settings.keyboard, isEnabled: true) {
             actions?.openFolder()
         }
     }
 
     private var allProjectsHint: EmptySessionHints.Hint {
-        EmptySessionHints.Hint(
-            title: "All Projects",
-            keys: settings.settings.keyboard.shortcut(for: .allProjects)?.displayString,
-            isEnabled: true
-        ) {
+        EmptySessionHints.Hint(.allProjects, keyboard: settings.settings.keyboard, isEnabled: true) {
             window.commands.send(.toggleAllProjects)
         }
     }

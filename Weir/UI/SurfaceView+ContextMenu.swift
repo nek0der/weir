@@ -166,87 +166,92 @@ struct SurfaceContextMenuState {
 /// Builds the terminal's right-click menu. Kept apart from the view so the
 /// titles can be checked in a given language without a live surface. The
 /// items carry no target: they travel the responder chain to the surface,
-/// which `menu(for:)` has just made first responder.
+/// which `menu(for:)` has just made first responder. An item a shortcut
+/// performs is named and drawn by its `MenuCommand`, the zoom item by its
+/// `PaneZoomAction`, and Move Pane to New Tab by its `MenuItemLabel`, as
+/// the header's ⋯ and the Pane menu name and draw them.
 @MainActor
 enum SurfaceContextMenu {
     /// `locale` is the app locale: an AppKit menu is outside SwiftUI's
     /// environment, and would otherwise answer in the launch language.
     static func make(_ state: SurfaceContextMenuState, locale: Locale) -> NSMenu {
         let menu = NSMenu()
-        func add(_ title: LocalizedStringResource, _ action: Selector, _ command: MenuCommand? = nil) -> NSMenuItem {
-            let item = menu.addItem(withTitle: title.resolved(in: locale), action: action, keyEquivalent: "")
-            if let command {
-                item.showShortcut(state.shortcut(command))
-            }
-            return item
-        }
+        let add = ItemAdder(menu: menu, state: state, locale: locale)
 
         if state.hasSelection {
-            _ = add("Copy", #selector(SurfaceView.copy(_:)), .copy)
+            add(.copy, #selector(SurfaceView.copy(_:)))
         }
-        _ = add("Paste", #selector(SurfaceView.paste(_:)), .paste)
+        add(.paste, #selector(SurfaceView.paste(_:)))
 
         menu.addItem(.separator())
-        _ = add("Select All", #selector(SurfaceView.selectAll(_:)), .selectAll)
-        _ = add("Clear", #selector(SurfaceView.clearScreen(_:)))
+        add(.selectAll, #selector(SurfaceView.selectAll(_:)))
+        add("Clear", #selector(SurfaceView.clearScreen(_:)))
 
         menu.addItem(.separator())
-        _ = add("Scroll to Top", #selector(SurfaceView.scrollToTop(_:)))
-        _ = add("Scroll to Bottom", #selector(SurfaceView.scrollToBottom(_:)))
+        add("Scroll to Top", #selector(SurfaceView.scrollToTop(_:)))
+        add("Scroll to Bottom", #selector(SurfaceView.scrollToBottom(_:)))
 
         guard state.isInPane else { return menu }
 
         menu.addItem(.separator())
-        _ = add("Find…", #selector(SurfaceView.findInSurface(_:)), .find)
+        add(.find, #selector(SurfaceView.findInSurface(_:)))
         if state.canRenamePane {
-            add("Rename Pane…", #selector(SurfaceView.renamePaneFromMenu(_:)))
-                .image = NSImage(systemSymbolName: "pencil", accessibilityDescription: nil)
+            add("Rename Pane…", #selector(SurfaceView.renamePaneFromMenu(_:)), symbol: "pencil")
         }
 
-        appendPaneActionItems(state, add: add, to: menu)
-        return menu
-    }
-
-    /// Split / zoom / promote / close section — split out of `make` so the
-    /// builder stays under the function-body-length lint cap.
-    private static func appendPaneActionItems(
-        _ state: SurfaceContextMenuState,
-        add: (LocalizedStringResource, Selector, MenuCommand?) -> NSMenuItem,
-        to menu: NSMenu
-    ) {
         menu.addItem(.separator())
-        add("Split Right", #selector(SurfaceView.splitRight(_:)), .splitRight).image = NSImage(
-            systemSymbolName: "rectangle.righthalf.inset.filled",
-            accessibilityDescription: nil
-        )
-        add("Split Down", #selector(SurfaceView.splitDown(_:)), .splitDown).image = NSImage(
-            systemSymbolName: "rectangle.bottomhalf.inset.filled",
-            accessibilityDescription: nil
-        )
+        add(.splitRight, #selector(SurfaceView.splitRight(_:)))
+        add(.splitDown, #selector(SurfaceView.splitDown(_:)))
 
         if state.zoomAction != nil || state.canMoveToNewTab {
             menu.addItem(.separator())
         }
         if let zoomAction = state.zoomAction {
-            let isZoom = zoomAction == .zoom
-            add(isZoom ? "Zoom Pane" : "Unzoom Pane", #selector(SurfaceView.zoomPaneFromMenu(_:)), .togglePaneZoom)
-                .image = NSImage(
-                    systemSymbolName: isZoom ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left",
-                    accessibilityDescription: nil
-                )
+            add(
+                zoomAction.title,
+                #selector(SurfaceView.zoomPaneFromMenu(_:)),
+                symbol: zoomAction.symbol,
+                keyOf: .togglePaneZoom
+            )
         }
         if state.canMoveToNewTab {
-            add("Move Pane to New Tab", #selector(SurfaceView.movePaneToNewTab(_:)), nil).image = NSImage(
-                systemSymbolName: "rectangle.split.2x1",
-                accessibilityDescription: nil
-            )
+            let movePane = MenuItemLabel.movePaneToNewTab
+            add(movePane.title, #selector(SurfaceView.movePaneToNewTab(_:)), symbol: movePane.symbol)
         }
 
         menu.addItem(.separator())
-        add("Close Pane", #selector(SurfaceView.closePaneFromMenu(_:)), .closePane).image = NSImage(
-            systemSymbolName: "xmark.square",
-            accessibilityDescription: nil
-        )
+        add(.closePane, #selector(SurfaceView.closePaneFromMenu(_:)))
+        return menu
+    }
+
+    /// Adds one item to the menu being built, its title in the app locale.
+    @MainActor
+    private struct ItemAdder {
+        let menu: NSMenu
+        let state: SurfaceContextMenuState
+        let locale: Locale
+
+        /// An item a shortcut performs: its command's name, symbol, and key.
+        func callAsFunction(_ command: MenuCommand, _ action: Selector) {
+            callAsFunction(command.title, action, symbol: command.icon, keyOf: command)
+        }
+
+        /// An item named `title`, showing the key of `command` when a
+        /// shortcut performs it.
+        func callAsFunction(
+            _ title: LocalizedStringResource,
+            _ action: Selector,
+            symbol: String? = nil,
+            keyOf command: MenuCommand? = nil
+        ) {
+            let item = menu.addItem(withTitle: title.resolved(in: locale), action: action, keyEquivalent: "")
+            if let command {
+                item.showShortcut(state.shortcut(command))
+            }
+            if let symbol {
+                item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            }
+        }
     }
 }
 

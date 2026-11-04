@@ -20,6 +20,9 @@ import Foundation
 ///
 /// A menu only shows the key; the menu bar stays the one place a shortcut
 /// is live, so a keystroke made with no menu open does what it always did.
+///
+/// Each case also names the item (`title`, `icon`), so every menu that
+/// offers the command words and draws it alike.
 enum MenuCommand: CaseIterable {
     case copy
     case paste
@@ -29,6 +32,9 @@ enum MenuCommand: CaseIterable {
     case splitDown
     case togglePaneZoom
     case closePane
+    /// ⌘W as an item that is not a pane's: the review tab's own menu, whose
+    /// ⌘W closes the review while it is in front.
+    case close
     case renameTab
     case closeTab
     case newWorktree
@@ -45,11 +51,61 @@ enum MenuCommand: CaseIterable {
         case .splitDown: .action(.splitDown)
         case .togglePaneZoom: .action(.toggleSplitZoom)
         case .closePane: .action(.closeSurface)
+        case .close: .action(.closeSurface)
         case .renameTab: .action(.renameTab)
         case .closeTab: .action(.closeTab)
         case .newWorktree: .action(.newWorktree)
         case .keyboardShortcuts: .action(.keyboardShortcuts)
         case .reviewChanges: .action(.review)
+        }
+    }
+
+    /// The item's name. Two menus word theirs from what they act on instead:
+    /// a pane's zoom says what pressing it does now (`PaneZoomAction`), and
+    /// the sidebar's New Worktree names its project.
+    ///
+    /// A pane's menus say "Close Pane", which ⌘W does to the focused pane,
+    /// where the menu bar says "Close" for every window ⌘W may close. A
+    /// tab's menu says "Rename…", the tab being the thing it was opened on.
+    var title: LocalizedStringResource {
+        switch self {
+        case .copy: "Copy"
+        case .paste: "Paste"
+        case .selectAll: "Select All"
+        case .find: WeirShortcutAction.find.localizedTitle
+        case .splitRight: WeirShortcutAction.splitRight.localizedTitle
+        case .splitDown: WeirShortcutAction.splitDown.localizedTitle
+        case .togglePaneZoom: WeirShortcutAction.toggleSplitZoom.localizedTitle
+        case .closePane: "Close Pane"
+        case .close: WeirShortcutAction.closeSurface.localizedTitle
+        case .renameTab: "Rename…"
+        case .closeTab: WeirShortcutAction.closeTab.localizedTitle
+        case .newWorktree: WeirShortcutAction.newWorktree.localizedTitle
+        case .keyboardShortcuts: WeirShortcutAction.keyboardShortcuts.localizedTitle
+        // The decision bar's words for the review on the unviewed turns.
+        case .reviewChanges: LocalizedStringResource(
+                "Review Unviewed",
+                comment: "Changes panel and decision bar: opens the unviewed turns in review"
+            )
+        }
+    }
+
+    /// The item's SF Symbol, or nil for an item drawn without one: the Edit
+    /// commands, as the Edit menu draws them, and the decision bar's words.
+    var icon: String? {
+        switch self {
+        case .copy, .paste, .selectAll, .find: nil
+        case .splitRight: WeirShortcutAction.splitRight.iconName
+        case .splitDown: WeirShortcutAction.splitDown.iconName
+        case .togglePaneZoom: WeirShortcutAction.toggleSplitZoom.iconName
+        case .closePane: WeirShortcutAction.closeSurface.iconName
+        // The review tab's mark for closing, as its own ✕ draws it.
+        case .close: "xmark"
+        case .renameTab: WeirShortcutAction.renameTab.iconName
+        case .closeTab: WeirShortcutAction.closeTab.iconName
+        case .newWorktree: WeirShortcutAction.newWorktree.iconName
+        case .keyboardShortcuts: WeirShortcutAction.keyboardShortcuts.iconName
+        case .reviewChanges: nil
         }
     }
 

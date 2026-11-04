@@ -234,6 +234,30 @@ enum PaneRenameStyle: Equatable {
 enum PaneZoomAction: Equatable {
     case zoom
     case unzoom
+
+    /// The item's name wherever a pane's zoom is offered: the Pane menu,
+    /// the header's ⋯ and its unzoom button, and the terminal's right-click
+    /// menu. It says what pressing it does now, which the shortcut list's
+    /// "Toggle Split Zoom" cannot.
+    var title: LocalizedStringResource {
+        switch self {
+        case .zoom: "Zoom Pane"
+        case .unzoom: "Unzoom Pane"
+        }
+    }
+
+    /// The item's symbol, beside `title`: the zoom's is the shortcut
+    /// action's, and the unzoom's points the other way.
+    var symbol: String {
+        switch self {
+        case .zoom: WeirShortcutAction.toggleSplitZoom.iconName
+        case .unzoom: "arrow.down.right.and.arrow.up.left"
+        }
+    }
+
+    var menuLabel: MenuItemLabel {
+        MenuItemLabel(title: title, symbol: symbol)
+    }
 }
 
 /// What committing a pane rename writes.

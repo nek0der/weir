@@ -146,7 +146,7 @@ struct WorktreeDropdown: View {
                     }
                 }
                 DropdownSeparator()
-                DropdownItem("New Worktree…") {
+                DropdownItem(WeirShortcutAction.newWorktree.localizedTitle) {
                     dismiss()
                     // The window's sheet opens for the project the window shows.
                     window.commands.send(.newWorktree)

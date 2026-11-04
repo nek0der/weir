@@ -17,8 +17,9 @@ extension TabActions {
     ///
     /// No-op when the owning tab has a single leaf: there's nothing to
     /// "split off", and creating an empty source tab would surprise the
-    /// user. The right-click menu hides the item in that case via
-    /// `canMoveToNewTab`; the guard here covers programmatic callers.
+    /// user. The menus hide the item in that case on the same rule
+    /// (`Tab.canMovePaneToNewTab`); the guard here covers programmatic
+    /// callers.
     /// Returns the new tab, `nil` when it made none.
     @discardableResult
     static func movePaneToNewTab(
@@ -38,7 +39,7 @@ extension TabActions {
     @discardableResult
     static func splitPaneOff(_ session: WorkspaceSession, paneID: UUID) -> UUID? {
         guard let sourceTab = session.tab(containing: paneID) else { return nil }
-        guard sourceTab.splitTree.allLeafIDs().count > 1 else { return nil }
+        guard sourceTab.canMovePaneToNewTab else { return nil }
 
         // A pane the user named carries that name to its new tab, pinned
         // the way a tab rename pins one: the source tab's title belongs to
