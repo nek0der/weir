@@ -173,7 +173,7 @@ enum WorktreeSetup {
             // Not `Task.sleep`: the task waiting here is the canceled one,
             // whose sleep would return at once.
             await withCheckedContinuation { (resumed: CheckedContinuation<Void, Never>) in
-                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(50)) {
+                stopQueue.asyncAfter(deadline: .now() + .milliseconds(50)) {
                     resumed.resume()
                 }
             }
@@ -185,6 +185,16 @@ enum WorktreeSetup {
 
     /// How long a group sent SIGKILL is waited for.
     private static let killGrace: Duration = .seconds(2)
+
+    /// Where a stopped step's SIGKILL and the wait's checks run. Not a
+    /// global queue: each Git read blocks a worker of the global queues
+    /// while Git runs (`GitProcess.run`), and once those workers reach
+    /// GCD's limit, work queued there waits for one to free, the
+    /// lower-priority work last. On a busy Mac the SIGKILL then came
+    /// seconds late, and a step that ignored SIGTERM went on writing in the
+    /// folder after "Skip Setup and Open" or a delete had asked it to stop.
+    /// A queue of our own gets a thread of its own even then.
+    fileprivate static let stopQueue = DispatchQueue(label: "com.nekoder.weir.worktree-setup.stop", qos: .userInitiated)
 
     private static func isUnsafeRelativePath(_ path: String) -> Bool {
         path.isEmpty
@@ -450,7 +460,7 @@ private final class RunningStep: @unchecked Sendable {
             process.terminate()
         }
         kill(-group, SIGTERM)
-        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(Int(WorktreeSetup.killAfter / .milliseconds(1)))) {
+        WorktreeSetup.stopQueue.asyncAfter(deadline: .now() + .milliseconds(Int(WorktreeSetup.killAfter / .milliseconds(1)))) {
             if WorktreeSetup.isRunning(group: group) {
                 kill(-group, SIGKILL)
             }
