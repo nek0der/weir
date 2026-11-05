@@ -86,6 +86,13 @@ final class SurfaceView: NSView {
     /// since `NSApp.currentEvent` can be unreliable mid-dispatch.
     var activeKeyEvent: NSEvent?
 
+    /// Whether `doCommand:` already sent `activeKeyEvent` to libghostty in
+    /// this dispatch. The input context turns a key such as ⌥⌫ or ⌥⏎ into
+    /// an editor command, and `keyDown` forwards a key held with ⌘, ⌃, or
+    /// ⌥ after the input context returns, so without this the terminal got
+    /// the key twice.
+    var hasForwardedActiveKeyEvent = false
+
     /// Text-translation counterpart to `activeKeyEvent`. It may omit Option
     /// according to `macos-option-as-alt`, while the raw event retains the
     /// modifiers that libghostty must encode and match against keybindings.

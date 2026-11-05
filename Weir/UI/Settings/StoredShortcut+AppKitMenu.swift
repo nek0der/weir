@@ -32,9 +32,13 @@ extension StoredShortcut {
     /// answers and the key its menu shows come from one value.
     func isPressed(in event: NSEvent) -> Bool {
         guard event.type == .keyDown, let equivalent = menuKeyEquivalent else { return false }
-        let pressed = event.modifierFlags.chord
-        return pressed == equivalent.modifiers
-            && event.charactersIgnoringModifiers?.lowercased() == equivalent.key
+        guard let characters = event.charactersIgnoringModifiers, characters.count == 1,
+              let character = characters.first
+        else { return false }
+        // ⌫ arrives as U+007F and its menu key is U+0008: one rule reads
+        // both as the same key (`KeyEquivalent.asShortcutKey`).
+        let pressedKey = String(KeyEquivalent(character).asShortcutKey.character).lowercased()
+        return event.modifierFlags.chord == equivalent.modifiers && pressedKey == equivalent.key
     }
 }
 

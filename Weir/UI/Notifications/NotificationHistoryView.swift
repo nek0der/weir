@@ -187,6 +187,13 @@ struct NotificationHistoryView: View {
         event.namedKey == .escape && event.modifierFlags.isDisjoint(with: [.command, .control, .option])
     }
 
+    /// ⌘⌫, which deletes the selected row, as Finder moves a file away.
+    static let deleteShortcut = StoredShortcut(key: NamedKey.backspace.rawValue, modifiers: [.command])
+
+    /// The keys the handler listens for: ⌫ as a press carries it (U+007F),
+    /// and SwiftUI's `.delete`, which a stored ⌫ becomes.
+    static let deleteKeys: Set<KeyEquivalent> = [.backspacePress, .delete]
+
     // MARK: - Content
 
     /// The panel: the name and what acts on the whole list over the
@@ -316,8 +323,8 @@ struct NotificationHistoryView: View {
                 return .handled
             }
             // ⌘⌫ deletes the selected row, as Finder moves a file away.
-            .onKeyPress(.delete, phases: .down) { press in
-                guard press.modifiers == .command,
+            .onKeyPress(keys: Self.deleteKeys, phases: .down) { press in
+                guard Self.deleteShortcut.isPressed(press),
                       case let .row(selected)? = model.items.first(where: { $0.id == selection.id })
                 else { return .ignored }
                 store.delete(selected.entry.id)
