@@ -67,29 +67,44 @@ struct ConversationIdentitySegments: View {
 /// one arrangement every SwiftUI place that names a conversation by its
 /// badge draws, so the bar is on the same side and at the same gap in each.
 /// With no identity (a worktree of one active conversation, or a scratch
-/// tab) the badge stands alone.
+/// tab) the badge stands alone, or after the bar's empty slot where it
+/// stands in a column of badges (`reservesBarSlot`).
 struct ConversationIdentityLead<Badge: View>: View {
     /// One color for a conversation; a tab's badge standing for several
     /// conversations of its kind has several (`ConversationIdentitySegments`).
     let identities: [Int]
     let barHeight: CGFloat
+    /// Whether a badge with no identity keeps the bar's slot empty before
+    /// it. A column of badges (the turn cards, the conversation headings)
+    /// sets it, so its badges share one left edge whether or not each has a
+    /// color; a lone badge, as in a tab or a menu, does not, and takes no
+    /// room for a bar it lacks.
+    let reservesBarSlot: Bool
     @ViewBuilder let badge: () -> Badge
 
     init(
         identity: Int?,
         barHeight: CGFloat = WeirLayout.Supervision.conversationIdentityBarHeight,
+        reservesBarSlot: Bool = false,
         @ViewBuilder badge: @escaping () -> Badge
     ) {
-        self.init(identities: identity.map { [$0] } ?? [], barHeight: barHeight, badge: badge)
+        self.init(
+            identities: identity.map { [$0] } ?? [],
+            barHeight: barHeight,
+            reservesBarSlot: reservesBarSlot,
+            badge: badge
+        )
     }
 
     init(
         identities: [Int],
         barHeight: CGFloat = WeirLayout.Supervision.conversationIdentityBarHeight,
+        reservesBarSlot: Bool = false,
         @ViewBuilder badge: @escaping () -> Badge
     ) {
         self.identities = identities
         self.barHeight = barHeight
+        self.reservesBarSlot = reservesBarSlot
         self.badge = badge
     }
 
@@ -97,6 +112,13 @@ struct ConversationIdentityLead<Badge: View>: View {
         if !identities.isEmpty {
             HStack(spacing: WeirLayout.Supervision.conversationIdentityBarSpacing) {
                 ConversationIdentitySegments(identities: identities, height: barHeight)
+                badge()
+            }
+        } else if reservesBarSlot {
+            HStack(spacing: WeirLayout.Supervision.conversationIdentityBarSpacing) {
+                Color.clear
+                    .frame(width: WeirLayout.Supervision.conversationIdentityBarWidth, height: barHeight)
+                    .accessibilityHidden(true)
                 badge()
             }
         } else {

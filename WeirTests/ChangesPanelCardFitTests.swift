@@ -211,8 +211,9 @@ extension SupervisionFootBarTests {
 
     /// The conversation's bar before its badge leaves the first column as tall
     /// as a single-conversation row's and within its width; a conversation
-    /// with no color draws its badge alone.
-    @Test func cardFit_identityBar_keepsRowHeight() {
+    /// with no color keeps the bar's slot empty, so its badge stands where a
+    /// colored one does.
+    @Test func cardFit_identityBar_keepsRowHeightAndBadgePosition() {
         var colored = ConversationChoice(conversation: TurnSummaryFixture.conversation, ordinal: 2, unviewedCount: 1)
         colored.identity = 3
         var plain = colored
@@ -220,10 +221,27 @@ extension SupervisionFootBarTests {
         let withBar = Self.contentSize(TurnCardLabel(number: 7, isUnviewed: true, conversation: colored))
         let alone = Self.contentSize(TurnCardLabel(number: 7, isUnviewed: true, conversation: plain))
         #expect(abs(withBar.height - alone.height) < 0.5, "\(withBar.height) against \(alone.height)")
-        #expect(withBar.width > alone.width, "the bar is drawn")
+        #expect(abs(withBar.width - alone.width) < 0.5, "the bar's slot is kept: \(withBar.width) against \(alone.width)")
         // Drawn out to the pill's start, so the column holds it less that.
         let column = Layout.turnFirstColumnWidth(hasConversation: true, digits: 1)
         #expect(withBar.width - Layout.turnUnviewedPillPadding.width <= column + 0.5, "\(withBar.width)")
+    }
+
+    /// A column of badges keeps the bar's slot where a conversation has no
+    /// color, so a conversation heading's badge stands where a colored one's
+    /// does; a lone badge, as in a tab, drops the slot.
+    @Test func identityLead_reservedSlot_keepsTheBadgesPlace() {
+        let headingHeight = Layout.conversationIdentityBarHeadingHeight
+        func width(identity: Int?, reservesBarSlot: Bool) -> CGFloat {
+            let lead = ConversationIdentityLead(identity: identity, barHeight: headingHeight, reservesBarSlot: reservesBarSlot) {
+                Color.clear.frame(width: 20, height: 20)
+            }
+            return NSHostingController(rootView: lead.fixedSize()).sizeThatFits(in: CGSize(width: 4000, height: 4000)).width
+        }
+        let colored = width(identity: 3, reservesBarSlot: true)
+        #expect(abs(width(identity: nil, reservesBarSlot: true) - colored) < 0.5)
+        #expect(abs(width(identity: nil, reservesBarSlot: false) - 20) < 0.5)
+        #expect(abs(width(identity: 3, reservesBarSlot: false) - colored) < 0.5)
     }
 
     /// The duration is the first fact to go: the list drops it from every
