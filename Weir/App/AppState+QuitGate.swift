@@ -135,13 +135,39 @@ extension AppState {
         }
     }
 
-    /// Whether quitting now would end an agent: one the session knows of, or
-    /// one only a pane's terminal knows of yet. The quit confirmation is
+    /// Returns whether quitting now would end an agent: one the session knows
+    /// of, or one only a terminal shows running. The quit confirmation is
     /// raised on it, and the verification channel's `quit`, which raises
     /// none, refuses on it unless forced.
     func hasAgentAQuitWouldEnd() -> Bool {
+        Self.hasAgentAQuitWouldEnd(
+            session: session,
+            registry: registry,
+            quickTerminal: quickTerminal,
+            foregroundGroup: \.foregroundGroupProcessNames
+        )
+    }
+
+    /// Returns whether quitting would end an agent, with how a surface's
+    /// foreground process group is read handed in, so the rule can be
+    /// checked against real surfaces without starting an agent in them.
+    ///
+    /// A quit ends every terminal surface, so we read every one
+    /// (`allSurfaceViews`), not the panes the session's tabs list. The quick
+    /// terminal is not a pane: it has no tab, and its agents run without
+    /// hooks (`quickTerminalEnvironment`), so only its foreground process
+    /// group shows an agent running there. The session's record is asked
+    /// first, and the terminals only until one answers, since each read asks
+    /// the kernel about a process group.
+    static func hasAgentAQuitWouldEnd(
+        session: WorkspaceSession,
+        registry: SurfaceRegistry,
+        quickTerminal: QuickTerminalController,
+        foregroundGroup: (SurfaceView) -> [String]
+    ) -> Bool {
         session.hasLiveAgentAnywhere()
-            || session.tabs.contains { $0.splitTree.allLeafIDs().contains(where: isAgentInFrontNow(inPane:)) }
+            || allSurfaceViews(registry: registry, quickTerminal: quickTerminal)
+            .contains { isAgentInFront(names: foregroundGroup($0)) }
     }
 
     /// Whether the pane's terminal runs an agent in front at this moment,
@@ -154,6 +180,10 @@ extension AppState {
     /// actor, and a run in Weir's own host has a record the session counts.
     private func isAgentInFrontNow(inPane paneID: UUID) -> Bool {
         guard let names = registry.view(for: paneID)?.foregroundGroupProcessNames else { return false }
+        return Self.isAgentInFront(names: names)
+    }
+
+    private static func isAgentInFront(names: [String]) -> Bool {
         if case .agent = AgentForeground.agentInFront(names: names, tmuxPane: .unknown) {
             return true
         }
