@@ -51,13 +51,16 @@ struct NewSessionModel {
     /// is given.
     struct Base: Hashable, Sendable {
         let name: String
+        /// The branch's full ref (`refs/remotes/origin/main`,
+        /// `refs/heads/main`), never its bare name, which Git reads as a
+        /// tag of that name first (`GitBranchRef`).
         let ref: String
         /// For the remote's branch the fetch brings up to date
         /// (`origin/main`): the local branch of the same name, which the
         /// worktree starts from when the fetch fails, and which the sheet
         /// says how far behind it is. `nil` for a local base, or when there
         /// is no local branch of that name.
-        var localRef: String?
+        var localName: String?
         /// Whether the base is the remote's branch, which only a fetch
         /// brings up to date.
         var isRemote = false
@@ -65,6 +68,11 @@ struct NewSessionModel {
         /// names as such ("feat/x (Current Worktree)"), so it is not taken
         /// for the default.
         var isCurrentWorktree = false
+
+        /// `localName`'s full ref, as Git is given it.
+        var localRef: String? {
+            localName.map(GitBranchRef.local)
+        }
     }
 
     /// Where the fetch before Create stands. The sheet starts it as it
@@ -133,6 +141,8 @@ struct NewSessionModel {
     /// `start` or on the existing branch `start`, then `request` in it.
     struct Plan: Equatable, Sendable {
         let path: URL
+        /// What a new branch starts from (a full ref, or a fetched commit),
+        /// or the existing branch's name, which `git worktree add` checks out.
         let start: String
         let newBranch: String?
         let request: SessionLaunchRequest
@@ -145,6 +155,13 @@ struct NewSessionModel {
         var pullRequest: PullRequestFetch?
         /// The worktree whose uncommitted changes move into the new one.
         var carry: CarrySource?
+
+        /// What the new worktree's files start as, for Git: `start` for a
+        /// new branch, and the existing branch's full ref, not its name,
+        /// which Git reads as a tag of that name first.
+        var startRevision: String {
+            newBranch == nil ? GitBranchRef.local(start) : start
+        }
     }
 
     /// A worktree whose uncommitted changes the new one takes: its
@@ -473,17 +490,19 @@ struct NewSessionModel {
                 : defaultBase
             let local = localBranches.contains(name) ? name : nil
             if let fetchRemote {
-                let remoteRef = "\(fetchRemote)/\(name)"
-                bases.append(Base(name: remoteRef, ref: remoteRef, localRef: local, isRemote: true))
+                let remoteName = "\(fetchRemote)/\(name)"
+                bases.append(Base(name: remoteName, ref: GitBranchRef.remote(remoteName), localName: local, isRemote: true))
             } else {
-                bases.append(Base(name: name, ref: local ?? defaultBase))
+                // A default that is no local branch is origin's
+                // (`ReviewGit.defaultBase`).
+                bases.append(Base(name: name, ref: local.map(GitBranchRef.local) ?? GitBranchRef.remote(defaultBase)))
             }
         }
         if let shownBranch, !bases.contains(where: { $0.name == shownBranch }) {
-            bases.append(Base(name: shownBranch, ref: shownBranch, isCurrentWorktree: true))
+            bases.append(Base(name: shownBranch, ref: GitBranchRef.local(shownBranch), isCurrentWorktree: true))
         }
         if bases.isEmpty, let head {
-            bases.append(Base(name: head, ref: head))
+            bases.append(Base(name: head, ref: GitBranchRef.local(head)))
         }
         return bases
     }
@@ -530,24 +549,20 @@ struct NewSessionModel {
         case .failed:
             // With no local branch of its name, the remote's branch as the
             // last fetch left it is what there is.
-            return base.localRef.map { .failed(start: $0, isLastFetched: false) } ?? .failed(start: base.ref, isLastFetched: true)
+            return base.localName.map { .failed(start: $0, isLastFetched: false) } ?? .failed(start: base.name, isLastFetched: true)
         case .remoteBranchMissing:
-            return .remoteBranchMissing(remote: base.name, start: base.localRef ?? base.ref)
+            return .remoteBranchMissing(remote: base.name, start: base.localName ?? base.name)
         case .none, .fetching, .fetched:
             return nil
         }
     }
 
-    /// The ref the new branch starts from: the base, or what the fetch's
-    /// shortfall says it starts from instead.
+    /// The full ref the new branch starts from: the base, or the branch
+    /// the fetch's shortfall says it starts from instead, the local one
+    /// when there is one.
     var startRef: String? {
         guard let base else { return nil }
-        switch fetchShortfall {
-        case let .failed(start, _)?, let .remoteBranchMissing(_, start)?:
-            return start
-        case nil:
-            return base.ref
-        }
+        return fetchShortfall == nil ? base.ref : base.localRef ?? base.ref
     }
 
     /// What the line under the base says of the fetch.
@@ -575,7 +590,7 @@ struct NewSessionModel {
         case .fetching:
             return .fetching
         case let .fetched(behind?) where behind > 0:
-            return base.localRef.map { .behind(local: $0, count: behind, remote: base.name) } ?? .fromRemote(base.name)
+            return base.localName.map { .behind(local: $0, count: behind, remote: base.name) } ?? .fromRemote(base.name)
         case .none, .fetched, .failed, .remoteBranchMissing:
             return .fromRemote(base.name)
         }
@@ -630,9 +645,9 @@ struct NewSessionModel {
             lines += [
                 .fetching,
                 .fromRemote(base.name),
-                .shortfall(.remoteBranchMissing(remote: base.name, start: base.localRef ?? base.ref))
+                .shortfall(.remoteBranchMissing(remote: base.name, start: base.localName ?? base.name))
             ]
-            if let local = base.localRef {
+            if let local = base.localName {
                 lines.append(.behind(local: local, count: Self.mostCommitsBehind, remote: base.name))
             }
         }

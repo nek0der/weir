@@ -28,8 +28,11 @@ extension ReviewGit {
             // A base that does not resolve leaves the counts unknown rather
             // than the facts missing: the uncommitted files still stand.
             let base = try await defaultBase(at: folder).map(GitFacts.Base.init(ref:))
-            let commitsNotOnBase: Int? = if let base {
-                try await count(["rev-list", "--count", "\(base.ref)..HEAD", "--"], at: folder)
+            // The full ref, as the review's merge base reads it
+            // (`branchRef`): a tag named like the branch is not counted
+            // against.
+            let commitsNotOnBase: Int? = if let base, let ref = try await branchRef(named: base.ref, root: folder) {
+                try await count(["rev-list", "--count", "--end-of-options", "\(ref)..HEAD", "--"], at: folder)
             } else {
                 nil
             }

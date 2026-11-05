@@ -9,11 +9,12 @@ import Foundation
 /// panel shows, and must not fill the object store with every edited and
 /// untracked file.
 extension ReviewGit {
-    /// The paths that differ between two trees. Throws `gitFailed` when one
-    /// of them is gone.
+    /// The paths that differ between two trees: what changed outside the
+    /// turns, and after a review range. Throws `gitFailed` when one of them
+    /// is gone.
     static func pathsChanged(from earlier: String, to later: String, at root: URL) async throws -> Set<String> {
         // Without rename detection, so a renamed file's old path counts too.
-        try await Set(splitPaths(command(["diff", "--no-renames", "--name-only", "-z", earlier, later, "--"], root: root)))
+        try await Set(splitPaths(command(diffArguments(["--no-renames", "--name-only", "-z", earlier, later, "--"]), root: root)))
     }
 
     /// What changed in the worktree since a tree (`pathsChanged(since:)`).
@@ -48,7 +49,7 @@ extension ReviewGit {
         } catch ReviewError.gitFailed {
             return ChangedSince(paths: [])
         }
-        var paths = try await Set(splitPaths(command(["diff", "--no-renames", "--name-only", "-z", tree, "--"], root: root)))
+        var paths = try await Set(splitPaths(command(diffArguments(["--no-renames", "--name-only", "-z", tree, "--"]), root: root)))
         let untracked = try await splitPaths(command(["ls-files", "--others", "--exclude-standard", "-z"], root: root))
         guard !untracked.isEmpty else { return ChangedSince(paths: paths) }
         // A nested repository is listed as its directory ("sub/"); the tree

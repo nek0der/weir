@@ -255,7 +255,7 @@ struct NewSessionActionsTests {
             #expect(await fixture.create(model) == .created(branch: "feat/fresh"))
             #expect(fixture.git.fetchCalls == ["origin"])
             #expect(Array(fixture.git.operations.prefix(3)) == ["fetch", "branch", "worktree add"])
-            #expect(fixture.git.branchCalls.first?.startPoint == "origin/main")
+            #expect(fixture.git.branchCalls.first?.startPoint == "refs/remotes/origin/main")
         }
     }
 
@@ -270,7 +270,7 @@ struct NewSessionActionsTests {
             model.setBranchName("feat/local")
             #expect(await fixture.create(model) == .created(branch: "feat/local"))
             #expect(fixture.git.fetchCalls.isEmpty)
-            #expect(fixture.git.branchCalls.first?.startPoint == "main")
+            #expect(fixture.git.branchCalls.first?.startPoint == "refs/heads/main")
         }
     }
 
@@ -292,7 +292,7 @@ struct NewSessionActionsTests {
                 #expect(model.fetchState == .failed)
 
                 #expect(await fixture.create(model) == .created(branch: "feat/offline"))
-                #expect(fixture.git.branchCalls.first?.startPoint == "main")
+                #expect(fixture.git.branchCalls.first?.startPoint == "refs/heads/main")
                 let row = try #require(fixture.shownWorktree)
                 #expect(fixture.launches.launch(in: row)?.notes == [.fetch(.failed(start: "main", isLastFetched: false))])
                 #expect(fixture.launches.launch(in: row)?.phase == .done)
@@ -310,7 +310,7 @@ struct NewSessionActionsTests {
             var model = try await fixture.load()
             model.fetchState = await NewSessionActions.fetch(for: model, stores: fixture.stores)
             #expect(model.fetchState == .remoteBranchMissing)
-            #expect(model.plan?.start == "main")
+            #expect(model.plan?.start == "refs/heads/main")
             #expect(model.plan?.notes == [.fetch(.remoteBranchMissing(remote: "origin/main", start: "main"))])
         }
     }
@@ -326,7 +326,7 @@ struct NewSessionActionsTests {
             var model = try await fixture.load()
             model.fetchState = await NewSessionActions.fetch(for: model, stores: fixture.stores)
             #expect(model.fetchState == .remoteBranchMissing)
-            #expect(model.plan?.start == "main")
+            #expect(model.plan?.start == "refs/heads/main")
         }
     }
 
@@ -379,7 +379,7 @@ struct NewSessionActionsTests {
 
             #expect(outcome == .created(branch: "task/\(fixture.todayInName)-1"))
             #expect(fixture.git.fetchCalls == ["origin"])
-            #expect(fixture.git.branchCalls.first?.startPoint == "origin/main")
+            #expect(fixture.git.branchCalls.first?.startPoint == "refs/remotes/origin/main")
             #expect(fixture.window.newSession == nil)
             #expect(fixture.shownWorktree != nil)
         }
@@ -510,6 +510,90 @@ struct NewSessionFetchGitTests {
         #expect(try await TempGitRepo.git(["rev-parse", "HEAD"], in: worktree.workingDirectory) == pushed)
         // The local `main` did not move: the fetch moved only `origin/main`.
         #expect(try await repo.git(["rev-parse", "main"]) != pushed)
+    }
+
+    /// A tag `main` on an older commit: Git reads a bare `main` as the tag,
+    /// and refused to make a branch from it as ambiguous. The new branch
+    /// starts from the branch `main`.
+    @Test func aTagNamedLikeTheBase_leavesTheWorktreeOnTheBranch() async throws {
+        let repo = try await TempGitRepo.make()
+        defer { repo.cleanup() }
+        try await repo.git(["tag", "main"])
+        try repo.write("landed\n", to: "landed.txt")
+        try await repo.commit("landed", paths: ["landed.txt"])
+        let tip = try await repo.git(["rev-parse", "refs/heads/main"])
+
+        let (session, model) = try await Self.form(for: repo, fetches: false)
+        let project = model.context.project
+        let plan = try #require(model.plan)
+        #expect(plan.start == "refs/heads/main")
+        let worktree = try await session.createGitWorktree(
+            projectID: project.id,
+            path: plan.path,
+            baseBranch: plan.start,
+            newBranchName: plan.newBranch,
+            openTab: false
+        )
+        #expect(try await TempGitRepo.git(["rev-parse", "HEAD"], in: worktree.workingDirectory) == tip)
+    }
+
+    /// A tag `origin/main` on an older commit: the fetch and the start take
+    /// the remote's branch, which the fetch brought up to date.
+    @Test func aTagNamedLikeTheRemotesBranch_leavesTheFetchAndTheWorktreeOnTheBranch() async throws {
+        let repo = try await TempGitRepo.make()
+        defer { repo.cleanup() }
+        let bare = try await repo.addBareOrigin()
+        try await repo.git(["remote", "set-head", "origin", "main"])
+        try await repo.git(["tag", "origin/main"])
+        let pushed = try await repo.advance(bare)
+
+        let (session, model) = try await Self.form(for: repo, fetches: true)
+        let project = model.context.project
+        let stores = NewSessionStores(session: session, launches: SessionLaunchStore(path: { nil }), settingsStore: SettingsStore(
+            directory: repo.scratch.appendingPathComponent("settings")
+        ))
+        var fetched = model
+        fetched.fetchState = await NewSessionActions.fetch(for: model, stores: stores)
+        #expect(fetched.fetchState == .fetched(behind: 1))
+        let plan = try #require(fetched.plan)
+        #expect(plan.start == "refs/remotes/origin/main")
+        let worktree = try await session.createGitWorktree(
+            projectID: project.id,
+            path: plan.path,
+            baseBranch: plan.start,
+            newBranchName: plan.newBranch,
+            openTab: false
+        )
+        #expect(try await TempGitRepo.git(["rev-parse", "HEAD"], in: worktree.workingDirectory) == pushed)
+    }
+
+    /// The sheet's form for `repo`, as it opens with what the folder says.
+    private static func form(
+        for repo: TempGitRepo,
+        fetches: Bool
+    ) async throws -> (WorkspaceSession, NewSessionModel) {
+        let facts = await NewSessionFacts.readGit(root: repo.url)
+        let session = WorkspaceSession()
+        let project = session.addOrActivateProject(rootURL: repo.url, suggestedName: "repo")
+        let model = NewSessionModel(
+            context: .init(
+                project: project,
+                localBranches: facts.localBranches,
+                checkedOutBranches: ["main"],
+                defaultBase: facts.defaultBase,
+                shownBranch: nil,
+                head: facts.head,
+                fetchRemote: NewSessionModel.fetchRemote(
+                    defaultBase: facts.defaultBase,
+                    upstreamRemote: facts.upstreamRemote,
+                    remotes: facts.remotes
+                ),
+                today: Date(),
+                folderExists: { FileManager.default.fileExists(atPath: $0.path) }
+            ),
+            choices: NewWorktreeChoices(open: .nothing, fetches: fetches, copiesIgnoredFiles: false, runsSetup: false)
+        )
+        return (session, model)
     }
 
     /// A remote that cannot be reached fails the fetch, and nothing waits

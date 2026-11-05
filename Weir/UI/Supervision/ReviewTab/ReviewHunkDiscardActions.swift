@@ -127,7 +127,7 @@ enum ReviewHunkDiscardActions {
             guard !Task.isCancelled else { return }
             // Each failure is one more attempt; after the last, the
             // discard says it could not check (`pathsChangedLaterFailed`).
-            if let paths = try? await ReviewGit.pathsChanged(from: range.endTree, to: later, root: URL(fileURLWithPath: range.root)) {
+            if let paths = try? await ReviewGit.pathsChanged(from: range.endTree, to: later, at: URL(fileURLWithPath: range.root)) {
                 records.pathsChangedLater[key] = paths
                 return
             }

@@ -147,11 +147,16 @@ enum ReviewGit {
         "--output-indicator-new=+", "--output-indicator-old=-", "--output-indicator-context= "
     ]
 
-    /// The paths that differ between two trees, renames read as a delete
-    /// and an add: what changed after a review range.
-    static func pathsChanged(from: String, to: String, root: URL) async throws -> Set<String> {
-        let data = try await command(["diff", "--name-only", "--no-renames", "-z", from, to], root: root)
-        return try Set(splitPaths(data))
+    /// `git diff` with the review's options, then `arguments`.
+    ///
+    /// Every comparison the review and the changes panel make is built here:
+    /// the file list, the line counts, the paths changed, and the patch. A
+    /// query that left the options out read the person's settings instead,
+    /// and `diff.ignoreSubmodules` or a submodule's own `ignore` then dropped
+    /// a submodule from the totals and the counts while the list still
+    /// showed it.
+    static func diffArguments(_ arguments: [String]) -> [String] {
+        ["diff"] + diffOptions + arguments
     }
 
     /// What changed between two recorded trees, counted as the receipt
@@ -160,7 +165,7 @@ enum ReviewGit {
     /// comparison over the worktree's turns, never the turns' counts added
     /// up, which would count a change two turns ran over twice.
     static func counts(from: String, to: String, root: URL) async throws -> ChangeSummary {
-        let data = try await command(["diff", "--numstat", "-z", "-M", from, to], root: root)
+        let data = try await command(diffArguments(["--numstat", "-z", "-M", from, to, "--"]), root: root)
         let stats = try parseNumstat(data)
         guard !stats.isEmpty else { return .unchanged }
         return .changed(
@@ -234,7 +239,7 @@ enum ReviewGit {
         var result: [ReviewFile] = []
         for layer in scope.layers {
             guard let selector = try await selector(for: layer, in: scope, root: root) else { continue }
-            let args = ["diff"] + selector + diffOptions + ["--name-status", "-z", "-M"]
+            let args = diffArguments(["--name-status", "-z", "-M"] + selector + ["--"])
             result += try await parseNames(command(args, root: root), layer: layer)
         }
         // Untracked files are in no tree and no index, so they are listed
@@ -273,7 +278,7 @@ enum ReviewGit {
         var result: [String: ReviewFileStat] = [:]
         for layer in scope.layers {
             guard let selector = try await selector(for: layer, in: scope, root: root) else { continue }
-            let data = try await command(["diff"] + selector + ["--numstat", "-z", "-M"], root: root)
+            let data = try await command(diffArguments(["--numstat", "-z", "-M"] + selector + ["--"]), root: root)
             for (path, stat) in try parseNumstat(data) {
                 result[layer.rawValue + ":" + path] = stat
             }
@@ -308,7 +313,8 @@ enum ReviewGit {
     /// diffing against a point the branch is no longer on would show the base
     /// branch's own commits as changes to review.
     static func mergeBase(_ base: String, root: URL) async throws -> String {
-        let data = try await command(["merge-base", "--", base, "HEAD"], root: root)
+        guard let ref = try await branchRef(named: base, root: root) else { throw ReviewError.gitFailed }
+        let data = try await command(["merge-base", "--end-of-options", ref, "HEAD"], root: root)
         guard var text = String(data: data, encoding: .utf8), text.hasSuffix("\n") else { throw ReviewError.gitFailed }
         text.removeLast()
         return text
@@ -318,22 +324,62 @@ enum ReviewGit {
     ///
     /// `origin/HEAD` is what the remote calls its own default and is right
     /// even where the branch is named something else; the local names are the
-    /// fallback for a repository that has no remote. `nil` when neither
-    /// resolves, which is what keeps the mode from being offered at all.
+    /// fallback for a repository that has no remote. `nil` when origin
+    /// names no default and neither local name is a branch, which is what
+    /// keeps the mode from being offered at all. origin's default is named
+    /// as Git has it, even where the remote branch is gone; `branchRef` then
+    /// finds no branch unless a local one has that name, and the comparison
+    /// fails rather than reading a tag.
+    ///
+    /// Named as a branch, never by Git's short form: `--short` turns
+    /// `origin/main` into `remotes/origin/main` where a tag is also named
+    /// `origin/main`, as `GitProcess.listLocalBranches` says of `heads/x`.
+    /// A tag named `main` does not stand in for a missing `main` branch.
+    ///
+    /// The name is what is kept, not the ref it was read as: comments store
+    /// their scope by name (`branch:<base>`), and `branchRef` resolves it
+    /// again, local branch first, so a local branch named `origin/main`
+    /// would be read in place of origin's default.
     static func defaultBase(at root: URL) async throws -> String? {
-        if let data = try? await command(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root: root),
+        let remotes = GitBranchRef.remote("")
+        if let data = try? await command(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], root: root),
            var text = String(data: data, encoding: .utf8), text.hasSuffix("\n")
         {
             text.removeLast()
-            return text.isEmpty ? nil : text
+            guard text.hasPrefix(remotes), text.count > remotes.count else { return nil }
+            return String(text.dropFirst(remotes.count))
         }
-        for name in ["main", "master"] {
-            let probe = try? await command(["rev-parse", "--verify", "--quiet", name + "^{commit}"], root: root)
-            if probe != nil {
-                return name
-            }
+        let names = ["main", "master"]
+        let local = try await refs(names.map(GitBranchRef.local), root: root)
+        return names.first { local.contains(GitBranchRef.local($0)) }
+    }
+
+    /// The full ref the branch `name` stands for (`GitBranchRef.resolve`),
+    /// never a tag; `nil` when `name` is no branch.
+    ///
+    /// The review's merge base and the facts' count of commits both ask
+    /// this, so the two cannot read the name in different ways.
+    static func branchRef(named name: String, root: URL) async throws -> String? {
+        let candidates = GitBranchRef.candidates(for: name)
+        return try await GitBranchRef.resolve(name, among: refs(candidates, root: root))
+    }
+
+    /// Which of `candidates`, each a full ref, exist; none when Git cannot
+    /// list them, which leaves the base unknown rather than the facts
+    /// unanswered. `for-each-ref` also matches a ref below a candidate
+    /// (`refs/heads/main/x` for `refs/heads/main`), so only exact names
+    /// count.
+    private static func refs(_ candidates: [String], root: URL) async throws -> Set<String> {
+        let data: Data
+        do {
+            data = try await command(["for-each-ref", "--format=%(refname)"] + candidates, root: root)
+        } catch ReviewError.gitFailed {
+            return []
         }
-        return nil
+        // A ref whose name is not UTF-8 cannot equal a candidate, which is a
+        // String, so dropping it loses nothing.
+        let listed = data.split(separator: UInt8(ascii: "\n")).compactMap { String(bytes: $0, encoding: .utf8) }
+        return Set(listed).intersection(candidates)
     }
 
     /// `--numstat -z` writes `added\tremoved\tpath\0`, except for renames,
@@ -548,7 +594,7 @@ enum ReviewGit {
         guard let selector = try await selector(for: file.layer, in: scope, root: root) else {
             throw ReviewError.gitFailed
         }
-        let args = ["diff"] + selector + diffOptions + ["-M", "--unified=3", "--"] + paths
+        let args = diffArguments(["-M", "--unified=3"] + selector + ["--"] + paths)
         let data = try await command(args, root: root)
         guard !data.contains(0), let patch = String(data: data, encoding: .utf8) else { throw ReviewError.unsupported }
         if let head {
