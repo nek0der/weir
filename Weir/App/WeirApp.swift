@@ -806,14 +806,6 @@ struct WeirApp: App {
     /// Without this gate a Debug session running alongside the
     /// installed dmg could replace its own DerivedData binary with
     /// the latest release mid-debug.
-    /// Owns the `SPUStandardUpdaterController` plus the gentle-reminder
-    /// user-driver delegate (which suppresses Sparkle's standard "found
-    /// update" alert and writes the appcast item into `availability`
-    /// instead, so the terminal column toolbar can surface its own shippingbox
-    /// affordance). Once the user clicks the toolbar button we hand
-    /// back to Sparkle's standard install / progress / restart UI by
-    /// calling `updater.checkForUpdates()` — Sparkle re-uses the
-    /// cached appcast item, so there's no second network round-trip.
     /// A demo run starts no updater at all (`UpdaterStack.init`).
     private let updaterStack = UpdaterStack(
         allowsAutomaticChecks: !WeirPaths.isDevBuild,
@@ -855,7 +847,7 @@ struct WeirApp: App {
                 .environment(state.settingsStore)
                 .environment(state.quickTerminalHotKeyCenter)
                 .environment(state.reduceTransparencyResolver)
-                .environment(\.sparkleUpdater, updaterStack.updater)
+                .environment(\.updaterStack, updaterStack)
                 .environment(updaterStack.stateModel)
                 .environment(\.suspendedSessionFile, state.suspendedSessionFile)
                 .environment(\.settingsAppActions, state.settingsAppActions)
@@ -890,10 +882,8 @@ struct WeirApp: App {
             // ── App menu ──────────────────────────────────────
             // "Check for Updates…" lives just under "About Weir".
             CommandGroup(after: .appInfo) {
-                // Debug routes through the mock pipeline so design
-                // tweaks reach both entry points without a real
-                // Sparkle round-trip. Both branches share one disable,
-                // `UpdateStateModel.disablesCheckForUpdates`.
+                // The check goes through UpdaterStack.checkForUpdates();
+                // UpdateStateModel.disablesCheckForUpdates turns it off.
                 CheckForUpdatesMenuItem(updaterStack: updaterStack)
             }
             // Replace the auto-generated "Settings…" item with one

@@ -14,9 +14,16 @@
 // calling it twice asserts. We protect both directions with `OneShot`
 // at the driver boundary and consume the OneShot whenever we discard
 // a state (auto-dismiss timer, state overwrites).
+//
+// Each session has an identity (`UpdateSessionID`). The state the
+// driver shows carries it, and every timer and Retry checks it, so one
+// left over from an earlier session never acts on a later one.
 
 import Foundation
+import OSLog
 import Sparkle
+
+private let log = Logger.weir("updates")
 
 /// Declared `@MainActor` because Sparkle calls every `SPUUserDriver`
 /// method on the main thread. Letting Swift see the isolation makes
@@ -31,14 +38,51 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
     /// Whether some window can show the update inline, read at each event;
     /// the UI knows its windows (`WeirWindowRole.isUpdateControlInSight`).
     private let isInlineTargetInSight: @MainActor () -> Bool
+    /// The timer that runs the auto-dismiss of a finished check or
+    /// install; tests step it by hand.
+    private let timer: HoverDelayTimer
 
-    /// Whether this update session went to Sparkle's own UI. Once one
-    /// step has, the rest of the session follows it there, even if a
-    /// window that could show it inline opens meanwhile, and the inline
-    /// state stays idle: a session shown in both places would let the
-    /// person answer it twice, and the rail's badge would say something
-    /// Sparkle's window no longer does. Cleared when the session ends.
-    private(set) var isStandardFlow = false
+    /// The action that starts a check the way Check for Updates does. Set
+    /// by `UpdaterStack`, which owns that entry; a check deferred to the
+    /// end of a session runs it once Sparkle has ended that session.
+    var startsCheck: (@MainActor () -> Void)?
+
+    /// One Sparkle session, from its first step to the moment Sparkle ends
+    /// it (`dismissUpdateInstallation` or `updateCycleDidFinish`).
+    private struct Session {
+        let id: UpdateSessionID
+        /// The update Sparkle offered in this session. Download and
+        /// install steps carry no item of their own, and the state shown
+        /// in between (extracting) has none, so the session keeps it.
+        var item: UpdateDisplayItem?
+        /// Whether this session went to Sparkle's own UI. Once one step
+        /// has, the rest of the session follows it there, even if a window
+        /// that could show it inline opens meanwhile, and the inline state
+        /// stays idle: a session shown in both places would let the person
+        /// answer it twice, and the rail's badge would say something
+        /// Sparkle's window no longer does.
+        var isStandardFlow = false
+    }
+
+    /// The open session; nil between sessions. A step that arrives with
+    /// none open (a scheduled check finding an update) opens one.
+    private var session: Session?
+    private var lastSessionNumber: UInt64 = 0
+    /// Whether a check was asked for while the open session showed its
+    /// result, so one starts when Sparkle ends that session. Sparkle
+    /// ignores a check asked for before then.
+    private var startsCheckWhenCycleEnds = false
+
+    /// Whether the open session shows in Sparkle's own UI.
+    var isStandardFlow: Bool {
+        session?.isStandardFlow ?? false
+    }
+
+    /// Whether a Sparkle session is open, so Sparkle answers a check asked
+    /// for now itself.
+    var hasOpenSession: Bool {
+        session != nil
+    }
 
     private var hasInlineTarget: Bool {
         isInlineTargetInSight()
@@ -52,11 +96,52 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
         )
     }
 
-    init(stateModel: UpdateStateModel, standard: any SPUUserDriver, hasInlineTarget: @escaping @MainActor () -> Bool) {
+    init(
+        stateModel: UpdateStateModel,
+        standard: any SPUUserDriver,
+        timer: HoverDelayTimer = .live,
+        hasInlineTarget: @escaping @MainActor () -> Bool
+    ) {
         self.stateModel = stateModel
         self.isInlineTargetInSight = hasInlineTarget
         self.standard = standard
+        self.timer = timer
         super.init()
+    }
+
+    // MARK: - Session
+
+    /// Opens a new session, ending any open one: Sparkle starts each
+    /// user-initiated check with a fresh session, whether or not it told
+    /// us the last one ended.
+    @discardableResult
+    private func beginSession() -> UpdateSessionID {
+        lastSessionNumber += 1
+        let id = UpdateSessionID(rawValue: lastSessionNumber)
+        session = Session(id: id)
+        return id
+    }
+
+    /// Returns the open session's identity, opening a session if none is
+    /// open.
+    @discardableResult
+    private func ensureSession() -> UpdateSessionID {
+        session?.id ?? beginSession()
+    }
+
+    /// Shows `state` inline as part of the open session.
+    private func show(_ state: UpdateState) {
+        stateModel.show(state, for: ensureSession())
+    }
+
+    /// Records that Sparkle ended an update session
+    /// (`SPUUpdaterDelegate`). Sparkle accepts a new check from here on,
+    /// so a check deferred during the session starts now.
+    func updateCycleDidFinish() {
+        session = nil
+        guard startsCheckWhenCycleEnds else { return }
+        startsCheckWhenCycleEnds = false
+        startsCheck?()
     }
 
     /// Decides, at a step that shows something new, where the session
@@ -65,11 +150,21 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
     /// behind. Steps that only report progress follow `isStandardFlow`
     /// without calling this, since settling a download's state would
     /// cancel the download.
-    private func showsInStandardUI() -> Bool {
-        if !isStandardFlow, !hasInlineTarget {
+    ///
+    /// `needsItem` marks a step whose inline view names the update. With
+    /// no item in the session, which Sparkle's order of steps rules out,
+    /// the step goes to Sparkle's UI, which reads the item itself, rather
+    /// than showing a made-up version.
+    private func showsInStandardUI(needsItem: Bool = false) -> Bool {
+        ensureSession()
+        let lacksItem = needsItem && session?.item == nil
+        if !isStandardFlow, !hasInlineTarget || lacksItem {
+            if lacksItem {
+                log.fault("an update step arrived with no update found in its session")
+            }
             consumePendingCallback()
-            stateModel.state = .idle
-            isStandardFlow = true
+            stateModel.show(.idle)
+            session?.isStandardFlow = true
         }
         return isStandardFlow
     }
@@ -98,7 +193,7 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
         case let .downloading(_, _, _, cancel):
             cancel.call()
         case let .notFound(ack),
-             let .error(_, ack),
+             let .error(_, ack, _),
              let .installed(ack):
             ack.call()
         case .idle, .extracting, .installing:
@@ -127,11 +222,12 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
 
     func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) {
         let cancelOnce = OneShot(cancellation)
+        beginSession()
         if showsInStandardUI() {
             standard.showUserInitiatedUpdateCheck(cancellation: { cancelOnce.call() })
         } else {
             consumePendingCallback()
-            stateModel.state = .checking(cancel: cancelOnce)
+            show(.checking(cancel: cancelOnce))
         }
     }
 
@@ -142,19 +238,18 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
         let ackOnce = OneShot(acknowledgement)
         if !showsInStandardUI() {
             consumePendingCallback()
-            stateModel.state = .notFound(acknowledgement: ackOnce)
+            show(.notFound(acknowledgement: ackOnce))
             // Auto-dismiss after a moment so the update control doesn't
             // keep a "no update" badge around forever. The OneShot ensures
             // the auto-dismiss and a manual OK click never both fire
             // ack, and that ack ALWAYS fires before we leave the
-            // state — Sparkle stalls otherwise.
-            let stateRef = stateModel
-            Task { @MainActor in
-                try? await Task.sleep(for: .seconds(3))
-                if case .notFound = stateRef.state {
-                    ackOnce.call()
-                    stateRef.state = .idle
-                }
+            // state — Sparkle stalls otherwise. The timer acts only on
+            // this session's result: a later check's own "no update"
+            // keeps its acknowledgment until its own timer or OK.
+            dismissAfter(.seconds(3)) { state in
+                guard case .notFound = state else { return false }
+                ackOnce.call()
+                return true
             }
         } else {
             standard.showUpdateNotFoundWithError(error, acknowledgement: { ackOnce.call() })
@@ -168,7 +263,11 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
         let ackOnce = OneShot(acknowledgement)
         if !showsInStandardUI() {
             consumePendingCallback()
-            stateModel.state = .error(error: error, acknowledgement: ackOnce)
+            let id = ensureSession()
+            let retry = OneShot<Void> { [weak self] in
+                self?.retry(afterSession: id, acknowledgement: ackOnce)
+            }
+            show(.error(error: error, acknowledgement: ackOnce, retry: retry))
         } else {
             standard.showUpdaterError(error, acknowledgement: { ackOnce.call() })
         }
@@ -181,19 +280,30 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
         state: SPUUserUpdateState,
         reply: @escaping (SPUUserUpdateChoice) -> Void
     ) {
-        let replyOnce = OneShot(reply)
-        if !showsInStandardUI() {
-            consumePendingCallback()
-            stateModel.state = .available(
-                item: UpdateDisplayItem(appcastItem: appcastItem),
-                reply: replyOnce
-            )
-        } else {
+        showUpdateFound(UpdateDisplayItem(appcastItem: appcastItem), reply: reply) { [standard] replyOnce in
             standard.showUpdateFound(
                 with: appcastItem,
                 state: state,
                 reply: { choice in replyOnce.call(choice) }
             )
+        }
+    }
+
+    /// Shows a found update given as Weir's own item, which tests can
+    /// make; `inStandardUI` hands the step to Sparkle's UI.
+    func showUpdateFound(
+        _ item: UpdateDisplayItem,
+        reply: @escaping (SPUUserUpdateChoice) -> Void,
+        inStandardUI: (OneShot<SPUUserUpdateChoice>) -> Void
+    ) {
+        let replyOnce = OneShot(reply)
+        ensureSession()
+        session?.item = item
+        if !showsInStandardUI() {
+            consumePendingCallback()
+            show(.available(item: item, reply: replyOnce))
+        } else {
+            inStandardUI(replyOnce)
         }
     }
 
@@ -211,20 +321,17 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
 
     func showDownloadInitiated(cancellation: @escaping () -> Void) {
         let cancelOnce = OneShot(cancellation)
-        if showsInStandardUI() {
+        guard !showsInStandardUI(needsItem: true), let item = session?.item else {
             standard.showDownloadInitiated(cancellation: { cancelOnce.call() })
             return
         }
-        // Carry forward the display item if we have one in state;
-        // otherwise show a placeholder.
-        let item = stateModel.pendingItem ?? .placeholder
         consumePendingCallback()
-        stateModel.state = .downloading(
+        show(.downloading(
             item: item,
             expectedBytes: nil,
             receivedBytes: 0,
             cancel: cancelOnce
-        )
+        ))
     }
 
     func showDownloadDidReceiveExpectedContentLength(_ expectedContentLength: UInt64) {
@@ -233,12 +340,12 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
             return
         }
         guard case let .downloading(item, _, received, cancel) = stateModel.state else { return }
-        stateModel.state = .downloading(
+        show(.downloading(
             item: item,
             expectedBytes: expectedContentLength,
             receivedBytes: received,
             cancel: cancel
-        )
+        ))
     }
 
     func showDownloadDidReceiveData(ofLength length: UInt64) {
@@ -247,12 +354,12 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
             return
         }
         guard case let .downloading(item, expected, received, cancel) = stateModel.state else { return }
-        stateModel.state = .downloading(
+        show(.downloading(
             item: item,
             expectedBytes: expected,
             receivedBytes: received + length,
             cancel: cancel
-        )
+        ))
     }
 
     // MARK: - Extraction
@@ -265,7 +372,7 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
         if isStandardFlow {
             standard.showDownloadDidStartExtractingUpdate()
         } else {
-            stateModel.state = .extracting(progress: 0)
+            show(.extracting(progress: 0))
         }
     }
 
@@ -273,7 +380,7 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
         if isStandardFlow {
             standard.showExtractionReceivedProgress(progress)
         } else {
-            stateModel.state = .extracting(progress: progress)
+            show(.extracting(progress: progress))
         }
     }
 
@@ -283,10 +390,9 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
         toInstallAndRelaunch reply: @escaping (SPUUserUpdateChoice) -> Void
     ) {
         let replyOnce = OneShot(reply)
-        if !showsInStandardUI() {
-            let item = stateModel.pendingItem ?? .placeholder
+        if !showsInStandardUI(needsItem: true), let item = session?.item {
             consumePendingCallback()
-            stateModel.state = .readyToInstall(item: item, reply: replyOnce)
+            show(.readyToInstall(item: item, reply: replyOnce))
         } else {
             standard.showReady(
                 toInstallAndRelaunch: { choice in replyOnce.call(choice) }
@@ -313,7 +419,7 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
         // user is stuck on the "Installing update…" row with no way
         // out — the standard driver path is deliberately skipped
         // (Sparkle would otherwise layer its own modal on top).
-        stateModel.state = .installing(retry: OneShot(retryTerminatingApplication))
+        show(.installing(retry: OneShot(retryTerminatingApplication)))
     }
 
     func showUpdateInstalledAndRelaunched(
@@ -321,11 +427,17 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
         acknowledgement: @escaping () -> Void
     ) {
         consumePendingCallback()
-        isStandardFlow = false
+        // The relaunched app reports the install of a session the earlier
+        // process ran; it shows inline as a session of its own.
+        beginSession()
         let ackOnce = OneShot(acknowledgement)
-        stateModel.state = .installed(acknowledgement: ackOnce)
+        show(.installed(acknowledgement: ackOnce))
+        // No Sparkle session of this process belongs to the report, and
+        // none will end it, so we close ours now; its dismiss timer still
+        // matches the state's session.
+        session = nil
         // Acknowledge immediately so Sparkle frees its resources; the
-        // OneShot keeps any view-side `acknowledgement.call()` safe.
+        // OneShot keeps any view-side `acknowledgment.call()` safe.
         ackOnce.call()
         // Auto-dismiss the inline state regardless of whether the
         // popover is ever opened. Without this the green ✓ badge
@@ -334,12 +446,50 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
         // popover is open, which it isn't in a freshly-relaunched
         // process). 5 s is a touch longer than `.notFound`'s 3 s so
         // the success message has time to land.
-        let stateRef = stateModel
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(5))
-            if case .installed = stateRef.state {
-                stateRef.state = .idle
+        dismissAfter(.seconds(5)) { state in
+            if case .installed = state {
+                true
+            } else {
+                false
             }
+        }
+    }
+
+    /// Clears the inline state after `delay` if it still shows this
+    /// session's result. `settles` checks the state, settles its callback,
+    /// and says whether to clear it.
+    private func dismissAfter(_ delay: Duration, settles: @escaping @MainActor (UpdateState) -> Bool) {
+        let id = ensureSession()
+        let stateRef = stateModel
+        _ = timer.schedule(delay) {
+            guard stateRef.sessionID == id, settles(stateRef.state) else { return }
+            stateRef.show(.idle)
+        }
+    }
+
+    /// Acknowledges a failed check and starts another once Sparkle has
+    /// ended it; a Retry left from an earlier session only acknowledges.
+    private func retry(afterSession id: UpdateSessionID, acknowledgement: OneShot<Void>) {
+        if session?.id == id, stateModel.sessionID == id, defersCheckToSessionEnd() {
+            return
+        }
+        acknowledgement.call()
+    }
+
+    /// Takes a check asked for while the open session shows its result,
+    /// "You’re up to date" or a failure: settles that result, which lets
+    /// Sparkle end the session, and starts the check once it has. Returns
+    /// whether it took the check; Sparkle answers any other check itself.
+    func defersCheckToSessionEnd() -> Bool {
+        guard let id = session?.id, stateModel.sessionID == id else { return false }
+        switch stateModel.state {
+        case let .notFound(acknowledgement),
+             let .error(_, acknowledgement, _):
+            startsCheckWhenCycleEnds = true
+            acknowledgement.call()
+            return true
+        case .idle, .checking, .available, .downloading, .extracting, .readyToInstall, .installing, .installed:
+            return false
         }
     }
 
@@ -359,11 +509,13 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
 
     func dismissUpdateInstallation() {
         consumePendingCallback()
-        stateModel.state = .idle
-        if isStandardFlow {
+        stateModel.show(.idle)
+        let wasStandardFlow = isStandardFlow
+        // Sparkle calls this only as it ends a session.
+        session = nil
+        if wasStandardFlow {
             // Sparkle's driver closes its checking and progress windows
             // here; without the call they outlive the session.
-            isStandardFlow = false
             standard.dismissUpdateInstallation()
         }
     }

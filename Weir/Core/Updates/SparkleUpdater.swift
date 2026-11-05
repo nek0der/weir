@@ -49,7 +49,6 @@ struct UpdateDisplayItem {
         self.releaseNotesURL = releaseNotesURL
     }
 
-    static let placeholder = UpdateDisplayItem(displayVersion: "v0.0.0")
 }
 
 // MARK: - One-shot callback wrapper
@@ -88,7 +87,7 @@ final class OneShot<Argument> {
 }
 
 extension OneShot where Argument == Void {
-    /// Parameterless convenience for callbacks like `acknowledgement`
+    /// Parameterless convenience for callbacks like `acknowledgment`
     /// and `cancellation` that don't carry a value.
     func call() {
         call(())
@@ -120,7 +119,18 @@ enum UpdateState {
     case installing(retry: OneShot<Void>?)
     case installed(acknowledgement: OneShot<Void>)
     case notFound(acknowledgement: OneShot<Void>)
-    case error(error: any Error, acknowledgement: OneShot<Void>)
+    /// `retry` closes the failed check and starts a new one once Sparkle
+    /// has ended it (`WeirUpdateDriver.updateCycleDidFinish`); a check
+    /// asked for while the failed one is still open is ignored.
+    case error(error: any Error, acknowledgement: OneShot<Void>, retry: OneShot<Void>)
+}
+
+/// The identity of one Sparkle update session: a check and whatever
+/// follows it, up to the moment Sparkle ends it. A timer or a choice made for one session
+/// compares its identity with the session the update interface shows, so
+/// one left over from an earlier session never ends a later one.
+struct UpdateSessionID: Hashable {
+    let rawValue: UInt64
 }
 
 /// Shared observable wrapping `UpdateState`. The driver writes; the
@@ -130,26 +140,25 @@ enum UpdateState {
 @MainActor
 @Observable
 final class UpdateStateModel {
-    var state: UpdateState = .idle
+    /// The state the update interface shows, written only through
+    /// `show(_:for:)` so its session never goes stale.
+    private(set) var state: UpdateState = .idle
+
+    /// The Sparkle session `state` belongs to; nil for an idle state and
+    /// for the Debug mock, which runs no session.
+    private(set) var sessionID: UpdateSessionID?
+
+    /// Shows `state` as part of `session`.
+    func show(_ state: UpdateState, for session: UpdateSessionID? = nil) {
+        self.state = state
+        sessionID = session
+    }
 
     /// Counts the times Check for Updates was chosen while an update was
     /// shown inline. The window in front opens its update popover on each
     /// change, so the choice brings the update forward instead of doing
     /// nothing (`WeirUpdateDriver.showUpdateInFocus`).
     var focusRequests = 0
-
-    /// Convenience: display item attached to the current state, if any,
-    /// without case-matching. The driver reads it.
-    var pendingItem: UpdateDisplayItem? {
-        switch state {
-        case let .available(item, _),
-             let .downloading(item, _, _, _),
-             let .readyToInstall(item, _):
-            item
-        case .idle, .checking, .extracting, .installing, .installed, .notFound, .error:
-            nil
-        }
-    }
 
     /// True when an update control (the left rail's icon) should render.
     /// `.idle` and `.notFound` (after auto-dismiss)
@@ -203,6 +212,9 @@ final class UpdaterStack {
     let updater: SPUUpdater
     let driver: WeirUpdateDriver
     let stateModel: UpdateStateModel
+    /// The updater's delegate, held here because `SPUUpdater` keeps its
+    /// delegate weakly.
+    let cycleObserver: UpdateCycleObserver
 
     /// `startsUpdater` is false in demo mode. Started, Sparkle checks at
     /// once when its defaults hold no last check, as in the isolated home
@@ -219,14 +231,19 @@ final class UpdaterStack {
     ) {
         let stateModel = UpdateStateModel()
         let driver = WeirUpdateDriver(stateModel: stateModel, hostBundle: .main, hasInlineTarget: hasInlineTarget)
+        let cycleObserver = UpdateCycleObserver(driver: driver)
         self.stateModel = stateModel
         self.driver = driver
+        self.cycleObserver = cycleObserver
         self.updater = SPUUpdater(
             hostBundle: .main,
             applicationBundle: .main,
             userDriver: driver,
-            delegate: nil
+            delegate: cycleObserver
         )
+        // Retry on a failed check starts the next one here, the way the
+        // menu item and Settings do.
+        driver.startsCheck = { [weak self] in self?.checkForUpdates() }
         guard startsUpdater else { return }
         // Otherwise always `start()` — without it, `checkForUpdates()`
         // (both the menu item and Settings → Check Now) silently no-ops.
@@ -251,6 +268,46 @@ final class UpdaterStack {
             updater.automaticallyChecksForUpdates = false
         }
     }
+
+    /// Starts a check for updates, for the app menu, Settings, and Retry
+    /// on a failed check. While a session shows "You’re up to date" or a
+    /// failure, Sparkle still has it open and would ignore the check, so
+    /// the driver settles that result and starts the check once Sparkle
+    /// has ended it. Debug builds run the mock pipeline instead of a
+    /// Sparkle check, so the update interface can be seen without a
+    /// release feed, except while a real session is open: the mock would
+    /// replace that session's state without settling its callback.
+    func checkForUpdates() {
+        if driver.defersCheckToSessionEnd() {
+            return
+        }
+        #if DEBUG
+            if driver.hasOpenSession {
+                updater.checkForUpdates()
+            } else {
+                MockUpdateAvailability.simulate(into: stateModel)
+            }
+        #else
+            updater.checkForUpdates()
+        #endif
+    }
+}
+
+/// The delegate that tells the driver when Sparkle has ended an update
+/// session. Sparkle ends one only after the acknowledgment of its last
+/// step, on a later turn of the main queue, and ignores a check asked for
+/// before then.
+@MainActor
+final class UpdateCycleObserver: NSObject, SPUUpdaterDelegate {
+    private weak var driver: WeirUpdateDriver?
+
+    init(driver: WeirUpdateDriver) {
+        self.driver = driver
+    }
+
+    func updater(_: SPUUpdater, didFinishUpdateCycleFor _: SPUUpdateCheck, error _: (any Error)?) {
+        driver?.updateCycleDidFinish()
+    }
 }
 
 #if DEBUG
@@ -273,12 +330,12 @@ final class UpdaterStack {
                 case .install:
                     runFakeInstallPipeline(item: item, into: model)
                 case .skip, .dismiss:
-                    model.state = .idle
+                    model.show(.idle)
                 @unknown default:
-                    model.state = .idle
+                    model.show(.idle)
                 }
             }
-            model.state = .available(item: item, reply: reply)
+            model.show(.available(item: item, reply: reply))
         }
 
         /// Runs the download → extract → ready chain with realistic-
@@ -288,9 +345,9 @@ final class UpdaterStack {
             item: UpdateDisplayItem,
             into model: UpdateStateModel
         ) {
-            let cancel = OneShot<Void> { [weak model] in model?.state = .idle }
+            let cancel = OneShot<Void> { [weak model] in model?.show(.idle) }
             let total: UInt64 = 60_817_408
-            model.state = .downloading(item: item, expectedBytes: total, receivedBytes: 0, cancel: cancel)
+            model.show(.downloading(item: item, expectedBytes: total, receivedBytes: 0, cancel: cancel))
             Task { @MainActor [weak model] in
                 guard let model else { return }
                 await runFakeDownload(item: item, total: total, cancel: cancel, in: model)
@@ -298,10 +355,10 @@ final class UpdaterStack {
                 await runFakeExtract(in: model)
                 guard case .extracting = model.state else { return }
                 try? await Task.sleep(for: .milliseconds(180))
-                model.state = .readyToInstall(
+                model.show(.readyToInstall(
                     item: item,
                     reply: makeReadyReply(item: item, model: model)
-                )
+                ))
             }
         }
 
@@ -315,22 +372,22 @@ final class UpdaterStack {
                 try? await Task.sleep(for: .milliseconds(220))
                 guard case .downloading = model.state else { return }
                 let received = UInt64(Double(total) * Double(step) / 10.0)
-                model.state = .downloading(
+                model.show(.downloading(
                     item: item,
                     expectedBytes: total,
                     receivedBytes: received,
                     cancel: cancel
-                )
+                ))
             }
         }
 
         private static func runFakeExtract(in model: UpdateStateModel) async {
             try? await Task.sleep(for: .milliseconds(180))
-            model.state = .extracting(progress: 0)
+            model.show(.extracting(progress: 0))
             for step in 1...6 {
                 try? await Task.sleep(for: .milliseconds(180))
                 guard case .extracting = model.state else { return }
-                model.state = .extracting(progress: Double(step) / 6.0)
+                model.show(.extracting(progress: Double(step) / 6.0))
             }
         }
 
@@ -349,7 +406,7 @@ final class UpdaterStack {
                         await runFakeInstallStage(in: model)
                     }
                 } else {
-                    model.state = .idle
+                    model.show(.idle)
                 }
             }
         }
@@ -357,15 +414,15 @@ final class UpdaterStack {
         private static func runFakeInstallStage(in model: UpdateStateModel) async {
             // Mock has nothing real to retry — pass nil so the inline
             // view hides the Retry affordance for the simulated stage.
-            model.state = .installing(retry: nil)
+            model.show(.installing(retry: nil))
             try? await Task.sleep(for: .milliseconds(800))
-            let ack = OneShot<Void> { [weak model] in model?.state = .idle }
-            model.state = .installed(acknowledgement: ack)
+            let ack = OneShot<Void> { [weak model] in model?.show(.idle) }
+            model.show(.installed(acknowledgement: ack))
             // Mirror the production driver's auto-dismiss so the
             // green ✓ doesn't persist forever in Debug iterations.
             try? await Task.sleep(for: .seconds(5))
             if case .installed = model.state {
-                model.state = .idle
+                model.show(.idle)
             }
         }
 

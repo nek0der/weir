@@ -2,7 +2,6 @@
 // Weir — the update interface's state: the item it shows, a download's progress, and how progress is read out.
 
 import Foundation
-import Sparkle
 import Testing
 @testable import Weir
 
@@ -22,16 +21,14 @@ struct UpdateStateTests {
         #expect(UpdateState.idle.progressValueText(locale: Locale(identifier: "en")).isEmpty)
     }
 
-    /// `UpdateDisplayItem` holds no appcast item by its type, which needs no
-    /// test here.
-    @Test("the driver reads the update's version from the state")
-    func updateStateCarriesDisplayItem() {
-        let item = UpdateDisplayItem(displayVersion: "v1.2.3")
-        let reply = OneShot<SPUUserUpdateChoice> { _ in }
+    @Test func showingAState_recordsTheSessionItBelongsTo() {
         let model = UpdateStateModel()
+        let session = UpdateSessionID(rawValue: 7)
 
-        model.state = .available(item: item, reply: reply)
+        model.show(.extracting(progress: 0.5), for: session)
+        #expect(model.sessionID == session)
 
-        #expect(model.pendingItem?.displayVersion == "v1.2.3")
+        model.show(.idle)
+        #expect(model.sessionID == nil)
     }
 }

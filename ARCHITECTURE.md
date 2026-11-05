@@ -539,7 +539,7 @@ conversation again as its surface mounts (`AgentResumeCommandBuilder`).
 | `Weir/Core/Git/ProcessDrain.swift` | The one runner of a bounded child process: its pipes read while it runs, its timeout, its output cap, SIGTERM then SIGKILL (`GitProcess`, the forge tools, the review's Git, the tmux client) |
 | `Weir/Core/Actions/ReviewInsertion.swift` | The order an insert happens in: resolve the pane, validate, deliver, then record |
 | `Weir/Core/Review/ReviewPresentation.swift` | Where review sits in a window, and which terminal it delivers to — following the focused pane until the reader pins one |
-| `Weir/Core/Updates/SparkleUpdater.swift` | Sparkle integration: the one `@Observable` updater the app and Settings share |
+| `Weir/Core/Updates/SparkleUpdater.swift` | Sparkle integration: `UpdaterStack`, the one place Weir starts a check (menu, Settings, Retry), and the update state each window shows, tagged with the Sparkle session it belongs to |
 
 ---
 

@@ -54,7 +54,7 @@ extension View {
         .environment(\.turnHistory, state.agentProjection.turnHistory)
         .environment(\.frecencyStore, state.frecencyStore)
         .environment(\.notificationManager, state.notificationManager)
-        .environment(\.sparkleUpdater, updaterStack.updater)
+        .environment(\.updaterStack, updaterStack)
         .environment(updaterStack.stateModel)
     }
 }
