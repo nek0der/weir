@@ -337,6 +337,11 @@ private struct ApprovalCard: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    // Room for the focus rings of a question's tabs, options,
+                    // and answer field, and of a permission request's Show
+                    // Details, which stand outside them; the scroll view cuts
+                    // off whatever reaches past its edge.
+                    .padding(WeirLayout.Supervision.focusRingOutset)
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 // As tall as what it holds, up to what the cap leaves.
@@ -346,6 +351,12 @@ private struct ApprovalCard: View {
                 ))
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { scrollingBodyHeight = $0 }
+                // Taken back outside the scroll view, so the controls line up
+                // with the header and the buttons below while their rings
+                // still draw inside it. The height above is measured before
+                // this, room included, so the cap on the card's height
+                // counts the room as the scroll view's own.
+                .padding(-WeirLayout.Supervision.focusRingOutset)
             }
             statusLine
             actions
