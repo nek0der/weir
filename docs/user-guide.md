@@ -194,8 +194,8 @@ with none left. Claude starts that turn itself when a task ends. The row,
 the tab, and the pane header show the circling dot meanwhile, and the agent
 still counts as finished for **Needs Attention** and notifications. A turn
 that fails or is interrupted says nothing about them. Codex does not report
-its background terminals, so its line never says this. Antigravity's line never
-says it either.
+its background terminals or subagents, so its line never says this.
+Antigravity's line never says it either.
 
 ### Changes panel
 

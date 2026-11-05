@@ -50,6 +50,8 @@ pub(crate) fn descriptor() -> &'static ProviderDescriptor {
             // `PermissionRequest` has no `tool_use_id`, so an
             // `AskUserQuestion` answered in the TUI is known by its turn.
             Capability::QuestionEndsWithTurn,
+            // A background subagent's hand-back opens a turn of Claude's.
+            Capability::SubagentEndOpensTurn,
         ]),
         // The Claude receiver historically ran a slow sweep; Codex needs a
         // faster one because it emits no Stop when killed mid-turn.
@@ -118,6 +120,7 @@ mod tests {
         assert!(descriptor.has(Capability::CwdEvents));
         assert!(!descriptor.has(Capability::ResumeDefersToOtherLiveSession));
         assert!(descriptor.has(Capability::CacheWindow));
+        assert!(descriptor.has(Capability::SubagentEndOpensTurn));
         assert!(descriptor.has(Capability::WorktreePlacement));
         assert!(!descriptor.has(Capability::WorktreeFinishProven));
         assert_eq!(descriptor.state_directory, "agent-states");

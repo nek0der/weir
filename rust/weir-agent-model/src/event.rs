@@ -190,11 +190,11 @@ pub enum AgentEvent {
         tool: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
-        /// The tool is a subagent's rather than the agent's own (Claude
-        /// names the subagent with `agent_id`). A background subagent works
-        /// on after the turn that launched it has stopped, and the stop
-        /// already counted it (`background_work`), so its tools do not put
-        /// the run back to work. Omitted when false.
+        /// The tool is a subagent's rather than the agent's own (Claude and
+        /// Codex name the subagent with `agent_id`). A subagent can work on
+        /// after the turn that launched it has stopped, and that stop ended
+        /// the pane's turn (Claude's also counted it, `background_work`),
+        /// so its tools do not put the run back to work. Omitted when false.
         #[serde(default, skip_serializing_if = "is_false")]
         by_subagent: bool,
     },

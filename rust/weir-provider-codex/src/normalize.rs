@@ -19,7 +19,10 @@
 //! the provider's internal work and yields no event (`is_internal_agent`).
 //!
 //! A subagent the person's agent spawns is marked, and only its tool calls
-//! and permission requests count as the pane's (`is_subagents_own`).
+//! and permission requests count as the pane's (`is_subagents_own`). Its
+//! tool calls say they are a subagent's (`by_subagent`), as Claude's do: the
+//! subagent can work on after the parent's `Stop`, and its tools then leave
+//! the finished run at rest.
 
 use crate::failure::{RolloutFailure, USAGE_LIMIT_KIND, rollout_failure};
 use crate::json::{contains, parse, string};
@@ -106,7 +109,7 @@ pub(crate) fn normalize(
         "PreToolUse" => pre_tool_use(&object),
         "PostToolUse" => AgentEvent::ToolFinished {
             tool: string(&object, "tool_name").map(str::to_owned),
-            by_subagent: false,
+            by_subagent: is_subagents(&object),
         },
         // Codex's request carries the tool and its input but no message, so
         // the lifecycle words the wait.
@@ -347,7 +350,7 @@ pub(crate) fn is_subagents(object: &Map<String, Value>) -> bool {
 /// the parent's own turn with no end), and its session, compaction, and
 /// interrupt would be taken for the parent's. Its tools still run, and its
 /// permission requests still wait on the person, in the pane's process, so
-/// those stay the pane's.
+/// those stay the pane's, its tools marked as a subagent's.
 fn is_subagents_own(object: &Map<String, Value>, event_name: &str) -> bool {
     is_subagents(object)
         && !matches!(
@@ -391,7 +394,7 @@ fn pre_tool_use(object: &Map<String, Value>) -> AgentEvent {
     AgentEvent::ToolStarted {
         detail: Some(detail),
         tool,
-        by_subagent: false,
+        by_subagent: is_subagents(object),
     }
 }
 
@@ -724,7 +727,8 @@ mod tests {
     /// A subagent's hooks carry `agent_id` and `agent_type` (Codex 0.163.0,
     /// `hooks/src/events/user_prompt_submit.rs`). Its prompt, session,
     /// compaction, and interrupt are its own and leave the parent's turn
-    /// alone; its tools and permission requests are work in the pane.
+    /// alone; its tools and permission requests are work in the pane, its
+    /// tools marked as a subagent's.
     #[test]
     fn a_subagent_neither_begins_nor_ends_the_parents_turn() {
         let marker = r#""agent_id":"019a0000-0000-7000-8000-000000000001","agent_type":"explorer""#;
@@ -746,7 +750,16 @@ mod tests {
             vec![AgentEvent::ToolStarted {
                 tool: "Bash".into(),
                 detail: Some("Bash: ls".into()),
-                by_subagent: false,
+                by_subagent: true,
+            }]
+        );
+        assert_eq!(
+            events(&format!(
+                r#"{{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{{"command":"ls"}},{marker}}}"#
+            )),
+            vec![AgentEvent::ToolFinished {
+                tool: Some("Bash".into()),
+                by_subagent: true,
             }]
         );
         assert!(matches!(

@@ -37,6 +37,7 @@
   ],
   [
     {
+      "by_subagent": true,
       "detail": "Bash: ls",
       "tool": "Bash",
       "type": "tool_started"
@@ -44,6 +45,7 @@
   ],
   [
     {
+      "by_subagent": true,
       "tool": "Bash",
       "type": "tool_finished"
     }
