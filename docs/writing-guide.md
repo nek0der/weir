@@ -5,17 +5,21 @@ and pull requests for Weir. It applies to human contributors and coding agents,
 but not to chat responses. Read the common rules and the section relevant to
 your task. Examples illustrate wording, not verified changes to Weir.
 
-The [language policy](../CONTRIBUTING.md#language-policy) specifies the
-language to use for each kind of contribution. The [document guide](README.md)
-defines structure and content rules for documents under `docs/`, including
-ADRs. The
-[site guide](../site/README.md) defines the corresponding rules for site pages.
-Follow those guides where their requirements differ from the general advice
-here. The [agent guide](../AGENTS.md) defines code and Git conventions, and
-the [PR template](../.github/pull_request_template.md) defines
-the required PR sections. Other contributor and agent instructions may
-summarize essential wording rules and link here. Keep detailed rules and
-examples in this guide.
+Related guides define the requirements for each kind of contribution:
+
+| Guide | Requirements |
+| --- | --- |
+| [Language policy](../CONTRIBUTING.md#language-policy) | Language for each kind of content. |
+| [Document guide](README.md) | Structure and content for `docs/`, including ADRs. |
+| [Site guide](../site/README.md) | Site pages and their translations. |
+| [Agent guide](../AGENTS.md) | Code conventions and repository constraints. |
+| [Contributor guide](../CONTRIBUTING.md#pull-requests) | Git conventions and contribution procedures. |
+| [PR template](../.github/pull_request_template.md) | Required PR sections. |
+
+Follow the document and site guides where their requirements differ from the
+general advice here. Contributor and agent instructions may summarize
+essential wording rules and link here; keep detailed rules and examples in
+this guide.
 
 ## Common wording
 
@@ -129,8 +133,8 @@ The title names the concrete change in the imperative: `preserve`, not
 private helper's name. After the prefix, start with a lowercase verb and omit
 the final period; this is a Weir convention, not a requirement of the external
 guides. Preserve the capitalization of identifiers and proper names.
-Follow the agent guide for scopes and attribution. For a standalone commit
-that needs explanation, leave a blank line after the subject and describe
+Follow the contributor guide for scopes and attribution. When a standalone
+commit needs explanation, leave a blank line after the subject and describe
 the reason, impact, or tradeoff that the diff cannot show.
 
 Write for a contributor who has not read the chat or worked on this area.

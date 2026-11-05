@@ -24,7 +24,9 @@
 
 ## Checklist
 
-<!-- Tick what applies; leave the rest unchecked (no need to explain why). -->
+<!-- Tick applicable items only after verifying them. Leave items that do not
+     apply unchecked; no explanation is needed. For an applicable check you
+     could not complete, leave it unchecked and explain why in How verified. -->
 
 - [ ] `make lint` passes locally
 - [ ] `make test` passes
