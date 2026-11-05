@@ -357,27 +357,52 @@ fn listed_worktree(root: &Path, path: &Path, branch: &str) -> Option<ListedWorkt
         .ok()
         .filter(|output| output.status.success())?;
     let listing = String::from_utf8_lossy(&listing.stdout);
-    let wanted_branch = format!("branch refs/heads/{branch}");
-    listing.split("\n\n").find_map(|entry| {
-        let mut lines = entry.lines();
-        let listed = lines.next()?.strip_prefix("worktree ")?;
-        if Path::new(listed).canonicalize().ok()? != wanted {
+    let wanted_ref = format!("refs/heads/{branch}");
+    parse_listing(&listing).into_iter().find_map(|entry| {
+        if Path::new(entry.path).canonicalize().ok()? != wanted {
             return None;
         }
-        let rest: Vec<&str> = lines.collect();
         // A prunable one has lost its folder or its `.git`, and Git run inside
         // would answer for whatever repository is around it. A locked one is never
         // called prunable, so we look for the `.git` ourselves.
-        let is_prunable =
-            rest.iter().any(|line| line.starts_with("prunable")) || !path.join(".git").exists();
+        let is_prunable = entry.is_prunable || !path.join(".git").exists();
         // Git holds the worktree locked through the checkout, under `initializing`
         // or the reason `--lock` gives, which may be a person's own or translated.
         // Only the index it writes at the end tells the checkout has finished.
-        let is_locked = rest.iter().any(|line| line.starts_with("locked"));
-        (rest.contains(&wanted_branch.as_str()) && !is_prunable).then(|| ListedWorktree {
-            is_checking_out: is_locked && !has_index(path),
+        (entry.branch_ref == Some(wanted_ref.as_str()) && !is_prunable).then(|| ListedWorktree {
+            is_checking_out: entry.is_locked && !has_index(path),
         })
     })
+}
+
+/// One worktree of `git worktree list --porcelain`, as Git wrote it.
+#[derive(Debug, PartialEq, Eq)]
+struct ListingEntry<'a> {
+    path: &'a str,
+    /// The ref its `branch` line names; `None` when detached or bare.
+    branch_ref: Option<&'a str>,
+    is_prunable: bool,
+    is_locked: bool,
+}
+
+/// The worktrees `git worktree list --porcelain` lists, in its order. Reads the
+/// text only: what the paths are on disk is the caller's to ask. An entry
+/// without its `worktree` line is not one.
+fn parse_listing(listing: &str) -> Vec<ListingEntry<'_>> {
+    listing
+        .split("\n\n")
+        .filter_map(|entry| {
+            let mut lines = entry.lines();
+            let path = lines.next()?.strip_prefix("worktree ")?;
+            let rest: Vec<&str> = lines.collect();
+            Some(ListingEntry {
+                path,
+                branch_ref: rest.iter().find_map(|line| line.strip_prefix("branch ")),
+                is_prunable: rest.iter().any(|line| line.starts_with("prunable")),
+                is_locked: rest.iter().any(|line| line.starts_with("locked")),
+            })
+        })
+        .collect()
 }
 
 /// Whether Git has written the worktree's index, which it does when the checkout
@@ -746,6 +771,51 @@ mod tests {
                 assert_eq!(rules(placement).worktree_path(&branch), None, "{branch:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_listing_is_read_entry_by_entry() {
+        let listing = "worktree /repo\nHEAD 1111\nbranch refs/heads/main\n\n\
+            worktree /repo-feature\nHEAD 2222\nbranch refs/heads/feature\nlocked initializing\n\n\
+            worktree /gone\nHEAD 3333\ndetached\nprunable gitdir file points to non-existent location\n\n";
+        assert_eq!(
+            parse_listing(listing),
+            vec![
+                ListingEntry {
+                    path: "/repo",
+                    branch_ref: Some("refs/heads/main"),
+                    is_prunable: false,
+                    is_locked: false,
+                },
+                ListingEntry {
+                    path: "/repo-feature",
+                    branch_ref: Some("refs/heads/feature"),
+                    is_prunable: false,
+                    is_locked: true,
+                },
+                ListingEntry {
+                    path: "/gone",
+                    branch_ref: None,
+                    is_prunable: true,
+                    is_locked: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_listing_keeps_a_path_with_spaces_whole_and_skips_what_is_no_worktree() {
+        let listing = "worktree /a b/c\nbare\n\n\nHEAD 1111\n\n";
+        assert_eq!(
+            parse_listing(listing),
+            vec![ListingEntry {
+                path: "/a b/c",
+                branch_ref: None,
+                is_prunable: false,
+                is_locked: false,
+            }]
+        );
+        assert!(parse_listing("").is_empty());
     }
 
     #[test]
