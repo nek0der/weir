@@ -114,7 +114,7 @@ enum UncommittedChangesCarrier {
     /// copy of its index.
     static func snapshot(of root: URL) async throws -> Snapshot? {
         let resolved = try await gitPaths(["index"] + UncommittedCarryRules.operationMarkers, in: root)
-        let head = try? await output(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], in: root)
+        let head = await headCommit(in: root)
         if let refusal = await UncommittedCarryRules.refusal(
             hasCommit: head != nil,
             isOperationInProgress: resolved.dropFirst().contains { FileManager.default.fileExists(atPath: $0.path) },
@@ -130,14 +130,8 @@ enum UncommittedChangesCarrier {
 
         return try await withScratch { scratch in
             let copy = scratch.appendingPathComponent("index")
-            try copyIndex(index, to: copy)
+            let indexTree = try await Self.indexTree(copying: index, to: copy, in: root)
             let environment = ["GIT_INDEX_FILE": copy.path]
-            let indexTree: String
-            do {
-                indexTree = try await output(["write-tree"], in: root, environment: environment)
-            } catch let UncommittedCarryRefusal.git(said) where said.contains("unmerged") {
-                throw UncommittedCarryRefusal.unmergedPaths
-            }
             try await refuseIndexOnlyState(in: root, indexTree: indexTree)
             try await output(["add", "-A", "--", ":/"], in: root, environment: environment)
             let fullTree = try await output(["write-tree"], in: root, environment: environment)
@@ -149,16 +143,10 @@ enum UncommittedChangesCarrier {
                     throw UncommittedCarryRefusal.submodules
                 }
             }
-            let deleted = try await names(
-                in: ["diff-tree", "-r", "-z", "--name-only", "--no-renames", "--diff-filter=D", head, fullTree],
-                root
-            )
+            let deleted = try await changedNames(from: head, to: fullTree, filter: "D", in: root)
             try await refuseIgnoredFilesInTheWay(in: root, deleted: deleted)
-            let untracked = try await names(
-                in: ["diff-tree", "-r", "-z", "--name-only", "--no-renames", "--diff-filter=A", indexTree, fullTree],
-                root
-            )
-            let changedPaths = try await names(in: ["diff-tree", "-r", "-z", "--name-only", "--no-renames", head, fullTree], root)
+            let untracked = try await changedNames(from: indexTree, to: fullTree, filter: "A", in: root)
+            let changedPaths = try await changedNames(from: head, to: fullTree, in: root)
             return await Snapshot(
                 source: root,
                 head: head,
@@ -171,6 +159,12 @@ enum UncommittedChangesCarrier {
                 fileCount: changedFileCount(in: root) ?? 0
             )
         }
+    }
+
+    /// The commit HEAD is at, `nil` when there is none or Git did not
+    /// answer.
+    private static func headCommit(in root: URL) async -> String? {
+        try? await output(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], in: root)
     }
 
     /// The branch HEAD names, `nil` on a detached HEAD: a checkout made
@@ -197,19 +191,20 @@ enum UncommittedChangesCarrier {
     /// it: going back to the file would remove the folder, those files with
     /// it, and they are carried nowhere.
     private static func refuseIgnoredFilesInTheWay(in root: URL, deleted: [String]) async throws {
-        if let path = try await ignoredFileInTheWay(in: root, deleted: deleted) {
+        if let path = try await ignoredFileInTheWay(in: root, at: deleted) {
             throw UncommittedCarryRefusal.ignoredFilesInTheWay(path)
         }
     }
 
-    /// The first path the changes delete where something Git ignores is on
-    /// disk now: a file of that name the person keeps out of Git (`.env`,
-    /// untracked and ignored after it was committed), or a folder holding
-    /// ignored files. Going back to HEAD writes the tracked file over it,
-    /// and nothing carries it. A file Git does not ignore there is no
-    /// deletion: it is in the snapshot.
-    private static func ignoredFileInTheWay(in root: URL, deleted: [String]) async throws -> String? {
-        for path in deleted {
+    /// The first of `paths`, each one Git is about to write a tracked file
+    /// at, where something Git ignores is on disk now: a file of that name
+    /// the person keeps out of Git (`.env`, untracked and ignored after it
+    /// was committed), or a folder holding ignored files. Git writes the
+    /// tracked file over it, and nothing carries it. For the paths the
+    /// changes delete, a file Git does not ignore there is no deletion: it
+    /// is in the snapshot.
+    private static func ignoredFileInTheWay(in root: URL, at paths: [String]) async throws -> String? {
+        for path in paths {
             switch FileBytes(at: root.appendingPathComponent(path)).kind {
             case .missing:
                 continue
@@ -237,6 +232,14 @@ enum UncommittedChangesCarrier {
         try await output(arguments, in: root, trims: false).split(separator: "\0").map(String.init)
     }
 
+    /// The paths `to` changes from `from`, both trees or commits, renames
+    /// read as a deletion and an addition; only those of `git diff
+    /// --diff-filter` kind `filter` when one is given.
+    private static func changedNames(from: String, to: String, filter: String? = nil, in root: URL) async throws -> [String] {
+        let filtering = filter.map { ["--diff-filter=\($0)"] } ?? []
+        return try await names(in: ["diff-tree", "-r", "-z", "--name-only", "--no-renames"] + filtering + [from, to], root)
+    }
+
     // MARK: - 2. Place
 
     /// The snapshot merged onto `start`, read in the repository at
@@ -249,10 +252,7 @@ enum UncommittedChangesCarrier {
         }
         let fullTree = try await merge(snapshot.fullTree, from: snapshot.head, onto: startCommit, in: repoRoot)
         let indexTree = try await merge(snapshot.indexTree, from: snapshot.head, onto: startCommit, in: repoRoot)
-        let startChanges = try await names(
-            in: ["diff-tree", "-r", "-z", "--name-only", "--no-renames", snapshot.head, startCommit],
-            repoRoot
-        )
+        let startChanges = try await changedNames(from: snapshot.head, to: startCommit, in: repoRoot)
         return Placement(start: startCommit, indexTree: indexTree, fullTree: fullTree, startChanges: Set(startChanges))
     }
 
@@ -307,7 +307,7 @@ enum UncommittedChangesCarrier {
     private static func apply(_ placement: Placement, of snapshot: Snapshot, to target: URL) async -> Bool {
         // The new worktree is at the start it was made from; anything else
         // and the merge was for another commit.
-        guard let head = try? await output(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], in: target),
+        guard let head = await headCommit(in: target),
               head == placement.start
         else { return false }
         // Nothing in it but its start, before we write: a `post-checkout`
@@ -329,8 +329,7 @@ enum UncommittedChangesCarrier {
                 return false
             }
         } catch {
-            await reset(target, from: placement)
-            return false
+            return await interruptedApply(placement, in: target)
         }
         let isPlaced = await isHolding(placement, in: target)
             && hasSameBytes(snapshot, placement: placement, in: target)
@@ -338,6 +337,14 @@ enum UncommittedChangesCarrier {
             await reset(target, from: placement)
         }
         return isPlaced
+    }
+
+    /// Step 3 after a `read-tree` that did not finish, which may have
+    /// written part of the change: the paths we carried put back to the
+    /// start. A refusal wrote nothing and needs none of this.
+    private static func interruptedApply(_ placement: Placement, in target: URL) async -> Bool {
+        await reset(target, from: placement)
+        return false
     }
 
     /// The index set to the placement's (its working tree is already the
@@ -351,9 +358,7 @@ enum UncommittedChangesCarrier {
         // are the unstaged changes, so its exit says nothing here.
         _ = try? await run(["update-index", "-q", "--refresh"], in: target)
         return await (try? withScratch { scratch in
-            let copy = scratch.appendingPathComponent("index")
-            try copyIndex(index, to: copy)
-            let indexTree = try await output(["write-tree"], in: target, environment: ["GIT_INDEX_FILE": copy.path])
+            let indexTree = try await Self.indexTree(copying: index, to: scratch.appendingPathComponent("index"), in: target)
             guard indexTree == placement.indexTree else { return false }
             return try await matches(placement.fullTree, in: target, seed: index, scratch: scratch)
         }) ?? false
@@ -404,11 +409,8 @@ enum UncommittedChangesCarrier {
     /// removes a file the placement added even where a run that did not
     /// finish wrote the file and not its entry.
     private static func reset(_ target: URL, from placement: Placement) async {
-        let start = placement.start
         do {
-            let written = try await names(in: ["diff-tree", "-r", "-z", "--name-only", "--no-renames", start, placement.fullTree], target)
-            let staged = try await names(in: ["diff-tree", "-r", "-z", "--name-only", "--no-renames", start, placement.indexTree], target)
-            let carried = Set(written).union(staged)
+            let (written, carried) = try await carriedPaths(of: placement, in: target)
             guard !carried.isEmpty else { return }
             let entries = try await output(["ls-tree", "-r", "-z", "--full-tree", placement.fullTree], in: target, trims: false)
             let placed = entries.split(separator: "\0").compactMap { cacheInfo($0, keeping: carried) }
@@ -437,6 +439,15 @@ enum UncommittedChangesCarrier {
         }
     }
 
+    /// The paths the placement changes from its start: `written`, those
+    /// whose files it writes, and `all`, those with its index's changes
+    /// besides.
+    private static func carriedPaths(of placement: Placement, in target: URL) async throws -> (written: [String], all: Set<String>) {
+        let written = try await changedNames(from: placement.start, to: placement.fullTree, in: target)
+        let staged = try await changedNames(from: placement.start, to: placement.indexTree, in: target)
+        return (written, Set(written).union(staged))
+    }
+
     /// Step 4: the snapshot taken out of its source, only as it was read.
     private static func clear(_ snapshot: Snapshot, headChecked: @Sendable () async -> Void) async -> Outcome {
         let root = snapshot.source
@@ -456,58 +467,83 @@ enum UncommittedChangesCarrier {
         // (docs/known-limitations.md).
         guard await isAtSnapshotHead(snapshot) else { return .leftInSource }
         return await (try? withScratch { scratch -> Outcome in
-            // The index as read: nothing staged or unstaged since.
-            let copy = scratch.appendingPathComponent("index")
-            try copyIndex(index, to: copy)
-            let indexTree = try await output(["write-tree"], in: root, environment: ["GIT_INDEX_FILE": copy.path])
-            guard indexTree == snapshot.indexTree else { return .leftInSource }
-            // The next index starts as the snapshot's, checked against every
-            // file on disk; then the working tree goes back to HEAD through
-            // it, which refuses, writing nothing, if a file changed since.
-            let next = scratch.appendingPathComponent("next")
-            try copyIndex(index, to: next)
-            let environment = ["GIT_INDEX_FILE": next.path]
-            try await output(["read-tree", "--reset", snapshot.fullTree], in: root, environment: environment)
-            guard try await run(["update-index", "--refresh"], in: root, environment: environment).succeeded else {
-                return .leftInSource
-            }
-            // Again just before Git writes: an ignored file a build made
-            // since the snapshot, where the changes delete a tracked one,
-            // would be written over, and Git takes ignored files as its own
-            // to replace.
-            guard try await ignoredFileInTheWay(in: root, deleted: snapshot.deletedPaths) == nil else { return .leftInSource }
-            let cleared: GitResult
-            do {
-                cleared = try await run(["read-tree", "-m", "-u", snapshot.fullTree, snapshot.head], in: root, environment: environment)
-            } catch {
-                // A run that did not finish may have written part of it.
-                if await isUntouched(snapshot, index: index, scratch: scratch) {
-                    return .leftInSource
-                }
-                log.error("carry: the source was cleared part way: \(String(describing: error), privacy: .private)")
-                return await .partlyCleared(stash: keepAsStash(snapshot))
-            }
-            guard cleared.succeeded else {
-                // Git checks every path before it writes any: a refusal, as
-                // for a file that changed, wrote nothing.
-                log.info("carry: the source changed; its changes stay: \(cleared.stderr, privacy: .private)")
-                return .leftInSource
-            }
-            // HEAD moved by a command that takes no lock on the index
-            // (`update-ref`, `reset --soft`): the new index would be for the
-            // old one.
-            guard await isAtSnapshotHead(snapshot), lock.commit(contentsOf: next) else {
-                log.error("carry: the source's new index could not be put in place")
-                return await .partlyCleared(stash: keepAsStash(snapshot))
-            }
-            return .moved(files: snapshot.fileCount)
+            guard let next = try await nextIndexIfUnchanged(snapshot, index: index, scratch: scratch) else { return .leftInSource }
+            return await writeBack(snapshot, index: index, next: next, lock: lock, scratch: scratch)
         }) ?? .leftInSource
+    }
+
+    /// Step 4's check that the source is still as read, under the lock: the
+    /// next index, the snapshot's checked against every file on disk, or
+    /// `nil` when anything changed since.
+    private static func nextIndexIfUnchanged(_ snapshot: Snapshot, index: URL, scratch: URL) async throws -> URL? {
+        let root = snapshot.source
+        // The index as read: nothing staged or unstaged since.
+        let indexTree = try await Self.indexTree(copying: index, to: scratch.appendingPathComponent("index"), in: root)
+        guard indexTree == snapshot.indexTree else { return nil }
+        // The next index starts as the snapshot's, checked against every
+        // file on disk; then the working tree goes back to HEAD through
+        // it, which refuses, writing nothing, if a file changed since.
+        let next = scratch.appendingPathComponent("next")
+        try copyIndex(index, to: next)
+        let environment = ["GIT_INDEX_FILE": next.path]
+        try await output(["read-tree", "--reset", snapshot.fullTree], in: root, environment: environment)
+        guard try await run(["update-index", "--refresh"], in: root, environment: environment).succeeded else {
+            return nil
+        }
+        // Again just before Git writes: an ignored file a build made
+        // since the snapshot, where the changes delete a tracked one,
+        // would be written over, and Git takes ignored files as its own
+        // to replace.
+        guard try await ignoredFileInTheWay(in: root, at: snapshot.deletedPaths) == nil else { return nil }
+        return next
+    }
+
+    /// Step 4's write: the working tree moved back to HEAD through the
+    /// index at `next`, then that index put in place through `lock`.
+    private static func writeBack(_ snapshot: Snapshot, index: URL, next: URL, lock: IndexLock, scratch: URL) async -> Outcome {
+        let environment = ["GIT_INDEX_FILE": next.path]
+        let cleared: GitResult
+        do {
+            cleared = try await run(
+                ["read-tree", "-m", "-u", snapshot.fullTree, snapshot.head],
+                in: snapshot.source,
+                environment: environment
+            )
+        } catch {
+            return await interruptedClear(snapshot, index: index, scratch: scratch, error: error)
+        }
+        guard cleared.succeeded else {
+            // Git checks every path before it writes any: a refusal, as
+            // for a file that changed, wrote nothing.
+            log.info("carry: the source changed; its changes stay: \(cleared.stderr, privacy: .private)")
+            return .leftInSource
+        }
+        // HEAD moved by a command that takes no lock on the index
+        // (`update-ref`, `reset --soft`): the new index would be for the
+        // old one.
+        guard await isAtSnapshotHead(snapshot), lock.commit(contentsOf: next) else {
+            log.error("carry: the source's new index could not be put in place")
+            return await .partlyCleared(stash: keepAsStash(snapshot))
+        }
+        return .moved(files: snapshot.fileCount)
+    }
+
+    /// Step 4 after a `read-tree` that did not finish, which may have
+    /// written part of it: the source left as it was when no file moved,
+    /// else cleared part way, with a copy of the changes kept. A refusal
+    /// wrote nothing and needs none of this.
+    private static func interruptedClear(_ snapshot: Snapshot, index: URL, scratch: URL, error: any Error) async -> Outcome {
+        if await isUntouched(snapshot, index: index, scratch: scratch) {
+            return .leftInSource
+        }
+        log.error("carry: the source was cleared part way: \(String(describing: error), privacy: .private)")
+        return await .partlyCleared(stash: keepAsStash(snapshot))
     }
 
     /// Whether the source's HEAD is the commit and the branch it was when
     /// the changes were read.
     private static func isAtSnapshotHead(_ snapshot: Snapshot) async -> Bool {
-        let head = try? await output(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], in: snapshot.source)
+        let head = await headCommit(in: snapshot.source)
         let branch = await headBranch(in: snapshot.source)
         return head == snapshot.head && branch == snapshot.branch
     }
@@ -655,6 +691,18 @@ enum UncommittedChangesCarrier {
             throw UncommittedCarryRefusal.git("\(index.path): no index")
         }
         try FileManager.default.copyItem(at: index, to: copy)
+    }
+
+    /// The tree the index at `index` makes, written through a copy of it at
+    /// `copy`, so the index itself is not written. An index with unmerged
+    /// paths makes no tree, and is refused as such.
+    private static func indexTree(copying index: URL, to copy: URL, in root: URL) async throws -> String {
+        try copyIndex(index, to: copy)
+        do {
+            return try await output(["write-tree"], in: root, environment: ["GIT_INDEX_FILE": copy.path])
+        } catch let UncommittedCarryRefusal.git(said) where said.contains("unmerged") {
+            throw UncommittedCarryRefusal.unmergedPaths
+        }
     }
 
     /// `body` with a folder of its own under the temporary folder, removed
