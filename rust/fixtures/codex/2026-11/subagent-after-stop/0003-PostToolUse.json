@@ -1,0 +1,18 @@
+{
+  "cwd": "/tmp/example",
+  "hook_event_name": "PostToolUse",
+  "model": "gpt-6-astra",
+  "permission_mode": "bypassPermissions",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "tool_input": {
+    "agent_type": "lookup",
+    "fork_turns": "none",
+    "message": "gAAAAABq7JGc5q0gWw1a7Je_dwN33jpm1IB2qECMLO1oGPJVC94aG8H-_KCOcZDVuLtE3gqJ6nIXf7mCWUcnxATW0mPGvQ_ygWL5WcYyaWigiF2elwYs4iZPXcU1xdQdb8N1j_G5VnlvJrRZEvt3pmNAhML3AUjxCxltTnegpEWkux95Y_0vYIPh8d0KELhujSmTRCibEEst-Ao3ZJRenc6nZO5VI3nCYGNyKe3cWz9YEDpGk3ABISaFPz9qoNWpZZSztrsnkigwICQHRD37ZPi-KpVWDAIzF8wygFblPcj1PXtKEkKxeh8=",
+    "task_name": "shell_task"
+  },
+  "tool_name": "collaborationspawn_agent",
+  "tool_response": "{\"task_name\":\"/root/shell_task\"}",
+  "tool_use_id": "toolu_00000000000000000000000",
+  "transcript_path": "/Users/example/.codex/sessions/2026/11/05/rollout-2026-11-05T23-24-00-00000000-0000-4000-8000-0000000000ff.jsonl",
+  "turn_id": "00000000-0000-4000-8000-000000000003"
+}

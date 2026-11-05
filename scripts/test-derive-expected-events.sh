@@ -77,12 +77,22 @@ expect(
     None,
 )
 expect(
-    "codex: a subagent's tool is the pane's work",
+    "codex: a subagent's tool is the pane's work, marked as a subagent's",
     derive.codex_event(
         {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}, **subagent},
         None,
     ),
-    {"type": "tool_started", "tool": "Bash", "detail": "Bash: ls"},
+    {"type": "tool_started", "tool": "Bash", "detail": "Bash: ls", "by_subagent": True},
+)
+expect(
+    "codex: a subagent's tool end is marked",
+    derive.codex_event({"hook_event_name": "PostToolUse", "tool_name": "Bash", **subagent}, None),
+    {"type": "tool_finished", "tool": "Bash", "by_subagent": True},
+)
+expect(
+    "codex: the agent's own tool end is not",
+    derive.codex_event({"hook_event_name": "PostToolUse", "tool_name": "Bash"}, None),
+    {"type": "tool_finished", "tool": "Bash"},
 )
 
 for name in ["PostToolUse", "PostToolUseFailure"]:

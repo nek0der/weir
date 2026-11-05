@@ -405,10 +405,16 @@ def codex_event(obj, _transcript_path):
             return event
         argument = tool_argument(tool_input, codex_argument)
         detail = f"{tool}: {argument}" if argument else tool
-        return {"type": "tool_started", "tool": tool, "detail": detail}
+        event = {"type": "tool_started", "tool": tool, "detail": detail}
+        # A subagent's tool call names the subagent, as Claude's does.
+        if string(obj, "agent_id"):
+            event["by_subagent"] = True
+        return event
     if name == "PostToolUse":
         event = {"type": "tool_finished"}
         optional(event, "tool", string(obj, "tool_name"))
+        if string(obj, "agent_id"):
+            event["by_subagent"] = True
         return event
     if name == "PermissionRequest":
         return {"type": "approval_requested"}

@@ -203,6 +203,7 @@ routing toggle when the descriptors cannot be read
 | `approval_hook` | Approval is answered by a hook process. | yes | yes | no | yes |
 | `approval_protocol` | Approval is requested over a connection. | no | no | no | no |
 | `subagents` | The provider emits subagent events. | yes | yes | yes | no |
+| `subagent_end_opens_turn` | A subagent's end hands its result back in a turn of the agent's own, so a subagent's tools at idle or error, or after a wait outside a turn, show the run working until that turn's stop. | yes | no | no | no |
 | `turn_snapshot` | Turns are recorded: a snapshot on prompt submit and another when the turn ends. | yes | yes | yes | yes |
 | `cache_window` | The provider reports when its prompt cache expires, on `TurnFinished`. | yes | no | no | no |
 | `program_status_idle_stops_turn` | An `idle` status report ends the turn it interrupts. | yes | no | yes | no |
@@ -270,8 +271,8 @@ described.
 
 A background subagent's tools reach the hook as the run's own `PreToolUse`,
 `PostToolUse`, and `PostToolUseFailure`, after the stop that launched it.
-Claude names the subagent in them (`agent_id`), and the adapter carries that
-as `by_subagent` on `ToolStarted` and `ToolFinished`. `apply` takes no such
+Claude and Codex name the subagent in them (`agent_id`), and their adapters
+carry that as `by_subagent` on `ToolStarted` and `ToolFinished`. `apply` takes no such
 tool event out of `finished` outside a turn and writes nothing for it: the
 stop already counted the subagent, and its tools are not the agent at work.
 The guard covers only `finished`. At `idle` and `error` no stop counted the
@@ -285,7 +286,10 @@ question the subagent asks after the stop (its `AskUserQuestion`, or its MCP
 server's request for input): its answer leaves the run `running` until the
 subagent's hand-back opens a turn whose stop settles it. Returning to the
 rest instead needs a wait that records whose it is, since the answer of an
-MCP server's request carries no `agent_id`. The agent's
+MCP server's request carries no `agent_id`. Codex's subagent ends with no
+hook and opens no turn (`subagent_end_opens_turn` is Claude's alone), so for
+Codex the guard also keeps `idle` and `error`, and a subagent's tool that
+ends a wait outside a turn returns the run to `finished`. The agent's
 own tools after a stop carry no `agent_id`, so a stop hook's continuation
 still reopens the run as "Work outside a turn" below describes.
 
