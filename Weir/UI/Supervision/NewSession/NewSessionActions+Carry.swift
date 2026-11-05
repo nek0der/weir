@@ -62,6 +62,7 @@ extension NewSessionActions {
         return switch await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target) {
         case .moved: nil
         case .notApplied: .carryNotApplied(from: name)
+        case .notPutBack: .carryNotPutBack(from: name)
         case .leftInSource: .carryLeftInSource(from: name)
         case let .partlyCleared(stash): .carryPartlyCleared(from: name, stash: stash)
         }
@@ -120,6 +121,18 @@ extension NewSessionActions {
                 "\(PathFormatting.showingControlCharacters(path)) is now a folder in \(source) that holds files Git ignores, and moving the changes would remove them. No worktree was created, and \(source) is unchanged.",
                 comment: "New worktree sheet: a tracked file became a folder holding ignored files; the path, the source's branch, twice"
             )
+        case let .ignoredFileWritten(path):
+            LocalizedStringResource(
+                // swiftlint:disable:next line_length
+                "\(path) in \(source) is a file Git ignores where the changes put back a tracked file, and moving the changes would write over it. No worktree was created, and \(source) is unchanged.",
+                comment: "New worktree sheet: an ignored file where a deleted tracked file goes back; the path, then the source, twice"
+            )
+        case let .ignoredFileInTheWay(path):
+            LocalizedStringResource(
+                // swiftlint:disable:next line_length
+                "\(path) in \(source) is a file Git ignores where the changes put back a folder, and moving the changes would remove it. No worktree was created, and \(source) is unchanged.",
+                comment: "New worktree sheet: an ignored file stands where a deleted file's folder was; the path, then the source, twice"
+            )
         case let .conflicts(paths):
             // Joined in the resolving language's list style, as the launch bar's notes are.
             LocalizedStringResource(
@@ -129,8 +142,8 @@ extension NewSessionActions {
             )
         case .unsupportedGit:
             LocalizedStringResource(
-                "Moving changes requires Git 2.40 or later. No worktree was created, and \(source) is unchanged.",
-                comment: "New worktree sheet: git merge-tree is too old for the carry; the argument is the source's branch"
+                "Moving changes requires Git 2.41 or later. No worktree was created, and \(source) is unchanged.",
+                comment: "New worktree sheet: Git is too old for the carry; the argument is the source's branch"
             )
         case let .git(said):
             LocalizedStringResource(

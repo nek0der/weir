@@ -316,7 +316,7 @@ final class WorktreeMoveSuggester {
 
     // MARK: - Async (case B) resolution
 
-    /// Run `git worktree list --porcelain` against `newCwd`. The
+    /// Run `git worktree list --porcelain -z` against `newCwd`. The
     /// porcelain output's first block is always the main worktree, so
     /// matching its path against the registered projects tells us which
     /// project owns `newCwd`. Nonisolated so it can run off the

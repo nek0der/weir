@@ -34,6 +34,22 @@ struct UncommittedCarryRulesTests {
         #expect(UncommittedCarryRules.changedFileCount(porcelain: " C copy\0from\0") == 1)
     }
 
+    /// A path above or below one with something else on disk is left
+    /// alone too, through a chain of them: putting `a/b` back would drop
+    /// the entry `a`. A path with nothing on disk stops none.
+    @Test func theOwnPaths_leaveAloneWhatIsAboveOrBelowAPathLeftAlone() {
+        let written = ["a", "a/b", "a/b/c", "x.txt", "a2"]
+        let foreign: (String) -> (String) -> UncommittedCarryRules.WrittenPath = { other in
+            { $0 == other ? .foreign : .ours }
+        }
+        #expect(UncommittedCarryRules.ownPaths(written, state: foreign("a")) == ["x.txt", "a2"])
+        #expect(UncommittedCarryRules.ownPaths(written, state: foreign("a/b/c")) == ["x.txt", "a2"])
+        #expect(UncommittedCarryRules.ownPaths(["d", "d/e", "d/f"], state: foreign("d/e")) == [])
+        #expect(UncommittedCarryRules.ownPaths(written) { _ in .ours } == written)
+        #expect(UncommittedCarryRules.ownPaths(written) { _ in .foreign } == [])
+        #expect(UncommittedCarryRules.ownPaths(["a", "a/b", "a/c"]) { $0 == "a/c" ? .absent : .ours } == ["a", "a/b"])
+    }
+
     @Test func aGitlink_isFoundOnEitherSide() {
         let regular = ":100644 100644 aaa bbb M\0a.txt\0"
         #expect(!UncommittedCarryRules.touchesGitlinks(rawDiff: regular))

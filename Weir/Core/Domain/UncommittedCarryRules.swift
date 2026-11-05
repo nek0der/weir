@@ -25,13 +25,22 @@ package enum UncommittedCarryRefusal: Error, Equatable, Sendable {
     /// in it: going back to the file would remove them, and they are
     /// carried nowhere.
     case ignoredFilesInTheWay(String)
+    /// A file Git ignores at this path, where the changes delete a tracked
+    /// one (`.env`, untracked and ignored after it was committed): going
+    /// back to the tracked file writes over it, and it is carried nowhere.
+    case ignoredFileWritten(String)
+    /// A file Git ignores at this path, where a tracked file the changes
+    /// delete had its folder: going back to that file puts the folder back
+    /// in its place, and the ignored file is carried nowhere.
+    case ignoredFileInTheWay(String)
     /// A submodule's pointer, or a repository inside the worktree, changes:
     /// its own changes are its own repository's, which a tree cannot hold.
     case submodules
     /// The changes do not apply on the new worktree's start: these paths
     /// conflict.
     case conflicts([String])
-    /// Git is older than 2.40, which `merge-tree --merge-base` needs.
+    /// Git is older than 2.41: `merge-tree --merge-base` came in 2.40, and
+    /// `--attr-source`, which putting a new worktree back needs, in 2.41.
     case unsupportedGit
     /// Git failed otherwise; its own words.
     case git(String)
@@ -119,9 +128,41 @@ package enum UncommittedCarryRules {
     }
 
     /// Whether `git merge-tree` failed because it does not know an option
-    /// we gave it, as a Git before 2.40 says of `--merge-base`: its usage
+    /// we gave it, as a Git before 2.40 says of `--merge-base`, or one before
+    /// 2.41 of `--attr-source`: its usage
     /// exit, or its own words.
     package static func isUnknownOption(exitCode: Int32, stderr: String) -> Bool {
         exitCode == 129 || stderr.localizedCaseInsensitiveContains("unknown option")
+    }
+
+    /// What is on disk at a path a write that failed may have made.
+    package enum WrittenPath: Equatable, Sendable {
+        /// What only the write puts there.
+        case ours
+        /// Something else: a hook's file, or one of ours cut short.
+        case foreign
+        /// Nothing: the write never got to it.
+        case absent
+    }
+
+    /// The paths among `written` a write that failed is taken to have made:
+    /// those `state` calls ours, less any above or below a path with
+    /// something else on disk, or below one of ours left alone in turn.
+    /// Git's index and `git restore` take a file and a folder of the same
+    /// name together (a new entry `a/b` drops the entry `a`), so putting
+    /// back a path related to one we leave alone would touch that one too.
+    /// A path with nothing on disk holds nothing to keep, and stops no other.
+    package static func ownPaths(_ written: [String], state: (String) -> WrittenPath) -> [String] {
+        let states = written.map(state)
+        var ours = zip(written, states).filter { $0.1 == .ours }.map(\.0)
+        var leaving = Set(zip(written, states).filter { $0.1 == .foreign }.map(\.0))
+        while true {
+            let related = ours.filter { path in
+                leaving.contains { $0.hasPrefix(path + "/") || path.hasPrefix($0 + "/") }
+            }
+            guard !related.isEmpty else { return ours }
+            leaving.formUnion(related)
+            ours.removeAll { related.contains($0) }
+        }
     }
 }

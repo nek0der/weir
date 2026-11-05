@@ -21414,6 +21414,40 @@
         }
       }
     },
+    "%@ in %@ is a file Git ignores where the changes put back a tracked file, and moving the changes would write over it. No worktree was created, and %@ is unchanged.": {
+      "comment": "New worktree sheet: an ignored file where a deleted tracked file goes back; the path, then the source, twice",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ in %2$@ is a file Git ignores where the changes put back a tracked file, and moving the changes would write over it. No worktree was created, and %3$@ is unchanged."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@ の %1$@ は Git が無視するファイルです。変更を移動するとコミット済みのファイルが戻ってこのファイルが上書きされるため、ワークツリーは作成していません。%3$@ は変更していません。"
+          }
+        }
+      }
+    },
+    "%@ in %@ is a file Git ignores where the changes put back a folder, and moving the changes would remove it. No worktree was created, and %@ is unchanged.": {
+      "comment": "New worktree sheet: an ignored file stands where a deleted file's folder was; the path, then the source, twice",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ in %2$@ is a file Git ignores where the changes put back a folder, and moving the changes would remove it. No worktree was created, and %3$@ is unchanged."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%2$@ の %1$@ は Git が無視するファイルです。変更を移動するとそこにフォルダーが戻ってこのファイルが削除されるため、ワークツリーは作成していません。%3$@ は変更していません。"
+          }
+        }
+      }
+    },
     "%@ is now a folder in %@ that holds files Git ignores, and moving the changes would remove them. No worktree was created, and %@ is unchanged.": {
       "comment": "New worktree sheet: a tracked file became a folder holding ignored files; the path, the source's branch, twice",
       "localizations": {
@@ -21465,13 +21499,13 @@
         }
       }
     },
-    "Moving changes requires Git 2.40 or later. No worktree was created, and %@ is unchanged.": {
-      "comment": "New worktree sheet: git merge-tree is too old for the carry; the argument is the source's branch",
+    "Moving changes requires Git 2.41 or later. No worktree was created, and %@ is unchanged.": {
+      "comment": "New worktree sheet: Git is too old for the carry; the argument is the source's branch",
       "localizations": {
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "変更を移動するには Git 2.40 以降が必要です。ワークツリーは作成していません。%@ は変更していません。"
+            "value": "変更を移動するには Git 2.41 以降が必要です。ワークツリーは作成していません。%@ は変更していません。"
           }
         }
       }
@@ -21616,6 +21650,23 @@
           "stringUnit": {
             "state": "translated",
             "value": "ベースブランチが見つかりません。"
+          }
+        }
+      }
+    },
+    "Couldn’t move the changes from %@ into this worktree, and some of them may be left here. They’re still in %@, unchanged.": {
+      "comment": "New worktree: the changes could not be put here, and some may be left here; the argument, twice, is the source",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn’t move the changes from %1$@ into this worktree, and some of them may be left here. They’re still in %2$@, unchanged."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ の変更をこのワークツリーに移動できませんでした。一部はここにも書き込まれている可能性があります。変更は %2$@ にそのまま残っています。"
           }
         }
       }

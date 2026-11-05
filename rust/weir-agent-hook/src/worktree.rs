@@ -352,7 +352,7 @@ fn listed_worktree(root: &Path, path: &Path, branch: &str) -> Option<ListedWorkt
     let listing = git_command()
         .arg("-C")
         .arg(root)
-        .args(["worktree", "list", "--porcelain"])
+        .args(["worktree", "list", "--porcelain", "-z"])
         .output()
         .ok()
         .filter(|output| output.status.success())?;
@@ -375,7 +375,7 @@ fn listed_worktree(root: &Path, path: &Path, branch: &str) -> Option<ListedWorkt
     })
 }
 
-/// One worktree of `git worktree list --porcelain`, as Git wrote it.
+/// One worktree of `git worktree list --porcelain -z`, as Git wrote it.
 #[derive(Debug, PartialEq, Eq)]
 struct ListingEntry<'a> {
     path: &'a str,
@@ -385,14 +385,16 @@ struct ListingEntry<'a> {
     is_locked: bool,
 }
 
-/// The worktrees `git worktree list --porcelain` lists, in its order. Reads the
-/// text only: what the paths are on disk is the caller's to ask. An entry
-/// without its `worktree` line is not one.
+/// The worktrees `git worktree list --porcelain -z` lists, in its order. Reads
+/// the text only: what the paths are on disk is the caller's to ask. An entry
+/// without its `worktree` line is not one. Each line ends in NUL and each entry
+/// in one more: without `-z` Git writes a path as it is, and a newline in it
+/// would cut the path short.
 fn parse_listing(listing: &str) -> Vec<ListingEntry<'_>> {
     listing
-        .split("\n\n")
+        .split("\0\0")
         .filter_map(|entry| {
-            let mut lines = entry.lines();
+            let mut lines = entry.split('\0');
             let path = lines.next()?.strip_prefix("worktree ")?;
             let rest: Vec<&str> = lines.collect();
             Some(ListingEntry {
@@ -775,9 +777,9 @@ mod tests {
 
     #[test]
     fn a_listing_is_read_entry_by_entry() {
-        let listing = "worktree /repo\nHEAD 1111\nbranch refs/heads/main\n\n\
-            worktree /repo-feature\nHEAD 2222\nbranch refs/heads/feature\nlocked initializing\n\n\
-            worktree /gone\nHEAD 3333\ndetached\nprunable gitdir file points to non-existent location\n\n";
+        let listing = "worktree /repo\0HEAD 1111\0branch refs/heads/main\0\0\
+            worktree /repo-feature\0HEAD 2222\0branch refs/heads/feature\0locked initializing\0\0\
+            worktree /gone\0HEAD 3333\0detached\0prunable gitdir file points to non-existent location\0\0";
         assert_eq!(
             parse_listing(listing),
             vec![
@@ -805,7 +807,7 @@ mod tests {
 
     #[test]
     fn a_listing_keeps_a_path_with_spaces_whole_and_skips_what_is_no_worktree() {
-        let listing = "worktree /a b/c\nbare\n\n\nHEAD 1111\n\n";
+        let listing = "worktree /a b/c\0bare\0\0\0HEAD 1111\0\0";
         assert_eq!(
             parse_listing(listing),
             vec![ListingEntry {
@@ -816,6 +818,29 @@ mod tests {
             }]
         );
         assert!(parse_listing("").is_empty());
+    }
+
+    #[test]
+    fn a_listing_keeps_a_path_with_a_newline_whole() {
+        let listing = "worktree /a\nb\0HEAD 1111\0branch refs/heads/x\0locked two\nlines\0\0\
+            worktree /c\0HEAD 2222\0detached\0\0";
+        assert_eq!(
+            parse_listing(listing),
+            vec![
+                ListingEntry {
+                    path: "/a\nb",
+                    branch_ref: Some("refs/heads/x"),
+                    is_prunable: false,
+                    is_locked: true,
+                },
+                ListingEntry {
+                    path: "/c",
+                    branch_ref: None,
+                    is_prunable: false,
+                    is_locked: false,
+                },
+            ]
+        );
     }
 
     #[test]

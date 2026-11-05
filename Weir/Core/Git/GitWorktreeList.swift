@@ -1,7 +1,8 @@
 // GitWorktreeList.swift
-// Weir — parse `git worktree list --porcelain` into a structured
+// Weir — parse `git worktree list --porcelain -z` into a structured
 // list of worktrees. Each worktree appears as a block of attribute
-// lines terminated by a blank line:
+// lines terminated by a blank line, shown here with `\n` where Git
+// writes NUL:
 //
 //   worktree /Users/me/repo
 //   HEAD abc123...
@@ -18,6 +19,10 @@
 // `bare`, `locked`, and `prunable` flags can also appear. The sync
 // leaves out a bare repository's own entry, which is no checkout, and a
 // prunable one, whose folder is gone.
+//
+// We ask for `-z` because without it Git writes a path as it is, so a
+// folder whose name holds a newline splits into a path cut short and a
+// line we would skip. NUL is the one byte no path or lock reason holds.
 
 import Foundation
 
@@ -32,12 +37,13 @@ struct GitWorktreeInfo: Equatable {
 }
 
 enum GitWorktreeList {
-    /// Parse the output of `git worktree list --porcelain`.
+    /// Parse the output of `git worktree list --porcelain -z`, each line
+    /// ended by NUL.
     static func parse(_ porcelain: String) -> [GitWorktreeInfo] {
         var results: [GitWorktreeInfo] = []
         var current: PartialWorktree?
 
-        for rawLine in porcelain.split(separator: "\n", omittingEmptySubsequences: false) {
+        for rawLine in porcelain.split(separator: "\0", omittingEmptySubsequences: false) {
             let line = String(rawLine)
             if line.isEmpty {
                 if let p = current?.finalized {
@@ -79,7 +85,7 @@ enum GitWorktreeList {
         return results
     }
 
-    /// Run `git worktree list --porcelain` against `repoRoot` and
+    /// Run `git worktree list --porcelain -z` against `repoRoot` and
     /// parse the result. `[]` when `repoRoot` is in no repository; throws
     /// on launch failure and on any other non-zero exit.
     ///
@@ -90,7 +96,7 @@ enum GitWorktreeList {
     /// know, a `.git/config` it cannot parse).
     static func fetch(repoRoot: URL) async throws -> [GitWorktreeInfo] {
         let result = try await GitProcess.run(
-            ["worktree", "list", "--porcelain"],
+            ["worktree", "list", "--porcelain", "-z"],
             cwd: repoRoot
         )
         guard result.succeeded else {

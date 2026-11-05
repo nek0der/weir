@@ -240,6 +240,12 @@ struct SessionLaunchBar: View {
                 "Couldn’t move the changes from \(source) into this worktree. They’re still in \(source), unchanged.",
                 comment: "New worktree: the changes could not be put here; the argument, twice, is the worktree they stay in"
             )
+        case let .carryNotPutBack(source):
+            LocalizedStringResource(
+                // swiftlint:disable:next line_length
+                "Couldn’t move the changes from \(source) into this worktree, and some of them may be left here. They’re still in \(source), unchanged.",
+                comment: "New worktree: the changes could not be put here, and some may be left here; the argument, twice, is the source"
+            )
         case let .carryLeftInSource(source):
             LocalizedStringResource(
                 "Moved the changes here. \(source) changed during the move, so its changes were also left in place.",
