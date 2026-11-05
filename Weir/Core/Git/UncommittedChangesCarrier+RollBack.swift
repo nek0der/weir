@@ -23,7 +23,15 @@ extension UncommittedChangesCarrier {
     /// ours Git cut short stays too, which loses nothing, since the source
     /// keeps the changes. The files go back even when the index could not
     /// (another Git holding its lock), as they need none of it.
-    static func rollBack(_ placement: Placement, in target: URL, madeFolders: Set<String>) async -> Bool {
+    /// `sharedEntries` are the start's files that a path the write adds
+    /// also named before Git wrote, as a case-only rename's new name names
+    /// the old file on a case-insensitive volume.
+    static func rollBack(
+        _ placement: Placement,
+        in target: URL,
+        madeFolders: Set<String>,
+        sharedEntries: [SharedEntry]
+    ) async -> Bool {
         let written: [String]
         let carried: Set<String>
         do {
@@ -52,7 +60,13 @@ extension UncommittedChangesCarrier {
         do {
             let added = try await Set(changedNames(from: placement.start, to: placement.fullTree, filter: "A", in: target))
             let deleted = try await Set(changedNames(from: placement.start, to: placement.fullTree, filter: "D", in: target))
-            guard let ours = try await ownPaths(of: placement, written: written, deleted: deleted, in: target) else {
+            guard let ours = try await ownPaths(
+                of: placement,
+                written: written,
+                deleted: deleted,
+                sharedEntries: sharedEntries,
+                in: target
+            ) else {
                 log.error("carry: what Git wrote in the new worktree could not be told; nothing of it is put back")
                 return false
             }
@@ -134,12 +148,15 @@ extension UncommittedChangesCarrier {
     /// and every file in it, ignored ones too, is one of ours. A path with
     /// anything else on disk is not ours, and neither is a path above or
     /// below it (`UncommittedCarryRules.ownPaths`); a path Git never wrote,
-    /// with nothing there, is neither. `nil` when Git could not check out
-    /// the placement to compare with.
+    /// with nothing there, is neither. Paths that named one of the start's
+    /// files before Git wrote (`sharedEntries`) name that file still, while
+    /// it is the same entry. `nil` when Git could not check out the
+    /// placement to compare with.
     private static func ownPaths(
         of placement: Placement,
         written: [String],
         deleted: Set<String>,
+        sharedEntries: [SharedEntry],
         in target: URL
     ) async throws -> [String]? {
         let files = written.filter { !deleted.contains($0) }
@@ -172,6 +189,9 @@ extension UncommittedChangesCarrier {
             // A link above it leads out of the worktree, where nothing is
             // ours, and a file above it is not ours to make a folder of.
             guard !hasNonFolderAbove(path, in: target) else { return .foreign }
+            if let shared = sharedEntries.first(where: { $0.contains(path) }) {
+                return sharedState(of: path, in: shared, deleted: deleted, placed: placed, target: target)
+            }
             guard deleted.contains(path) else {
                 if placed.contains(path) {
                     return .ours
@@ -187,6 +207,33 @@ extension UncommittedChangesCarrier {
             else { return .foreign }
             return .ours
         }
+    }
+
+    /// What is on disk, for the put-back, at `path`, which named one of the
+    /// start's files with other paths before Git wrote. While the entry is
+    /// the same one, Git did not write there: the file is the start's, and a
+    /// path the write adds has nothing of its own. With nothing left there,
+    /// a deleted path is ours to put back, as any deletion is. Once Git
+    /// replaced the file, the entry is what Git wrote for an added path, so
+    /// a deleted path that finds it is ours exactly when that added path is.
+    private static func sharedState(
+        of path: String,
+        in shared: SharedEntry,
+        deleted: Set<String>,
+        placed: Set<String>,
+        target: URL
+    ) -> UncommittedCarryRules.WrittenPath {
+        let isDeleted = { (candidate: String) in deleted.contains { $0.utf8.elementsEqual(candidate.utf8) } }
+        let now = DiskEntry(at: target.appendingPathComponent(path))
+        if now == shared.entry {
+            return isDeleted(path) ? .foreign : .absent
+        }
+        guard now != nil else { return isDeleted(path) ? .ours : .absent }
+        guard isDeleted(path) else { return placed.contains(path) ? .ours : .foreign }
+        let isAddedPathOurs = shared.paths.contains { other in
+            !isDeleted(other) && placed.contains { $0.utf8.elementsEqual(other.utf8) }
+        }
+        return isAddedPathOurs ? .ours : .foreign
     }
 
     /// The files in the folder at `url`, ignored ones and links included,

@@ -64,6 +64,12 @@ enum UncommittedChangesCarrier {
         let changedPaths: [String]
         /// The paths among them it deletes, which going back to HEAD writes.
         let deletedPaths: [String]
+        /// The paths among them it adds, which going back to HEAD removes.
+        let addedPaths: [String]
+        /// The paths among them that named one entry on disk when they were
+        /// read, as a case-only rename's old and new names do on a
+        /// case-insensitive volume.
+        let sharedEntries: [SharedEntry]
         /// How many files changed, as the sidebar counts them.
         let fileCount: Int
     }
@@ -150,7 +156,8 @@ enum UncommittedChangesCarrier {
                 }
             }
             let deleted = try await changedNames(from: head, to: fullTree, filter: "D", in: root)
-            try await refuseIgnoredFilesInTheWay(in: root, deleted: deleted)
+            let added = try await changedNames(from: head, to: fullTree, filter: "A", in: root)
+            try await refuseIgnoredFilesInTheWay(in: root, deleted: deleted, added: added)
             let untracked = try await changedNames(from: indexTree, to: fullTree, filter: "A", in: root)
             let changedPaths = try await changedNames(from: head, to: fullTree, in: root)
             return await Snapshot(
@@ -162,6 +169,8 @@ enum UncommittedChangesCarrier {
                 untracked: untracked,
                 changedPaths: changedPaths,
                 deletedPaths: deleted,
+                addedPaths: added,
+                sharedEntries: sharedEntries(among: changedPaths, in: root),
                 fileCount: changedFileCount(in: root) ?? 0
             )
         }
@@ -197,8 +206,8 @@ enum UncommittedChangesCarrier {
     /// file: a folder holding ignored files, or an ignored file, where the
     /// file was, or an ignored file where its folder was. Git would remove
     /// it to write the file, and it is carried nowhere.
-    private static func refuseIgnoredFilesInTheWay(in root: URL, deleted: [String]) async throws {
-        if let refusal = try await ignoredFileInTheWay(in: root, at: deleted) {
+    private static func refuseIgnoredFilesInTheWay(in root: URL, deleted: [String], added: [String]) async throws {
+        if let refusal = try await ignoredFileInTheWay(in: root, at: deleted, removing: added) {
             throw refusal
         }
     }
@@ -213,25 +222,37 @@ enum UncommittedChangesCarrier {
     /// paths the changes delete, a file Git does not ignore there is no
     /// deletion: it is in the snapshot; for the paths a placement adds, it
     /// is one `read-tree` refuses to write over, so either way we stop.
-    /// Answered as the refusal that names it.
-    private static func ignoredFileInTheWay(in root: URL, at paths: [String]) async throws -> UncommittedCarryRefusal? {
+    /// `removed` holds the paths the same write deletes, which Git removes
+    /// before it writes any. Answered as the refusal that names what is on
+    /// disk, under the spelling on disk.
+    private static func ignoredFileInTheWay(
+        in root: URL,
+        at paths: [String],
+        removing removed: [String]
+    ) async throws -> UncommittedCarryRefusal? {
+        // On a case-insensitive volume, `a.txt` also finds the `A.txt` that
+        // a case-only rename made, and `dir/a` finds `DIR/a`. When the entry
+        // a path finds is one of the paths the same write removes, Git
+        // removes it first, so nothing is in the way.
+        let removing = sharedEntries(among: paths + removed, in: root)
+            .filter { shared in removed.contains { shared.contains($0) } }
         // The folders above a path already found to hold nothing in the
         // way, each asked about once.
         var cleared: Set<String> = []
-        for path in paths {
+        for path in paths where !removing.contains(where: { $0.contains(path) }) {
             if let folder = try await ignoredFileAbove(path, in: root, cleared: &cleared) {
-                return .ignoredFileInTheWay(folder)
+                return .ignoredFileInTheWay(spellingOnDisk(folder, in: root))
             }
             switch FileBytes(at: root.appendingPathComponent(path)).kind {
             case .missing:
                 continue
             case .unreadable:
-                guard isFolder(root.appendingPathComponent(path)) else { return .ignoredFileWritten(path) }
+                guard isFolder(root.appendingPathComponent(path)) else { return .ignoredFileWritten(spellingOnDisk(path, in: root)) }
                 if try await !ignoredFiles(at: "\(path)/", in: root).isEmpty {
-                    return .ignoredFilesInTheWay(path)
+                    return .ignoredFilesInTheWay(spellingOnDisk(path, in: root))
                 }
             case .link, .file:
-                return .ignoredFileWritten(path)
+                return .ignoredFileWritten(spellingOnDisk(path, in: root))
             }
         }
         return nil
@@ -430,9 +451,11 @@ enum UncommittedChangesCarrier {
         // A file Git ignores where the changes add one (a hook's `.env`, or
         // the folder it installs into): `read-tree` would write over it.
         let added: [String]
+        let deleted: [String]
         do {
             added = try await changedNames(from: placement.start, to: placement.fullTree, filter: "A", in: target)
-            if let refusal = try await ignoredFileInTheWay(in: target, at: added) {
+            deleted = try await changedNames(from: placement.start, to: placement.fullTree, filter: "D", in: target)
+            if let refusal = try await ignoredFileInTheWay(in: target, at: added, removing: deleted) {
                 let what = String(describing: refusal)
                 log.info("carry: the new worktree has an ignored file in the way (\(what, privacy: .private)); it is left as it is")
                 return .notApplied
@@ -443,8 +466,18 @@ enum UncommittedChangesCarrier {
         }
         // The folders the write would make, in place of nothing or of a
         // file it deletes, which putting it back may remove again once
-        // empty; a folder that was there stays.
-        let madeFolders = Set(added.flatMap(folders(above:)).filter { !isFolder(target.appendingPathComponent($0)) })
+        // empty; a folder that was there stays. On a case-insensitive
+        // volume, a folder found only under another spelling (`Docs` for
+        // `docs/x`) is one Git removes once empty and makes again under the
+        // new spelling, so putting back removes it too, and the old one
+        // comes back under its own spelling.
+        let madeFolders = Set(added.flatMap(folders(above:)).filter { folder in
+            !isFolder(target.appendingPathComponent(folder))
+                || !spellingOnDisk(folder, in: target).utf8.elementsEqual(folder.utf8)
+        })
+        // The start's files that a path the write adds also names, as before
+        // Git writes, so a put-back can tell whether Git replaced them.
+        let shared = sharedEntries(among: added + deleted, in: target)
         await checked()
         // Checks every path before writing any: a file the checkout's hook
         // made where a change goes stops it with nothing written, and the
@@ -455,18 +488,18 @@ enum UncommittedChangesCarrier {
                 // A refusal wrote nothing; a write stopped part way, as at
                 // a folder Git may not write in, exits the same way.
                 log.error("carry: the new worktree did not take the changes: \(result.stderr, privacy: .private)")
-                return await rollBack(placement, in: target, madeFolders: madeFolders) ? .notApplied : .notPutBack
+                return await rollBack(placement, in: target, madeFolders: madeFolders, sharedEntries: shared) ? .notApplied : .notPutBack
             }
         } catch {
             log.error("carry: the new worktree did not take the changes: \(String(describing: error), privacy: .private)")
-            return await rollBack(placement, in: target, madeFolders: madeFolders) ? .notApplied : .notPutBack
+            return await rollBack(placement, in: target, madeFolders: madeFolders, sharedEntries: shared) ? .notApplied : .notPutBack
         }
         await placed()
         let isPlaced = await isHolding(placement, in: target)
             && hasSameBytes(snapshot, placement: placement, in: target)
         guard isPlaced else {
             log.error("carry: the new worktree does not hold the changes as the source has them")
-            return await rollBack(placement, in: target, madeFolders: madeFolders) ? .notApplied : .notPutBack
+            return await rollBack(placement, in: target, madeFolders: madeFolders, sharedEntries: shared) ? .notApplied : .notPutBack
         }
         return nil
     }
@@ -583,7 +616,8 @@ enum UncommittedChangesCarrier {
         // since the snapshot, where the changes delete a tracked one,
         // would be written over, and Git takes ignored files as its own
         // to replace.
-        guard try await ignoredFileInTheWay(in: root, at: snapshot.deletedPaths) == nil else { return nil }
+        guard try await ignoredFileInTheWay(in: root, at: snapshot.deletedPaths, removing: snapshot.addedPaths) == nil
+        else { return nil }
         return next
     }
 
@@ -647,9 +681,12 @@ enum UncommittedChangesCarrier {
     /// the source as touched and keep a copy, the side that loses nothing.
     private static func isUntouched(_ snapshot: Snapshot, scratch: URL) async -> Bool {
         let root = snapshot.source
-        guard let added = try? await Set(changedNames(from: snapshot.head, to: snapshot.fullTree, filter: "A", in: root)) else {
-            return false
-        }
+        let added = Set(snapshot.addedPaths)
+        // Paths that named one entry when the changes were read, such as a
+        // case-only rename's old and new names, each read that entry, so
+        // they tell nothing apart. While the entry is the same one, Git has
+        // not put the old name back, which writes a new file.
+        let unchanged = snapshot.sharedEntries.filter { $0.isUnchanged(in: root) }
         let inHead = snapshot.changedPaths.filter { !added.contains($0) }
         let checkedOut = scratch.appendingPathComponent("head", isDirectory: true)
         let environment = ["GIT_INDEX_FILE": scratch.appendingPathComponent("head-index").path]
@@ -663,6 +700,7 @@ enum UncommittedChangesCarrier {
             guard result?.succeeded == true else { return false }
         }
         return !snapshot.changedPaths.contains { path in
+            guard !unchanged.contains(where: { $0.contains(path) }) else { return false }
             let url = root.appendingPathComponent(path)
             guard !added.contains(path) else { return !hasNonFolder(at: url) }
             let now = FileBytes(at: url)

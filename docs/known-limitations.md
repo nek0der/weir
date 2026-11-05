@@ -209,7 +209,10 @@ as they are fixed or confirmed.
   conflict with the new worktree's starting point. It needs Git 2.41 or later.
   If a file would come out of the new worktree with other bytes than it has (a
   line-ending setting or a filter), or the new worktree already has a file Git
-  ignores where the changes add one or need a folder, nothing is moved. Empty
+  ignores where the changes add one or need a folder, nothing is moved. With
+  `core.precomposeunicode` off, nothing is moved either for a rename that
+  changes only a name's Unicode normalization: the volume takes both names
+  for one file, and Git refuses to write the new name over it. Empty
   folders do not come along, nor do files Git ignores (those come only through
   the copy that Project Settings names), and changes inside a submodule stay
   where they are. A file Git ignores that the new worktree's checkout hook,
