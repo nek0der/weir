@@ -10,10 +10,10 @@ private let log = Logger.weir("fs.guard")
 
 /// The rule every change to Weir's own files passes through
 /// (`SecureFileWrite`) while the test host runs: nothing under the user's real
-/// `~/Library`, or the `~/.codex` Weir installs hooks into, is touched. Real
-/// user data was corrupted once by a test that forgot to inject its directory,
-/// and redirecting the default directory alone does not stop a test that
-/// builds a path of its own.
+/// `~/Library`, or the `~/.codex` that holds the person's Codex config, is
+/// touched. Real user data was corrupted once by a test that forgot to inject
+/// its directory, and redirecting the default directory alone does not stop a
+/// test that builds a path of its own.
 ///
 /// We refuse rather than trap. A trap ends the whole test host, so every other
 /// test's result is lost, and the test that proves the refusal could not run

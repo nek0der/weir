@@ -316,6 +316,12 @@ as they are fixed or confirmed.
   Starting an agent again in a stopped pane ends the stop once the new
   agent reports to Weir. Codex reports nothing until its first prompt, so
   until then the pane still shows the stop.
+- **Limpid (Weir's earlier name) 0.1.11 and earlier may have left hook trust
+  in `~/.codex/config.toml`.** Those builds wrote a
+  `[hooks.state."/<session-flags>/config.toml:…"]` table for each of their
+  hooks, between `# BEGIN limpid — managed hook trust, regenerated on launch`
+  and `# END limpid`. Weir does not touch the file, and the tables do nothing
+  now. To remove them, delete those tables and the two marker lines.
 
 ## Antigravity
 

@@ -147,7 +147,7 @@ there.
 | `pane-path-<project ID>.txt` | new: the `PATH` the last shell of a pane of that project ended up with, where an agent is looked up for that project | — |
 | `tab-focus/<run>.json`, and its `<run>.json.<nonce>.answer` | new: Weir's request that an OpenCode pane show one of its sessions, and the plugin's answer (`AgentTabFocus.swift`) | — |
 | `opencode-agent-states/pane-env/<random>` | new: the pane's `WEIR_*` variables for the OpenCode plugin, 0600, swept after a day | — |
-| Codex's `~/.codex/config.toml` (the person's own) | our tables and markers are taken out | none |
+| Codex's `~/.codex/config.toml` (the person's own) | no longer written; what earlier builds left stays | none |
 | Antigravity's plugin (`~/.gemini/config/plugins/weir`) | new | — |
 | OpenCode's plugin (`~/.config/opencode/plugins/weir`) | new | — |
 | Refs and files in each repository's Git directory | new, and one no longer written | — |
@@ -1017,41 +1017,22 @@ lost.
 
 ### Codex's `config.toml`
 
-Not Weir's file: the person's own `~/.codex/config.toml`, which Codex edits too
-(`CodexUserConfig`, `CodexHookInstaller`). Earlier builds kept a
-`[hooks.state."<key>"]` table in it for each hook they passed Codex, with two
-keys, `enabled = true` and `trusted_hash`, between `# BEGIN weir …` and `# END
-weir` (`# BEGIN limpid …` and `# END limpid` before 0.1.14). The current build
-passes that trust in the `-c` flags that carry the hooks, and at launch takes
-out what the earlier builds wrote:
+Not Weir's file: the person's own `~/.codex/config.toml`, which Codex edits too.
+Weir neither reads nor writes it. The trust Codex needs before it runs a hook
+travels in the `-c` flags that carry Weir's hooks (`CodexHookInjection`).
 
-- In a table whose header is one Weir wrote (`/<session-flags>/config.toml`
-  keys for the events Weir subscribes to), wherever it stands in the file,
-  the `enabled` and `trusted_hash` lines go. The header goes too when only
-  blank lines are left under it; a key Codex added to it, or a comment,
-  keeps it. A trust table with any other key stays, even of the same form.
-- Both `weir` markers go. The `limpid` markers stay, since only the `weir`
-  ones are matched. A table Codex appended between them (a folder trust it
-  recorded lands there, after the last table in the file) stays.
-- Where two blank lines would end up in a row, one goes; at the end of the
-  file, the blank lines before what was removed go.
-- A line inside a multi-line string (`"""` or `'''`) belongs to the string,
-  even when it reads like one of our headers, keys, or markers.
-- A file saved with CRLF line endings keeps them, and a UTF-8 byte order
-  mark at the start is kept.
-- A `config.toml` that is a symbolic link (a dotfiles checkout) is written
-  through to the file it names, so the link stays a link. A link to nothing
-  is left alone, as is a file that cannot be read, is not UTF-8, or would
-  not load once edited. The file is written only when something of ours is
-  in it, so this happens once.
+Limpid 0.1.11 and earlier kept a
+`[hooks.state."/<session-flags>/config.toml:<event>:<group>:0"]` table in it
+for each hook they passed Codex, with `enabled = true` and a `trusted_hash`,
+between `# BEGIN limpid — managed hook trust, regenerated on launch` and
+`# END limpid`. Later builds took those tables out at launch, and 0.1.12 and
+0.1.13 the markers too. The current build leaves what remains: a hash in
+the file covered the bundle path of the build that wrote it, and the hash in
+the flags takes its place (`CodexHookInjectionSmokeTests`).
+[Known limitations](known-limitations.md#codex) says how to remove them.
 
-Weir takes no copy before writing: the lines it removes are its own, and
-a `trusted_hash` left in the file only names a hook command of an earlier
-build.
-
-An earlier build writes its tables back on its next launch. That is
-harmless here: a hash in the flags takes the place of the one in the file,
-and the current build takes the tables out again at its next launch.
+Going back to 0.1.11 or earlier writes the tables again at its next launch.
+That is harmless here for the same reason.
 
 ### Antigravity's plugin
 

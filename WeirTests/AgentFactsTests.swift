@@ -117,9 +117,9 @@ struct AgentFactsTests {
         #expect(!WorktreeAdmissionRule.isAgentPlaced(facts("/Users/someone/elsewhere/repo")))
     }
 
-    /// The guard protects the Codex home the installer cleans, under each
-    /// home it knows.
-    @Test("the test write guard protects the same Codex home the installer cleans")
+    /// The guard protects the Codex home that holds the person's config,
+    /// under each home it knows.
+    @Test("the test write guard protects the default Codex home")
     func writeGuard_protectsTheDefaultCodexHome() {
         let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
         #expect(TestWriteGuard.protectedRoots.contains(AgentProviderRegistry.defaultHome(of: .codex, under: home)))

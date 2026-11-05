@@ -61,7 +61,7 @@ into their private state. Core keeps AppKit and SwiftUI out. What every
 agent shares, its shim (`AgentShimLocator`) and its resume command
 (`AgentResumeCommandBuilder`), lives once in `Core/Agent` and takes an
 `AgentKind`. `Core/Codex` holds only what Codex alone needs: its hook
-installer and the trust its hooks need in `config.toml`.
+installer, and the `-c` flags that carry its hooks and their trust.
 
 The bridge-wide ABI number is a compatibility version, not a release or API
 revision. Adding a new exported symbol keeps the current number. Increment it

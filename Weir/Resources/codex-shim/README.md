@@ -11,9 +11,9 @@ recorded, and it reads that record from the flags as well as from the
 user's own `config.toml`, so the trust travels in the same flags
 (`CodexHookInjection`) and a Codex with any `CODEX_HOME` runs our hooks.
 The record has to be one inline table, `hooks.state={…}`: Codex splits a
-flag's key at each dot, and our keys hold one. Earlier builds wrote the
-trust tables into `~/.codex/config.toml` instead; `CodexUserConfig` takes
-them out again.
+flag's key at each dot, and our keys hold one. Weir does not touch
+`~/.codex/config.toml`: the trust tables Limpid 0.1.11 and earlier wrote
+there hold stale hashes, and the flags' trust takes precedence over them.
 
 ## Files
 

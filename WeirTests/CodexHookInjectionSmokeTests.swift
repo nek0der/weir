@@ -227,4 +227,48 @@ struct CodexHookInjectionSmokeTests {
             #expect(user.allSatisfy { $0.trustStatus == "trusted" }, "the person's own hook lost its trust")
         }
     }
+
+    /// Weir leaves alone the trust tables Limpid 0.1.11 and earlier wrote
+    /// into `~/.codex/config.toml`, so Codex meets them beside our flags.
+    /// Their hashes covered the bundle path those builds ran from; the
+    /// flags' trust must take precedence over them.
+    @Test("Codex trusts the flags' hooks over the trust tables an earlier build left")
+    func generatedFlags_overrideLeftoverTrustTables() throws {
+        try withTempDir { dir in
+            let home = dir.appendingPathComponent("codex-home", isDirectory: true)
+            try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+            let left = [
+                "session_start:0", "session_end:0", "user_prompt_submit:0", "pre_tool_use:0", "pre_tool_use:1",
+                "post_tool_use:0", "pre_compact:0", "post_compact:0", "permission_request:0", "interrupt:0", "stop:0"
+            ].map { """
+            [hooks.state."/<session-flags>/config.toml:\($0):0"]
+            enabled = true
+            trusted_hash = "sha256:\(String(repeating: "0", count: 64))"
+            """ }
+            try (["# BEGIN limpid — managed hook trust, regenerated on launch"] + left + ["# END limpid", ""])
+                .joined(separator: "\n")
+                .write(to: home.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
+
+            let arguments = CodexHookInjection.arguments(
+                lifecycleCommand: "/bin/echo lifecycle", worktreeCommand: "/bin/echo worktree"
+            )
+            // Without the flags' trust, Codex goes by the left tables and
+            // finds their hashes wrong, which is what the check below must
+            // overcome. Each flag is a `-c` and its value.
+            let withoutTrust = stride(from: 0, to: arguments.count, by: 2)
+                .filter { !arguments[$0 + 1].hasPrefix("hooks.state=") }
+                .flatMap { arguments[$0...($0 + 1)] }
+            let untrusted = try discoveredHooks(home: home, cwd: dir, extraArguments: withoutTrust)
+                .filter { $0.source == "sessionFlags" }
+            #expect(untrusted.contains { $0.trustStatus == "modified" })
+
+            let ours = try discoveredHooks(home: home, cwd: dir, extraArguments: arguments)
+                .filter { $0.source == "sessionFlags" }
+            #expect(ours.count == CodexHookInjection.subscribedEvents.count + 2)
+            #expect(
+                ours.allSatisfy { $0.trustStatus == "trusted" },
+                "untrusted: \(ours.filter { $0.trustStatus != "trusted" }.map(\.eventName))"
+            )
+        }
+    }
 }
