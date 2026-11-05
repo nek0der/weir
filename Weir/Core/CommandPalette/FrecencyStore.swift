@@ -89,7 +89,7 @@ final class FrecencyStore {
         // Nothing changed this launch: the file already holds the ranking.
         // Rows past their lifetime wait there for the next change, and the
         // next load drops them anyway.
-        let hasChanges = saveDebounce.hasPending
+        let hasChanges = saveDebounce.hasUnflushedChanges
         saveDebounce.cancel()
         guard writesFiles, !isSavingSuspended, hasChanges else { return }
         pruneExpired()
@@ -105,9 +105,17 @@ final class FrecencyStore {
         // be read is kept like one that does not decode.
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
         let data: Data
-        do {
-            data = try Data(contentsOf: fileURL)
-        } catch {
+        switch PersistedRead.read(fileURL) {
+        case .absent:
+            // The check above found a file and the read did not. It goes
+            // aside as an unreadable one does, so a file put back in the
+            // meantime is not saved over.
+            log.error("frecency.json gone before it was read")
+            setAside(reason: "read-failed")
+            return
+        case let .data(bytes):
+            data = bytes
+        case let .unreadable(error):
             log.error("failed to read frecency.json: \(String(describing: error), privacy: .private)")
             setAside(reason: "read-failed")
             return

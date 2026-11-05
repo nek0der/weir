@@ -162,9 +162,17 @@ final class NotificationHistoryStore {
         // be read is kept like one that does not decode.
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
         let data: Data
-        do {
-            data = try Data(contentsOf: fileURL)
-        } catch {
+        switch PersistedRead.read(fileURL) {
+        case .absent:
+            // The check above found a file and the read did not. It goes
+            // aside as an unreadable one does, so a file put back in the
+            // meantime is not saved over.
+            log.error("notifications.json gone before it was read")
+            setAside(reason: "read-failed")
+            return
+        case let .data(bytes):
+            data = bytes
+        case let .unreadable(error):
             log.error("failed to read notifications.json: \(String(describing: error), privacy: .private)")
             setAside(reason: "read-failed")
             return

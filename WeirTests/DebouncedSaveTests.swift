@@ -23,7 +23,7 @@ struct DebouncedSaveTests {
         save.schedule { runs.labels.append("first") }
         timer.advance(by: .milliseconds(10))
         save.schedule { runs.labels.append("second") }
-        #expect(save.hasPending)
+        #expect(save.hasUnflushedChanges)
 
         timer.advance(by: .milliseconds(19))
         #expect(runs.labels.isEmpty, "the second change put the save off")
@@ -39,23 +39,23 @@ struct DebouncedSaveTests {
         save.schedule { runs.labels.append("canceled") }
         save.cancel()
 
-        #expect(!save.hasPending)
+        #expect(!save.hasUnflushedChanges)
         timer.advance(by: .milliseconds(20))
         #expect(runs.labels.isEmpty)
     }
 
-    @Test func hasPending_staysTrueOnceTheSaveHasRun() async {
+    @Test func hasUnflushedChanges_staysTrueOnceTheSaveHasRun() async {
         // A store's flush writes again after a save that ran, as it did
         // before the timer was shared.
         let save = DebouncedSave(delay: .milliseconds(10))
         let runs = Runs()
-        #expect(!save.hasPending)
+        #expect(!save.hasUnflushedChanges)
 
         save.schedule { runs.labels.append("ran") }
         await pollUntil(interval: .milliseconds(10)) { !runs.labels.isEmpty }
 
         #expect(runs.labels == ["ran"])
-        #expect(save.hasPending)
+        #expect(save.hasUnflushedChanges)
     }
 
     @Test func schedule_changesThatNeverStop_stillSaveOnceTheBurstHasWaitedTheMaximum() {
