@@ -182,7 +182,7 @@ enum SessionRowFactText {
             ).resolved(in: locale)
         }
         return LocalizedStringResource(
-            "Its tabs start in \(startFolder.lastPathComponent)",
+            "Its tabs start in \(PathFormatting.name(of: startFolder))",
             comment: "Left rail, VoiceOver: the Scratch button and the folder its new tabs start in"
         ).resolved(in: locale)
     }

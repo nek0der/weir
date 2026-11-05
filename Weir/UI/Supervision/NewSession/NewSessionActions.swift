@@ -130,7 +130,7 @@ enum NewSessionActions {
         let carrySource = shown.map { row in
             NewSessionModel.CarrySource(
                 root: row.root,
-                name: row.branch ?? (row.isProjectFolder ? facts.head : nil) ?? row.root.lastPathComponent,
+                name: row.branch ?? (row.isProjectFolder ? facts.head : nil) ?? PathFormatting.name(of: row.root),
                 changedFiles: nil
             )
         }

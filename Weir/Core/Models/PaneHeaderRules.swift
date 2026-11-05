@@ -394,7 +394,7 @@ enum PaneHeaderRules {
         if abbreviated == "~" {
             return abbreviated
         }
-        return normalizedName((path as NSString).lastPathComponent)
+        return normalizedName(PathFormatting.showingControlCharacters((path as NSString).lastPathComponent))
     }
 
     /// Resolve what a header shows. The name is the first of: the name the
@@ -410,7 +410,10 @@ enum PaneHeaderRules {
         workingDirectory: String?,
         fallbackName: String
     ) -> PaneHeaderLabel {
-        let directory = normalizedName(workingDirectory)
+        // The directory is a path, not a name, so it is not cleaned up as
+        // one: joining its lines or trimming its end would name a folder
+        // that does not exist.
+        let directory = workingDirectory.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         let personName = normalizedName(customName)
         let name = personName
             ?? normalizedName(agent?.title)

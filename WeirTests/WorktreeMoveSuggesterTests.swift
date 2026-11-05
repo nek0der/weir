@@ -14,6 +14,19 @@ import Testing
 @MainActor
 struct WorktreeMoveSuggesterTests {
 
+    /// A worktree found in a folder whose name holds a newline: the banner
+    /// shows the newline as "␊".
+    @Test("a suggestion's banner shows a newline in its label as a picture")
+    func suggestion_labelWithANewline_isShownAsAPicture() {
+        let folder = URL(fileURLWithPath: "/tmp/feat\nline")
+        let suggestion = WorktreeMoveSuggestion(
+            paneID: UUID(),
+            newCwd: folder,
+            kind: .reparentAfterAttach(projectID: UUID(), path: folder, branchName: nil, label: folder.lastPathComponent)
+        )
+        #expect(suggestion.displayLabel == "feat\u{240A}line")
+    }
+
     // MARK: - RepositoryPath.contains
 
     @Test(arguments: [

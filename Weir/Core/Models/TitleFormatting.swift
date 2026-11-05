@@ -12,10 +12,12 @@ enum TitleFormatting {
     ///   - zsh uses `%(4~|…/%3~|%~)` → `~/path` up to 3 levels, then
     ///     `…/last3` for deeper trees
     /// Picking the same string up front avoids a visible title flash
-    /// from our placeholder to the shell's first emission.
+    /// from our placeholder to the shell's first emission. The folder's
+    /// characters stay as they are, since the tab keeps the title;
+    /// `Tab.name` shows a control character in it.
     static func pwdStyle(for workingDirectory: URL?) -> String {
         let path = workingDirectory?.path ?? FileManager.default.homeDirectoryForCurrentUser.path
-        let tildePath = PathFormatting.abbreviateHome(path)
+        let tildePath = PathFormatting.homeRelative(path)
         if tildePath == "~" {
             return "~"
         }

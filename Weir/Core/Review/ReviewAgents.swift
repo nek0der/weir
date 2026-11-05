@@ -29,10 +29,10 @@ enum ReviewAgents {
         // A tab hosting a plain shell carries the command it was started with
         // as its title, which for a tmux-hosted pane is a line of `attach -t`
         // arguments. The directory it works in says more in less room.
-        let fallback = directory(for: tab.container, in: session)?.lastPathComponent
+        let fallback = directory(for: tab.container, in: session).map(PathFormatting.name(of:))
         return ReviewDestination(
             paneID: paneID,
-            title: agent ?? fallback ?? tab.title,
+            title: agent ?? fallback ?? PathFormatting.showingControlCharacters(tab.title),
             agent: kind,
             isLive: registry.deliverer(for: paneID)?.isReadyForReviewPaste == true,
             hasExited: session.childExitCode(paneID: paneID) != nil

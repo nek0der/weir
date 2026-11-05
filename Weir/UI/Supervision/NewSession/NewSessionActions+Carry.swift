@@ -117,7 +117,7 @@ extension NewSessionActions {
         case let .ignoredFilesInTheWay(path):
             LocalizedStringResource(
                 // swiftlint:disable:next line_length
-                "\(path) is now a folder in \(source) that holds files Git ignores, and moving the changes would remove them. No worktree was created, and \(source) is unchanged.",
+                "\(PathFormatting.showingControlCharacters(path)) is now a folder in \(source) that holds files Git ignores, and moving the changes would remove them. No worktree was created, and \(source) is unchanged.",
                 comment: "New worktree sheet: a tracked file became a folder holding ignored files; the path, the source's branch, twice"
             )
         case let .conflicts(paths):
