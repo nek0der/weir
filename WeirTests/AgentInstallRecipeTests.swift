@@ -41,46 +41,6 @@ struct AgentInstallRecipeTests {
         #expect(codex.values.contains("/usage") == false)
     }
 
-    /// The variables of `kind`'s recipe its shim reads before the agent
-    /// starts, which a tmux session therefore never needs.
-    private static func readBeforeStart(_ kind: AgentKind) -> Set<String> {
-        switch kind {
-        case .claude: ["WEIR_CLAUDE_HOOK_NAMESPACE"]
-        case .codex: ["WEIR_CODEX_HOOK_ARGS"]
-        case .antigravity, .opencode: []
-        }
-    }
-
-    /// A variable a shim does not hand to tmux takes the server's value, and a
-    /// Dev agent on a Release server would then write into Release's folders.
-    /// A shim that never hosts its agent in tmux names no such list.
-    @Test(
-        "a tmux-hosted agent gets every variable its recipe exports",
-        .disabled(if: !RepoFixture.hasLocalRepo),
-        arguments: AgentKind.allCases
-    )
-    func hostedEnvironment_coversTheRecipe(kind: AgentKind) throws {
-        let root = try #require(RepoFixture.weirRoot)
-        let script = try String(
-            contentsOf: root.appending(path: "Weir/Resources/\(AgentShimLocator(kind).shimDirectoryName)/\(kind.launchCommand)"),
-            encoding: .utf8
-        )
-        let recipe = try #require(AgentProviderRegistry.recipes[kind.rawValue])
-        let names = recipe.environment.map(\.name)
-        #expect(!names.isEmpty)
-        guard let line = script.split(separator: "\n").first(where: { $0.hasPrefix("hosted_env_names=") }) else {
-            #expect(!script.contains("weir_exec_agent"), "a shim that hands off to tmux names what the session gets")
-            return
-        }
-        let hosted = Set(
-            line.dropFirst("hosted_env_names=".count)
-                .trimmingCharacters(in: ["\""])
-                .split(separator: " ")
-                .map(String.init)
-        )
-        #expect(Set(names).subtracting(Self.readBeforeStart(kind)).subtracting(hosted).isEmpty)
-    }
-
     /// A pane's agent variables are merged locator by locator in `AgentKind`'s
     /// order and Codex's installer after them all, where it once came right
     /// after Codex's locator. That gives the same environment while no other

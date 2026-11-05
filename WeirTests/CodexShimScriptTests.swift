@@ -129,7 +129,11 @@ struct CodexShimScriptTests {
 
     /// Runs the shim under a pty. The hosting decision asks whether
     /// stdin and stdout are terminals, and a `Process` pipe is not one,
-    /// so the harness above can never reach the tmux branch at all.
+    /// so the harness above can never reach the tmux branch at all. The
+    /// stand-in tmux starts the session as a server another pane started
+    /// would (`ShimHarness.fakeTmux`), so a hosted Codex runs too;
+    /// `seenAgent` is handed its environment, and the saved pane
+    /// environments left in the temporary folder.
     private func runShimHosted(
         _ args: [String],
         hookArgs: String? = nil,
@@ -138,7 +142,8 @@ struct CodexShimScriptTests {
         environment: [String: String] = [:],
         knownLocation: String? = nil,
         onPath: Bool = false,
-        seenFound: ((String?) -> Void)? = nil
+        seenFound: ((String?) -> Void)? = nil,
+        seenAgent: (([String: String], [String]) -> Void)? = nil
     ) throws -> Handover {
         try withTempDir { dir in
             let codexArgv = dir.appendingPathComponent("codex.argv")
@@ -149,21 +154,25 @@ struct CodexShimScriptTests {
             let codexStub = dir.appendingPathComponent(knownLocation ?? (onPath ? "bin/codex" : "fake-codex"))
             try FileManager.default.createDirectory(at: codexStub.deletingLastPathComponent(), withIntermediateDirectories: true)
             let tmuxStub = dir.appendingPathComponent("fake-tmux")
-            for (stub, argvFile) in [(codexStub, codexArgv), (tmuxStub, tmuxArgv)] {
-                // Beside the argv, what the stub saw of the sheet's
-                // executable (`seenFound`).
-                try ShimHarness.writeExecutable(ShimHarness.argvRecorder(into: argvFile, then: """
-                printf '%s' "${WEIR_FOUND_CODEX-unset}" > "\(argvFile.path).found"
-                exit 0
-                """), at: stub)
+            /// Beside the argv, what each stub saw of the sheet's executable
+            /// (`seenFound`), and the agent's whole environment.
+            func seen(_ argvFile: URL) -> String {
+                "printf '%s' \"${WEIR_FOUND_CODEX-unset}\" > \"\(argvFile.path).found\""
             }
+            try ShimHarness.writeExecutable(ShimHarness.argvRecorder(into: codexArgv, then: """
+            \(seen(codexArgv))
+            /usr/bin/env -0 > "\(codexArgv.path).env"
+            exit 0
+            """), at: codexStub)
+            try ShimHarness.writeExecutable(ShimHarness.fakeTmux(into: tmuxArgv, then: seen(tmuxArgv)), at: tmuxStub)
 
             var shimEnvironment = ShimHarness.environment(in: dir)
             shimEnvironment.merge([
                 "WEIR_REAL_CODEX": codexStub.path,
                 "WEIR_AGENT_TMUX": tmuxStub.path,
                 "WEIR_AGENT_TMUX_SOCKET": "weir-test.socket",
-                // Spaces on purpose: these reach tmux as `-e` values.
+                // Spaces on purpose: these reach the session through the
+                // saved environment.
                 "WEIR_CODEX_SESSIONS_DIR": "/App Support/codex-sessions",
                 "WEIR_CODEX_AGENT_STATES_DIR": "/App Support/codex-agent-states"
             ]) { _, new in new }
@@ -193,6 +202,11 @@ struct CodexShimScriptTests {
                 let ran = FileManager.default.fileExists(atPath: tmuxArgv.path) ? tmuxArgv : codexArgv
                 seenFound(try? String(contentsOfFile: ran.path + ".found", encoding: .utf8))
             }
+            if let seenAgent {
+                let left = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?
+                    .filter { $0.hasPrefix("weir-hosted-env.") } ?? []
+                seenAgent(ShimHarness.recordedEnvironment(codexArgv.appendingPathExtension("env")) ?? [:], left)
+            }
             if let recorded = argv(tmuxArgv) {
                 return .tmux(recorded)
             }
@@ -219,22 +233,19 @@ struct CodexShimScriptTests {
         // `-L` picks the socket but leaves `~/.tmux.conf` loading, which
         // would bring the user's hooks and plugins onto our server.
         #expect(argv.dropFirst(2).prefix(2) == ["-f", "/dev/null"])
-        #expect(argv.contains("new-session"))
-        #expect(argv.contains("-e"))
-        #expect(argv.contains("WEIR_PANE_ID=547D688D-39DF-4A06-BD6F-316C3385532C"))
-        #expect(argv.contains { $0.hasPrefix("WEIR_AGENT_RUN_ID=") })
-        #expect(argv.contains("WEIR_AGENT_TMUX_HOST_MODE=weirHosted"))
         // `-A` would attach to an existing session of the same name and
         // silently drop the command, handing back the running agent.
         #expect(!argv.contains("-A"))
-        // Guarantees more than one argument after `new-session`, which is
+        // More than one argument after `new-session -s <name>`, which is
         // what makes tmux exec the argv directly instead of handing a
-        // single string to `sh -c`.
-        let env = try #require(argv.lastIndex(of: "/usr/bin/env"))
-        // Then only `-u NAME`, for what the pane does not set, and the agent.
-        let unsets = argv[(env + 1)...].dropLast()
-        #expect(unsets.count.isMultiple(of: 2))
-        #expect(stride(from: unsets.startIndex, to: unsets.endIndex, by: 2).allSatisfy { argv[$0] == "-u" })
+        // single string to `sh -c`: the reader of the pane's environment,
+        // its file, then the agent.
+        let session = try #require(argv.firstIndex(of: "new-session"))
+        #expect(argv[session + 1] == "-s")
+        #expect(argv[(session + 3)...].prefix(2) == ["/bin/sh", "-c"])
+        #expect(argv[session + 6] == "weir-env")
+        #expect(argv[session + 7].contains("/weir-hosted-env."))
+        #expect(argv.last?.hasSuffix("/fake-codex") == true)
     }
 
     /// The reason nothing here is quoted. Each `-c` value is TOML with
@@ -251,102 +262,105 @@ struct CodexShimScriptTests {
         #expect(argv.suffix(3) == ["-c", value, "resume"])
     }
 
-    /// A session created on a server that already exists inherits that
-    /// server's environment for everything outside tmux's
-    /// `update-environment` — measured 2026-09-06, a second session read
-    /// the first one's `WEIR_CODEX_AGENT_STATES_DIR`. The receiver
-    /// writes its records where these point, so a Dev agent that landed
-    /// on a Release build's server would write into the Release
-    /// directories. They are passed rather than inherited.
-    @Test("passes the record directories explicitly rather than inheriting them")
-    func hostedInvocation_passesTheRecordDirectories() throws {
-        guard case let .tmux(argv) = try runShimHosted([]) else {
-            Issue.record("expected a tmux handover")
-            return
-        }
-        #expect(argv.contains("WEIR_CODEX_SESSIONS_DIR=/App Support/codex-sessions"))
-        #expect(argv.contains("WEIR_CODEX_AGENT_STATES_DIR=/App Support/codex-agent-states"))
-    }
-
-    /// A server already running would otherwise start the agent with the
-    /// `CODEX_HOME` of the pane that started the server, and the hook would
-    /// read the memory agent against another home.
-    @Test("passes the pane's CODEX_HOME into tmux")
-    func hostedInvocation_passesThePanesCodexHome() throws {
-        guard case let .tmux(argv) = try runShimHosted([], environment: ["CODEX_HOME": "/opt/codex"]) else {
-            Issue.record("expected a tmux handover")
-            return
-        }
-        #expect(argv.contains("CODEX_HOME=/opt/codex"), "\(argv)")
-    }
-
-    /// A pane with no `CODEX_HOME` must not take the one of the pane that
-    /// started the server: a session takes every variable not given to it
-    /// from the server's environment, and tmux's `-e` only sets one. So
-    /// the agent starts with it unset, through `/usr/bin/env -u`, and
-    /// Codex reads its default home, as it would outside tmux.
-    @Test("unsets in the session the CODEX_HOME the pane does not set")
-    func hostedInvocation_unsetsACodexHomeThePaneDoesNotSet() throws {
-        guard case let .tmux(argv) = try runShimHosted([]) else {
-            Issue.record("expected a tmux handover")
-            return
-        }
-        #expect(!argv.contains { $0.hasPrefix("CODEX_HOME=") }, "\(argv)")
-        let env = try #require(argv.lastIndex(of: "/usr/bin/env"))
-        let unsets = Array(argv[(env + 1)...].dropLast())
-        #expect(zip(unsets, unsets.dropFirst()).contains { $0 == ("-u", "CODEX_HOME") }, "\(argv)")
-        // What the session's command does with it, on a server whose
-        // environment holds another pane's home.
-        let probe = try TestProcess.run(
-            URL(fileURLWithPath: "/usr/bin/env"),
-            arguments: unsets + ["/bin/sh", "-c", "printf %s \"${CODEX_HOME-unset}\""],
-            environment: IsolatedProcessEnvironment.make(["CODEX_HOME": "/work/a/.codex", "PATH": "/usr/bin:/bin"])
+    /// The environment the hosted Codex saw, failing the test when the
+    /// shim did not host it or left the saved pane environment behind.
+    private func hostedAgentEnvironment(
+        environment: [String: String] = [:],
+        knownLocation: String? = nil,
+        onPath: Bool = false,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) throws -> [String: String] {
+        var seen: [String: String] = [:]
+        var left: [String] = []
+        let handover = try runShimHosted(
+            [],
+            environment: environment,
+            knownLocation: knownLocation,
+            onPath: onPath,
+            seenAgent: { environment, leftFiles in
+                seen = environment
+                left = leftFiles
+            }
         )
-        #expect(probe.ending == .exited)
-        #expect(probe.stdoutText == "unset")
-
-        // A pane that sets it passes it, and unsets nothing of the kind.
-        guard case let .tmux(given) = try runShimHosted([], environment: ["CODEX_HOME": "/opt/codex"]) else {
-            Issue.record("expected a tmux handover")
-            return
+        guard case .tmux = handover else {
+            Issue.record("expected a tmux handover, got \(handover)", sourceLocation: sourceLocation)
+            return [:]
         }
-        #expect(!zip(given, given.dropFirst()).contains { $0 == ("-u", "CODEX_HOME") }, "\(given)")
+        #expect(left.isEmpty, "\(left)", sourceLocation: sourceLocation)
+        return seen
     }
 
-    /// The pane's `PATH` too, whichever way the agent was found: a server
-    /// already running would start it on the `PATH` of the pane that
-    /// started the server, which a mise, direnv or `.nvmrc` folder makes
-    /// another project's.
-    @Test("passes the pane's PATH into tmux")
-    func hostedInvocation_passesThePanesPath() throws {
-        guard case let .tmux(argv) = try runShimHosted([], onPath: true) else {
-            Issue.record("expected a tmux handover")
-            return
+    /// The bug this guards: a session takes every variable it is not
+    /// given from the tmux server's environment, which is that of the pane
+    /// whose agent started the server — measured 2026-09-06, a second
+    /// session read the first one's `WEIR_CODEX_AGENT_STATES_DIR`. Codex
+    /// sees this pane's variables, the person's own exports included,
+    /// none of the other pane's, and tmux's own for the terminal it draws
+    /// on.
+    @Test("starts a hosted agent with the pane's environment, not the tmux server's")
+    func hostedLaunch_getsThePanesEnvironmentNotTheServers() throws {
+        let env = try hostedAgentEnvironment(environment: ["PERSON_EXPORT": "this pane's\nsecond line"])
+        #expect(env["PERSON_EXPORT"] == "this pane's\nsecond line")
+        #expect(env["OTHER_PANE_ONLY"] == nil)
+        for (name, value) in ShimHarness.tmuxSessionVariables {
+            #expect(env[name] == value, "\(name)")
         }
-        let path = zip(argv, argv.dropFirst()).first { $0.0 == "-e" && $0.1.hasPrefix("PATH=") }?.1
+        #expect(env["WEIR_PANE_ID"] == "547D688D-39DF-4A06-BD6F-316C3385532C")
+        #expect(env["WEIR_AGENT_RUN_ID"]?.isEmpty == false)
+        #expect(env["WEIR_AGENT_TMUX_HOST_MODE"] == "weirHosted")
+    }
+
+    /// The receiver writes its records where these point, so a Dev agent
+    /// that took a Release server's would write into the Release
+    /// directories.
+    @Test("starts a hosted agent with the pane's record directories")
+    func hostedInvocation_passesTheRecordDirectories() throws {
+        let env = try hostedAgentEnvironment()
+        #expect(env["WEIR_CODEX_SESSIONS_DIR"] == "/App Support/codex-sessions")
+        #expect(env["WEIR_CODEX_AGENT_STATES_DIR"] == "/App Support/codex-agent-states")
+    }
+
+    /// The server's `CODEX_HOME` is another pane's, and the hook would
+    /// read the memory agent against another home. A pane with none
+    /// starts Codex with none, which reads its default home, as it would
+    /// outside tmux.
+    @Test("starts a hosted agent with the pane's CODEX_HOME, or none")
+    func hostedInvocation_passesThePanesCodexHome() throws {
+        #expect(try hostedAgentEnvironment(environment: ["CODEX_HOME": "/opt/codex"])["CODEX_HOME"] == "/opt/codex")
+        let unset = try hostedAgentEnvironment()
+        #expect(!unset.isEmpty)
+        #expect(unset["CODEX_HOME"] == nil)
+    }
+
+    /// The pane's `PATH` too, whichever way the agent was found: the
+    /// server's is the `PATH` of the pane that started it, which a mise,
+    /// direnv or `.nvmrc` folder makes another project's.
+    @Test("starts a hosted agent on the pane's PATH")
+    func hostedInvocation_passesThePanesPath() throws {
+        let path = try hostedAgentEnvironment(onPath: true)["PATH"]
         // As the pane had it: found on it, the agent adds nothing.
-        #expect(path?.hasSuffix("/bin:/usr/bin:/bin:/usr/sbin:/sbin") == true, "\(argv)")
-        #expect(path?.components(separatedBy: ":").count == 5, "\(argv)")
+        #expect(path?.hasSuffix("/bin:/usr/bin:/bin:/usr/sbin:/sbin") == true, "\(path ?? "nil")")
+        #expect(path?.components(separatedBy: ":").count == 5, "\(path ?? "nil")")
     }
 
     /// Found at a known location, the agent's folder has joined the
     /// `PATH`, and the session gets that `PATH`.
-    @Test("passes the PATH with the agent's folder when it was found at a known location")
+    @Test("starts a hosted agent found at a known location on the PATH with its folder")
     func hostedInvocation_ofAnAgentAtAKnownLocation_passesThePathWithItsFolder() throws {
         let location = ".nvm/versions/node/v22.3.0/bin/codex"
+        let path = try hostedAgentEnvironment(knownLocation: location)["PATH"]
+        #expect(path?.hasPrefix("/usr/bin:/bin:/usr/sbin:/sbin:") == true, "\(path ?? "nil")")
+        #expect(path?.hasSuffix("/.nvm/versions/node/v22.3.0/bin") == true, "\(path ?? "nil")")
         guard case let .tmux(argv) = try runShimHosted([], knownLocation: location) else {
             Issue.record("expected a tmux handover")
             return
         }
-        let path = zip(argv, argv.dropFirst()).first { $0.0 == "-e" && $0.1.hasPrefix("PATH=") }?.1
-        #expect(path?.hasPrefix("PATH=/usr/bin:/bin:/usr/sbin:/sbin:") == true, "\(argv)")
-        #expect(path?.hasSuffix("/.nvm/versions/node/v22.3.0/bin") == true, "\(argv)")
         #expect(argv.last?.hasSuffix(location) == true, "\(argv)")
     }
 
     /// What the new workspace sheet found stays with the pane's shell: a
     /// tmux server started with it would hand it to every session after,
-    /// in whatever folder. Neither the tmux client nor its `-e` list has it.
+    /// in whatever folder. Neither the tmux client nor the agent has it.
     @Test("keeps what the sheet found out of tmux")
     func hostedInvocation_keepsTheSheetsExecutableOutOfTmux() throws {
         var seen: String?
@@ -356,7 +370,8 @@ struct CodexShimScriptTests {
             return
         }
         #expect(seen == "unset")
-        #expect(!argv.contains { $0.hasPrefix("WEIR_FOUND_") })
+        #expect(!argv.contains { $0.contains("WEIR_FOUND_") })
+        #expect(try hostedAgentEnvironment(environment: ["WEIR_FOUND_CODEX": "/opt/tools/bin/codex"])["WEIR_FOUND_CODEX"] == nil)
     }
 
     @Test("does not wrap again once inside tmux")
@@ -402,18 +417,15 @@ struct CodexShimScriptTests {
         #expect(try runShimHosted([], paneID: nil) == .direct([]))
     }
 
-    @Test("passes an emptied record directory into tmux as empty")
+    @Test("starts a hosted agent with an emptied record directory empty")
     func hostedLaunch_passesEmptyRecordDirectories() throws {
-        // A demo pane empties them; left out, the session would take the
-        // tmux server's values, which are another build's directories.
-        guard case let .tmux(argv) = try runShimHosted([], environment: [
+        // A demo pane empties them; the session must not take the tmux
+        // server's values, which are another build's directories.
+        let env = try hostedAgentEnvironment(environment: [
             "WEIR_CODEX_AGENT_STATES_DIR": "",
             "WEIR_CODEX_SESSIONS_DIR": ""
-        ]) else {
-            Issue.record("expected a tmux handover")
-            return
-        }
-        #expect(argv.contains("WEIR_CODEX_AGENT_STATES_DIR="))
-        #expect(argv.contains("WEIR_CODEX_SESSIONS_DIR="))
+        ])
+        #expect(env["WEIR_CODEX_AGENT_STATES_DIR"] == "")
+        #expect(env["WEIR_CODEX_SESSIONS_DIR"] == "")
     }
 }

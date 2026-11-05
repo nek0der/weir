@@ -61,13 +61,9 @@ struct InitialPromptShimTests {
         printf '%s\n%s\n%s\n' "${WEIR_INITIAL_PROMPT_FILE:+set}" "$$" "${WEIR_CODEX_PID:-}" > "\(agentEnv.path)"
         exit 0
         """), at: stub)
-        // Records its argv, then runs what follows `/usr/bin/env`, as tmux
-        // runs the session's command.
+        // Records its argv, then runs the session's command as tmux does.
         let tmux = dir.appendingPathComponent("fake-tmux-\(run)")
-        try ShimHarness.writeExecutable(ShimHarness.argvRecorder(into: tmuxArgv, then: """
-        while [ "$#" -gt 0 ] && [ "$1" != /usr/bin/env ]; do shift; done
-        exec "$@"
-        """), at: tmux)
+        try ShimHarness.writeExecutable(ShimHarness.fakeTmux(into: tmuxArgv), at: tmux)
 
         var environment = ShimHarness.environment(in: dir)
         environment[agent.realVariable] = stub.path

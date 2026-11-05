@@ -400,8 +400,8 @@ final class AppState {
         }
         // Always make sure the window has at least one tab to render.
         session.openLaunchTabIfNone()
-        if writesUserFiles, !session.keepsUnreferencedFiles {
-            InitialPromptFile.removeOrphans(keeping: Set(session.tabs.flatMap(\.initialPromptFiles.values)))
+        if writesUserFiles {
+            Self.removeLeftLaunchFiles(of: session)
         }
 
         // Only takes out what earlier builds wrote: our hooks carry their
@@ -533,6 +533,17 @@ final class AppState {
         if let themeObserver {
             DistributedNotificationCenter.default.removeObserver(themeObserver)
         }
+    }
+
+    /// Deletes what agent launches left in the temporary folders: the first
+    /// instructions no tab stages any more, unless the session could not be
+    /// read and might still name some, and the pane environments a tmux
+    /// session never read.
+    private static func removeLeftLaunchFiles(of session: WorkspaceSession) {
+        if !session.keepsUnreferencedFiles {
+            InitialPromptFile.removeOrphans(keeping: Set(session.tabs.flatMap(\.initialPromptFiles.values)))
+        }
+        HostedPaneEnvironmentFile.removeOrphans()
     }
 
     /// Wire the static gate slots that AppKit / `CloseConfirmer`

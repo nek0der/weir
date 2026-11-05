@@ -128,6 +128,70 @@ enum ShimHarness {
         """
     }
 
+    /// The environment of the tmux server a hosted session lands on when
+    /// another pane's agent started that server: another `PATH`, account,
+    /// and record directories, and a variable that pane's person exported.
+    /// A hosted agent must see none of it.
+    static let tmuxServerEnvironment: [String: String] = [
+        "PATH": "/other-pane/bin:/usr/bin:/bin",
+        "HOME": "/Users/other",
+        "OTHER_PANE_ONLY": "1",
+        "PERSON_EXPORT": "the other pane's",
+        "CLAUDE_CONFIG_DIR": "/Users/other/.claude-work",
+        "CODEX_HOME": "/Users/other/.codex-work",
+        "WEIR_SESSIONS_DIR": "/Release/sessions",
+        "WEIR_AGENT_STATES_DIR": "/Release/agent-states",
+        "WEIR_CWD_EVENTS_DIR": "/Release/cwd-events",
+        "WEIR_CODEX_SESSIONS_DIR": "/Release/codex-sessions",
+        "WEIR_CODEX_AGENT_STATES_DIR": "/Release/codex-agent-states",
+        "TERM": "xterm-ghostty"
+    ]
+
+    /// What tmux 3.8 sets in a session for the terminal it is, over the
+    /// server's environment (measured: `env` in a new session).
+    static let tmuxSessionVariables: [String: String] = [
+        "TERM": "tmux-256color",
+        "TERM_PROGRAM": "tmux",
+        "TERM_PROGRAM_VERSION": "3.8",
+        "COLORTERM": "truecolor",
+        "TMUX": "/private/tmp/tmux-501/weir-test.socket,4242,1",
+        "TMUX_PANE": "%1"
+    ]
+
+    /// A stand-in tmux that records its arguments in `argvFile`, runs
+    /// `then`, and then starts the session's command as tmux does on a
+    /// server another pane started: in that server's environment
+    /// (`tmuxServerEnvironment`) with tmux's own variables over it, and
+    /// none of the client's.
+    static func fakeTmux(into argvFile: URL, then: String = "") -> String {
+        let assignments = tmuxServerEnvironment
+            .merging(tmuxSessionVariables) { _, own in own }
+            .sorted { $0.key < $1.key }
+            .map { "'" + "\($0.key)=\($0.value)".replacingOccurrences(of: "'", with: "'\\''") + "'" }
+            .joined(separator: " ")
+        return argvRecorder(into: argvFile, then: """
+        \(then)
+        while [ "$#" -gt 0 ] && [ "$1" != new-session ]; do shift; done
+        [ "$#" -ge 3 ] || exit 1
+        shift
+        [ "$1" = -s ] || exit 1
+        shift 2
+        exec /usr/bin/env -i \(assignments) "$@"
+        """)
+    }
+
+    /// The environment a stub recorded with `/usr/bin/env -0`; nil when it
+    /// never ran.
+    static func recordedEnvironment(_ url: URL) -> [String: String]? {
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        var environment: [String: String] = [:]
+        for entry in text.split(separator: "\0") {
+            guard let equals = entry.firstIndex(of: "=") else { continue }
+            environment[String(entry[..<equals])] = String(entry[entry.index(after: equals)...])
+        }
+        return environment
+    }
+
     /// Writes `script` to `url` and makes it executable.
     static func writeExecutable(_ script: String, at url: URL) throws {
         try script.write(to: url, atomically: true, encoding: .utf8)

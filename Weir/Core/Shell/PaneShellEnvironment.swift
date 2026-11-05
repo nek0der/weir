@@ -114,14 +114,13 @@ enum PaneShellEnvironment {
     }
 
     /// Namespaced by bundle identifier, which is what keeps a Debug
-    /// build off a Release build's server. Measured 2026-09-06: a
-    /// session created on a server that already exists inherits that
-    /// server's environment for every variable outside tmux's
-    /// `update-environment`, so a Dev agent started on the Release
-    /// build's server would write its hook records into the Release
-    /// directories. It also keeps us off a server the user happens to
-    /// have started under a plainer name, where our global options
-    /// would land on their sessions.
+    /// build off a Release build's server: each build counts a client of
+    /// its own server as its agent host (`TmuxPanePresence.isAgentHost`).
+    /// The agent's environment no longer depends on the server: the shim
+    /// hands the session its pane's (`weir_hosted_env_reader`). It also
+    /// keeps us off a server the user happens to have started under a
+    /// plainer name, where our global options would land on their
+    /// sessions.
     static func defaultAgentSocketName() -> String {
         "weir-" + WeirPaths.bundleID
     }
