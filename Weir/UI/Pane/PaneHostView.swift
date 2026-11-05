@@ -541,16 +541,11 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
         tab: Tab?,
         paneID: UUID
     ) {
-        guard let tab else { return }
-        guard let rawPath = tab.scrollbackPaths[paneID], !rawPath.isEmpty else { return }
+        guard let tab, let rawPath = session.consumeScrollbackPath(tabID: tab.id, paneID: paneID) else { return }
         // Only replay a `.vt` file we wrote; a tampered state.json could
         // otherwise point this at an arbitrary file for libghostty to read.
         if let path = session.scrollbackFiles?.validatedPath(rawPath) {
             view.initialScrollbackPath = path
-        }
-        let tabID = tab.id
-        session.update(tabID) { tab in
-            tab.scrollbackPaths.removeValue(forKey: paneID)
         }
     }
 }

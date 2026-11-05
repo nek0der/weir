@@ -11,9 +11,10 @@
 //     (`scrollbackFiles`): `<WeirPaths app support>/scrollback/`.
 //   * One per pane, named `<paneUUID>.vt` (`ScrollbackFiles`).
 //   * Captured fresh on every ⌘Q.
-//   * Consumed in `PaneHostView.stageScrollback`: the path is moved
-//     onto the SurfaceView and immediately cleared from the model so
-//     a later split / re-mount can't double-replay.
+//   * Consumed in `PaneHostView.stageScrollback` through
+//     `consumeScrollbackPath`: the path is moved onto the SurfaceView and
+//     immediately cleared from the model so a later split / re-mount
+//     can't double-replay.
 //   * `ScrollbackFiles.prune` deletes any file not referenced by a live
 //     tab so the directory doesn't grow unboundedly across months, except
 //     in a run whose state.json was set aside (`keepsUnreferencedFiles`).
@@ -35,27 +36,17 @@ extension WorkspaceSession {
         guard writesUserFiles, let files = scrollbackFiles else { return }
         var liveFiles: Set<String> = []
         for tabIdx in tabs.indices {
-            let paneIDs = tabs[tabIdx].splitTree.allLeafIDs()
-            // Walk each live pane and overwrite its slot only when we
-            // got a fresh dump. Leaves whose terminal was never
-            // mounted this run (a restored tab the user never clicked
-            // into) keep their previously-persisted path — wiping the
-            // map would also drop the .vt file via the prune,
+            // A leaf whose terminal was never mounted this run (a restored
+            // tab the person never clicked into) keeps its inherited path:
+            // wiping it would also let the prune below delete the `.vt`,
             // taking real scrollback with it.
-            for pid in paneIDs {
-                if let url = files.capture(pid, with: writer) {
-                    tabs[tabIdx].scrollbackPaths[pid] = url.path
-                    liveFiles.insert(url.path)
-                } else if let preserved = tabs[tabIdx].scrollbackPaths[pid] {
-                    // Surface not mounted this run — keep the inherited
-                    // path alive so prune leaves the on-disk file alone.
-                    liveFiles.insert(preserved)
-                }
-            }
-            // Drop entries for leaves the tab no longer contains so
-            // stale uuids don't pile up across edits.
-            let liveSet = Set(paneIDs)
-            tabs[tabIdx].scrollbackPaths = tabs[tabIdx].scrollbackPaths.filter { liveSet.contains($0.key) }
+            let paths = files.capturePaths(
+                of: tabs[tabIdx].splitTree.allLeafIDs(),
+                inheriting: tabs[tabIdx].scrollbackPaths,
+                with: writer
+            )
+            tabs[tabIdx].scrollbackPaths = paths
+            liveFiles.formUnion(paths.values)
         }
         // Keep `.vt` files referenced by the reopen-closed-tab stack
         // too — they're about to be replayed when the user hits ⌘⇧T.
@@ -68,5 +59,17 @@ extension WorkspaceSession {
         // session's; the next launch that reads a state.json prunes them.
         guard !keepsUnreferencedFiles else { return }
         files.prune(keeping: liveFiles)
+    }
+
+    /// Takes the saved scrollback path of `paneID` out of its tab and hands
+    /// it back, so the pane's terminal replays it once and a later split or
+    /// re-mount does not replay it again. `nil`, and nothing changes, when
+    /// the pane has no path to replay.
+    func consumeScrollbackPath(tabID: UUID, paneID: UUID) -> String? {
+        guard let path = tab(tabID)?.scrollbackPaths[paneID], !path.isEmpty else { return nil }
+        update(tabID) { tab in
+            tab.scrollbackPaths.removeValue(forKey: paneID)
+        }
+        return path
     }
 }

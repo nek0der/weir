@@ -1,5 +1,5 @@
 // ScrollbackCaptureTests.swift
-// Weir — the capture at ⌘Q that fills the session's scrollback folder, and what it leaves alone.
+// Weir — the capture at ⌘Q that fills the session's scrollback folder, what it leaves alone, and the rule a tab's close shares with it.
 
 import Foundation
 import Testing
@@ -102,5 +102,72 @@ struct ScrollbackCaptureTests {
         session.captureScrollbackPaths(from: registry)
 
         #expect(session.tab(tab.id)?.scrollbackPaths.isEmpty == true)
+    }
+
+    // MARK: - The capture rule ⌘Q and a tab's close share
+
+    @Test func capturePaths_aFreshDumpWinsOverTheInheritedPath() throws {
+        try withFiles { files in
+            let pane = UUID()
+            let registry = RecordingSurfaceRegistry()
+            registry.scrollback[pane] = "fresh"
+
+            let paths = files.capturePaths(of: [pane], inheriting: [pane: "/earlier.vt"], with: registry)
+
+            let saved = files.directory.appendingPathComponent("\(pane.uuidString).vt")
+            #expect(paths == [pane: saved.path])
+        }
+    }
+
+    @Test func capturePaths_keepsTheInheritedPath_whenThePaneHasNoDump() throws {
+        try withFiles { files in
+            let mounted = UUID()
+            let unmounted = UUID()
+            let registry = RecordingSurfaceRegistry()
+            registry.scrollback[mounted] = "fresh"
+
+            let paths = files.capturePaths(
+                of: [mounted, unmounted],
+                inheriting: [unmounted: "/earlier.vt"],
+                with: registry
+            )
+
+            #expect(paths[unmounted] == "/earlier.vt")
+            #expect(paths[mounted] == files.directory.appendingPathComponent("\(mounted.uuidString).vt").path)
+        }
+    }
+
+    @Test func capturePaths_dropsPanesOutsideTheLeaves() throws {
+        try withFiles { files in
+            let leaf = UUID()
+            let gone = UUID()
+            let registry = RecordingSurfaceRegistry()
+            registry.scrollback[gone] = "a closed split"
+
+            let paths = files.capturePaths(of: [leaf], inheriting: [gone: "/gone.vt"], with: registry)
+
+            #expect(paths.isEmpty)
+        }
+    }
+
+    // MARK: - Taking a restored pane's path
+
+    @Test func consumeScrollbackPath_handsThePathBackOnce() {
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        _ = session.update(tab.id) { $0.scrollbackPaths[pane] = "/saved.vt" }
+
+        #expect(session.consumeScrollbackPath(tabID: tab.id, paneID: pane) == "/saved.vt")
+        #expect(session.tab(tab.id)?.scrollbackPaths[pane] == nil)
+        #expect(session.consumeScrollbackPath(tabID: tab.id, paneID: pane) == nil)
+    }
+
+    @Test func consumeScrollbackPath_leavesAnEmptyPathInPlace() {
+        // An empty path was never a file to replay; taking it would change
+        // the tab for nothing.
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        _ = session.update(tab.id) { $0.scrollbackPaths[pane] = "" }
+
+        #expect(session.consumeScrollbackPath(tabID: tab.id, paneID: pane) == nil)
+        #expect(session.tab(tab.id)?.scrollbackPaths[pane] == "")
     }
 }

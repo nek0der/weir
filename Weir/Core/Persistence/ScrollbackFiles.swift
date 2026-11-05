@@ -47,6 +47,29 @@ struct ScrollbackFiles: Equatable {
         return url
     }
 
+    /// The scrollback paths a tab with `leafIDs` keeps: each pane's fresh
+    /// dump, else the path it `inherited` (a restored pane never mounted this
+    /// run has no terminal to dump, and its earlier file is still the one to
+    /// replay). Panes outside `leafIDs` are dropped, so a closed split's path
+    /// does not outlive it. The one rule for ⌘Q and a tab's close, which differ
+    /// only in what they pass as `inherited`.
+    @MainActor
+    func capturePaths(
+        of leafIDs: [UUID],
+        inheriting inherited: [UUID: String],
+        with writer: any ScrollbackWriting
+    ) -> [UUID: String] {
+        var paths: [UUID: String] = [:]
+        for paneID in leafIDs {
+            if let url = capture(paneID, with: writer) {
+                paths[paneID] = url.path
+            } else if let preserved = inherited[paneID] {
+                paths[paneID] = preserved
+            }
+        }
+        return paths
+    }
+
     /// Removes every file in the folder that no live or recently closed tab
     /// references, so the folder does not grow across months.
     func prune(keeping live: Set<String>) {
