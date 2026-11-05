@@ -68,5 +68,6 @@
     "GIT_GLOB_PATHSPECS",
     "GIT_NOGLOB_PATHSPECS",
     "GIT_ICASE_PATHSPECS"
-  ]
+  ],
+  "gitCommonOptions": ["-c", "core.fsmonitor=false"]
 }

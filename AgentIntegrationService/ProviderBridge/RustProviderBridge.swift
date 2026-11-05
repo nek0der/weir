@@ -183,6 +183,21 @@ enum RustProviderBridge {
         return outcome
     }
 
+    /// Appends `message` to the hook log at `path` through the runtime's own
+    /// log, which keeps the file private to the user, refuses a symlink at
+    /// `path`, and sets a full log aside. `false` when the line could not be
+    /// written there, or the bridge refused the input.
+    static func logLine(_ message: String, to path: String) -> Bool {
+        let pathBytes = Data(path.utf8)
+        let messageBytes = Data(message.utf8)
+        let status = RustBytes.withBytes(pathBytes) { pathPointer, pathCount in
+            RustBytes.withBytes(messageBytes) { messagePointer, messageCount in
+                weir_hook_log_line_v1(pathPointer, pathCount, messagePointer, messageCount)
+            }
+        }
+        return status == Int32(WEIR_PROVIDER_OK.rawValue)
+    }
+
     /// The input pointer-length pairs one ABI call receives, plus the output
     /// slots it fills.
     private struct Pointers {

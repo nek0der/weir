@@ -427,9 +427,11 @@ impl HookLog {
         }
     }
 
-    /// A log at `path`, for tests that read what was logged.
-    #[cfg(all(test, unix))]
-    pub(crate) fn at(path: PathBuf) -> Self {
+    /// A log at `path`, for a caller that reads `WEIR_HOOK_LOG` itself: the
+    /// Hook Helper's own lines (`weir_hook_log_line_v1`), so one writer keeps
+    /// the file private and bounded, and tests that read what was logged.
+    #[must_use]
+    pub fn at(path: PathBuf) -> Self {
         Self { path: Some(path) }
     }
 
@@ -444,25 +446,66 @@ impl HookLog {
     /// file is the user's alone, like the records; and a log left enabled
     /// is kept to one earlier generation of `HOOK_LOG_LIMIT_BYTES`.
     pub fn line(&self, message: &str) {
-        let Some(path) = &self.path else { return };
-        if fs::metadata(path).is_ok_and(|metadata| metadata.len() >= HOOK_LOG_LIMIT_BYTES) {
-            let mut previous = path.clone().into_os_string();
-            previous.push(".1");
-            let _ = fs::rename(path, previous);
-        }
-        if let Ok(mut file) = open_log(path) {
-            let _ = writeln!(
-                file,
-                "{} weir-agent-hook: {message}",
-                crate::format_utc_seconds(std::time::SystemTime::now())
-            );
-        }
+        let _ = self.write_line(HOOK_LOG_SOURCE, message);
+    }
+
+    /// `line`, from `source`, which labels the line as the runtime's own
+    /// lines carry `weir-agent-hook`, and saying whether the line was
+    /// written: the Hook Helper labels its own lines and prints one it could
+    /// not log to its standard error instead. A log that is turned off
+    /// writes nothing and succeeds.
+    ///
+    /// # Errors
+    ///
+    /// Returns the I/O error from opening, setting aside, or writing the
+    /// log, including a refusal of a symlink or anything but a plain file
+    /// at its path.
+    pub fn write_line(&self, source: &str, message: &str) -> io::Result<()> {
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
+        let mut file = set_aside_if_full(open_log(path)?, path)?;
+        writeln!(
+            file,
+            "{} {source}: {message}",
+            crate::format_utc_seconds(std::time::SystemTime::now())
+        )
     }
 }
+
+/// The label of the runtime's own lines in the hook log.
+const HOOK_LOG_SOURCE: &str = "weir-agent-hook";
 
 /// How large the hook log grows before it is set aside for a new one.
 const HOOK_LOG_LIMIT_BYTES: u64 = 4 * 1024 * 1024;
 
+/// `file`, the log `open_log` opened at `path`, or a new log in its place once
+/// it is full. The size is asked of the file we opened, which `open_log` has
+/// already made private, so the generation set aside is never one an earlier
+/// build left readable. Every call that sets the log aside holds the full
+/// file's own lock and renames it only while it is still the one at `path`:
+/// two calls that opened it together set it aside once, and the second never
+/// sets aside the log the first has just started, which would drop the
+/// earlier generation.
+fn set_aside_if_full(file: File, path: &Path) -> io::Result<File> {
+    if file.metadata()?.len() < HOOK_LOG_LIMIT_BYTES {
+        return Ok(file);
+    }
+    file.lock()?;
+    if is_at_path(&file, path) {
+        let mut previous = path.to_path_buf().into_os_string();
+        previous.push(".1");
+        fs::rename(path, previous)?;
+    }
+    let _ = unlock(&file);
+    open_log(path)
+}
+
+/// Opens the log to append, private to the user whatever mode it had and
+/// whatever the umask is. `WEIR_HOOK_LOG` may name a folder others can
+/// write to, so a symlink there is refused rather than followed (its
+/// target would be written and narrowed), and so is anything but a plain
+/// file. The mode is set through the open file, never the path.
 #[cfg(unix)]
 fn open_log(path: &Path) -> io::Result<File> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -470,16 +513,26 @@ fn open_log(path: &Path) -> io::Result<File> {
         .append(true)
         .create(true)
         .mode(0o600)
+        .custom_flags(O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
-    // The mode applies only when the file is created, so a log an earlier
-    // build left readable is narrowed here; the rename keeps it for `.1`.
+    if !file.metadata()?.is_file() {
+        return Err(io::Error::other("the hook log is not a plain file"));
+    }
+    // The mode given above applies only when the file is created, and the
+    // umask narrows it further at most.
     file.set_permissions(fs::Permissions::from_mode(0o600))?;
     Ok(file)
 }
 
 #[cfg(not(unix))]
 fn open_log(path: &Path) -> io::Result<File> {
-    OpenOptions::new().append(true).create(true).open(path)
+    // Read access too: Windows locks (`set_aside_if_full`) only a file opened
+    // with it or with full write access, which append alone is not.
+    OpenOptions::new()
+        .read(true)
+        .append(true)
+        .create(true)
+        .open(path)
 }
 
 #[cfg(test)]
@@ -617,6 +670,69 @@ mod tests {
         let current = fs::read_to_string(&path).expect("log");
         assert!(current.ends_with("after the limit\n"), "{current}");
         assert!(current.len() < 100);
+    }
+
+    /// A log an earlier build left readable and already past the limit is
+    /// set aside private too: it is narrowed before it is renamed, not only
+    /// the new one.
+    #[cfg(unix)]
+    #[test]
+    fn a_readable_log_already_past_the_limit_is_set_aside_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new("log-full");
+        let path = scratch.0.join("hook.log");
+        let full = usize::try_from(HOOK_LOG_LIMIT_BYTES).expect("limit");
+        fs::write(&path, vec![b'x'; full]).expect("earlier log");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("chmod");
+        HookLog::at(path.clone()).line("after the limit");
+        let previous = fs::metadata(scratch.0.join("hook.log.1")).expect("previous");
+        assert_eq!(previous.len(), HOOK_LOG_LIMIT_BYTES);
+        assert_eq!(previous.permissions().mode() & 0o777, 0o600);
+        let current = fs::metadata(&path).expect("log");
+        assert_eq!(current.permissions().mode() & 0o777, 0o600);
+    }
+
+    /// Two calls that opened the full log together set it aside once: the
+    /// one that finds the log already set aside writes to the new one and
+    /// leaves the earlier generation in `.1`.
+    #[cfg(unix)]
+    #[test]
+    fn a_full_log_opened_by_two_calls_is_set_aside_once() {
+        let scratch = Scratch::new("log-race");
+        let path = scratch.0.join("hook.log");
+        let full = usize::try_from(HOOK_LOG_LIMIT_BYTES).expect("limit");
+        fs::write(&path, vec![b'x'; full]).expect("full log");
+        let late = open_log(&path).expect("the second call's open");
+        HookLog::at(path.clone()).line("first");
+        let mut late = set_aside_if_full(late, &path).expect("set aside");
+        writeln!(late, "second").expect("write");
+        let previous = fs::metadata(scratch.0.join("hook.log.1")).expect("previous");
+        assert_eq!(previous.len(), HOOK_LOG_LIMIT_BYTES);
+        let current = fs::read_to_string(&path).expect("log");
+        assert!(current.ends_with("first\nsecond\n"), "{current}");
+    }
+
+    /// A symlink at the log's path is never followed: the file it names is
+    /// neither written nor narrowed, and is not set aside in its place.
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_at_the_log_path_is_not_followed() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new("log-link");
+        let target = scratch.0.join("elsewhere");
+        fs::write(&target, b"theirs\n").expect("target");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o644)).expect("chmod");
+        let path = scratch.0.join("hook.log");
+        std::os::unix::fs::symlink(&target, &path).expect("link");
+        assert!(
+            HookLog::at(path.clone())
+                .write_line("weir-hook-helper", "refused")
+                .is_err()
+        );
+        assert_eq!(fs::read(&target).expect("target"), b"theirs\n");
+        let mode = fs::metadata(&target).expect("target").permissions().mode();
+        assert_eq!(mode & 0o777, 0o644);
+        assert!(fs::symlink_metadata(&path).expect("link").is_symlink());
     }
 
     #[test]

@@ -25,6 +25,7 @@ struct SharedValuesContractTests {
         let notAtWorkStates: [String]
         let worktreeFolders: WorktreeFolders
         let gitRepositoryVariables: [String]
+        let gitCommonOptions: [String]
         let usageLimitScopes: [String]
         let usageWindows: UsageWindows
     }
@@ -71,6 +72,10 @@ struct SharedValuesContractTests {
         let listed = try Self.sharedValues().gitRepositoryVariables
         #expect(Set(listed).count == listed.count, "no name twice")
         #expect(GitProcess.repositoryVariables == Set(listed))
+    }
+
+    @Test func theCommonOptions_areTheOnesTheHookStartsItsGitWith() throws {
+        #expect(try GitProcess.commonOptions == Self.sharedValues().gitCommonOptions)
     }
 
     @Test func theUsageNames_areTheOnesTheRustModelWrites() throws {

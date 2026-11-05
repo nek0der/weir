@@ -9,8 +9,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 use std::slice;
 use weir_agent_hook::{
-    GitSnapshots, HookEnv, HookOutcome, HookRuntime, NoSnapshots, SnapshotRunner, adapter_for,
-    run_hook, run_worktree_hook,
+    GitSnapshots, HookEnv, HookLog, HookOutcome, HookRuntime, NoSnapshots, SnapshotRunner,
+    adapter_for, run_hook, run_worktree_hook,
 };
 use weir_agent_model::{
     ApprovalDecision, FailureWatch, MAX_HOOK_INPUT_BYTES, NormalizeError, ProviderAdapter,
@@ -39,6 +39,10 @@ pub enum weir_provider_result {
     WEIR_PROVIDER_INTERNAL = 6,
     /// Rust caught a panic at the FFI boundary.
     WEIR_PROVIDER_PANIC = 7,
+    /// `weir_hook_log_line_v1` could not write the line: the log could not
+    /// be opened (a symlink or no plain file at its path, a folder that is
+    /// not there), set aside, or written.
+    WEIR_PROVIDER_LOG_NOT_WRITTEN = 8,
 }
 
 const PROVIDER_OK: i32 = weir_provider_result::WEIR_PROVIDER_OK as i32;
@@ -49,6 +53,7 @@ const PROVIDER_INPUT_TOO_LARGE: i32 = weir_provider_result::WEIR_PROVIDER_INPUT_
 const PROVIDER_INVALID_INPUT: i32 = weir_provider_result::WEIR_PROVIDER_INVALID_INPUT as i32;
 const PROVIDER_INTERNAL: i32 = weir_provider_result::WEIR_PROVIDER_INTERNAL as i32;
 const PROVIDER_PANIC: i32 = weir_provider_result::WEIR_PROVIDER_PANIC as i32;
+const PROVIDER_LOG_NOT_WRITTEN: i32 = weir_provider_result::WEIR_PROVIDER_LOG_NOT_WRITTEN as i32;
 
 /// The longest transcript line asked about: more than the watcher's reads can
 /// hand over together with what they kept of the line before.
@@ -131,6 +136,45 @@ pub unsafe extern "C" fn weir_hook_run_v1(
     });
     status.unwrap_or_else(|code| code)
 }
+
+/// Appends `message` to the hook log at `path`, labeled `weir-hook-helper`,
+/// as the hook runtime appends its own lines (`HookLog`): one writer, so the file is created and set
+/// aside private to the user whatever its earlier mode or the umask, a
+/// symlink at `path` is refused, and the log is kept to one earlier
+/// generation. Both are UTF-8. A line that could not be written returns
+/// `WEIR_PROVIDER_LOG_NOT_WRITTEN`, so the caller can print it where it
+/// still can.
+///
+/// # Safety
+///
+/// `path` must be readable for `path_len` bytes and `message` for
+/// `message_len` bytes (either may be null with a zero length).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn weir_hook_log_line_v1(
+    path: *const u8,
+    path_len: usize,
+    message: *const u8,
+    message_len: usize,
+) -> i32 {
+    let status = provider_boundary(|| {
+        let path = unsafe { input_bytes(path, path_len) }?;
+        let path = std::str::from_utf8(path).map_err(|_| PROVIDER_INVALID_INPUT)?;
+        if path.is_empty() {
+            return Err(PROVIDER_INVALID_INPUT);
+        }
+        let message = unsafe { input_bytes(message, message_len) }?;
+        let message = std::str::from_utf8(message).map_err(|_| PROVIDER_INVALID_INPUT)?;
+        HookLog::at(std::path::PathBuf::from(path))
+            .write_line(HOOK_HELPER_LOG_SOURCE, message)
+            .map_err(|_| PROVIDER_LOG_NOT_WRITTEN)?;
+        Ok(PROVIDER_OK)
+    });
+    status.unwrap_or_else(|code| code)
+}
+
+/// The label `weir_hook_log_line_v1` gives the Hook Helper's lines, beside
+/// the runtime's own `weir-agent-hook`.
+const HOOK_HELPER_LOG_SOURCE: &str = "weir-hook-helper";
 
 fn outcome_json(outcome: &HookOutcome) -> serde_json::Value {
     let (name, message, stdout) = match outcome {
@@ -453,6 +497,49 @@ mod tests {
         assert_eq!(body["message"], "record lock busy");
     }
     use crate::test_support::take_bytes;
+
+    /// The Hook Helper's lines go through the runtime's own log: the file is
+    /// private even when the umask and an earlier build left it readable.
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_line_is_written_private_through_the_hook_log() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = tempfile::tempdir().expect("scratch");
+        let path = scratch.path().join("hook.log");
+        std::fs::write(&path, b"").expect("earlier log");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        let path_bytes = path.to_str().expect("path").as_bytes();
+        let message = b"Weir hook helper: refused";
+        // SAFETY: Both inputs are live locals of this test.
+        let status = unsafe {
+            weir_hook_log_line_v1(
+                path_bytes.as_ptr(),
+                path_bytes.len(),
+                message.as_ptr(),
+                message.len(),
+            )
+        };
+        assert_eq!(status, PROVIDER_OK);
+        let written = std::fs::read_to_string(&path).expect("log");
+        assert!(
+            written.ends_with("Weir hook helper: refused\n"),
+            "{written}"
+        );
+        let mode = std::fs::metadata(&path).expect("log").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        // SAFETY: A null path with no length is the call's empty input.
+        let empty = unsafe { weir_hook_log_line_v1(ptr::null(), 0, message.as_ptr(), 1) };
+        assert_eq!(empty, PROVIDER_INVALID_INPUT);
+        // A log that cannot be opened says so, for the helper to print the
+        // line to its standard error instead.
+        let gone = scratch.path().join("gone/hook.log");
+        let gone = gone.to_str().expect("path").as_bytes();
+        // SAFETY: Both inputs are live locals of this test.
+        let unwritten = unsafe {
+            weir_hook_log_line_v1(gone.as_ptr(), gone.len(), message.as_ptr(), message.len())
+        };
+        assert_eq!(unwritten, PROVIDER_LOG_NOT_WRITTEN);
+    }
 
     fn request(provider: &str, payload: &[u8]) -> (i32, Option<Value>) {
         let mut out: *mut u8 = ptr::dangling_mut();

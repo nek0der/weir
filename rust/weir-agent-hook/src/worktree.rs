@@ -8,6 +8,7 @@
 //! a sandbox still stops it. The bootstrap waits for `PostToolUse` and a worktree
 //! Git lists.
 
+use crate::git::git_command;
 use serde_json::Value;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -200,15 +201,6 @@ fn adds_to_project(intent: &WorktreeIntent, root: &Path) -> bool {
     }
     common_dir(&start_directory(intent))
         .is_some_and(|asked| common_dir(root).is_some_and(|project| asked == project))
-}
-
-/// Git for the hook's own questions, which are about the folders we name and not
-/// whatever the agent's environment points at.
-fn git_command() -> Command {
-    let mut command = Command::new("git");
-    crate::git::clear_repository_variables(&mut command);
-    command.stdin(Stdio::null()).stderr(Stdio::null());
-    command
 }
 
 /// Where the agent's command starts Git, past any `-C`, which decides the

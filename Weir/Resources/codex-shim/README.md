@@ -123,7 +123,9 @@ instruction stays off tmux's command line, which tmux limits to about
 `weir-hook` exits `0` on any failure the helper runs into, because a
 broken hook must never stop the user from running Codex. The one exception
 is a missing helper, which exits `1` (see [Files](#files) above). Set
-`WEIR_HOOK_LOG=<path>` to capture the helper's diagnostics.
+`WEIR_HOOK_LOG=<path>` to capture the helper's diagnostics. `<path>` must
+name a plain file or none yet; a symlink there is refused, and the log is
+kept readable by the user alone.
 
 The `codex` shim exits `127` with a diagnostic when it cannot find a
 real `codex` to hand over to, since there is nothing left to fall back
