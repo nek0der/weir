@@ -494,9 +494,17 @@ final class ViewedLineStore {
         // be read is kept like one that does not decode.
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
         let data: Data
-        do {
-            data = try Data(contentsOf: fileURL)
-        } catch {
+        switch PersistedRead.read(fileURL) {
+        case .absent:
+            // The check above found a file and the read did not. It goes
+            // aside as an unreadable one does, so a file put back in the
+            // meantime is not saved over.
+            log.error("viewed lines file gone before it was read")
+            setAside(reason: "read-failed")
+            return
+        case let .data(bytes):
+            data = bytes
+        case let .unreadable(error):
             log.error("viewed lines unreadable: \(String(describing: error), privacy: .private)")
             setAside(reason: "read-failed")
             return
@@ -597,7 +605,7 @@ final class ViewedLineStore {
     /// and for tests.
     func flushSynchronously() {
         refs?.waitForPendingMoves()
-        guard writesFiles, isWritable, saveDebounce.hasPending else { return }
+        guard writesFiles, isWritable, saveDebounce.hasUnflushedChanges else { return }
         saveDebounce.cancel()
         let document = makeDocument()
         let url = fileURL

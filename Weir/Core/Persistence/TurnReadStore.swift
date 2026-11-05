@@ -201,7 +201,7 @@ final class TurnReadStore {
     /// queue, so a write already under way there cannot land after this one
     /// with older marks.
     func flushSynchronously() {
-        guard writesFiles, isWritable, saveDebounce.hasPending else { return }
+        guard writesFiles, isWritable, saveDebounce.hasUnflushedChanges else { return }
         saveDebounce.cancel()
         let document = Document(reads: reads, ends: ends)
         let url = fileURL

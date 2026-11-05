@@ -249,7 +249,7 @@ final class SettingsStore {
         self.appLanguageAtLaunch = language
         self.appLocale = Self.locale(for: language, sources: languageSources)
         let fileURL = Self.settingsFileURL(in: directory)
-        let read = Result { try Data(contentsOf: fileURL) }
+        let read = PersistedRead.read(fileURL)
         let result = Self.load(read, at: fileURL, writes: writesFiles)
         var loaded = result.settings
         self.isSavingSuspended = result.suspendsSaving
@@ -258,7 +258,7 @@ final class SettingsStore {
         // The launch's own move to the current schema, should the watcher
         // report it, is nothing new (`reloadFromDisk`).
         self.lastSyncedBytes = result.writtenBytes
-        self.hasNoFileYet = Self.isNoSuchFile(read)
+        self.hasNoFileYet = read.isAbsent
         // The hero screenshot pipeline runs under `WEIR_DEMO=1`.
         // Force the toolbar opaque there so the captured PNG doesn't
         // depend on whatever wallpaper / other windows happen to sit
@@ -341,7 +341,7 @@ final class SettingsStore {
     /// (`WeirSettings.normalizeKeyboard`). With `writes` false (demo
     /// mode) nothing is written: the move happens in memory only.
     private static func load(
-        _ read: Result<Data, any Error>,
+        _ read: PersistedRead,
         at url: URL,
         writes: Bool,
         setsAsideUndecodable: Bool = true
@@ -355,23 +355,19 @@ final class SettingsStore {
         return result
     }
 
-    private static func isNoSuchFile(_ read: Result<Data, any Error>) -> Bool {
-        guard case let .failure(error as CocoaError) = read else { return false }
-        return error.code == .fileReadNoSuchFile
-    }
-
-    private static func loadAsStored(_ read: Result<Data, any Error>, at url: URL, writes: Bool) -> LoadResult {
+    private static func loadAsStored(_ read: PersistedRead, at url: URL, writes: Bool) -> LoadResult {
         // Only a file that is not there is a first launch. A check that the
         // file exists would also answer no for a folder that cannot be
         // searched, and the defaults would then be saved over the file once
         // the folder opens up again.
         let data: Data
-        do {
-            data = try read.get()
-        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+        switch read {
+        case .absent:
             log.info("settings.json absent at \(url.path, privacy: .private); using defaults")
             return LoadResult(settings: .default)
-        } catch {
+        case let .data(bytes):
+            data = bytes
+        case let .unreadable(error):
             log.error("settings.json read failed: \(String(describing: error), privacy: .private). Using defaults.")
             return setAsideUnread(url, writes: writes)
         }
@@ -561,8 +557,11 @@ final class SettingsStore {
     }
 
     /// Synchronous write — used by `scheduleSave` and at app
-    /// termination so an in-flight debounce doesn't lose data.
-    func saveNow() {
+    /// termination so an in-flight debounce doesn't lose data. Whether
+    /// `settings.json` now holds the settings: false when saving is off
+    /// (demo mode, a suspended save) or the write failed.
+    @discardableResult
+    func saveNow() -> Bool {
         // Demo mode pins appearance and advanced values so the hero
         // screenshot does not depend on the contributor's own
         // preferences. Those pins are for the run, not for the file:
@@ -573,7 +572,7 @@ final class SettingsStore {
         // change the bundle identifier. `SessionStore` guards both of
         // its write paths for the same reason; this is the one that
         // was missing.
-        guard writesFiles, !isSavingSuspended else { return }
+        guard writesFiles, !isSavingSuspended else { return false }
         let url = settingsFileURL
         SecureFileWrite.ensureUserOnlyDirectory(url.deletingLastPathComponent())
         do {
@@ -590,8 +589,10 @@ final class SettingsStore {
             lastSyncedBytes = data
             hasNoFileYet = false
             finishPendingMigration(written: data, at: url)
+            return true
         } catch {
             log.error("settings.json save failed: \(String(describing: error), privacy: .private)")
+            return false
         }
     }
 
@@ -627,7 +628,7 @@ final class SettingsStore {
     /// — does NOT schedule a save back (would cause a feedback loop).
     func reloadFromDisk() {
         let url = settingsFileURL
-        reload(from: Result { try Data(contentsOf: url) })
+        reload(from: PersistedRead.read(url))
     }
 
     /// `reloadFromDisk` once the file is read. One read decides everything,
@@ -635,12 +636,12 @@ final class SettingsStore {
     /// while judging those of another left saving stopped once the file came
     /// back to the bytes recorded, with nothing to report a change. Internal
     /// so a test can hand it bytes the file no longer holds.
-    func reload(from read: Result<Data, any Error>) {
+    func reload(from read: PersistedRead) {
         // Our own save coming back through the watcher, or a file unchanged
         // since we last read it: nothing we do not already have, and the
         // settings may have moved on since. A read that fails is not one
         // and goes the usual way.
-        let bytes = try? read.get()
+        let bytes = read.data
         if let lastSyncedBytes, bytes == lastSyncedBytes {
             return
         }
@@ -649,7 +650,7 @@ final class SettingsStore {
         // `state.json`). Read as defaults, the missing file would undo every
         // change made since the launch before the save that is about to
         // write it.
-        if hasNoFileYet, Self.isNoSuchFile(read) {
+        if hasNoFileYet, read.isAbsent {
             return
         }
         hasNoFileYet = false

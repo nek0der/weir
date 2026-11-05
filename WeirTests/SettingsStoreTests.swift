@@ -40,6 +40,15 @@ struct SettingsStoreTests {
         }
     }
 
+    /// `saveNow` says whether the file holds the settings; callers ignore it
+    /// today, so this pins what it means before one starts reading it.
+    @Test func saveNow_reportsWhetherTheFileWasWritten() throws {
+        try withTempDir { dir in
+            #expect(SettingsStore(directory: dir).saveNow())
+            #expect(!SettingsStore(directory: dir, writesFiles: false).saveNow(), "demo mode writes nothing")
+        }
+    }
+
     /// The file name is what users edit by hand and what older builds
     /// read, so we pin it here rather than through the store's helper.
     @Test("the store saves to and loads from settings.json in its directory")
@@ -99,6 +108,7 @@ struct SettingsStoreTests {
             #expect(store.savingSuspension == .newerVersionUnreadable)
             #expect(store.settings.terminal == WeirSettings.default.terminal)
             store.settings.terminal.minPaneSize = 160
+            #expect(!store.saveNow(), "saving is suspended")
             store.flushSynchronously()
 
             #expect(try Data(contentsOf: file) == bytes)
@@ -262,7 +272,7 @@ struct SettingsStoreTests {
             edited.terminal.minPaneSize = 140
             try WeirSettings.makeFileEncoder().encode(edited).write(to: file)
 
-            store.reload(from: .success(Data(#"{ "terminal": "#.utf8)))
+            store.reload(from: .data(Data(#"{ "terminal": "#.utf8)))
             #expect(store.savingSuspension == .doesNotDecode)
             #expect(store.settings.terminal.minPaneSize == 120)
 

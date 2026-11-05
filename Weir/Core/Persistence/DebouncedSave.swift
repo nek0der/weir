@@ -46,7 +46,9 @@ final class DebouncedSave {
     /// after that save has run, as the stores' own work items did, so a
     /// store's synchronous flush still writes its latest state once more
     /// through its queue rather than trust a write that may be in flight.
-    var hasPending: Bool {
+    /// Only `cancel()` clears it, which says nothing about whether a write
+    /// succeeded.
+    var hasUnflushedChanges: Bool {
         hasScheduled
     }
 
