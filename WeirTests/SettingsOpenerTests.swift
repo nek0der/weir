@@ -91,6 +91,18 @@ struct SettingsOpenerTests {
         #expect(try !StandardMenuShortcut.quit.isPressed(in: press("q", [])))
     }
 
+    @Test func menuBarKeyPress_matchesQuitAndSettings_withOrWithoutCapsLock() {
+        for shortcut in [StandardMenuShortcut.quit, StandardMenuShortcut.settings] {
+            let key = KeyEquivalent(Character(shortcut.key))
+            #expect(shortcut.isPressed(key: key, modifiers: .command))
+            #expect(shortcut.isPressed(key: key, modifiers: [.command, .capsLock]))
+            let shifted = KeyEquivalent(Character(shortcut.key.uppercased()))
+            #expect(shortcut.isPressed(key: shifted, modifiers: [.command, .capsLock]))
+            #expect(!shortcut.isPressed(key: key, modifiers: [.command, .option]))
+            #expect(!shortcut.isPressed(key: key, modifiers: []))
+        }
+    }
+
     @Test func menuBarMoreMenu_keysSettingsAndQuitFromTheStandardMenuKeys() {
         let entries = MenuBarMoreMenu.entries(onOpenWeir: {}, onOpenSettings: {}, onQuit: {})
 
@@ -109,7 +121,33 @@ struct SettingsOpenerTests {
         let keys = [StandardMenuShortcut.settings, StandardMenuShortcut.quit].compactMap(\.swiftUIKeyEquivalent)
 
         #expect(keys.count == 2)
-        #expect(SupervisionMenuBarContent.appMenuKeys == Set(keys))
+        #expect(SupervisionMenuBarContent.appMenuKeys.isSuperset(of: keys))
+    }
+
+    /// A stored ⌫ is SwiftUI's `.delete`, U+0008, and a press of ⌫ carries
+    /// U+007F; the two are one key.
+    @Test func storedBackspace_matchesAPressOfBackspace() {
+        let shortcut = StoredShortcut(key: NamedKey.backspace.rawValue, modifiers: [.command])
+        #expect(shortcut.isPressed(key: .backspacePress, modifiers: .command))
+        #expect(shortcut.isPressed(key: .backspacePress, modifiers: [.command, .capsLock]))
+        #expect(!shortcut.isPressed(key: .deleteForward, modifiers: .command))
+    }
+
+    /// The AppKit match reads ⌫ by the same rule: the event carries U+007F,
+    /// and the menu's key for a stored ⌫ is U+0008.
+    @Test func storedBackspace_matchesABackspaceKeyEvent() throws {
+        let shortcut = StoredShortcut(key: NamedKey.backspace.rawValue, modifiers: [.command])
+        let press = try NSEvent.testKeyDown(keyCode: 51, modifiers: .command, characters: "\u{7F}")
+        let withCapsLock = try NSEvent.testKeyDown(keyCode: 51, modifiers: [.command, .capsLock], characters: "\u{7F}")
+        let forwardDelete = try NSEvent.testKeyDown(keyCode: 117, modifiers: .command, characters: "\u{F728}")
+        #expect(shortcut.isPressed(in: press))
+        #expect(shortcut.isPressed(in: withCapsLock))
+        #expect(!shortcut.isPressed(in: forwardDelete))
+    }
+
+    @Test func menuBarKeyHandler_hearsQuitWithCapsLockOn() {
+        #expect(SupervisionMenuBarContent.appMenuKeys.contains(KeyEquivalent("Q")))
+        #expect(SupervisionMenuBarContent.appMenuKeys == [",", "q", "Q"])
     }
 
     @Test func shortcutList_namesAndKeysSettingsAsTheMenuDoes() throws {

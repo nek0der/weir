@@ -315,10 +315,14 @@ struct SupervisionMenuBarContent: View {
     }
 
     /// The keys of the app menu's Settings… and Quit Weir, as `onKeyPress`
-    /// hears them.
+    /// hears them: each in both cases, since Caps Lock can turn the `q` of
+    /// ⌘Q into `Q` before the filter sees it.
     static let appMenuKeys: Set<KeyEquivalent> = Set(
         [StandardMenuShortcut.settings.swiftUIKeyEquivalent, StandardMenuShortcut.quit.swiftUIKeyEquivalent]
             .compactMap(\.self)
+            .flatMap { key in
+                [key] + key.character.uppercased().map { KeyEquivalent($0) }
+            }
     )
 
     private func openSettings() {

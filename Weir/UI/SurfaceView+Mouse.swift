@@ -106,11 +106,34 @@ extension SurfaceView {
     // Right-click context menu lives in `SurfaceView+ContextMenu.swift`.
 
     override func otherMouseDown(with event: NSEvent) {
-        sendMouseButton(event, state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_MIDDLE)
+        guard let button = Self.otherMouseButton(event.buttonNumber) else { return }
+        sendMouseButton(event, state: GHOSTTY_MOUSE_PRESS, button: button)
     }
 
     override func otherMouseUp(with event: NSEvent) {
-        sendMouseButton(event, state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_MIDDLE)
+        guard let button = Self.otherMouseButton(event.buttonNumber) else { return }
+        sendMouseButton(event, state: GHOSTTY_MOUSE_RELEASE, button: button)
+    }
+
+    /// The libghostty button for AppKit's `buttonNumber`, or nil for one it
+    /// has no name for. AppKit sends every button past the second through
+    /// `otherMouse…`, so naming each one middle made a mouse's back button
+    /// paste the selection. Back and forward (3 and 4) are the X11 buttons
+    /// 8 and 9 that programs read them as; the rest follow Ghostty's macOS
+    /// app (MIT).
+    nonisolated static func otherMouseButton(_ buttonNumber: Int) -> ghostty_input_mouse_button_e? {
+        switch buttonNumber {
+        case 2: GHOSTTY_MOUSE_MIDDLE
+        case 3: GHOSTTY_MOUSE_EIGHT
+        case 4: GHOSTTY_MOUSE_NINE
+        case 5: GHOSTTY_MOUSE_SIX
+        case 6: GHOSTTY_MOUSE_SEVEN
+        case 7: GHOSTTY_MOUSE_FOUR
+        case 8: GHOSTTY_MOUSE_FIVE
+        case 9: GHOSTTY_MOUSE_TEN
+        case 10: GHOSTTY_MOUSE_ELEVEN
+        default: nil
+        }
     }
 
     // MARK: - Motion events

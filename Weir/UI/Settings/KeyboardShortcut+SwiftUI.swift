@@ -62,11 +62,21 @@ extension StoredShortcut {
         return key.count == 1 ? KeyEquivalent(Character(key)) : nil
     }
 
-    /// Whether `press` is this shortcut: its key with exactly its modifiers,
-    /// for a view that answers a menu's key while the menu cannot.
+    /// Whether `press` is this shortcut: its key in either case with exactly
+    /// its ⌘, ⌃, ⌥, and ⇧, for a view that answers a menu's key while the
+    /// menu cannot.
     func isPressed(_ press: KeyPress) -> Bool {
+        isPressed(key: press.key, modifiers: press.modifiers)
+    }
+
+    /// Compares only ⌘, ⌃, ⌥, and ⇧, as the menu does: Caps Lock and the
+    /// keypad flag ride along on a press, and with Caps Lock on ⌘Q or ⌘,
+    /// otherwise matched nothing. The key compares without case, as
+    /// `isPressed(in:)` does, because Caps Lock turns the `q` of ⌘Q into `Q`.
+    func isPressed(key pressedKey: KeyEquivalent, modifiers pressed: EventModifiers) -> Bool {
         guard let key = swiftUIKeyEquivalent else { return false }
-        return press.key == key && press.modifiers == modifiers.swiftUIEventModifiers
+        return pressedKey.asShortcutKey.character.lowercased() == key.character.lowercased()
+            && pressed.chord == modifiers.swiftUIEventModifiers
     }
 }
 
@@ -108,5 +118,19 @@ extension NamedKey {
         // which is never a surrogate, so the initializer cannot fail; the
         // fallback only keeps the accessor total.
         Unicode.Scalar(UInt32(0xF704 + number - 1)) ?? "\u{F704}"
+    }
+}
+
+extension KeyEquivalent {
+    /// The character ⌫ arrives as in a key press, U+007F. SwiftUI's
+    /// `.delete`, which a stored ⌫ becomes and a menu's key equivalent
+    /// matches, is U+0008, so a press of ⌫ compared with it as is never
+    /// matched.
+    static let backspacePress = KeyEquivalent("\u{7F}")
+
+    /// The key a press names, as a stored shortcut names it: ⌫'s U+007F
+    /// reads as `.delete`, and every other key as itself.
+    var asShortcutKey: KeyEquivalent {
+        self == .backspacePress ? .delete : self
     }
 }

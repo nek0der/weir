@@ -234,6 +234,8 @@ extension SurfaceView {
         defer { activeTranslationKeyEvent = nil }
         keyTextAccumulator = []
         defer { keyTextAccumulator = nil }
+        hasForwardedActiveKeyEvent = false
+        defer { hasForwardedActiveKeyEvent = false }
 
         let wasComposing = hasMarkedText()
         let consumed = inputContext?.handleEvent(translationEvent) ?? false
@@ -270,7 +272,12 @@ extension SurfaceView {
                     )
                 }
             }
-        } else if !hasMarkedText(), !consumed || hasKeybindModifiers {
+        } else if Self.forwardsUncommittedKey(
+            isComposing: hasMarkedText(),
+            isConsumed: consumed,
+            hasKeybindModifiers: hasKeybindModifiers,
+            wasForwardedByCommand: hasForwardedActiveKeyEvent
+        ) {
             forward(
                 event,
                 action: GHOSTTY_ACTION_PRESS,
@@ -278,6 +285,19 @@ extension SurfaceView {
             )
         }
         // else: preedit active — the keystroke belongs to the IME.
+    }
+
+    /// Whether `keyDown` sends a key that produced no text once the input
+    /// context has had it. A key the input context consumed is dropped
+    /// unless ⌘, ⌃, or ⌥ makes it a keybind, and a key `doCommand:` already
+    /// sent is never sent again.
+    nonisolated static func forwardsUncommittedKey(
+        isComposing: Bool,
+        isConsumed: Bool,
+        hasKeybindModifiers: Bool,
+        wasForwardedByCommand: Bool
+    ) -> Bool {
+        !isComposing && !wasForwardedByCommand && (!isConsumed || hasKeybindModifiers)
     }
 
     /// Returns true for keys that the input context tends to swallow as
