@@ -116,27 +116,18 @@ fi
 # `escape-time` guards the Esc that interrupts a turn on a tmux old
 # enough to still default it high — 3.6a already uses 10, measured — and
 # the terminal overrides are what keep the agent's colors.
-# `WEIR_AGENT_TMUX_SOCKET` is namespaced per build for the same
-# reason, and because a session created on a server that already exists
-# inherits that server's environment for everything outside tmux's
-# `update-environment`: a Dev agent on a Release server would write its
-# records into the Release directories. `-f /dev/null` completes the
-# separation — `-L` picks the socket but the user's `~/.tmux.conf` is
-# still read otherwise, which would bring their hooks and plugins onto
-# our server.
+# `WEIR_AGENT_TMUX_SOCKET` is namespaced per build for the same reason.
+# The agent starts with this pane's environment, not the server's,
+# whichever pane started the server (`weir_exec_agent`). `-f /dev/null`
+# completes the separation — `-L` picks the socket but the user's
+# `~/.tmux.conf` is still read otherwise, which would bring their hooks
+# and plugins onto our server.
 
 # The first arguments that begin an interactive session. Everything else
 # runs directly.
 interactive_first_args="resume fork"
 # Non-interactive wherever they appear.
 one_shot_flags="--version -v -V --help -h -p --print --bg --background"
-# Passed through explicitly rather than left to inheritance, for the
-# reason above. `PATH` among them: the pane's, which a mise, direnv or
-# `.nvmrc` folder changes and the agent's folder may have joined, where
-# the server's is the first pane's that started it. `CODEX_HOME` too: the
-# home this pane's Codex reads its config and trust from, made absolute
-# below.
-hosted_env_names="WEIR_PANE_ID WEIR_CODEX_SESSIONS_DIR WEIR_CODEX_AGENT_STATES_DIR WEIR_AGENT_RUN_ID WEIR_AGENT_PARENT_RUN_ID WEIR_AGENT_LAUNCH_ORDER WEIR_AGENT_TMUX_HOST_MODE WEIR_AGENT_TMUX PATH CODEX_HOME"
 
 hosts_in_tmux=0
 # Decided against the user's own arguments, before we add any of ours
@@ -157,7 +148,7 @@ export WEIR_AGENT_TMUX_HOST_MODE
 # user asked for that. Every exit from this script goes through here.
 exec_agent() {
   command -v weir_exec_agent >/dev/null 2>&1 || exec "$@"
-  weir_exec_agent "$hosts_in_tmux" "$hosted_env_names" 0 "$@"
+  weir_exec_agent "$hosts_in_tmux" 0 "$@"
 }
 
 # Codex resolves a relative `CODEX_HOME` against the directory it starts

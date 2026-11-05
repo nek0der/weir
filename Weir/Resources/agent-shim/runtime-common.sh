@@ -105,16 +105,101 @@ case $lpr_text in
 esac
 exec "$@" -- "$lpr_text"'
 
-# Hands off to the agent, which is every argument after the first three, inside
-# a tmux session of its own when $1 is 1. $2 names the variables the session
-# gets from this pane, and $3 is 1 when a one-word instruction gets a trailing
-# space (`weir_prompt_reader`). Each shim says its own; the rest is the same
-# for every agent.
+# Starts the agent inside its tmux session with this pane's environment
+# and nothing else of the tmux server's. A session takes every variable it
+# is not given from the server's environment, which is the environment of
+# the pane whose agent started the server: another pane's `PATH`, account,
+# record directories, and the person's own exports there. No list of names
+# can cover the person's own, so the shim saves every exported variable
+# (`weir_save_pane_environment`), and this starts from an empty environment
+# and reads them back, as the agent would have them outside tmux. On top go
+# the variables tmux sets for the terminal it is, measured on tmux 3.8: the
+# agent draws on tmux, not on the pane. They travel as `NAME=value`
+# arguments up to a `--`. The reading shell is `dash`, which wrote the
+# file: it holds no read-only variable, where bash refuses a pane's `UID`,
+# `EUID`, or `SHELLOPTS` and would stop there. The text is held in a
+# positional argument, so no name of ours can clash with one of the pane's,
+# and ends in `x` only when `cat` read it all (`y` when `cat` failed,
+# whatever it printed first). The file is removed as soon as it is read,
+# whether or not that worked. One that cannot be read starts nothing,
+# rather than an agent with no environment, and says so for two seconds
+# before tmux closes the session. $1 is the file; the rest is the agent's
+# argv.
+weir_hosted_env_reader='lhe_file=$1
+shift
+set -- -- "$@"
+for lhe_name in TERM TERM_PROGRAM TERM_PROGRAM_VERSION COLORTERM TMUX TMUX_PANE; do
+  eval "lhe_is_set=\${$lhe_name+set}"
+  [ -n "$lhe_is_set" ] || continue
+  eval "lhe_value=\${$lhe_name}"
+  set -- "$lhe_name=$lhe_value" "$@"
+done
+exec /usr/bin/env -i /bin/dash -c "lhe_fail() {
+  printf \"%s\\n\" \"Weir: the pane environment saved for this agent could not be read, so the agent did not start. Run the command again.\" >&2
+  /bin/sleep 2
+  exit 1
+}
+set -- \"\$(/bin/cat -- \"\$1\" && printf x || printf y)\" \"\$@\"
+/bin/rm -f -- \"\$2\"
+case \$1 in *x) ;; *) lhe_fail ;; esac
+eval \"\${1%x}\" || lhe_fail
+shift 2
+while [ \"\$1\" != -- ]; do export \"\$1\"; shift; done
+shift
+exec \"\$@\"" weir-env "$lhe_file" "$@"'
+
+# A temporary folder only this user can change: TMPDIR, or the one macOS
+# gives each user, whichever is first to be a folder of ours, not a link,
+# that no one else may write to. Another user who can write to the folder
+# could swap the saved environment for a file of their own, which the
+# session would then run. Sets weir_private_temp_dir and succeeds when
+# there is one.
+weir_find_private_temp_dir() {
+  weir_private_temp_dir=""
+  for lfpt_dir in "${TMPDIR:-}" "$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null)"; do
+    lfpt_dir="${lfpt_dir%/}"
+    [ -n "$lfpt_dir" ] && [ -d "$lfpt_dir" ] && [ ! -L "$lfpt_dir" ] && [ -O "$lfpt_dir" ] || continue
+    case "$(/usr/bin/stat -f %Lp "$lfpt_dir" 2>/dev/null)" in
+      ?[0145][0145]) ;;
+      *) continue ;;
+    esac
+    weir_private_temp_dir="$lfpt_dir"
+    return 0
+  done
+  return 1
+}
+
+# Saves this pane's exported variables for `weir_hosted_env_reader`, in a
+# file only this user can read (`mktemp` makes it 0600) in a folder only
+# this user can change (`weir_find_private_temp_dir`). `dash` writes them,
+# so `dash` can read them back: each value in single quotes, byte for byte.
+# The values include the person's secrets. A session reads and removes
+# its own file within moments; one whose session never ran (the server
+# failed to start, the session was killed at once) is removed once it is
+# a minute old, here by the next hosted launch and by Weir at its own
+# launch (`HostedPaneEnvironmentFile.removeOrphans`). Sets
+# weir_pane_environment_file and succeeds when the file holds them all.
+weir_save_pane_environment() {
+  weir_pane_environment_file=""
+  [ -x /bin/dash ] && weir_find_private_temp_dir || return 1
+  find "$weir_private_temp_dir" -maxdepth 1 -type f -name 'weir-hosted-env.*' -mmin +1 -exec rm -f {} + 2>/dev/null
+  lspe_file=$(/usr/bin/mktemp "$weir_private_temp_dir/weir-hosted-env.XXXXXXXXXXXX" 2>/dev/null) || return 1
+  if ! /bin/dash -c 'export -p' >"$lspe_file" 2>/dev/null; then
+    rm -f -- "$lspe_file"
+    return 1
+  fi
+  weir_pane_environment_file="$lspe_file"
+}
+
+# Hands off to the agent, which is every argument after the first two, inside
+# a tmux session of its own when $1 is 1, with this pane's environment
+# (`weir_hosted_env_reader`). $2 is 1 when a one-word instruction gets a
+# trailing space (`weir_prompt_reader`). Each shim says its own; the rest is
+# the same for every agent.
 weir_exec_agent() {
   lea_hosts_in_tmux=$1
-  lea_hosted_env_names=$2
-  lea_pad_lone_word=$3
-  shift 3
+  lea_pad_lone_word=$2
+  shift 2
   # The first instruction goes last, after `--`, as one argument whatever
   # it holds: quotes and `$(...)` reach the agent as typed. A reader in
   # front of the agent passes it, inside tmux as outside
@@ -123,6 +208,13 @@ weir_exec_agent() {
     set -- /bin/sh -c "$weir_prompt_reader" weir-prompt "$weir_initial_prompt_file" "$lea_pad_lone_word" "$@"
   fi
   [ "$lea_hosts_in_tmux" = 1 ] || exec "$@"
+  # Saved last, once the shim has exported everything the agent and its
+  # hooks read. Without the file the agent runs here, as with the setting
+  # off: in tmux it would run with the server's environment.
+  if ! weir_save_pane_environment; then
+    unset WEIR_AGENT_TMUX_HOST_MODE
+    exec "$@"
+  fi
   # Unique per invocation. `-A` is deliberately absent: with the name
   # already taken it attaches and silently drops the command, handing
   # back the running agent instead of starting the one that was asked
@@ -131,40 +223,17 @@ weir_exec_agent() {
   # The agent command is in "$@" and the tmux command line has to come
   # before it. We append the tmux side after it and then rotate the
   # agent command to the end, which is how a list whose values may hold
-  # spaces is built in POSIX sh.
+  # spaces is built in POSIX sh. More than one argument after the
+  # options is what makes tmux exec our argv directly rather than pass a
+  # single string to `sh -c`, so nothing here needs quoting.
   lea_count=$#
   set -- "$@" -L "${WEIR_AGENT_TMUX_SOCKET:-weir}" -f /dev/null \
     set -s escape-time 10 ";" \
     set -s default-terminal tmux-256color ";" \
     set -sa terminal-overrides ",*:RGB" ";" \
     set -g prefix None ";" \
-    new-session -s "$lea_session"
-  # A variable set to empty is passed on empty: a session on a server that
-  # already runs takes every variable not given here from the server's
-  # environment, and a demo pane empties the record directories precisely
-  # so the agent writes no records into another build's.
-  # One this pane does not set is unset in the session, for the same
-  # reason: left out, the session would take the server's value, which
-  # is the pane's that started the server (another pane's home, another
-  # run's id). tmux's `-e` only sets (`NAME=value`), so `/usr/bin/env -u`
-  # takes it out as the agent starts.
-  lea_unset=""
-  for lea_name in $lea_hosted_env_names; do
-    eval "lea_is_set=\${$lea_name+set}"
-    if [ -z "$lea_is_set" ]; then
-      lea_unset="$lea_unset $lea_name"
-      continue
-    fi
-    eval "lea_value=\${$lea_name}"
-    set -- "$@" -e "$lea_name=$lea_value"
-  done
-  # `/usr/bin/env` guarantees more than one argument after the options,
-  # which is what makes tmux exec our argv directly rather than passing
-  # a single string to `sh -c` — so nothing here needs quoting.
-  set -- "$@" /usr/bin/env
-  for lea_name in $lea_unset; do
-    set -- "$@" -u "$lea_name"
-  done
+    new-session -s "$lea_session" \
+    /bin/sh -c "$weir_hosted_env_reader" weir-env "$weir_pane_environment_file"
   while [ "$lea_count" -gt 0 ]; do
     lea_arg="$1"
     shift

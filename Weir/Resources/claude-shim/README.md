@@ -97,6 +97,22 @@ to the inherited launch pane. Existing pre-upgrade runs may need a new hook
 event before their attachment becomes visible. Manual tmux requires this shim
 on the inner shell's `PATH`, because no global agent hooks are installed.
 
+## Environment inside tmux
+
+A tmux session takes the variables it is not given from the server's
+environment, apart from the few tmux's `update-environment` copies from the
+client, and the server's environment is that of the pane whose agent started
+the server. So with tmux hosting on, the shim saves the pane's exported
+variables (`dash`'s `export -p`) to a 0600 file in a temporary folder only
+this user can change, and the session's command starts from an empty
+environment, reads the file with `dash`, deletes it, and adds only what tmux
+sets for the terminal it is (`TERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`,
+`COLORTERM`, `TMUX`, `TMUX_PANE`). Claude sees the pane's variables, the
+person's own exports included, as it would outside tmux
+(`weir_hosted_env_reader` in `agent-shim/runtime-common.sh`). A file whose
+session never ran is removed once it is a minute old, by the next hosted
+launch and by Weir at its own launch (`HostedPaneEnvironmentFile`).
+
 ## First instruction
 
 Weir no longer writes these files: an earlier build's new worktree sheet

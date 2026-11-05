@@ -58,9 +58,9 @@ struct PaneShellEnvironmentTests {
     /// The shims test one variable to decide whether to host the agent
     /// in tmux, so it has to be absent — not empty — when the setting is
     /// off. The socket name rides along because the server has to be
-    /// ours alone: a session created on an existing server inherits that
-    /// server's environment, so a Debug build sharing a Release build's
-    /// server would write its records into the Release directories.
+    /// ours alone: each build counts a client of its own server as its
+    /// agent host, and our server-wide options must not land on a server
+    /// the person uses.
     @Test("carries the tmux binary and socket when the agent is hosted")
     func variables_carriesAgentTmuxHost() {
         let env = PaneShellEnvironment.variables(

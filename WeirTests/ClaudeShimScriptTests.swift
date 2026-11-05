@@ -296,7 +296,9 @@ struct ClaudeShimScriptTests {
     }
 
     /// Runs the shim under a pty with tmux hosting switched on, and
-    /// returns the argv tmux was handed. The hosting decision asks
+    /// returns the argv tmux was handed and what the agent saw. The
+    /// stand-in tmux starts the session as a server another pane started
+    /// would (`ShimHarness.fakeTmux`). The hosting decision asks
     /// whether stdin and stdout are terminals, and the harness above runs
     /// the shim on the null device, so it can never reach this branch. The rule
     /// is shared (`weir_should_host_in_tmux` in `runtime-common.sh`), but
@@ -306,14 +308,26 @@ struct ClaudeShimScriptTests {
     /// `underPTY: false` is the launch whose output is not a terminal.
     /// `files`, when given, are written into the temporary folder, and the
     /// shim then runs there, so a relative path in `args` or `environment`
-    /// names one of them.
+    /// names one of them. `othersCanWrite` lets every user write to that
+    /// folder, which is also the shim's TMPDIR. `prepare` runs in that
+    /// folder first, and what it returns is laid over the environment.
+    /// `losesSavedEnvironment` has the stand-in tmux delete the saved pane
+    /// environment before the session reads it, and keep the session's
+    /// stderr.
     private func runShimHosted(
         _ args: [String],
         environment: [String: String] = [:],
         files: [String: String] = [:],
-        underPTY: Bool = true
+        underPTY: Bool = true,
+        othersCanWrite: Bool = false,
+        losesSavedEnvironment: Bool = false,
+        prepare: ((URL) throws -> [String: String])? = nil
     ) throws -> HostedRun {
         try withTempDir { dir in
+            if othersCanWrite {
+                try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: dir.path)
+            }
+            let prepared = try prepare?(dir) ?? [:]
             for (name, contents) in files {
                 try contents.write(to: dir.appendingPathComponent(name), atomically: true, encoding: .utf8)
             }
@@ -321,14 +335,31 @@ struct ClaudeShimScriptTests {
             let tmuxArgv = dir.appendingPathComponent("tmux.argv")
             let claudeStub = dir.appendingPathComponent("fake-claude")
             let tmuxStub = dir.appendingPathComponent("fake-tmux")
-            for (stub, argvFile) in [(claudeStub, claudeArgv), (tmuxStub, tmuxArgv)] {
-                // Beside the argv, what the stub saw of the sheet's executable.
-                try ShimHarness.writeExecutable(ShimHarness.argvRecorder(into: argvFile, then: """
+            /// Beside the argv, what each stub saw of the sheet's executable
+            /// and the host mode, and the agent's whole environment.
+            func seen(_ argvFile: URL) -> String {
+                """
                 printf '%s' "${WEIR_FOUND_CLAUDE-unset}" > "\(argvFile.path).found"
                 printf '%s' "${WEIR_AGENT_TMUX_HOST_MODE-unset}" > "\(argvFile.path).mode"
-                exit 0
-                """), at: stub)
+                """
             }
+            try ShimHarness.writeExecutable(ShimHarness.argvRecorder(into: claudeArgv, then: """
+            \(seen(claudeArgv))
+            /usr/bin/env -0 > "\(claudeArgv.path).env"
+            exit 0
+            """), at: claudeStub)
+            let losesFile = losesSavedEnvironment ? """
+            previous=""
+            for arg in "$@"; do
+              [ "$previous" = weir-env ] && rm -f -- "$arg"
+              previous=$arg
+            done
+            exec 2>"\(tmuxArgv.path).stderr"
+            """ : ""
+            try ShimHarness.writeExecutable(
+                ShimHarness.fakeTmux(into: tmuxArgv, then: seen(tmuxArgv) + "\n" + losesFile),
+                at: tmuxStub
+            )
 
             var shimEnvironment = ShimHarness.environment(in: dir)
             try shimEnvironment.merge([
@@ -339,7 +370,8 @@ struct ClaudeShimScriptTests {
                 "WEIR_PANE_ID": "547D688D-39DF-4A06-BD6F-316C3385532C"
             ]) { _, new in new }
             shimEnvironment.merge(environment) { _, new in new }
-            try ShimHarness.run(
+            shimEnvironment.merge(prepared) { _, new in new }
+            let process = try ShimHarness.run(
                 ShimHarness.shim("claude"),
                 args,
                 environment: shimEnvironment,
@@ -350,24 +382,46 @@ struct ClaudeShimScriptTests {
             func argv(_ url: URL) -> [String] {
                 ShimHarness.recordedArgv(url) ?? []
             }
+            let leftEnvironmentFiles = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?
+                .filter { $0.hasPrefix("weir-hosted-env.") } ?? []
             return HostedRun(
                 tmux: argv(tmuxArgv),
                 claude: argv(claudeArgv),
                 tmuxSawFound: try? String(contentsOfFile: tmuxArgv.path + ".found", encoding: .utf8),
-                claudeSawMode: try? String(contentsOfFile: claudeArgv.path + ".mode", encoding: .utf8)
+                claudeSawMode: try? String(contentsOfFile: claudeArgv.path + ".mode", encoding: .utf8),
+                claudeEnvironment: ShimHarness.recordedEnvironment(claudeArgv.appendingPathExtension("env")) ?? [:],
+                leftEnvironmentFiles: leftEnvironmentFiles,
+                temporaryFolder: dir.path,
+                sessionStderr: try? String(contentsOfFile: tmuxArgv.path + ".stderr", encoding: .utf8),
+                exitStatus: process.terminationStatus
             )
         }
     }
 
     /// What `runShimHosted` saw: the argv tmux and the agent were each
-    /// handed (empty for the one that did not run), and what tmux saw of
-    /// `WEIR_FOUND_CLAUDE` (`unset` when it had none), and the host mode
-    /// a Claude run directly was handed (`unset` when it had none).
+    /// handed (empty for the one that did not run; a hosted agent runs in
+    /// the stand-in tmux's session), what tmux saw of `WEIR_FOUND_CLAUDE`
+    /// (`unset` when it had none), the host mode Claude was handed
+    /// (`unset` when it had none), Claude's environment, and the saved
+    /// pane environments left in the temporary folder.
     private struct HostedRun {
         let tmux: [String]
         let claude: [String]
         let tmuxSawFound: String?
         let claudeSawMode: String?
+        let claudeEnvironment: [String: String]
+        let leftEnvironmentFiles: [String]
+        let temporaryFolder: String
+        /// What the session wrote to stderr, kept only with
+        /// `losesSavedEnvironment`.
+        let sessionStderr: String?
+        let exitStatus: Int32
+
+        /// The saved pane environment the session was handed, read from
+        /// tmux's argv: the argument after `weir-env`.
+        var savedEnvironmentFile: String? {
+            tmux.firstIndex(of: "weir-env").flatMap { tmux.indices.contains($0 + 1) ? tmux[$0 + 1] : nil }
+        }
 
         /// Claude ran directly, with our settings and then the user's
         /// arguments.
@@ -383,21 +437,21 @@ struct ClaudeShimScriptTests {
     @Test("keeps our settings flag when the agent is hosted in tmux")
     func hostedInvocation_stillCarriesTheSettingsFlag() throws {
         let handover = try runShimHosted([])
-        #expect(handover.claude.isEmpty)
         #expect(handover.tmux.prefix(4) == ["-L", "weir-test.socket", "-f", "/dev/null"])
-        #expect(handover.tmux.contains { $0.hasPrefix("WEIR_AGENT_RUN_ID=") })
-        #expect(handover.tmux.contains("WEIR_AGENT_TMUX_HOST_MODE=weirHosted"))
-        let settings = try #require(handover.tmux.firstIndex(of: "--settings"))
-        // After `/usr/bin/env` and the `-u NAME` of each variable the pane
-        // does not set comes the agent, then our flag.
-        let env = try #require(handover.tmux.lastIndex(of: "/usr/bin/env"))
-        let unsets = handover.tmux[(env + 1)..<(settings - 1)]
-        #expect(unsets.count.isMultiple(of: 2))
-        #expect(stride(from: unsets.startIndex, to: unsets.endIndex, by: 2).allSatisfy { handover.tmux[$0] == "-u" })
+        // The session's command reads the pane's environment back, then
+        // starts the agent with our flag.
+        let session = try #require(handover.tmux.firstIndex(of: "new-session"))
+        #expect(handover.tmux[(session + 3)...].prefix(2) == ["/bin/sh", "-c"])
+        #expect(handover.tmux[session + 6] == "weir-env")
+        #expect(handover.tmux[session + 8].hasSuffix("/fake-claude"))
+        #expect(handover.tmux[session + 9] == "--settings")
         let payload = try JSONSerialization.jsonObject(
-            with: Data(handover.tmux[settings + 1].utf8)
+            with: Data(handover.tmux[session + 10].utf8)
         ) as? [String: Any]
         #expect(payload?["hooks"] != nil)
+        #expect(handover.claude.first == "--settings")
+        #expect(handover.claudeEnvironment["WEIR_AGENT_RUN_ID"]?.isEmpty == false)
+        #expect(handover.claudeSawMode == "weirHosted")
     }
 
     /// `--bg` prints a session id and returns, so hosting it would put
@@ -417,86 +471,189 @@ struct ClaudeShimScriptTests {
     @Test("hosts a resume")
     func hostedInvocation_hostsAResume() throws {
         let handover = try runShimHosted(["--resume", "abc123"])
-        #expect(handover.claude.isEmpty)
         #expect(handover.tmux.suffix(2) == ["--resume", "abc123"])
+        #expect(handover.claude.suffix(2) == ["--resume", "abc123"])
+    }
+
+    /// The bug this guards: a session takes every variable it is not
+    /// given from the tmux server's environment, which is that of the pane
+    /// whose agent started the server. The agent sees this pane's
+    /// variables, the person's own exports included, exactly as typed,
+    /// none of the other pane's, and tmux's own for the terminal it draws
+    /// on. The saved environment is gone once read.
+    @Test("starts a hosted agent with the pane's environment, not the tmux server's")
+    func hostedLaunch_getsThePanesEnvironmentNotTheServers() throws {
+        let export = "it's \"quoted\" $HOME `x` \\\nsecond line\n"
+        let handover = try runShimHosted([], environment: [
+            "PERSON_EXPORT": export,
+            "PANE_ONLY": "",
+            // Named like the reader's own variables, which must not touch it.
+            "lhe_file": "the person's",
+            "TERM": "xterm-ghostty"
+        ])
+        #expect(!handover.tmux.isEmpty)
+        let env = handover.claudeEnvironment
+        #expect(env["PERSON_EXPORT"] == export)
+        #expect(env["PANE_ONLY"] == "")
+        #expect(env["lhe_file"] == "the person's")
+        #expect(env["OTHER_PANE_ONLY"] == nil)
+        #expect(env["HOME"] != ShimHarness.tmuxServerEnvironment["HOME"])
+        for (name, value) in ShimHarness.tmuxSessionVariables {
+            #expect(env[name] == value, "\(name)")
+        }
+        #expect(env["WEIR_PANE_ID"] == "547D688D-39DF-4A06-BD6F-316C3385532C")
+        #expect(handover.leftEnvironmentFiles.isEmpty)
+        // Nothing of the environment travels on tmux's command line.
+        #expect(!handover.tmux.contains { $0.contains("PERSON_EXPORT") })
+    }
+
+    /// Bash refuses to assign `UID`, `EUID`, and `SHELLOPTS`, which it keeps
+    /// read-only, so a pane exporting one would stop a reader in bash before
+    /// the agent started, and leave the saved environment behind.
+    @Test("starts a hosted agent with the variables bash keeps read-only")
+    func hostedLaunch_keepsVariablesBashKeepsReadOnly() throws {
+        let handover = try runShimHosted([], environment: ["UID": "501", "EUID": "501", "SHELLOPTS": "braceexpand"])
+        #expect(handover.claudeEnvironment["UID"] == "501")
+        #expect(handover.claudeEnvironment["EUID"] == "501")
+        #expect(handover.claudeEnvironment["SHELLOPTS"]?.hasPrefix("braceexpand") == true)
+        #expect(handover.leftEnvironmentFiles.isEmpty)
+    }
+
+    /// Another user who can write to TMPDIR could swap the saved
+    /// environment for a file of their own, which the session would run,
+    /// so the file goes to the folder macOS keeps for this user instead.
+    @Test("saves the pane's environment outside a TMPDIR others can write to")
+    func hostedLaunch_withATemporaryFolderOthersCanWrite_savesInTheUsersOwn() throws {
+        let handover = try runShimHosted([], environment: ["PERSON_EXPORT": "this pane's"], othersCanWrite: true)
+        let saved = try #require(handover.savedEnvironmentFile)
+        #expect(!saved.hasPrefix(handover.temporaryFolder))
+        #expect(!FileManager.default.fileExists(atPath: saved))
+        #expect(handover.claudeEnvironment["PERSON_EXPORT"] == "this pane's")
+    }
+
+    /// A session that cannot read the saved environment starts nothing,
+    /// rather than an agent with the server's environment or none, and says
+    /// so in the pane before tmux closes it.
+    @Test("starts nothing, and says so, when the session cannot read the pane's environment")
+    func hostedLaunch_whoseSavedEnvironmentIsGone_startsNothing() throws {
+        let handover = try runShimHosted([], losesSavedEnvironment: true)
+        #expect(!handover.tmux.isEmpty)
+        #expect(handover.claude.isEmpty)
+        #expect(handover.sessionStderr?.contains("could not be read, so the agent did not start. Run the command again.") == true)
+        #expect(handover.exitStatus != 0)
+    }
+
+    /// With nowhere private to save the pane's environment, the agent runs
+    /// in the pane as with hosting off: in tmux it would take the server's.
+    /// A TMPDIR others can write to and no folder of the user's from
+    /// `getconf` leave nowhere.
+    @Test("runs the agent directly when the pane's environment cannot be saved")
+    func hostedLaunch_withNowhereToSave_runsDirectly() throws {
+        let handover = try runShimHosted([], othersCanWrite: true) { dir in
+            let bin = dir.appendingPathComponent("bin")
+            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+            try ShimHarness.writeExecutable("#!/bin/sh\nexit 0\n", at: bin.appendingPathComponent("getconf"))
+            return ["PATH": "\(bin.path):\(ShimHarness.systemPath)"]
+        }
+        #expect(handover.ranDirectly([]))
+        #expect(handover.claudeSawMode == "unset")
+        #expect(handover.leftEnvironmentFiles.isEmpty)
+    }
+
+    /// A file whose session never ran holds the person's secrets, so the
+    /// next hosted launch removes it once it is a minute old; one younger
+    /// may be another launch's, about to be read.
+    @Test("removes a saved environment a session never read once it is a minute old")
+    func hostedLaunch_removesALeftBehindEnvironment() throws {
+        let handover = try runShimHosted([]) { dir in
+            for (name, age) in [("weir-hosted-env.OLDOLDOLDOLD", 120.0), ("weir-hosted-env.NEWNEWNEWNEW", 0.0)] {
+                let url = dir.appendingPathComponent(name)
+                FileManager.default.createFile(atPath: url.path, contents: Data("export SECRET='hunter2'\n".utf8))
+                try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -age)], ofItemAtPath: url.path)
+            }
+            return [:]
+        }
+        #expect(!handover.tmux.isEmpty)
+        #expect(handover.leftEnvironmentFiles == ["weir-hosted-env.NEWNEWNEWNEW"])
     }
 
     /// A server already running would otherwise start the agent on the
     /// `PATH` of the pane that started the server (`CodexShimScriptTests`
     /// pins what the agent's folder adds to it). The stub comes through
     /// `WEIR_REAL_CLAUDE`, an override that leaves the `PATH` as it was.
-    @Test("passes the pane's PATH into tmux")
+    @Test("starts a hosted agent on the pane's PATH")
     func hostedInvocation_passesThePanesPath() throws {
         let handover = try runShimHosted([])
-        #expect(zip(handover.tmux, handover.tmux.dropFirst()).contains { $0 == "-e" && $1 == "PATH=/usr/bin:/bin:/usr/sbin:/sbin" })
+        #expect(handover.claudeEnvironment["PATH"] == "/usr/bin:/bin:/usr/sbin:/sbin")
     }
 
     /// What the new workspace sheet found stays with the pane's shell: a
     /// tmux server started with it would hand it to every session after.
-    /// Neither the tmux client nor its `-e` list has it.
+    /// Neither the tmux client nor the agent has it.
     @Test("keeps what the sheet found out of tmux")
     func hostedInvocation_keepsTheSheetsExecutableOutOfTmux() throws {
         let handover = try runShimHosted([], environment: ["WEIR_FOUND_CLAUDE": "/opt/tools/bin/claude"])
         #expect(!handover.tmux.isEmpty)
         #expect(handover.tmuxSawFound == "unset")
-        #expect(!handover.tmux.contains { $0.hasPrefix("WEIR_FOUND_") })
+        #expect(!handover.tmux.contains { $0.contains("WEIR_FOUND_") })
+        #expect(handover.claudeEnvironment["WEIR_FOUND_CLAUDE"] == nil)
     }
 
     /// A tmux session starts in a folder of its own, so a relative value
     /// would name another folder there, and one left out would be the tmux
     /// server's, the first pane's account rather than this pane's.
-    @Test("passes the pane's Claude account into tmux, made absolute")
+    @Test("starts a hosted agent on the pane's Claude account, made absolute")
     func hostedLaunch_passesTheAccountMadeAbsolute() throws {
         let handover = try runShimHosted(
             [],
             environment: ["CLAUDE_CONFIG_DIR": "relative/config"],
             files: ["placeholder": ""]
         )
-        let value = try #require(handover.tmux.first { $0.hasPrefix("CLAUDE_CONFIG_DIR=") })
-        #expect(value.hasPrefix("CLAUDE_CONFIG_DIR=/"))
+        let value = try #require(handover.claudeEnvironment["CLAUDE_CONFIG_DIR"])
+        #expect(value.hasPrefix("/"))
         #expect(value.hasSuffix("/relative/config"))
 
         let unset = try runShimHosted([])
-        #expect(zip(unset.tmux, unset.tmux.dropFirst()).contains { $0 == ("-u", "CLAUDE_CONFIG_DIR") })
+        #expect(!unset.tmux.isEmpty)
+        #expect(unset.claudeEnvironment["CLAUDE_CONFIG_DIR"] == nil)
     }
 
     /// The status line relay finds the person's own status line in the
     /// settings they launched with, which our flag replaced.
-    @Test("passes the person's settings into tmux for the status line relay")
+    @Test("hands a hosted agent the person's settings for the status line relay")
     func hostedLaunch_passesThePersonsSettings() throws {
         let file = try runShimHosted(
             ["--resume", "abc", "--settings", "mine.json"],
             files: ["mine.json": #"{"model":"opus"}"#]
         )
-        let value = try #require(file.tmux.first { $0.hasPrefix("WEIR_CLAUDE_USER_SETTINGS=") })
-        #expect(value.hasPrefix("WEIR_CLAUDE_USER_SETTINGS=/"))
+        let value = try #require(file.claudeEnvironment["WEIR_CLAUDE_USER_SETTINGS"])
+        #expect(value.hasPrefix("/"))
         #expect(value.hasSuffix("/mine.json"))
 
         // Inline JSON is passed as written, blanks before it included, and
         // merged as JSON rather than read as a file of that name.
         let inline = "  \n {\"model\":\"opus\"}"
         let handover = try runShimHosted(["--resume", "abc", "--settings", inline])
-        #expect(handover.tmux.contains("WEIR_CLAUDE_USER_SETTINGS=\(inline)"))
+        #expect(handover.claudeEnvironment["WEIR_CLAUDE_USER_SETTINGS"] == inline)
         let settings = try #require(handover.tmux.firstIndex(of: "--settings"))
         let payload = try JSONSerialization.jsonObject(with: Data(handover.tmux[settings + 1].utf8)) as? [String: Any]
         #expect(payload?["model"] as? String == "opus")
         #expect(payload?["hooks"] != nil)
     }
 
-    @Test("passes an emptied record directory into tmux as empty")
+    @Test("starts a hosted agent with an emptied record directory empty")
     func hostedLaunch_passesEmptyRecordDirectories() throws {
-        // A demo pane empties them; left out, the session would take the
-        // tmux server's values, which are another build's directories.
+        // A demo pane empties them; the session must not take the tmux
+        // server's values, which are another build's directories.
         let handover = try runShimHosted([], environment: [
             "WEIR_AGENT_STATES_DIR": "",
             "WEIR_SESSIONS_DIR": ""
         ])
-        #expect(handover.tmux.contains("WEIR_AGENT_STATES_DIR="))
-        #expect(handover.tmux.contains("WEIR_SESSIONS_DIR="))
-        // An unset one stays unset: not passed, and taken out of what the
-        // session would take from the server.
-        #expect(!handover.tmux.contains { $0.hasPrefix("WEIR_CWD_EVENTS_DIR=") })
-        #expect(zip(handover.tmux, handover.tmux.dropFirst()).contains { $0 == ("-u", "WEIR_CWD_EVENTS_DIR") })
+        #expect(handover.claudeEnvironment["WEIR_AGENT_STATES_DIR"] == "")
+        #expect(handover.claudeEnvironment["WEIR_SESSIONS_DIR"] == "")
+        // One the pane does not set stays unset.
+        #expect(!handover.tmux.isEmpty)
+        #expect(handover.claudeEnvironment["WEIR_CWD_EVENTS_DIR"] == nil)
     }
 
     /// The rest of Claude's allow list: a bare launch, and each spelling
@@ -504,7 +661,6 @@ struct ClaudeShimScriptTests {
     @Test("hosts each interactive entry point", arguments: [[], ["-r"], ["--resume"], ["-c"], ["--continue"]])
     func hostedInvocation_hostsTheInteractiveEntryPoints(_ args: [String]) throws {
         let handover = try runShimHosted(args)
-        #expect(handover.claude.isEmpty)
         #expect(handover.tmux.contains("new-session"))
         #expect(handover.tmux.suffix(args.count) == args[...])
     }
