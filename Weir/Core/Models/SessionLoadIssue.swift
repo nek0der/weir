@@ -6,8 +6,9 @@ import Foundation
 enum SessionLoadIssue: Equatable, Identifiable {
     case versionMismatch(found: Int, expected: Int)
     case decodeFailed(message: DisplayText)
-    /// The snapshot loaded, but we dropped the tabs whose pane IDs collided
-    /// or chose another sidebar item for the one that couldn't be restored.
+    /// The snapshot loaded, but we dropped the tabs whose tab or pane IDs
+    /// collided or chose another sidebar item for the one that couldn't be
+    /// restored.
     case recovered(droppedTabCount: Int, didResetActiveContainer: Bool)
 
     var id: String {
@@ -57,8 +58,8 @@ enum SessionLoadIssue: Equatable, Identifiable {
         }
         if didResetActiveContainer {
             // swiftlint:disable:next line_length
-            return "Removed \(droppedTabCount) tabs with duplicate pane IDs. The selected sidebar item couldn’t be restored, so another one is selected."
+            return "Removed \(droppedTabCount) tabs with duplicate IDs. The selected sidebar item couldn’t be restored, so another one is selected."
         }
-        return "Removed \(droppedTabCount) tabs with duplicate pane IDs."
+        return "Removed \(droppedTabCount) tabs with duplicate IDs."
     }
 }

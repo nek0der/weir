@@ -4131,7 +4131,7 @@
         }
       }
     },
-    "Removed %lld tabs with duplicate pane IDs.": {
+    "Removed %lld tabs with duplicate IDs.": {
       "localizations": {
         "en": {
           "variations": {
@@ -4139,13 +4139,13 @@
               "one": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "Removed %lld tab with duplicate pane IDs."
+                  "value": "Removed %lld tab with duplicate IDs."
                 }
               },
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "Removed %lld tabs with duplicate pane IDs."
+                  "value": "Removed %lld tabs with duplicate IDs."
                 }
               }
             }
@@ -4157,7 +4157,7 @@
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "ペイン ID が重複していたタブを %lld 個削除しました。"
+                  "value": "ID が重複していたタブを %lld 個削除しました。"
                 }
               }
             }
@@ -21859,7 +21859,7 @@
         }
       }
     },
-    "Removed %lld tabs with duplicate pane IDs. The selected sidebar item couldn’t be restored, so another one is selected.": {
+    "Removed %lld tabs with duplicate IDs. The selected sidebar item couldn’t be restored, so another one is selected.": {
       "localizations": {
         "en": {
           "variations": {
@@ -21867,13 +21867,13 @@
               "one": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "Removed %lld tab with duplicate pane IDs. The selected sidebar item couldn’t be restored, so another one is selected."
+                  "value": "Removed %lld tab with duplicate IDs. The selected sidebar item couldn’t be restored, so another one is selected."
                 }
               },
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "Removed %lld tabs with duplicate pane IDs. The selected sidebar item couldn’t be restored, so another one is selected."
+                  "value": "Removed %lld tabs with duplicate IDs. The selected sidebar item couldn’t be restored, so another one is selected."
                 }
               }
             }
@@ -21885,7 +21885,7 @@
               "other": {
                 "stringUnit": {
                   "state": "translated",
-                  "value": "ペイン ID が重複していたタブを %lld 個削除しました。サイドバーで選択していた項目を復元できなかったため、別の項目を選択しました。"
+                  "value": "ID が重複していたタブを %lld 個削除しました。サイドバーで選択していた項目を復元できなかったため、別の項目を選択しました。"
                 }
               }
             }

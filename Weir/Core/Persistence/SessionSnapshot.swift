@@ -410,9 +410,9 @@ extension WorkspaceSession {
     /// Restore from a decoded snapshot, sanitizing anything that would crash
     /// or mislead the UI. A tampered or partially-written state.json can carry
     /// duplicate pane UUIDs — which collide in `SurfaceRegistry` and trip an
-    /// AppKit view-hierarchy assertion — or an active container that no
-    /// longer exists. We drop / reset those and return a `SessionLoadIssue`
-    /// so the caller can tell the user.
+    /// AppKit view-hierarchy assertion — duplicate tab IDs, or an active
+    /// container that no longer exists. We drop / reset those and return a
+    /// `SessionLoadIssue` so the caller can tell the user.
     ///
     /// The primary window comes from the first window record. A tab still
     /// in a group, made after groups became scratch tabs by a build
@@ -444,18 +444,28 @@ extension WorkspaceSession {
 
         // Drop any tab that reuses a pane UUID already claimed by an earlier
         // tab, or that repeats one within its own tree: duplicate leaf IDs
-        // collide in `SurfaceRegistry` and assert in AppKit on mount.
+        // collide in `SurfaceRegistry` and assert in AppKit on mount. Drop a
+        // tab that reuses an earlier tab's ID too. The decode keys each tab by
+        // its key in `tabs`, not by the ID in its body, so two keys can carry
+        // one ID; every lookup by tab ID would then find the first, and
+        // `Dictionary(uniqueKeysWithValues:)` over a project's tabs (Close
+        // All Tabs) would trap. Checked here rather than at decode, so the
+        // one gate every snapshot passes reports the drop to the person.
         var seenLeafIDs: Set<UUID> = []
+        var seenTabIDs: Set<UUID> = []
         var keptTabs: [Tab] = []
         var droppedTabs = 0
         for tab in snapshot.tabs {
             let leafIDs = tab.splitTree.allLeafIDs()
             let unique = Set(leafIDs)
-            if unique.count != leafIDs.count || !unique.isDisjoint(with: seenLeafIDs) {
+            if unique.count != leafIDs.count || !unique.isDisjoint(with: seenLeafIDs)
+                || seenTabIDs.contains(tab.id)
+            {
                 droppedTabs += 1
                 continue
             }
             seenLeafIDs.formUnion(unique)
+            seenTabIDs.insert(tab.id)
             keptTabs.append(tab)
         }
         tabs = keptTabs

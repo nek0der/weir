@@ -150,24 +150,117 @@ struct ScrollbackCaptureTests {
         }
     }
 
-    // MARK: - Taking a restored pane's path
+    // MARK: - A restored pane's path, kept until its terminal is made
 
-    @Test func consumeScrollbackPath_handsThePathBackOnce() {
+    @Test func scrollbackPath_staysInTheTab_untilItIsForgotten() {
+        // Reading it is what staging a terminal does; the terminal may never
+        // be made, so the tab keeps the path until it is.
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
         _ = session.update(tab.id) { $0.scrollbackPaths[pane] = "/saved.vt" }
 
-        #expect(session.consumeScrollbackPath(tabID: tab.id, paneID: pane) == "/saved.vt")
+        #expect(session.scrollbackPath(ofPane: pane) == "/saved.vt")
+        #expect(session.scrollbackPath(ofPane: pane) == "/saved.vt")
+
+        session.forgetScrollbackPath(ofPane: pane)
+
         #expect(session.tab(tab.id)?.scrollbackPaths[pane] == nil)
-        #expect(session.consumeScrollbackPath(tabID: tab.id, paneID: pane) == nil)
+        #expect(session.scrollbackPath(ofPane: pane) == nil)
     }
 
-    @Test func consumeScrollbackPath_leavesAnEmptyPathInPlace() {
-        // An empty path was never a file to replay; taking it would change
-        // the tab for nothing.
+    @Test func forgetScrollbackPath_findsAPaneThatMovedToAnotherTab() throws {
+        // The pane's path goes with it when it moves; the terminal made
+        // afterwards replays it there, and it is forgotten there.
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        _ = session.update(tab.id) {
+            $0.splitTree = $0.splitTree.insert(at: pane, direction: .horizontal).tree
+            $0.scrollbackPaths[pane] = "/saved.vt"
+        }
+        TabActions.movePaneToNewTab(session, paneID: pane)
+        let moved = try #require(session.tab(containing: pane))
+        #expect(moved.id != tab.id)
+        #expect(moved.scrollbackPaths[pane] == "/saved.vt")
+
+        session.forgetScrollbackPath(ofPane: pane)
+
+        #expect(session.tab(moved.id)?.scrollbackPaths[pane] == nil)
+    }
+
+    @Test func scrollbackPath_leavesAnEmptyPathInPlace() {
+        // An empty path was never a file to replay; forgetting it would
+        // change the tab for nothing.
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
         _ = session.update(tab.id) { $0.scrollbackPaths[pane] = "" }
 
-        #expect(session.consumeScrollbackPath(tabID: tab.id, paneID: pane) == nil)
+        #expect(session.scrollbackPath(ofPane: pane) == nil)
+        session.forgetScrollbackPath(ofPane: pane)
         #expect(session.tab(tab.id)?.scrollbackPaths[pane] == "")
+    }
+
+    // MARK: - A tab's close
+
+    @Test func closingARestoredTabNeverMounted_keepsItsScrollbackForReopen() throws {
+        // A restored tab the person never clicked into has no terminal to
+        // dump; its earlier file is what ⌘⇧T replays.
+        try withFiles { files in
+            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            session.scrollbackFiles = files
+            let earlier = files.directory.appendingPathComponent("\(pane.uuidString).vt")
+            try Data("earlier".utf8).write(to: earlier)
+            _ = session.update(tab.id) { $0.scrollbackPaths[pane] = earlier.path }
+
+            TabActions.closeTab(session, registry: RecordingSurfaceRegistry(), tabID: tab.id)
+
+            #expect(session.closedTabStack.last?.tab.scrollbackPaths == [pane: earlier.path])
+            TabActions.reopenClosedTab(session)
+            let revived = try #require(session.tabs.last)
+            let revivedPane = try #require(revived.splitTree.allLeafIDs().first)
+            #expect(revived.scrollbackPaths == [revivedPane: earlier.path])
+            #expect(FileManager.default.fileExists(atPath: earlier.path))
+        }
+    }
+
+    @Test func closingAMountedPane_keepsItsFreshDump_overTheInheritedPath() throws {
+        try withFiles { files in
+            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            session.scrollbackFiles = files
+            _ = session.update(tab.id) { $0.scrollbackPaths[pane] = "/earlier.vt" }
+            let registry = RecordingSurfaceRegistry()
+            registry.scrollback[pane] = "fresh"
+
+            TabActions.closeTab(session, registry: registry, tabID: tab.id)
+
+            let saved = files.directory.appendingPathComponent("\(pane.uuidString).vt")
+            #expect(session.closedTabStack.last?.tab.scrollbackPaths == [pane: saved.path])
+        }
+    }
+
+    @Test func aClosedTabLeavingTheStack_deletesOnlyItsFilesInTheFolder() throws {
+        // A restored path came from state.json, which a tampered file could
+        // point anywhere; the stack's cap must not delete what it names.
+        try withFiles { files in
+            let session = WorkspaceSession()
+            session.scrollbackFiles = files
+            let ours = files.directory.appendingPathComponent("\(UUID().uuidString).vt")
+            try Data("ours".utf8).write(to: ours)
+            let outside = files.directory.deletingLastPathComponent().appendingPathComponent("outside.vt")
+            try Data("not ours".utf8).write(to: outside)
+            let oldest = session.openTab(container: .loose)
+            let first = try #require(oldest.splitTree.allLeafIDs().first)
+            let second = UUID()
+            _ = session.update(oldest.id) {
+                $0.splitTree = $0.splitTree.insert(at: first, direction: .horizontal, newID: second).tree
+                $0.scrollbackPaths = [first: ours.path, second: outside.path]
+            }
+            TabActions.closeTab(session, registry: RecordingSurfaceRegistry(), tabID: oldest.id)
+
+            for _ in 0..<WorkspaceSession.closedTabStackLimit {
+                let tab = session.openTab(container: .loose)
+                TabActions.closeTab(session, registry: RecordingSurfaceRegistry(), tabID: tab.id)
+            }
+
+            #expect(!session.closedTabStack.contains { $0.tab.id == oldest.id })
+            #expect(!FileManager.default.fileExists(atPath: ours.path))
+            #expect(FileManager.default.fileExists(atPath: outside.path))
+        }
     }
 }

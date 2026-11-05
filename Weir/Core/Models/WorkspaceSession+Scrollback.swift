@@ -11,10 +11,10 @@
 //     (`scrollbackFiles`): `<WeirPaths app support>/scrollback/`.
 //   * One per pane, named `<paneUUID>.vt` (`ScrollbackFiles`).
 //   * Captured fresh on every ⌘Q.
-//   * Consumed in `PaneHostView.stageScrollback` through
-//     `consumeScrollbackPath`: the path is moved onto the SurfaceView and
-//     immediately cleared from the model so a later split / re-mount
-//     can't double-replay.
+//   * Read in `PaneHostView.stageScrollback` and handed to the SurfaceView;
+//     cleared from the model (`forgetScrollbackPath`) only once the
+//     terminal exists and holds it, so a later split / re-mount
+//     can't double-replay, and a terminal that was never made keeps it.
 //   * `ScrollbackFiles.prune` deletes any file not referenced by a live
 //     tab so the directory doesn't grow unboundedly across months, except
 //     in a run whose state.json was set aside (`keepsUnreferencedFiles`).
@@ -61,15 +61,27 @@ extension WorkspaceSession {
         files.prune(keeping: liveFiles)
     }
 
-    /// Takes the saved scrollback path of `paneID` out of its tab and hands
-    /// it back, so the pane's terminal replays it once and a later split or
-    /// re-mount does not replay it again. `nil`, and nothing changes, when
-    /// the pane has no path to replay.
-    func consumeScrollbackPath(tabID: UUID, paneID: UUID) -> String? {
-        guard let path = tab(tabID)?.scrollbackPaths[paneID], !path.isEmpty else { return nil }
+    /// The saved scrollback path of `paneID` for its terminal to replay, or
+    /// `nil` when the pane has none. The path stays in the tab until the
+    /// pane's terminal exists to replay it (`forgetScrollbackPath`): a pane
+    /// whose terminal is never made this run, or fails, keeps it for the
+    /// next ⌘Q or close to carry, rather than leave the `.vt` to the prune.
+    func scrollbackPath(ofPane paneID: UUID) -> String? {
+        guard let path = tab(containing: paneID)?.scrollbackPaths[paneID], !path.isEmpty else { return nil }
+        return path
+    }
+
+    /// Drops the saved scrollback path of `paneID` once its terminal exists
+    /// and holds it, so a later split or re-mount does not replay it again
+    /// and the next ⌘Q dumps the terminal instead. Looked up by pane, not by
+    /// the tab the path was read from: the pane may have moved to another
+    /// tab, taking its path along (`Tab.PaneTransferState`), before its terminal
+    /// was made. An empty path is left in place, as it was never a file to
+    /// replay.
+    func forgetScrollbackPath(ofPane paneID: UUID) {
+        guard let tabID = tab(containing: paneID)?.id, scrollbackPath(ofPane: paneID) != nil else { return }
         update(tabID) { tab in
             tab.scrollbackPaths.removeValue(forKey: paneID)
         }
-        return path
     }
 }

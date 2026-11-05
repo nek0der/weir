@@ -99,6 +99,35 @@ struct SessionSnapshotTests {
         #expect(restored.primarySelection.activeContainerID == .project(project.id))
     }
 
+    @Test("a tab whose body repeats an earlier tab's ID is dropped and reported")
+    func restore_duplicateTabID_dropsTheLaterTab() throws {
+        // The decode keys each tab by its key in `tabs`, so two keys can
+        // carry one ID in their bodies. Kept, every lookup by ID finds the
+        // first, and Close All Tabs builds a dictionary by tab ID that traps.
+        let session = WorkspaceSession()
+        let first = session.openTab(container: .loose)
+        let second = session.openTab(container: .loose)
+        let data = try JSONEncoder().encode(session.makeSnapshot())
+        var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var tabs = try #require(json["tabs"] as? [String: Any])
+        let secondKey = try #require(tabs.keys.first { $0.caseInsensitiveCompare(second.id.uuidString) == .orderedSame })
+        var body = try #require(tabs[secondKey] as? [String: Any])
+        body["id"] = first.id.uuidString
+        tabs[secondKey] = body
+        json["tabs"] = tabs
+        let decoded = try JSONDecoder().decode(SessionSnapshot.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.tabs.map(\.id) == [first.id, first.id])
+
+        let restored = WorkspaceSession()
+        let issue = restored.restore(from: decoded)
+
+        #expect(issue == .recovered(droppedTabCount: 1, didResetActiveContainer: false))
+        #expect(restored.tabs.map(\.id) == [first.id])
+        #expect(restored.tabs.first?.splitTree.allLeafIDs() == first.splitTree.allLeafIDs())
+        TabActions.closeAllTabs(restored, registry: NoopSurfaceRegistry(), in: .loose)
+        #expect(restored.tabs(in: .loose).isEmpty)
+    }
+
     @Test("an active container that no longer exists is reported as a repair")
     func restore_missingActiveContainer_reportsRecovery() {
         let s = WorkspaceSession()

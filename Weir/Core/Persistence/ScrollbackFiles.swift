@@ -99,14 +99,14 @@ struct ScrollbackFiles: Equatable {
         let resolved = url.resolvingSymlinksInPath()
         let base = directory.resolvingSymlinksInPath().path
         guard resolved.pathExtension == "vt", RepositoryPath.isStrictDescendant(resolved.path, of: base) else {
-            scrollbackLog.warning("rejected out-of-sandbox scrollback path on restore")
+            scrollbackLog.warning("rejected out-of-sandbox scrollback path")
             return nil
         }
         // A leaf whose kind cannot be read is taken as no link: the resolved
         // path is already in the folder.
         let isSymlink = (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) ?? false
         if isSymlink {
-            scrollbackLog.warning("rejected symlinked scrollback path on restore")
+            scrollbackLog.warning("rejected symlinked scrollback path")
             return nil
         }
         // The resolved path goes on, so libghostty opens the real target and

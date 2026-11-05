@@ -19,8 +19,12 @@ extension WorkspaceSession {
         closedTabStack.append(ClosedTab(tab: snapshot, closedAt: .now))
         if closedTabStack.count > Self.closedTabStackLimit {
             let dropped = closedTabStack.removeFirst()
+            // A closed tab keeps the paths it was restored with, which came
+            // from state.json; only a file in the scrollback folder is ours
+            // to delete, never whatever a tampered path names.
             for path in dropped.tab.scrollbackPaths.values {
-                try? SecureFileWrite.removeItem(at: URL(fileURLWithPath: path))
+                guard let owned = scrollbackFiles?.validatedPath(path) else { continue }
+                try? SecureFileWrite.removeItem(at: URL(fileURLWithPath: owned))
             }
             // Its panes will never start: their first instructions go too.
             for path in dropped.tab.initialPromptFiles.values {
