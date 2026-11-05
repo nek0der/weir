@@ -33,12 +33,15 @@ struct WorktreeMoveSuggestion: Identifiable, Equatable {
         case reparentAfterAttach(projectID: UUID, path: URL, branchName: String?, label: String)
     }
 
-    /// Display label shared across kinds — used by the banner title.
+    /// Display label shared across kinds — used by the banner title. An
+    /// attach's label keeps a folder's characters, since accepting stores it
+    /// as the worktree's; a registered worktree's is its shown `label`
+    /// already, and showing it again changes nothing.
     var displayLabel: String {
         switch kind {
         case let .reparentToRegistered(_, _, label),
              let .reparentAfterAttach(_, _, _, label):
-            label
+            PathFormatting.showingControlCharacters(label)
         }
     }
 

@@ -360,7 +360,7 @@ extension NeedsAttentionListModel {
             let worktree = session.worktree(forSessionRow: item.subject)
             let row = project.flatMap { project in worktree.map { ContainerID.worktree(projectID: project.id, worktreeID: $0.id) } }
             return Names(
-                title: row.flatMap { session.rowName(of: $0)?.text } ?? worktreeRoot.lastPathComponent,
+                title: row.flatMap { session.rowName(of: $0)?.text } ?? PathFormatting.name(of: worktreeRoot),
                 place: project.map { AgentStatusText.place(project: $0.name, checkout: row.flatMap { session.rowCheckout(of: $0)?.shown }) }
             )
         case let .unplaced(provider):

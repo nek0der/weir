@@ -47,7 +47,7 @@ enum CheckoutName {
     /// leaves the folder's name out instead, since the project's name
     /// already stands there.
     nonisolated static func label(of project: Project) -> String {
-        of(project) ?? project.rootURL.lastPathComponent
+        of(project) ?? PathFormatting.name(of: project.rootURL)
     }
 
     /// The branch of the checkout `container` shows, or a worktree's label

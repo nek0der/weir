@@ -156,6 +156,29 @@ struct SidebarRowCheckoutTests {
         #expect(session.rowCheckout(of: bisect) == RowCheckout(name: "\(repository)-bisect", shown: "bisect", isBranch: false))
     }
 
+    /// A worktree with no branch is named by its folder, and a newline in
+    /// that folder shows rather than running its two lines together.
+    @Test func theSession_namesAWorktreeWithANewlineInItsFolder_withTheNewlineShown() throws {
+        let rootURL = WorkspaceSessionFixture.projectRootURL("parent").appendingPathComponent("duesmith")
+        let (session, project) = WorkspaceSessionFixture.withProject(name: "duesmith", rootURL: rootURL)
+        let index = try #require(session.projects.firstIndex { $0.id == project.id })
+        let detached = Worktree(
+            label: "bisect",
+            workingDirectory: project.rootURL.deletingLastPathComponent().appendingPathComponent("duesmith-bisect\nold"),
+            gitRef: GitRef(branchName: nil, headSHA: "abc"),
+            origin: .gitWorktree
+        )
+        session.projects[index].worktrees = [detached]
+        let row = ContainerID.worktree(projectID: project.id, worktreeID: detached.id)
+        #expect(session.rowName(of: row)?.text == "duesmith-bisect\u{240A}old")
+        session.renameRow(row, to: "Find the regression", runtimes: [])
+        #expect(session.rowCheckout(of: row) == RowCheckout(
+            name: "duesmith-bisect\u{240A}old",
+            shown: "bisect\u{240A}old",
+            isBranch: false
+        ))
+    }
+
     /// The project's folder row, labeled, shows its branch; with no branch
     /// known, its folder whole, unless that is the project's name, which
     /// the header says.

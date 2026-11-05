@@ -53,7 +53,8 @@ struct WorktreeOperationAlerts: ViewModifier {
                 // Prose first so the consequence is visually anchored
                 // to the title, then the path on its own line — keeps
                 // long /Users/... paths from breaking the sentence.
-                Text("Runs `git worktree remove`. The folder is removed from disk.\n\n\(target.path.path)")
+                let folder = PathFormatting.showingControlCharacters(target.path.path)
+                Text("Runs `git worktree remove`. The folder is removed from disk.\n\n\(folder)")
             }
             .alert(
                 Text("Force delete the worktree “\(forceDeleteWorktree?.target.label ?? "")”?"),

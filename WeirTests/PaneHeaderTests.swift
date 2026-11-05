@@ -881,3 +881,18 @@ extension PaneHeaderTests {
         #expect(PaneHeaderLabel.shortModel("Opus 5.5") == "Opus 5.5")
     }
 }
+
+extension PaneHeaderTests {
+    /// The status band reads the header's folder, so both show the newline
+    /// a worktree's folder holds rather than run its two lines together,
+    /// and a newline at the end stays part of the folder.
+    @Test func label_shellInAFolderWithANewline_showsTheNewlineInTheNameAndThePath() {
+        let label = PaneHeaderRules.label(customName: nil, agent: nil, workingDirectory: "/tmp/weir-feat\nline", fallbackName: "Terminal")
+        #expect(label.name == "weir-feat\u{240A}line")
+        #expect(label.detail == "/tmp/weir-feat\u{240A}line")
+        #expect(label.folder == "/tmp/weir-feat\u{240A}line")
+        let trailing = PaneHeaderRules.label(customName: nil, agent: nil, workingDirectory: "/tmp/feat\n", fallbackName: "Terminal")
+        #expect(trailing.name == "feat\u{240A}")
+        #expect(trailing.folder == "/tmp/feat\u{240A}")
+    }
+}

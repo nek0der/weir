@@ -39,9 +39,18 @@ enum WorkingDirectoryMode: String, Codable, Equatable, CaseIterable {
 
 struct Project: Codable, Equatable, Identifiable {
     let id: UUID
-    /// Display name shown in the sidebar. Defaults to the basename of
-    /// `rootURL` at creation.
-    var name: String
+    /// Display name shown in the sidebar, as a line of text shows it: a
+    /// control character the stored name holds shows as its control
+    /// picture (`PathFormatting.showingControlCharacters`). Setting it
+    /// stores the text as given.
+    var name: String {
+        get { PathFormatting.showingControlCharacters(storedName) }
+        set { storedName = newValue }
+    }
+
+    /// The name as it was given and as state.json keeps it. It defaults
+    /// to the basename of `rootURL` at creation, which may hold a newline.
+    private var storedName: String
     /// The Project's "anchor" directory. Default cwd for tabs created
     /// directly under the Project (no worktree).
     var rootURL: URL
@@ -166,7 +175,7 @@ struct Project: Codable, Equatable, Identifiable {
         checkCommands: [String]? = nil
     ) {
         self.id = id
-        self.name = name
+        self.storedName = name
         self.rootURL = rootURL
         self.worktrees = worktrees
         self.paletteIndex = paletteIndex
@@ -192,7 +201,7 @@ struct Project: Codable, Equatable, Identifiable {
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(UUID.self, forKey: .id)
-        self.name = try c.decode(String.self, forKey: .name)
+        self.storedName = try c.decode(String.self, forKey: .name)
         self.rootURL = try c.decode(URL.self, forKey: .rootURL)
         self.worktrees = try c.decode([Worktree].self, forKey: .worktrees)
         self.paletteIndex = try c.decodeIfPresent(Int.self, forKey: .paletteIndex)
@@ -241,7 +250,7 @@ struct Project: Codable, Equatable, Identifiable {
     func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
-        try c.encode(name, forKey: .name)
+        try c.encode(storedName, forKey: .name)
         try c.encode(rootURL, forKey: .rootURL)
         try c.encode(worktrees, forKey: .worktrees)
         try c.encodeIfPresent(paletteIndex, forKey: .paletteIndex)
@@ -394,8 +403,16 @@ enum WorktreePlacement: Codable, Equatable {
 
 struct Worktree: Codable, Equatable, Identifiable {
     let id: UUID
-    /// Sidebar label (branch name, subdir name, etc.).
-    var label: String
+    /// Sidebar label (branch name, subdir name, etc.), as a line of text
+    /// shows it: a control character a folder's name holds shows as its
+    /// control picture. Setting it stores the text as given.
+    var label: String {
+        get { PathFormatting.showingControlCharacters(storedLabel) }
+        set { storedLabel = newValue }
+    }
+
+    /// The label as it was given and as state.json keeps it.
+    private var storedLabel: String
     /// cwd for tabs opened under this worktree.
     var workingDirectory: URL
     /// Non-nil when this is a real git worktree (populated by
@@ -468,7 +485,7 @@ struct Worktree: Codable, Equatable, Identifiable {
         displayName: String? = nil
     ) {
         self.id = id
-        self.label = label
+        self.storedLabel = label
         self.workingDirectory = workingDirectory
         self.gitRef = gitRef
         self.origin = origin
@@ -488,7 +505,7 @@ struct Worktree: Codable, Equatable, Identifiable {
     init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
-        label = try c.decode(String.self, forKey: .label)
+        storedLabel = try c.decode(String.self, forKey: .label)
         workingDirectory = try c.decode(URL.self, forKey: .workingDirectory)
         gitRef = try c.decodeIfPresent(GitRef.self, forKey: .gitRef)
         origin = try c.decode(WorktreeOrigin.self, forKey: .origin)
@@ -512,7 +529,7 @@ struct Worktree: Codable, Equatable, Identifiable {
     func encode(to encoder: any Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id)
-        try c.encode(label, forKey: .label)
+        try c.encode(storedLabel, forKey: .label)
         try c.encode(workingDirectory, forKey: .workingDirectory)
         try c.encodeIfPresent(gitRef, forKey: .gitRef)
         try c.encode(origin, forKey: .origin)

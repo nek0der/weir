@@ -32,6 +32,14 @@ struct WorkspaceSessionContainersTests {
         #expect(project.name == "myrepo")
     }
 
+    @Test("addOrActivateProject shows a newline in the folder's name, and keeps it in the name it saves")
+    func addOrActivateProject_folderWithANewline_showsItAndSavesItAsItIs() throws {
+        let session = WorkspaceSession()
+        let project = session.addOrActivateProject(rootURL: Fixture.projectRootURL("containers").appendingPathComponent("feat\nline"))
+        #expect(project.name == "feat\u{240A}line")
+        #expect(try JSONObjectFixture.object(encoding: project)["name"] as? String == "feat\nline")
+    }
+
     @Test("addOrActivateProject is idempotent on the same standardized path")
     func addOrActivateProject_existingPath_noDuplicate() {
         let session = WorkspaceSession()

@@ -144,7 +144,7 @@ enum ConversationText {
                 comment: "Changes panel: a pane runs this conversation, in a tab with no title yet"
             ).resolved(in: locale)
         }
-        let title = tab.title
+        let title = PathFormatting.showingControlCharacters(tab.title)
         // In the session, or in a worktree with no name left to say (its
         // project is gone): the tab alone.
         switch tab.isInSession ? nil : tab.checkoutPlace {

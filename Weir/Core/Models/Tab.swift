@@ -31,7 +31,8 @@ struct Tab: Codable, Equatable, Identifiable {
     var kind: Kind = .terminal
 
     /// Title reported by libghostty (OSC 0/2). Seeded from the
-    /// container at creation.
+    /// container at creation, with the folder's characters as they are;
+    /// `name` is how a line of text shows it.
     var title: String
 
     /// User-pinned title override. When non-nil and non-empty, replaces
@@ -340,8 +341,11 @@ struct Tab: Codable, Equatable, Identifiable {
     /// The tab's own name, without the name prefix: a manual override, else
     /// the terminal's title. What names a session row, which never carries
     /// a group's name.
+    /// A control character in it shows as its control picture: the title a
+    /// tab starts with is its folder (`TitleFormatting.pwdStyle`), whose name
+    /// may hold a newline.
     var name: String {
-        titleOverride.flatMap { $0.isEmpty ? nil : $0 } ?? title
+        PathFormatting.showingControlCharacters(titleOverride.flatMap { $0.isEmpty ? nil : $0 } ?? title)
     }
 
     /// Names the tab as the person typed it: the name prefix goes with the

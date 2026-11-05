@@ -192,6 +192,17 @@ struct TabTests {
         tab.agentBadges[.codex] = [:]
         #expect(tab.agentKinds.isEmpty, "a retired run leaves the tab a plain terminal")
     }
+
+    /// A tab's first title is its folder: the tab keeps the folder's
+    /// characters, and its name shows the newline.
+    @Test("a tab's first title keeps the newline, and its name shows it")
+    func pwdStyleTitle_keepsTheNewline_andTheTabsNameShowsIt() {
+        let title = TitleFormatting.pwdStyle(for: URL(fileURLWithPath: "/tmp/feat\nline"))
+        #expect(title == "/tmp/feat\nline")
+        let tab = Tab(title: title, splitTree: SplitTree(leafID: UUID()), container: .loose)
+        #expect(tab.name == "/tmp/feat\u{240A}line")
+        #expect(tab.displayTitle == "/tmp/feat\u{240A}line")
+    }
 }
 
 @MainActor

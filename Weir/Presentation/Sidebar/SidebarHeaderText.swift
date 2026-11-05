@@ -102,7 +102,8 @@ enum ProjectTroubleText {
         switch trouble {
         case .folderMissing:
             LocalizedStringResource(
-                "The project’s folder is gone: \(folder.path). Move it back, or close the project.",
+                // swiftlint:disable:next line_length
+                "The project’s folder is gone: \(PathFormatting.showingControlCharacters(folder.path)). Move it back, or close the project.",
                 comment: "Sidebar project header, tooltip and VoiceOver: the project's folder was deleted or moved; the path follows"
             )
         case .gitUnavailable:

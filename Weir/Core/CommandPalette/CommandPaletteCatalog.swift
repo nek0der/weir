@@ -299,7 +299,7 @@ enum CommandPaletteCatalog {
             items.append(CommandPaletteItem(
                 id: "recent.\(url.path)",
                 category: .reopen,
-                title: url.lastPathComponent,
+                title: PathFormatting.name(of: url),
                 subtitle: PathFormatting.abbreviateHome(url.path),
                 icon: "clock",
                 shortcutDisplay: nil,

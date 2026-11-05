@@ -36,7 +36,7 @@ struct PathRow: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
-                        .help(Text(verbatim: url.path))
+                        .help(Text(verbatim: PathFormatting.showingControlCharacters(url.path)))
                     if isExpectedToExist, !FileManager.default.fileExists(atPath: url.path) {
                         Text("Not Found")
                             .foregroundStyle(SupervisionTokens.waitingText.color)

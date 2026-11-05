@@ -34,6 +34,33 @@ struct ProjectBootstrapTests {
         }
     }
 
+    /// A name taken from a folder whose name holds a newline shows it as
+    /// "␊", and state.json keeps the newline: only what is shown changes.
+    @Test
+    func projectAndWorktreeNames_withANewline_showItAndAreSavedAsTheyAre() throws {
+        let saved = #"""
+        {
+          "id": "11111111-1111-1111-1111-111111111111",
+          "name": "feat\nline",
+          "rootURL": "file:///tmp/feat%0Aline",
+          "worktrees": [{
+            "id": "22222222-2222-2222-2222-222222222222",
+            "label": "repo-feat\nline",
+            "workingDirectory": "file:///tmp/repo-feat%0Aline",
+            "origin": "gitWorktree",
+            "isHidden": false
+          }]
+        }
+        """#
+        let project = try JSONDecoder().decode(Project.self, from: Data(saved.utf8))
+        #expect(project.name == "feat\u{240A}line")
+        #expect(project.worktrees.first?.label == "repo-feat\u{240A}line")
+        let written = try JSONObjectFixture.object(encoding: project)
+        #expect(written["name"] as? String == "feat\nline")
+        let worktrees = try #require(written["worktrees"] as? [[String: Any]])
+        #expect(worktrees.first?["label"] as? String == "repo-feat\nline")
+    }
+
     @Test
     func projectRoundtrips_bootstrapShorthandAndDetailed() throws {
         let project = Project(

@@ -19,7 +19,7 @@ struct WorktreePlacementMenuItems: View {
         item(.insideHidden, Text(WorktreePlacementActions.insideTitle))
         if let project, case let .custom(folder) = project.worktreePlacement {
             item(.custom, Text(verbatim: MenuLine.fit(PathFormatting.abbreviateHome(folder.path), as: .path)))
-                .help(Text(verbatim: folder.path))
+                .help(Text(verbatim: PathFormatting.showingControlCharacters(folder.path)))
         }
         Divider()
         Button {

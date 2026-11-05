@@ -75,7 +75,7 @@ enum WorktreePlacementActions {
                 comment: "New worktree sheet: the folder menu's face for the folder inside the project"
             ))
         case let .custom(folder):
-            .verbatim(folder.lastPathComponent)
+            .verbatim(PathFormatting.name(of: folder))
         }
     }
 
@@ -83,7 +83,7 @@ enum WorktreePlacementActions {
     /// the choice shows the convention at a glance: "myapp-<branch>".
     nonisolated static func siblingPreview(of project: Project?) -> String {
         guard let project else { return "<repo>-<branch>" }
-        return "\(project.rootURL.lastPathComponent)-<branch>"
+        return "\(PathFormatting.name(of: project.rootURL))-<branch>"
     }
 
     /// Sets the project's placement to `choice`. A custom choice with no

@@ -83,7 +83,7 @@ enum CreateWorktreeError: WeirLocalizedError {
         switch self {
         case .projectNotFound: "Project not found."
         case .missingBranchName: "Enter a branch name for the new worktree."
-        case let .pathAlreadyExists(url): "A folder already exists at \(url.path)."
+        case let .pathAlreadyExists(url): "A folder already exists at \(PathFormatting.showingControlCharacters(url.path))."
         case let .invalidBranchName(name): "“\(name)” can’t be a branch name."
         case .gitFailed, .gitFailedLeavingBranch: "git worktree add failed."
         case let .timedOut(seconds, _, nil):
@@ -96,7 +96,7 @@ enum CreateWorktreeError: WeirLocalizedError {
         case let .timedOut(seconds, _, leftover?):
             LocalizedStringResource(
                 // swiftlint:disable:next line_length
-                "git worktree add didn’t finish within \(seconds / 60) minutes, so Weir stopped it. The partially created worktree at \(leftover.path) couldn’t be removed; remove it with git worktree remove --force. Check the repository’s hooks, such as post-checkout.",
+                "git worktree add didn’t finish within \(seconds / 60) minutes, so Weir stopped it. The partially created worktree at \(PathFormatting.showingControlCharacters(leftover.path)) couldn’t be removed; remove it with git worktree remove --force. Check the repository’s hooks, such as post-checkout.",
                 // swiftlint:disable:next line_length
                 comment: "New session, the worktree stage: git worktree add ran past its deadline and was stopped, and the folder it left could not be removed; the number is minutes, then the folder"
             )

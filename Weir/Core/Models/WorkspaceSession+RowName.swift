@@ -57,7 +57,11 @@ extension WorkspaceSession {
             let isProjectsName = folder.compare(project.name, options: .caseInsensitive) == .orderedSame
             return name.checkoutBeside(branch: branch, folder: isProjectsName ? nil : folder)
         case let .worktree(projectID, _):
-            return name.checkoutBeside(branch: branch, folder: folder, repository: project(projectID)?.rootURL.lastPathComponent)
+            return name.checkoutBeside(
+                branch: branch,
+                folder: folder,
+                repository: project(projectID).map { PathFormatting.name(of: $0.rootURL) }
+            )
         }
     }
 
@@ -76,9 +80,9 @@ extension WorkspaceSession {
         case .loose:
             nil
         case let .project(projectID):
-            project(projectID).map { ($0.rootURL.lastPathComponent, $0.rootDisplayName) }
+            project(projectID).map { (PathFormatting.name(of: $0.rootURL), $0.rootDisplayName) }
         case let .worktree(projectID, worktreeID):
-            worktree(projectID: projectID, worktreeID: worktreeID).map { ($0.workingDirectory.lastPathComponent, $0.displayName) }
+            worktree(projectID: projectID, worktreeID: worktreeID).map { (PathFormatting.name(of: $0.workingDirectory), $0.displayName) }
         }
     }
 
