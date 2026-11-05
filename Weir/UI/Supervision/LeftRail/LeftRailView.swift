@@ -1,7 +1,6 @@
 // LeftRailView.swift
 // Weir — the left tool window bar: sessions, scratch, all projects, history; update, plan usage, shortcuts, and Settings below.
 
-import Sparkle
 import SwiftUI
 import WeirDomain
 
@@ -18,7 +17,6 @@ struct LeftRailView: View {
     @Environment(NotificationHistoryPresentation.self) private var historyPresentation
     @Environment(ProjectWindowState.self) private var window
     @Environment(UpdateStateModel.self) private var updateState
-    @Environment(\.sparkleUpdater) private var updater
     @Environment(\.openWindow) private var openWindow
     @Environment(\.locale) private var locale
     /// The history control's frame, in global coordinates: its panel opens
@@ -96,8 +94,8 @@ struct LeftRailView: View {
         } bottom: {
             // Only while there is something to say about an update, so
             // the shortcuts below stay in place the rest of the time.
-            if updateState.showsBadge, let updater {
-                RailUpdateButton(updater: updater, isOpen: $isUpdateOpen, isLit: highlight == .update)
+            if updateState.showsBadge {
+                RailUpdateButton(isOpen: $isUpdateOpen, isLit: highlight == .update)
             }
             RailPlanUsageButton(isLit: highlight == .planUsage)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
@@ -171,7 +169,6 @@ struct RailColumn<Top: View, Bottom: View>: View {
 /// The rail's update icon, drawn in the accent color, opening the
 /// update popover beside the rail.
 private struct RailUpdateButton: View {
-    let updater: SPUUpdater
     @Binding var isOpen: Bool
     /// Whether this is the one button the rail lights (`RailHighlight`).
     let isLit: Bool
@@ -207,7 +204,7 @@ private struct RailUpdateButton: View {
         .accessibilityLabel(Text(model.state.helpText))
         .accessibilityValue(Text(verbatim: model.state.progressValueText(locale: locale)))
         .popover(isPresented: $isOpen, arrowEdge: .trailing) {
-            UpdatePopover(updater: updater) {
+            UpdatePopover {
                 isOpen = false
             }
             .environment(\.locale, locale)

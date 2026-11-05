@@ -11,7 +11,6 @@
 // values at the root of the Weir scene so production never touches
 // the fallbacks.
 
-import Sparkle
 import SwiftUI
 import WeirDomain
 
@@ -38,11 +37,11 @@ extension EnvironmentValues {
     /// emission + Dock badge updates.
     @Entry var notificationManager: WeirNotificationManager?
 
-    /// Sparkle updater. `nil` in Previews / tests; WeirApp installs
-    /// the live `SPUStandardUpdaterController.updater` on both window
-    /// scenes so the Settings → General pane can drive the auto-check
-    /// toggle + "Check Now" button without re-creating a controller.
-    @Entry var sparkleUpdater: SPUUpdater?
+    /// The app's updater. `nil` in Previews / tests; WeirApp installs
+    /// its one `UpdaterStack` on both window scenes so the Settings →
+    /// General pane can drive the auto-check toggle and "Check Now"
+    /// through the same check entry as the menu.
+    @Entry var updaterStack: UpdaterStack?
 
     /// Reduces the agent records into what each pane shows. `TabActions`
     /// and `PaneActions` tell it when a pane closes so the records that

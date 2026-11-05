@@ -13,7 +13,7 @@ import SwiftUI
 
 struct GeneralPane: View {
     @Environment(SettingsStore.self) private var settings
-    @Environment(\.sparkleUpdater) private var updater
+    @Environment(\.updaterStack) private var updaterStack
 
     var body: some View {
         @Bindable var settings = settings
@@ -68,8 +68,8 @@ struct GeneralPane: View {
 
             FileApplicationSection()
 
-            if let updater {
-                UpdatesSection(updater: updater)
+            if let updaterStack {
+                UpdatesSection(updaterStack: updaterStack)
             }
 
             AboutSection()
@@ -201,19 +201,22 @@ private struct AboutSection: View {
     }()
 }
 
-/// Sparkle auto-update controls. Lives in its own struct because the
-/// auto-check toggle binds through Sparkle's own KVO-backed setter
-/// (not the `WeirSettings` JSON path), and the "Check Now" button
-/// needs a `@State`-tracked `canCheckForUpdates` flag from a small
-/// `@Observable` adapter.
+/// The Sparkle auto-update controls. They live in their own struct
+/// because the auto-check toggle binds through Sparkle's own KVO-backed
+/// setter (not the `WeirSettings` JSON path), and "Check Now" starts its
+/// check through `UpdaterStack.checkForUpdates()`, as the menu does.
 private struct UpdatesSection: View {
-    let updater: SPUUpdater
+    let updaterStack: UpdaterStack
     @State private var isAutoCheckEnabled: Bool
     @Environment(UpdateStateModel.self) private var stateModel
 
-    init(updater: SPUUpdater) {
-        self.updater = updater
-        self._isAutoCheckEnabled = State(initialValue: updater.automaticallyChecksForUpdates)
+    private var updater: SPUUpdater {
+        updaterStack.updater
+    }
+
+    init(updaterStack: UpdaterStack) {
+        self.updaterStack = updaterStack
+        self._isAutoCheckEnabled = State(initialValue: updaterStack.updater.automaticallyChecksForUpdates)
     }
 
     var body: some View {
@@ -229,24 +232,14 @@ private struct UpdatesSection: View {
             HStack(spacing: 12) {
                 Text("Updates")
                 Spacer(minLength: 12)
-                // We intentionally don't gate this on Sparkle's
-                // `canCheckForUpdates`. After a failed appcast fetch
-                // (404, no network at launch, etc.) the flag has
-                // been observed to stay `false` and the button
-                // becomes permanently un-clickable — Sparkle itself
-                // is the bug we're routing around. Sparkle ignores
-                // re-entrant `checkForUpdates()` calls internally,
-                // so an always-enabled button is safe.
+                // We don't gate this on Sparkle's `canCheckForUpdates`,
+                // which stays false while a session is open, including
+                // one that only shows its result. A check asked for then
+                // waits for that session to end
+                // (`UpdaterStack.checkForUpdates()`), so the button
+                // stays on.
                 Button("Check Now…") {
-                    #if DEBUG
-                        // Mirror the App-menu "Check for Updates…"
-                        // mock routing so design iteration still
-                        // reaches both entry points without a real
-                        // Sparkle round-trip.
-                        MockUpdateAvailability.simulate(into: stateModel)
-                    #else
-                        updater.checkForUpdates()
-                    #endif
+                    updaterStack.checkForUpdates()
                 }
                 .disabled(stateModel.disablesCheckForUpdates)
             }
@@ -261,8 +254,8 @@ private struct UpdatesSection: View {
             if case .idle = stateModel.state {
                 EmptyView()
             } else {
-                UpdatePopover(updater: updater, dismiss: {
-                    stateModel.state = .idle
+                UpdatePopover(dismiss: {
+                    stateModel.show(.idle)
                 }, width: nil)
                     .environment(\.updatePopoverMetrics, .settingsRow)
             }

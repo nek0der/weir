@@ -14,7 +14,6 @@ import Sparkle
 import SwiftUI
 
 struct UpdatePopover: View {
-    let updater: SPUUpdater
     let dismiss: () -> Void
     /// Caller-supplied width. A main window's update control opens it at the
     /// rail panels' width; the Settings pane lets the form column size it.
@@ -50,13 +49,11 @@ struct UpdatePopover: View {
                 InstalledView()
             case let .notFound(acknowledgement):
                 NotFoundView(acknowledgement: acknowledgement, dismiss: dismiss)
-            case let .error(error, acknowledgement):
+            case let .error(error, acknowledgement, retry):
                 ErrorView(
                     error: error,
                     acknowledgement: acknowledgement,
-                    retry: {
-                        updater.checkForUpdates()
-                    },
+                    retry: retry,
                     dismiss: dismiss
                 )
             }
@@ -437,7 +434,9 @@ private struct ErrorView: View {
     @Environment(\.weirAccent) private var accent
     let error: any Error
     let acknowledgement: OneShot<Void>
-    let retry: () -> Void
+    /// The action that settles the failure and starts a new check once
+    /// Sparkle has ended the failed one (`WeirUpdateDriver`).
+    let retry: OneShot<Void>
     let dismiss: () -> Void
 
     @State private var showsDetails = false
@@ -476,8 +475,7 @@ private struct ErrorView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 Button {
-                    acknowledgement.call()
-                    retry()
+                    retry.call()
                 } label: {
                     Text(CommonText.retry)
                 }
