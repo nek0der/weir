@@ -311,7 +311,7 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
                 )
             }
         }
-        Self.stageScrollback(view: view, session: session, tab: owningTab, paneID: paneID)
+        Self.stageScrollback(view: view, session: session, paneID: paneID)
         registry.register(view, for: paneID)
         return view
     }
@@ -532,20 +532,30 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
         return AgentResumeCommandBuilder.firstResume(for: tab, paneID: paneID)
     }
 
-    /// Stage the saved scrollback path for replay and clear it from the
-    /// model so a later split / re-mount doesn't replay it again.
+    /// Stage the saved scrollback path for replay. The model keeps the path
+    /// until the terminal exists to replay it: a view whose surface
+    /// is never made (the person switches away first) or fails has nothing
+    /// to dump at ⌘Q, and the path is then what keeps the `.vt` out of the
+    /// prune and replays it next launch.
     @MainActor
-    private static func stageScrollback(
+    static func stageScrollback(
         view: SurfaceView,
         session: WorkspaceSession,
-        tab: Tab?,
         paneID: UUID
     ) {
-        guard let tab, let rawPath = session.consumeScrollbackPath(tabID: tab.id, paneID: paneID) else { return }
+        guard let rawPath = session.scrollbackPath(ofPane: paneID) else { return }
         // Only replay a `.vt` file we wrote; a tampered state.json could
         // otherwise point this at an arbitrary file for libghostty to read.
         if let path = session.scrollbackFiles?.validatedPath(rawPath) {
             view.initialScrollbackPath = path
+        }
+        // Surface creation can run inside a SwiftUI update, when the view
+        // first lands in a window; the session changes once that is over.
+        view.onSurfaceCreated = { [weak session] in
+            guard let session else { return }
+            DispatchQueue.main.async {
+                session.forgetScrollbackPath(ofPane: paneID)
+            }
         }
     }
 }

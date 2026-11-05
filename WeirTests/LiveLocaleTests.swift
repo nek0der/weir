@@ -224,7 +224,7 @@ struct LiveLocaleTests {
             expectTranslated(detail)
         }
         let single = SessionLoadIssue.recovered(droppedTabCount: 1, didResetActiveContainer: false)
-        #expect(single.detail.resolved(in: en) == "Removed 1 tab with duplicate pane IDs.")
+        #expect(single.detail.resolved(in: en) == "Removed 1 tab with duplicate IDs.")
     }
 
     // MARK: - Builders that need a String

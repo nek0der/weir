@@ -88,6 +88,32 @@ struct SurfaceViewCreationTests {
         #expect(maker.calls == 2)
     }
 
+    /// A restored pane's saved path stays in its tab until its terminal
+    /// exists. A failed surface has nothing to dump at ⌘Q, so dropping the
+    /// path then would let the prune delete the `.vt` with its scrollback.
+    @Test(.tags(.ffi), .enabled("libghostty is unavailable") { await GhosttyAvailability.isAvailable() })
+    func aRestoredPanesPath_staysUntilItsSurfaceIsMade() async throws {
+        let ghosttyApp = try #require(GhosttyApp.placeholder.target)
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        _ = session.update(tab.id) { $0.scrollbackPaths[pane] = "/saved.vt" }
+        let maker = Maker(failures: 1)
+        let view = SurfaceView(ghosttyApp: ghosttyApp, makeSurface: maker.make)
+        PaneHostRepresentable.stageScrollback(view: view, session: session, paneID: pane)
+
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        defer { window.close() }
+        #expect(view.creation.hasFailed)
+        #expect(session.scrollbackPath(ofPane: pane) == "/saved.vt")
+
+        view.createSurface()
+
+        #expect(view.surface != nil)
+        await pollUntil { session.scrollbackPath(ofPane: pane) == nil }
+        #expect(session.tab(tab.id)?.scrollbackPaths[pane] == nil)
+    }
+
     /// The failure itself is observed too, so the card appears when
     /// libghostty returns NULL rather than on the next redraw.
     @Test(.tags(.ffi), .enabled("libghostty is unavailable") { await GhosttyAvailability.isAvailable() })

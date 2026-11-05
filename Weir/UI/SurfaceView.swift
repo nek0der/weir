@@ -204,6 +204,14 @@ final class SurfaceView: NSView {
     /// on a previous quit. When set, ghostty replays it before the
     /// shell starts so the visible state survives an app restart.
     var initialScrollbackPath: String?
+    /// Told each time `createSurface` gets a surface from libghostty, which
+    /// then holds `initialScrollbackPath` and replays it as its terminal
+    /// starts. Until then the pane's saved path stays in its tab: a view
+    /// whose surface was never made, or failed, has no terminal to dump at
+    /// ⌘Q, so that path is the only record of its scrollback
+    /// (`stageScrollback` in `PaneHostView`). `nil` for a terminal with
+    /// nothing to replay.
+    var onSurfaceCreated: (@MainActor () -> Void)?
 
     /// Owned C buffer with the same lifetime contract as
     /// `workingDirectoryCStr`: allocated by MainActor `createSurface()`,
@@ -807,6 +815,7 @@ extension SurfaceView {
         }
         surface = s
         creation.hasFailed = false
+        onSurfaceCreated?()
         app.applyColorScheme(to: s)
 
         // Push the initial size now that libghostty owns the layer.
