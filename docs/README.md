@@ -20,7 +20,7 @@ follow.
 | [`agent-integration-protocol.md`](agent-integration-protocol.md) | The approval service's wire protocol, and how each provider's hooks map onto turn records. |
 | [`data-migration.md`](data-migration.md) | Every file Weir stores, and how each one moves between versions. |
 | [`verification-channel.md`](verification-channel.md) | The Debug-only channel agents use to check a running build. |
-| [`libghostty-fork.md`](libghostty-fork.md) | Why we carry a libghostty fork, its patches, and how one is added or retired. |
+| [`libghostty-fork.md`](libghostty-fork.md) | Why we carry a libghostty fork, its patches, how one is added or retired, and what Weir changes in its copy of the shell integration. |
 
 ### Decision records
 

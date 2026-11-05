@@ -230,9 +230,18 @@ _ghostty_deferred_init() {
         (( _ghostty_state = 1 ))
     }
 
-    # Enable reporting current working dir to terminal. Ghostty supports
-    # the kitty-shell-cwd format.
-    _ghostty_report_pwd() { builtin print -nu $_ghostty_fd '\e]7;kitty-shell-cwd://'"$HOST""$PWD"'\a'; }
+    # Enable reporting current working dir to terminal. Send a file:// URL
+    # with every byte outside the unreserved set and "/" percent-encoded:
+    # the terminal drops control characters such as a newline inside an OSC
+    # string, and decodes the path of a file:// URL but takes a
+    # kitty-shell-cwd:// path as is.
+    _ghostty_report_pwd() {
+        builtin emulate -L zsh
+        builtin setopt extended_glob
+        builtin local LC_ALL=C
+        builtin local path_url="${PWD//(#b)([^A-Za-z0-9\/._~-])/%${(l:2::0:)$(( [##16] #match ))}}"
+        builtin print -nu $_ghostty_fd '\e]7;file://'"$HOST$path_url"'\a'
+    }
     chpwd_functions=(${chpwd_functions[@]} "_ghostty_report_pwd")
     # An executed program could change cwd and report the changed cwd, so also report cwd at each new prompt
     # as in this case chpwd_functions is insufficient. chpwd_functions is still needed for things like: cd x && something

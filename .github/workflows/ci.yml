@@ -663,3 +663,5 @@ jobs:
         run: scripts/test-derive-expected-events.sh
       - name: Self-test that make screenshot shoots the app this checkout built
         run: scripts/test-screenshot-app.sh
+      - name: Check the working directory the bundled shells report
+        run: scripts/test-shell-integration-pwd.sh
