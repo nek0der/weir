@@ -149,18 +149,16 @@ enum TabActions {
         }
 
         // Capture every pane's scrollback so reopen rebuilds the full
-        // split layout, not just the focused leaf. Routes through the
-        // shared helper so ⌘Q and per-tab close stay in lock-step on
-        // filename / permissions / directory creation.
+        // split layout, not just the focused leaf. The rule for which path
+        // each pane keeps is the one ⌘Q uses (`ScrollbackFiles.capturePaths`);
+        // unlike ⌘Q, a close passes no inherited paths, so a pane with no
+        // terminal to dump reopens with no scrollback.
         var snapshot = tab
         var paths: [UUID: String] = [:]
         // A demo run's panes are not the person's; their scrollback would
         // be strays in the person's folder.
         if session.writesUserFiles, let files = session.scrollbackFiles {
-            for pid in leafIDs {
-                guard let url = files.capture(pid, with: registry) else { continue }
-                paths[pid] = url.path
-            }
+            paths = files.capturePaths(of: leafIDs, inheriting: [:], with: registry)
         }
         snapshot.scrollbackPaths = paths
         session.recordClosedTab(snapshot)
