@@ -89,12 +89,17 @@ project.yml    xcodegen source of truth for the .xcodeproj
 ## 3. Code conventions
 
 Most of the style is enforced by `make lint` (`cargo fmt`, Clippy,
-`swiftformat --lint`, and `swiftlint --strict`). The rules a linter can't check:
+`swiftformat --lint`, and `swiftlint --strict`).
+
+Before writing or reviewing comments, documents, commit messages, or PR text,
+read the relevant section of [the writing guide](docs/writing-guide.md).
+
+The rules a linter can't check:
 
 - **English only** for source, comments, commits, and PR titles and bodies.
-  No emoji anywhere. US spelling (`color`, `normalize`, `gray`); some
-  older files still use British forms, so match the rule rather than
-  the file you are editing.
+  Use US spelling even where older files use British spelling. No emoji
+  anywhere. See the [writing guide](docs/writing-guide.md#common-wording)
+  for wording and tone.
 - **SwiftUI before AppKit.** AppKit is the boundary (`NSWindow`,
   `NSTextInputClient`, `NSPasteboard`, `NSVisualEffectView`), not the
   default. Wrap AppKit classes in `*Representable` types and keep the
@@ -110,9 +115,10 @@ Most of the style is enforced by `make lint` (`cargo fmt`, Clippy,
   `GhosttyFFI.swift`. `nonisolated(unsafe)` is reserved for `deinit`
   cleanup of resources captured during a known-safe lifetime.
   Document the safety argument in the property's doc comment.
-- **Comments answer why**, not what. Full sentences, first-person
-  plural (`we` / `our`), no `I`. Every Swift file starts with a
-  banner: `// FileName.swift` / `// Weir — one-line description`.
+- **Comments** describe API contracts or explain implementation reasons;
+  use `we` / `our`, not `I`, when explaining our choices. Follow the
+  [comment guide](docs/writing-guide.md#code-comments) for sentence forms.
+  Every Swift file starts with a banner: `// FileName.swift` / `// Weir — one-line description`.
 - **Booleans read as predicates** (`isFocused`, `hasPendingChanges`),
   never bare `focused` / `pending`.
 - **No force-unwrap (`!`)** in production. Document *why* a stored

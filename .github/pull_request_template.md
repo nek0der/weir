@@ -1,6 +1,8 @@
 ## Summary
 
-<!-- One to three sentences: what changed and why. -->
+<!-- Begin with one to three sentences: the problem and resulting behavior.
+     Explain the implementation, rationale, or limitations when needed.
+     Wording: docs/writing-guide.md. -->
 
 ## Related issue
 
@@ -8,7 +10,10 @@
 
 ## How verified
 
-<!-- Required for user-visible changes. Otherwise write "Build + tests only."
+<!-- State the checks actually performed and their outcomes for every PR.
+     Distinguish local checks from CI and identify unverified behavior.
+     For user-visible changes, describe your manual checks or explain why
+     you could not perform them.
      Examples:
        - "Launched a Debug build, dragged a pane onto a tab, and confirmed it merges."
        - "Ran make screenshot; the Needs Attention list still renders correctly in demo mode." -->

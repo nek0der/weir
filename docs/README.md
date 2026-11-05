@@ -13,6 +13,7 @@ follow.
 
 | Document | What it is the home of |
 | --- | --- |
+| [`writing-guide.md`](writing-guide.md) | Shared wording rules for comments, documents, commit messages, and PRs, for human contributors and coding agents. |
 | [`user-guide.md`](user-guide.md) | The app as a person uses it: each part of the window, the workflow, and the main default shortcuts. |
 | [`known-limitations.md`](known-limitations.md) | What a person meets as a limit, and what has not been checked on a real machine. |
 | [`provider-adapters.md`](provider-adapters.md) | The provider adapter, the capabilities that say how a provider differs, the turn rules, and what each provider needed beyond the contract. |
@@ -68,6 +69,9 @@ ADRs of an area before changing its shape.
 
 ## Format
 
+Use the [writing guide](writing-guide.md) for wording and sentence forms.
+The rules below cover document structure and maintenance.
+
 ### A document
 
 - The title is a noun phrase in sentence case (`# Known limitations`).
@@ -87,8 +91,8 @@ ADRs of an area before changing its shape.
   repository is a relative link the first time a section names it.
 - Sections are `##`, with `###` under them and no deeper. A section is
   referred to by its title in quotes ("Work outside a turn").
-- English with US spelling, and prose wrapped at about 80 columns. Tables,
-  and a line that holds only a link, are not wrapped.
+- Wrap prose at about 80 columns. Tables and lines containing only a link
+  are not wrapped.
 
 ### An ADR
 
