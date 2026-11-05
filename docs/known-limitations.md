@@ -249,6 +249,13 @@ as they are fixed or confirmed.
 - **Codex's background terminals are not shown.** Codex keeps them running
   after a turn, but its `Stop` does not list them and no hook reports their
   end.
+- **A Codex subagent still at work after its turn is not shown.** Codex's
+  `Stop` does not wait for it or count it, and no hook reports its end, so
+  the pane shows the turn finished while the subagent works on.
+- **A Codex subagent's permission request made before its turn's `Stop`
+  shows as finished.** The `Stop` ends the wait, so the pane shows the turn
+  finished while Codex still waits on the person. The run record holds one
+  wait and does not record whose it is.
 
 ## Pane headers
 

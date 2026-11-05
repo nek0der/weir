@@ -110,6 +110,15 @@ pub enum Capability {
     ApprovalProtocol,
     /// The provider emits subagent events.
     Subagents,
+    /// A subagent's end hands its result back in a turn of the agent's own,
+    /// and the agent holds its idle prompt back while a subagent runs. So a
+    /// subagent's tool at a rest no stop counted it at (`idle`, `error`), or
+    /// one that ends a wait outside a turn, can show the run working: that
+    /// turn's stop, or the idle prompt, settles the run. A provider without
+    /// it, whose subagent ends with no hook and no turn, keeps the run at its
+    /// rest through a subagent's tools outside a turn, as nothing would end
+    /// that work.
+    SubagentEndOpensTurn,
     /// A turn snapshot can be captured on prompt submit.
     TurnSnapshot,
     /// The provider reports when its prompt cache expires, on the event that

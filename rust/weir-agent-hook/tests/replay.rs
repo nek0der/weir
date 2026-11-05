@@ -1750,7 +1750,8 @@ fn a_codex_tool_after_its_turns_stop_begins_no_turn() {
 }
 
 /// A subagent the turn spawned can still work after the parent's `Stop`;
-/// its tool names the subagent's own turn, which is no turn of the pane's.
+/// its tool names the subagent's own turn, which is no turn of the pane's,
+/// and leaves the run finished rather than putting it back to work.
 #[test]
 fn a_codex_subagents_tool_after_the_parents_stop_begins_no_turn() {
     let scratch = Scratch::new("codex-subagent-after-stop");
@@ -1765,6 +1766,12 @@ fn a_codex_subagents_tool_after_the_parents_stop_begins_no_turn() {
     codex(
         r#"{"hook_event_name":"PreToolUse","session_id":"c","turn_id":"t2","agent_id":"019a0000-0000-7000-8000-000000000001","agent_type":"explorer","tool_name":"Bash","tool_input":{"command":"ls"}}"#,
     );
+    let state = || scratch.record().map(|record| record.state);
+    assert_eq!(state(), Some(RunState::Finished), "its tool's start");
+    codex(
+        r#"{"hook_event_name":"PostToolUse","session_id":"c","turn_id":"t2","agent_id":"019a0000-0000-7000-8000-000000000001","agent_type":"explorer","tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":"README.md\n"}"#,
+    );
+    assert_eq!(state(), Some(RunState::Finished), "its tool's end");
 
     assert_eq!(scratch.turns().len(), 1);
     assert!(

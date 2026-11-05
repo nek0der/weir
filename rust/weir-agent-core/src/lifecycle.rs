@@ -241,24 +241,16 @@ fn apply_event(
         {
             return writes;
         }
-        // A background subagent's tool after the turn ended, its start or its
-        // end, is work the stop already counted (`background_work`); the run
-        // stays at its rest rather than reading as a turn at work. Only the
-        // finished rest. At `idle` and `error` no stop counted the subagent
-        // (a session start and a failure clear the count), so its tools are
-        // the one sign that work goes on, and they still show the run
-        // working until the subagent ends: its end starts a turn of Claude's,
-        // whose stop settles the run, and Claude holds the idle prompt back
-        // while a subagent runs. A wait the subagent's permission prompt
-        // opened is ended by its next tool as any wait is.
+        // A subagent's tool after the turn ended, its start or its end, is
+        // work of a turn the stop already ended (Claude's stop also counted
+        // it, `background_work`); the run stays at its rest rather than
+        // reading as a turn at work (`keeps_rest_for_subagent`).
         AgentEvent::ToolStarted {
             by_subagent: true, ..
         }
         | AgentEvent::ToolFinished {
             by_subagent: true, ..
-        } if prev
-            .is_some_and(|record| record.state == RunState::Finished && !is_in_a_turn(record)) =>
-        {
+        } if prev.is_some_and(|record| keeps_rest_for_subagent(record, descriptor)) => {
             return writes;
         }
         _ => {}
@@ -462,6 +454,13 @@ fn turn_transition(
         // A tool outside a turn runs too: the run is shown working, and its
         // `runStartedAt` stays empty, which is what records that no turn
         // holds the work (`idle_outcome`).
+        // A wait a subagent opened after the turn ended, which its next tool
+        // ends, returns to a finish (`ends_subagents_wait_at_rest`).
+        AgentEvent::ToolStarted { .. } | AgentEvent::ToolFinished { .. }
+            if ends_subagents_wait_at_rest(prev, event, descriptor) =>
+        {
+            next.state = RunState::Finished;
+        }
         AgentEvent::ToolStarted { tool, detail, .. } => {
             next.state = RunState::Running;
             next.detail = detail.as_deref().and_then(text_field);
@@ -567,6 +566,53 @@ fn finish_turn(
     // Each stop lists everything still running, so it replaces what an
     // earlier stop listed, and a stop that lists nothing clears it.
     next.background_work = background_work.filter(|work| !work.is_empty());
+}
+
+/// Whether a subagent's tool leaves `record` as it is: the run rests after a
+/// turn, at the finish its stop left. At `idle` and `error` no stop counted
+/// the subagent (a session start and a failure clear the count). For a
+/// provider whose subagent's end opens a turn of its own
+/// (`Capability::SubagentEndOpensTurn`), its tools there are the one sign
+/// that work goes on, and they show the run working until that turn's stop
+/// settles it. For a provider whose subagent ends with no hook, nothing would
+/// end that work, so the run keeps either rest.
+fn keeps_rest_for_subagent(record: &RunRecord, descriptor: &ProviderDescriptor) -> bool {
+    if is_in_a_turn(record) {
+        return false;
+    }
+    match record.state {
+        RunState::Finished => true,
+        RunState::Idle | RunState::Error => !descriptor.has(Capability::SubagentEndOpensTurn),
+        _ => false,
+    }
+}
+
+/// Whether `event` is a subagent's tool that ends a wait outside a turn
+/// (the subagent's permission request or question after the parent's
+/// stop), for a provider whose subagent's end opens no turn: the run
+/// returns to a finish, since nothing would end the work it would otherwise
+/// show. A wait after a failure ends finished too, as work outside a turn
+/// does (`note_rest_left`): the agent went on after the failure. For a
+/// provider whose subagent's end opens a turn, the wait ends at work as any
+/// wait does, and that turn or the idle prompt settles the run.
+fn ends_subagents_wait_at_rest(
+    prev: Option<&RunRecord>,
+    event: &AgentEvent,
+    descriptor: &ProviderDescriptor,
+) -> bool {
+    let is_subagents = matches!(
+        event,
+        AgentEvent::ToolStarted {
+            by_subagent: true,
+            ..
+        } | AgentEvent::ToolFinished {
+            by_subagent: true,
+            ..
+        }
+    );
+    is_subagents
+        && !descriptor.has(Capability::SubagentEndOpensTurn)
+        && prev.is_some_and(|record| record.state == RunState::NeedsInput && !is_in_a_turn(record))
 }
 
 /// Whether a prompt opened a turn that has not ended. `runStartedAt` is the

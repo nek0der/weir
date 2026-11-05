@@ -279,6 +279,12 @@ Cases that could not be recorded as planned:
   records. The ids became the fixture placeholders, the response ids
   `resp_0001` to `resp_0005`, and the last messages a placeholder. The hook
   runtime's replay tests read it.
+- `codex/2026-11/subagent-after-stop` records Codex CLI 0.166.0 asked to
+  start one subagent that ran `sleep 25 && ls` and to end its turn without
+  waiting for it. The subagent's `PostToolUse` came 22 seconds after the
+  parent's `Stop`, and its own end reached no hook. The ids were replaced by
+  hand as in `codex/2026-10/subagent`, the project folder became
+  `/tmp/example`, and the `ls` output became `README.md`.
 - `claude/2026-10/background-task` was recorded with Claude Code 2.1.312 in
   print mode (`claude -p`), with a user `--settings` value whose hooks saved
   each payload and the transcript beside it, rather than under the Debug

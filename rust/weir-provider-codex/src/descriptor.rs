@@ -122,6 +122,7 @@ mod tests {
         // Codex reports no cache expiry today; its adapter fills the same
         // window once it does.
         assert!(!descriptor.has(Capability::CacheWindow));
+        assert!(!descriptor.has(Capability::SubagentEndOpensTurn));
         assert!(descriptor.has(Capability::WorktreePlacement));
         assert!(!descriptor.has(Capability::WorktreeFinishProven));
         assert_eq!(descriptor.state_directory, "codex-agent-states");
