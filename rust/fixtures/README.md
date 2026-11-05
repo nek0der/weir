@@ -118,10 +118,10 @@ Notes that shaped the recorded cases:
   `weir-hook`. To capture it, the case passes a user `--settings` value that
   adds a second `PermissionRequest` hook pointing at the recorder; the shim
   merges user settings with its own.
-- Codex only runs hooks whose trust hash is in `~/.codex/config.toml`, which
-  only the app writes. Launch the Debug app once before recording so the block
-  matches the Debug bundle; `scripts/codex-hook-args.py` checks this and
-  builds the same `-c` flags the app hands a pane.
+- Codex only runs hooks whose trust hash it has recorded.
+  `scripts/codex-hook-args.py` builds the same `-c` flags the app hands a
+  pane, with that trust in them, so nothing needs to be in
+  `~/.codex/config.toml`.
 - Codex's `PermissionRequest` reaches the recorder through the approval
   helper's lifecycle fallback, which runs only when the helper cannot reach
   the approval service. Record it with the Debug service unregistered

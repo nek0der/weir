@@ -172,8 +172,7 @@ final class AppState {
     /// current tab doesn't own.
     let worktreeMoveSuggester: WorktreeMoveSuggester
     /// Installs our lifecycle hooks into Codex: the flags every Codex
-    /// pty carries, trust included, and the removal of the trust tables
-    /// earlier builds wrote into the user's own `~/.codex/config.toml`.
+    /// pty carries, trust included.
     let codexHookInstaller: CodexHookInstaller
     /// User preferences store. Owned by `AppState` so libghostty gets
     /// the initial values at boot and live-reload routes through here.
@@ -404,11 +403,7 @@ final class AppState {
             Self.removeLeftLaunchFiles(of: session)
         }
 
-        // Only takes out what earlier builds wrote: our hooks carry their
-        // own trust in each pane's flags, so no pane waits on this.
-        let codexHookInstaller = CodexHookInstaller.shared
-        codexHookInstaller.removeLegacyTrust(writesUserFiles: writesUserFiles)
-        self.codexHookInstaller = codexHookInstaller
+        self.codexHookInstaller = CodexHookInstaller.shared
         CodexHookInstaller.reportMissingHookHelper()
 
         let staged = Self.stagedProjection
