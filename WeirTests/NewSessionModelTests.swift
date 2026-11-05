@@ -166,7 +166,7 @@ struct NewSessionModelTests {
         #expect(model.destination == destination)
         #expect(model.plan == NewSessionModel.Plan(
             path: destination,
-            start: "main",
+            start: "refs/heads/main",
             newBranch: "feat/login",
             // No setup to run in this project.
             request: SessionLaunchRequest(open: .agent(.claude), runsSetup: false),
@@ -182,6 +182,7 @@ struct NewSessionModelTests {
         #expect(model.outcome == .existingBranch("feat/older"))
         #expect(model.baseLine == nil)
         #expect(model.plan?.start == "feat/older")
+        #expect(model.plan?.startRevision == "refs/heads/feat/older", "the carry reads the branch, not a tag of its name")
         #expect(model.plan?.newBranch == nil)
     }
 
@@ -254,9 +255,9 @@ struct NewSessionModelTests {
 
     @Test func withoutAFetch_theDefaultBase_isTheLocalBranch_whenThereIsOne() {
         #expect(NewSessionModel.bases(defaultBase: "origin/main", localBranches: ["main"], shownBranch: nil, head: "main", fetchRemote: nil)
-            == [.init(name: "main", ref: "main")])
+            == [.init(name: "main", ref: "refs/heads/main")])
         #expect(NewSessionModel.bases(defaultBase: "origin/main", localBranches: [], shownBranch: nil, head: nil, fetchRemote: nil)
-            == [.init(name: "main", ref: "origin/main")])
+            == [.init(name: "main", ref: "refs/remotes/origin/main")])
     }
 
     /// A fetch does not move the local `main`: with one, the base is the
@@ -269,12 +270,12 @@ struct NewSessionModelTests {
             head: "main",
             fetchRemote: "origin"
         )
-            == [.init(name: "origin/main", ref: "origin/main", localRef: "main", isRemote: true)])
+            == [.init(name: "origin/main", ref: "refs/remotes/origin/main", localName: "main", isRemote: true)])
         // A local default with an upstream elsewhere.
         #expect(NewSessionModel.bases(defaultBase: "main", localBranches: ["main"], shownBranch: nil, head: "main", fetchRemote: "upstream")
-            == [.init(name: "upstream/main", ref: "upstream/main", localRef: "main", isRemote: true)])
+            == [.init(name: "upstream/main", ref: "refs/remotes/upstream/main", localName: "main", isRemote: true)])
         #expect(NewSessionModel.bases(defaultBase: "origin/main", localBranches: [], shownBranch: nil, head: nil, fetchRemote: "origin")
-            == [.init(name: "origin/main", ref: "origin/main", isRemote: true)])
+            == [.init(name: "origin/main", ref: "refs/remotes/origin/main", isRemote: true)])
     }
 
     @Test func theShownWorktreesBranch_followsTheDefault_once() {
@@ -285,14 +286,14 @@ struct NewSessionModelTests {
             head: "main",
             fetchRemote: nil
         )
-            == [.init(name: "main", ref: "main"), .init(name: "feat/x", ref: "feat/x", isCurrentWorktree: true)])
+            == [.init(name: "main", ref: "refs/heads/main"), .init(name: "feat/x", ref: "refs/heads/feat/x", isCurrentWorktree: true)])
         #expect(NewSessionModel.bases(defaultBase: "main", localBranches: ["main"], shownBranch: "main", head: "main", fetchRemote: nil)
-            == [.init(name: "main", ref: "main")])
+            == [.init(name: "main", ref: "refs/heads/main")])
     }
 
     @Test func withoutADefault_theRootsBranchIsTheBase() {
         #expect(NewSessionModel.bases(defaultBase: nil, localBranches: ["dev"], shownBranch: nil, head: "dev", fetchRemote: "origin")
-            == [.init(name: "dev", ref: "dev")])
+            == [.init(name: "dev", ref: "refs/heads/dev")])
         #expect(NewSessionModel.bases(defaultBase: nil, localBranches: [], shownBranch: nil, head: nil, fetchRemote: nil).isEmpty)
     }
 
@@ -309,10 +310,10 @@ struct NewSessionModelTests {
     @Test func theFetchBox_switchesTheBase_betweenTheRemotesBranchAndTheLocal() {
         var model = Self.model(fetchRemote: "origin")
         #expect(model.base?.name == "origin/main")
-        #expect(model.plan?.start == "origin/main")
+        #expect(model.plan?.start == "refs/remotes/origin/main")
         model.fetches = false
         #expect(model.base?.name == "main")
-        #expect(model.plan?.start == "main")
+        #expect(model.plan?.start == "refs/heads/main")
         // With no remote, the box asks for nothing.
         let local = Self.model(fetchRemote: nil)
         #expect(local.fetchRemote == nil)
@@ -340,10 +341,10 @@ struct NewSessionModelTests {
     @Test func aFailedFetch_startsFromTheLocalBranch_andSaysSoInTheBar() {
         var model = Self.model(fetchRemote: "origin")
         model.fetchState = .failed
-        #expect(model.plan?.start == "main")
+        #expect(model.plan?.start == "refs/heads/main")
         #expect(model.plan?.notes == [.fetch(.failed(start: "main", isLastFetched: false))])
         model.fetchState = .fetched(behind: 1)
-        #expect(model.plan?.start == "origin/main")
+        #expect(model.plan?.start == "refs/remotes/origin/main")
         #expect(model.plan?.notes == [])
     }
 
@@ -393,14 +394,14 @@ struct NewSessionModelTests {
     @Test func aFailedFetch_withNoLocalBranch_startsFromTheLastFetch() {
         var model = Self.model(branches: ["dev"], defaultBase: "origin/main", fetchRemote: "origin")
         model.fetchState = .failed
-        #expect(model.plan?.start == "origin/main")
+        #expect(model.plan?.start == "refs/remotes/origin/main")
         #expect(model.plan?.notes == [.fetch(.failed(start: "origin/main", isLastFetched: true))])
     }
 
     @Test func aRemoteWithoutTheBranch_startsFromTheLocalOne() {
         var model = Self.model(fetchRemote: "origin")
         model.fetchState = .remoteBranchMissing
-        #expect(model.plan?.start == "main")
+        #expect(model.plan?.start == "refs/heads/main")
         #expect(model.baseLine == .shortfall(.remoteBranchMissing(remote: "origin/main", start: "main")))
     }
 

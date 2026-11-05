@@ -49,7 +49,7 @@ struct ReviewGitNameTests {
         let tree = try await repo.git(["write-tree"])
         let head = try await repo.git(["rev-parse", "HEAD^{tree}"])
         #expect(try await ReviewGit.counts(from: head, to: tree, root: root) == .changed(files: 2, added: 2, removed: 0))
-        #expect(try await ReviewGit.pathsChanged(from: head, to: tree, root: root) == ["plain.txt", "r\u{FFFD}sum\u{FFFD}.txt"])
+        #expect(try await ReviewGit.pathsChanged(from: head, to: tree, at: root) == ["plain.txt", "r\u{FFFD}sum\u{FFFD}.txt"])
     }
 
     @Test func aPathEndingInAModeNumber_isStillText() async throws {

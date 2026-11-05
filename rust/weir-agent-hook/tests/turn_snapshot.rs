@@ -239,6 +239,57 @@ fn a_pure_rename_counts_as_one_file_with_no_lines() {
     );
 }
 
+/// A submodule moved to another commit counts as one file, as the Changes
+/// panel's totals and the review's list count it, even where its `ignore`
+/// setting tells Git's own diff to leave it out.
+#[test]
+fn a_submodule_moved_counts_even_where_its_ignore_setting_hides_it() {
+    let repo = Repo::new("submodule");
+    fs::write(
+        repo.path.join(".gitmodules"),
+        "[submodule \"module\"]\n\tpath = module\n\turl = ./module\n\tignore = all\n",
+    )
+    .expect("gitmodules");
+    let head = git(&repo.path, &["rev-parse", "HEAD"]).expect("head");
+    let base = git(&repo.path, &["rev-parse", "HEAD^{tree}"]).expect("base tree");
+    let tree_with_module = |commit: &str| {
+        let gitlink = format!("160000,{commit},module");
+        git(
+            &repo.path,
+            &["update-index", "--add", "--cacheinfo", &gitlink],
+        )
+        .expect("gitlink");
+        git(&repo.path, &["write-tree"]).expect("tree")
+    };
+    let begin = tree_with_module(&head);
+    let end = tree_with_module(&commit_of(&repo, &base));
+
+    let diff = GitSnapshots.diff(&repo.path, &begin, &end).expect("diff");
+    assert_eq!(
+        (diff.files, diff.added, diff.removed),
+        (1, 1, 1),
+        "the submodule is one file, its old commit out and its new one in"
+    );
+}
+
+/// A commit of `tree`, other than `HEAD`, for a gitlink to point at.
+fn commit_of(repo: &Repo, tree: &str) -> String {
+    git(
+        &repo.path,
+        &[
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.com",
+            "commit-tree",
+            "-m",
+            "other",
+            tree,
+        ],
+    )
+    .expect("commit")
+}
+
 /// A turn outside any repository still finishes, and no end is taken where
 /// the hook happens to run: that directory may be another repository, which
 /// would get the turn's refs.

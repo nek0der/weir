@@ -227,8 +227,8 @@ enum NewSessionActions {
         // The base is `<remote>/<branch>`, and we fetch that branch only:
         // the tracking branch of one the remote has deleted stays where it
         // was, and is not the latest of anything.
-        guard base.ref.hasPrefix(remote + "/") else { return .failed }
-        let branch = String(base.ref.dropFirst(remote.count + 1))
+        guard base.name.hasPrefix(remote + "/") else { return .failed }
+        let branch = String(base.name.dropFirst(remote.count + 1))
         guard let result = try? await git.fetch(repoRoot: root, remote: remote, branch: branch) else { return .failed }
         guard result.succeeded else { return LiveGit.isMissingRemoteBranch(result) ? .remoteBranchMissing : .failed }
         // Comparing the base against itself says whether the fetch left a
@@ -369,7 +369,7 @@ enum NewSessionActions {
         // made: what stops them stops Create, with the source untouched.
         var carry: PreparedCarry?
         if let source = plan.carry {
-            switch await prepareCarry(from: source, onto: plan.start, named: startName(of: model, plan: plan), repoRoot: repoRoot) {
+            switch await prepareCarry(from: source, onto: plan.startRevision, named: startName(of: model, plan: plan), repoRoot: repoRoot) {
             case let .success(prepared):
                 carry = prepared
             case let .failure(failure):

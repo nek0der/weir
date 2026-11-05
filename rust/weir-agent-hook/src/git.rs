@@ -938,9 +938,20 @@ impl SnapshotRunner for GitSnapshots {
         // no lines, not a delete and an add.
         // The paths a restore checks and the bytes a turn added still read a
         // rename as a delete and an add, since each side is a path there.
+        // A submodule's `ignore` setting, in `.gitmodules` or the config,
+        // reaches plumbing too, so we name the submodules in, as the Changes
+        // panel's totals and the review's list do.
         let output = Self::git(
             root,
-            &["diff-tree", "-r", "--numstat", "-M", begin, end],
+            &[
+                "diff-tree",
+                "-r",
+                "--numstat",
+                "-M",
+                "--ignore-submodules=none",
+                begin,
+                end,
+            ],
             None,
         )?;
         let mut stat = DiffStat {
