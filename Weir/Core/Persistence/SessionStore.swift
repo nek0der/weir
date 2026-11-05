@@ -80,11 +80,12 @@ final class SessionStore {
 
     func load() -> LoadOutcome {
         let data: Data
-        do {
-            data = try Data(contentsOf: fileURL)
-        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+        switch PersistedRead.read(fileURL) {
+        case .absent:
             return .absent
-        } catch {
+        case let .data(bytes):
+            data = bytes
+        case let .unreadable(error):
             // A file that is there but cannot be read (its permissions, an
             // I/O error) is not a first launch. It may be readable again
             // by the time this launch saves, and that save must not
@@ -251,7 +252,7 @@ final class SessionStore {
             // scheduled.
             let pendingMigration = self?.pendingMigration
             queue.async {
-                guard Self.write(snapshot, to: url, finishing: pendingMigration) else { return }
+                guard Self.write(snapshot, to: url, finishing: pendingMigration).hasFinishedMigration else { return }
                 DispatchQueue.main.async { self?.didFinishMigration() }
             }
         }
@@ -266,7 +267,7 @@ final class SessionStore {
         guard writesFiles, !isSavingSuspended else { return }
         saveDebounce.cancel()
         let url = fileURL
-        if queue.sync(execute: { Self.write(snapshot, to: url, finishing: pendingMigration) }) {
+        if queue.sync(execute: { Self.write(snapshot, to: url, finishing: pendingMigration) }).hasFinishedMigration {
             didFinishMigration()
         }
     }
@@ -277,32 +278,44 @@ final class SessionStore {
         pendingMigration = nil
     }
 
+    /// What one save did. The two answers are kept apart because they
+    /// differ: a save that reached disk with no migration to finish has
+    /// written but finished nothing, and only the second answer lets the
+    /// store drop its unfinished migration.
+    struct WriteResult: Equatable {
+        /// Whether `state.json` now holds the snapshot.
+        var isWritten: Bool
+        /// Whether a migration's ledger was finished with these bytes: false
+        /// when there was nothing to finish, the write failed, or the ledger
+        /// did not update.
+        var hasFinishedMigration: Bool
+    }
+
     /// Writes the snapshot, and when a migration's own write had failed
     /// (`pending`), records these bytes as its written document right away,
     /// on the queue, so the ledger does not wait for the main actor (an app
-    /// quitting in between would leave it unfinished). Whether it finished
-    /// that ledger: false when there was nothing to finish or the write
-    /// failed. A ledger that fails to update is tried again on the next save.
+    /// quitting in between would leave it unfinished). A ledger that fails
+    /// to update is tried again on the next save.
     private nonisolated static func write(
         _ snapshot: SessionSnapshot,
         to url: URL,
         finishing pending: MigrationBackupRecord?
-    ) -> Bool {
+    ) -> WriteResult {
         let data: Data
         do {
             data = try PersistenceCoders.makeEncoder().encode(snapshot)
             try writeSnapshot(projects: snapshot.projects, bytes: data, to: url)
         } catch {
             log.error("write failed: \(String(describing: error), privacy: .private)")
-            return false
+            return WriteResult(isWritten: false, hasFinishedMigration: false)
         }
-        guard let pending else { return false }
+        guard let pending else { return WriteResult(isWritten: true, hasFinishedMigration: false) }
         do {
             try MigrationBackup.markWritten(pending, for: url, bytes: data)
-            return true
+            return WriteResult(isWritten: true, hasFinishedMigration: true)
         } catch {
             log.error("migration ledger update failed: \(String(describing: error), privacy: .private)")
-            return false
+            return WriteResult(isWritten: true, hasFinishedMigration: false)
         }
     }
 
