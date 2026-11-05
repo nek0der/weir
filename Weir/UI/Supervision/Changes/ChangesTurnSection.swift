@@ -135,7 +135,13 @@ struct ChangesSectionHeading: View {
                 .animation(reduceMotion ? nil : WeirMotion.reorder, value: isCollapsed)
                 .frame(width: Layout.stateGlyphSize, height: Layout.stateGlyphSize)
                 .accessibilityHidden(true)
-            ConversationIdentityLead(identity: choice.identity, barHeight: Layout.conversationIdentityBarHeadingHeight) {
+            // We keep the bar's slot on a heading with no identity, so the
+            // headings' badges and names line up down the list.
+            ConversationIdentityLead(
+                identity: choice.identity,
+                barHeight: Layout.conversationIdentityBarHeadingHeight,
+                reservesBarSlot: true
+            ) {
                 SessionAgentBadge(badge: badge, text: SessionRowFactText.badge(badge, locale: locale), size: .regular)
             }
             VStack(alignment: .leading, spacing: Layout.turnLineSpacing) {

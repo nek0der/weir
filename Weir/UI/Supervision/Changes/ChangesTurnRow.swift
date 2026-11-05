@@ -327,12 +327,12 @@ struct TurnCardTimeSlot: View {
 }
 
 /// A turn card's first column: "T7", and under it the conversation's
-/// badge, led by its identity bar where it has one, where the worktree has
-/// more than one conversation. Stacked in the one column, so the prompt
-/// starts where it does in a worktree of one conversation, and every row
-/// of the list keeps the column whatever its conversation. An unviewed
-/// turn's number stands in a filled pill, the card's one mark of its
-/// state; the row's sentence says "Unviewed" in words.
+/// badge, led by its identity bar or the bar's empty slot, where the
+/// worktree has more than one conversation. Stacked in the one column, so
+/// the prompt starts where it does in a worktree of one conversation, and
+/// every row of the list keeps the column whatever its conversation. An
+/// unviewed turn's number stands in a filled pill, the card's one mark of
+/// its state; the row's sentence says "Unviewed" in words.
 struct TurnCardLabel: View {
     let number: Int
     let isUnviewed: Bool
@@ -374,8 +374,10 @@ struct TurnCardLabel: View {
                 }
             if let conversation {
                 let badge = SessionRowFact.Badge.agent(conversation.conversation.provider)
-                // Silent: the row's sentence names the conversation.
-                ConversationIdentityLead(identity: conversation.identity) {
+                // Silent: the row's sentence names the conversation. We keep
+                // the bar's slot on a row with no identity, so every badge in
+                // the list stands at one left edge.
+                ConversationIdentityLead(identity: conversation.identity, reservesBarSlot: true) {
                     SessionAgentBadge(badge: badge, text: SessionRowFactText.badge(badge, locale: locale), size: .row)
                 }
                 // Out to where the unviewed pill starts, so the two marks
