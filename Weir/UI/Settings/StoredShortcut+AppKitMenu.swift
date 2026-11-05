@@ -32,7 +32,7 @@ extension StoredShortcut {
     /// answers and the key its menu shows come from one value.
     func isPressed(in event: NSEvent) -> Bool {
         guard event.type == .keyDown, let equivalent = menuKeyEquivalent else { return false }
-        let pressed = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        let pressed = event.modifierFlags.chord
         return pressed == equivalent.modifiers
             && event.charactersIgnoringModifiers?.lowercased() == equivalent.key
     }

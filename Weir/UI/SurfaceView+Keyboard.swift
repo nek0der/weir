@@ -321,7 +321,7 @@ extension SurfaceView {
         isRepeat: Bool
     ) -> PrimaryKeyPress? {
         guard NamedKey(keyCode: keyCode) == .return else { return nil }
-        let chord = modifierFlags.intersection([.command, .option, .shift, .control])
+        let chord = modifierFlags.chord
         guard chord.contains(.command) else { return nil }
         return PrimaryKeyPress(isCommandOnly: chord == .command, isComposing: isComposing, isRepeat: isRepeat)
     }
