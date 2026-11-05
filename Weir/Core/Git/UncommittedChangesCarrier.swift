@@ -22,8 +22,9 @@
 //    writes any, then checked against them, and every file the changes
 //    touch compared byte for byte with the source's (a line-ending setting
 //    or a filter can make files Git calls equal differ on disk). A new
-//    worktree whose checkout's hook changed a tracked file is not written
-//    at all, and a failure puts back only the paths the changes wrote.
+//    worktree whose checkout's hook changed a tracked file, or left a file
+//    Git ignores where the changes add one, is not written at all, and a
+//    failure puts back only the paths the changes wrote.
 // 4. Take away. With the source's index locked as Git locks it, and HEAD
 //    read again under the lock, the working tree is moved from the
 //    snapshot back to HEAD with `git read-tree -m -u`: it refuses, writing
@@ -82,10 +83,15 @@ enum UncommittedChangesCarrier {
     enum Outcome: Equatable, Sendable {
         /// In the new worktree, and taken out of the source.
         case moved(files: Int)
-        /// The new worktree could not take them; the paths we carried are
-        /// put back to its start (changes of its own, such as a hook's, are
-        /// left as they are), and the source was not touched.
+        /// The new worktree could not take them; what we wrote there is put
+        /// back to its start where it is still as we wrote it (a file a hook
+        /// wrote meanwhile, or one of ours Git cut short, stays as it is),
+        /// and the source was not touched.
         case notApplied
+        /// The new worktree could not take them, and what we wrote there
+        /// could not all be put back, so some of the changes may be in it
+        /// too; the source was not touched.
+        case notPutBack
         /// In the new worktree, and still in the source, which changed, or
         /// whose index Git held, while they were moved.
         case leftInSource
@@ -187,44 +193,116 @@ enum UncommittedChangesCarrier {
         }
     }
 
-    /// A tracked file whose path is a folder now, with files Git ignores in
-    /// it: going back to the file would remove the folder, those files with
-    /// it, and they are carried nowhere.
+    /// Something Git ignores where going back to HEAD writes a tracked
+    /// file: a folder holding ignored files, or an ignored file, where the
+    /// file was, or an ignored file where its folder was. Git would remove
+    /// it to write the file, and it is carried nowhere.
     private static func refuseIgnoredFilesInTheWay(in root: URL, deleted: [String]) async throws {
-        if let path = try await ignoredFileInTheWay(in: root, at: deleted) {
-            throw UncommittedCarryRefusal.ignoredFilesInTheWay(path)
+        if let refusal = try await ignoredFileInTheWay(in: root, at: deleted) {
+            throw refusal
         }
     }
 
     /// The first of `paths`, each one Git is about to write a tracked file
     /// at, where something Git ignores is on disk now: a file of that name
     /// the person keeps out of Git (`.env`, untracked and ignored after it
-    /// was committed), or a folder holding ignored files. Git writes the
-    /// tracked file over it, and nothing carries it. For the paths the
-    /// changes delete, a file Git does not ignore there is no deletion: it
-    /// is in the snapshot.
-    private static func ignoredFileInTheWay(in root: URL, at paths: [String]) async throws -> String? {
+    /// was committed), a folder holding ignored files, or an ignored file
+    /// or link where the path needs a folder (`build` for `build/out`).
+    /// `read-tree -u` takes ignored files as its own to replace, so Git
+    /// writes the tracked file over it, and nothing carries it. For the
+    /// paths the changes delete, a file Git does not ignore there is no
+    /// deletion: it is in the snapshot; for the paths a placement adds, it
+    /// is one `read-tree` refuses to write over, so either way we stop.
+    /// Answered as the refusal that names it.
+    private static func ignoredFileInTheWay(in root: URL, at paths: [String]) async throws -> UncommittedCarryRefusal? {
+        // The folders above a path already found to hold nothing in the
+        // way, each asked about once.
+        var cleared: Set<String> = []
         for path in paths {
+            if let folder = try await ignoredFileAbove(path, in: root, cleared: &cleared) {
+                return .ignoredFileInTheWay(folder)
+            }
             switch FileBytes(at: root.appendingPathComponent(path)).kind {
             case .missing:
                 continue
             case .unreadable:
-                var isFolder: ObjCBool = false
-                guard FileManager.default.fileExists(atPath: root.appendingPathComponent(path).path, isDirectory: &isFolder),
-                      isFolder.boolValue
-                else { return path }
-                let ignored = try await output(
-                    ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", "\(path)/"],
-                    in: root
-                )
-                if !ignored.isEmpty {
-                    return path
+                guard isFolder(root.appendingPathComponent(path)) else { return .ignoredFileWritten(path) }
+                if try await !ignoredFiles(at: "\(path)/", in: root).isEmpty {
+                    return .ignoredFilesInTheWay(path)
                 }
             case .link, .file:
-                return path
+                return .ignoredFileWritten(path)
             }
         }
         return nil
+    }
+
+    /// The first folder `path` is in that is no folder on disk but a file
+    /// or a link Git ignores. Git writes `path` by putting a folder in its
+    /// place. A tracked file there is the changes' own to replace, and an
+    /// untracked one `read-tree` refuses to write over.
+    private static func ignoredFileAbove(_ path: String, in root: URL, cleared: inout Set<String>) async throws -> String? {
+        let parts = path.split(separator: "/").dropLast()
+        for count in parts.indices.map({ $0 + 1 }) {
+            let folder = parts.prefix(count).joined(separator: "/")
+            guard !cleared.contains(folder) else { continue }
+            var info = stat()
+            guard lstat(root.appendingPathComponent(folder).path, &info) == 0 else {
+                // Nothing there, and so nothing below it: Git makes the folder.
+                if errno == ENOENT || errno == ENOTDIR {
+                    return nil
+                }
+                return folder
+            }
+            guard info.st_mode & S_IFMT == S_IFDIR else {
+                if try await !ignoredFiles(at: folder, in: root).isEmpty {
+                    return folder
+                }
+                cleared.insert(folder)
+                return nil
+            }
+            cleared.insert(folder)
+        }
+        return nil
+    }
+
+    /// The files Git ignores at `pathspec`, taken as the path it is.
+    private static func ignoredFiles(at pathspec: String, in root: URL) async throws -> String {
+        try await output(
+            ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", pathspec],
+            in: root,
+            environment: literalPaths
+        )
+    }
+
+    /// Whether a folder is at `url`, links not followed.
+    static func isFolder(_ url: URL) -> Bool {
+        var info = stat()
+        return lstat(url.path, &info) == 0 && info.st_mode & S_IFMT == S_IFDIR
+    }
+
+    /// Whether something other than a folder stands above `path` in the
+    /// worktree at `root`: a link, a file, or what cannot be looked at.
+    static func hasNonFolderAbove(_ path: String, in root: URL) -> Bool {
+        let parts = path.split(separator: "/").dropLast()
+        for count in parts.indices.map({ $0 + 1 }) {
+            var info = stat()
+            guard lstat(root.appendingPathComponent(parts.prefix(count).joined(separator: "/")).path, &info) == 0 else {
+                return errno != ENOENT
+            }
+            if info.st_mode & S_IFMT != S_IFDIR {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Whether something other than a folder is at `url`, links not
+    /// followed. What cannot be looked at counts as something.
+    static func hasNonFolder(at url: URL) -> Bool {
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else { return errno != ENOENT && errno != ENOTDIR }
+        return info.st_mode & S_IFMT != S_IFDIR
     }
 
     /// The paths `git <arguments>` lists with `-z`.
@@ -235,7 +313,7 @@ enum UncommittedChangesCarrier {
     /// The paths `to` changes from `from`, both trees or commits, renames
     /// read as a deletion and an addition; only those of `git diff
     /// --diff-filter` kind `filter` when one is given.
-    private static func changedNames(from: String, to: String, filter: String? = nil, in root: URL) async throws -> [String] {
+    static func changedNames(from: String, to: String, filter: String? = nil, in root: URL) async throws -> [String] {
         let filtering = filter.map { ["--diff-filter=\($0)"] } ?? []
         return try await names(in: ["diff-tree", "-r", "-z", "--name-only", "--no-renames"] + filtering + [from, to], root)
     }
@@ -247,6 +325,17 @@ enum UncommittedChangesCarrier {
     /// `.conflicts` with the paths when the changes do not apply there.
     static func place(_ snapshot: Snapshot, onto start: String, repoRoot: URL) async throws -> Placement {
         let startCommit = try await output(["rev-parse", "--verify", "--quiet", "--end-of-options", "\(start)^{commit}"], in: repoRoot)
+        // Putting a new worktree back reads attributes with `--attr-source`
+        // (Git 2.41), so an older Git is refused here, before anything is
+        // made, rather than found out there, where nothing could be told
+        // ours.
+        let probe = try await run(["--attr-source=\(startCommit)", "version"], in: repoRoot)
+        guard probe.succeeded else {
+            if UncommittedCarryRules.isUnknownOption(exitCode: probe.exitCode, stderr: probe.stderr) {
+                throw UncommittedCarryRefusal.unsupportedGit
+            }
+            throw UncommittedCarryRefusal.git(probe.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
         guard startCommit != snapshot.head else {
             return Placement(start: startCommit, indexTree: snapshot.indexTree, fullTree: snapshot.fullTree, startChanges: [])
         }
@@ -287,6 +376,12 @@ enum UncommittedChangesCarrier {
     /// Puts `placement` into the new worktree at `target`, checks it there,
     /// then takes the snapshot out of its source. Never throws: each way it
     /// can end is an `Outcome`, and none of them loses a change.
+    /// `checked` runs once the new worktree was checked, before Git writes
+    /// in it, and `placed` once Git wrote the placement, before it is
+    /// checked: a test writes there, as a hook still running would.
+    /// `clearing` runs under the source's lock, once it was found as read,
+    /// just before Git writes there: a test edits a file, as an agent
+    /// would.
     /// `headChecked` runs once the source's HEAD was found unmoved, before
     /// its index is locked: a test moves HEAD there, so only the check
     /// under the lock can see it.
@@ -294,57 +389,86 @@ enum UncommittedChangesCarrier {
         _ snapshot: Snapshot,
         placement: Placement,
         into target: URL,
-        headChecked: @Sendable () async -> Void = {}
+        checked: @Sendable () async -> Void = {},
+        placed: @Sendable () async -> Void = {},
+        headChecked: @Sendable () async -> Void = {},
+        clearing: @Sendable () async -> Void = {}
     ) async -> Outcome {
-        guard await apply(placement, of: snapshot, to: target) else { return .notApplied }
-        return await clear(snapshot, headChecked: headChecked)
+        if let failure = await apply(placement, of: snapshot, to: target, checked: checked, placed: placed) {
+            return failure
+        }
+        return await clear(snapshot, headChecked: headChecked, clearing: clearing)
     }
 
-    /// Step 3. `true` once the new worktree holds the placement, checked;
-    /// else the paths we carried are put back to its start. A worktree
-    /// with tracked changes of its own is refused before we write and
-    /// left as it is.
-    private static func apply(_ placement: Placement, of snapshot: Snapshot, to target: URL) async -> Bool {
+    /// Step 3. `nil` once the new worktree holds the placement, checked;
+    /// else what we wrote is put back to its start, and the outcome says
+    /// whether all of it could be. A worktree
+    /// with tracked changes of its own, or a file Git ignores where the
+    /// changes add one, is refused before we write and left as it is.
+    private static func apply(
+        _ placement: Placement,
+        of snapshot: Snapshot,
+        to target: URL,
+        checked: @Sendable () async -> Void,
+        placed: @Sendable () async -> Void
+    ) async -> Outcome? {
         // The new worktree is at the start it was made from; anything else
         // and the merge was for another commit.
         guard let head = await headCommit(in: target),
               head == placement.start
-        else { return false }
+        else { return .notApplied }
         // Nothing in it but its start, before we write: a `post-checkout`
         // hook may have changed or staged a tracked file, and the checks
         // below compare the whole worktree with the placement, so that
         // change would fail them and be taken back as ours. Files Git does
-        // not track may stay: `read-tree` refuses to write over one.
+        // not track may stay: `read-tree` refuses to write over one it does
+        // not ignore, and the ignored ones are looked for next.
         guard await hasNoTrackedChanges(target) else {
             log.info("carry: the new worktree has changes of its own; it is left as it is")
-            return false
+            return .notApplied
         }
-        // Checks every path before writing any: a file the checkout's hook
-        // made where a change goes stops it with nothing written, and the
-        // worktree keeps that file. Only a run that did not finish may have
-        // written part of the change, which the reset takes back.
+        // A file Git ignores where the changes add one (a hook's `.env`, or
+        // the folder it installs into): `read-tree` would write over it.
+        let added: [String]
         do {
-            guard try await run(["read-tree", "-m", "-u", "HEAD", placement.fullTree], in: target).succeeded else {
-                log.error("carry: the new worktree refused the changes")
-                return false
+            added = try await changedNames(from: placement.start, to: placement.fullTree, filter: "A", in: target)
+            if let refusal = try await ignoredFileInTheWay(in: target, at: added) {
+                let what = String(describing: refusal)
+                log.info("carry: the new worktree has an ignored file in the way (\(what, privacy: .private)); it is left as it is")
+                return .notApplied
             }
         } catch {
-            return await interruptedApply(placement, in: target)
+            log.error("carry: the new worktree could not be checked for ignored files: \(String(describing: error), privacy: .private)")
+            return .notApplied
         }
+        // The folders the write would make, in place of nothing or of a
+        // file it deletes, which putting it back may remove again once
+        // empty; a folder that was there stays.
+        let madeFolders = Set(added.flatMap(folders(above:)).filter { !isFolder(target.appendingPathComponent($0)) })
+        await checked()
+        // Checks every path before writing any: a file the checkout's hook
+        // made where a change goes stops it with nothing written, and the
+        // worktree keeps that file.
+        do {
+            let result = try await run(["read-tree", "-m", "-u", "HEAD", placement.fullTree], in: target)
+            guard result.succeeded else {
+                // A refusal wrote nothing; a write stopped part way, as at
+                // a folder Git may not write in, exits the same way.
+                log.error("carry: the new worktree did not take the changes: \(result.stderr, privacy: .private)")
+                return await rollBack(placement, in: target, madeFolders: madeFolders) ? .notApplied : .notPutBack
+            }
+        } catch {
+            log.error("carry: the new worktree did not take the changes: \(String(describing: error), privacy: .private)")
+            return await rollBack(placement, in: target, madeFolders: madeFolders) ? .notApplied : .notPutBack
+        }
+        await placed()
         let isPlaced = await isHolding(placement, in: target)
             && hasSameBytes(snapshot, placement: placement, in: target)
-        if !isPlaced {
-            await reset(target, from: placement)
+        guard isPlaced else {
+            log.error("carry: the new worktree does not hold the changes as the source has them")
+            return await rollBack(placement, in: target, madeFolders: madeFolders) ? .notApplied : .notPutBack
         }
-        return isPlaced
-    }
-
-    /// Step 3 after a `read-tree` that did not finish, which may have
-    /// written part of the change: the paths we carried put back to the
-    /// start. A refusal wrote nothing and needs none of this.
-    private static func interruptedApply(_ placement: Placement, in target: URL) async -> Bool {
-        await reset(target, from: placement)
-        return false
+        return nil
     }
 
     /// The index set to the placement's (its working tree is already the
@@ -399,57 +523,21 @@ enum UncommittedChangesCarrier {
         return result.succeeded && result.stdout.isEmpty
     }
 
-    /// Puts the new worktree back at its start where the placement wrote,
-    /// and nowhere else: the index entries and the files of the paths the
-    /// placement changes from the start. A reset of the whole worktree
-    /// would also take back what anything else wrote there meanwhile, as a
-    /// hook's job still running does, and that is not ours to undo.
-    ///
-    /// The index entries are set to the placement's first, so the restore
-    /// removes a file the placement added even where a run that did not
-    /// finish wrote the file and not its entry.
-    private static func reset(_ target: URL, from placement: Placement) async {
-        do {
-            let (written, carried) = try await carriedPaths(of: placement, in: target)
-            guard !carried.isEmpty else { return }
-            let entries = try await output(["ls-tree", "-r", "-z", "--full-tree", placement.fullTree], in: target, trims: false)
-            let placed = entries.split(separator: "\0").compactMap { cacheInfo($0, keeping: carried) }
-            let placedPaths = Set(placed.compactMap { $0.split(separator: ",", maxSplits: 2).last.map(String.init) })
-            for batch in batches(of: carried.subtracting(placedPaths).sorted()) {
-                try await output(["update-index", "--force-remove", "--"] + batch, in: target)
-            }
-            for batch in batches(of: placed) {
-                try await output(["update-index", "--add", "--replace"] + batch.flatMap { ["--cacheinfo", $0] }, in: target)
-            }
-            // A path only the index changed has the start's entry now, and
-            // its file was never written.
-            guard !written.isEmpty else { return }
-            try await withScratch { scratch in
-                let list = scratch.appendingPathComponent("paths")
-                try Data(written.joined(separator: "\0").utf8).write(to: list)
-                try await output(
-                    ["restore", "--source=HEAD", "--staged", "--worktree", "--pathspec-from-file=\(list.path)", "--pathspec-file-nul"],
-                    in: target,
-                    // Git takes the paths as they are, never as patterns.
-                    environment: ["GIT_LITERAL_PATHSPECS": "1"]
-                )
-            }
-        } catch {
-            log.error("carry: the new worktree could not be put back: \(String(describing: error), privacy: .private)")
-        }
-    }
-
     /// The paths the placement changes from its start: `written`, those
     /// whose files it writes, and `all`, those with its index's changes
     /// besides.
-    private static func carriedPaths(of placement: Placement, in target: URL) async throws -> (written: [String], all: Set<String>) {
+    static func carriedPaths(of placement: Placement, in target: URL) async throws -> (written: [String], all: Set<String>) {
         let written = try await changedNames(from: placement.start, to: placement.fullTree, in: target)
         let staged = try await changedNames(from: placement.start, to: placement.indexTree, in: target)
         return (written, Set(written).union(staged))
     }
 
     /// Step 4: the snapshot taken out of its source, only as it was read.
-    private static func clear(_ snapshot: Snapshot, headChecked: @Sendable () async -> Void) async -> Outcome {
+    private static func clear(
+        _ snapshot: Snapshot,
+        headChecked: @Sendable () async -> Void,
+        clearing: @Sendable () async -> Void
+    ) async -> Outcome {
         let root = snapshot.source
         guard await isAtSnapshotHead(snapshot), let index = try? await gitPaths(["index"], in: root).first else { return .leftInSource }
         await headChecked()
@@ -468,6 +556,7 @@ enum UncommittedChangesCarrier {
         guard await isAtSnapshotHead(snapshot) else { return .leftInSource }
         return await (try? withScratch { scratch -> Outcome in
             guard let next = try await nextIndexIfUnchanged(snapshot, index: index, scratch: scratch) else { return .leftInSource }
+            await clearing()
             return await writeBack(snapshot, index: index, next: next, lock: lock, scratch: scratch)
         }) ?? .leftInSource
     }
@@ -502,21 +591,17 @@ enum UncommittedChangesCarrier {
     /// index at `next`, then that index put in place through `lock`.
     private static func writeBack(_ snapshot: Snapshot, index: URL, next: URL, lock: IndexLock, scratch: URL) async -> Outcome {
         let environment = ["GIT_INDEX_FILE": next.path]
-        let cleared: GitResult
         do {
-            cleared = try await run(
+            let cleared = try await run(
                 ["read-tree", "-m", "-u", snapshot.fullTree, snapshot.head],
                 in: snapshot.source,
                 environment: environment
             )
+            guard cleared.succeeded else {
+                return await failedClear(snapshot, scratch: scratch, reason: cleared.stderr)
+            }
         } catch {
-            return await interruptedClear(snapshot, index: index, scratch: scratch, error: error)
-        }
-        guard cleared.succeeded else {
-            // Git checks every path before it writes any: a refusal, as
-            // for a file that changed, wrote nothing.
-            log.info("carry: the source changed; its changes stay: \(cleared.stderr, privacy: .private)")
-            return .leftInSource
+            return await failedClear(snapshot, scratch: scratch, reason: String(describing: error))
         }
         // HEAD moved by a command that takes no lock on the index
         // (`update-ref`, `reset --soft`): the new index would be for the
@@ -528,15 +613,19 @@ enum UncommittedChangesCarrier {
         return .moved(files: snapshot.fileCount)
     }
 
-    /// Step 4 after a `read-tree` that did not finish, which may have
-    /// written part of it: the source left as it was when no file moved,
-    /// else cleared part way, with a copy of the changes kept. A refusal
-    /// wrote nothing and needs none of this.
-    private static func interruptedClear(_ snapshot: Snapshot, index: URL, scratch: URL, error: any Error) async -> Outcome {
-        if await isUntouched(snapshot, index: index, scratch: scratch) {
+    /// Step 4 after a `read-tree` that failed. A refusal, as for a file
+    /// that changed since the check, wrote nothing; a run that failed
+    /// while writing (a folder it may not write in, a disk that stops
+    /// taking writes) or did not finish may have written part of it. Git's
+    /// exit tells neither apart, so the source does: left as it was when no
+    /// file the changes touch was put back to HEAD, else cleared part way,
+    /// with a copy of the changes kept.
+    private static func failedClear(_ snapshot: Snapshot, scratch: URL, reason: String) async -> Outcome {
+        if await isUntouched(snapshot, scratch: scratch) {
+            log.info("carry: the source changed; its changes stay: \(reason, privacy: .private)")
             return .leftInSource
         }
-        log.error("carry: the source was cleared part way: \(String(describing: error), privacy: .private)")
+        log.error("carry: the source was cleared part way: \(reason, privacy: .private)")
         return await .partlyCleared(stash: keepAsStash(snapshot))
     }
 
@@ -548,16 +637,37 @@ enum UncommittedChangesCarrier {
         return head == snapshot.head && branch == snapshot.branch
     }
 
-    /// Whether the source's working tree is still the snapshot's, every
-    /// file, the ones the snapshot had deleted included: the tree its
-    /// index (unchanged while the lock is ours) makes of the whole working
-    /// tree is the snapshot's.
-    private static func isUntouched(_ snapshot: Snapshot, index: URL, scratch: URL) async -> Bool {
-        let copy = scratch.appendingPathComponent("again-\(UUID().uuidString)")
-        guard (try? copyIndex(index, to: copy)) != nil else { return false }
-        let environment = ["GIT_INDEX_FILE": copy.path]
-        guard await (try? output(["add", "-A", "--", ":/"], in: snapshot.source, environment: environment)) != nil else { return false }
-        return await (try? output(["write-tree"], in: snapshot.source, environment: environment)) == snapshot.fullTree
+    /// Whether no file the changes touch was put back to HEAD in the
+    /// source, which only our write does: a changed path whose file is now
+    /// byte for byte what Git checks out from HEAD (under HEAD's own
+    /// attributes), or, for a file HEAD does not have, gone. Git checks
+    /// every path before it writes any, so a refusal, as for a file an agent
+    /// changed since the check, wrote nothing and leaves none of them so; a
+    /// write stopped part way has put one back. When Git cannot say, we take
+    /// the source as touched and keep a copy, the side that loses nothing.
+    private static func isUntouched(_ snapshot: Snapshot, scratch: URL) async -> Bool {
+        let root = snapshot.source
+        guard let added = try? await Set(changedNames(from: snapshot.head, to: snapshot.fullTree, filter: "A", in: root)) else {
+            return false
+        }
+        let inHead = snapshot.changedPaths.filter { !added.contains($0) }
+        let checkedOut = scratch.appendingPathComponent("head", isDirectory: true)
+        let environment = ["GIT_INDEX_FILE": scratch.appendingPathComponent("head-index").path]
+        guard await (try? output(["read-tree", snapshot.head], in: root, environment: environment)) != nil else { return false }
+        for batch in batches(of: inHead) {
+            let result = try? await run(
+                ["--attr-source=\(snapshot.head)", "checkout-index", "--prefix=\(checkedOut.path)/", "--"] + batch,
+                in: root,
+                environment: environment
+            )
+            guard result?.succeeded == true else { return false }
+        }
+        return !snapshot.changedPaths.contains { path in
+            let url = root.appendingPathComponent(path)
+            guard !added.contains(path) else { return !hasNonFolder(at: url) }
+            let now = FileBytes(at: url)
+            return now.kind != .missing && now == FileBytes(at: checkedOut.appendingPathComponent(path))
+        }
     }
 
     // MARK: - The copy kept
@@ -621,11 +731,15 @@ enum UncommittedChangesCarrier {
 
     /// Paths a few hundred at a time, so no command line passes what the
     /// system takes.
-    private static func batches(of items: [String]) -> [[String]] {
+    static func batches(of items: [String]) -> [[String]] {
         stride(from: 0, to: items.count, by: 256).map { Array(items[$0..<min($0 + 256, items.count)]) }
     }
 
     // MARK: - Running Git
+
+    /// Git takes the paths we name as they are, never as patterns: a file
+    /// named `*.txt` is that file alone.
+    static let literalPaths = ["GIT_LITERAL_PATHSPECS": "1"]
 
     /// Who the carry's own commits are by. They are in no branch, only in
     /// the trees merged and the stash kept, and must not stop on a person
@@ -639,7 +753,7 @@ enum UncommittedChangesCarrier {
     /// file of a large worktree, or writing back what changed, takes far
     /// longer than a read's ten seconds, and a run ended part way is the
     /// one way the carry could leave a worktree half written.
-    private static func run(_ arguments: [String], in root: URL, environment: [String: String] = [:]) async throws -> GitResult {
+    static func run(_ arguments: [String], in root: URL, environment: [String: String] = [:]) async throws -> GitResult {
         do {
             return try await GitProcess.run(arguments, cwd: root, timeout: GitProcess.worktreeTimeout, environment: environment)
         } catch {
@@ -650,7 +764,7 @@ enum UncommittedChangesCarrier {
     /// What `git <arguments>` printed, trimmed unless `trims` is off;
     /// throws its words when it fails.
     @discardableResult
-    private static func output(
+    static func output(
         _ arguments: [String],
         in root: URL,
         environment: [String: String] = [:],
@@ -707,7 +821,7 @@ enum UncommittedChangesCarrier {
 
     /// `body` with a folder of its own under the temporary folder, removed
     /// after it.
-    private static func withScratch<T>(_ body: (URL) async throws -> T) async throws -> T {
+    static func withScratch<T>(_ body: (URL) async throws -> T) async throws -> T {
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("weir-carry-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
@@ -752,83 +866,5 @@ struct FileBytes: Equatable {
         case (.unreadable, _), (_, .unreadable): false
         default: lhs.kind == rhs.kind
         }
-    }
-}
-
-/// Git's lock on an index, taken as Git takes it: `<index>.lock` made with
-/// `O_EXCL`, so only one process holds it, then renamed over the index to
-/// put a new one in place at once. Any Git that wants to write the index
-/// meanwhile finds the lock and stops or waits.
-///
-/// Not `Sendable`: one task takes it, uses it, and lets it go.
-final class IndexLock {
-    let index: URL
-    private let lock: URL
-    /// The open lock file, closed by `commit` or `release`; -1 once closed.
-    private var descriptor: Int32
-
-    private init(index: URL, lock: URL, descriptor: Int32) {
-        self.index = index
-        self.lock = lock
-        self.descriptor = descriptor
-    }
-
-    /// A lock never let go, as when the task holding it is torn down, is
-    /// let go here, or every Git in the worktree would stop on it.
-    deinit {
-        release()
-    }
-
-    /// How long to wait for another Git to let the lock go: `git status`
-    /// holds it a moment to refresh the index.
-    static let patience: Duration = .seconds(2)
-
-    /// `nil` when another holds the lock past `patience`, or `index` is no
-    /// index: a lock beside a file that is not there guards nothing.
-    static func acquire(for index: URL) async -> IndexLock? {
-        guard FileManager.default.fileExists(atPath: index.path) else { return nil }
-        let lock = URL(fileURLWithPath: index.path + ".lock")
-        let deadline = ContinuousClock.now + patience
-        repeat {
-            let descriptor = open(lock.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o644)
-            if descriptor >= 0 {
-                return IndexLock(index: index, lock: lock, descriptor: descriptor)
-            }
-            guard errno == EEXIST else { return nil }
-            try? await Task.sleep(for: .milliseconds(50))
-        } while ContinuousClock.now < deadline
-        return nil
-    }
-
-    /// The index at `next` written into the lock and renamed over the
-    /// index, as Git puts a new index in place. `false` leaves the old
-    /// index as it was.
-    func commit(contentsOf next: URL) -> Bool {
-        guard descriptor >= 0, let data = try? Data(contentsOf: next) else { return false }
-        let isWritten = data.withUnsafeBytes { bytes in
-            var offset = 0
-            while offset < bytes.count {
-                let written = write(descriptor, bytes.baseAddress?.advanced(by: offset), bytes.count - offset)
-                guard written > 0 else { return false }
-                offset += written
-            }
-            return fsync(descriptor) == 0
-        }
-        close(descriptor)
-        descriptor = -1
-        guard isWritten, rename(lock.path, index.path) == 0 else {
-            unlink(lock.path)
-            return false
-        }
-        return true
-    }
-
-    /// Lets the lock go without changing the index, unless `commit` put a
-    /// new one in place already.
-    func release() {
-        guard descriptor >= 0 else { return }
-        close(descriptor)
-        descriptor = -1
-        unlink(lock.path)
     }
 }

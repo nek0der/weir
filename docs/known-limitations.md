@@ -199,17 +199,22 @@ as they are fixed or confirmed.
   but GitLab may stop keeping that ref for a merge request closed long ago.
   A local branch with the request's branch name is used only when it is
   already at the request's commit; otherwise the worktree gets `pr/<number>`.
-- **Carrying uncommitted changes into a new worktree** stops before anything is
-  made when the worktree they are in has a merge, rebase, cherry-pick, or revert
-  under way, has conflicts to resolve, uses a sparse checkout or a split index,
-  has files marked skip-worktree or assume-unchanged or added with `git add -N`,
-  changes a submodule or a repository inside it, or has a folder with ignored
-  files where a tracked file was, and when the changes conflict with the new
-  worktree's starting point. It needs Git 2.40 or later. If a file would come
-  out of the new worktree with other bytes than it has (a line-ending setting or
-  a filter), nothing is moved. Empty folders do not come along, nor do files Git
-  ignores (those come only through the copy that Project Settings names), and
-  changes inside a submodule stay where they are.
+- **Carrying uncommitted changes into a new worktree** stops before anything
+  is made when the worktree they are in has a merge, rebase, cherry-pick, or
+  revert under way, has conflicts to resolve, uses a sparse checkout or a
+  split index, has files marked skip-worktree or assume-unchanged or added
+  with `git add -N`, changes a submodule or a repository inside it, or has a
+  file Git ignores, or a folder with ignored files, where a tracked file was,
+  or an ignored file where a tracked file's folder was, and when the changes
+  conflict with the new worktree's starting point. It needs Git 2.41 or later.
+  If a file would come out of the new worktree with other bytes than it has (a
+  line-ending setting or a filter), or the new worktree already has a file Git
+  ignores where the changes add one or need a folder, nothing is moved. Empty
+  folders do not come along, nor do files Git ignores (those come only through
+  the copy that Project Settings names), and changes inside a submodule stay
+  where they are. A file Git ignores that the new worktree's checkout hook,
+  still running, makes where the changes add one, in the instant between
+  Weir's check and Git's write, is written over.
 - **A worktree that changes while its changes are carried keeps them.** If
   an agent or an editor writes in it, or Git holds its index, in the moment
   the changes are moved, they end up in both worktrees, and the bar under

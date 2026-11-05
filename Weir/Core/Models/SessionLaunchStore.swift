@@ -86,6 +86,10 @@ struct SessionLaunch: Equatable, Sendable {
         /// The changes could not be put in this worktree; the one named
         /// still has them, untouched.
         case carryNotApplied(from: String)
+        /// The changes could not be put in this worktree, and what was
+        /// written here could not all be taken back, so some may be here
+        /// too; the one named still has them, untouched.
+        case carryNotPutBack(from: String)
         /// The changes are here, and still in the worktree named, which
         /// changed while they were moved.
         case carryLeftInSource(from: String)

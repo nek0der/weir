@@ -1,5 +1,5 @@
 // GitWorktreeListTests.swift
-// Weir — parser tests for `git worktree list --porcelain` plus a smoke run against a fresh temp repo.
+// Weir — parser tests for `git worktree list --porcelain -z` plus a smoke run against a fresh temp repo.
 
 import Foundation
 import Testing
@@ -7,6 +7,23 @@ import Testing
 
 @Suite("GitWorktreeList parser")
 struct GitWorktreeListParserTests {
+    /// The listing as `-z` writes it: the fixtures are written one line
+    /// per line for reading, and Git ends each with NUL instead.
+    private static func nulTerminated(_ lines: String) -> String {
+        lines.replacingOccurrences(of: "\n", with: "\0")
+    }
+
+    /// A newline is a byte a folder's name may hold; only NUL ends a line.
+    @Test
+    func parse_aPathWithANewline_keepsItWhole() {
+        let porcelain = "worktree /Users/me/repo\nfeat\0HEAD aaa\0branch refs/heads/feat\0locked two\nlines\0\0"
+            + "worktree /Users/me/repo\0HEAD bbb\0detached\0\0"
+        let result = GitWorktreeList.parse(porcelain)
+        #expect(result.map(\.path.path) == ["/Users/me/repo\nfeat", "/Users/me/repo"])
+        #expect(result[0].branch == "feat")
+        #expect(result[0].isLocked)
+        #expect(result[1].isDetached)
+    }
 
     @Test("a single worktree on main is parsed with its head + branch")
     func parse_singleWorktreeOnMain_extractsAllFields() {
@@ -16,7 +33,7 @@ struct GitWorktreeListParserTests {
         branch refs/heads/main
 
         """
-        let result = GitWorktreeList.parse(porcelain)
+        let result = GitWorktreeList.parse(Self.nulTerminated(porcelain))
         #expect(result.count == 1)
         #expect(result[0].path.path == "/Users/me/repo")
         #expect(result[0].headSHA == "abc123abc123abc123abc123abc123abc123abc1")
@@ -40,7 +57,7 @@ struct GitWorktreeListParserTests {
         detached
 
         """
-        let result = GitWorktreeList.parse(porcelain)
+        let result = GitWorktreeList.parse(Self.nulTerminated(porcelain))
         #expect(result.count == 3)
         #expect(result[0].branch == "main")
         #expect(result[1].branch == "feat-x")
@@ -62,7 +79,7 @@ struct GitWorktreeListParserTests {
         prunable
 
         """
-        let result = GitWorktreeList.parse(porcelain)
+        let result = GitWorktreeList.parse(Self.nulTerminated(porcelain))
         #expect(result.count == 2)
         #expect(result[0].isLocked)
         #expect(result[1].isPrunable)
@@ -75,7 +92,7 @@ struct GitWorktreeListParserTests {
         bare
 
         """
-        let result = GitWorktreeList.parse(porcelain)
+        let result = GitWorktreeList.parse(Self.nulTerminated(porcelain))
         #expect(result.count == 1)
         #expect(result[0].isBare)
         #expect(result[0].branch == nil)
@@ -91,7 +108,7 @@ struct GitWorktreeListParserTests {
         somefuturefield value
 
         """
-        let result = GitWorktreeList.parse(porcelain)
+        let result = GitWorktreeList.parse(Self.nulTerminated(porcelain))
         #expect(result.count == 1)
         #expect(result[0].branch == "main")
     }
@@ -157,5 +174,20 @@ struct GitWorktreeListFetchTests {
         try FileManager.default.removeItem(at: linked)
         let worktrees = try await GitWorktreeList.fetch(repoRoot: repo.url)
         #expect(worktrees.map(\.isPrunable) == [false, true])
+    }
+
+    /// A linked worktree in a folder whose name holds a newline is listed
+    /// at that folder, not at the part of its path before the newline.
+    @Test
+    func fetch_aWorktreeWhosePathHasANewline_listsItsWholePath() async throws {
+        let repo = try await TempGitRepo.make()
+        defer { repo.cleanup() }
+        let linked = repo.scratch.appendingPathComponent("feat\nline")
+        _ = try await repo.git(["worktree", "add", "-q", "-b", "feat", "--", linked.path])
+        let worktrees = try await GitWorktreeList.fetch(repoRoot: repo.url)
+        #expect(worktrees.count == 2)
+        #expect(worktrees.last?.path.lastPathComponent == "feat\nline")
+        #expect(worktrees.last?.branch == "feat")
+        #expect(worktrees.last?.isPrunable == false)
     }
 }

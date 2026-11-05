@@ -64,7 +64,7 @@ If the status stops changing, the service's rate limit may have run out. Weir th
 
 ## New Worktree cannot carry my uncommitted changes
 
-Carrying changes needs Git 2.40 or later. Weir also stops before making anything when the worktree has a merge or rebase under way, has conflicts, or uses a sparse checkout. Finish or undo that first, or make the worktree without the changes.
+Carrying changes needs Git 2.41 or later. Weir also stops before making anything when the worktree has a merge or rebase under way, has conflicts, or uses a sparse checkout. Finish or undo that first, or make the worktree without the changes.
 
 Files Git ignores do not come along. To copy them, such as `.env`, choose them in **Project Settings**.
 

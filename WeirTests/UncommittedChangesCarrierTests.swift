@@ -13,7 +13,7 @@ struct UncommittedChangesCarrierTests {
 
     /// A repository with a few committed files of each kind (text, binary,
     /// script, symlink) and nothing uncommitted.
-    private static func makeRepository() async throws -> TempGitRepo {
+    static func makeRepository() async throws -> TempGitRepo {
         let repo = try await TempGitRepo.make()
         try repo.write("a\nb\nc\n", to: "a.txt")
         try repo.write("keep\n", to: "x.txt")
@@ -42,13 +42,13 @@ struct UncommittedChangesCarrierTests {
         try ScratchFile.write("deep\n", to: "dir/inner.txt", in: root)
     }
 
-    private static func status(_ root: URL) async throws -> String {
+    static func status(_ root: URL) async throws -> String {
         try await TempGitRepo.git(["status", "--porcelain=v1", "--untracked-files=all"], in: root)
     }
 
     /// What a worktree holds, beyond `status`: the index as a tree, and the
     /// bytes of every file `status` lists.
-    private static func state(_ root: URL) async throws -> [String] {
+    static func state(_ root: URL) async throws -> [String] {
         let tree = try await TempGitRepo.git(["write-tree"], in: root)
         var state = try await [tree, status(root)]
         for path in ["a.txt", "y.txt", "image.bin", "notes.txt", "dir/inner.txt", "later.txt"] {
@@ -60,13 +60,13 @@ struct UncommittedChangesCarrierTests {
 
     /// A worktree beside the repository on a new branch from `start`, as
     /// the sheet makes one.
-    private static func addTarget(_ repo: TempGitRepo, branch: String, start: String = "HEAD") async throws -> URL {
+    static func addTarget(_ repo: TempGitRepo, branch: String, start: String = "HEAD") async throws -> URL {
         let target = repo.url.deletingLastPathComponent().appendingPathComponent("\(repo.url.lastPathComponent)-\(branch)")
         try await repo.git(["worktree", "add", "-q", "-b", branch, target.path, start])
         return target
     }
 
-    private static func carry(_ repo: TempGitRepo, onto start: String = "HEAD", target: URL) async throws
+    static func carry(_ repo: TempGitRepo, onto start: String = "HEAD", target: URL) async throws
         -> (UncommittedChangesCarrier.Snapshot, UncommittedChangesCarrier.Outcome)
     {
         let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
@@ -282,6 +282,108 @@ struct UncommittedChangesCarrierTests {
         #expect(try await Self.status(target) == "?? vendor/lib.txt")
     }
 
+    /// A file the new worktree's checkout hook made, which Git ignores,
+    /// where the changes add one (`.env`, added with `--force` in the
+    /// source): `read-tree` would write over it, so nothing is written.
+    @Test func anIgnoredFileInTheNewWorktree_whereTheChangesAddOne_isKept() async throws {
+        let repo = try await Self.makeRepository()
+        defer { repo.cleanup() }
+        try repo.write(".env\n", to: ".gitignore")
+        try await repo.git(["add", ".gitignore"])
+        try await repo.git(["commit", "-q", "-m", "ignore"])
+        try repo.write("SECRET=carried\n", to: ".env")
+        try await repo.git(["add", "--force", ".env"])
+        let before = try await Self.status(repo.url)
+        let target = try await Self.addTarget(repo, branch: "carried")
+        try ScratchFile.write("SECRET=hook\n", to: ".env", in: target)
+
+        let (_, outcome) = try await Self.carry(repo, target: target)
+
+        #expect(outcome == .notApplied)
+        #expect(try ScratchFile.read(".env", in: target) == "SECRET=hook\n")
+        #expect(try await Self.status(target).isEmpty)
+        #expect(try await Self.status(repo.url) == before)
+        #expect(try repo.read(".env") == "SECRET=carried\n")
+    }
+
+    /// A file Git ignores in the new worktree where the changes need a
+    /// folder (`build` for `build/out.txt`): Git would put the folder in
+    /// its place.
+    @Test func anIgnoredFileInTheNewWorktree_whereTheChangesNeedAFolder_isKept() async throws {
+        let repo = try await Self.makeRepository()
+        defer { repo.cleanup() }
+        try repo.write("build\n", to: ".gitignore")
+        try await repo.git(["add", ".gitignore"])
+        try await repo.git(["commit", "-q", "-m", "ignore"])
+        try repo.write("carried\n", to: "build/out.txt")
+        try await repo.git(["add", "--force", "build/out.txt"])
+        let target = try await Self.addTarget(repo, branch: "carried")
+        try ScratchFile.write("made by a hook\n", to: "build", in: target)
+
+        let (_, outcome) = try await Self.carry(repo, target: target)
+
+        #expect(outcome == .notApplied)
+        #expect(try ScratchFile.read("build", in: target) == "made by a hook\n")
+        #expect(try repo.read("build/out.txt") == "carried\n")
+    }
+
+    /// Git stops part way through writing the new worktree (a folder its
+    /// hook made that may not be written in): what it wrote is put back,
+    /// and the hook's own file stays. The first file goes where an empty
+    /// folder was, which Git replaces, so a path that held something before
+    /// may be ours too.
+    @Test func aWriteThatStopsPartWay_inTheNewWorktree_isPutBack() async throws {
+        let repo = try await Self.makeRepository()
+        defer { repo.cleanup() }
+        try repo.write("first\n", to: "a-new.txt")
+        try repo.write("second\n", to: "locked/new.txt")
+        let before = try await Self.state(repo.url)
+        let target = try await Self.addTarget(repo, branch: "carried")
+        try ScratchFile.write("made by a hook\n", to: "locked/hook.txt", in: target)
+        try FileManager.default.createDirectory(at: target.appendingPathComponent("a-new.txt"), withIntermediateDirectories: false)
+        let locked = target.appendingPathComponent("locked")
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+
+        let (_, outcome) = try await Self.carry(repo, target: target)
+
+        #expect(outcome == .notApplied)
+        #expect(!FileManager.default.fileExists(atPath: target.appendingPathComponent("a-new.txt").path))
+        #expect(try ScratchFile.read("locked/hook.txt", in: target) == "made by a hook\n")
+        #expect(try await Self.status(target) == "?? locked/hook.txt")
+        #expect(try await Self.state(repo.url) == before)
+    }
+
+    /// Git stops part way through taking the changes out of the source (a
+    /// folder that may not be written in), after it put one file back: the
+    /// source is cleared part way, not left as it was, and a copy is kept.
+    @Test func aClearThatStopsPartWay_isPartlyCleared_withACopyKept() async throws {
+        let repo = try await Self.makeRepository()
+        defer { repo.cleanup() }
+        try repo.write("inner\n", to: "locked/inner.txt")
+        try await repo.git(["add", "locked/inner.txt"])
+        try await repo.git(["commit", "-q", "-m", "locked"])
+        try repo.write("a\nB\nc\n", to: "a.txt")
+        try repo.write("changed\n", to: "locked/inner.txt")
+        let locked = repo.url.appendingPathComponent("locked")
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+        let target = try await Self.addTarget(repo, branch: "carried")
+
+        let (snapshot, outcome) = try await Self.carry(repo, target: target)
+
+        guard case let .partlyCleared(stash?) = outcome else {
+            Issue.record("expected a partly cleared source with a copy kept, got \(outcome)")
+            return
+        }
+        let entries = try await repo.git(["stash", "list", "--format=%gs"])
+        #expect(entries.contains(stash))
+        #expect(try await repo.git(["rev-parse", "stash@{0}^{tree}"]) == snapshot.fullTree)
+        #expect(try ScratchFile.read("a.txt", in: target) == "a\nB\nc\n")
+        #expect(try ScratchFile.read("locked/inner.txt", in: target) == "changed\n")
+        #expect(try repo.read("locked/inner.txt") == "changed\n")
+    }
+
     // MARK: - What stops it first
 
     @Test func nothingToCarry_isNone() async throws {
@@ -411,10 +513,31 @@ struct UncommittedChangesCarrierTests {
         try repo.write(".env\n", to: ".gitignore")
         try repo.write("SECRET=real\n", to: ".env")
 
-        await #expect(throws: UncommittedCarryRefusal.ignoredFilesInTheWay(".env")) {
+        await #expect(throws: UncommittedCarryRefusal.ignoredFileWritten(".env")) {
             try await UncommittedChangesCarrier.snapshot(of: repo.url)
         }
         #expect(try repo.read(".env") == "SECRET=real\n")
+    }
+
+    /// A folder HEAD has a file in, deleted, and a file Git ignores made at
+    /// its name since (`build` for `build/out.txt`): going back to HEAD
+    /// would put the folder in its place.
+    @Test func anIgnoredFileWhereADeletedFilesFolderWas_isRefused_andKept() async throws {
+        let repo = try await Self.makeRepository()
+        defer { repo.cleanup() }
+        try repo.write("committed\n", to: "build/out.txt")
+        try await repo.git(["add", "build/out.txt"])
+        try await repo.git(["commit", "-q", "-m", "build"])
+        try repo.write("build\n", to: ".gitignore")
+        try await repo.git(["add", ".gitignore"])
+        try await repo.git(["commit", "-q", "-m", "ignore"])
+        try FileManager.default.removeItem(at: repo.url.appendingPathComponent("build"))
+        try repo.write("mine\n", to: "build")
+
+        await #expect(throws: UncommittedCarryRefusal.ignoredFileInTheWay("build")) {
+            try await UncommittedChangesCarrier.snapshot(of: repo.url)
+        }
+        #expect(try repo.read("build") == "mine\n")
     }
 
     /// Git stores a file as its line-ending setting says, so a file with
