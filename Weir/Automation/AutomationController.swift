@@ -708,12 +708,12 @@
 
         /// Ends the run the way Quit does, with the scrollback saved and the
         /// run folder removed, but without the confirmation, which is a native
-        /// alert the channel cannot answer. Agents running in the run's panes
-        /// would be ended with it, so that takes `force`; without it the reply
-        /// says so and nothing quits.
+        /// alert the channel cannot answer. Agents running in the run's panes or
+        /// its quick terminal would be ended with it, so that takes `force`;
+        /// without it the reply says so and nothing quits.
         private func quit(_ request: AutomationRequest, in state: AppState) -> AutomationReply {
             if state.hasAgentAQuitWouldEnd(), request.force != true {
-                return .failed(request.id, "agents are running in this run's panes; quit with force to end them")
+                return .failed(request.id, "agents are running in this run's terminals; quit with force to end them")
             }
             isQuitting = true
             // A paste confirmation left up is a sheet on a window, and AppKit
