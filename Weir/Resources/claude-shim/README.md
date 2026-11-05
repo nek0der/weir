@@ -151,7 +151,8 @@ instruction stays off tmux's command line, which tmux limits to about
 broken hook must never stop the user from running Claude. The one exception
 is a missing helper, which exits `1` (see [Files](#files) above); Claude shows
 that and carries on. Set `WEIR_HOOK_LOG=<path>` to capture the helper's
-diagnostics.
+diagnostics. `<path>` must name a plain file or none yet; a symlink there is
+refused, and the log is kept readable by the user alone.
 
 The `claude` shim falls back to executing the real `claude` with no
 overrides if `weir-hook` or the bundled `settings.template.json` is

@@ -43,25 +43,17 @@ private let inputReadChunkBytes = 64 * 1024
 /// lines do, so one file collects both sides of a failed hook. The providers
 /// discard the stderr of a hook that exits 0, which is why stderr alone is
 /// not enough. The value `1` keeps the old meaning of "print to stderr".
+/// The runtime's log writes the line (`RustProviderBridge.logLine`), so the
+/// file is kept private and bounded in one place; a line it could not write
+/// goes to stderr.
 func logHookDiagnostic(_ message: String) {
     guard let target = ProcessInfo.processInfo.environment["WEIR_HOOK_LOG"], !target.isEmpty else {
         return
     }
-    let line = Data((message + "\n").utf8)
-    guard target != "1", let handle = FileHandle(forWritingAtPath: target) ?? createLog(at: target) else {
-        FileHandle.standardError.write(line)
+    guard target != "1", RustProviderBridge.logLine(message, to: target) else {
+        FileHandle.standardError.write(Data((message + "\n").utf8))
         return
     }
-    defer { try? handle.close() }
-    _ = try? handle.seekToEnd()
-    handle.write(line)
-}
-
-private func createLog(at path: String) -> FileHandle? {
-    guard FileManager.default.createFile(atPath: path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
-        return nil
-    }
-    return FileHandle(forWritingAtPath: path)
 }
 
 func readBoundedStandardInput() throws -> Data {

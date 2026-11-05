@@ -736,3 +736,62 @@ fn a_codex_goal_turn_is_snapshotted_where_the_hook_runs_not_where_its_first_tool
         session.path.canonicalize().ok()
     );
 }
+
+/// A turn's snapshots start neither the repository's own `core.fsmonitor`,
+/// which git would start on every read of the index, nor its
+/// `reference-transaction` hook, which git would start for every
+/// ref a pin moves. A folder opened from an archive brings its `.git` along.
+#[test]
+fn a_snapshot_starts_neither_the_repositorys_fsmonitor_nor_its_hooks() {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = Repo::new("repository-programs");
+    let marker = repo.root.join("ran");
+    let program = |path: &Path, name: &str| {
+        fs::write(
+            path,
+            format!("#!/bin/sh\necho {name} >> '{}'\nexit 0\n", marker.display()),
+        )
+        .expect("program");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).expect("chmod");
+    };
+    let fsmonitor = repo.root.join("fsmonitor");
+    program(&fsmonitor, "fsmonitor");
+    git(
+        &repo.path,
+        &[
+            "config",
+            "core.fsmonitor",
+            fsmonitor.to_str().expect("path"),
+        ],
+    )
+    .expect("config");
+    program(
+        &repo.git_dir().join("hooks/reference-transaction"),
+        "reference-transaction",
+    );
+    fs::write(repo.path.join("README.md"), "changed\n").expect("edit");
+
+    let (begin, root) = captured(
+        &GitSnapshots
+            .capture(&repo.path, PANE, TurnSide::Begin)
+            .status,
+    );
+    fs::write(repo.path.join("added.txt"), "new\n").expect("add");
+    let (end, _) = captured(&GitSnapshots.capture(&repo.path, PANE, TurnSide::End).status);
+    let root = Path::new(&root);
+    assert!(GitSnapshots.diff(root, &begin, &end).is_some());
+    assert!(GitSnapshots.worktree(&repo.path).is_some());
+    GitSnapshots
+        .pin(root, "turn", TurnSide::Begin, &begin)
+        .expect("pin");
+    GitSnapshots
+        .pin(root, "turn", TurnSide::End, &end)
+        .expect("pin");
+    assert_eq!(GitSnapshots.unpin(root, None, "turn"), Ok(true));
+    GitSnapshots.remove(&repo.path, PANE).expect("remove");
+    assert_eq!(
+        fs::read_to_string(&marker).ok(),
+        None,
+        "a repository program ran"
+    );
+}

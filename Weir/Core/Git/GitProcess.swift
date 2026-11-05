@@ -114,7 +114,9 @@ enum GitProcess {
     /// What every run starts with. A repository's own `core.fsmonitor`
     /// names a program git would start, and a folder opened from an
     /// archive brings its `.git/config` along; the review turns it off
-    /// the same way (`ReviewGitCommand`).
+    /// the same way (`ReviewGitCommand`), and so does every git the agent
+    /// hook runs (`COMMON_OPTIONS`). The two sides check the options
+    /// against `rust/fixtures/contract/shared-values.json`.
     static let commonOptions = ["-c", "core.fsmonitor=false"]
 
     /// Run `git <args>` with cwd = `cwd`. Throws when the launch

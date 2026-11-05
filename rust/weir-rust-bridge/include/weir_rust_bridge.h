@@ -75,6 +75,10 @@ typedef enum weir_provider_result {
   WEIR_PROVIDER_INTERNAL = 6,
   // Rust caught a panic at the FFI boundary.
   WEIR_PROVIDER_PANIC = 7,
+  // `weir_hook_log_line_v1` could not write the line: the log could not
+  // be opened (a symlink or no plain file at its path, a folder that is
+  // not there), set aside, or written.
+  WEIR_PROVIDER_LOG_NOT_WRITTEN = 8,
 } weir_provider_result;
 
 // Status codes returned by the projection ABI functions, reported as
@@ -461,6 +465,23 @@ int32_t weir_hook_run_v1(const uint8_t *provider,
                          size_t env_len,
                          uint8_t **out,
                          size_t *out_len);
+
+// Appends `message` to the hook log at `path`, labeled `weir-hook-helper`,
+// as the hook runtime appends its own lines (`HookLog`): one writer, so the file is created and set
+// aside private to the user whatever its earlier mode or the umask, a
+// symlink at `path` is refused, and the log is kept to one earlier
+// generation. Both are UTF-8. A line that could not be written returns
+// `WEIR_PROVIDER_LOG_NOT_WRITTEN`, so the caller can print it where it
+// still can.
+//
+// # Safety
+//
+// `path` must be readable for `path_len` bytes and `message` for
+// `message_len` bytes (either may be null with a zero length).
+int32_t weir_hook_log_line_v1(const uint8_t *path,
+                              size_t path_len,
+                              const uint8_t *message,
+                              size_t message_len);
 
 // Translates a provider's `PermissionRequest` payload into the neutral
 // approval request as JSON.

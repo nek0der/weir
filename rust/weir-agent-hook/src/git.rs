@@ -51,6 +51,37 @@ pub(crate) fn clear_repository_variables(command: &mut Command) {
     }
 }
 
+/// The options every git the hook runs starts with, the app's own
+/// (`GitProcess.commonOptions`); the two sides check them against
+/// `rust/fixtures/contract/shared-values.json`. A repository's own
+/// `core.fsmonitor` names a program git would start on every read of the
+/// index, and a folder opened from an archive brings its `.git/config` along.
+pub(crate) const COMMON_OPTIONS: [&str; 2] = ["-c", "core.fsmonitor=false"];
+
+/// What the hook's git adds to `COMMON_OPTIONS`: no repository hook. Pinning a
+/// turn's trees moves refs, and git starts the repository's
+/// `reference-transaction` hook for every ref it moves, on every turn. The
+/// hook's git only reads the working tree and writes its own refs and
+/// indexes, which no repository hook is for; the app's git keeps hooks, as
+/// adding a worktree runs the repository's `post-checkout`.
+const NO_REPOSITORY_HOOKS: [&str; 2] = ["-c", "core.hooksPath=/dev/null"];
+
+/// Git as the hook runs it, for every call: the agent's environment without
+/// what points git away from the folder we name (`clear_repository_variables`),
+/// with `COMMON_OPTIONS` and `NO_REPOSITORY_HOOKS`, nothing on its standard
+/// input and its diagnostics dropped. Each caller adds its arguments after
+/// these.
+pub(crate) fn git_command() -> Command {
+    let mut command = Command::new("git");
+    clear_repository_variables(&mut command);
+    command
+        .args(COMMON_OPTIONS)
+        .args(NO_REPOSITORY_HOOKS)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null());
+    command
+}
+
 /// Untracked files larger than this are left out of a snapshot and listed on
 /// the turn record instead: hashing them would slow every prompt, and a
 /// build product or a dump is rarely what a turn is reviewed for.
@@ -229,14 +260,12 @@ impl GitSnapshots {
         args: &[&str],
         index: Option<&Path>,
     ) -> std::process::Command {
-        let mut command = std::process::Command::new("git");
-        clear_repository_variables(&mut command);
+        let mut command = git_command();
         command
             .env("GIT_OPTIONAL_LOCKS", "0")
             .arg("-C")
             .arg(cwd)
-            .args(args)
-            .stderr(std::process::Stdio::null());
+            .args(args);
         if let Some(index) = index {
             command.env("GIT_INDEX_FILE", index);
         }
@@ -1126,7 +1155,9 @@ mod tests {
 
 #[cfg(test)]
 mod contract_tests {
-    use super::REPOSITORY_VARIABLES;
+    use super::{
+        COMMON_OPTIONS, GitSnapshots, NO_REPOSITORY_HOOKS, REPOSITORY_VARIABLES, git_command,
+    };
     use serde_json::Value;
     use std::collections::BTreeSet;
     use std::path::Path;
@@ -1147,5 +1178,37 @@ mod contract_tests {
         let ours: BTreeSet<&str> = REPOSITORY_VARIABLES.into_iter().collect();
         assert_eq!(ours.len(), REPOSITORY_VARIABLES.len(), "no name twice");
         assert_eq!(ours, listed);
+    }
+
+    #[test]
+    fn every_git_starts_with_the_options_the_app_starts_its_own_with() {
+        let path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/contract/shared-values.json");
+        let shared: Value =
+            serde_json::from_slice(&std::fs::read(path).expect("the shared values file"))
+                .expect("the shared values decode");
+        let listed: Vec<&str> = shared["gitCommonOptions"]
+            .as_array()
+            .expect("the options")
+            .iter()
+            .map(|option| option.as_str().expect("an option"))
+            .collect();
+        assert_eq!(COMMON_OPTIONS.as_slice(), listed.as_slice());
+        let expected: Vec<&str> = COMMON_OPTIONS
+            .into_iter()
+            .chain(NO_REPOSITORY_HOOKS)
+            .collect();
+        let leading = |command: &std::process::Command| -> Vec<String> {
+            command
+                .get_args()
+                .take(expected.len())
+                .map(|argument| argument.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(leading(&git_command()), expected);
+        assert_eq!(
+            leading(&GitSnapshots::command(Path::new("/"), &["status"], None)),
+            expected
+        );
     }
 }
