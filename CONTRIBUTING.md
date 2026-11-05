@@ -117,10 +117,13 @@ open Weir.xcodeproj
 
 ## Pull requests
 
+Read the [writing guide](docs/writing-guide.md) when writing comments,
+documents, commit messages, or PR text, whether you write them yourself or use
+an AI assistant. Follow the PR template for the required sections.
+
 - Branch off `main` using a conventional prefix: `feat/<short>`, `fix/<short>`, `docs/<short>`, `chore/<short>`, `refactor/<short>`, `test/<short>`.
 - Keep commits focused. Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, etc.).
-- Code comments must be in English.
-- Code style: see [`AGENTS.md`](AGENTS.md) §3 for the conventions a linter can't enforce (comments explain *why*, file banners, naming).
+- Code style: see [`AGENTS.md`](AGENTS.md) §3 for the conventions a linter can't enforce (file banners, naming, and code structure).
 - `release-please` generates `CHANGELOG.md` from commit messages, so don't edit it by hand.
 - The release pull request skips the builds, tests, and Swift lint, because `main` already ran them. Its `Main CI passed` check holds the merge, which creates the tag, until the CI run for the latest commit on `main` has passed. To run everything on it anyway, dispatch the CI workflow on its branch from the Actions tab, and read the results there: they do not appear among the pull request's checks.
 
