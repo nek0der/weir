@@ -129,7 +129,7 @@ extension SurfaceView: AgentCommandTyping {
         charactersIgnoringModifiers characters: String?,
         modifiers: NSEvent.ModifierFlags
     ) -> PromptInputEffect {
-        let held = modifiers.intersection([.command, .control, .option, .shift])
+        let held = modifiers.chord
         if held.contains(.command) {
             return characters?.lowercased() == "v" ? .draft : .none
         }

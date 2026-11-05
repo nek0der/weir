@@ -22,7 +22,7 @@ enum ReviewTableKey {
     case openInEditor
 
     init?(event: NSEvent) {
-        let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        let modifiers = event.modifierFlags.chord
         if modifiers == .command, event.namedKey == .return {
             self = .insert
             return

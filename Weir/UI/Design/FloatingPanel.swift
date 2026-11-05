@@ -330,7 +330,7 @@ struct FloatingPanelEventMonitor: NSViewRepresentable {
                 }
                 let key = FloatingPanelKey(
                     isEscape: event.namedKey == .escape
-                        && event.modifierFlags.isDisjoint(with: [.command, .control, .option, .shift]),
+                        && event.modifierFlags.chord.isEmpty,
                     isTypingInTerminal: window.firstResponder is SurfaceView
                 )
                 return onKey?(key) == true ? nil : event
