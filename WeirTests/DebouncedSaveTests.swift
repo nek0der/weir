@@ -44,15 +44,16 @@ struct DebouncedSaveTests {
         #expect(runs.labels.isEmpty)
     }
 
-    @Test func hasUnflushedChanges_staysTrueOnceTheSaveHasRun() async {
+    @Test func hasUnflushedChanges_staysTrueOnceTheSaveHasRun() {
         // A store's flush writes again after a save that ran, as it did
         // before the timer was shared.
-        let save = DebouncedSave(delay: .milliseconds(10))
+        let timer = ManualTimer()
+        let save = DebouncedSave(delay: .milliseconds(10), timer: timer.timer)
         let runs = Runs()
         #expect(!save.hasUnflushedChanges)
 
         save.schedule { runs.labels.append("ran") }
-        await pollUntil(interval: .milliseconds(10)) { !runs.labels.isEmpty }
+        timer.advance(by: .milliseconds(10))
 
         #expect(runs.labels == ["ran"])
         #expect(save.hasUnflushedChanges)

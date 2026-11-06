@@ -2,6 +2,7 @@
 // Weir — asking Codex's app server for its usage: the exchange, and reading the answer through the Rust bridge.
 
 import Foundation
+import os
 import Testing
 @testable import Weir
 @testable import WeirDomain
@@ -55,18 +56,31 @@ struct CodexUsageReaderTests {
         try await withTempDir { dir in
             let server = dir.appendingPathComponent("codex")
             try ShimHarness.writeExecutable("#!/bin/sh\nwhile read -r line; do :; done\n", at: server)
-            let start = ContinuousClock.now
+            // The timer fires as soon as it is set, so the wait ends on the
+            // timeout whatever the machine's load, and says what it was set for.
+            let delays = OSAllocatedUnfairLock<[Duration]>(initialState: [])
             let answer = await CodexUsageReader.exchange(
                 executable: server.path,
                 path: ShimHarness.systemPath,
                 timeout: .milliseconds(500)
-            )
+            ) { delay, fire in
+                delays.withLock { $0.append(delay) }
+                fire()
+            }
             #expect(answer == nil)
-            // The half-second timeout, against the 15-second default a run
-            // that ignored it would wait, or no end at all. The bound leaves
-            // room for a busy CI runner.
-            #expect(ContinuousClock.now - start < .seconds(10), "the timeout given, not the default")
+            #expect(delays.withLock { $0 } == [.milliseconds(500)], "the timeout given, not the default")
         }
+    }
+
+    /// The dispatch timer the app counts a timeout with is handed the delay
+    /// in seconds with their fractions, not a whole number of them.
+    @Test("a timeout's delay reaches the dispatch timer in seconds, fractions kept", arguments: [
+        (Duration.milliseconds(500), 0.5),
+        (.seconds(15), 15),
+        (.seconds(2) + .milliseconds(250), 2.25)
+    ])
+    func seconds_keepTheDelaysFractions(delay: Duration, seconds: Double) {
+        #expect(abs(CodexUsageReader.seconds(delay) - seconds) < 1e-9)
     }
 
     /// A server that ends before it reads anything: the requests meet a
