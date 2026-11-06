@@ -86,16 +86,23 @@ struct ForgeRemote: Equatable, Sendable {
 /// already off the main actor, and only the caches need serializing.
 actor ForgeResolver {
     private let locator: ToolLocator
+    private let git: PRStatusFetcher.GitRun
 
-    init(locator: ToolLocator) {
+    /// `git` reads the remotes. It is the pull request lookups' runner, so
+    /// the remotes are read as every other Git of Weir is, through
+    /// `GitProcess`, and a test that runs the lookups' Git runs this one too.
+    init(locator: ToolLocator, git: @escaping PRStatusFetcher.GitRun = PRStatusFetcher.liveGit) {
         self.locator = locator
+        self.git = git
     }
 
-    /// A present `nil` means "resolved, and this directory has no
-    /// forge we can serve" — either no remote at all or an
-    /// unrecognized host. Callers skip those without spawning
-    /// anything.
-    private var byWorkingDirectory: [URL: ForgeKind?] = [:]
+    /// The forge each checkout resolved to. A checkout with none we serve
+    /// is not kept: a remote added later (an agent's `git remote add`) must
+    /// show its pull request without a Refresh, which the sidebar offers
+    /// only on a row that already shows one. `byHost` keeps an
+    /// unrecognized host, so reading such a checkout again costs one
+    /// `git config` and no CLI.
+    private var byWorkingDirectory: [URL: ForgeKind] = [:]
     private var byHost: [String: ForgeKind?] = [:]
 
     /// Bumped by `invalidate()`, and checked before every cache write.
@@ -113,29 +120,52 @@ actor ForgeResolver {
     /// canceled task, a binary we could not locate.
     ///
     /// Distinct from "resolved, and there is no forge here", because
-    /// the two must not be cached alike: a present `nil` stops us
-    /// spawning anything for that directory again, and a question we
-    /// never got an answer to would then disable the feature for the
-    /// rest of the session on one slow `git config`.
+    /// the two must not be answered alike: an unrecognized host is kept
+    /// in `byHost`, which stops us probing it again, and a lookup that
+    /// took a question we never got an answer to for "no forge" would
+    /// clear what its rows showed.
     private struct LookupUnavailable: Error {}
 
+    /// What the resolver could say of a checkout: its forge, or `nil` for
+    /// none we serve, or that a tool it needed did not answer, which is not
+    /// a no.
+    enum Answer: Equatable {
+        case known(ForgeKind?)
+        case unavailable
+    }
+
+    /// The forge of the checkout at `workingDirectory`, `nil` both when it
+    /// has none we serve and when that could not be read; `answer(for:)`
+    /// tells the two apart.
     func forge(for workingDirectory: URL) async -> ForgeKind? {
+        if case let .known(forge) = await answer(for: workingDirectory) {
+            return forge
+        }
+        return nil
+    }
+
+    func answer(for workingDirectory: URL) async -> Answer {
         if let cached = byWorkingDirectory[workingDirectory] {
-            return cached
+            return .known(cached)
         }
         let started = generation
-        guard let resolved = try? await resolve(workingDirectory: workingDirectory) else {
-            return nil
+        // `do` rather than `try?`, which would fold a resolved "no forge"
+        // into a failed read.
+        let resolved: ForgeKind?
+        do {
+            resolved = try await resolve(workingDirectory: workingDirectory)
+        } catch {
+            return .unavailable
         }
         // Withheld when `invalidate()` landed while we were suspended:
         // the caller still gets this answer, since the fetch it belongs
         // to is about to be made against it either way, but caching it
         // would silently undo the one affordance that says "look
         // again".
-        if generation == started {
+        if generation == started, let resolved {
             byWorkingDirectory[workingDirectory] = resolved
         }
-        return resolved
+        return .known(resolved)
     }
 
     /// Drop caches so the next tick re-reads remotes. Called when the
@@ -206,16 +236,10 @@ actor ForgeResolver {
     }
 
     private func remoteURLs(workingDirectory: URL) async throws -> [String: String] {
-        guard let git = await locator.locate("git") else { throw LookupUnavailable() }
-        let result = await runTool(
-            executable: git,
-            arguments: ["config", "--get-regexp", #"^remote\..*\.url$"#],
-            workingDirectory: workingDirectory,
-            timeout: .seconds(5)
-        )
-        // A nil result is `git config` never finishing — a timeout or a
-        // canceled task. Reading it as "no remotes" would cache a
-        // permanent no for a question we never asked.
+        let result = await git(["config", "--get-regexp", #"^remote\..*\.url$"#], workingDirectory)
+        // A nil result is `git config` that did not run or never finished.
+        // Reading it as "no remotes" would cache a permanent no for a
+        // question we never asked.
         guard let result else { throw LookupUnavailable() }
         // Exit 1 with empty output is `git config`'s way of saying
         // "no keys matched", i.e. no remotes — not an error.

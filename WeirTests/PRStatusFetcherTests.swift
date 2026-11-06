@@ -63,15 +63,22 @@ private final class CountedGit: Sendable {
 struct PRStatusFetcherTests {
     private let clock = ManualPRStatusClock()
 
-    private func makeFetcher(_ cli: ScriptedForgeCLI, git: CountedGit = CountedGit()) -> PRStatusFetcher {
+    /// `remotes` reads the checkout's remotes for its forge; by default
+    /// through `git`, as the app does.
+    private func makeFetcher(
+        _ cli: ScriptedForgeCLI,
+        git: CountedGit = CountedGit(),
+        remotes: PRStatusFetcher.GitRun? = nil
+    ) -> PRStatusFetcher {
         let locator = ToolLocator(known: ["gh": URL(fileURLWithPath: "/usr/bin/false"), "glab": URL(fileURLWithPath: "/usr/bin/false")])
         let now: @Sendable () -> Date = { [clock] in clock.now() }
+        let run: PRStatusFetcher.GitRun = { await git.run($0, in: $1) }
         return PRStatusFetcher(
-            resolver: ForgeResolver(locator: locator),
+            resolver: ForgeResolver(locator: locator, git: remotes ?? run),
             locator: locator,
             limiter: ForgeRateLimiter(now: now, jitter: { 1 }),
             now: now,
-            git: { await git.run($0, in: $1) },
+            git: run,
             forgeCLI: { _, arguments, _, _ in await cli.run(arguments) }
         )
     }
@@ -114,7 +121,7 @@ struct PRStatusFetcherTests {
         return #"{"data":{"rateLimit":\#(rateLimit),"repository":{\#(fields.joined(separator: ","))}}}"#
     }
 
-    @Test("a repository's rows cost one query and two Git reads of its own, with each row's head asked for by its owner")
+    @Test("a repository's rows cost one query and three Git reads of its own, with each row's head asked for by its owner")
     func rows_costOneQuery() async throws {
         let (repo, rows) = try await repository()
         defer { repo.cleanup() }
@@ -135,8 +142,10 @@ struct PRStatusFetcherTests {
         #expect(arguments.contains("owner=acme") && arguments.contains("repo=app"))
         #expect(arguments.contains("b0=main") && arguments.contains("b1=a") && arguments.contains("b2=b"))
         // A `git symbolic-ref` per row before the query and after it, and
-        // one `git config` and one `git for-each-ref` for the repository.
-        #expect(git.runs == rows.count * 2 + 2)
+        // for the repository one `git config` for its forge, which is kept
+        // for the next lookup, then one for its branches and one
+        // `git for-each-ref`.
+        #expect(git.runs == rows.count * 2 + 3)
         #expect(batch.lookups[rows[0].container] == PRStatusFetcher.Lookup(forge: .gitHub, head: .branch("main")))
         #expect(batch.lookups[rows[1].container]?.info?.number == 5)
         #expect(batch.lookups[rows[2].container]?.info?.state == .merged)
@@ -164,6 +173,31 @@ struct PRStatusFetcherTests {
         #expect(!probe.lookups.values.contains { !$0.isAnswered })
         _ = await fetcher.lookup(rows)
         #expect(cli.calls.count == 3)
+    }
+
+    @Test("a checkout whose remotes could not be read gets no answer, and the forge is not asked")
+    func unreadRemotes_areNoAnswer() async throws {
+        let (repo, rows) = try await repository()
+        defer { repo.cleanup() }
+        let cli = ScriptedForgeCLI()
+        cli.script(Self.ok(Self.body(["", "", ""])))
+        // `git config` that did not run, or ran past its limit.
+        let batch = await makeFetcher(cli, remotes: { _, _ in nil }).lookup(rows)
+        #expect(cli.calls.isEmpty)
+        #expect(batch.lookups.count == rows.count)
+        #expect(batch.lookups.values.allSatisfy { $0 == PRStatusFetcher.Lookup(isAnswered: false) })
+    }
+
+    @Test("a checkout with no remote is answered with no forge, and the forge is not asked")
+    func noRemote_isAnsweredWithNoForge() async throws {
+        let (repo, rows) = try await repository()
+        defer { repo.cleanup() }
+        try await repo.git(["remote", "remove", "origin"])
+        let cli = ScriptedForgeCLI()
+        let batch = await makeFetcher(cli).lookup(rows)
+        #expect(cli.calls.isEmpty)
+        #expect(batch.lookups.count == rows.count)
+        #expect(batch.lookups.values.allSatisfy { $0 == PRStatusFetcher.Lookup() })
     }
 
     @Test("a checkout that switches branch during the query gets no answer")
