@@ -20,9 +20,9 @@
 
 use serde::{Deserialize, Serialize};
 use weir_agent_model::{
-    AgentEvent, BackgroundWork, CacheWindow, Capability, FailureKind, MAX_RECORD_TEXT_BYTES,
-    PromptKind, ProviderDescriptor, RunRecord, RunState, SessionSettings, SessionSource, Titles,
-    TmuxEndpoint, UsageLimit, WaitKind, classify_prompt, seconds_between,
+    AgentEvent, BackgroundWork, CacheWindow, Caller, Capability, FailureKind,
+    MAX_RECORD_TEXT_BYTES, PromptKind, ProviderDescriptor, RunRecord, RunState, SessionSettings,
+    SessionSource, Titles, TmuxEndpoint, UsageLimit, WaitKind, classify_prompt, seconds_between,
 };
 
 /// Everything the record needs that comes from the hook's environment
@@ -241,23 +241,45 @@ fn apply_event(
         {
             return writes;
         }
+        // A tool of another caller than the one the run waits on, the
+        // agent's own or another subagent's, leaves the wait as it is: the
+        // person has still to answer it (`leaves_the_wait`).
+        AgentEvent::ToolStarted { caller, .. } | AgentEvent::ToolFinished { caller, .. }
+            if prev.is_some_and(|record| leaves_the_wait(record, caller)) =>
+        {
+            return writes;
+        }
         // A subagent's tool after the turn ended, its start or its end, is
         // work of a turn the stop already ended (Claude's stop also counted
         // it, `background_work`); the run stays at its rest rather than
         // reading as a turn at work (`keeps_rest_for_subagent`).
         AgentEvent::ToolStarted {
-            by_subagent: true, ..
+            caller: Caller::Subagent(_),
+            ..
         }
         | AgentEvent::ToolFinished {
-            by_subagent: true, ..
-        } if prev.is_some_and(|record| keeps_rest_for_subagent(record, descriptor)) => {
+            caller: Caller::Subagent(_),
+            ..
+        } if prev.is_some_and(|record| {
+            !is_in_a_turn(record) && keeps_rest_for_subagent(record.state, descriptor)
+        }) =>
+        {
             return writes;
         }
         _ => {}
     }
 
     let mut next = carried(prev, context, now);
+    // A subagent's wait outside a turn, which its own tool ends, returns to
+    // the rest the wait came in (`rest_after_subagents_wait`).
+    let rest_after_wait = match event {
+        AgentEvent::ToolStarted { caller, .. } | AgentEvent::ToolFinished { caller, .. } => {
+            rest_after_subagents_wait(prev, caller, descriptor)
+        }
+        _ => None,
+    };
     match event {
+        _ if let Some(rest) = rest_after_wait => next.state = rest,
         AgentEvent::SessionStarted { .. } | AgentEvent::SessionEnded { .. } => {
             session_transition(
                 prev,
@@ -277,8 +299,11 @@ fn apply_event(
     let continues_episode = leaves_or_rejoins_a_rest(prev, event, now);
     // A `Stop` is the end of work every time, so it always begins an
     // episode, even from `finished`: the run the idle prompt settled after a
-    // late tool, then a real `Stop`, has finished again.
-    let begins_episode = matches!(event, AgentEvent::TurnFinished { .. });
+    // late tool, then a real `Stop`, has finished again. A stop that leaves a
+    // subagent's wait open (`keeps_subagents_wait`) changes nothing the
+    // person is shown, so the wait stays the one already announced.
+    let begins_episode =
+        matches!(event, AgentEvent::TurnFinished { .. }) && !is_stop_keeping_a_wait(event, &next);
     next.state_episode_token = match (prev.map(|record| record.state), previous_token) {
         (Some(previous), Some(token))
             if !begins_episode && (previous == next.state || continues_episode) =>
@@ -454,34 +479,22 @@ fn turn_transition(
         // A tool outside a turn runs too: the run is shown working, and its
         // `runStartedAt` stays empty, which is what records that no turn
         // holds the work (`idle_outcome`).
-        // A wait a subagent opened after the turn ended, which its next tool
-        // ends, returns to a finish (`ends_subagents_wait_at_rest`).
-        AgentEvent::ToolStarted { .. } | AgentEvent::ToolFinished { .. }
-            if ends_subagents_wait_at_rest(prev, event, descriptor) =>
-        {
-            next.state = RunState::Finished;
-        }
-        AgentEvent::ToolStarted { tool, detail, .. } => {
+        AgentEvent::ToolStarted {
+            tool,
+            detail,
+            caller,
+        } => {
             next.state = RunState::Running;
             next.detail = detail.as_deref().and_then(text_field);
             next.tool = text_field(tool);
+            next.caller = named(caller);
             note_rest_left(prev, event, next);
         }
-        AgentEvent::WaitingForInput { detail } => {
-            next.state = RunState::NeedsInput;
-            next.detail = detail.as_deref().and_then(text_field);
-            next.wait_kind = Some(WaitKind::Question);
+        AgentEvent::WaitingForInput { detail, caller } => {
+            open_wait(prev, WaitKind::Question, detail.as_deref(), caller, next);
         }
-        AgentEvent::ApprovalRequested { detail } => {
-            next.state = RunState::NeedsInput;
-            // Claude's permission prompt also follows its question tool: the
-            // question is still what waits, in its own words.
-            if is_question_wait(prev) {
-                carry_wait(prev, next);
-                next.wait_kind = Some(WaitKind::Question);
-            } else {
-                approval_wait(prev, detail.as_deref(), next);
-            }
+        AgentEvent::ApprovalRequested { detail, caller } => {
+            open_wait(prev, WaitKind::Approval, detail.as_deref(), caller, next);
         }
         AgentEvent::Compacting => {
             next.state = RunState::Compacting;
@@ -507,7 +520,10 @@ fn turn_transition(
             cache,
             background_work,
             ..
-        } => finish_turn(next, titles.as_ref(), cache.as_ref(), *background_work),
+        } => {
+            finish_turn(next, titles.as_ref(), cache.as_ref(), *background_work);
+            keeps_subagents_wait(prev, next);
+        }
         AgentEvent::Failed {
             error,
             usage_limit,
@@ -549,6 +565,45 @@ fn turn_transition(
     }
 }
 
+/// Whether `event` is a stop that left a subagent's wait open
+/// (`keeps_subagents_wait`).
+fn is_stop_keeping_a_wait(event: &AgentEvent, next: &RunRecord) -> bool {
+    matches!(event, AgentEvent::TurnFinished { .. }) && next.state == RunState::NeedsInput
+}
+
+/// The record a question (`kind` is `Question`) or a permission request
+/// leaves: the run waits on the person, on behalf of the caller the event
+/// or the tool before it names (`wait_caller`).
+fn open_wait(
+    prev: Option<&RunRecord>,
+    kind: WaitKind,
+    detail: Option<&str>,
+    caller: &Caller,
+    next: &mut RunRecord,
+) {
+    next.state = RunState::NeedsInput;
+    next.wait_started_at = Some(next.updated_at.clone());
+    if kind == WaitKind::Question {
+        next.detail = detail.and_then(text_field);
+        next.wait_kind = Some(WaitKind::Question);
+        (next.caller, next.is_caller_inferred) = wait_caller(prev, caller);
+    } else if is_question_wait(prev) && asks_for_the_same(prev, caller) {
+        // Claude's permission prompt also follows its question tool: the
+        // question is still what waits, in its own words. A prompt that
+        // names no one may be another call's, so the question's caller is
+        // only inferred from then on (`leaves_the_wait`).
+        carry_wait(prev, next);
+        next.wait_kind = Some(WaitKind::Question);
+        if *caller == Caller::Unnamed && next.caller.is_some() {
+            next.is_caller_inferred = Some(true);
+        }
+    } else {
+        approval_wait(prev, detail, next);
+        (next.caller, next.is_caller_inferred) = wait_caller(prev, caller);
+    }
+    note_wait_rest(prev, next);
+}
+
 /// The record a stop leaves: the turn ended, with what the stop observed.
 fn finish_turn(
     next: &mut RunRecord,
@@ -568,51 +623,142 @@ fn finish_turn(
     next.background_work = background_work.filter(|work| !work.is_empty());
 }
 
-/// Whether a subagent's tool leaves `record` as it is: the run rests after a
-/// turn, at the finish its stop left. At `idle` and `error` no stop counted
-/// the subagent (a session start and a failure clear the count). For a
-/// provider whose subagent's end opens a turn of its own
+/// Whether a subagent's tool leaves a run resting outside a turn at `rest`
+/// as it is: at the finish its stop left. At `idle` and `error` no stop
+/// counted the subagent (a session start and a failure clear the count). For
+/// a provider whose subagent's end opens a turn of its own
 /// (`Capability::SubagentEndOpensTurn`), its tools there are the one sign
 /// that work goes on, and they show the run working until that turn's stop
 /// settles it. For a provider whose subagent ends with no hook, nothing would
 /// end that work, so the run keeps either rest.
-fn keeps_rest_for_subagent(record: &RunRecord, descriptor: &ProviderDescriptor) -> bool {
-    if is_in_a_turn(record) {
-        return false;
-    }
-    match record.state {
+fn keeps_rest_for_subagent(rest: RunState, descriptor: &ProviderDescriptor) -> bool {
+    match rest {
         RunState::Finished => true,
         RunState::Idle | RunState::Error => !descriptor.has(Capability::SubagentEndOpensTurn),
         _ => false,
     }
 }
 
-/// Whether `event` is a subagent's tool that ends a wait outside a turn
-/// (the subagent's permission request or question after the parent's
-/// stop), for a provider whose subagent's end opens no turn: the run
-/// returns to a finish, since nothing would end the work it would otherwise
-/// show. A wait after a failure ends finished too, as work outside a turn
-/// does (`note_rest_left`): the agent went on after the failure. For a
-/// provider whose subagent's end opens a turn, the wait ends at work as any
-/// wait does, and that turn or the idle prompt settles the run.
-fn ends_subagents_wait_at_rest(
+/// Whether a tool event of `caller` leaves the wait `record` is in as it is:
+/// the wait is someone else's. A subagent's wait ends only with that
+/// subagent's tool, and the agent's own only with the agent's: the agent goes
+/// on beside a subagent that waits, and subagents run beside each other. A
+/// wait whose caller the record does not know, or only inferred
+/// (`isCallerInferred`), ends with any tool, as does an event that names no
+/// caller (an MCP server's answer, which ends whichever request it answers):
+/// an inferred caller can be the wrong one, and a wait its real caller's tool
+/// could not end would outlive the request.
+fn leaves_the_wait(record: &RunRecord, caller: &Caller) -> bool {
+    record.state == RunState::NeedsInput
+        && record.is_caller_inferred != Some(true)
+        && *caller != Caller::Unnamed
+        && record.caller.as_ref().is_some_and(|owner| owner != caller)
+}
+
+/// The rest a run returns to when a subagent's wait outside a turn ends, or
+/// `None` when the run is not in such a wait. The rest is the one the wait
+/// came in (`outsideTurnRest`, which the parent's stop sets to `finished`
+/// when it leaves the wait open), as the subagent's tool would leave it
+/// (`keeps_rest_for_subagent`); at a rest the subagent's tools reopen, the
+/// tool shows the run working as any tool does. A wait after a failure
+/// returns to a finish, as work after one does (`note_rest_left`). The
+/// agent's own tool that ends a wait only inferred to be a subagent's is the
+/// agent at work, and shows the run working.
+fn rest_after_subagents_wait(
     prev: Option<&RunRecord>,
-    event: &AgentEvent,
+    caller: &Caller,
     descriptor: &ProviderDescriptor,
-) -> bool {
-    let is_subagents = matches!(
-        event,
-        AgentEvent::ToolStarted {
-            by_subagent: true,
-            ..
-        } | AgentEvent::ToolFinished {
-            by_subagent: true,
-            ..
+) -> Option<RunState> {
+    let record = prev?;
+    if record.state != RunState::NeedsInput
+        || is_in_a_turn(record)
+        || !is_subagents_wait(record)
+        || caller.is_agent()
+    {
+        return None;
+    }
+    let rest = match record.outside_turn_rest {
+        Some(RunState::Idle) => RunState::Idle,
+        _ => RunState::Finished,
+    };
+    keeps_rest_for_subagent(rest, descriptor).then_some(rest)
+}
+
+/// Whether the wait `record` is in is, or may be, a subagent's: its caller
+/// is one, or was only inferred (`isCallerInferred`). An inferred wait at the
+/// parent's stop is a subagent's whatever caller was inferred, since the
+/// agent cannot stop while its own call's prompt is open; outside a turn it
+/// is treated as one too.
+fn is_subagents_wait(record: &RunRecord) -> bool {
+    record.caller.as_ref().is_some_and(Caller::is_subagent)
+        || record.is_caller_inferred == Some(true)
+}
+
+/// Keeps a subagent's wait open through the parent's stop, and one whose
+/// caller was only inferred (`is_subagents_wait`). The stop ends the
+/// agent's turn, which `next` already records, but the subagent still waits
+/// on the person, and only its own tool (any tool, for a caller only
+/// inferred), or the agent's report that the wait is gone (`projection`),
+/// ends it. The run then returns to the finish the
+/// stop left (`outsideTurnRest`).
+fn keeps_subagents_wait(prev: Option<&RunRecord>, next: &mut RunRecord) {
+    let Some(record) =
+        prev.filter(|record| record.state == RunState::NeedsInput && is_subagents_wait(record))
+    else {
+        return;
+    };
+    next.state = RunState::NeedsInput;
+    carry_wait(Some(record), next);
+    next.outside_turn_rest = Some(RunState::Finished);
+}
+
+/// Records the rest a wait outside a turn interrupts, for the end of a
+/// subagent's wait to return to: `idle` at the prompt after a session start,
+/// and `finished` otherwise, as a tool event records it (`note_rest_left`).
+/// A wait during work outside a turn keeps what that work recorded.
+fn note_wait_rest(prev: Option<&RunRecord>, next: &mut RunRecord) {
+    let Some(record) = prev.filter(|record| !is_in_a_turn(record)) else {
+        return;
+    };
+    match record.state {
+        RunState::Idle => next.outside_turn_rest = Some(RunState::Idle),
+        RunState::Finished | RunState::Error => next.outside_turn_rest = Some(RunState::Finished),
+        _ => {}
+    }
+}
+
+/// The caller a record keeps for `caller`: none for one the payload did not
+/// name, which the record does not know.
+fn named(caller: &Caller) -> Option<Caller> {
+    (*caller != Caller::Unnamed).then(|| caller.clone())
+}
+
+/// Whose wait an event opens, and whether that is only inferred. The event
+/// says so when the payload named its caller. When it did not (Claude's
+/// permission prompt and an MCP server's request for input), the tool event
+/// just before it is taken for the call that asks, as it gives the wait its
+/// words (`has_tool_context`); but that is only the last tool the record
+/// took, which a call beside it can have been, so the caller is marked
+/// inferred. With neither, the record does not know.
+fn wait_caller(prev: Option<&RunRecord>, caller: &Caller) -> (Option<Caller>, Option<bool>) {
+    match caller {
+        Caller::Unnamed => {
+            let inferred = prev
+                .filter(|record| has_tool_context(record))
+                .and_then(|record| record.caller.clone());
+            let is_inferred = inferred.is_some().then_some(true);
+            (inferred, is_inferred)
         }
-    );
-    is_subagents
-        && !descriptor.has(Capability::SubagentEndOpensTurn)
-        && prev.is_some_and(|record| record.state == RunState::NeedsInput && !is_in_a_turn(record))
+        caller => (Some(caller.clone()), None),
+    }
+}
+
+/// Whether a permission request for `caller` is the one the question `prev`
+/// waits on asks: Claude's permission prompt that follows its question tool
+/// names no one, so it is; a request another caller named is a wait of its
+/// own.
+fn asks_for_the_same(prev: Option<&RunRecord>, caller: &Caller) -> bool {
+    *caller == Caller::Unnamed || prev.and_then(|record| record.caller.as_ref()) == Some(caller)
 }
 
 /// Whether a prompt opened a turn that has not ended. `runStartedAt` is the
@@ -636,8 +782,9 @@ pub enum IdleOutcome {
     /// Work no turn holds: Claude's TUI has sent a turn's `Stop` before the
     /// `PreToolUse` of a tool the turn still ran, with no `Stop` after it,
     /// or a turn another stop hook holds open has gone on after its first
-    /// `Stop`. The turn's end is taken again, with that work in it, and the
-    /// turn keeps how it ended.
+    /// `Stop`, including such a tool's permission prompt the person declined.
+    /// The turn's end is taken again, with that work in it, and the turn
+    /// keeps how it ended.
     EndsOutsideWork,
     /// A turn is still open: it stopped without a `Stop`, which an Esc does,
     /// including the Esc that declines the question or permission prompt
@@ -677,10 +824,19 @@ pub fn idle_outcome(
         RunState::Running | RunState::Compacting => {
             has_sat_idle().then_some(IdleOutcome::EndsStoppedTurn)
         }
-        // A wait outside a turn is a late tool's, which no turn holds; it
-        // keeps resting on the person as before.
         RunState::NeedsInput if awaited_call_ended && is_in_a_turn(record) => {
             has_sat_idle().then_some(IdleOutcome::EndsStoppedTurn)
+        }
+        // A wait outside a turn is a late tool's, which no turn holds. When
+        // the call is the agent's own, its transcript speaks for it, and a
+        // call that has ended there was declined: the stretch is over. A
+        // subagent's call is not in that transcript, so the transcript says
+        // nothing of its wait, and neither does a wait whose caller the
+        // record does not know; either keeps resting on the person.
+        RunState::NeedsInput
+            if awaited_call_ended && record.caller.as_ref().is_some_and(Caller::is_agent) =>
+        {
+            Some(IdleOutcome::EndsOutsideWork)
         }
         _ => None,
     }
@@ -719,6 +875,9 @@ pub fn end_stopped_turn(prev: &RunRecord, now: &str) -> Option<RunRecord> {
     next.detail = None;
     next.tool = None;
     next.wait_kind = None;
+    next.caller = None;
+    next.is_caller_inferred = None;
+    next.wait_started_at = None;
     next.transcript_path = None;
     next.cache_window = None;
     next.outside_turn_rest = None;
@@ -776,23 +935,26 @@ fn is_question_wait(prev: Option<&RunRecord>) -> bool {
     })
 }
 
+/// Whether the record's last event was a tool's start, which says what a
+/// permission request that follows asks for, and whose call it is. `tool` is
+/// written only by a tool event and kept only with its words; a record from
+/// before the field says it by its last event, which the shell receivers
+/// named after the hook.
+fn has_tool_context(record: &RunRecord) -> bool {
+    record.tool.is_some()
+        || matches!(
+            record.last_hook_event.as_deref(),
+            Some("tool_started" | "PreToolUse")
+        )
+}
+
 /// A permission request's wait. Only the tool event just before it says
 /// what needs approval, and which tool; any earlier detail (an error, say)
 /// is not a request's words, and the provider's own message stands instead.
 fn approval_wait(prev: Option<&RunRecord>, detail: Option<&str>, next: &mut RunRecord) {
     next.wait_kind = Some(WaitKind::Approval);
-    // `tool` is written only by a tool event and kept only with its words;
-    // a record from before the field says it by its last event, which the
-    // shell receivers named after the hook.
-    let has_tool_context = prev.is_some_and(|record| {
-        record.tool.is_some()
-            || matches!(
-                record.last_hook_event.as_deref(),
-                Some("tool_started" | "PreToolUse")
-            )
-    });
     let tool_detail = prev
-        .filter(|_| has_tool_context)
+        .filter(|record| has_tool_context(record))
         .and_then(|record| record.detail.as_deref())
         .and_then(text_field);
     if tool_detail.is_some() {
@@ -827,8 +989,8 @@ fn turn_transcript(
         .filter(|path| !path.is_empty() && path.len() <= MAX_RECORD_TEXT_BYTES)
 }
 
-/// Keeps what the run's wait is about through an event that leaves its
-/// state as it was.
+/// Keeps what the run's wait is about, and whose it is, through an event
+/// that leaves its state as it was.
 fn carry_wait(prev: Option<&RunRecord>, next: &mut RunRecord) {
     next.detail = prev
         .and_then(|record| record.detail.as_deref())
@@ -837,6 +999,9 @@ fn carry_wait(prev: Option<&RunRecord>, next: &mut RunRecord) {
         .and_then(|record| record.tool.as_deref())
         .and_then(text_field);
     next.wait_kind = prev.and_then(|record| record.wait_kind);
+    next.caller = prev.and_then(|record| record.caller.clone());
+    next.is_caller_inferred = prev.and_then(|record| record.is_caller_inferred);
+    next.wait_started_at = prev.and_then(|record| record.wait_started_at.clone());
 }
 
 /// The next record with every field the event does not touch carried over
@@ -852,10 +1017,13 @@ fn carried(prev: Option<&RunRecord>, context: &ApplyContext, now: &str) -> RunRe
         state: prev.map_or(RunState::Unknown, |record| record.state),
         // The shell wrote `detail` fresh on every event; only the approval
         // rule reads the previous one, and it does so explicitly. The tool
-        // `detail` names and the kind of wait go with it.
+        // `detail` names, the kind of wait, and whose call it is go with it.
         detail: None,
         tool: None,
         wait_kind: None,
+        caller: None,
+        is_caller_inferred: None,
+        wait_started_at: None,
         // `apply` sets it again while the run is in a turn or waits
         // (`turn_transcript`).
         transcript_path: None,

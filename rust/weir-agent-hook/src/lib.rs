@@ -1986,7 +1986,7 @@ mod start_tests {
         let tool = AgentEvent::ToolStarted {
             tool: "Bash".into(),
             detail: None,
-            by_subagent: false,
+            caller: weir_agent_model::Caller::Agent,
         };
         assert_eq!(
             judged(None).moved_on(&tool, Some(&at_rest), Some(&begun), &lookups),

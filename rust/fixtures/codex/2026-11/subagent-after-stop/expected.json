@@ -30,7 +30,9 @@
   ],
   [
     {
-      "by_subagent": true,
+      "caller": {
+        "subagent": "00000000-0000-4000-8000-000000000021"
+      },
       "detail": "Bash: sleep 25 && ls",
       "tool": "Bash",
       "type": "tool_started"
@@ -44,7 +46,9 @@
   ],
   [
     {
-      "by_subagent": true,
+      "caller": {
+        "subagent": "00000000-0000-4000-8000-000000000021"
+      },
       "tool": "Bash",
       "type": "tool_finished"
     }

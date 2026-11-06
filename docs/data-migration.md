@@ -702,7 +702,7 @@ The hook's run records (`agent-states/<id>.state.json` for Claude,
 `codex-agent-states/<id>.state.json` for Codex, and
 `antigravity-agent-states/<id>.state.json` for Antigravity, new with its resume
 hints in `antigravity-sessions/`) stay at schema 3, and every field they gained
-is optional (`RunRecord` in `weir-agent-model` lists them all). The nine below
+is optional (`RunRecord` in `weir-agent-model` lists them all). The ten below
 change how a record reads. `killedByLimpidAt` became `killedByWeirAt` in 0.1.14
 with no alias, so a Limpid record's mark is carried as an unknown field. An
 earlier build has no Antigravity provider, so it neither reads nor deletes those
@@ -763,6 +763,29 @@ running. 0.1.9 carries the field through its unknown fields but never clears it,
 so a record it rewrites after a later prompt keeps a count the next turn no
 longer describes. After a stop 0.1.9 wrote, the current build can show that
 stale count until it writes the record again at its next write.
+
+The tenth, `caller`, says whose call `tool` and `detail` describe and, while
+the run waits, whose wait it is: `agent`, or `{"subagent": "<id>"}` with the id
+Claude or Codex gives the subagent (`docs/provider-adapters.md`, "Whose a wait
+is"). It is read leniently: a shape the current build cannot read is no caller.
+With it come `isCallerInferred`, `true` when the caller was taken from the tool
+event before a call that named no one (such a wait ends with any tool), and
+`waitStartedAt`, when the wait opened, which the agent's status report is read
+against. A record without `caller`, written by the build before or brought
+forward from schema 2, has a wait of no known caller, which ends with any tool
+and with the parent's `Stop` as every wait did before. The build before also
+ended a Codex subagent's wait outside a turn at the subagent's next tool, back
+at `finished`; the current build does that only for a wait it knows is the
+subagent's, so a Codex subagent's wait the build before wrote ends at that tool
+showing the run working, until the next `Stop` or prompt. The build before
+carries the fields through its unknown fields but never clears them, so a
+record it rewrites keeps a `caller` and `isCallerInferred`, and an earlier
+`waitStartedAt`, past the call they described, as with `waitKind`; a carried
+`waitStartedAt` dates a later wait from the older one. A wait of the agent's
+that the build before opened can therefore read as a subagent's in the current
+build, which keeps it open through the parent's `Stop` and ends it at the
+agent's status report or the next prompt, until the current build writes the
+record again.
 
 A record the current build cannot read, one with a later schema version above
 all, is left as it is, and the hook writes nothing for the run until a build

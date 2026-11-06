@@ -9,7 +9,7 @@
 
 use crate::background::BackgroundWork;
 use crate::cache::CacheWindow;
-use crate::event::FailureKind;
+use crate::event::{Caller, FailureKind};
 use crate::serde_helpers::lenient;
 use crate::session_settings::PermissionMode;
 use crate::usage::UsageLimit;
@@ -177,6 +177,39 @@ pub struct RunRecord {
         deserialize_with = "lenient"
     )]
     pub wait_kind: Option<WaitKind>,
+    /// Whose call `tool` and `detail` describe and, while the run is in
+    /// `NeedsInput`, whose wait it is: the agent's own (`agent`) or a
+    /// subagent's (`{"subagent": "<id>"}`). A subagent's wait outlives the
+    /// parent's turn and ends only with that subagent's tool (any tool, when
+    /// `isCallerInferred`), so the lifecycle reads it, and the projection for
+    /// a subagent's wait the agent reports gone. Written by a tool event and by
+    /// the event that opens a wait, and kept with the wait's words by the
+    /// permission request that follows a tool. Absent when the call named no
+    /// one and no tool event said whose it was, and in records written before
+    /// the field existed: such a wait ends as before, with any tool. A shape
+    /// this build cannot read is absent too (`"unnamed"` is never written).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient"
+    )]
+    pub caller: Option<Caller>,
+    /// Set when `caller` was not named by the call it describes but taken
+    /// from the tool event before it (Claude Code's permission prompt and an
+    /// MCP server's request for input name no one). That event is the last
+    /// tool the record took, which need not be the call that asks, so a wait
+    /// with an inferred caller ends with any tool. Absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_caller_inferred: Option<bool>,
+    /// When the wait the run is in opened, or last renewed: set by the event
+    /// that puts it in `NeedsInput` and kept with the wait, through the
+    /// parent's stop that leaves a subagent's wait open. The agent's status
+    /// report is evidence of that wait only when it came after this
+    /// (`projection`); `updatedAt` moves with every write, the stop's
+    /// included, and stays when the run last changed. Absent outside a wait
+    /// and in records written before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_started_at: Option<String>,
     /// This is the provider's transcript of the conversation, as the prompt
     /// that began the run's turn or the event that put it in `NeedsInput`
     /// named it. It is absent outside a turn unless the run waits, for a
@@ -474,9 +507,12 @@ impl From<RunRecordV2> for RunRecord {
             state_episode_token: record.state_episode_token,
             state: record.state,
             detail: record.detail.filter(|value| !value.is_empty()),
-            // The shell receivers recorded neither.
+            // The shell receivers recorded none of them.
             tool: None,
             wait_kind: None,
+            caller: None,
+            is_caller_inferred: None,
+            wait_started_at: None,
             transcript_path: None,
             run_started_at: record.run_started_at.filter(|value| !value.is_empty()),
             updated_at: record.updated_at,
@@ -679,6 +715,37 @@ mod tests {
         let unreadable = json.replace("\"revision\":1", r#""revision":1,"waitKind":7"#);
         let record = RunRecord::decode(unreadable.as_bytes()).expect("the record survives");
         assert_eq!(record.wait_kind, None);
+    }
+
+    #[test]
+    fn the_caller_round_trips_and_one_this_build_cannot_read_is_absent() {
+        let json = V2.replace("\"schemaVersion\":2", "\"schemaVersion\":3");
+        let record = RunRecord::decode(json.as_bytes()).expect("decodes without the field");
+        assert_eq!(record.caller, None);
+        let text = String::from_utf8(record.encode().expect("encodes")).expect("utf8");
+        assert!(!text.contains("caller"), "absent stays absent");
+        for (caller, written) in [
+            (Caller::Agent, r#""caller":"agent""#),
+            (
+                Caller::Subagent("a1".to_owned()),
+                r#""caller":{"subagent":"a1"}"#,
+            ),
+        ] {
+            let encoded = RunRecord {
+                caller: Some(caller.clone()),
+                ..record.clone()
+            }
+            .encode()
+            .expect("encodes");
+            let text = String::from_utf8(encoded.clone()).expect("utf8");
+            assert!(text.contains(written), "{text}");
+            let again = RunRecord::decode(&encoded).expect("decodes again");
+            assert_eq!(again.caller, Some(caller));
+            assert!(!again.extra.contains_key("caller"));
+        }
+        let unreadable = json.replace("\"revision\":1", r#""revision":1,"caller":{"team":"x"}"#);
+        let record = RunRecord::decode(unreadable.as_bytes()).expect("the record survives");
+        assert_eq!(record.caller, None);
     }
 
     #[test]

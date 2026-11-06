@@ -39,7 +39,9 @@
   ],
   [
     {
-      "by_subagent": true,
+      "caller": {
+        "subagent": "a0000000000000001"
+      },
       "detail": "Read: /tmp/example/README.md",
       "tool": "Read",
       "type": "tool_started"
@@ -47,7 +49,9 @@
   ],
   [
     {
-      "by_subagent": true,
+      "caller": {
+        "subagent": "a0000000000000001"
+      },
       "detail": "SubagentHandback",
       "tool": "SubagentHandback",
       "type": "tool_started"

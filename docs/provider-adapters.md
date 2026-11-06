@@ -203,7 +203,7 @@ routing toggle when the descriptors cannot be read
 | `approval_hook` | Approval is answered by a hook process. | yes | yes | no | yes |
 | `approval_protocol` | Approval is requested over a connection. | no | no | no | no |
 | `subagents` | The provider emits subagent events. | yes | yes | yes | no |
-| `subagent_end_opens_turn` | A subagent's end hands its result back in a turn of the agent's own, so a subagent's tools at idle or error, or after a wait outside a turn, show the run working until that turn's stop. | yes | no | no | no |
+| `subagent_end_opens_turn` | A subagent's end hands its result back in a turn of the agent's own, so a subagent's tools at idle or error, the one that ends its wait there included, show the run working until that turn's stop. | yes | no | no | no |
 | `turn_snapshot` | Turns are recorded: a snapshot on prompt submit and another when the turn ends. | yes | yes | yes | yes |
 | `cache_window` | The provider reports when its prompt cache expires, on `TurnFinished`. | yes | no | no | no |
 | `program_status_idle_stops_turn` | An `idle` status report ends the turn it interrupts. | yes | no | yes | no |
@@ -272,26 +272,87 @@ described.
 A background subagent's tools reach the hook as the run's own `PreToolUse`,
 `PostToolUse`, and `PostToolUseFailure`, after the stop that launched it.
 Claude and Codex name the subagent in them (`agent_id`), and their adapters
-carry that as `by_subagent` on `ToolStarted` and `ToolFinished`. `apply` takes no such
-tool event out of `finished` outside a turn and writes nothing for it: the
-stop already counted the subagent, and its tools are not the agent at work.
-The guard covers only `finished`. At `idle` and `error` no stop counted the
-subagent, because a session start and a failure clear the count, so its tool
-events are the one sign that work goes on; they reopen the run as any tool
-does until the subagent ends. Its end starts a turn of Claude's, whose stop
-settles the run; Claude holds the idle prompt back while a subagent runs
-(see "Work outside a turn"). A wait that the subagent's permission prompt
-opened is not a rest either, and its next tool event ends it. So is a
-question the subagent asks after the stop (its `AskUserQuestion`, or its MCP
-server's request for input): its answer leaves the run `running` until the
-subagent's hand-back opens a turn whose stop settles it. Returning to the
-rest instead needs a wait that records whose it is, since the answer of an
-MCP server's request carries no `agent_id`. Codex's subagent ends with no
-hook and opens no turn (`subagent_end_opens_turn` is Claude's alone), so for
-Codex the guard also keeps `idle` and `error`, and a subagent's tool that
-ends a wait outside a turn returns the run to `finished`. The agent's
-own tools after a stop carry no `agent_id`, so a stop hook's continuation
-still reopens the run as "Work outside a turn" below describes.
+carry that as the event's `caller` on `ToolStarted` and `ToolFinished`.
+`apply` takes no such tool event out of `finished` outside a turn and writes
+nothing for it: the stop already counted the subagent, and its tools are not
+the agent at work. For Claude the guard covers only `finished`. At `idle` and
+`error` no stop counted the subagent, because a session start and a failure
+clear the count, so its tool events are the one sign that work goes on; they
+reopen the run as any tool does until the subagent ends. Its end starts a turn
+of Claude's, whose stop settles the run; Claude holds the idle prompt back
+while a subagent runs (see "Work outside a turn"). Codex's subagent ends with
+no hook and opens no turn (`subagent_end_opens_turn` is Claude's alone), so
+for Codex the guard also keeps `idle` and `error`. The agent's own tools after
+a stop carry no `agent_id`, so a stop hook's continuation still reopens the
+run as "Work outside a turn" below describes.
+
+### Whose a wait is
+
+A subagent works beside the agent and can wait on the person while the agent
+goes on, or after the agent's turn has ended. The run record holds one wait,
+and records whose it is in `caller`: `agent`, or the subagent's id. Codex
+names a subagent's `PermissionRequest` and question (`request_user_input`)
+with `agent_id`, and Claude names a subagent's `AskUserQuestion` so. Claude's
+permission prompt (`Notification`) and an MCP server's request for input
+(`Elicitation`) name no one, and their events carry the caller `unnamed`.
+Claude's `PermissionRequest`, which comes first and names the tool, goes to the
+approval helper alone, not to the lifecycle, and no recording shows whether a
+subagent's carries `agent_id`. Such a wait then takes the caller of the tool
+event just before it, which also gives the wait its words and tool, and the
+record marks it inferred (`isCallerInferred`): that event is only the last tool
+the record took, and a call beside the one that asks can have been it. A
+permission prompt while a named question waits keeps the question but marks
+its caller inferred the same way, since the agent's own tools leave the
+question and write nothing, so the question's own prompt and another call's
+read alike. With no tool event before it the record does not know whose the
+wait is.
+
+- A tool event ends a wait only if it is the same caller's. Another
+  subagent's tools, and the agent's own, leave a subagent's wait as it is and
+  write nothing, and a subagent's tools leave the agent's wait so.
+  `ElicitationResult` names no one either and ends the request it answers. A
+  wait whose caller the record does not know, or only inferred, ends with any
+  tool, as every wait did before the field, so a wait taken for the wrong
+  caller cannot outlive the request.
+- The parent's `TurnFinished` ends the turn (`runStartedAt`, the cache window,
+  and what it left running are written as for any stop) but leaves a
+  subagent's wait open in the episode that announced it, and records
+  `finished` as the rest under it (`outsideTurnRest`). A wait whose caller was
+  only inferred is kept the same way whatever caller was inferred, since the
+  agent cannot stop while its own call's prompt is open. The wait keeps the
+  time it opened (`waitStartedAt`), against which the agent's status reports
+  are read (below), while `updatedAt` is the stop's. The agent's own wait,
+  when named, ends with its stop as before.
+- A wait that opens outside a turn while the run rests records that rest the
+  same way, `finished` after an error. When the subagent's own tool ends its
+  wait outside a turn, the run returns to that rest, as the subagent's tool
+  would leave it: at `finished` for both agents, and at `idle` for Codex. At
+  Claude's `idle` the tool shows the run working, as above.
+- No other hook ends a subagent's wait. Codex runs none when the person
+  declines it, inside the parent's turn or after it: Esc stops the subagent's
+  turn, recorded on Codex 0.166.0 (`codex/2026-11/subagent-wait-before-stop`),
+  and the subagent may run no tool again, while the parent's own tools leave
+  the wait. The agent's status report says it instead: while the request is
+  on screen Codex reports `blocked`, and after Esc something else (`done`
+  once its turn was over). So a run that waits on a subagent, or on a caller
+  only inferred, whose pane last reported anything but `blocked` after the
+  second the wait opened, is shown without the wait's words or kind and in the
+  wait's episode (`subagents_wait_is_gone`): at work inside the parent's turn,
+  and at the rest under the wait outside one. A report from the second the
+  wait opened can be the work that asked, sent a moment before the request was
+  drawn, so it does not count, and the parent's stop, which writes the record
+  after Codex may already have reported `done`, does not move the time it is
+  read against. Codex's request reaches the record only when the approval
+  helper gives it back to Codex's own prompt, so a request Weir's approval
+  card answers is never such a wait. As for a wait only a report
+  shows, the record is not written; the next hook moves it on. Inside tmux, or
+  with `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` set, the wait stays until the
+  subagent's next tool or the next prompt.
+- The agent's own wait outside a turn (a late tool's permission) ends with
+  Claude's idle prompt when the transcript shows the call ended, which is how
+  a declined call shows there (see "Work outside a turn"). A subagent's call
+  is not in that transcript, so the idle prompt leaves its wait, and a wait
+  whose caller the record does not know.
 
 `project` passes the count to the badge only while the run rests `finished`.
 Codex keeps its background terminals running after a turn too, but its
@@ -381,9 +442,11 @@ every tool call of the latest assistant message that made one has a result,
 or an interrupt line follows it. A wait with that fact, in a turn open at
 least 55 seconds, ends as interrupted; without it the wait stays, because a
 minute idle is also a person who has not answered yet, and ending a live
-question would hide it. A wait outside a turn (a late tool's permission) is
-left as it is either way. The idle prompt writes nothing for any other run: a
-run at rest already rests.
+question would hide it. Outside a turn, the agent's own wait (a late tool's
+permission) with that fact ends the stretch, and the run returns to its
+`outsideTurnRest` in the wait's episode; a subagent's wait, or one whose caller
+the record does not know, is left as it is (see "Whose a wait is"). The idle
+prompt writes nothing for any other run: a run at rest already rests.
 
 On a real Claude Code 2.1.309 run, the idle prompt did not come at all after an
 Esc that declined a question: twice, nothing followed for 85 and 110 seconds. So

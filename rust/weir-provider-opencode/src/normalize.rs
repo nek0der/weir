@@ -8,9 +8,9 @@ use crate::failure;
 use serde_json::{Map, Value};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use weir_agent_model::{
-    AgentEvent, CommandRun, MAX_HOOK_INPUT_BYTES, NormalizeError, PermissionMode, PromptKind,
-    RawHookInput, SessionSettings, SessionSource, Titles, TurnPreparation, TurnReading, TurnUsage,
-    WorktreeIntent, parse_object,
+    AgentEvent, Caller, CommandRun, MAX_HOOK_INPUT_BYTES, NormalizeError, PermissionMode,
+    PromptKind, RawHookInput, SessionSettings, SessionSource, Titles, TurnPreparation, TurnReading,
+    TurnUsage, WorktreeIntent, parse_object,
 };
 
 /// The plugin started in a Weir pane.
@@ -98,13 +98,15 @@ pub(crate) fn normalize(input: RawHookInput<'_>) -> Result<Vec<AgentEvent>, Norm
         "session.tool.called" => vec![tool_started(&object)],
         "session.tool.success" | "session.tool.failed" => vec![AgentEvent::ToolFinished {
             tool: owned(data_string(&object, "name")),
-            by_subagent: false,
+            caller: Caller::Agent,
         }],
         "permission.asked" => vec![AgentEvent::ApprovalRequested {
             detail: permission_detail(&object),
+            caller: Caller::Agent,
         }],
         "form.created" => vec![AgentEvent::WaitingForInput {
             detail: form_detail(&object),
+            caller: Caller::Agent,
         }],
         // The last wait is over and the agent goes on. A refusal is not reported
         // (the plugin leaves it to the end of the execution), and nothing else
@@ -112,12 +114,12 @@ pub(crate) fn normalize(input: RawHookInput<'_>) -> Result<Vec<AgentEvent>, Norm
         "permission.replied" => vec![AgentEvent::ToolStarted {
             tool: string(&object, "tool").unwrap_or_default().to_owned(),
             detail: None,
-            by_subagent: false,
+            caller: Caller::Agent,
         }],
         "form.replied" | "form.cancelled" => vec![AgentEvent::ToolStarted {
             tool: "question".to_owned(),
             detail: None,
-            by_subagent: false,
+            caller: Caller::Agent,
         }],
         // The service tries again by itself, so this is work going on rather than
         // a stop.
@@ -128,7 +130,7 @@ pub(crate) fn normalize(input: RawHookInput<'_>) -> Result<Vec<AgentEvent>, Norm
                 .and_then(|error| error.get("message"))
                 .and_then(Value::as_str)
                 .map(str::to_owned),
-            by_subagent: false,
+            caller: Caller::Agent,
         }],
         "session.compaction.started" => vec![AgentEvent::Compacting],
         "session.compaction.ended" | "session.compaction.failed" => {
@@ -188,7 +190,7 @@ fn tool_started(object: &Map<String, Value>) -> AgentEvent {
             Some(argument) => format!("{tool}: {argument}"),
             None => tool.to_owned(),
         }),
-        by_subagent: false,
+        caller: Caller::Agent,
     }
 }
 

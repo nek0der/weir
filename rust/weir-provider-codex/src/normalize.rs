@@ -19,10 +19,10 @@
 //! the provider's internal work and yields no event (`is_internal_agent`).
 //!
 //! A subagent the person's agent spawns is marked, and only its tool calls
-//! and permission requests count as the pane's (`is_subagents_own`). Its
-//! tool calls say they are a subagent's (`by_subagent`), as Claude's do: the
-//! subagent can work on after the parent's `Stop`, and its tools then leave
-//! the finished run at rest.
+//! and permission requests count as the pane's (`is_subagents_own`). They
+//! name the subagent (`caller`), as Claude's do: the subagent can work on
+//! after the parent's `Stop`, its tools then leave the finished run at rest,
+//! and its wait outlives that `Stop` and ends only with its own tool.
 
 use crate::failure::{RolloutFailure, USAGE_LIMIT_KIND, rollout_failure};
 use crate::json::{contains, parse, string};
@@ -31,9 +31,9 @@ use std::borrow::Cow;
 use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 use weir_agent_model::{
-    AgentEvent, HookContext, MAX_HOOK_INPUT_BYTES, NormalizeError, PermissionMode, RawHookInput,
-    RunRecord, SessionSettings, SessionSource, UsageLimit, format_utc_seconds, parse_object,
-    parse_utc_seconds, transcript_path_for_events,
+    AgentEvent, Caller, HookContext, MAX_HOOK_INPUT_BYTES, NormalizeError, PermissionMode,
+    RawHookInput, RunRecord, SessionSettings, SessionSource, UsageLimit, format_utc_seconds,
+    parse_object, parse_utc_seconds, transcript_path_for_events,
 };
 
 /// The variable that moves Codex's configuration directory from `~/.codex`.
@@ -109,11 +109,14 @@ pub(crate) fn normalize(
         "PreToolUse" => pre_tool_use(&object),
         "PostToolUse" => AgentEvent::ToolFinished {
             tool: string(&object, "tool_name").map(str::to_owned),
-            by_subagent: is_subagents(&object),
+            caller: caller(&object),
         },
         // Codex's request carries the tool and its input but no message, so
         // the lifecycle words the wait.
-        "PermissionRequest" => AgentEvent::ApprovalRequested { detail: None },
+        "PermissionRequest" => AgentEvent::ApprovalRequested {
+            detail: None,
+            caller: caller(&object),
+        },
         "PreCompact" => AgentEvent::Compacting,
         "PostCompact" => AgentEvent::CompactionFinished,
         "Interrupt" => AgentEvent::Interrupted,
@@ -339,7 +342,13 @@ fn rollout_effort(rollout: &[u8]) -> Option<String> {
 /// Whether the payload comes from a subagent (Codex names it with
 /// `agent_id`), its tools among them.
 pub(crate) fn is_subagents(object: &Map<String, Value>) -> bool {
-    string(object, "agent_id").is_some_and(|id| !id.is_empty())
+    caller(object).is_subagent()
+}
+
+/// Whose call the payload reports: the subagent its `agent_id` names, else
+/// the agent's own.
+fn caller(object: &Map<String, Value>) -> Caller {
+    Caller::from_agent_id(string(object, "agent_id"))
 }
 
 /// Returns whether the payload is a subagent's own event, which is not the
@@ -375,6 +384,7 @@ fn pre_tool_use(object: &Map<String, Value>) -> AgentEvent {
     if tool == QUESTION_TOOL {
         return AgentEvent::WaitingForInput {
             detail: question_text(object),
+            caller: caller(object),
         };
     }
     // The concrete argument over the bare tool name, as the Claude adapter
@@ -394,7 +404,7 @@ fn pre_tool_use(object: &Map<String, Value>) -> AgentEvent {
     AgentEvent::ToolStarted {
         detail: Some(detail),
         tool,
-        by_subagent: is_subagents(object),
+        caller: caller(object),
     }
 }
 
@@ -750,7 +760,7 @@ mod tests {
             vec![AgentEvent::ToolStarted {
                 tool: "Bash".into(),
                 detail: Some("Bash: ls".into()),
-                by_subagent: true,
+                caller: Caller::Subagent("019a0000-0000-7000-8000-000000000001".into()),
             }]
         );
         assert_eq!(
@@ -759,7 +769,7 @@ mod tests {
             )),
             vec![AgentEvent::ToolFinished {
                 tool: Some("Bash".into()),
-                by_subagent: true,
+                caller: Caller::Subagent("019a0000-0000-7000-8000-000000000001".into()),
             }]
         );
         assert!(matches!(
@@ -1033,7 +1043,8 @@ mod tests {
                 r#"{"hook_event_name":"PreToolUse","tool_name":"request_user_input","tool_input":{"questions":[{"id":"a","header":"A","question":"Which license?","options":[]},{"id":"b","header":"B","question":"Who holds it?","options":[]}]}}"#
             ),
             vec![AgentEvent::WaitingForInput {
-                detail: Some("Which license?".into())
+                detail: Some("Which license?".into()),
+                caller: Caller::Agent,
             }]
         );
         for input in [r"{}", r#"{"questions":[{"question":"  "}]}"#] {
@@ -1042,7 +1053,10 @@ mod tests {
             );
             assert_eq!(
                 events(&payload),
-                vec![AgentEvent::WaitingForInput { detail: None }],
+                vec![AgentEvent::WaitingForInput {
+                    detail: None,
+                    caller: Caller::Agent
+                }],
                 "{input}"
             );
         }
@@ -1057,7 +1071,7 @@ mod tests {
             vec![AgentEvent::ToolStarted {
                 tool: "request_user_input_async".into(),
                 detail: Some("request_user_input_async".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             }]
         );
     }
@@ -1071,7 +1085,7 @@ mod tests {
             vec![AgentEvent::ToolStarted {
                 tool: "Bash".into(),
                 detail: Some("Bash: echo out > out-long.txt".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             }]
         );
         assert_eq!(
@@ -1081,7 +1095,7 @@ mod tests {
             vec![AgentEvent::ToolStarted {
                 tool: "apply_patch".into(),
                 detail: Some("apply_patch: /a.txt".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             }]
         );
         assert_eq!(
@@ -1091,7 +1105,7 @@ mod tests {
             vec![AgentEvent::ToolStarted {
                 tool: "Read".into(),
                 detail: Some("Read".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             }]
         );
         // A `command` that is there but empty says what the tool runs is
@@ -1106,7 +1120,7 @@ mod tests {
             vec![AgentEvent::ToolStarted {
                 tool: "apply_patch".into(),
                 detail: Some("apply_patch".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             }]
         );
         assert_eq!(
@@ -1116,14 +1130,14 @@ mod tests {
             vec![AgentEvent::ToolStarted {
                 tool: "Bash".into(),
                 detail: Some("Bash: bash -lc ls -la".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             }]
         );
         assert_eq!(
             events(r#"{"hook_event_name":"PostToolUse","tool_name":"Bash"}"#),
             vec![AgentEvent::ToolFinished {
                 tool: Some("Bash".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             }]
         );
     }

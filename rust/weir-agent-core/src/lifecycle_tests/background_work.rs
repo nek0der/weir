@@ -150,7 +150,7 @@ fn a_codex_subagents_tool_after_the_stop_leaves_the_run_finished() {
 fn subagents_tool_end() -> AgentEvent {
     AgentEvent::ToolFinished {
         tool: Some("Bash".into()),
-        by_subagent: true,
+        caller: subagent(),
     }
 }
 
@@ -160,7 +160,10 @@ fn subagents_tool_end() -> AgentEvent {
 /// work it would otherwise show.
 #[test]
 fn a_codex_subagents_wait_after_the_stop_ends_finished() {
-    let approval = AgentEvent::ApprovalRequested { detail: None };
+    let approval = AgentEvent::ApprovalRequested {
+        detail: None,
+        caller: subagent(),
+    };
     let (waiting, ..) = run(
         &codex(),
         &[started(None), prompt("go"), stop(None), approval.clone()],
@@ -206,7 +209,7 @@ fn a_codex_subagents_tool_after_a_failure_or_compact_leaves_the_rest() {
     let tool_start = AgentEvent::ToolStarted {
         tool: "Bash".into(),
         detail: Some("Bash: ls".into()),
-        by_subagent: true,
+        caller: subagent(),
     };
     for (record, rest) in [(failed, RunState::Error), (compacted, RunState::Idle)] {
         assert_eq!(record.state, rest);
@@ -224,7 +227,7 @@ fn the_agents_own_tool_after_the_stop_is_still_work() {
     let own = AgentEvent::ToolStarted {
         tool: "Bash".into(),
         detail: Some("Bash: make test".into()),
-        by_subagent: false,
+        caller: Caller::Agent,
     };
     let (record, ..) = run(
         &claude(),
@@ -243,7 +246,11 @@ const SUBAGENT: BackgroundWork = BackgroundWork {
 fn question_end(by_subagent: bool) -> AgentEvent {
     AgentEvent::ToolFinished {
         tool: Some("AskUserQuestion".into()),
-        by_subagent,
+        caller: if by_subagent {
+            subagent()
+        } else {
+            Caller::Agent
+        },
     }
 }
 
@@ -294,6 +301,7 @@ fn the_agents_own_tool_end_after_the_stop_is_still_work() {
 fn a_subagents_tool_end_still_ends_its_wait() {
     let approval = AgentEvent::ApprovalRequested {
         detail: Some("Claude needs your permission".into()),
+        caller: Caller::Unnamed,
     };
     let (record, ..) = run(
         &claude(),
@@ -326,7 +334,7 @@ fn work_outside_the_turn_keeps_it_and_the_next_stop_replaces_it() {
     let tool = AgentEvent::ToolStarted {
         tool: "Bash".into(),
         detail: Some("Bash: ls".into()),
-        by_subagent: false,
+        caller: Caller::Agent,
     };
     let idle = AgentEvent::AwaitingPrompt {
         awaited_call_ended: false,
@@ -357,7 +365,7 @@ fn the_stop_after_a_stop_hook_replaces_the_count() {
     let tool = AgentEvent::ToolStarted {
         tool: "Bash".into(),
         detail: Some("Bash: ls".into()),
-        by_subagent: false,
+        caller: Caller::Agent,
     };
     let real_end = AgentEvent::TurnFinished {
         continues_after_stop_hook: true,

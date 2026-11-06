@@ -7,6 +7,7 @@ mod background_work;
 mod outside_a_turn;
 mod prompts_and_waits;
 mod session_settings;
+mod waits_by_caller;
 
 const NOW: &str = "2026-09-14T00:00:00Z";
 const LATER: &str = "2026-09-14T00:00:05Z";
@@ -32,6 +33,11 @@ fn claude() -> ProviderDescriptor {
 
 fn codex() -> ProviderDescriptor {
     weir_provider_codex::CodexAdapter.descriptor().clone()
+}
+
+/// The subagent the tests' subagent calls come from.
+fn subagent() -> Caller {
+    Caller::Subagent("a1".into())
 }
 
 fn started(title: Option<&str>) -> AgentEvent {

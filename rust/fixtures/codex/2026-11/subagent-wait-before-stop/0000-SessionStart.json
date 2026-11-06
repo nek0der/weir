@@ -1,0 +1,9 @@
+{
+  "cwd": "/tmp/example",
+  "hook_event_name": "SessionStart",
+  "model": "gpt-6-astra",
+  "permission_mode": "default",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "source": "startup",
+  "transcript_path": "/Users/example/.codex/sessions/2026/11/06/rollout-2026-11-06T11-46-19-00000000-0000-4000-8000-0000000000ff.jsonl"
+}

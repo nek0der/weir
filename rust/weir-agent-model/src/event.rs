@@ -146,6 +146,45 @@ pub enum FailureKind {
     ModelUnavailable,
 }
 
+/// Who made the call an event reports: the agent in the pane, a subagent it
+/// started, or someone the payload does not name. A subagent works beside the
+/// agent and can outlive its turn, so its wait is not the agent's: the
+/// agent's stop does not end it, and neither do another caller's tools.
+/// Serialized as `"agent"`, `{"subagent": "<id>"}`, or `"unnamed"`.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Caller {
+    /// The agent itself.
+    #[default]
+    Agent,
+    /// A subagent, by the id the provider gives it (`agent_id`).
+    Subagent(String),
+    /// The payload does not say whose call it is.
+    Unnamed,
+}
+
+impl Caller {
+    /// The caller a payload's `agent_id` names: a subagent for a non-empty
+    /// id, else the agent. Claude and Codex both mark a subagent's hooks so.
+    #[must_use]
+    pub fn from_agent_id(agent_id: Option<&str>) -> Self {
+        match agent_id.filter(|id| !id.is_empty()) {
+            Some(id) => Self::Subagent(id.to_owned()),
+            None => Self::Agent,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_agent(&self) -> bool {
+        matches!(self, Self::Agent)
+    }
+
+    #[must_use]
+    pub const fn is_subagent(&self) -> bool {
+        matches!(self, Self::Subagent(_))
+    }
+}
+
 /// One neutral event derived from one provider hook payload.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -190,29 +229,44 @@ pub enum AgentEvent {
         tool: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
-        /// The tool is a subagent's rather than the agent's own (Claude and
+        /// Whose tool it is: the agent's own, or a subagent's (Claude and
         /// Codex name the subagent with `agent_id`). A subagent can work on
         /// after the turn that launched it has stopped, and that stop ended
         /// the pane's turn (Claude's also counted it, `background_work`),
-        /// so its tools do not put the run back to work. Omitted when false.
-        #[serde(default, skip_serializing_if = "is_false")]
-        by_subagent: bool,
+        /// so its tools do not put the run back to work. A wait ends only
+        /// with a tool of the caller it is for. Omitted for the agent's own.
+        #[serde(default, skip_serializing_if = "Caller::is_agent")]
+        caller: Caller,
     },
     ToolFinished {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool: Option<String>,
-        /// As on `ToolStarted`: the tool that ended is a subagent's. Omitted
-        /// when false.
-        #[serde(default, skip_serializing_if = "is_false")]
-        by_subagent: bool,
+        /// As on `ToolStarted`: whose tool ended. `Unnamed` for the end of a
+        /// request whose payload does not say (Claude's
+        /// `ElicitationResult`), which ends the wait it answers whoever it is
+        /// for. Omitted for the agent's own.
+        #[serde(default, skip_serializing_if = "Caller::is_agent")]
+        caller: Caller,
     },
     WaitingForInput {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+        /// Whose question it is: the agent's, a subagent's, or `Unnamed`
+        /// when the payload does not say (Claude's `Elicitation`), and the
+        /// tool event just before it then says. A subagent's wait outlives
+        /// the parent's turn. Omitted for the agent's own.
+        #[serde(default, skip_serializing_if = "Caller::is_agent")]
+        caller: Caller,
     },
     ApprovalRequested {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<String>,
+        /// Whose permission request it is, as on `WaitingForInput`. Codex's
+        /// `PermissionRequest` names a subagent with `agent_id`; Claude's
+        /// permission prompt (`Notification`) names no one, so it is
+        /// `Unnamed`. Omitted for the agent's own.
+        #[serde(default, skip_serializing_if = "Caller::is_agent")]
+        caller: Caller,
     },
     Compacting,
     CompactionFinished,
@@ -396,6 +450,43 @@ mod tests {
     }
 
     #[test]
+    fn a_caller_is_written_by_name_and_the_agent_is_left_out() {
+        let asked = AgentEvent::ApprovalRequested {
+            detail: None,
+            caller: Caller::Subagent("a1".into()),
+        };
+        let json = serde_json::to_string(&asked).expect("serialize");
+        assert_eq!(
+            json,
+            r#"{"type":"approval_requested","caller":{"subagent":"a1"}}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<AgentEvent>(&json).expect("deserialize"),
+            asked
+        );
+        let unnamed = AgentEvent::WaitingForInput {
+            detail: None,
+            caller: Caller::Unnamed,
+        };
+        let json = serde_json::to_string(&unnamed).expect("serialize");
+        assert_eq!(json, r#"{"type":"waiting_for_input","caller":"unnamed"}"#);
+        assert_eq!(
+            serde_json::from_str::<AgentEvent>(r#"{"type":"approval_requested"}"#)
+                .expect("deserialize"),
+            AgentEvent::ApprovalRequested {
+                detail: None,
+                caller: Caller::Agent,
+            }
+        );
+        assert_eq!(Caller::from_agent_id(Some("")), Caller::Agent);
+        assert_eq!(Caller::from_agent_id(None), Caller::Agent);
+        assert_eq!(
+            Caller::from_agent_id(Some("a1")),
+            Caller::Subagent("a1".into())
+        );
+    }
+
+    #[test]
     fn a_compacting_event_an_earlier_build_wrote_with_a_token_count_still_decodes() {
         let event: AgentEvent =
             serde_json::from_str(r#"{"type":"compacting","context_tokens":120000}"#)
@@ -466,14 +557,14 @@ mod tests {
 
         let mut tool = AgentEvent::ToolFinished {
             tool: None,
-            by_subagent: false,
+            caller: Caller::Agent,
         };
         tool.add_titles(&added);
         assert_eq!(
             tool,
             AgentEvent::ToolFinished {
                 tool: None,
-                by_subagent: false,
+                caller: Caller::Agent,
             }
         );
     }
@@ -482,7 +573,7 @@ mod tests {
     fn absent_optionals_are_omitted() {
         let json = serde_json::to_string(&AgentEvent::ToolFinished {
             tool: None,
-            by_subagent: false,
+            caller: Caller::Agent,
         })
         .expect("ok");
         assert_eq!(json, "{\"type\":\"tool_finished\"}");

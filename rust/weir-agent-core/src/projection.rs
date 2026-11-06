@@ -17,12 +17,12 @@ use crate::turn_rules::conversation_of;
 use std::collections::{BTreeMap, BTreeSet};
 use uuid::Uuid;
 use weir_agent_model::{
-    AcceptedRun, AttachmentResolution, AttentionMarks, Badge, BlockedKind, Capability, Command,
-    CommandOp, ConversationKey, ConversationTurns, EpisodeStamp, Instants, PidStatus, Precondition,
-    ProgramState, ProgramStatus, Projection, ProjectionInput, ProjectionState, ProviderDescriptor,
-    ProviderId, RecordFile, RunRecord, RunState, RuntimePresentation, SessionInfo, SnapshotStatus,
-    StopReason, Target, TurnRecord, TurnSummary, VIEWED_FINISHED_RETENTION_SECS, WaitKind,
-    parse_utc_seconds, seconds_between,
+    AcceptedRun, AttachmentResolution, AttentionMarks, Badge, BlockedKind, Caller, Capability,
+    Command, CommandOp, ConversationKey, ConversationTurns, EpisodeStamp, Instants, PidStatus,
+    Precondition, ProgramState, ProgramStatus, Projection, ProjectionInput, ProjectionState,
+    ProviderDescriptor, ProviderId, RecordFile, RunRecord, RunState, RuntimePresentation,
+    SessionInfo, SnapshotStatus, StopReason, Target, TurnRecord, TurnSummary,
+    VIEWED_FINISHED_RETENTION_SECS, WaitKind, parse_utc_seconds, seconds_between,
 };
 
 /// Priority of a finished run the user has already looked at: still visible,
@@ -275,6 +275,8 @@ fn build_runtimes(
             } else if let Some(evidence) = stopped_turn(run, input, is_pane_agent, declined) {
                 stopped_turns.push((storage_id.clone(), evidence));
                 stopped_badge(badge, run.record.state)
+            } else if subagents_wait_is_gone(run, input, is_pane_agent) {
+                past_subagents_wait_badge(badge, &run.record)
             } else if let Some(kind) = reported_wait(run, input, is_pane_agent, now) {
                 reported_wait_badge(badge, kind)
             } else if reported_failure(run, input, is_pane_agent) {
@@ -928,6 +930,72 @@ fn next_settled_auth_in_ms(
         .filter(|left| *left > 0)
         .min()
         .map(|left| left * 1_000)
+}
+
+/// Returns whether the agent's own status report says the subagent's wait
+/// the run is in is over. Nothing else would end it: Codex runs no hook when
+/// the person declines the request (Esc stops the subagent's turn), inside
+/// the parent's turn or after it, and a subagent declined at Claude's prompt
+/// can end without another tool. The parent's own tools leave the wait
+/// (`lifecycle`), and its stop keeps it. A wait whose caller was only
+/// inferred counts as a subagent's here, as at the stop. While the request is
+/// on screen the agent reports `blocked`. A report of anything else, sent
+/// after the second the wait opened (`waitStartedAt`), is the agent's word
+/// that nothing waits on the person now; one from that same second can be
+/// the work that asked, reported a moment before the request was drawn, and
+/// is no evidence. The wait's own time, not the record's, since the parent's
+/// stop writes the record after the agent may already have reported the end
+/// of its turn. The agent's own wait outside a turn ends with the idle prompt
+/// (`lifecycle::idle_outcome`), and inside one with the rules for a turn the
+/// person stopped (`stopped_turn`).
+fn subagents_wait_is_gone(run: &AcceptedRun, input: &ProjectionInput, is_pane_agent: bool) -> bool {
+    let record = &run.record;
+    let is_subagents = record.caller.as_ref().is_some_and(Caller::is_subagent)
+        || record.is_caller_inferred == Some(true);
+    if record.state != RunState::NeedsInput || !is_subagents || !is_pane_agent {
+        return false;
+    }
+    let Some(status) = pane_program_status(run, input) else {
+        return false;
+    };
+    let opened = record
+        .wait_started_at
+        .as_deref()
+        .and_then(parse_utc_seconds);
+    status.state != ProgramState::Blocked
+        && parse_utc_seconds(&status.observed_at)
+            .zip(opened)
+            .is_some_and(|(reported, opened)| reported > opened)
+}
+
+/// Returns the badge of a run whose subagent's wait is gone
+/// (`subagents_wait_is_gone`), with neither the wait's words nor its kind.
+/// Inside the parent's turn the run is at work, as the parent's next tool
+/// would show it. Outside one it is back at the rest the wait came in, as the
+/// subagent's own tool would return it (`lifecycle`). As with a reported wait
+/// the record is not written: the report is the evidence for as long as it is
+/// the pane's latest, and the next hook moves the record on. The episode stays
+/// the wait's, so the person, who answered at the agent's prompt, is not told
+/// again.
+fn past_subagents_wait_badge(badge: Badge, record: &RunRecord) -> Badge {
+    let state = if record.run_started_at.is_some() {
+        RunState::Running
+    } else if record.outside_turn_rest == Some(RunState::Idle) {
+        RunState::Idle
+    } else {
+        RunState::Finished
+    };
+    Badge {
+        state,
+        detail: None,
+        wait_kind: None,
+        tool: None,
+        stop_reason: None,
+        background_work: (state == RunState::Finished)
+            .then_some(record.background_work)
+            .flatten(),
+        ..badge
+    }
 }
 
 /// Returns the badge of a run whose agent reported a wait no hook announced

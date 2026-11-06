@@ -1,0 +1,14 @@
+{
+  "0006-PermissionRequest.json": {
+    "input": {
+      "command": "touch made-by-subagent",
+      "description": "<description for subagent-wait-before-stop>"
+    },
+    "operation_id": "00000000-0000-4000-8000-000000000023",
+    "provider": "codex",
+    "session_id": "00000000-0000-4000-8000-000000000001",
+    "summary": "touch made-by-subagent",
+    "timeout_ms": 570000,
+    "tool_name": "Bash"
+  }
+}
