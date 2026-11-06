@@ -3,6 +3,17 @@
 
 import Foundation
 
+/// A commented run as a draft quotes it (`ReviewSession.excerpt`).
+struct ReviewExcerpt: Equatable {
+    /// The run's text without its diff markers, cut to the budget.
+    let text: String
+    /// One marker per line of `text`.
+    let markers: String
+    /// Where `text` stops before the run does, or `nil` when it holds the
+    /// whole run.
+    let cut: ReviewQuoteCut?
+}
+
 extension ReviewSession {
     /// The lines of `lines` a comment covers: those the column `side`
     /// draws, within the first one's changed block (`add`).
@@ -20,30 +31,68 @@ extension ReviewSession {
     /// line, so the two strings stay the same length in lines. A single line
     /// longer than the whole budget is the one exception and is cut where the
     /// budget ends: passing it through whole let a minified file produce a
-    /// comment that could be written but never sent.
-    static func excerpt(of run: [ReviewLine]) -> (text: String, markers: String) {
+    /// comment that could be written but never sent. That cut falls between
+    /// characters, not inside one, so an accented letter or a flag is not
+    /// sent as half of itself; only a character larger than the budget on its
+    /// own is cut between its scalars.
+    ///
+    /// `cut` says where the quote stops before the run does. The comment
+    /// still names the whole run, so everything that reads the quote has to
+    /// know: the prompt tells the agent the code is cut, and the checks
+    /// against Git compare a line cut in its middle by its start
+    /// (`ReviewCommentRelocation`). Without it a cut quote read as a whole
+    /// one, which told the agent a selection of two hundred lines was forty,
+    /// and held back for ever a comment on a minified line, which no file
+    /// ever matched. The two cuts are told apart because only the first
+    /// leaves a partial line: a whole line before lines left out is still
+    /// compared whole, or an empty one would match any line.
+    static func excerpt(of run: [ReviewLine]) -> ReviewExcerpt {
         var lines: [String] = []
         var markers = ""
         var budget = maxCodeExcerpt
+        var cut: ReviewQuoteCut?
         for line in run {
             let isFirst = lines.isEmpty
-            let cost = isFirst ? line.text.utf8.count : line.text.utf8.count + 1
-            guard budget >= cost || isFirst else { break }
-            var excerpt = ""
-            if isFirst {
-                var bytes = 0
-                for scalar in line.text.unicodeScalars {
-                    let size = scalar.utf8.count
-                    guard bytes + size <= budget else { break }
-                    excerpt.unicodeScalars.append(scalar)
-                    bytes += size
-                }
+            let quoted = isFirst ? Self.prefix(of: line.text, fitting: budget) : line.text
+            let cost = isFirst ? quoted.utf8.count : quoted.utf8.count + 1
+            guard cost <= budget else {
+                cut = .betweenLines
+                break
             }
-            lines.append(isFirst ? excerpt : line.text)
-            budget -= min(cost, budget)
+            lines.append(quoted)
+            budget -= cost
             markers.append(line.kind.marker)
+            guard quoted.utf8.count == line.text.utf8.count else {
+                cut = .withinLine
+                break
+            }
         }
-        return (lines.joined(separator: "\n"), markers)
+        return ReviewExcerpt(text: lines.joined(separator: "\n"), markers: markers, cut: cut)
+    }
+
+    /// The longest start of `text` that fits in `budget` UTF-8 bytes, cut
+    /// between characters. A first character larger than the budget on its
+    /// own (a letter under thousands of combining marks) is cut between its
+    /// scalars instead, since nothing at all would say less.
+    private static func prefix(of text: String, fitting budget: Int) -> String {
+        guard text.utf8.count > budget else { return text }
+        var result = ""
+        var bytes = 0
+        for character in text {
+            let size = character.utf8.count
+            guard bytes + size <= budget else {
+                guard result.isEmpty else { return result }
+                for scalar in character.unicodeScalars {
+                    guard bytes + scalar.utf8.count <= budget else { break }
+                    result.unicodeScalars.append(scalar)
+                    bytes += scalar.utf8.count
+                }
+                return result
+            }
+            result.append(character)
+            bytes += size
+        }
+        return result
     }
 
     /// The comments of one scope: what a review of that comparison shows

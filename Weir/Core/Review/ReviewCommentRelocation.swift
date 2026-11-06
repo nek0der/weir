@@ -25,8 +25,11 @@ enum ReviewCommentRelocation {
 
     /// `comment` re-anchored on `diff`, in `scopeID`, with the target's
     /// fingerprint, when its quoted lines are there exactly once. A comment
-    /// whose excerpt was cut short (`ReviewSession.excerpt`) covers the lines
-    /// it kept.
+    /// whose excerpt was cut short (`ReviewSession.excerpt`) is placed by the
+    /// lines it kept, a line cut in its middle by its start, and covers those
+    /// lines. A moved comment records only a cut within its line: one whose
+    /// later lines were left out now names only the lines it kept, so its
+    /// quote is whole.
     ///
     /// A comment taken in one column of the side-by-side layout quotes the
     /// lines that column draws, which are not next to each other in the
@@ -38,8 +41,11 @@ enum ReviewCommentRelocation {
         let markers = comment.codeMarkers.map(Array.init)
         let lines = comment.side.map { side in diff.lines.filter { ReviewSide.covers($0, on: side) } } ?? diff.lines
         guard !texts.isEmpty, texts.count <= lines.count, markers.map({ $0.count == texts.count }) ?? true else { return .notFound }
+        let isLineCut = comment.comparedCut == .withinLine
         var start: Int?
-        for candidate in 0...(lines.count - texts.count) where matches(texts, markers, at: candidate, in: lines) {
+        for candidate in 0...(lines.count - texts.count)
+            where matches(texts, markers, isCut: isLineCut, at: candidate, in: lines)
+        {
             guard start == nil else { return .repeated }
             start = candidate
         }
@@ -55,6 +61,7 @@ enum ReviewCommentRelocation {
             side: comment.side,
             code: comment.code,
             codeMarkers: comment.codeMarkers,
+            codeCut: comment.codeCut == .withinLine ? .withinLine : nil,
             body: comment.body,
             insertedAt: comment.insertedAt,
             resolvedAt: comment.resolvedAt
@@ -64,12 +71,21 @@ enum ReviewCommentRelocation {
     /// Whether the quote is at `start`, within one changed block: a column's
     /// lines leave out the blocks' headers, so the end of one block and the
     /// start of the next sit side by side there, and a comment never spans
-    /// two (`ReviewSession.commentRun`).
-    private static func matches(_ texts: [String], _ markers: [Character]?, at start: Int, in lines: [ReviewLine]) -> Bool {
+    /// two (`ReviewSession.commentRun`). `isCut` is a quote whose last line
+    /// is the start of the line it was taken from.
+    private static func matches(
+        _ texts: [String],
+        _ markers: [Character]?,
+        isCut: Bool,
+        at start: Int,
+        in lines: [ReviewLine]
+    ) -> Bool {
         let hunkIndex = lines[start].hunkIndex
         for (offset, text) in texts.enumerated() {
             let line = lines[start + offset]
-            guard line.isCommentable, line.text == text, line.hunkIndex == hunkIndex else { return false }
+            guard line.isCommentable, line.hunkIndex == hunkIndex,
+                  quotes(line.text, text, isCut: isCut && offset == texts.count - 1)
+            else { return false }
             if let markers, markers[offset] != line.kind.marker {
                 return false
             }
@@ -88,13 +104,24 @@ enum ReviewCommentRelocation {
     static func quotesCurrentCode(_ comment: ReviewComment, current: [String]) -> Bool {
         let texts = comment.code.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let markers = comment.codeMarkers.map(Array.init)
-        let newSide = texts.indices.filter { markers?[safe: $0] != "-" }.map { texts[$0] }
+        let newSide = texts.indices.filter { markers?[safe: $0] != "-" }
         guard !newSide.isEmpty else { return true }
         // The first new-side line of the run is the one `anchor.newLine` names.
         guard let line = comment.anchor.newLine, line >= 1 else { return false }
         let start = line - 1
         guard start + newSide.count <= current.count else { return false }
-        return newSide.indices.allSatisfy { current[start + $0] == newSide[$0] }
+        let isLineCut = comment.comparedCut == .withinLine
+        return newSide.enumerated().allSatisfy { offset, index in
+            quotes(current[start + offset], texts[index], isCut: isLineCut && index == texts.count - 1)
+        }
+    }
+
+    /// Whether `quoted` is `line`: the same text, or for a line the quote
+    /// cut in its middle (`ReviewSession.excerpt`), its start. Compared as
+    /// UTF-8 rather than as characters, so a cut taken between the scalars of
+    /// one character still matches the line it was taken from.
+    private static func quotes(_ line: String, _ quoted: String, isCut: Bool) -> Bool {
+        isCut ? line.utf8.starts(with: quoted.utf8) : line == quoted
     }
 }
 
