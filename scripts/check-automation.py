@@ -849,6 +849,7 @@ def main():
     finally:
         if not args.keep:
             _make_sure_it_quit(launched)
+            client.forget_home(home)
             shutil.rmtree(home, ignore_errors=True)
     return 0 if checks.summary() else 1
 

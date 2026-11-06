@@ -2,6 +2,7 @@
 // Weir — the process entry: Weir itself, or a bare host for the test bundle.
 
 import AppKit
+import OSLog
 
 /// Xcode runs our tests inside the app (`TEST_HOST`). Were the host Weir
 /// itself, every test run would launch a Dock app that takes the focus and
@@ -19,6 +20,15 @@ enum WeirLaunch {
         if WeirPaths.isTestHostByEnvironment {
             TestHost.run()
         } else {
+            #if DEBUG && WEIR_AUTOMATION
+                if AutomationChannel.isCopyOutsideTheChannel(environment: ProcessInfo.processInfo.environment) {
+                    Logger.weir("automation").error("a channel run's copy started outside the channel; quitting")
+                    exit(0)
+                }
+                // Before `WeirApp` and its stored properties are made, as
+                // they read the defaults.
+                AutomationDefaults.startOverIfTheHomeIsFresh()
+            #endif
             WeirApp.main()
         }
     }

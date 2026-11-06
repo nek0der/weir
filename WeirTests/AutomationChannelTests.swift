@@ -73,44 +73,120 @@
 
     @MainActor
     struct AutomationRefusalTests {
+        /// The identifier of a copy `scripts/weir-automation.py launch` made.
+        private let copy = "com.nekoder.Weir.automation-1234abcd.dev"
+
         @Test func dataRefusal_allowsTheDemoAndAnotherHome() {
-            #expect(AutomationChannel.dataRefusal(environment: [:], isDemoActive: true, realHome: "/Users/a") == nil)
+            #expect(AutomationChannel.dataRefusal(environment: [:], isDemoActive: true, bundleID: copy, realHome: "/Users/a") == nil)
             #expect(AutomationChannel.dataRefusal(
                 environment: ["CFFIXED_USER_HOME": "/tmp/somewhere"],
                 isDemoActive: false,
+                bundleID: copy,
                 realHome: "/Users/a"
             ) == nil)
         }
 
         @Test func dataRefusal_refusesThePersonsOwnData() {
-            #expect(AutomationChannel.dataRefusal(environment: [:], isDemoActive: false, realHome: "/Users/a") != nil)
+            #expect(AutomationChannel.dataRefusal(environment: [:], isDemoActive: false, bundleID: copy, realHome: "/Users/a") != nil)
             #expect(AutomationChannel.dataRefusal(
                 environment: ["CFFIXED_USER_HOME": "/Users/a/"],
                 isDemoActive: false,
+                bundleID: copy,
                 realHome: "/Users/a"
             ) != nil)
+        }
+
+        /// Under the build's own identifier the run would read and write the
+        /// person's user defaults, whatever its home.
+        @Test(arguments: ["com.nekoder.Weir.dev", "com.nekoder.Weir"])
+        func dataRefusal_refusesTheBuildsOwnBundleIdentifier(bundleID: String) {
+            #expect(AutomationChannel.dataRefusal(environment: [:], isDemoActive: true, bundleID: bundleID, realHome: "/Users/a") != nil)
+            #expect(AutomationChannel.dataRefusal(
+                environment: ["CFFIXED_USER_HOME": "/tmp/somewhere"],
+                isDemoActive: false,
+                bundleID: bundleID,
+                realHome: "/Users/a"
+            ) != nil)
+            #expect(!AutomationChannel.isAutomationRun(
+                environment: ["WEIR_AUTOMATION": "1", "CFFIXED_USER_HOME": "/tmp/somewhere"],
+                isDemoActive: false,
+                bundleID: bundleID,
+                realHome: "/Users/a"
+            ))
+        }
+
+        /// A copy started by Relaunch, Spotlight, or Finder has none of the
+        /// launch's environment and quits; the build itself, and a copy the
+        /// launcher started, run.
+        @Test func isCopyOutsideTheChannel_isACopyWithoutTheChannelsLaunch() {
+            let launched = ["WEIR_AUTOMATION": "1", "CFFIXED_USER_HOME": "/tmp/somewhere"]
+            #expect(AutomationChannel.isCopyOutsideTheChannel(environment: [:], isDemoActive: false, bundleID: copy, realHome: "/Users/a"))
+            #expect(AutomationChannel.isCopyOutsideTheChannel(
+                environment: ["WEIR_AUTOMATION": "1"],
+                isDemoActive: false,
+                bundleID: copy,
+                realHome: "/Users/a"
+            ))
+            #expect(!AutomationChannel.isCopyOutsideTheChannel(
+                environment: launched,
+                isDemoActive: false,
+                bundleID: copy,
+                realHome: "/Users/a"
+            ))
+            #expect(!AutomationChannel.isCopyOutsideTheChannel(
+                environment: [:],
+                isDemoActive: false,
+                bundleID: "com.nekoder.Weir.dev",
+                realHome: "/Users/a"
+            ))
         }
 
         /// The channel and the approval service's registration read one rule:
         /// a run is the channel's only when it asks and is not refused.
         @Test func isAutomationRun_isAnAskedRunTheChannelDoesNotRefuse() {
             let other = ["WEIR_AUTOMATION": "1", "CFFIXED_USER_HOME": "/tmp/somewhere"]
-            #expect(AutomationChannel.decision(environment: [:], isDemoActive: true, realHome: "/Users/a") == .notAsked)
+            #expect(AutomationChannel.decision(environment: [:], isDemoActive: true, bundleID: copy, realHome: "/Users/a") == .notAsked)
             #expect(AutomationChannel
-                .decision(environment: ["WEIR_AUTOMATION": "0"], isDemoActive: true, realHome: "/Users/a") == .notAsked)
-            #expect(AutomationChannel.decision(environment: ["WEIR_AUTOMATION": "1"], isDemoActive: true, realHome: "/Users/a") == .runs)
-            #expect(AutomationChannel.decision(environment: other, isDemoActive: false, realHome: "/Users/a") == .runs)
-            let refusal = AutomationChannel.dataRefusal(environment: ["WEIR_AUTOMATION": "1"], isDemoActive: false, realHome: "/Users/a")
-            #expect(AutomationChannel.decision(environment: ["WEIR_AUTOMATION": "1"], isDemoActive: false, realHome: "/Users/a")
+                .decision(environment: ["WEIR_AUTOMATION": "0"], isDemoActive: true, bundleID: copy, realHome: "/Users/a") == .notAsked)
+            #expect(AutomationChannel.decision(
+                environment: ["WEIR_AUTOMATION": "1"],
+                isDemoActive: true,
+                bundleID: copy,
+                realHome: "/Users/a"
+            ) == .runs)
+            #expect(AutomationChannel.decision(environment: other, isDemoActive: false, bundleID: copy, realHome: "/Users/a") == .runs)
+            let refusal = AutomationChannel.dataRefusal(
+                environment: ["WEIR_AUTOMATION": "1"],
+                isDemoActive: false,
+                bundleID: copy,
+                realHome: "/Users/a"
+            )
+            #expect(AutomationChannel.decision(
+                environment: ["WEIR_AUTOMATION": "1"],
+                isDemoActive: false,
+                bundleID: copy,
+                realHome: "/Users/a"
+            )
                 == refusal.map(AutomationChannel.Decision.refused))
 
-            #expect(!AutomationChannel.isAutomationRun(environment: [:], isDemoActive: true, realHome: "/Users/a"))
-            #expect(AutomationChannel.isAutomationRun(environment: ["WEIR_AUTOMATION": "1"], isDemoActive: true, realHome: "/Users/a"))
-            #expect(AutomationChannel.isAutomationRun(environment: other, isDemoActive: false, realHome: "/Users/a"))
-            #expect(!AutomationChannel.isAutomationRun(environment: ["WEIR_AUTOMATION": "1"], isDemoActive: false, realHome: "/Users/a"))
+            #expect(!AutomationChannel.isAutomationRun(environment: [:], isDemoActive: true, bundleID: copy, realHome: "/Users/a"))
+            #expect(AutomationChannel.isAutomationRun(
+                environment: ["WEIR_AUTOMATION": "1"],
+                isDemoActive: true,
+                bundleID: copy,
+                realHome: "/Users/a"
+            ))
+            #expect(AutomationChannel.isAutomationRun(environment: other, isDemoActive: false, bundleID: copy, realHome: "/Users/a"))
+            #expect(!AutomationChannel.isAutomationRun(
+                environment: ["WEIR_AUTOMATION": "1"],
+                isDemoActive: false,
+                bundleID: copy,
+                realHome: "/Users/a"
+            ))
             #expect(!AutomationChannel.isAutomationRun(
                 environment: ["WEIR_AUTOMATION": "1", "CFFIXED_USER_HOME": "/Users/a"],
                 isDemoActive: false,
+                bundleID: copy,
                 realHome: "/Users/a"
             ))
         }
@@ -124,12 +200,22 @@
             }
             // Decided outside `#expect`, which evaluates the arguments it
             // shows, `home()` among them.
-            let unset = AutomationChannel.decision(environment: [:], isDemoActive: false, realHome: home())
-            let off = AutomationChannel.isAutomationRun(environment: ["WEIR_AUTOMATION": "0"], isDemoActive: false, realHome: home())
+            let unset = AutomationChannel.decision(environment: [:], isDemoActive: false, bundleID: copy, realHome: home())
+            let off = AutomationChannel.isAutomationRun(
+                environment: ["WEIR_AUTOMATION": "0"],
+                isDemoActive: false,
+                bundleID: copy,
+                realHome: home()
+            )
             #expect(unset == .notAsked)
             #expect(!off)
             #expect(reads == 0)
-            let asked = AutomationChannel.isAutomationRun(environment: ["WEIR_AUTOMATION": "1"], isDemoActive: false, realHome: home())
+            let asked = AutomationChannel.isAutomationRun(
+                environment: ["WEIR_AUTOMATION": "1"],
+                isDemoActive: false,
+                bundleID: copy,
+                realHome: home()
+            )
             #expect(!asked)
             #expect(reads == 1)
         }

@@ -38,9 +38,12 @@ code, so the functions below raise `ChannelError` rather than exit; only
 """
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
+import plistlib
 import shutil
 import socket
 import subprocess
@@ -391,6 +394,117 @@ def screencapture_window(window_number, path, timeout=30):
     subprocess.run(["screencapture", "-x", "-o", f"-l{window_number}", path], timeout=timeout, check=True)
 
 
+# A run's bundle identifier starts with this, so its user defaults, and what
+# AppKit and Sparkle keep there, are a domain of its own rather than the person's
+# `com.nekoder.Weir.dev`. The app refuses the channel under any other identifier
+# (`AutomationChannel.automationBundlePrefix`).
+AUTOMATION_BUNDLE_PREFIX = "com.nekoder.Weir.automation-"
+
+
+def automation_bundle_id(home):
+    """The identifier a run in `home` gets: one per home, so the user defaults
+    are the home's own, as its data folder is. It ends in `.dev`, which is how
+    the app tells a Debug build: its data folder's name, no automatic update
+    checks, and hook links of its own."""
+    digest = hashlib.sha256(os.path.realpath(home).encode()).hexdigest()[:8]
+    return f"{AUTOMATION_BUNDLE_PREFIX}{digest}.dev"
+
+
+def forget_home(home):
+    """Takes what a run in `home` left outside it away: the copy's entry in
+    Launch Services and its user defaults domain, which `cfprefsd` keeps under
+    the account's `~/Library/Preferences` by the home's identifier. For a
+    home about to be removed; nothing reads either again."""
+    for name in os.listdir(home) if os.path.isdir(home) else []:
+        if name.endswith(".app"):
+            unregister_copy(os.path.realpath(os.path.join(home, name)))
+    # Through `defaults`, so `cfprefsd` drops the domain it holds too; a
+    # domain that was never written is not an error here. `defaults delete`
+    # leaves the file behind with an empty dictionary, which goes too.
+    identifier = automation_bundle_id(home)
+    subprocess.run(["defaults", "delete", identifier], capture_output=True)
+    leftover = os.path.join(os.path.expanduser("~"), "Library", "Preferences", identifier + ".plist")
+    try:
+        with open(leftover, "rb") as f:
+            if plistlib.load(f) == {}:
+                os.remove(leftover)
+    except (OSError, plistlib.InvalidFileException):
+        pass
+
+
+def build_stamp(app):
+    """What changes whenever the build at `app` does: the hash of its seal,
+    which lists every resource, and its executable's time and size."""
+    contents = os.path.join(app, "Contents")
+    with open(os.path.join(contents, "Info.plist"), "rb") as f:
+        executable = plistlib.load(f)["CFBundleExecutable"]
+    with open(os.path.join(contents, "_CodeSignature", "CodeResources"), "rb") as f:
+        seal = hashlib.sha256(f.read()).hexdigest()
+    status = os.stat(os.path.join(contents, "MacOS", executable))
+    return f"{seal} {status.st_mtime_ns} {status.st_size}"
+
+
+@contextlib.contextmanager
+def automation_copy(app, home):
+    """A copy of `app` in `home` under `automation_bundle_id(home)`, made again when
+    the build has changed since.
+
+    macOS keeps an app's user defaults by bundle identifier under the
+    account's own `~/Library/Preferences`, whatever `CFFIXED_USER_HOME` says,
+    so a run of the build itself would read and write the person's domain:
+    their language, and the frames and folders AppKit and Sparkle save there.
+    The copy is an APFS clone, so it costs almost no space, and it is signed
+    again ad hoc, as a Debug build is, since its `Info.plist` changed. A copy
+    that a live run is using is never replaced under it, and two launches into
+    one home take turns: the copy is yielded with the home's lock held, so the
+    caller starts it before another launch can replace it."""
+    # Resolved, as `ps` names a running copy's executable (`/private/tmp`, not
+    # `/tmp`), so the check below finds a live run of it.
+    copy = os.path.realpath(os.path.join(home, os.path.basename(app.rstrip("/"))))
+    with open(os.path.join(home, "app-copy.lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield _make_copy(app, home, copy)
+
+
+def _make_copy(app, home, copy):
+    """`automation_copy`'s work, with the home's lock held."""
+    stamp_path = os.path.join(home, "app-copy-stamp")
+    stamp = build_stamp(app)
+    try:
+        with open(stamp_path) as f:
+            if f.read() == stamp and os.path.isdir(copy):
+                return copy
+    except OSError:
+        pass
+    executables = os.path.join(copy, "Contents", "MacOS") + os.sep
+    running = subprocess.run(["ps", "-axo", "comm="], capture_output=True, text=True, check=True).stdout
+    if any(line.startswith(executables) for line in running.splitlines()):
+        raise ChannelError(f"a run of the copy in {home} is still open, and the build has changed; quit it first")
+    fresh = copy + ".new"
+    shutil.rmtree(fresh, ignore_errors=True)
+    if subprocess.run(["cp", "-cR", app, fresh], capture_output=True).returncode != 0:
+        shutil.rmtree(fresh, ignore_errors=True)
+        subprocess.run(["ditto", app, fresh], check=True)
+    info_path = os.path.join(fresh, "Contents", "Info.plist")
+    with open(info_path, "rb") as f:
+        info = plistlib.load(f)
+    info["CFBundleIdentifier"] = automation_bundle_id(home)
+    with open(info_path, "wb") as f:
+        plistlib.dump(info, f)
+    # The entitlements only: the hardened runtime of a build signed with a Team
+    # ID would turn on library validation, and the libraries in the copy, which
+    # keep that Team ID, would then be refused by the ad hoc executable.
+    subprocess.run(
+        ["codesign", "--force", "--sign", "-", "--preserve-metadata=entitlements", fresh],
+        capture_output=True, check=True,
+    )
+    shutil.rmtree(copy, ignore_errors=True)
+    os.rename(fresh, copy)
+    with open(stamp_path, "w") as f:
+        f.write(stamp)
+    return copy
+
+
 # The demo's layers (`DemoFixture.OpenLayer`), which `--layer` opens at launch.
 DEMO_LAYERS = ["needs-attention", "all-projects", "review", "approval-list", "approval-card"]
 
@@ -407,7 +521,9 @@ def launch(app=None, home=None, wait=30, projects=(), demo=None):
 
     The run gets `CFFIXED_USER_HOME` pointed at `home` (by default
     `build/automation-home` in this checkout, which git ignores), so it never
-    reads or writes the person's `Weir Dev` session.
+    reads or writes the person's `Weir Dev` session, and it runs from a copy of
+    the build there with a bundle identifier of its own (`automation_copy`), so
+    it never reads or writes their user defaults either.
 
     It is started with `open -g -n`: `-g` keeps it behind the person's windows
     (an app started by its executable comes to the front), and `-n` makes it a
@@ -424,6 +540,7 @@ def launch(app=None, home=None, wait=30, projects=(), demo=None):
         raise ChannelError(f"no build at {app}; run make build first")
     home = os.path.abspath(home or os.path.join(root, "build", "automation-home"))
     os.makedirs(home, exist_ok=True)
+    bundle_id = automation_bundle_id(home)
     log = os.path.join(home, "weir.log")
     nonce = uuid.uuid4().hex
     environment = {key: value for key, value in os.environ.items() if not key.startswith(INHERITED_AGENT_VARIABLES)}
@@ -437,11 +554,12 @@ def launch(app=None, home=None, wait=30, projects=(), demo=None):
         for name, value in demo.items():
             if value:
                 settings += ["--env", f"WEIR_DEMO_{name.upper()}={value}"]
-    # The folders go last, as the documents `open` hands the new run.
-    subprocess.run(
-        ["open", "-g", "-n", "-a", app, *settings, "--stdout", log, "--stderr", log, *folders],
-        env=environment, check=True,
-    )
+    with automation_copy(app, home) as copy:
+        # The folders go last, as the documents `open` hands the new run.
+        subprocess.run(
+            ["open", "-g", "-n", "-a", copy, *settings, "--stdout", log, "--stderr", log, *folders],
+            env=environment, check=True,
+        )
     deadline = time.time() + wait
     run = None
     while time.time() < deadline:
@@ -449,17 +567,62 @@ def launch(app=None, home=None, wait=30, projects=(), demo=None):
         if run:
             try:
                 with Channel(find_run(run["folder"]), timeout=5):
-                    return dict(run, home=home, log=log)
+                    return dict(run, home=home, log=log, bundleID=bundle_id)
             except ChannelError:
                 pass
         time.sleep(0.2)
-    if run:
-        os.kill(run["pid"], 15)
+    # The run, or, when it has not written its folder yet, every process of
+    # this copy that no other live run names: the one this call started.
+    others = {r["pid"] for r in live_runs() if r.get("nonce") != nonce}
+    pids = [run["pid"]] if run else [pid for pid in copy_processes(copy) if pid not in others]
+    for pid in pids:
+        os.kill(pid, 15)
+    end = time.time() + 5
+    while any(is_running(pid) for pid in pids) and time.time() < end:
+        time.sleep(0.2)
+    # As `quit_run` does, so a copy whose run never answered is not left
+    # offered as an app for folders.
+    unregister_copy(copy)
     raise ChannelError(f"the run did not answer within {wait} seconds; see {log}")
+
+
+LSREGISTER = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+
+
+def running_copy(pid):
+    """The automation copy process `pid` runs from, or `None` for any other app."""
+    executable = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    bundle = executable.split("/Contents/MacOS/")[0] if "/Contents/MacOS/" in executable else None
+    try:
+        with open(os.path.join(bundle, "Contents", "Info.plist"), "rb") as f:
+            identifier = plistlib.load(f).get("CFBundleIdentifier", "")
+    except (OSError, TypeError, plistlib.InvalidFileException):
+        return None
+    return bundle if identifier.startswith(AUTOMATION_BUNDLE_PREFIX) else None
+
+
+def copy_processes(bundle):
+    """The process IDs running the executable of the copy at `bundle`."""
+    executables = os.path.join(bundle, "Contents", "MacOS") + os.sep
+    listing = subprocess.run(["ps", "-axo", "pid=,comm="], capture_output=True, text=True, check=True).stdout
+    pids = []
+    for line in listing.splitlines():
+        pid, _, command = line.strip().partition(" ")
+        if command.strip().startswith(executables):
+            pids.append(int(pid))
+    return pids
+
+
+def unregister_copy(bundle):
+    """Takes the copy at `bundle` out of Launch Services, which `open` added it
+    to, so it is not offered as an app for folders or found by Spotlight. A copy
+    started anyway refuses to run outside the channel (`WeirLaunch`)."""
+    subprocess.run([LSREGISTER, "-u", bundle], capture_output=True)
 
 
 def quit_run(run, force=False, wait=15):
     """Ends `run` through the channel and waits for its process to exit."""
+    bundle = running_copy(run["pid"])
     with Channel(run) as channel:
         reply = channel.call({"op": "quit", "force": force})
     if reply["status"] != "done":
@@ -467,6 +630,8 @@ def quit_run(run, force=False, wait=15):
     deadline = time.time() + wait
     while time.time() < deadline:
         if not is_running(run["pid"]):
+            if bundle:
+                unregister_copy(bundle)
             return reply
         time.sleep(0.2)
     raise ChannelError(f"the app did not exit within {wait} seconds")

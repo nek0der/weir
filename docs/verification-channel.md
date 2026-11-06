@@ -31,6 +31,41 @@ writes the session the person is using. Like the demo, it leaves the
 approval service's registration alone, which is one per user and would
 otherwise be replaced by this build's.
 
+A run with the channel on also refuses the build's own bundle identifier.
+macOS keeps an app's user defaults by bundle identifier under the account's
+own `~/Library/Preferences`, whatever `CFFIXED_USER_HOME` says. Under
+`com.nekoder.Weir.dev` the run would read and write the person's defaults:
+the language they picked, and what AppKit and Sparkle keep there.
+`scripts/weir-automation.py launch` therefore starts a copy of the build in
+the run's home, an APFS clone signed again ad hoc, whose identifier is
+`com.nekoder.Weir.automation-<first 8 hex digits of the SHA-256 of the
+home's path>.dev`. The app refuses the channel under any identifier that does
+not start with `com.nekoder.Weir.automation-`
+(`AutomationChannel.automationBundlePrefix`).
+
+Each home has its own defaults domain under that identifier, and the `.dev`
+suffix keeps every Debug rule: the `Weir Dev` data folder, no automatic update
+checks, and hook links of its own. The domain lives in
+`~/Library/Preferences` and outlives the home. A run that finds no
+`automation-defaults` mark in its data folder empties the domain before
+anything reads it (`AutomationDefaults`), so a home made again starts empty.
+`make check-automation` deletes its home's domain, and takes the copy out of
+Launch Services, when it removes the home. A run in a home named with
+`--home`, or one kept with `--keep`, leaves its domain's plist in
+`~/Library/Preferences`, where the next run in that home finds it. The
+launcher makes the copy again when the build has changed, and refuses while a
+run of the old copy is still open.
+
+`quit` takes the copy out of Launch Services, which `open` added it to, so it
+is not offered as an app for folders. A copy started outside the channel
+anyway, by Relaunch, Spotlight, or Finder, has none of the launch's
+environment and would open the person's `Weir Dev/` data, so it quits at once
+(`AutomationChannel.isCopyOutsideTheChannel`).
+
+The copy's identifier is one the person never allowed to post notifications,
+so a channel run asks for no permission, which would put a system prompt in
+front of them. It posts no banners; its notifications still reach the history.
+
 `CFFIXED_USER_HOME` moves Weir's own data only. The shells and agents in the
 run's panes still have the real `HOME`, so what they read and write (agent
 settings, history, the repository) is the person's.
@@ -224,7 +259,8 @@ Bash. Its `launch` starts this checkout's Debug build with `open -g -n`
 Claude Code's own variables taken out of the environment, data in
 `build/automation-home`, and a nonce the run writes into its `info.json`, so
 two launches at once each find their own run. It returns once the run
-answers hello, ends a run that never does, and prints the run; `quit` ends
+answers hello, ends a run that never does, and prints the run with its
+`bundleID`; `quit` ends
 it. A run's data starts with no project, and Open Folder… asks through a
 panel the channel cannot answer, so `launch --project FOLDER` hands folders
 to the new run as Finder's Open With does, which opens each as a project,

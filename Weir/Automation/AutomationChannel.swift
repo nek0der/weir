@@ -95,32 +95,73 @@
         static func decision(
             environment: [String: String],
             isDemoActive: Bool = DemoFixture.isDemoActive,
+            bundleID: String = WeirPaths.bundleID,
             realHome: @autoclosure () -> String? = realHomeDirectory()
         ) -> Decision {
             guard environment["WEIR_AUTOMATION"] == "1" else { return .notAsked }
-            if let refusal = dataRefusal(environment: environment, isDemoActive: isDemoActive, realHome: realHome()) {
+            if let refusal = dataRefusal(
+                environment: environment,
+                isDemoActive: isDemoActive,
+                bundleID: bundleID,
+                realHome: realHome()
+            ) {
                 return .refused(refusal)
             }
             return .runs
         }
 
         /// Whether this run is one the channel drives: asked for, and on data
-        /// that is not the person's. Such a run shares the bundle identifier
-        /// with the person's Weir and leaves what is theirs alone, such as the
-        /// approval service's registration.
+        /// that is not the person's. Such a run leaves what is the person's
+        /// alone even where its own identifier does not keep it apart, such as
+        /// the approval service's registration, which is one per user.
         static func isAutomationRun(
             environment: [String: String],
             isDemoActive: Bool = DemoFixture.isDemoActive,
+            bundleID: String = WeirPaths.bundleID,
             realHome: @autoclosure () -> String? = realHomeDirectory()
         ) -> Bool {
-            decision(environment: environment, isDemoActive: isDemoActive, realHome: realHome()) == .runs
+            decision(environment: environment, isDemoActive: isDemoActive, bundleID: bundleID, realHome: realHome()) == .runs
         }
 
+        /// Whether this process is a copy the launcher made, started outside
+        /// the channel: by Relaunch, whose `open` passes no environment, or
+        /// from Spotlight or Finder, which can still find the copy. Without
+        /// the launch's `CFFIXED_USER_HOME` it would open the person's
+        /// `Weir Dev` data, so it quits before anything opens.
+        static func isCopyOutsideTheChannel(
+            environment: [String: String],
+            isDemoActive: Bool = DemoFixture.isDemoActive,
+            bundleID: String = WeirPaths.bundleID,
+            realHome: @autoclosure () -> String? = realHomeDirectory()
+        ) -> Bool {
+            bundleID.hasPrefix(automationBundlePrefix)
+                && !isAutomationRun(environment: environment, isDemoActive: isDemoActive, bundleID: bundleID, realHome: realHome())
+        }
+
+        /// How the bundle identifier of a copy that
+        /// `scripts/weir-automation.py launch` makes for a run begins
+        /// (`AUTOMATION_BUNDLE_PREFIX` there).
+        static let automationBundlePrefix = "com.nekoder.Weir.automation-"
+
         /// Why this run may not open the channel, or `nil` when it may. A run
-        /// it drives must not write the session the person is using: it needs
-        /// the demo, or a `CFFIXED_USER_HOME` that is not the person's home,
-        /// which moves Application Support with it.
-        static func dataRefusal(environment: [String: String], isDemoActive: Bool, realHome: String? = realHomeDirectory()) -> String? {
+        /// it drives must not write what the person is using. Its bundle
+        /// identifier must be a copy's (`automationBundlePrefix`): macOS keeps
+        /// the user defaults by identifier under the account's own
+        /// `~/Library/Preferences`, whatever the home, so under the build's
+        /// own identifier the run would read and write the person's
+        /// language, and what AppKit and Sparkle keep there. And it needs the
+        /// demo, or a `CFFIXED_USER_HOME` that is not the person's home, which
+        /// moves Application Support with it.
+        static func dataRefusal(
+            environment: [String: String],
+            isDemoActive: Bool,
+            bundleID: String = WeirPaths.bundleID,
+            realHome: String? = realHomeDirectory()
+        ) -> String? {
+            guard bundleID.hasPrefix(automationBundlePrefix) else {
+                return "WEIR_AUTOMATION needs the copy that scripts/weir-automation.py launch makes, "
+                    + "so the run does not use the person's user defaults"
+            }
             if isDemoActive {
                 return nil
             }

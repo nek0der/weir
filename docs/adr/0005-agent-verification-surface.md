@@ -11,6 +11,9 @@
 - Amended: 2026-11-04. Added what the channel may answer for the person
   ("Answering for the person"), and which changes keep the protocol marker.
   The decision is unchanged.
+- Amended: 2026-11-06. The person's data that a run refuses includes their
+  user defaults, which macOS keeps by bundle identifier whatever the run's
+  home. The decision is unchanged.
 
 ## Context
 
@@ -56,7 +59,8 @@ operations, and its limits are in
   names.
 - **Off unless asked for, and never on the person's data.** `WEIR_AUTOMATION=1`
   turns it on. A run with the channel on refuses the person's `Weir Dev/`
-  data and leaves the approval service's registration alone.
+  data and user defaults, and leaves the approval service's registration
+  alone.
 - **Who may connect.** A client that reaches the run's Unix socket and presents
   the random token kept in the run's private folder. The token is not in the
   environment of the panes, because the agent under test runs there and has no

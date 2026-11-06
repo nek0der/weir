@@ -3,9 +3,32 @@
 
 import AppKit
 import Foundation
+import UserNotifications
 import WeirDomain
 
 extension AppState {
+    /// The notification manager, writing in the app's language. A channel
+    /// run posts no banner and asks for no permission: its bundle identifier
+    /// is a copy's own, which the person never allowed, so the request would
+    /// put a system prompt in front of them. Its notifications still reach the
+    /// history, where the channel reads them.
+    static func makeNotificationManager(
+        _ historyStore: NotificationHistoryStore,
+        _ settingsStore: SettingsStore
+    ) -> WeirNotificationManager {
+        var bannerPoster: (@MainActor (UNNotificationRequest) -> Void)?
+        #if DEBUG && WEIR_AUTOMATION
+            if AutomationChannel.isAutomationRun(environment: ProcessInfo.processInfo.environment) {
+                bannerPoster = { _ in }
+            }
+        #endif
+        return WeirNotificationManager(
+            historyStore: historyStore,
+            appLocale: { [settingsStore] in settingsStore.appLocale },
+            bannerPoster: bannerPoster
+        )
+    }
+
     /// The sync that announces when a usage limit lifts, reading the
     /// limits from the attention list and the switch from Settings.
     static func makeUsageLimitResetSync(
