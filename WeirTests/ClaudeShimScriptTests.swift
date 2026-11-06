@@ -83,17 +83,27 @@ struct ClaudeShimScriptTests {
 
     /// The hook path is captured by a running Claude process. Separate stable
     /// names let a new invocation refresh its own build without redirecting a
-    /// session launched by another installed build.
+    /// session launched by another build: the Release app, or a Debug build
+    /// from another worktree, which has the same bundle id.
     @Test("namespaces the no-space hook link by build identity")
     func hookLink_separatesBuilds() throws {
-        let releaseArguments = try runShim([], hookNamespace: "com.nekoder.Weir")
-        let release = try sessionStartCommand(releaseArguments)
-        let developmentArguments = try runShim([], hookNamespace: "com.nekoder.Weir.dev")
-        let development = try sessionStartCommand(developmentArguments)
+        let release = WeirPaths.buildIdentity(bundleID: "com.nekoder.Weir", bundlePath: "/Applications/Weir.app")
+        let firstDebug = WeirPaths.buildIdentity(
+            bundleID: "com.nekoder.Weir.dev",
+            bundlePath: "/DerivedData/Weir-aaaa/Build/Products/Debug/Weir Dev.app"
+        )
+        let secondDebug = WeirPaths.buildIdentity(
+            bundleID: "com.nekoder.Weir.dev",
+            bundlePath: "/DerivedData/Weir-bbbb/Build/Products/Debug/Weir Dev.app"
+        )
+        let commands = try [release, firstDebug, secondDebug].map { namespace in
+            try sessionStartCommand(runShim([], hookNamespace: namespace))
+        }
 
-        #expect(release.hasSuffix("/weir-claude-shim-com.nekoder.Weir/weir-hook"))
-        #expect(development.hasSuffix("/weir-claude-shim-com.nekoder.Weir.dev/weir-hook"))
-        #expect(release != development)
+        #expect(commands[0].hasSuffix("/weir-claude-shim-com.nekoder.Weir/weir-hook"))
+        #expect(commands[1].hasSuffix("/weir-claude-shim-\(firstDebug)/weir-hook"))
+        #expect(commands[2].hasSuffix("/weir-claude-shim-\(secondDebug)/weir-hook"))
+        #expect(Set(commands.map { URL(fileURLWithPath: $0).deletingLastPathComponent().lastPathComponent }).count == 3)
     }
 
     /// A link folder someone else put in place (here a link to another

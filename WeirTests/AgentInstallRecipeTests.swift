@@ -28,7 +28,7 @@ struct AgentInstallRecipeTests {
         #expect(claude["WEIR_USAGE_DIR"] == "/usage")
         #expect(claude["WEIR_SESSIONS_DIR"] == "/sessions")
         #expect(claude["WEIR_CWD_EVENTS_DIR"] == "/cwd")
-        #expect(claude["WEIR_CLAUDE_HOOK_NAMESPACE"] == WeirPaths.bundleID)
+        #expect(claude["WEIR_CLAUDE_HOOK_NAMESPACE"] == WeirPaths.buildIdentity)
 
         let codex = AgentProviderRegistry.environment(
             for: "codex", state: state, sessions: sessions, cwdEvents: nil, usage: usage
@@ -109,7 +109,7 @@ struct AgentInstallRecipeTests {
         #expect(environment["WEIR_SESSIONS_DIR"] == directories.sessions.path)
         #expect(environment["WEIR_CWD_EVENTS_DIR"] == directories.cwdEvents?.path)
         // The running build's identity, which names the hook link.
-        #expect(environment["WEIR_CLAUDE_HOOK_NAMESPACE"] == WeirPaths.bundleID)
+        #expect(environment["WEIR_CLAUDE_HOOK_NAMESPACE"] == WeirPaths.buildIdentity)
     }
 
     @Test("a demo pane's Claude is told of no record directory")
@@ -122,7 +122,7 @@ struct AgentInstallRecipeTests {
         #expect(environment["WEIR_AGENT_STATES_DIR"] == "")
         #expect(environment["WEIR_SESSIONS_DIR"] == "")
         #expect(environment["WEIR_CWD_EVENTS_DIR"] == "")
-        #expect(environment["WEIR_CLAUDE_HOOK_NAMESPACE"] == WeirPaths.bundleID)
+        #expect(environment["WEIR_CLAUDE_HOOK_NAMESPACE"] == WeirPaths.buildIdentity)
     }
 
     @Test("a demo pane's Codex is told of no record directory and no hook")
