@@ -26,9 +26,10 @@ jobs:
             build
             ci
             perf
-            style
             revert
+          scopes: |
+            [a-z0-9]+(-[a-z0-9]+)*
           requireScope: false
-          subjectPattern: ^[A-Za-z].+$
+          subjectPattern: ^[a-z`].+$
           subjectPatternError: |
-            The PR title subject must start with a letter (e.g. "feat: add sidebar drag-and-drop").
+            The subject "{subject}" must start with a lowercase letter or a backtick, such as "fix(session): preserve saved projects when decoding fails". Start it with a verb in the imperative, or put an identifier that has to come first in backticks. CONTRIBUTING.md ("Commit titles and branches") lists the types, scopes, and subject rules.
