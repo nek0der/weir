@@ -132,8 +132,11 @@ The title names the concrete change in the imperative: `preserve`, not
 `preserves`, `preserved`, or `preserving`. Prefer the observable effect to a
 private helper's name. After the prefix, start with a lowercase verb and omit
 the final period; this is a Weir convention, not a requirement of the external
-guides. Preserve the capitalization of identifiers and proper names.
-Follow the contributor guide for scopes and attribution. When a standalone
+guides. Preserve the capitalization of identifiers and proper names; when
+one would start the subject, put an identifier in backticks or start with
+the verb instead. Follow the
+[contributor guide](../CONTRIBUTING.md#commit-titles-and-branches) for types,
+scopes, title length, and attribution. When a standalone
 commit needs explanation, leave a blank line after the subject and describe
 the reason, impact, or tradeoff that the diff cannot show.
 

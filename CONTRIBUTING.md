@@ -148,12 +148,127 @@ Read the [writing guide](docs/writing-guide.md) when writing comments,
 documents, commit messages, or PR text, whether you write them yourself or use
 an AI assistant. Follow the PR template for the required sections.
 
-- Branch off `main` using a conventional prefix: `feat/<short>`, `fix/<short>`, `docs/<short>`, `chore/<short>`, `refactor/<short>`, `test/<short>`.
-- Keep commits focused. Use [Conventional Commits](https://www.conventionalcommits.org/), such as `fix(session): preserve saved projects`.
-- Use lowercase scopes, with kebab-case for multiple words. Reuse a scope from `git log` when one fits; add a new scope only when needed. Choose singular or plural to suit the area (`fix(tab)`, `chore(deps)`).
+- Branch off `main`, and name the branch and the PR title as
+  [Commit titles and branches](#commit-titles-and-branches) describes. Keep
+  commits focused.
 - Do not add `Co-Authored-By` trailers or AI attribution to commits.
 - Code style: see [`AGENTS.md`](AGENTS.md) §3 for the conventions a linter can't enforce (file banners, naming, and code structure).
 - `release-please` generates `CHANGELOG.md` from commit messages, so don't edit it by hand.
+
+### Commit titles and branches
+
+A pull request is squashed into one commit on `main`, and the commit takes
+the PR title as its whole message. `release-please` builds `CHANGELOG.md`
+from those titles, and the PR Lint workflow
+(`.github/workflows/pr-lint.yml`) checks the type, the form of the scope, and
+the first character of the subject. Titles follow
+[Conventional Commits](https://www.conventionalcommits.org/) in the form
+`<type>(<scope>): <subject>`, such as
+`fix(session): preserve saved projects when decoding fails`.
+
+| Type | Use it for | In `CHANGELOG.md` |
+| --- | --- | --- |
+| `feat` | A new capability for the person using Weir. | Features |
+| `fix` | A correction to something the person using Weir can see, including wording, layout, and appearance. | Bug Fixes |
+| `perf` | Less time or memory for the same behavior. | Performance |
+| `refactor` | A code change that the person using Weir cannot see. | Refactors |
+| `docs` | Documents: `docs/` with its ADRs, the READMEs, `site/` (the landing page and its documents), and the contributor and agent instructions (`AGENTS.md`, this guide, `.agents/skills/`, the PR template, and the writing guide). | Documentation |
+| `build` | The build and the release: `Makefile`, `project.yml`, the build and packaging scripts, toolchain pins, and `.github/release-please-config.json`. | Hidden |
+| `ci` | `.github/workflows/` and the CI configuration in `.github/`, such as `dependabot.yml` and `actionlint.yaml`. | Hidden |
+| `test` | Tests, test fixtures, and the verification tools, with no change to the app. | Hidden |
+| `chore` | Dependency updates, release pull requests, and maintenance that no other type covers. | Hidden |
+| `revert` | A change that undoes an earlier commit on `main`. | Reverts |
+
+The line between `fix` and `refactor` is what the person using Weir sees. A
+change they can see is `fix`, or `feat` when it adds a capability, even when
+it comes from restructuring code. `refactor` is only for changes with no
+visible effect.
+
+Name the branch `<type>/<short-description>` with the PR's type, such as
+`fix/session-decode` or `ci/pr-lint-rules`. Branches that Dependabot and
+`release-please` create keep their own names.
+
+Choose the scope from the table below. A scope is lowercase, with hyphens
+between words. A PR that adds a screen or a feature that no scope covers adds
+its scope to this table in the same PR. The scope is optional when a change
+covers its type's whole area, such as a change to every CI job.
+
+| Scope | Covers |
+| --- | --- |
+| `agent` | Behavior shared by every agent, such as hooks, shims, turns, and agent state, and agents with no scope of their own, such as Antigravity and OpenCode. With `docs`, the contributor and agent instructions. |
+| `claude` | Behavior specific to Claude Code. |
+| `codex` | Behavior specific to Codex. |
+| `app` | The app as a whole: launch, its name and icon, the `weir` command, and logging. |
+| `approval` | Native approvals: the approval service, its protocol, and the approval card. |
+| `changes` | The Changes panel and each turn's Changes card. |
+| `confirmations` | The questions Weir asks before a close or a quit. |
+| `core` | The Core and Domain modules. |
+| `demo` | Demo mode and the hero screenshot. |
+| `design` | Shared UI components, tokens, materials, and motion. |
+| `ghostty` | The libghostty fork and its bindings. |
+| `keyboard` | Shortcuts and key handling. |
+| `l10n` | Localization. |
+| `notifications` | Notifications. |
+| `palette` | The command palette. |
+| `persistence` | Weir's data files: how they are read, written, and recovered. |
+| `quick-terminal` | The Quick Terminal. |
+| `review` | The review of an agent's changes. |
+| `session` | The saved workspace and its restoration. |
+| `settings` | The Settings window. |
+| `sidebar` | The Worktrees sidebar. |
+| `supervision` | The main window: panes and tabs, the title bar, the rails, Needs Attention, and All Projects. The Changes panel has `changes`, and the approval card has `approval`. |
+| `surface` | A pane's terminal: input, output, and what the shell reports. |
+| `tmux` | Panes that run tmux. |
+| `updates` | App updates through Sparkle. |
+| `worktree` | Worktrees and the Git operations on them. |
+| `site` | The website and the READMEs. |
+| `support` | Test fixtures, the test host, and the verification channel. |
+| `lint` | Linters, formatters, and the PR title check. |
+| `release` | Archives, the dmg, the appcast, the bundled notices, and `release-please`. |
+| `rust` | The Rust toolchain and the build of the Rust bridge. |
+| `deps` | Dependency updates. |
+| `main` | Release pull requests, which `release-please` titles itself. |
+
+Earlier commits used scopes that are now folded into others:
+
+| Earlier scope | Now |
+| --- | --- |
+| `chore(build)` | `build` or `ci`, by the files changed, with `release` or `rust` when one applies. |
+| `chore(github)` | `docs(agent)` for the PR template, and `ci` for other files in `.github/`. |
+| `docs(adr)` | `docs` with the scope of the area the ADR decides, or `docs(agent)` for rules that apply to every ADR. |
+| `chore(site)` | `docs(site)`. |
+| `docs(readme)` | `docs(site)`. |
+| `domain` | `core`. |
+| `glass` | `design`. |
+| `layout` | `supervision`. |
+| `log` | `app`. |
+| `notices` | `release`. |
+| `process` | `support`. |
+| `screenshot` | `demo`. |
+
+The subject follows these rules:
+
+- Start with a lowercase verb in the imperative: `preserve`, not `preserves`
+  or `Preserve`. An identifier with its own capitalization may come first in
+  backticks, which keep its spelling.
+- Aim for about 90 characters for the whole title, and keep it within 110.
+- Do not end it with a period.
+
+The [writing guide](docs/writing-guide.md#commit-messages-and-pull-requests)
+covers the wording of the subject.
+
+Mark a change that breaks compatibility with `!` after the type or scope, such
+as `feat(settings)!: <subject>`. `release-please` treats the commit as
+breaking from the `!` alone. The squashed commit has no body unless the person
+merging adds one, so they add a `BREAKING CHANGE:` footer as its body, saying
+what breaks and what to do, such as
+`gh pr merge --squash --body "BREAKING CHANGE: <what breaks and what to do>"`.
+The PR's Summary says the same.
+
+Title a revert `revert(<scope>): <subject>` with the scope and subject of the
+reverted commit, without its PR number. GitHub's Revert button titles the PR
+`Revert "<title>"`, which the PR Lint workflow rejects, so retitle it. Name
+the reverted PR in Related issue, such as `Reverts #123.`
 
 ### Before opening the PR
 

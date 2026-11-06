@@ -193,7 +193,21 @@ explain the design of agent integration and the verification channel.
 Follow [the contribution workflow](CONTRIBUTING.md#pull-requests) for branch
 names, commit scopes, required checks, and PR creation.
 
-- Use conventional branch prefixes and Conventional Commits subjects.
+- Title each PR, and so its squashed commit, `<type>(<scope>): <subject>`
+  as [Commit titles and branches](CONTRIBUTING.md#commit-titles-and-branches)
+  describes:
+  - Types: `feat`, `fix`, `perf`, `refactor`, `docs`, `build`, `ci`, `test`,
+    `chore`, and `revert`. A change the person using Weir can see is `fix`,
+    not `refactor`. Documents and the contributor and agent instructions,
+    including this file, are `docs`. The build and the release configuration
+    are `build`, `.github/workflows/` and the CI configuration are `ci`, and
+    dependency updates and other maintenance are `chore`.
+  - The subject starts with a lowercase verb in the imperative (an
+    identifier in backticks may come first), the whole title aims for about
+    90 characters and stays within 110, and the subject has no final period.
+  - Choose the scope from the list in that section. A PR that adds a screen
+    or a feature that no scope covers adds its scope there.
+  - The branch is `<type>/<short-description>` with the PR's type.
 - Do not add AI attribution or `Co-Authored-By` trailers to commits.
 - Fill in every section of `.github/pull_request_template.md` and pass the
   completed body to `gh pr create --body-file`.
