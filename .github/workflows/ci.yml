@@ -431,6 +431,7 @@ jobs:
         timeout-minutes: 15
         env:
           WEIR_REQUIRE_TMUX_TESTS: "1"
+          TEST_RUNNER_WEIR_REQUIRE_CASE_FOLDING_TESTS: "1"
         run: |
           set -o pipefail
           xcodebuild \

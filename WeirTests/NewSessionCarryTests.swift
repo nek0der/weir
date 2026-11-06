@@ -50,6 +50,23 @@ struct UncommittedCarryRulesTests {
         #expect(UncommittedCarryRules.ownPaths(["a", "a/b", "a/c"]) { $0 == "a/c" ? .absent : .ours } == ["a", "a/b"])
     }
 
+    /// Paths that a volume may take for one name are grouped: those that
+    /// differ only in case when the volume ignores case, and those that
+    /// differ only in Unicode normalization on any volume.
+    @Test func possiblySharedPaths_groupCaseAndNormalizationVariants() {
+        let composed = "caf\u{E9}.txt"
+        let decomposed = "cafe\u{301}.txt"
+        let paths = ["a.txt", "A.txt", "dir/a", "DIR/a", "dir/b", composed, decomposed]
+        let sorted = { (groups: [[String]]) in groups.map { $0.sorted() }.sorted { $0[0] < $1[0] } }
+
+        #expect(sorted(UncommittedCarryRules.possiblySharedPaths(paths, foldsCase: true))
+            == sorted([["A.txt", "a.txt"], ["DIR/a", "dir/a"], [composed, decomposed]]))
+        let caseSensitive = UncommittedCarryRules.possiblySharedPaths(paths, foldsCase: false)
+        #expect(caseSensitive.count == 1)
+        #expect(caseSensitive.first.map { Set($0.map { Array($0.utf8) }) } == [Array(composed.utf8), Array(decomposed.utf8)])
+        #expect(UncommittedCarryRules.possiblySharedPaths(["a.txt", "b.txt"], foldsCase: true).isEmpty)
+    }
+
     @Test func aGitlink_isFoundOnEitherSide() {
         let regular = ":100644 100644 aaa bbb M\0a.txt\0"
         #expect(!UncommittedCarryRules.touchesGitlinks(rawDiff: regular))

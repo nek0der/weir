@@ -135,6 +135,21 @@ package enum UncommittedCarryRules {
         exitCode == 129 || stderr.localizedCaseInsensitiveContains("unknown option")
     }
 
+    /// Returns the groups of two or more `paths` that a volume may resolve
+    /// to one entry: paths equal after Unicode canonical composition, which
+    /// APFS and HFS+ ignore in names, and after case folding when the volume
+    /// ignores case. A case-only rename (`a.txt` to `A.txt`) puts its old and
+    /// new names in one group. Each group still needs checking on disk,
+    /// because two such paths can also be two entries.
+    package static func possiblySharedPaths(_ paths: [String], foldsCase: Bool) -> [[String]] {
+        Dictionary(grouping: paths) { path in
+            let composed = path.precomposedStringWithCanonicalMapping
+            return foldsCase ? composed.folding(options: .caseInsensitive, locale: nil) : composed
+        }
+        .values
+        .filter { $0.count > 1 }
+    }
+
     /// What is on disk at a path a write that failed may have made.
     package enum WrittenPath: Equatable, Sendable {
         /// What only the write puts there.
