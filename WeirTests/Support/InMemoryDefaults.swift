@@ -40,4 +40,13 @@ final class InMemoryDefaults: UserDefaults, @unchecked Sendable {
     override func removeObject(forKey defaultName: String) {
         values[defaultName] = nil
     }
+
+    /// The domains emptied, in order. The values here stand for every
+    /// domain, so emptying any of them clears them all.
+    private(set) var removedDomains: [String] = []
+
+    override func removePersistentDomain(forName domainName: String) {
+        removedDomains.append(domainName)
+        values.removeAll()
+    }
 }

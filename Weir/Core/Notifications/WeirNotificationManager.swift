@@ -22,7 +22,8 @@ final class WeirNotificationManager {
     /// the system's center.
     private lazy var center = UNUserNotificationCenter.current()
     /// Takes a banner in place of macOS, so a test can see what would be
-    /// posted. Nil in the app, which posts to `center`.
+    /// posted. Nil in the app, which posts to `center`, except in a channel
+    /// run (`AppState.makeNotificationManager`).
     private let bannerPoster: (@MainActor (UNNotificationRequest) -> Void)?
     private var rateLimiter = RateLimiter(maxPerSecond: 5)
     private let historyStore: NotificationHistoryStore

@@ -446,7 +446,7 @@ final class AppState {
         staged?.markViewedLines(in: viewedLines)
         self.viewedLines = viewedLines
         self.primaryKeyHint = PrimaryKeyHint(defaults: writesUserFiles ? .standard : nil)
-        let notificationManager = WeirNotificationManager(historyStore: historyStore) { [settingsStore] in settingsStore.appLocale }
+        let notificationManager = Self.makeNotificationManager(historyStore, settingsStore)
         self.notificationManager = notificationManager
         // Cwd-change → worktree-move suggestion pipeline. Every fresh
         // record hands off to the suggester which decides whether the

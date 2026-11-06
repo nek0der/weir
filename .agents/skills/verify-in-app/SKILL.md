@@ -131,11 +131,17 @@ and the reason is what to act on.
   clears it by refusing the paste.
 - The run's panes have the person's real `HOME`: an agent started there reads
   and writes the person's agent settings and history.
+- The run is a copy of the build with a bundle identifier of its own, which
+  `launch` prints as `bundleID`. Read the run's user defaults with
+  `defaults read <bundleID>`. The build's own identifier is the person's
+  domain, so never write to it.
 
 ## Checking approvals in a signed run
 
 Native approvals need a build signed with `WEIR_DEVELOPMENT_TEAM`, started
-with `make run`, not with `launch`. The approval service is one per user, so
+with `make run`, not with `launch`: `make run` starts the build itself, under
+its own bundle identifier and signature, which the approval service needs, not
+the ad hoc copy `launch` makes. The approval service is one per user, so
 these checks run one worktree at a time; `make run` quits only this
 checkout's Weir Dev and never reaches another worktree's. Native approvals
 are off in any run with the channel on, so this run is started without it.
