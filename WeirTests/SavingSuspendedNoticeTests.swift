@@ -1,5 +1,5 @@
 // SavingSuspendedNoticeTests.swift
-// Weir — what Weir says while it has stopped saving the sessions or the settings.
+// Weir — what Weir says while it has stopped saving the person's files, or a save fails.
 
 import Foundation
 import Testing
@@ -12,12 +12,18 @@ struct SavingSuspendedNoticeTests {
     private static let sessionFile = folder.appendingPathComponent("state.json")
     private static let settingsFile = folder.appendingPathComponent("settings.json")
 
-    /// Nothing is shown while both files are saved, in Settings or at launch.
-    @Test func bothFilesSaved_showNothing() {
+    /// Nothing is shown while every file is saved, in Settings or in the alert.
+    @Test func everyFileSaved_showsNothing() {
         #expect(SavingSuspendedNotice.make(
-            suspendedSessionFile: nil, settings: nil, settingsFile: Self.settingsFile, locale: Self.english
+            status: SavingStatus(), settings: nil, isSettingsSaveFailing: false, settingsFile: Self.settingsFile, locale: Self.english
         ) == nil)
-        #expect(SavingSuspendedNotice.atLaunch(settings: nil, settingsFile: Self.settingsFile, locale: Self.english) == nil)
+        #expect(SavingSuspendedNotice.alert(
+            launchSettings: nil,
+            failedSessionFile: nil,
+            isSettingsSaveFailing: false,
+            settingsFile: Self.settingsFile,
+            locale: Self.english
+        ) == nil)
     }
 
     /// Settings → General names each file whose saving stopped, the
@@ -25,8 +31,9 @@ struct SavingSuspendedNoticeTests {
     /// selects.
     @Test func eachSuspendedFile_isNamed_sessionsFirst() throws {
         let notice = try #require(SavingSuspendedNotice.make(
-            suspendedSessionFile: Self.sessionFile,
+            status: SavingStatus(suspendedSessionFile: Self.sessionFile),
             settings: .unreadable,
+            isSettingsSaveFailing: false,
             settingsFile: Self.settingsFile,
             locale: Self.japanese
         ))
@@ -40,8 +47,9 @@ struct SavingSuspendedNoticeTests {
     /// An older settings file read as it was is not called unreadable.
     @Test func anOlderSettingsFileNotMoved_isToldApart() throws {
         let notice = try #require(SavingSuspendedNotice.make(
-            suspendedSessionFile: nil,
+            status: SavingStatus(),
             settings: .notMoved,
+            isSettingsSaveFailing: false,
             settingsFile: Self.settingsFile,
             locale: Self.english
         ))
@@ -80,13 +88,67 @@ struct SavingSuspendedNoticeTests {
 
     /// The launch alert tells the settings alone.
     @Test func theLaunchAlert_tellsTheSettings() throws {
-        let alert = try #require(SavingSuspendedNotice.atLaunch(
-            settings: .unreadable,
+        let alert = try #require(SavingSuspendedNotice.alert(
+            launchSettings: .unreadable,
+            failedSessionFile: nil,
+            isSettingsSaveFailing: false,
             settingsFile: Self.settingsFile,
             locale: Self.japanese
         ))
         #expect(alert.files == [Self.settingsFile])
         #expect(alert.sentences == [SavingSuspendedText.settingsNotSaved(.unreadable, locale: Self.japanese)])
+    }
+
+    /// A save that fails is told apart from saving that stopped: it says
+    /// what to check, and that the next change saves again.
+    @Test func aFailingSave_isTold_inSettingsAndTheAlert() throws {
+        let status = SavingStatus(failedSessionFile: Self.sessionFile)
+        let notice = try #require(SavingSuspendedNotice.make(
+            status: status, settings: nil, isSettingsSaveFailing: true, settingsFile: Self.settingsFile, locale: Self.japanese
+        ))
+        let sentences = [
+            "セッションを保存できませんでした。state.json に書き込めませんでした。ディスクの空き容量と、フォルダーに書き込めるかを確認してください。次に変更したときにもう一度保存します。",
+            "設定を保存できませんでした。settings.json に書き込めませんでした。ディスクの空き容量と、フォルダーに書き込めるかを確認してください。次に変更したときにもう一度保存します。"
+        ]
+        #expect(notice.sentences == sentences)
+        #expect(notice.files == [Self.sessionFile, Self.settingsFile])
+        let alert = try #require(SavingSuspendedNotice.alert(
+            launchSettings: nil,
+            failedSessionFile: Self.sessionFile,
+            isSettingsSaveFailing: true,
+            settingsFile: Self.settingsFile,
+            locale: Self.japanese
+        ))
+        #expect(alert == notice)
+        #expect(SavingSuspendedText.sessionSaveFailed(locale: Self.english)
+            .hasPrefix("Your sessions couldn’t be saved: writing state.json failed."))
+        #expect(SavingSuspendedText.saveFailedTitle(locale: Self.japanese) == "変更を保存できませんでした")
+    }
+
+    /// The smaller stores are named in Settings, after the sessions and the
+    /// settings, each with its own file; the alert leaves them out, as what
+    /// they hold is not lost work.
+    @Test func theSmallerStores_areNamedInSettingsOnly() throws {
+        let history = Self.folder.appendingPathComponent("notifications.json")
+        let ranking = Self.folder.appendingPathComponent("frecency.json")
+        let viewed = Self.folder.appendingPathComponent("viewed-lines.json")
+        let status = SavingStatus(
+            suspendedSessionFile: Self.sessionFile,
+            suspendedStores: [
+                .init(kind: .notificationHistory, file: history),
+                .init(kind: .paletteRanking, file: ranking),
+                .init(kind: .viewedTurns, file: viewed)
+            ]
+        )
+        let notice = try #require(SavingSuspendedNotice.make(
+            status: status, settings: nil, isSettingsSaveFailing: false, settingsFile: Self.settingsFile, locale: Self.japanese
+        ))
+        #expect(notice.files == [Self.sessionFile, history, ranking, viewed])
+        #expect(Array(notice.sentences.dropFirst()) == [
+            "通知履歴を保存していません。notifications.json を使用できず、退避もできませんでした。フォルダーのアクセス権を確認するか、ファイルをフォルダーの外に移動してから、Weir を終了して再度開いてください。",
+            "コマンドパレットの並び順を保存していません。frecency.json を使用できず、退避もできませんでした。フォルダーのアクセス権を確認するか、ファイルをフォルダーの外に移動してから、Weir を終了して再度開いてください。",
+            "確認済みのターンを保存していません。viewed-lines.json を使用できず、退避もできませんでした。フォルダーのアクセス権を確認するか、ファイルをフォルダーの外に移動してから、Weir を終了して再度開いてください。"
+        ])
     }
 
     /// The alert that the session was not restored also says it is not
@@ -97,5 +159,30 @@ struct SavingSuspendedNoticeTests {
             == detail)
         #expect(SavingSuspendedText.loadIssueMessage(detail: detail, isSessionSavingSuspended: true, locale: Self.english)
             == detail + "\n\n" + SavingSuspendedText.sessionNotSaved(locale: Self.english))
+    }
+
+    /// The alert names the stores whose loss is work to do again, and
+    /// leaves the ones that rebuild themselves to Settings; a file of work
+    /// still to finish is named by its file.
+    @Test func theAlert_namesOnlyTheStoresWhoseLossIsWork() throws {
+        let stores: [SuspendedStore] = [
+            .init(kind: .notificationHistory, file: Self.folder.appendingPathComponent("notifications.json")),
+            .init(kind: .stops, file: Self.folder.appendingPathComponent("stops.json")),
+            .init(kind: .turnReads, file: Self.folder.appendingPathComponent("turn-reads.json")),
+            .init(kind: .pendingWork, file: Self.folder.appendingPathComponent("turn-deletions.json"))
+        ]
+        let alert = try #require(SavingSuspendedNotice.alert(
+            launchSettings: nil,
+            launchStores: stores,
+            failedSessionFile: nil,
+            isSettingsSaveFailing: false,
+            settingsFile: Self.settingsFile,
+            locale: Self.english
+        ))
+        #expect(alert.files.map(\.lastPathComponent) == ["stops.json", "turn-deletions.json"])
+        #expect(alert.sentences[1]
+            == "Weir isn’t saving turn-deletions.json: it can’t be used and couldn’t be set aside. "
+            + "Check the permissions of its folder or move it out, then quit and reopen Weir.")
+        #expect(SavingSuspendedText.storesTitle(locale: Self.japanese) == "一部のファイルを保存していません")
     }
 }

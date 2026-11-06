@@ -357,4 +357,41 @@ struct ReviewDraftLifecycleTests {
             )
         }
     }
+
+    /// A folder that cannot be searched hides the draft in it, which is not
+    /// a review with no draft: the writer stops saving, so a save once the
+    /// folder opens up again cannot replace the comments with an empty list.
+    @Test func aDraftInAFolderThatCannotBeSearched_isNeverSavedOver() throws {
+        try withTempDir { dir in
+            let storage = dir.appendingPathComponent("reviews")
+            let root = URL(fileURLWithPath: "/tmp/weir-review-unsearchable")
+            let drafts = FileReviewDraftStore(directory: storage)
+            try drafts.save(ReviewDraft(lastFileID: ["uncommitted": "a.swift"]), root: root)
+            let file = FileReviewDraftStore.url(root: root, directory: storage)
+            let original = try Data(contentsOf: file)
+            let manager = FileManager.default
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: storage.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: storage.path) }
+
+            let writer = ReviewDraftWriter(root: root, drafts: drafts)
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: storage.path)
+
+            #expect(writer.hasUnreadableDraft)
+            #expect(writer.isSavingSuspended)
+            try writer.commit([])
+            #expect(try Data(contentsOf: file) == original)
+        }
+    }
+
+    /// No draft at all is a review not started: nothing is unreadable.
+    @Test func noDraft_isAReviewNotStarted() throws {
+        try withTempDir { dir in
+            let writer = ReviewDraftWriter(
+                root: URL(fileURLWithPath: "/tmp/weir-review-none"),
+                drafts: FileReviewDraftStore(directory: dir.appendingPathComponent("reviews"))
+            )
+            #expect(!writer.hasUnreadableDraft)
+            #expect(!writer.isSavingSuspended)
+        }
+    }
 }

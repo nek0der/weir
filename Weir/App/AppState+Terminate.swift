@@ -37,6 +37,7 @@ extension AppState {
         let tmuxPresence = self.tmuxPresence
         let sessionLaunches = self.sessionLaunches
         let approvalPresentation = self.approvalPresentation
+        let reviewWriters = self.reviewWriters
         return NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
@@ -82,6 +83,9 @@ extension AppState {
                 frecencyStore.flushSynchronously()
                 turnReads.flushSynchronously()
                 viewedLines.flushSynchronously()
+                // The file each review had open and its read marks, which
+                // wait on a short timer that would not run again.
+                reviewWriters.flushNavigationSaves()
                 // The stops, so a stop that exists at quit exists after the
                 // relaunch: the person ends it, not the launch.
                 stopLedger.flushSynchronously()

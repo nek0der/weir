@@ -171,10 +171,12 @@ struct SessionStoreTests {
                 return
             }
             #expect(MigrationBackup.readLedger(for: file)?.stage == .backedUp, "nothing reached disk yet")
+            #expect(store.hasFailedToSave, "the migration's write is a save that failed")
 
             try manager.setAttributes([.immutable: false], ofItemAtPath: file.path)
             store.saveSynchronously(SessionSnapshot(projects: [], tabs: []))
             #expect(MigrationBackup.readLedger(for: file)?.stage == .written)
+            #expect(!store.hasFailedToSave)
 
             let relaunched = SessionStore(directory: dir, migrator: Self.oneStep(Self.upgrade))
             _ = relaunched.load()
@@ -476,6 +478,45 @@ struct SessionStoreTests {
             #expect(snapshot.tabs.map(\.id) == [tab.id])
             #expect(snapshot.tabs.first?.agentBadges[.claude]?[pane]?.state == .unknown)
             #expect(try !Self.files(in: dir).contains { $0.hasPrefix("state.json.bak-") })
+        }
+    }
+
+    /// A save that does not reach disk is reported, for the notice that
+    /// tells the person, and the next save that lands takes it back. Only
+    /// whether the file was written decides it.
+    @Test func aSaveThatFails_isReported_untilASaveLands() throws {
+        try withTempDir { dir in
+            let manager = FileManager.default
+            let store = SessionStore(directory: dir)
+            try manager.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+            store.saveSynchronously(SessionSnapshot(projects: [], tabs: []))
+            #expect(store.hasFailedToSave)
+            #expect(!store.isSavingSuspended)
+
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            store.saveSynchronously(SessionSnapshot(projects: [], tabs: []))
+            #expect(!store.hasFailedToSave)
+            #expect(manager.fileExists(atPath: dir.appendingPathComponent("state.json").path))
+        }
+    }
+
+    /// The debounced save reports a failure too, once its write is back on
+    /// the main actor.
+    @Test func aDebouncedSaveThatFails_isReported() async throws {
+        try await withTempDir { dir in
+            let manager = FileManager.default
+            let store = SessionStore(directory: dir)
+            try manager.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+            store.scheduleSave(SessionSnapshot(projects: [], tabs: []))
+            let deadline = ContinuousClock.now + .seconds(10)
+            while !store.hasFailedToSave, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            #expect(store.hasFailedToSave)
         }
     }
 }

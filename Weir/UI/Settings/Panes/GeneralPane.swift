@@ -78,17 +78,19 @@ struct GeneralPane: View {
 }
 
 /// Tells, above everything else in the pane, that this launch has stopped
-/// saving the sessions or the settings (`SavingSuspendedNotice`), with a
-/// way to the files the person has to act on. Absent while both are saved.
+/// saving one of the app's files or that a save failed
+/// (`SavingSuspendedNotice`), with a way to the files the person has to
+/// act on. Absent while every one is saved.
 private struct SavingSuspendedSection: View {
     @Environment(SettingsStore.self) private var settings
-    @Environment(\.suspendedSessionFile) private var suspendedSessionFile
+    @Environment(\.savingStatus) private var savingStatus
     @Environment(\.locale) private var locale
 
     var body: some View {
         if let notice = SavingSuspendedNotice.make(
-            suspendedSessionFile: suspendedSessionFile,
+            status: savingStatus,
             settings: settings.savingSuspension,
+            isSettingsSaveFailing: settings.hasFailedToSave,
             settingsFile: settings.settingsFileURL,
             locale: locale
         ) {

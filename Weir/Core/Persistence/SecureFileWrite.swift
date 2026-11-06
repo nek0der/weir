@@ -113,6 +113,15 @@ enum SecureFileWrite {
             ? .cleared : .keptInPlace
     }
 
+    /// `setAside` for a file that is there but could not be read
+    /// (`PersistedRead.unreadable`). Its name is clear only once the file
+    /// has actually moved: a folder that cannot be searched hides the file
+    /// from `setAside`'s check that it is still there, and the file would
+    /// then be replaced once the folder opens up again.
+    static func setAsideUnreadable(_ url: URL) -> SetAsideResult {
+        quarantine(url, reason: "read-failed") != nil ? .cleared : .keptInPlace
+    }
+
     /// Best-effort `chmod 0600` on a file that some other component
     /// (e.g. libghostty's scrollback writer) already created. Logs
     /// but does not propagate failures — leaving the file in place

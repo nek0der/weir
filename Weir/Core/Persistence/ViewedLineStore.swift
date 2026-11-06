@@ -105,7 +105,9 @@ final class ViewedLineStore {
     @ObservationIgnored private var outsideTurnsMarks = 0
     @ObservationIgnored private let fileURL: URL
     @ObservationIgnored private let saveDebounce = DebouncedSave()
-    @ObservationIgnored private let saveQueue = DispatchQueue(label: "com.nekoder.weir.viewed-lines")
+    /// Serial, so writes land in the order they were made. Injected by a
+    /// test that holds a write back to see what waits for it.
+    @ObservationIgnored private let saveQueue: DispatchQueue
     /// False in demo mode: lines are kept in memory only, and neither the
     /// person's file nor their repositories' refs are touched.
     @ObservationIgnored private let writesFiles: Bool
@@ -114,6 +116,17 @@ final class ViewedLineStore {
     /// what it added. False too after a file that could not be read could
     /// not be moved aside: writing would replace the only copy.
     @ObservationIgnored private var isWritable = true
+    /// Whether `isWritable` is false because a file that could not be read
+    /// could not be moved aside, rather than because a newer build wrote
+    /// it, which loses nothing by not being saved over.
+    @ObservationIgnored private var isKeptUnread = false
+    /// `viewed-lines.json` while a file this build could not read keeps it
+    /// from being saved, for the notice in Settings → General that tells
+    /// the person (`SavingSuspendedNotice`).
+    var suspendedFile: URL? {
+        isKeptUnread ? fileURL : nil
+    }
+
     /// `nil` when the refs are not written (demo mode, most tests).
     @ObservationIgnored private let refs: (any ViewedLineRefWriting)?
     @ObservationIgnored private let now: () -> Date
@@ -130,9 +143,11 @@ final class ViewedLineStore {
         directory: URL,
         writesFiles: Bool = true,
         refs: (any ViewedLineRefWriting)? = nil,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        saveQueue: DispatchQueue = DispatchQueue(label: "com.nekoder.weir.viewed-lines")
     ) {
         self.writesFiles = writesFiles
+        self.saveQueue = saveQueue
         // A run that may not write the person's files does not touch their
         // repositories either, whatever it is handed.
         self.refs = writesFiles ? refs : nil
@@ -490,23 +505,19 @@ final class ViewedLineStore {
     // MARK: - Persistence
 
     private func load() {
-        // No file yet is the first launch; a file that is there but cannot
-        // be read is kept like one that does not decode.
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        // Only a file that is not there is the first launch. A check that it
+        // exists answers no for a folder that cannot be searched too, and
+        // this launch's lines would then replace the file, with the deleted
+        // turns' spans it holds, once the folder opens up again.
         let data: Data
         switch PersistedRead.read(fileURL) {
         case .absent:
-            // The check above found a file and the read did not. It goes
-            // aside as an unreadable one does, so a file put back in the
-            // meantime is not saved over.
-            log.error("viewed lines file gone before it was read")
-            setAside(reason: "read-failed")
             return
         case let .data(bytes):
             data = bytes
         case let .unreadable(error):
             log.error("viewed lines unreadable: \(String(describing: error), privacy: .private)")
-            setAside(reason: "read-failed")
+            suspendSaving(unless: SecureFileWrite.setAsideUnreadable(fileURL))
             return
         }
         do {
@@ -546,10 +557,14 @@ final class ViewedLineStore {
     /// over them with this launch's alone, so the file is moved aside
     /// first, or saving stops when it cannot be moved.
     private func setAside(reason: String) {
-        if SecureFileWrite.setAside(fileURL, reason: reason) == .keptInPlace {
-            log.error("viewed-lines.json stays in place; saving is suspended for this launch")
-            isWritable = false
-        }
+        suspendSaving(unless: SecureFileWrite.setAside(fileURL, reason: reason))
+    }
+
+    private func suspendSaving(unless result: SecureFileWrite.SetAsideResult) {
+        guard result == .keptInPlace else { return }
+        log.error("viewed-lines.json stays in place; saving is suspended for this launch")
+        isWritable = false
+        isKeptUnread = true
     }
 
     /// Drops the restore moves no line can take back any more
@@ -601,11 +616,17 @@ final class ViewedLineStore {
         }
     }
 
-    /// Writes any pending save now, and waits for the refs, for quitting
-    /// and for tests.
+    /// Writes any pending save now, and waits for the refs and for a write
+    /// already on its way, for quitting and for tests. With nothing pending
+    /// it still waits on the save queue: `noteDeletedTurns` cancels the
+    /// debounce and writes on its own, and the deleted turns' spans that
+    /// write carries are the only record of them.
     func flushSynchronously() {
         refs?.waitForPendingMoves()
-        guard writesFiles, isWritable, saveDebounce.hasUnflushedChanges else { return }
+        guard writesFiles, isWritable, saveDebounce.hasUnflushedChanges else {
+            saveQueue.sync {}
+            return
+        }
         saveDebounce.cancel()
         let document = makeDocument()
         let url = fileURL

@@ -404,4 +404,50 @@ struct StopLedgerStoreTests: StopLedgerFixture {
         #expect(store.ledger.record(id)?.resume == .failed)
         #expect(toldOfTimeout)
     }
+
+    /// A folder that cannot be searched hides stops.json, which is not a
+    /// launch with no stops: the file is kept as it is, nothing is written
+    /// over it this launch, and the person is told.
+    @Test func stopsInAFolderThatCannotBeSearched_areNeverSavedOver() throws {
+        try withTempDir { root in
+            let dir = root.appendingPathComponent("support")
+            let manager = FileManager.default
+            try manager.createDirectory(at: dir, withIntermediateDirectories: false)
+            let file = dir.appendingPathComponent("stops.json")
+            let earlier = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
+            _ = earlier.update(runtimes: [Self.run("a", .error, at: 0)], paneExists: Self.always)
+            earlier.flushSynchronously()
+            let original = try Data(contentsOf: file)
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dir.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+            let store = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            _ = store.update(runtimes: [Self.run("b", .error, at: 1)], paneExists: Self.always)
+            store.flushSynchronously()
+
+            #expect(try Data(contentsOf: file) == original)
+            #expect(store.suspendedFile == file)
+        }
+    }
+
+    /// Stops that do not decode are moved aside before anything saves, and
+    /// saving goes on.
+    @Test func stopsThatDoNotDecode_areMovedAside() throws {
+        try withTempDir { dir in
+            let file = dir.appendingPathComponent("stops.json")
+            let garbled = Data(#"{ "records": "#.utf8)
+            try garbled.write(to: file)
+
+            let store = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
+            _ = store.update(runtimes: [Self.run("b", .error, at: 1)], paneExists: Self.always)
+            store.flushSynchronously()
+
+            let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            let aside = try #require(names.first { $0.hasPrefix("stops.json.bak-decode-failed-") })
+            #expect(try Data(contentsOf: dir.appendingPathComponent(aside)) == garbled)
+            #expect(store.suspendedFile == nil)
+            #expect(FileManager.default.fileExists(atPath: file.path))
+        }
+    }
 }

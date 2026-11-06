@@ -83,8 +83,19 @@ final class TurnReadStore {
     @ObservationIgnored private let writesFiles: Bool
     /// False after finding a newer build's file: its marks count here when
     /// they can be read, but rewriting it in this version's shape could drop
-    /// what it added.
+    /// what it added. False too after a file that could not be read could
+    /// not be moved aside: writing would replace the only copy.
     @ObservationIgnored private var isWritable = true
+    /// Whether `isWritable` is false because a file that could not be read
+    /// could not be moved aside, rather than because a newer build wrote it.
+    @ObservationIgnored private var isKeptUnread = false
+    /// `turn-reads.json` while a file this build could not read keeps it
+    /// from being saved, for the notice that tells the person
+    /// (`SavingSuspendedNotice`).
+    var suspendedFile: URL? {
+        isKeptUnread ? fileURL : nil
+    }
+
     /// The clock for the read times; injected by tests.
     @ObservationIgnored private let now: () -> Date
 
@@ -156,7 +167,25 @@ final class TurnReadStore {
     // MARK: - Persistence
 
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL) else { return }
+        // Only a file that is not there holds no marks. One that cannot be
+        // read (its permissions, a folder that cannot be searched) may be
+        // readable again by the time this launch saves, and that save
+        // must not replace its marks with this launch's alone.
+        let data: Data
+        switch PersistedRead.read(fileURL) {
+        case .absent:
+            return
+        case let .data(bytes):
+            data = bytes
+        case let .unreadable(error):
+            log.error("turn reads unreadable: \(String(describing: error), privacy: .private)")
+            if SecureFileWrite.setAsideUnreadable(fileURL) == .keptInPlace {
+                log.error("turn-reads.json stays in place; saving is suspended for this launch")
+                isWritable = false
+                isKeptUnread = true
+            }
+            return
+        }
         do {
             if case .newer = try Self.migrator.migrate(data) {
                 // Read for its marks, which only ever mean "read", and left

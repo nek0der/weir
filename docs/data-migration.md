@@ -81,6 +81,10 @@ there.
     the file afresh.
   - A migrated draft that would exceed the 2 MB limit is renamed
     `<hash>.json.bak-migration-too-large-<unix>`.
+  - A draft that is there but cannot be opened is renamed
+    `<hash>.json.bak-read-failed-<unix>`. One in a folder that cannot be
+    searched is not taken for a missing one: it cannot be moved, so the
+    review starts empty and is not saved.
 - Sometimes this build cannot use a `state.json` or `settings.json` and cannot
   rename it aside either (a read-only folder, an immutable file). Weir then
   leaves the file in place and does not save it for the rest of that launch,
@@ -91,6 +95,11 @@ there.
   draft in that position is handled the same way: the review starts empty, is
   not saved, and loses its changes when it closes. Opening it again tries the
   file afresh.
+- When a save of `state.json` or `settings.json` does not reach disk (a full
+  disk, a folder that cannot be written), Weir says so in an alert, once for
+  each run of failed saves, and at the top of Settings → General while the
+  last save failed. Both go once both files save again, which each later
+  change tries.
 - Before a migrated file is written, `MigrationBackup`
   (`Weir/Core/Persistence/MigrationBackup.swift`) copies the original to
   `<name>.pre-v<N>` beside it. `<N>` is the version the file moves to, and the
@@ -652,7 +661,10 @@ is gone and can open the request's card. Rows written before have neither and
 fall back to the label recorded with them. A file that cannot be read is set
 aside as `notifications.json.bak-read-failed-<unix>` or
 `.bak-decode-failed-<unix>`. When it cannot be moved, it is left in place and
-saving stops for that launch.
+saving stops for that launch, and the top of Settings → General says so. As
+for `state.json`, only a missing file counts as none: one in a folder that
+cannot be searched stops saving too. `frecency.json`, the command palette's
+ranking, is handled the same way.
 
 0.1.9 ignores the two fields and drops them when it next
 saves. Those rows then name their place by the recorded label.
@@ -866,13 +878,18 @@ when it saves. That build then groups the moves of one mark by their time, as
 it did before.
 
 A file from a newer build is read for what it can give and not rewritten. A
-`turn-reads.json` that cannot be read is dropped and written again on the
-next change: turns go back to unread, never the reverse. A
+`turn-reads.json` that does not decode is dropped and written again on the
+next change: turns go back to unread, never the reverse. One that is there
+but cannot be read is set aside as `turn-reads.json.bak-read-failed-<unix>`,
+or, when it cannot be moved, left in place with saving stopped for that
+launch, and the top of Settings → General says so. A
 `viewed-lines.json` that cannot be read is set aside as
 `viewed-lines.json.bak-read-failed-<unix>` or `.bak-decode-failed-<unix>`,
 since its deleted turns' spans and restores' moves are not a reading to
 take again. Turns go back to not viewed. When the file cannot be moved, it
-is left in place and saving stops for that launch.
+is left in place and saving stops for that launch, and Weir says so in an
+alert and at the top of Settings → General. One in a folder that cannot be
+searched is not taken for a missing one and stops saving too.
 
 0.1.9 does not know either file and leaves them alone.
 
@@ -913,9 +930,12 @@ A file from a newer build is read for the stops it can give and not
 rewritten. Each entry of `records` and `dismissed` is read on its own. An
 entry this build cannot read (a reason a newer build added) is dropped by
 itself rather than costing the whole file. It is left out at the next write
-when the file is this build's version. A file that cannot be read is dropped
-and written again on the next change. The last launch's stops are then lost,
-and their panes stay plain shells.
+when the file is this build's version. A file that does not decode is set
+aside as `stops.json.bak-decode-failed-<unix>`, and one that cannot be read
+as `stops.json.bak-read-failed-<unix>`. The last launch's stops are then not
+listed, and their panes stay plain shells. When the file cannot be moved,
+it is left in place and saving stops for that launch, and Weir says so in an
+alert and at the top of Settings → General.
 
 0.1.9 does not know the file and leaves it alone. It lists no
 stop after a relaunch, and the file stays as the current build last wrote it.
@@ -940,8 +960,12 @@ it from the rules meanwhile, and removes the file once none is left. If a
 write of the file fails (a folder that will not take it), the write is tried
 again before every pass and at quit, even if the list has not changed since.
 
-A file that cannot be read, or that comes from a newer build, holds no hints.
-Such a session may be offered again, and the person can end it again.
+A file that comes from a newer build holds no hints and is not written that
+launch. A file that does not decode or cannot be read is set aside as
+`ended-session-hints.json.bak-decode-failed-<unix>` or
+`.bak-read-failed-<unix>`, or, when it cannot be moved, left in place and not
+written that launch, and Weir says so. Such a session may be offered again,
+and the person can end it again.
 
 0.1.9 does not know the file and leaves it alone. A session
 ended this way may be resumed there, as it would have been before.
@@ -969,9 +993,12 @@ launch:
 The file is written before each batch goes and is removed once nothing is
 listed.
 
-A file that cannot be read, or that comes from a newer build, holds no turns.
-A turn deleted unheard is then reported without its span, as before the file
-was kept.
+A file that comes from a newer build holds no turns and is not written that
+launch. A file that does not decode or cannot be read is set aside as
+`turn-deletions.json.bak-decode-failed-<unix>` or `.bak-read-failed-<unix>`,
+or, when it cannot be moved, left in place and not written that launch, and
+Weir says so. A turn deleted unheard is then reported without its span, as
+before the file was kept.
 
 0.1.9 does not know the file and leaves it alone.
 
@@ -1008,10 +1035,14 @@ The file is removed once nothing is listed. If a write fails after a notice
 was told, that notice is told again at the next launch, which is safer than
 losing it.
 
-A file that is deleted, cannot be read, or comes from a newer build holds no
-notices. An undo cut short whose operation is read later is then not told at
-launch. A restore still offers its Undo in its record; a discard's undo is
-lost.
+A file that is deleted holds no notices. One that comes from a newer build
+holds none and is not written that launch. One that does not decode or
+cannot be read is set aside as
+`restore-pending-stops.json.bak-decode-failed-<unix>` or
+`.bak-read-failed-<unix>`, or, when it cannot be moved, left in place and not
+written that launch, and Weir says so. An undo cut short whose operation is
+read later is then not told at launch. A restore still offers its Undo in
+its record; a discard's undo is lost.
 
 0.1.9 does not know the file and leaves it alone.
 

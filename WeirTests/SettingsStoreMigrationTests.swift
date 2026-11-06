@@ -81,11 +81,13 @@ struct SettingsStoreMigrationTests {
             let store = SettingsStore(directory: dir)
             #expect(store.settings.schemaVersion == 2, "the move is in use")
             #expect(MigrationBackup.readLedger(for: file)?.stage == .backedUp, "nothing reached disk yet")
+            #expect(store.hasFailedToSave, "the move's write is a save that failed")
 
             try FileManager.default.setAttributes([.immutable: false], ofItemAtPath: file.path)
             store.settings.terminal.minPaneSize = 140
             store.saveNow()
             #expect(MigrationBackup.readLedger(for: file)?.stage == .written)
+            #expect(!store.hasFailedToSave)
             _ = SettingsStore(directory: dir)
             #expect(MigrationBackup.readLedger(for: file)?.stage == .written, "and after a relaunch")
         }
@@ -227,8 +229,12 @@ struct SettingsStoreMigrationTests {
             let store = SettingsStore(directory: dir)
             #expect(store.settings == .default)
             #expect(store.savingSuspension == nil)
-            #expect(SavingSuspendedNotice.atLaunch(
-                settings: store.savingSuspension, settingsFile: file, locale: Locale(identifier: "en")
+            #expect(SavingSuspendedNotice.alert(
+                launchSettings: store.savingSuspension,
+                failedSessionFile: nil,
+                isSettingsSaveFailing: false,
+                settingsFile: file,
+                locale: Locale(identifier: "en")
             ) == nil)
             let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
             #expect(names.contains { $0.hasPrefix("settings.json.bak-decode-failed-") })

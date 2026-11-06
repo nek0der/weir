@@ -411,9 +411,11 @@ extension WorkspaceSession {
 /// exclude edit doesn't block worktree creation, and since the file
 /// lives under `.git/` the user almost never notices the failure;
 /// `.worktrees/<branch>/` will just show up as untracked in
-/// `git status` until they ignore it themselves.
+/// `git status` until they ignore it themselves. A file that is there
+/// but cannot be read, or is not UTF-8, is left as it is: writing the
+/// block alone would replace the person's own rules. Internal for tests.
 @MainActor
-private func ensureLocalExcludeCoversWorktreesDir(repoRoot: URL) {
+func ensureLocalExcludeCoversWorktreesDir(repoRoot: URL) {
     // Resolve `.git` — usually a directory, but in submodules it's a
     // text file pointing elsewhere. Skip the gitfile case for now;
     // submodules with worktrees inside themselves are exotic enough
@@ -432,7 +434,20 @@ private func ensureLocalExcludeCoversWorktreesDir(repoRoot: URL) {
     let endMarker = "# <<< weir worktrees <<<"
     let block = "\(beginMarker)\n/.worktrees/\n\(endMarker)\n"
 
-    let existing = (try? String(contentsOf: excludeURL, encoding: .utf8)) ?? ""
+    let existing: String
+    switch PersistedRead.read(excludeURL) {
+    case .absent:
+        existing = ""
+    case let .data(bytes):
+        guard let text = String(data: bytes, encoding: .utf8) else {
+            log.error("\(excludeURL.path, privacy: .private) is not UTF-8; left as it is")
+            return
+        }
+        existing = text
+    case let .unreadable(error):
+        log.error("\(excludeURL.path, privacy: .private) unreadable; left as it is: \(error.localizedDescription, privacy: .private)")
+        return
+    }
     // Require BOTH markers — a half-written block (begin without
     // end) would otherwise read as "already wrote it" and leave
     // the worktrees dir un-ignored forever. `String.write(atomically:

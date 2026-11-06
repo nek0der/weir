@@ -109,6 +109,13 @@ final class RestoreCoordinator {
     /// Where `pendingStops` are kept between launches; `nil` keeps them in
     /// memory only, as demo mode and tests do.
     @ObservationIgnored private let pendingStopsURL: URL?
+    /// Whether `pendingStopsURL` may be written this launch
+    /// (`VersionedListRead.isWritable`): a file this build could not use is
+    /// kept, since it may hold a discard's only way back.
+    @ObservationIgnored private let arePendingStopsWritable: Bool
+    /// `pendingStopsURL` while it is kept unread and not written, for the
+    /// notice that tells the person.
+    @ObservationIgnored let suspendedPendingStopsFile: URL?
     /// When a pending notice is taken to begin, and how old one is; injected
     /// by tests.
     @ObservationIgnored private let now: () -> Date
@@ -144,10 +151,12 @@ final class RestoreCoordinator {
         self.rereadAttempts = rereadAttempts
         self.pendingStopsURL = pendingStopsURL
         self.now = now
-        let read = pendingStopsURL.map(RestorePendingStopFile.read) ?? []
-        pendingStops = read
+        let read = pendingStopsURL.map(RestorePendingStopFile.read) ?? .usable([])
+        arePendingStopsWritable = read.isWritable
+        suspendedPendingStopsFile = read.isKeptUnread ? pendingStopsURL : nil
+        pendingStops = read.elements
         dropExpiredPendingStops()
-        if pendingStops != read {
+        if pendingStops != read.elements {
             savePendingStops()
         }
     }
@@ -447,7 +456,7 @@ final class RestoreCoordinator {
     }
 
     private func savePendingStops() {
-        if let pendingStopsURL {
+        if arePendingStopsWritable, let pendingStopsURL {
             RestorePendingStopFile.write(pendingStops, to: pendingStopsURL)
         }
     }

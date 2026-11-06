@@ -652,4 +652,58 @@ struct ViewedLineStoreTests {
             #expect(try Data(contentsOf: file(in: dir)) == garbled)
         }
     }
+
+    /// A folder that cannot be searched hides the file in it, which is not
+    /// a first launch: the check that a file exists answers no there too.
+    /// Saving stops, and says so, so a save once the folder opens up again
+    /// cannot replace the file with what this launch recorded.
+    @Test func aFileInAFolderThatCannotBeSearched_isNeverSavedOver() async throws {
+        try await withTempDir { root in
+            let dir = root.appendingPathComponent("support")
+            let manager = FileManager.default
+            try manager.createDirectory(at: dir, withIntermediateDirectories: false)
+            let span = DateInterval(start: Date(timeIntervalSince1970: 1000), duration: 100)
+            #expect(await ViewedLineStore(directory: dir).noteDeletedTurns([dir.path: [span]]))
+            let original = try Data(contentsOf: file(in: dir))
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dir.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+            let store = ViewedLineStore(directory: dir)
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            try store.markViewed(through: Fixture.turn("b", number: 2), source: .decisionBar)
+            store.flushSynchronously()
+
+            #expect(try Data(contentsOf: file(in: dir)) == original, "the deleted turns' spans are still there")
+            #expect(store.suspendedFile == file(in: dir))
+        }
+    }
+
+    /// The deleted turns' spans are written on their own, with the debounce
+    /// canceled. A quit while that write is still on its way must wait for
+    /// it: the spans are the only record of when those turns ran.
+    @Test func flush_waitsForTheDeletedTurnsSpansWriteOnItsWay() async throws {
+        try await withTempDir { dir in
+            let queue = DispatchQueue(label: "viewed-lines-test")
+            let store = ViewedLineStore(directory: dir, saveQueue: queue)
+            let span = DateInterval(start: Date(timeIntervalSince1970: 1000), duration: 100)
+            // Holds the queue, so the spans' write waits behind it until the
+            // flush below has started.
+            let release = DispatchSemaphore(value: 0)
+            queue.async { release.wait() }
+            let noting = Task { await store.noteDeletedTurns([dir.path: [span]]) }
+            // The spans are taken in, and their write queued, in one step
+            // on the main actor once the task runs.
+            let deadline = ContinuousClock.now + .seconds(10)
+            while store.deletedTurns.isEmpty, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            #expect(store.deletedTurns == [dir.path: [span]])
+            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(200)) { release.signal() }
+
+            store.flushSynchronously()
+
+            #expect(ViewedLineStore(directory: dir).deletedTurns == [dir.path: [span]])
+            #expect(await noting.value)
+        }
+    }
 }

@@ -315,4 +315,90 @@ struct SettingsStoreTests {
             #expect(entries.first?.hasPrefix("settings.json.bak-init-failure-") == true)
         }
     }
+
+    /// A save of the session's file sets the watcher off for the folder,
+    /// and the reload finds settings.json as the launch read it. That is
+    /// nothing new, and must not undo the first change made since the
+    /// launch, before its save lands.
+    @Test func aReloadOfTheFileTheLaunchRead_keepsAChangeNotSavedYet() throws {
+        try withTempDir { dir in
+            let file = dir.appendingPathComponent("settings.json")
+            try WeirSettings.makeFileEncoder().encode(WeirSettings.default).write(to: file)
+            let store = SettingsStore(directory: dir)
+            store.settings.terminal.minPaneSize = 140
+
+            store.reloadFromDisk()
+
+            #expect(store.settings.terminal.minPaneSize == 140)
+        }
+    }
+
+    /// A hand edit after the launch is still read, as it is new.
+    @Test func aReloadOfAFileEditedSinceTheLaunch_readsTheEdit() throws {
+        try withTempDir { dir in
+            let file = dir.appendingPathComponent("settings.json")
+            let encoder = WeirSettings.makeFileEncoder()
+            try encoder.encode(WeirSettings.default).write(to: file)
+            let store = SettingsStore(directory: dir)
+            var edited = WeirSettings.default
+            edited.terminal.minPaneSize = 150
+            try encoder.encode(edited).write(to: file)
+
+            store.reloadFromDisk()
+
+            #expect(store.settings.terminal.minPaneSize == 150)
+        }
+    }
+
+    /// A save that does not reach disk is reported, for the notice that
+    /// tells the person, and the next save that lands takes it back.
+    @Test func aSaveThatFails_isReported_untilASaveLands() throws {
+        try withTempDir { dir in
+            let manager = FileManager.default
+            let store = SettingsStore(directory: dir)
+            try manager.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+            store.settings.terminal.minPaneSize = 140
+            #expect(!store.saveNow())
+            #expect(store.hasFailedToSave)
+            #expect(store.savingSuspension == nil, "nothing stopped the saving; it failed")
+
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            #expect(store.saveNow())
+            #expect(!store.hasFailedToSave)
+        }
+    }
+
+    /// A save skipped because saving is suspended is not a failure: the
+    /// suspension has its own sentence.
+    @Test func aSaveSkippedWhileSuspended_isNotAFailure() throws {
+        try withTempDir { dir in
+            let file = dir.appendingPathComponent("settings.json")
+            try WeirSettings.testFileData(version: WeirSettings.currentSchemaVersion + 1, overrides: [:]).write(to: file)
+            let store = SettingsStore(directory: dir)
+            #expect(store.savingSuspension == .newerVersion)
+
+            store.settings.terminal.minPaneSize = 140
+            #expect(!store.saveNow())
+            #expect(!store.hasFailedToSave)
+        }
+    }
+
+    /// A file the launch moved aside leaves no file, as a first launch does.
+    /// The watcher's next event finds none, which is nothing new, and must
+    /// not undo the change waiting to be saved.
+    @Test func aReloadAfterTheLaunchMovedTheFileAside_keepsAChangeNotSavedYet() throws {
+        try withTempDir { dir in
+            try Data(#"{ "broken": "#.utf8).write(to: dir.appendingPathComponent("settings.json"))
+            let store = SettingsStore(directory: dir)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path)
+                .contains { $0.hasPrefix("settings.json.bak-decode-failed-") })
+            store.settings.terminal.minPaneSize = 140
+
+            store.reloadFromDisk()
+
+            #expect(store.settings.terminal.minPaneSize == 140)
+        }
+    }
 }

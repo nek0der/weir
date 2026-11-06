@@ -23,10 +23,11 @@ enum AgentForgottenHintFile {
         log: Logger.weir("agent.projection.forgotten")
     )
 
-    /// The hints `url` holds. A file that is missing, does not read, or
-    /// comes from a newer build holds none: what it loses is a session
-    /// that may be offered again, which the person can end again.
-    static func read(_ url: URL) -> [AgentForgottenHint] {
+    /// The hints `url` holds, and whether the file may be written
+    /// (`VersionedListFile.read`). One this build cannot use costs a session
+    /// that may be offered again, which the person can end again, and is
+    /// kept rather than written over.
+    static func read(_ url: URL) -> VersionedListRead<AgentForgottenHint> {
         file.read(url)
     }
 
@@ -51,10 +52,19 @@ struct AgentForgottenHintQueue {
     /// change again before the next launch reads the file, so a write that
     /// waited for a change would never come.
     private var isUnsaved = false
+    /// Whether the file may be written this launch
+    /// (`VersionedListRead.isWritable`).
+    private let isWritable: Bool
+    /// The file while it is kept unread and not written, for the notice
+    /// that tells the person.
+    let suspendedFile: URL?
 
     init(url: URL?) {
         self.url = url
-        hints = url.map(AgentForgottenHintFile.read) ?? []
+        let read = url.map(AgentForgottenHintFile.read) ?? .usable([])
+        hints = read.elements
+        isWritable = read.isWritable
+        suspendedFile = read.isKeptUnread ? url : nil
     }
 
     mutating func add(_ hint: AgentForgottenHint) {
@@ -74,7 +84,7 @@ struct AgentForgottenHintQueue {
 
     /// Writes the hints when the file does not hold them yet.
     mutating func save() {
-        guard isUnsaved, let url else { return }
+        guard isUnsaved, isWritable, let url else { return }
         isUnsaved = !AgentForgottenHintFile.write(hints, to: url)
     }
 }
