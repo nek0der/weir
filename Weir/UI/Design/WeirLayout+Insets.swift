@@ -89,9 +89,8 @@ extension WeirLayout.Supervision {
 
     /// "T7" on a turn's card: monospaced, so the numbers stand in one
     /// column down the list, and measured for `turnFirstColumnWidth(hasConversation:digits:)`.
-    /// Made on each ask: `NSFont` is not `Sendable`, so it cannot be kept.
     static var turnNumberFont: NSFont {
-        NSFont.monospacedSystemFont(ofSize: WeirFont.Supervision.Size.caption.rawValue, weight: .bold)
+        MonospacedSystemFont.font(ofSize: WeirFont.Supervision.Size.caption.rawValue, weight: .bold)
     }
 
     /// The panel's head: its first line is the surfaces' heading line

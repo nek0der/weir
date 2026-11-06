@@ -25,10 +25,8 @@ enum ReviewRowMetrics {
     /// every line of a two-hundred-line file.
     static let defaultNumberWidth: CGFloat = 26
 
-    /// Computed rather than stored: `NSFont` is not `Sendable`, and a stored
-    /// static of a non-Sendable type is a global mutable reference under Swift 6.
     static var font: NSFont {
-        .monospacedSystemFont(ofSize: WeirFont.Supervision.Size.meta.rawValue, weight: .regular)
+        MonospacedSystemFont.font(ofSize: WeirFont.Supervision.Size.meta.rawValue, weight: .regular)
     }
 
     static var commentFont: NSFont {
@@ -195,7 +193,7 @@ enum ReviewRowMetrics {
     }
 
     static var cardDetailFont: NSFont {
-        .monospacedSystemFont(ofSize: WeirFont.Supervision.Size.micro.rawValue, weight: .regular)
+        MonospacedSystemFont.font(ofSize: WeirFont.Supervision.Size.micro.rawValue, weight: .regular)
     }
 
     /// Where the title starts: the icon's inset, the icon, and the gap after
@@ -428,7 +426,7 @@ final class ReviewHunkRowView: NSView {
         label.translatesAutoresizingMaskIntoConstraints = false
         // In the supervision window's tokens: its words in `muted`, which
         // reads at 4.5:1 on the header's ground.
-        label.font = .monospacedSystemFont(ofSize: WeirFont.Supervision.Size.detail.rawValue, weight: .regular)
+        label.font = MonospacedSystemFont.font(ofSize: WeirFont.Supervision.Size.detail.rawValue, weight: .regular)
         label.textColor = SupervisionTokens.muted.nsColor
         label.lineBreakMode = .byTruncatingTail
         addSubview(label)

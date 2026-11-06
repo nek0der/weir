@@ -262,7 +262,7 @@ private struct ApprovalCard: View {
     }
 
     private var detailsHeight: CGFloat {
-        let font = NSFont.monospacedSystemFont(ofSize: WeirFont.Supervision.Size.caption.rawValue, weight: .regular)
+        let font = MonospacedSystemFont.font(ofSize: WeirFont.Supervision.Size.caption.rawValue, weight: .regular)
         return ApprovalCardModel.detailsHeight(
             of: approval.inputDescription,
             lineHeight: ceil(font.ascender - font.descender + font.leading),

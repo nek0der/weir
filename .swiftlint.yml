@@ -72,6 +72,24 @@ custom_rules:
       app locale.
     severity: error
 
+  # A monospaced system font AppKit made and Weir let go breaks text measured
+  # later in one of the same size and weight (MonospacedSystemFont.swift).
+  monospaced_system_font:
+    name: "Monospaced system font made on the spot"
+    regex: '\.monospacedSystemFont\('
+    excluded: 'Weir/UI/Design/MonospacedSystemFont\.swift$'
+    excluded_match_kinds:
+      - comment
+      - comment.mark
+      - comment.url
+      - doccomment
+      - doccomment.field
+      - string
+    message: >-
+      Ask MonospacedSystemFont.font(ofSize:weight:), which keeps each size and
+      weight for the app's life.
+    severity: error
+
   # Core and Presentation decide what the app does; AppKit and SwiftUI are the
   # boundary where that is drawn and wired to the system (CLAUDE.md, "SwiftUI
   # before AppKit"), and code below it that imports them cannot be tested
