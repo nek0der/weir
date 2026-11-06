@@ -426,11 +426,13 @@ jobs:
 
       # The tests have taken at most 3 minutes. Their own limit, under the
       # job's, fails a hung test run here, and the steps after it still upload
-      # the result bundle and the coverage.
+      # the result bundle and the coverage. xcodebuild hands a TEST_RUNNER_
+      # variable to the test process without the prefix, and no other, so the
+      # tmux tests fail here rather than skip when tmux is missing.
       - name: Test with coverage
         timeout-minutes: 15
         env:
-          WEIR_REQUIRE_TMUX_TESTS: "1"
+          TEST_RUNNER_WEIR_REQUIRE_TMUX_TESTS: "1"
           TEST_RUNNER_WEIR_REQUIRE_CASE_FOLDING_TESTS: "1"
         run: |
           set -o pipefail
