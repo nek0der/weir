@@ -10,8 +10,15 @@ skill has a link there, `.claude/skills/<name>` pointing at
 `../../.agents/skills/<name>`. One link per skill, not one for the whole
 folder: Claude Code's documentation says it follows a link to a skill's
 folder, and a link to the folder above has been reported not to load. A new skill adds
-its link in the same pull request (`ln -s ../../.agents/skills/<name>
-.claude/skills/<name>`).
+its link (`ln -s ../../.agents/skills/<name> .claude/skills/<name>`) and its
+row in [Available skills](#available-skills) in the same pull request.
+
+## Available skills
+
+| Skill | Use it for |
+| --- | --- |
+| [design-tests](design-tests/SKILL.md) | Designing and reviewing test cases, assertions, fixtures, and consolidation while preserving regression coverage. |
+| [verify-in-app](verify-in-app/SKILL.md) | Checking a change in a running Debug app through the verification channel. |
 
 ## When something is a skill
 
