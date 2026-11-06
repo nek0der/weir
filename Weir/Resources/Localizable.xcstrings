@@ -8674,6 +8674,23 @@
         }
       }
     },
+    "Find Bar": {
+      "comment": "VoiceOver: the find bar over a pane, which holds its field and buttons",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Find Bar"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "検索バー"
+          }
+        }
+      }
+    },
     "Find Next": {
       "localizations": {
         "ja": {

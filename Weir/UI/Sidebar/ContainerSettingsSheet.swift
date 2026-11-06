@@ -189,6 +189,8 @@ struct ContainerSettingsSheet: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text("Change Color"))
+                // The dot shows the color; VoiceOver says it by name.
+                .accessibilityValue(Text(ContainerColorPicker.name(of: project?.paletteIndex)))
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
                     colorDotFrame = frame
                     colorPanel.updateAnchor(projectID: projectID, anchor: frame)

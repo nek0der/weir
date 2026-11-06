@@ -94,7 +94,6 @@ struct NeedsAttentionRowView: View {
                         // The place leads; a command or a file at the end stays
                         // with it ("alpha · Write: /Users/…/notes.txt").
                         .supervisionTruncation(row.factTruncation)
-                        .accessibilityLabel(row.spokenDetail.isEmpty ? Text(detail) : Text(verbatim: row.spokenDetail))
                     if onAction != nil, let action = row.action {
                         Spacer(minLength: 0)
                         // As wide as the button laid over it, so the fact is
@@ -120,7 +119,11 @@ struct NeedsAttentionRowView: View {
         )
         .contentShape(Rectangle())
         .onClick { onOpen(.click(holdsCommand: $0)) }
-        .accessibilityElement(children: .combine)
+        // Read as the list reads the row the keys are on (`Row.spoken`),
+        // then how long it has waited, so the two never say it apart. The
+        // glyph's name is left out: the fact says the state already.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: AgentStatusText.spokenList([row.spoken(locale: locale), waitLabel], locale: locale)))
         .accessibilityAddTraits(.isButton)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityHint(Text(openHint))

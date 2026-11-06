@@ -228,6 +228,7 @@ routing toggle when the descriptors cannot be read
 | `worktree_placement` | A `git worktree add` can be stopped before it runs and sent to the project's placement; the project settings give it a toggle. | yes | yes | yes | no |
 | `worktree_finish_proven` | A `git worktree add` already run is proven by its payload alone, and gets the setup when it lands at the placement. | no | no | no | yes |
 | `approval_hook` | Approval is answered by a hook process. | yes | yes | no | yes |
+| `approval_hook_asks_questions` | The question tool asks through the approval hook too, so a question reaches the approval service as a request, and VoiceOver reads that request rather than the wait at the agent's prompt. | yes | no | no | no |
 | `approval_protocol` | Approval is requested over a connection. | no | no | no | no |
 | `subagents` | The provider emits subagent events. | yes | yes | yes | no |
 | `subagent_end_opens_turn` | A subagent's end hands its result back in a turn of the agent's own, so a subagent's tools at idle or error, the one that ends its wait there included, show the run working until that turn's stop. | yes | no | no | no |
@@ -238,7 +239,7 @@ routing toggle when the descriptors cannot be read
 | `program_status_announces_failure` | An `error` status report is a failure of its own until the next report. | no | no | yes | no |
 | `program_status_auth_settles` | A `blocked` status report of kind `auth` is a wait only once it has stood for a while. | no | no | yes | no |
 | `turn_begin_prepared` | A turn's start is saved by a call of its own before the input is sent. | no | no | no | yes |
-| `question_answered_by_agent` | A question asked through the approval hook is answered at the agent's own prompt; Weir does not hold it. | no | yes | no | no |
+| `question_answered_by_agent` | A question is answered at the agent's own prompt, never on Weir's card, so Weir holds no request that carries one. Codex's `request_user_input` waits at its prompt and never reaches the approval hook. | no | yes | no | no |
 | `question_ends_with_turn` | A question's request ends with the turn it was asked in, which the Hook Helper watches for. | yes | no | no | no |
 | `approval_hook_records_lifecycle` | The agent calls the Hook Helper instead of its lifecycle hook for a permission request, so the helper records one it does not answer. | no | yes | no | no |
 | `approval_withdrawn_by_signal` | A SIGTERM to the Hook Helper, sent when the person answers at the agent's own prompt, withdraws the request. | no | no | no | yes |

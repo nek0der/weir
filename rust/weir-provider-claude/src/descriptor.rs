@@ -37,6 +37,8 @@ pub(crate) fn descriptor() -> &'static ProviderDescriptor {
             Capability::WorktreeEvents,
             Capability::WorktreePlacement,
             Capability::ApprovalHook,
+            // `AskUserQuestion` comes through `PermissionRequest` too.
+            Capability::ApprovalHookAsksQuestions,
             // Its permission dialog comes up while the hook still holds the
             // request.
             Capability::ApprovalPromptBesideCard,

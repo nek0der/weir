@@ -98,8 +98,13 @@ struct ContainerColorPicker: View {
         .frame(width: WeirLayout.containerColorSwatchSlot, height: WeirLayout.containerColorSwatchSlot)
     }
 
-    private static func name(of index: Int) -> LocalizedStringResource {
-        WeirColor.projectPaletteNames.indices.contains(index)
+    /// A color's name, as its swatch and the Color row's dot say it; `nil`
+    /// is Automatic's.
+    static func name(of index: Int?) -> LocalizedStringResource {
+        guard let index else {
+            return LocalizedStringResource("Automatic", comment: "Project color picker: no color of the project's own")
+        }
+        return WeirColor.projectPaletteNames.indices.contains(index)
             ? WeirColor.projectPaletteNames[index]
             : LocalizedStringResource("Color \(index + 1)")
     }
@@ -120,7 +125,7 @@ struct ContainerColorPicker: View {
         }
         .buttonStyle(.plain)
         .help(Text("Use the accent color", comment: "Project color picker: tooltip of Automatic"))
-        .accessibilityLabel(Text("Automatic", comment: "Project color picker: no color of the project's own"))
+        .accessibilityLabel(Text(Self.name(of: nil)))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityFocused($focusedSwatch, equals: -1)
     }

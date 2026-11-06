@@ -217,7 +217,7 @@ final class AttentionQueueStore {
         return AttentionQueueReducer.Input(
             runtimes: facts,
             approvals: approvals,
-            isApprovalServiceRunning: isApprovalServiceRunning,
+            serviceRequests: isApprovalServiceRunning ? .ofInstalledProviders() : .none,
             launchFailures: launches.compactMap { launch in
                 launch.failure.map { failure in
                     AttentionQueueReducer.LaunchFailure(
@@ -239,5 +239,18 @@ final class AttentionQueueStore {
     /// that stays in sight reads nothing new by staying.
     static func panesComingIntoSight(previous: Set<UUID>, current: Set<UUID>) -> Set<UUID> {
         current.subtracting(previous)
+    }
+}
+
+extension AttentionQueueReducer.ServiceRequests {
+    /// The waits the approval service receives as requests, as each
+    /// provider's descriptor says: its permission requests with
+    /// `approval_hook`, its questions too with `approval_hook_asks_questions`.
+    static func ofInstalledProviders(has: (String, AgentKind) -> Bool = AgentProviderRegistry.has) -> Self {
+        let approvals = AgentKind.allCases.filter { has(ProviderCapabilityName.approvalHook, $0) }
+        return Self(
+            approvals: Set(approvals),
+            questions: Set(approvals.filter { has(ProviderCapabilityName.approvalHookAsksQuestions, $0) })
+        )
     }
 }

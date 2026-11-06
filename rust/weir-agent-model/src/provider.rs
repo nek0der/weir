@@ -146,9 +146,15 @@ pub enum Capability {
     /// began reaches us after the agent may have started on it. A turn no such
     /// call came before has no start, rather than a late one taken for its start.
     TurnBeginPrepared,
-    /// A question the agent asks through its approval hook is answered at the
-    /// agent's own prompt, never on Weir's card: the card cannot give the
-    /// agent its answer back, so Weir does not hold one.
+    /// The agent's question tool asks through its approval hook too, so the
+    /// approval service receives a question as a request, as it receives a
+    /// permission request. A provider whose questions only wait at its own
+    /// prompt leaves it out: no request will stand for such a wait.
+    ApprovalHookAsksQuestions,
+    /// A question is answered at the agent's own prompt, never on Weir's
+    /// card: the card cannot give the agent its answer back, so Weir holds
+    /// no request that carries one. Codex's question tool waits at its
+    /// prompt and never reaches the approval hook.
     QuestionAnsweredByAgent,
     /// A question's approval request ends when the turn it was asked in ends,
     /// which the helper watches for between short waits for the decision: the

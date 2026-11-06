@@ -113,15 +113,47 @@ package enum AttentionQueueReducer {
         }
     }
 
+    /// Which waits at an agent's prompt the approval service also receives
+    /// as a request: none while it does not run. Such a wait is usually a
+    /// request that has not reached Weir yet, or one just answered whose
+    /// hook has not moved on; it is listed but not announced, so the person
+    /// does not hear one request twice. Every other wait (Antigravity's
+    /// permission prompt, Codex's and OpenCode's questions, a sign-in) has
+    /// no request to be announced by, so it is announced itself.
+    package struct ServiceRequests: Equatable, Sendable {
+        /// The service does not run, so no request stands for any wait.
+        package static let none = Self()
+
+        /// The providers whose approval hook sends their permission requests.
+        package var approvals: Set<AgentKind>
+        /// The providers whose question tool asks through that hook too.
+        package var questions: Set<AgentKind>
+
+        package init(approvals: Set<AgentKind> = [], questions: Set<AgentKind> = []) {
+            self.approvals = approvals
+            self.questions = questions
+        }
+
+        /// Whether a request will stand for `provider`'s `wait`. A wait we
+        /// cannot name, from a record before it said what its wait is, is
+        /// taken for a permission request, the one kind such records held.
+        package func standsFor(_ wait: PromptWait, of provider: AgentKind?) -> Bool {
+            guard let provider else { return false }
+            switch wait {
+            case .approval, .unclassified: return approvals.contains(provider)
+            case .question: return questions.contains(provider)
+            case .signIn: return false
+            }
+        }
+    }
+
     package struct Input: Equatable, Sendable {
         package var runtimes: [RuntimeFact] = []
         /// Every request the ledger keeps, settled ones included.
         package var approvals: [PlacedApproval] = []
-        /// Whether the approval service runs. A wait at the agent's prompt is
-        /// then usually a request that has not reached Weir yet, or one
-        /// just answered whose hook has not moved on; it is listed but not
-        /// announced, so the person does not hear one request twice.
-        package var isApprovalServiceRunning = false
+        /// The waits a request of the approval service stands for, which are
+        /// listed but not announced (`ServiceRequests`).
+        package var serviceRequests = ServiceRequests.none
         package var launchFailures: [LaunchFailure] = []
         package var missingWorktrees: [MissingWorktree] = []
         package var retainedStops: [RetainedStop] = []
@@ -132,7 +164,7 @@ package enum AttentionQueueReducer {
         package init(
             runtimes: [RuntimeFact] = [],
             approvals: [PlacedApproval] = [],
-            isApprovalServiceRunning: Bool = false,
+            serviceRequests: ServiceRequests = .none,
             launchFailures: [LaunchFailure] = [],
             missingWorktrees: [MissingWorktree] = [],
             retainedStops: [RetainedStop] = [],
@@ -140,7 +172,7 @@ package enum AttentionQueueReducer {
         ) {
             self.runtimes = runtimes
             self.approvals = approvals
-            self.isApprovalServiceRunning = isApprovalServiceRunning
+            self.serviceRequests = serviceRequests
             self.launchFailures = launchFailures
             self.missingWorktrees = missingWorktrees
             self.retainedStops = retainedStops
@@ -161,7 +193,7 @@ package enum AttentionQueueReducer {
         var effects: [AttentionEffect] = []
         for item in wanted {
             if queue.insert(id: item.id, kind: item.kind, subject: item.subject, arrivedAt: item.arrivedAt) {
-                if item.kind.isAnnounced(whileServiceRuns: input.isApprovalServiceRunning) {
+                if item.kind.isAnnounced(about: item.subject.agentKind, serviceRequests: input.serviceRequests) {
                     effects.append(.announce(item.id))
                 }
                 // A request's banner comes from here, as it arrives, so it
@@ -341,12 +373,12 @@ private extension AttentionItemKind {
 
     /// Whether a new item of this kind is read out by VoiceOver. Only what
     /// blocks on the person: unread turns are frequent, and announcing each
-    /// would interrupt the work they report on. A prompt is left to its
-    /// request while the service runs (`Input.isApprovalServiceRunning`).
-    func isAnnounced(whileServiceRuns isServiceRunning: Bool) -> Bool {
+    /// would interrupt the work they report on. A prompt is left to the
+    /// request that stands for it (`ServiceRequests`).
+    func isAnnounced(about provider: AgentKind?, serviceRequests: AttentionQueueReducer.ServiceRequests) -> Bool {
         switch self {
         case .approval, .question, .stop: true
-        case .prompt: !isServiceRunning
+        case let .prompt(wait): !serviceRequests.standsFor(wait, of: provider)
         case .unread: false
         }
     }

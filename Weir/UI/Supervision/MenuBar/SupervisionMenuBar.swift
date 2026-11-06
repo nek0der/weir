@@ -207,7 +207,7 @@ struct SupervisionMenuBarContent: View {
         // heading when it opens, and the row the keys are on as they move.
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(list.heading))
-        .accessibilityValue(Text(verbatim: selection.spokenRow(in: list.rows)))
+        .accessibilityValue(Text(verbatim: selection.spokenRow(in: list.rows, locale: locale)))
         .onKeyPress(.downArrow) {
             selection.move(forward: true, in: list.rows)
             keyboardMoves += 1

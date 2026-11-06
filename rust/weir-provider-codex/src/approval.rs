@@ -60,8 +60,10 @@ pub(crate) fn approval_output(decision: &ApprovalDecision, _request: &Value) -> 
             json!({"behavior": "deny", "message": message})
         }
         ApprovalDecision::Deny { message: None } => json!({"behavior": "deny"}),
-        // Codex has no question tool, so there is nothing to render an
-        // answer into; it delegates like an explicit `Delegate`.
+        // Codex's question tool, `request_user_input`, never reaches this
+        // hook: it waits at Codex's own TUI. So no request here carries a
+        // question, an answer has nothing to be rendered into, and it
+        // delegates like an explicit `Delegate`.
         ApprovalDecision::Delegate | ApprovalDecision::Answer { .. } => {
             return ProviderOutput { stdout: None };
         }

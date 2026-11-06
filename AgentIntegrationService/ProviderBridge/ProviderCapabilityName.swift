@@ -17,6 +17,11 @@ enum ProviderCapabilityName {
     /// A `git worktree add` already run is proven by its payload alone, and
     /// gets the setup when it lands at the placement.
     static let worktreeFinishProven = "worktree_finish_proven"
+    /// Approval is answered by a hook process, which sends the provider's
+    /// permission requests to the approval service.
+    static let approvalHook = "approval_hook"
+    /// The provider's question tool asks through that hook too.
+    static let approvalHookAsksQuestions = "approval_hook_asks_questions"
     /// Weir never holds the provider's question: its own prompt answers it.
     static let questionAnsweredByAgent = "question_answered_by_agent"
     /// A question's request ends with the turn it was asked in.
