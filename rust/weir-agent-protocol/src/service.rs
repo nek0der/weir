@@ -92,9 +92,18 @@ impl ApprovalService {
         }
     }
 
-    /// Creates one authenticated discrete-message session.
+    /// Creates one authenticated discrete-message session. A requester's
+    /// session keeps its run known to the broker until it is dropped, so a
+    /// withdrawal of the run (`withdraw_requester`) refuses every submit
+    /// the session still makes (`ApprovalBroker::open_requester`).
     #[must_use]
     pub fn session(self: &Arc<Self>, principal: Principal) -> ApprovalSession {
+        if let Principal::Requester { run_id } = principal {
+            // A poisoned lock fails every exchange of the session anyway.
+            if let Ok(mut broker) = self.lock_broker() {
+                broker.open_requester(run_id);
+            }
+        }
         ApprovalSession {
             service: Arc::clone(self),
             principal,
@@ -475,6 +484,18 @@ impl ApprovalSession {
             return Err(ExchangeError::ResponseTooLarge);
         }
         Ok(encoded)
+    }
+}
+
+impl Drop for ApprovalSession {
+    fn drop(&mut self) {
+        if let Principal::Requester { run_id } = self.principal {
+            // A poisoned lock leaves the run noted, which only keeps refusing
+            // submits no session can make any more.
+            if let Ok(mut broker) = self.service.lock_broker() {
+                broker.close_requester(run_id);
+            }
+        }
     }
 }
 

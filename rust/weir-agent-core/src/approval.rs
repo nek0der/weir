@@ -105,6 +105,21 @@ pub struct ApprovalBroker {
     /// evicting one the requester has not read yet would turn its result into
     /// `not_found` while its hook still waits.
     consumed: BTreeSet<ApprovalKey>,
+    /// The requester runs that have a session open (`open_requester`), and
+    /// whether each was withdrawn (`cancel_run`). The host can deliver a
+    /// submit sent just before a connection went after that connection's
+    /// withdrawal, and `submit` refuses it here, under the same lock as the
+    /// withdrawal. A run is kept only while a session of it is open, since
+    /// only an open session can still submit, so these never outnumber the
+    /// sessions.
+    requester_runs: BTreeMap<RunId, RequesterRun>,
+}
+
+/// A requester run with a session open (`ApprovalBroker::requester_runs`).
+#[derive(Clone, Copy, Debug, Default)]
+struct RequesterRun {
+    open_sessions: usize,
+    is_withdrawn: bool,
 }
 
 impl ApprovalBroker {
@@ -116,6 +131,7 @@ impl ApprovalBroker {
             sequence: 0,
             records: BTreeMap::new(),
             consumed: BTreeSet::new(),
+            requester_runs: BTreeMap::new(),
         }
     }
 
@@ -134,7 +150,8 @@ impl ApprovalBroker {
     /// # Errors
     ///
     /// Returns an authorization, validation, capacity, conflict, or counter
-    /// error without changing an existing request.
+    /// error without changing an existing request. A run already withdrawn
+    /// (`cancel_run`) is no longer authorized to ask.
     pub fn submit(
         &mut self,
         principal: &Principal,
@@ -142,7 +159,12 @@ impl ApprovalBroker {
         now_ms: u64,
     ) -> Result<ApprovalSnapshot, BrokerError> {
         self.expire(now_ms)?;
-        if !matches!(principal, Principal::Requester { run_id } if *run_id == request.key.run_id) {
+        if !matches!(principal, Principal::Requester { run_id } if *run_id == request.key.run_id)
+            || self
+                .requester_runs
+                .get(&request.key.run_id)
+                .is_some_and(|run| run.is_withdrawn)
+        {
             return Err(BrokerError::Unauthorized);
         }
         if request.timeout_ms == 0 {
@@ -283,7 +305,9 @@ impl ApprovalBroker {
     /// interrupted the tool, or its person answered in the TUI's own
     /// dialog), so nobody would ever read a decision. Without this the
     /// request stays pending until its deadline and keeps offering a card
-    /// for an answer that can no longer arrive.
+    /// for an answer that can no longer arrive. While a session of the run
+    /// is still open, the run is remembered as withdrawn, so a submit of it
+    /// that arrives later is refused (`requester_runs`).
     ///
     /// # Errors
     ///
@@ -293,10 +317,16 @@ impl ApprovalBroker {
         principal: &Principal,
         now_ms: u64,
     ) -> Result<Vec<ApprovalSnapshot>, BrokerError> {
-        self.expire(now_ms)?;
         let Principal::Requester { run_id } = principal else {
             return Err(BrokerError::Unauthorized);
         };
+        // Marked first, so an error below cannot leave the run open to a
+        // late submit: the connection is gone whether or not its requests
+        // could be canceled.
+        if let Some(run) = self.requester_runs.get_mut(run_id) {
+            run.is_withdrawn = true;
+        }
+        self.expire(now_ms)?;
         let keys: Vec<ApprovalKey> = self
             .records
             .iter()
@@ -308,6 +338,23 @@ impl ApprovalBroker {
             canceled.push(self.cancel(principal, key, now_ms)?);
         }
         Ok(canceled)
+    }
+
+    /// Notes a session opened for the requester run `run_id`, so a
+    /// withdrawal of the run holds for as long as the session can submit.
+    pub fn open_requester(&mut self, run_id: RunId) {
+        self.requester_runs.entry(run_id).or_default().open_sessions += 1;
+    }
+
+    /// Notes a session of `run_id` closed. The run is forgotten with its
+    /// last session: nothing is left that could submit for it.
+    pub fn close_requester(&mut self, run_id: RunId) {
+        if let Some(run) = self.requester_runs.get_mut(&run_id) {
+            run.open_sessions = run.open_sessions.saturating_sub(1);
+            if run.open_sessions == 0 {
+                self.requester_runs.remove(&run_id);
+            }
+        }
     }
 
     /// Returns a controller-only consistent snapshot after applying expiry.
@@ -648,6 +695,79 @@ mod tests {
             broker.cancel_run(&Principal::Controller, 4),
             Err(BrokerError::Unauthorized)
         );
+    }
+
+    /// The host runs a requester's submit on a thread of its own, so the
+    /// connection's withdrawal can reach the broker first. A submit that
+    /// lands after it must not leave a request nobody waits for.
+    #[test]
+    fn a_submit_after_its_run_was_withdrawn_is_refused() {
+        let mut broker = broker();
+        let late = request(1, 2);
+        let other_run = request(3, 4);
+        let requester = requester_of(&late);
+        broker.open_requester(late.key.run_id);
+        broker.open_requester(other_run.key.run_id);
+
+        assert_eq!(broker.cancel_run(&requester, 0).unwrap(), Vec::new());
+
+        assert_eq!(
+            broker.submit(&requester, late.clone(), 1),
+            Err(BrokerError::Unauthorized)
+        );
+        assert_eq!(
+            broker.get(&Principal::Controller, late.key, 2),
+            Err(BrokerError::NotFound)
+        );
+        broker
+            .submit(&requester_of(&other_run), other_run, 3)
+            .unwrap();
+    }
+
+    /// A withdrawal that fails part way, here on an exhausted sequence,
+    /// still leaves its run withdrawn: the connection is gone either way.
+    #[test]
+    fn a_withdrawal_that_fails_still_refuses_a_late_submit() {
+        let mut broker = broker();
+        let due = request(1, 2);
+        let late = request(1, 3);
+        let requester = requester_of(&due);
+        broker.open_requester(due.key.run_id);
+        broker.submit(&requester, due, 0).unwrap();
+        broker.sequence = u64::MAX;
+
+        assert_eq!(
+            broker.cancel_run(&requester, 2_000),
+            Err(BrokerError::SequenceOverflow)
+        );
+
+        broker.sequence = 0;
+        assert_eq!(
+            broker.submit(&requester, late, 2_001),
+            Err(BrokerError::Unauthorized)
+        );
+    }
+
+    /// A withdrawn run is remembered while any session of it is open, and
+    /// forgotten with the last one, so the broker holds no more of them
+    /// than there are sessions.
+    #[test]
+    fn a_withdrawn_run_is_forgotten_with_its_last_session() {
+        let mut broker = broker();
+        let late = request(1, 2);
+        let requester = requester_of(&late);
+        broker.open_requester(late.key.run_id);
+        broker.open_requester(late.key.run_id);
+        broker.cancel_run(&requester, 0).unwrap();
+
+        broker.close_requester(late.key.run_id);
+        assert_eq!(
+            broker.submit(&requester, late.clone(), 1),
+            Err(BrokerError::Unauthorized)
+        );
+
+        broker.close_requester(late.key.run_id);
+        assert!(broker.requester_runs.is_empty());
     }
 
     fn small_broker() -> ApprovalBroker {

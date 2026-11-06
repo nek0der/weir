@@ -115,11 +115,12 @@ final class ApprovalPresentationStore {
     /// here (`WindowRegistry.settleApprovalCards`). Until then nothing
     /// listens.
     @ObservationIgnored var onRequestsChanged: @MainActor () -> Void = {}
-    /// When each request was first seen pending in the observed epoch. The
-    /// ledger keeps the same for the requests it holds; this also covers a
-    /// pending request it does not, one a stale projection lists after its
-    /// episode ended.
-    private var firstSeenAtByID: [String: Date] = [:]
+    /// When each pending request was first seen pending in the observed
+    /// epoch. The ledger keeps the same for the requests it holds; this also
+    /// covers a pending request it does not, one a stale projection lists
+    /// after its episode ended. Only the pending list's requests have an
+    /// entry: one that left is the ledger's to remember, or no longer read.
+    private(set) var firstSeenAtByID: [String: Date] = [:]
     private var observedEpoch: UUID?
     /// Unsent answers by request. A question card can be closed (Escape or its
     /// close button) before it is sent, so its draft lives here rather than in
@@ -380,10 +381,12 @@ final class ApprovalPresentationStore {
     /// it, and a hand-off cannot be taken back. Only `held` requests go: one
     /// being sent, already handed over, timed out, or settled is left alone,
     /// and so is one whose send failed, which stays for the person rather
-    /// than being retried on every change.
+    /// than being retried on every change. Read from the ledger, which
+    /// holds every request still waiting, rather than the pending list,
+    /// which a dropped subscription empties until it reconnects.
     func handOverHeldRequests() {
-        for approval in pending where ledger.entry(for: approval)?.state == .held && !resolvingIDs.contains(approval.id) {
-            send(.delegate, for: approval, origin: .bySetting)
+        for entry in openEntries where entry.state == .held && !resolvingIDs.contains(entry.presentation.id) {
+            send(.delegate, for: entry.presentation, origin: .bySetting)
         }
     }
 
@@ -397,26 +400,39 @@ final class ApprovalPresentationStore {
     /// the quit took the main thread, and the broker keeps the first
     /// decision that reaches it and refuses the second, so the agent never
     /// gets two. A request already settled, handed over, or timed out has
-    /// had its decision.
+    /// had its decision. Read from the ledger, as `handOverHeldRequests` is,
+    /// and whether or not the store follows the service now: a dropped
+    /// subscription empties the pending list until it reconnects, and a
+    /// failed readiness check stops the store (`stop`), while the agents
+    /// still wait on a service that may be running. Demo mode's staged
+    /// request has no service behind it and gets nothing.
     var decisionsToSendAtQuit: [(approval: ApprovalPresentation, resolution: ApprovalResolution)] {
-        pending.compactMap { approval in
-            switch ledger.entry(for: approval)?.state {
+        guard !isStaged else { return [] }
+        return openEntries.compactMap { entry in
+            switch entry.state {
             case let .sending(resolution, _):
-                (approval, resolution)
+                (entry.presentation, resolution)
             case .held, .sendFailed:
                 // A held request with a release in flight gets the same
                 // hand-over the release is sending.
-                (approval, .delegate)
-            case .handedToTerminal, .timedOut, .withdrawn, .unknownResult, .answered, nil:
+                (entry.presentation, .delegate)
+            case .handedToTerminal, .timedOut, .withdrawn, .unknownResult, .answered:
                 nil
             }
         }
     }
 
-    /// Whether the store follows a running service, rather than demo mode's
-    /// staged requests, which no service holds.
-    var followsService: Bool {
-        observerTask != nil
+    /// The ledger's requests Weir still holds a decision for (held, being
+    /// sent, or after a failed send), oldest first, so a hand-over with
+    /// little time reaches the request that has waited longest. Once a new
+    /// epoch is read, an earlier one's entries are not among them: they
+    /// have lost their result (`ApprovalLedger.outliveEpoch`). Until then a
+    /// send of another epoch's request is refused or skipped
+    /// (`ApprovalControllerConnection.sendBeforeQuit`).
+    private var openEntries: [ApprovalLedger.Entry] {
+        ledger.entries.values
+            .filter(\.state.isHeldByWeir)
+            .sorted { ($0.firstSeenAt, $0.presentation.id) < ($1.firstSeenAt, $1.presentation.id) }
     }
 
     /// Releases requests the terminal already answered. The helper prints
@@ -819,9 +835,10 @@ final class ApprovalPresentationStore {
             observedEpoch = epoch
             firstSeenAtByID = [:]
         }
-        for approval in approvals where firstSeenAtByID[approval.id] == nil {
-            firstSeenAtByID[approval.id] = seenAt
-        }
+        firstSeenAtByID = Dictionary(
+            approvals.map { ($0.id, firstSeenAtByID[$0.id] ?? seenAt) },
+            uniquingKeysWith: { first, _ in first }
+        )
         pending = approvals
         serviceDeadlines = serviceDeadlines.filter { entry in approvals.contains { $0.id == entry.key } }
         // Kept past the pending list while the ledger holds the request, for

@@ -521,7 +521,8 @@ conversation again as its surface mounts (`AgentResumeCommandBuilder`).
 | `Weir/UI/Terminal/GhosttyApp.swift` | Wraps `ghostty_app_t`, runtime callbacks, lifecycle |
 | `Weir/Core/Rust/WeirRustBridge.swift` | The typed Swift entry point for the versioned Rust C ABI |
 | `Weir/Core/Agent/AgentIntegrationServiceRegistrar.swift` | Registering, verifying, and replacing the bundled LaunchAgent on launch, the bounded retry for a service that does not answer ([ADR 0007](docs/adr/0007-unreachable-service-and-temporary-locations.md)), plus the Debug-only `WEIR_AGENT_SERVICE_CONTROL` commands |
-| `AgentIntegrationService/Service/main.swift` | Role-separated XPC listeners and authenticated principal creation |
+| `AgentIntegrationService/Service/main.swift` | Role-separated XPC listeners, each with its peer requirement |
+| `AgentIntegrationService/Service/AgentIntegrationListener.swift` | Authenticated principal creation for each connection, and withdrawing a requester's requests when its connection goes |
 | `AgentIntegrationService/Service/RustApprovalHost.swift` | Ownership-safe Swift wrapper around the Rust approval service and session C ABI |
 | `AgentIntegrationService/Shared/AgentIntegrationConfiguration.swift` | Debug/Release identifiers and Team ID-bound peer requirements |
 | `scripts/build-rust-bridge.sh` | Builds the architecture-specific Rust static library into Xcode DerivedData |

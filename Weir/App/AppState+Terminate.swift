@@ -68,12 +68,10 @@ extension AppState {
                 // hand-over to the agent's own prompt. An agent that outlives
                 // the app (under tmux) would otherwise wait out its deadline
                 // for a card no one can open.
-                if approvalPresentation.followsService {
-                    ApprovalControllerConnection.sendBeforeQuit(
-                        approvalPresentation.decisionsToSendAtQuit,
-                        budget: .seconds(2)
-                    )
-                }
+                ApprovalControllerConnection.sendBeforeQuit(
+                    approvalPresentation.decisionsToSendAtQuit,
+                    budget: .seconds(2)
+                )
                 // Independent intents protect a direct agent's resume even if
                 // a concurrent hook owns the lifecycle record's advisory lock.
                 agentProjection.prepareForTermination()
