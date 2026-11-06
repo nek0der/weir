@@ -414,7 +414,9 @@ final class SessionLaunchStore {
     /// Stops every copy and setup that runs: Weir is quitting, and a step
     /// left running would go on in a worktree no one watches. Waits, a
     /// moment at most, until each step has ended or been sent SIGKILL: the
-    /// canceled tasks would send it seconds later, after Weir is gone.
+    /// canceled tasks would send it seconds later, after Weir is gone. A
+    /// step that starts on another thread as this runs is stopped with the
+    /// others, or not started at all (`WorktreeSetup.RunningSteps.start`).
     func cancelAll() {
         for task in tasks.values {
             task.cancel()

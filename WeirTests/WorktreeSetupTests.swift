@@ -276,29 +276,66 @@ struct WorktreeSetupTests {
 
     /// Before Weir exits, the quit sends SIGKILL to a step that ignores
     /// SIGTERM. No timer runs here, unlike a cancel's, so a step that ends
-    /// was ended by the quit, however long that takes on a busy runner.
+    /// was ended by the quit, however long that takes on a busy runner. The
+    /// step is on the list once its start returns, with no later call to
+    /// put it there.
     @Test func theQuit_killsAStepThatIgnoresSIGTERM_withNoTimerOfItsOwn() async throws {
         try await withTempDir { folder in
             let ready = folder.appendingPathComponent("ready")
+            let steps = WorktreeSetup.RunningSteps()
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
             // `exec` keeps the ignored SIGTERM, as a step's children do.
-            let group = try spawnProcessGroup(["/bin/sh", "-c", "trap '' TERM; touch \"$1\"; exec sleep 60", "sh", ready.path])
+            process.arguments = ["-c", "trap '' TERM; touch \"$1\"; exec sleep 60", "sh", ready.path]
+            try #require(try steps.start(process))
+            let group = process.processIdentifier
             defer {
                 if WorktreeSetup.isRunning(group: group) {
                     kill(-group, SIGKILL)
                 }
             }
-            reapWhenItEnds(group)
+            // The stop comes once the trap is set, so only SIGKILL can end
+            // the step.
             await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) {
                 FileManager.default.fileExists(atPath: ready.path)
             }
             try #require(FileManager.default.fileExists(atPath: ready.path))
 
-            let steps = WorktreeSetup.RunningSteps()
-            steps.insert(group)
             steps.stopBeforeExit()
 
             await pollUntil(timeout: .seconds(15), interval: .milliseconds(20)) { !WorktreeSetup.isRunning(group: group) }
             #expect(!WorktreeSetup.isRunning(group: group))
         }
+    }
+
+    /// A step that reaches its start after the quit stopped the owner's
+    /// steps is not started. The quit cancels the setups' tasks, but a
+    /// step whose start runs on another thread can be past that check, and
+    /// the quit's stop would not know of it: it went on in the worktree
+    /// after Weir exited. Here its task is never canceled, so only the
+    /// stop can keep it from starting.
+    @Test func aStepThatReachesItsStartAfterTheQuit_isNotStarted_andCancelsTheSetup() async throws {
+        try await withTempDir { folder in
+            let steps = WorktreeSetup.RunningSteps()
+            steps.stopBeforeExit()
+
+            await #expect(throws: CancellationError.self) {
+                try await WorktreeSetup.run([.shorthand("touch ran.txt")], in: folder, path: Self.path, steps: steps)
+            }
+            #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("ran.txt").path))
+        }
+    }
+
+    /// Once the quit has stopped the steps, a start starts nothing.
+    @Test func aStartAfterTheQuit_startsNoProcess() throws {
+        let steps = WorktreeSetup.RunningSteps()
+        steps.stopBeforeExit()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        process.arguments = ["60"]
+
+        #expect(try !steps.start(process))
+        #expect(!process.isRunning)
+        #expect(process.processIdentifier == 0)
     }
 }

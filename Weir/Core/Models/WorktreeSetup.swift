@@ -64,6 +64,7 @@ enum WorktreeSetup {
     ) async throws -> Failure? {
         for (offset, item) in items.enumerated() {
             try Task.checkCancellation()
+            try steps.checkOpen()
             await onStep(offset)
             // `appendingPathComponent` doesn't resolve `..` and
             // `chdir(2)` would happily follow it, so a careless
@@ -86,8 +87,10 @@ enum WorktreeSetup {
             }
             let logTail = await runStep(item, at: directory, path: path, steps: steps)
             // A step stopped by the cancel exits non-zero; that is not its
-            // failure.
+            // failure. Nor is one the quit refused to start, which returns as
+            // a step that ran: the run ends canceled, not on to the next step.
             try Task.checkCancellation()
+            try steps.checkOpen()
             if let logTail {
                 return Failure(offset: offset, command: item.cmd, reason: .exited(logTail: logTail))
             }
@@ -104,9 +107,32 @@ enum WorktreeSetup {
     final class RunningSteps: @unchecked Sendable {
         private let lock = NSLock()
         private var groups: Set<pid_t> = []
+        /// Whether the quit has stopped the steps (`stopBeforeExit`): from
+        /// then on no step of this owner starts.
+        private var isClosed = false
 
-        func insert(_ group: pid_t) {
-            _ = lock.withLock { groups.insert(group) }
+        /// Starts `process` and puts its group on the list, under the lock
+        /// the quit's stop takes. A step is then either on the list the quit
+        /// stops or never started. The quit cancels the setups' tasks first,
+        /// but a step whose start runs on another thread can be past that
+        /// check: started just after the quit read the list, it went on in
+        /// the worktree after Weir exited. False, with nothing started, once
+        /// the quit has stopped the steps.
+        func start(_ process: Process) throws -> Bool {
+            try lock.withLock {
+                guard !isClosed else { return false }
+                try process.run()
+                groups.insert(process.processIdentifier)
+                return true
+            }
+        }
+
+        /// Throws `CancellationError` once the quit has stopped the steps:
+        /// a run the quit reached is canceled, whether or not its task was.
+        func checkOpen() throws {
+            if lock.withLock({ isClosed }) {
+                throw CancellationError()
+            }
         }
 
         func remove(_ group: pid_t) {
@@ -121,7 +147,10 @@ enum WorktreeSetup {
         /// would send it is gone, and a step that ignores SIGTERM would go on
         /// in a worktree no one watches.
         func stopBeforeExit() {
-            let groups = lock.withLock { self.groups }
+            let groups = lock.withLock {
+                isClosed = true
+                return self.groups
+            }
             guard !groups.isEmpty else { return }
             for group in groups {
                 kill(-group, SIGTERM)
@@ -316,7 +345,10 @@ enum WorktreeSetup {
                     return
                 }
                 do {
-                    try process.run()
+                    guard try steps.start(process) else {
+                        running.resume(cont, with: .canceled)
+                        return
+                    }
                     running.launched()
                 } catch {
                     log.warning("""
@@ -406,13 +438,11 @@ private final class RunningStep: @unchecked Sendable {
     }
 
     /// A cancellation between `adopt` and `run` found nothing running to
-    /// stop; it is stopped here.
+    /// stop; it is stopped here. The list has the step already
+    /// (`WorktreeSetup.RunningSteps.start`).
     func launched() {
         let target: Process? = lock.withLock {
-            if let process {
-                steps.insert(process.processIdentifier)
-            }
-            return isCancelled ? process : nil
+            isCancelled ? process : nil
         }
         if let target {
             Self.stop(target)
