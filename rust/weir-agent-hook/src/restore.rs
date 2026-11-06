@@ -1299,4 +1299,4 @@ pub use discard::{
 // lock file (`records::open_lock_file`), so these run on Unix only.
 #[cfg(all(test, unix))]
 #[path = "restore_tests/mod.rs"]
-mod tests;
+pub(crate) mod tests;

@@ -14,10 +14,11 @@ use crate::env::HookEnv;
 use crate::records::{atomic_write, ensure_user_only_directory};
 use serde_json::{Map, Value};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use weir_agent_model::{
-    PlanUsage, ProviderAdapter, SettingsSource, StatusLineAdapter, parse_utc_seconds,
+    FileEntry, FileKind, PlanUsage, ProviderAdapter, SettingsFiles, SettingsSource,
+    StatusLineAdapter, parse_utc_seconds,
 };
 
 /// How old a stored copy may grow before an unchanged reading rewrites it,
@@ -69,7 +70,7 @@ pub fn status_line_setting(
     let adapter = adapter_for(provider)?;
     let status_line = adapter.status_line()?;
     let chosen = user_status_line(env, adapter, status_line, Some(working_directory))?;
-    Some(status_line.relay(&chosen, relay_command))
+    Some(status_line.relay(&chosen, relay_command, &|name| env.get(name)))
 }
 
 fn user_status_line(
@@ -79,7 +80,7 @@ fn user_status_line(
     project: Option<&Path>,
 ) -> Option<Map<String, Value>> {
     let layers: Vec<Option<Value>> = status_line
-        .settings_sources(project)
+        .settings_sources(project, &|name| env.get(name), &DiskSettingsFiles { env })
         .iter()
         .map(|source| read_source(env, adapter, source))
         .collect();
@@ -110,6 +111,76 @@ fn read_source(
             }
         }
     }
+}
+
+/// The largest text file an adapter reads to find its settings (a Git
+/// worktree's `.git`, `commondir`, and `gitdir` are one line each).
+const MAX_LOCATING_TEXT_BYTES: u64 = 64 * 1024;
+
+/// The file system as the status line's process sees it.
+struct DiskSettingsFiles<'a> {
+    env: &'a HookEnv,
+}
+
+impl SettingsFiles for DiskSettingsFiles<'_> {
+    fn entry(&self, path: &Path) -> Option<FileEntry> {
+        fs::symlink_metadata(path)
+            .ok()
+            .map(|metadata| file_entry(&metadata))
+    }
+
+    fn target(&self, path: &Path) -> Option<FileEntry> {
+        fs::metadata(path)
+            .ok()
+            .map(|metadata| file_entry(&metadata))
+    }
+
+    fn real_path(&self, path: &Path) -> Option<PathBuf> {
+        fs::canonicalize(path).ok()
+    }
+
+    fn read_text(&self, path: &Path) -> Option<String> {
+        let metadata = fs::metadata(path).ok()?;
+        if !metadata.is_file() || metadata.len() > MAX_LOCATING_TEXT_BYTES {
+            return None;
+        }
+        fs::read_to_string(path).ok()
+    }
+
+    #[cfg(unix)]
+    fn user_id(&self) -> Option<u32> {
+        // SAFETY: `geteuid` takes nothing and cannot fail.
+        Some(unsafe { libc::geteuid() })
+    }
+
+    #[cfg(not(unix))]
+    fn user_id(&self) -> Option<u32> {
+        None
+    }
+
+    fn home(&self) -> Option<PathBuf> {
+        fs::canonicalize(self.env.get("HOME")?).ok()
+    }
+}
+
+fn file_entry(metadata: &fs::Metadata) -> FileEntry {
+    let kind = if metadata.file_type().is_symlink() {
+        FileKind::Link
+    } else if metadata.is_dir() {
+        FileKind::Directory
+    } else if metadata.is_file() {
+        FileKind::File
+    } else {
+        FileKind::Other
+    };
+    #[cfg(unix)]
+    let owner = {
+        use std::os::unix::fs::MetadataExt;
+        Some(metadata.uid())
+    };
+    #[cfg(not(unix))]
+    let owner = None;
+    FileEntry { kind, owner }
 }
 
 fn read_settings(path: &Path) -> Option<Value> {
@@ -150,7 +221,10 @@ mod tests {
     use serde_json::json;
     use std::path::PathBuf;
     use std::time::{Duration, UNIX_EPOCH};
-    use weir_provider_claude::LAUNCH_SETTINGS_VARIABLE;
+    use weir_provider_claude::{LAUNCH_SETTINGS_VARIABLE, SETTING_SOURCES_VARIABLE};
+
+    /// What the shim writes for a launch with no `--setting-sources`.
+    const EVERY_SOURCE: &str = "user,project,local";
 
     struct Fixture {
         _root: tempfile::TempDir,
@@ -174,8 +248,11 @@ mod tests {
         }
     }
 
+    /// The environment of a status line the shim launched with no
+    /// `--setting-sources`, with `extra` laid over it.
     fn env(fixture: &Fixture, extra: &[(&str, &str)]) -> HookEnv {
         let mut pairs = vec![
+            (SETTING_SOURCES_VARIABLE.to_owned(), EVERY_SOURCE.to_owned()),
             (
                 "WEIR_USAGE_DIR".to_owned(),
                 fixture.usage.display().to_string(),
@@ -185,11 +262,10 @@ mod tests {
                 fixture.config.display().to_string(),
             ),
         ];
-        pairs.extend(
-            extra
-                .iter()
-                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned())),
-        );
+        for (name, value) in extra {
+            pairs.retain(|(existing, _)| existing != name);
+            pairs.push(((*name).to_owned(), (*value).to_owned()));
+        }
         HookEnv::from_pairs(pairs)
     }
 
@@ -253,6 +329,185 @@ mod tests {
         assert_eq!(
             run_status_line("claude", &input(&fixture, 1.0), &env_launch, at(0)).as_deref(),
             Some("launch.sh")
+        );
+    }
+
+    /// A project whose shared settings set a status line command, and a
+    /// person who has one of their own.
+    fn project_and_user_status_lines(fixture: &Fixture) {
+        write(
+            &fixture.config.join("settings.json"),
+            &json!({ "statusLine": { "type": "command", "command": "user.sh", "padding": 1 } }),
+        );
+        write(
+            &fixture.project.join(".claude/settings.json"),
+            &json!({ "statusLine": { "type": "command", "command": "project.sh" } }),
+        );
+    }
+
+    /// `claude --setting-sources user` reads no project file, so neither the
+    /// relay nor the setting the shim launches with takes the project's
+    /// command, which Claude Code would not run.
+    #[test]
+    fn a_launch_that_leaves_the_project_out_never_runs_its_command() {
+        let fixture = fixture();
+        project_and_user_status_lines(&fixture);
+        let user_only = format!("{EVERY_SOURCE}\nuser");
+        let env = env(&fixture, &[(SETTING_SOURCES_VARIABLE, &user_only)]);
+        assert_eq!(
+            run_status_line("claude", &input(&fixture, 1.0), &env, at(0)).as_deref(),
+            Some("user.sh")
+        );
+        assert_eq!(
+            status_line_setting("claude", &env, &fixture.project, "/h statusline claude"),
+            Some(json!({ "type": "command",
+                "command": format!("{SETTING_SOURCES_VARIABLE}=user /h statusline claude"),
+                "padding": 1 }))
+        );
+    }
+
+    /// A settings file the launch loads may set the status line's
+    /// environment (`env`), so the relay goes by the sources its own command
+    /// names, which the launch settings carry.
+    #[test]
+    fn the_relay_s_command_outranks_an_env_block_that_widens_the_sources() {
+        let fixture = fixture();
+        project_and_user_status_lines(&fixture);
+        let user_only = format!("{EVERY_SOURCE}\nuser");
+        let launch = env(&fixture, &[(SETTING_SOURCES_VARIABLE, &user_only)]);
+        let setting =
+            status_line_setting("claude", &launch, &fixture.project, "/h statusline claude")
+                .expect("the person's own");
+        let command = setting["command"].as_str().expect("a command");
+        let assignment = command
+            .strip_suffix(" /h statusline claude")
+            .and_then(|prefix| prefix.strip_prefix(&format!("{SETTING_SOURCES_VARIABLE}=")))
+            .expect("the relay command sets the sources");
+        // What the shell running that command hands the relay, whatever a
+        // project's `env` block put in the variable before.
+        let run = env(&fixture, &[(SETTING_SOURCES_VARIABLE, assignment)]);
+        assert_eq!(
+            run_status_line("claude", &input(&fixture, 1.0), &run, at(0)).as_deref(),
+            Some("user.sh")
+        );
+    }
+
+    /// `--restricted` reads none of the three files; `--settings` still
+    /// applies.
+    #[test]
+    fn a_restricted_launch_runs_only_its_launch_settings() {
+        let fixture = fixture();
+        project_and_user_status_lines(&fixture);
+        let restricted = format!("{EVERY_SOURCE}\n");
+        let env_none = env(&fixture, &[(SETTING_SOURCES_VARIABLE, &restricted)]);
+        assert_eq!(
+            run_status_line("claude", &input(&fixture, 1.0), &env_none, at(0)),
+            None
+        );
+        let launch =
+            json!({ "statusLine": { "type": "command", "command": "launch.sh" } }).to_string();
+        let env_launch = env(
+            &fixture,
+            &[
+                (SETTING_SOURCES_VARIABLE, &restricted),
+                (LAUNCH_SETTINGS_VARIABLE, &launch),
+            ],
+        );
+        assert_eq!(
+            run_status_line("claude", &input(&fixture, 1.0), &env_launch, at(0)).as_deref(),
+            Some("launch.sh")
+        );
+    }
+
+    /// A status line started without the shim's word on its sources, or
+    /// with a word Claude Code would not start with, cannot tell which files
+    /// the launch reads: it runs no command from them.
+    #[test]
+    fn a_launch_it_cannot_read_runs_no_file_s_command() {
+        let fixture = fixture();
+        project_and_user_status_lines(&fixture);
+        let unset = HookEnv::from_pairs([
+            ("WEIR_USAGE_DIR", fixture.usage.display().to_string()),
+            ("CLAUDE_CONFIG_DIR", fixture.config.display().to_string()),
+        ]);
+        let refused = env(
+            &fixture,
+            &[(SETTING_SOURCES_VARIABLE, "user,project,local\nbogus")],
+        );
+        for env in [unset, refused] {
+            assert_eq!(
+                run_status_line("claude", &input(&fixture, 1.0), &env, at(0)),
+                None
+            );
+            assert_eq!(
+                status_line_setting("claude", &env, &fixture.project, "/h statusline claude"),
+                None
+            );
+        }
+    }
+
+    /// Claude Code reads a worktree session's local settings from the main
+    /// checkout's root, and the worktree's own local file from an earlier
+    /// version below it; the shared file is the worktree's. Unix only: off
+    /// it Claude Code keeps the local file in the starting folder.
+    #[cfg(unix)]
+    #[test]
+    fn a_worktree_session_takes_the_local_file_of_the_main_checkout() {
+        let fixture = fixture();
+        // Git writes the paths it resolved, so the fixture's are resolved too.
+        let root = fs::canonicalize(fixture.project.parent().expect("parent")).expect("real");
+        let main = root.join("main");
+        let worktree = root.join("worktree");
+        fs::create_dir_all(&main).expect("main");
+        let git = |args: &[&str]| crate::restore::tests::git_runner::required(&main, args);
+        git(&["init", "-q", "-b", "main"]);
+        git(&[
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.com",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ]);
+        git(&[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            worktree.to_str().expect("utf-8"),
+        ]);
+        for (folder, name, command) in [
+            (&main, "settings.local.json", "main-local.sh"),
+            (&worktree, "settings.local.json", "worktree-local.sh"),
+            (&worktree, "settings.json", "worktree-shared.sh"),
+        ] {
+            fs::create_dir_all(folder.join(".claude")).expect(".claude");
+            write(
+                &folder.join(".claude").join(name),
+                &json!({ "statusLine": { "type": "command", "command": command } }),
+            );
+        }
+        let input = json!({ "workspace": { "project_dir": worktree } }).to_string();
+        let env = env(&fixture, &[]);
+        let run = || run_status_line("claude", input.as_bytes(), &env, at(0));
+        assert_eq!(run().as_deref(), Some("main-local.sh"));
+        fs::remove_file(main.join(".claude/settings.local.json")).expect("remove");
+        assert_eq!(run().as_deref(), Some("worktree-local.sh"));
+        fs::remove_file(worktree.join(".claude/settings.local.json")).expect("remove");
+        assert_eq!(run().as_deref(), Some("worktree-shared.sh"));
+        // Leaving local settings out leaves out both local files.
+        write(
+            &main.join(".claude/settings.local.json"),
+            &json!({ "statusLine": { "type": "command", "command": "main-local.sh" } }),
+        );
+        let project_only = format!("{EVERY_SOURCE}\nproject");
+        let env = super::tests::env(&fixture, &[(SETTING_SOURCES_VARIABLE, &project_only)]);
+        assert_eq!(
+            run_status_line("claude", input.as_bytes(), &env, at(0)).as_deref(),
+            Some("worktree-shared.sh")
         );
     }
 
@@ -328,7 +583,9 @@ mod tests {
         );
         assert_eq!(
             setting,
-            Some(json!({ "type": "command", "command": "/h statusline claude", "padding": 0 }))
+            Some(json!({ "type": "command",
+                "command": format!("{SETTING_SOURCES_VARIABLE}=user,project,local /h statusline claude"),
+                "padding": 0 }))
         );
     }
 

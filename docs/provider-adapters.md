@@ -163,6 +163,33 @@ pub trait ProviderAdapter: Send + Sync {
 - `turn_preparation` reads a request to save the start of a turn about to be
   sent, and `prepared_begin` names the saved start a turn begins from, for a
   provider with `turn_begin_prepared`. See "OpenCode".
+- `status_line` is for a provider that hands its status line the plan's usage
+  (Claude Code, Antigravity). The shim puts the Hook Helper's relay in the
+  person's status line slot, and the relay runs their command after it has
+  read the usage. `StatusLineAdapter::settings_sources` lists the settings
+  documents that command can come from, and lists only those the provider
+  reads for this launch, which the adapter learns from the variables the shim
+  set (`LaunchVariables`). The relay runs the command it finds there under
+  `/bin/sh`, so a document the provider leaves out must not be read: a launch
+  the adapter cannot read lists none of the documents a launch may leave out.
+  Claude Code's managed settings and `--settings` are read by every launch;
+  its user, project, and local files only as `--setting-sources` and
+  `--restricted` allow, which the Claude shim writes into
+  `WEIR_CLAUDE_SETTING_SOURCES` (`weir-provider-claude/src/status_line.rs`).
+  The project's files are where Claude Code reads them
+  (`weir-provider-claude/src/project_settings.rs`): the shared file in the
+  starting folder, and the local file at the root of the Git repository
+  around it, the main checkout's for a worktree, then one an earlier version
+  left in the starting folder. The local file stays in the starting folder
+  when the root is the home folder or not the person's, and neither is read
+  inside a `connector-downloads` folder. The adapter reads none of this
+  itself; the runtime answers its questions about the file system
+  (`SettingsFiles`).
+  `StatusLineAdapter::relay` writes the sources into the relay's command as
+  well, because the `env` block of a settings file the launch loads also sets
+  the status line's environment and could name a file the launch leaves out.
+  Workspace trust needs nothing of ours: Claude Code runs no status line,
+  ours included, in a folder not yet trusted.
 
 Where an intercepted worktree goes is read from `worktree-routing.json`, which
 the application writes beside its session file in the same operation, rather

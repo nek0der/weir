@@ -8,6 +8,7 @@
   "atWorkStates": ["running", "needsInput", "compacting"],
   "notAtWorkStates": ["idle", "finished", "error", "unknown"],
   "claudeStatusLineRelayArguments": "statusline claude",
+  "claudeSettingSourcesVariable": "WEIR_CLAUDE_SETTING_SOURCES",
   "codexTurnEndEvent": "task_complete",
   "usageLimitScopes": ["account", "upstream", "model"],
   "usageWindows": {

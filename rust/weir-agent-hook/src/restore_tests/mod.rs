@@ -17,7 +17,7 @@ use weir_agent_model::{
 mod applying;
 mod discarding;
 #[path = "../../tests/support/git_runner.rs"]
-mod git_runner;
+pub(crate) mod git_runner;
 mod pinning;
 mod recovery;
 mod undoing;

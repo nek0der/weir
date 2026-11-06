@@ -45,8 +45,10 @@ across app restarts, badge agent state, and re-route
   else gives it out: the relay writes it to `$WEIR_USAGE_DIR/claude.json`
   for the usage panel, then becomes their own status line (`sh -c`) on the
   same input, which it finds the way Claude Code would, by settings
-  precedence. Without one of theirs the slot stays empty, since Claude Code
-  keeps a row even for a status line that prints nothing.
+  precedence and only in the settings files this launch reads
+  (`WEIR_CLAUDE_SETTING_SOURCES`). Without one of theirs the slot stays
+  empty, since Claude Code keeps a row even for a status line that prints
+  nothing.
 - `zdotdir/` — zsh startup files that source the user's own first, then
   put the shim directories back at the front of `PATH`. Without them, a
   user's `export PATH="/opt/homebrew/bin:$PATH"` buries the shim and
@@ -72,6 +74,7 @@ sets them:
 | `WEIR_CWD_EVENTS_DIR` | Directory to write cwd-change records into |
 | `WEIR_USAGE_DIR` | Directory the status line relay writes the plan usage into |
 | `WEIR_CLAUDE_USER_SETTINGS` | Set by the shim: the person's own `--settings` value (inline JSON or an absolute path), which our flag replaced, so the status line relay finds their status line in it. Unset at the shim's start, so a nested `claude` does not take its parent's |
+| `WEIR_CLAUDE_SETTING_SOURCES` | Set by the shim: which of the user, project, and local settings files this launch reads, so the status line relay takes the person's status line only from those. One line per value: `user,project,local` (Claude Code's default) first, then each `--setting-sources` value as written, an empty line for `--restricted`, and `user` for `--project-config-root`, which moves both project files to a folder the relay does not follow. The relay reads only the sources every line names, and none of the three when the variable is unset or a line is not a value Claude Code accepts. The relay's command in `statusLine` sets it again to the one value those lines come to (`WEIR_CLAUDE_SETTING_SOURCES=user …/AgentIntegrationHookHelper statusline claude`), since a settings file's `env` block also reaches the status line's environment. Unset at the shim's start, so a nested `claude` does not take its parent's |
 | `WEIR_REAL_CLAUDE` | Optional override path to the real `claude`, taken before any search (a test's stub); outside an app bundle only |
 | `WEIR_FOUND_CLAUDE` | The `claude` the new worktree sheet found, from the login shell's `PATH`, the known locations, or the last `PATH` a pane of the same project had, in that order (`AgentCatalog.detectInstallations`). Given only to the shell of the pane that the sheet's launch starts (`WorkspaceSession.StagedLaunch`), never to a restored one. The shim takes it when that pane's own `PATH` has no `claude`, before the known locations, while it still names an executable file, and removes it from what it hands on, so the agent and a tmux server never carry it. The pane's shell keeps it until the pane closes, as the same fallback for a later `claude` typed there |
 | `WEIR_CLAUDE_KNOWN_LOCATIONS` | Newline-separated places to look when the `PATH` has no `claude`, in order; one may hold a `*`. The agent catalog's list (`AgentCatalog.knownLocationsEnvironment`), so what the new worktree sheet offers is what the shim finds. A `*` folder is tried newest version first. The folder of an agent found off the `PATH`, here or through `WEIR_FOUND_CLAUDE`, goes at the end of `PATH`; when it is a `#!/usr/bin/env node` script with a `node` beside it (an npm install under nvm), the shim starts it on that `node` rather than the first on `PATH` (`weir_find_known_agent` and `weir_node_beside` in `agent-shim/runtime-common.sh`) |

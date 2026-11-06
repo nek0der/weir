@@ -31,9 +31,10 @@ mod worktree;
 pub mod conformance;
 
 pub use adapter::{
-    CommandRun, FailureReport, FailureWatch, HookContext, ListDirectory, MAX_HOOK_INPUT_BYTES,
-    NormalizeError, ProviderAdapter, QuestionTurn, QuestionTurnPhase, RawHookInput, SettingsSource,
-    StatusLineAdapter, TmuxEndpoint, TurnPreparation, TurnReading, UnpromptedPrompt, parse_object,
+    CommandRun, FailureReport, FailureWatch, FileEntry, FileKind, HookContext, LaunchVariables,
+    ListDirectory, MAX_HOOK_INPUT_BYTES, NormalizeError, ProviderAdapter, QuestionTurn,
+    QuestionTurnPhase, RawHookInput, SettingsFiles, SettingsSource, StatusLineAdapter,
+    TmuxEndpoint, TurnPreparation, TurnReading, UnpromptedPrompt, parse_object,
     transcript_path_for_events,
 };
 pub use approval::{

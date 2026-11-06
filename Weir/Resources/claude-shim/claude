@@ -38,7 +38,7 @@ if [ -r "$runtime_common" ]; then
 fi
 # A person's own `--settings`, moved here by the shim that started an
 # enclosing claude, belongs to that one: this launch sets its own below.
-unset WEIR_CLAUDE_USER_SETTINGS
+unset WEIR_CLAUDE_USER_SETTINGS WEIR_CLAUDE_SETTING_SOURCES
 
 # Claude Code resolves a relative `CLAUDE_CONFIG_DIR` against the directory
 # it starts in, and so does the status line relay, which reads the person's
@@ -365,6 +365,46 @@ function run(argv) {
 }' -- "$1" "$2" "$ms_kind" 2>/dev/null)
   [ -n "$ms_result" ] && printf '%s' "$ms_result"
 }
+
+# Which of the user, project, and local settings files this launch reads, for
+# the status line relay below: it must take the person's status line only from
+# a file Claude Code reads, or it would run a command the person kept Claude
+# from running. The first line is Claude Code's default, then every
+# `--setting-sources` value as written, and an empty line for `--restricted`,
+# which reads none of them. `--project-config-root` moves both project files
+# to a folder the relay does not follow, so it adds a `user` line: the relay
+# then reads neither. The Rust side reads the values as Claude Code does
+# and takes only the sources every line names: Claude Code goes by the last
+# value, and a flag spelled as another option's value (or after `--`) is read
+# here as a flag too, which can only leave a source out. The variable name is
+# pinned in rust/fixtures/contract/shared-values.json.
+setting_sources="user,project,local"
+expect_sources_value=0
+for arg in "$@"; do
+  if [ "$expect_sources_value" = 1 ]; then
+    setting_sources="$setting_sources
+$arg"
+    expect_sources_value=0
+    continue
+  fi
+  case "$arg" in
+    --project-config-root | --project-config-root=*)
+      setting_sources="$setting_sources
+user"
+      ;;
+    --setting-sources) expect_sources_value=1 ;;
+    --setting-sources=*)
+      setting_sources="$setting_sources
+${arg#--setting-sources=}"
+      ;;
+    --restricted)
+      setting_sources="$setting_sources
+"
+      ;;
+  esac
+done
+WEIR_CLAUDE_SETTING_SOURCES="$setting_sources"
+export WEIR_CLAUDE_SETTING_SOURCES
 
 # `--settings` is last-wins rather than additive, and ours is passed first,
 # so a user-supplied one silently took every Weir hook with it. Detect

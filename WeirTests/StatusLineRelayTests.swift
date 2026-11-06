@@ -11,6 +11,25 @@ import Testing
 @testable import Weir
 @testable import WeirDomain
 
+/// The status line values the shim, the Hook Helper, and the Rust side each
+/// spell for themselves (`rust/fixtures/contract/shared-values.json`).
+enum StatusLineContract {
+    static func value(_ key: String) throws -> String {
+        let root = try #require(RepoFixture.weirRoot)
+        let data = try Data(contentsOf: root.appendingPathComponent("rust/fixtures/contract/shared-values.json"))
+        let shared = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        return try #require(shared[key] as? String)
+    }
+
+    /// The variable the shim writes the launch's setting sources into.
+    static func settingSourcesVariable() throws -> String {
+        try value("claudeSettingSourcesVariable")
+    }
+
+    /// What the shim writes there for a launch with no `--setting-sources`.
+    static let everySource = "user,project,local"
+}
+
 @Suite(
     "Status line relay",
     .disabled(if: HookHelperFixture.helperURL == nil, "no hook helper beside the test host"),
@@ -36,11 +55,33 @@ struct StatusLineRelayTests {
         return output
     }
 
-    private func environment(in dir: URL) -> [String: String] {
-        ShimHarness.environment(in: dir, merging: [
+    /// The environment of a status line the shim launched with
+    /// `settingSources` as the launch's sources (`nil`: a launch the shim did
+    /// not describe).
+    private func environment(
+        in dir: URL,
+        settingSources: String? = StatusLineContract.everySource
+    ) throws -> [String: String] {
+        var environment = ShimHarness.environment(in: dir, merging: [
             "CLAUDE_CONFIG_DIR": dir.appendingPathComponent("config").path,
             "WEIR_USAGE_DIR": dir.appendingPathComponent("usage").path
         ])
+        let variable = try StatusLineContract.settingSourcesVariable()
+        environment[variable] = settingSources
+        return environment
+    }
+
+    /// `input` with `dir` as its project.
+    private func projectInput(in dir: URL) throws -> Data {
+        var object = try #require(JSONSerialization.jsonObject(with: input) as? [String: Any])
+        object["workspace"] = ["project_dir": dir.path]
+        return try JSONSerialization.data(withJSONObject: object)
+    }
+
+    private func writeProjectSettings(_ settings: [String: Any], in dir: URL) throws {
+        let folder = dir.appendingPathComponent(".claude")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: settings).write(to: folder.appendingPathComponent("settings.json"))
     }
 
     private func writeUserSettings(_ settings: [String: Any], in dir: URL) throws {
@@ -66,6 +107,59 @@ struct StatusLineRelayTests {
             let usage = try PlanUsage.decode(record)
             #expect(usage.windows.map(\.kind) == [PlanUsageWindow.fiveHour, PlanUsageWindow.sevenDay])
             #expect(usage.windows.map(\.usedPercent) == [42, 83])
+        }
+    }
+
+    /// `claude --setting-sources user` keeps Claude Code from reading the
+    /// project's settings, so the command a repository sets there must not
+    /// run through the relay either.
+    @Test("runs no project command for a launch that leaves the project's settings out")
+    func relay_leavesOutTheSettingsTheLaunchLeftOut() throws {
+        try withTempDir { dir in
+            try writeProjectSettings(["statusLine": ["type": "command", "command": "echo project"]], in: dir)
+            let project = try projectInput(in: dir)
+
+            let everySource = try runHelper(["statusline", "claude"], stdin: project, environment: environment(in: dir), in: dir)
+            #expect(everySource.stdout == Data("project\n".utf8))
+
+            let userOnly = try runHelper(
+                ["statusline", "claude"],
+                stdin: project,
+                environment: environment(in: dir, settingSources: StatusLineContract.everySource + "\nuser"),
+                in: dir
+            )
+            #expect(userOnly.status == 0)
+            #expect(userOnly.stdout.isEmpty)
+
+            try writeUserSettings(["statusLine": ["type": "command", "command": "echo mine"]], in: dir)
+            let withTheirOwn = try runHelper(
+                ["statusline", "claude"],
+                stdin: project,
+                environment: environment(in: dir, settingSources: StatusLineContract.everySource + "\nuser"),
+                in: dir
+            )
+            #expect(withTheirOwn.stdout == Data("mine\n".utf8))
+        }
+    }
+
+    /// Started without the shim's word on which settings the launch reads,
+    /// the relay cannot tell whether Claude Code reads the project's, so it
+    /// runs no command from a settings file.
+    @Test("runs no settings file's command when it cannot tell what the launch reads")
+    func relay_withoutTheLaunchsSources_runsNoFilesCommand() throws {
+        try withTempDir { dir in
+            try writeProjectSettings(["statusLine": ["type": "command", "command": "echo project"]], in: dir)
+            try writeUserSettings(["statusLine": ["type": "command", "command": "echo mine"]], in: dir)
+            for settingSources in [nil, StatusLineContract.everySource + "\nbogus"] {
+                let output = try runHelper(
+                    ["statusline", "claude"],
+                    stdin: projectInput(in: dir),
+                    environment: environment(in: dir, settingSources: settingSources),
+                    in: dir
+                )
+                #expect(output.status == 0)
+                #expect(output.stdout.isEmpty, "\(settingSources ?? "unset")")
+            }
         }
     }
 
@@ -103,7 +197,10 @@ struct StatusLineRelayTests {
             let settings = try #require(JSONSerialization.jsonObject(with: output.stdout) as? [String: Any])
             #expect(settings["hooks"] != nil)
             let statusLine = try #require(settings["statusLine"] as? [String: Any])
-            #expect(statusLine["command"] as? String == "/links/helper statusline claude")
+            // The command names the sources the launch loads itself, which a
+            // settings file's `env` block cannot widen.
+            let variable = try StatusLineContract.settingSourcesVariable()
+            #expect(statusLine["command"] as? String == "\(variable)=user,project,local /links/helper statusline claude")
             #expect(statusLine["padding"] as? Int == 0)
         }
     }
@@ -178,8 +275,15 @@ struct ClaudeShimStatusLineTests {
     private func shimSettings(
         _ arguments: [String],
         userStatusLine: [String: Any]? = nil,
+        projectStatusLine: [String: Any]? = nil,
         in dir: URL
     ) throws -> [String: Any] {
+        if let projectStatusLine {
+            let folder = dir.appendingPathComponent(".claude")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try JSONSerialization.data(withJSONObject: ["statusLine": projectStatusLine])
+                .write(to: folder.appendingPathComponent("settings.json"))
+        }
         if let userStatusLine {
             let config = dir.appendingPathComponent("config")
             try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
@@ -218,10 +322,7 @@ struct ClaudeShimStatusLineTests {
     /// The relay's arguments as the Rust side recognizes its own relay by
     /// them (`rust/fixtures/contract/shared-values.json`).
     private static func relayArguments() throws -> String {
-        let root = try #require(RepoFixture.weirRoot)
-        let data = try Data(contentsOf: root.appendingPathComponent("rust/fixtures/contract/shared-values.json"))
-        let shared = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        return try #require(shared["claudeStatusLineRelayArguments"] as? String)
+        try StatusLineContract.value("claudeStatusLineRelayArguments")
     }
 
     @Test("puts the relay in the status line slot beside the hooks")
@@ -242,6 +343,30 @@ struct ClaudeShimStatusLineTests {
             let settings = try shimSettings([], in: dir)
             #expect(settings["hooks"] != nil)
             #expect(settings["statusLine"] == nil)
+        }
+    }
+
+    /// The shim launches Claude Code with the status line it finds the way
+    /// Claude Code would. A launch that leaves the project's settings out
+    /// takes none from them, so a repository's status line does not reach
+    /// the slot through ours; the person's own still does, with its options.
+    @Test("takes no status line from settings the launch leaves out", arguments: [
+        ["--setting-sources", "user"],
+        ["--setting-sources=local"],
+        ["--setting-sources", "project,local", "--setting-sources", "user"],
+        ["--restricted"],
+        // Moves the project's files to a folder the relay does not follow.
+        ["--project-config-root", "elsewhere"]
+    ])
+    func shim_leavesOutTheSettingsTheLaunchLeftOut(_ arguments: [String]) throws {
+        let project = ["type": "command", "command": "project.sh"]
+        try withTempDir { dir in
+            let without = try shimSettings(arguments, projectStatusLine: project, in: dir)
+            #expect(without["statusLine"] == nil)
+        }
+        try withTempDir { dir in
+            let read = try shimSettings([], projectStatusLine: project, in: dir)
+            #expect(read["statusLine"] != nil)
         }
     }
 
