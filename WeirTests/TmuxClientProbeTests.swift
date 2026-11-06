@@ -333,6 +333,8 @@ struct TmuxClientProbeLocateTests {
     }
 }
 
+/// CI sets `TEST_RUNNER_WEIR_REQUIRE_TMUX_TESTS`, which xcodebuild hands the
+/// test process as `WEIR_REQUIRE_TMUX_TESTS`, like the case-folding one.
 @Suite(
     "TmuxClientProbe smoke",
     .tags(.smoke),
