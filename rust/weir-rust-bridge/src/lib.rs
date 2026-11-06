@@ -733,6 +733,50 @@ mod tests {
         }
     }
 
+    /// A requester's submit can reach the service after its connection's
+    /// withdrawal, since the host runs it on a thread of its own. While the
+    /// session is open, that submit is refused, and a session of another
+    /// run is not affected.
+    #[test]
+    fn a_submit_after_its_requester_was_withdrawn_is_refused() {
+        // SAFETY: Each handle is released exactly once before the test returns.
+        unsafe {
+            let service = weir_approval_service_create_v1(8);
+            let run_id = Uuid::new_v4();
+            let other_run_id = Uuid::new_v4();
+            let withdrawn = requester(service, run_id);
+            let other = requester(service, other_run_id);
+            let epoch = hello(withdrawn);
+            assert_eq!(hello(other), epoch);
+
+            assert_eq!(
+                weir_approval_service_withdraw_requester_v1(
+                    service,
+                    run_id.as_bytes().as_ptr(),
+                    16
+                ),
+                APPROVAL_OK
+            );
+            let late = exchange(withdrawn, approval_submit(epoch, run_id, Uuid::new_v4()));
+            assert_eq!(late["type"], "error");
+            assert_eq!(late["body"]["code"], "unauthorized");
+            let submitted = exchange(other, approval_submit(epoch, other_run_id, Uuid::new_v4()));
+            assert_eq!(submitted["body"]["state"]["status"], "pending");
+
+            // Freeing the run's last session forgets the withdrawal, so a
+            // service that runs for weeks keeps none of them.
+            weir_approval_session_free_v1(withdrawn);
+            let reopened = requester(service, run_id);
+            assert_eq!(hello(reopened), epoch);
+            let accepted = exchange(reopened, approval_submit(epoch, run_id, Uuid::new_v4()));
+            assert_eq!(accepted["body"]["state"]["status"], "pending");
+
+            weir_approval_session_free_v1(reopened);
+            weir_approval_session_free_v1(other);
+            weir_approval_service_free_v1(service);
+        }
+    }
+
     /// The ABI hands the session's refusals back as they are: an error
     /// frame with the session's code. Who may resolve what, and which epoch
     /// is current, are the session's rules, tested with it.

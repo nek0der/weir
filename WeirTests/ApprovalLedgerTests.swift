@@ -187,6 +187,22 @@ struct ApprovalLedgerTests {
         #expect(store.firstSeenAt(for: request) == Self.seenAt)
     }
 
+    /// The pending list's own first sights cover only the requests it
+    /// lists: the ledger keeps its own for a request that left, so one kept
+    /// past the list would only grow with every request of a long epoch.
+    @Test func theListsFirstSights_leaveWithTheirRequests() {
+        let store = ApprovalPresentationStore(decisionSender: { _, _ in })
+        let left = ApprovalPresentation.test()
+        let staying = ApprovalPresentation.test(epoch: left.epoch)
+        store.receive([left, staying], seenAt: Self.seenAt)
+
+        store.receive([staying], seenAt: Self.laterSight)
+
+        #expect(store.firstSeenAtByID.keys.sorted() == [staying.id])
+        #expect(store.firstSeenAt(for: staying) == Self.seenAt)
+        #expect(store.firstSeenAt(for: left) == Self.seenAt, "the ledger still holds it")
+    }
+
     @Test func aNewEpoch_seesItsRequestsAfresh() {
         let store = ApprovalPresentationStore(decisionSender: { _, _ in })
         let old = ApprovalPresentation.test()

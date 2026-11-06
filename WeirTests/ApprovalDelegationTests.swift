@@ -217,6 +217,75 @@ struct ApprovalDelegationTests {
         #expect(store.decisionsToSendAtQuit.map(\.resolution) == [.delegate])
     }
 
+    /// A dropped subscription empties the pending list for the two seconds
+    /// before it reconnects, while the ledger keeps every request. A quit
+    /// in that gap still owes each held request its hand-over, and an
+    /// answer on its way its resend: the agent under tmux would otherwise
+    /// wait out its deadline. The oldest goes first, so a short budget
+    /// spends itself on the request that has waited longest.
+    @Test func atQuit_afterTheSubscriptionDropped_everyOpenRequestStillGoes() async {
+        let gate = Gate<Void>()
+        let store = ApprovalPresentationStore { _, _ in await gate.wait() }
+        let older = ApprovalPresentation.test()
+        let newer = ApprovalPresentation.test(epoch: older.epoch)
+        store.receive([older], seenAt: Date(timeIntervalSince1970: 1))
+        store.receive([older, newer], seenAt: Date(timeIntervalSince1970: 2))
+        store.resolve(newer, .allowOnce)
+        await gate.waitUntilRequested()
+
+        store.connectionDidDrop()
+
+        #expect(store.pending.isEmpty)
+        #expect(store.decisionsToSendAtQuit.map(\.approval) == [older, newer])
+        #expect(store.decisionsToSendAtQuit.map(\.resolution) == [.delegate, .allowOnce])
+        gate.open()
+        await store.waitUntilResolved(newer)
+    }
+
+    /// A readiness check that fails once stops the store, while the service
+    /// may run on with the agent's request. The quit still hands it over;
+    /// a service that is gone only makes that send fail within its budget.
+    @Test func atQuit_afterTheStoreStopped_aHeldRequestStillGoes() {
+        let (store, request) = Self.store { _, _ in }
+
+        store.stop()
+
+        #expect(store.decisionsToSendAtQuit.map(\.approval) == [request])
+        #expect(store.decisionsToSendAtQuit.map(\.resolution) == [.delegate])
+    }
+
+    /// Demo mode's request has no service behind it, so a quit sends nothing.
+    @Test func atQuit_demoModesRequest_getsNothing() {
+        let store = ApprovalPresentationStore(decisionSender: { _, _ in })
+        let request = ApprovalPresentation.test()
+
+        store.stage(.test(pending: [request]), epoch: request.epoch, now: SuspendingClock.now)
+
+        #expect(store.ledger.entry(for: request)?.state == .held)
+        #expect(store.decisionsToSendAtQuit.isEmpty)
+    }
+
+    /// The hidden setting hands over what the ledger holds, not what the
+    /// pending list shows, so a request held through a dropped subscription
+    /// goes to the agent's prompt too.
+    @Test func withoutHolding_aRequestHeldThroughADroppedSubscription_isHandedOver() async {
+        let sent = DecisionRecorder()
+        let (store, request) = Self.store { _, resolution in
+            #expect(resolution == .delegate)
+            await sent.next()
+        }
+        store.connectionDidDrop()
+
+        store.handOverHeldRequests()
+        await store.waitUntilResolved(request)
+
+        #expect(await sent.count == 1)
+        guard case .handedToTerminal? = store.ledger.entry(for: request)?.state else {
+            Issue.record("expected the request to be with the TUI")
+            return
+        }
+    }
+
     @Test func atQuit_aRequestThatTimedOut_getsNothing() {
         let (store, request) = Self.store { _, _ in }
         store.ledger.settle(id: request.id, by: .expired, now: SuspendingClock.now)

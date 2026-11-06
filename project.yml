@@ -265,6 +265,7 @@ targets:
           - "Resources/cli"
       - path: AgentIntegrationService/Shared
       - path: AgentIntegrationService/ProviderBridge
+      - path: AgentIntegrationService/Service/AgentIntegrationListener.swift
       - path: AgentIntegrationService/Service/RustApprovalHost.swift
       - path: AgentIntegrationService/Service/ThreadAdmission.swift
       - path: AgentIntegrationService/Resources/com.nekoder.weir.agent-integration-service.plist

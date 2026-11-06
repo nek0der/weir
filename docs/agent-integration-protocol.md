@@ -236,7 +236,11 @@ accepted decision is idempotent; a different later decision returns
 `already_terminal`. When a requester's connection is gone, the service host
 withdraws every pending request of its run
 (`weir_approval_service_withdraw_requester_v1`), so no card waits on an answer
-nobody would read. The deadline is checked during every operation, so a late
+nobody would read. The broker also remembers the run as withdrawn, so a submit
+of it that the host delivers after the withdrawal is refused as `unauthorized`
+rather than registered with nobody waiting for it. The broker forgets the run
+when the run's last session closes, since nothing is left that could submit
+for it. The deadline is checked during every operation, so a late
 allow is rejected even if no timer callback has run.
 
 The supported decisions are:
