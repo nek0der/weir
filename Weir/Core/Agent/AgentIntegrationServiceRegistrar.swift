@@ -439,6 +439,17 @@ final class AgentIntegrationServiceRegistrar {
                 await task.value
             }
         }
+
+        /// Waits until no reconcile runs, leaving a scheduled retry waiting,
+        /// so a test whose retry delays never pass can read what one
+        /// activation decided before the next arrives: an activation while a
+        /// reconcile runs is dropped, and the reconcile goes on after its
+        /// observation ends.
+        func waitUntilReconciled() async {
+            while let task = reconcileTask {
+                await task.value
+            }
+        }
     #endif
 
     private func reconcile(forceReplacement: Bool = false) {

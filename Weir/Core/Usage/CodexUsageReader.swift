@@ -34,6 +34,19 @@ struct CodexUsageReader: CodexUsageReading {
     /// network.
     static let timeout: Duration = .seconds(15)
 
+    /// Calls `fire` once `delay` has passed. The exchange's seam for its
+    /// timeout, so a test ends the wait without waiting it out.
+    typealias TimeoutTimer = @Sendable (_ delay: Duration, _ fire: @escaping @Sendable () -> Void) -> Void
+
+    static let dispatchTimer: TimeoutTimer = { delay, fire in
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds(delay), execute: fire)
+    }
+
+    /// `delay` in seconds, fractions kept, as `DispatchTime` takes it.
+    static func seconds(_ delay: Duration) -> Double {
+        Double(delay.components.seconds) + Double(delay.components.attoseconds) / 1e18
+    }
+
     /// The JSON-RPC id of the usage request, which its answer carries.
     private static let requestID = 2
 
@@ -96,8 +109,13 @@ struct CodexUsageReader: CodexUsageReading {
 
     /// Runs the server, sends the requests, and returns the answer's line.
     /// `nil` when the server could not start, ended first, or took longer
-    /// than `timeout`.
-    static func exchange(executable: String, path: String, timeout: Duration = timeout) async -> Data? {
+    /// than `timeout`, which `timer` counts.
+    static func exchange(
+        executable: String,
+        path: String,
+        timeout: Duration = timeout,
+        timer: TimeoutTimer = dispatchTimer
+    ) async -> Data? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = ["app-server"]
@@ -145,10 +163,7 @@ struct CodexUsageReader: CodexUsageReading {
                     log.error("codex app-server could not be asked: \(String(describing: error), privacy: .private)")
                     wait.finish(nil)
                 case .started:
-                    let seconds = Double(timeout.components.seconds) + Double(timeout.components.attoseconds) / 1e18
-                    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) {
-                        wait.finish(nil)
-                    }
+                    timer(timeout) { wait.finish(nil) }
                 }
             }
         } onCancel: {

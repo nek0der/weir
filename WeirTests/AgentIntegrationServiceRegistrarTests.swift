@@ -2,6 +2,7 @@
 // Weir — registration decisions, crash-recovery markers, and recovery from a service that does not answer.
 
 import Foundation
+import Observation
 import ServiceManagement
 import Testing
 @testable import Weir
@@ -401,12 +402,13 @@ struct AgentIntegrationServiceRecoveryTests {
             try writeMarker(.ready, in: directory)
             let registrar = system.registrar(directory: directory)
             registrar.start { _ in }
-            await pollUntil { system.sleeps.count == 1 }
+            await untilObserved { system.sleeps.count == 1 }
+            await registrar.waitUntilReconciled()
             for activation in 1...10 {
                 system.advance(by: .seconds(1))
                 registrar.appDidBecomeActive()
-                await pollUntil { system.observationCount == activation + 1 && !system.isObserving }
-                await Task.yield()
+                await registrar.waitUntilReconciled()
+                #expect(system.observationCount == activation + 1)
             }
             #expect(system.observationCount == 11)
             #expect(system.unregisterCount == 0)
@@ -427,12 +429,13 @@ struct AgentIntegrationServiceRecoveryTests {
             try writeMarker(.ready, in: directory)
             let registrar = system.registrar(directory: directory)
             registrar.start { _ in }
-            await pollUntil { system.sleeps.count == 1 }
+            await untilObserved { system.sleeps.count == 1 }
+            await registrar.waitUntilReconciled()
 
             system.advance(by: .seconds(60))
             registrar.appDidBecomeActive()
-            await pollUntil { system.unregisterCount == 1 && !system.isObserving }
             await registrar.waitUntilIdle()
+            #expect(system.unregisterCount == 1)
             #expect(marker(in: directory)?.phase == .replacing)
 
             system.releaseSleeps()
@@ -450,7 +453,7 @@ struct AgentIntegrationServiceRecoveryTests {
             try writeMarker(.ready, in: directory)
             let registrar = system.registrar(directory: directory)
             registrar.start { _ in }
-            await pollUntil { system.isObserving }
+            await untilObserved { system.isObserving }
             registrar.retry()
             system.answersAfterSleeps = 0
             system.releaseObservation()
@@ -538,8 +541,11 @@ struct AgentIntegrationServiceRecoveryTests {
 /// A stand-in for `SMAppService`, the bundle, the running service, and the
 /// clock. The service does not answer until `answersAfterSleeps` retry
 /// delays have passed (never, by default). A sleep passes at once and moves
-/// the clock on, unless `holdsSleeps` keeps it waiting.
+/// the clock on, unless `holdsSleeps` keeps it waiting. Observable, so a
+/// test waits for a held sleep or observation to begin without a deadline
+/// a loaded machine can pass.
 @MainActor
+@Observable
 private final class FakeServiceSystem {
     let artifact: AgentIntegrationServiceArtifact
     var location = AgentIntegrationBundleLocation.installed
