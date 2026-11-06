@@ -2,15 +2,14 @@
 
 > `CLAUDE.md` is a symlink to this file. They are the same document.
 
-Weir is a macOS 26 terminal app written primarily in Swift 6 + SwiftUI. It
-embeds `libghostty` through its C ABI and links OS-independent Rust code through
-a separate versioned C ABI. At its center is a supervision window for coding
-agents. Each window shows one project at a time: a sidebar of every
-project's worktrees, the session's pane strip and terminal with a decision bar under each agent pane,
-and a Changes panel of the agent's turns. Weir also ships tabs, projects
-with Git worktree management, Sparkle auto-update, JSON session restoration,
-and en/ja localization. It is an individual open-source project, so expect
-the cadence of a single active developer.
+Weir is a macOS 26 terminal app written in Swift 6 and SwiftUI, with
+libghostty and Rust components connected through C ABIs. Its supervision
+window shows a project's worktrees, agent panes, approvals, and changes
+recorded during agent turns.
+
+This guide defines the rules agents need while working in the repository.
+[CONTRIBUTING.md](CONTRIBUTING.md) holds the shared setup, verification, test,
+and PR procedures for human contributors and agents.
 
 ## Table of contents
 
@@ -24,44 +23,33 @@ the cadence of a single active developer.
 
 ## 1. Build / Test / Run
 
-The Makefile is the canonical entry point — `make help` lists the common targets.
+Use the Makefile as the command entry point; `make help` lists the targets.
+Read [the verification requirements](CONTRIBUTING.md#before-opening-the-pr)
+to choose checks for the change. For app code changes, run `make build`,
+`make lint`, `make test`, and `make review-core`; the build must have no
+warnings. For prose-only changes, follow the repository prose row in the table.
 
 ```bash
-make dev           # Debug build + launch
-make build         # Debug build only
-make run           # Launch the most recently built app
-make test          # Rust, OpenCode plugin (needs Node), and Swift Testing suites
-make test-measure  # Timing suite that `make test` leaves out (prints, checks nothing)
-make rust-test     # Rust workspace tests only
-make review-core   # Terminal-probe review scenario that runs outside the test target
-make lint          # Rust and Swift lint plus the repo checks (mirrors CI)
-make release-check # Unsigned Release archive, checked for what `exportArchive` needs
-make dmg           # Release DMG artifact
-make screenshot    # Regenerate .github/assets/hero.png (builds Release first)
-make site-images   # Regenerate the site's and the documents' captures (builds Release first)
-make xcodegen      # Regenerate Weir.xcodeproj from project.yml
-make ghostty       # Build vendored libghostty
-make clean         # Remove DerivedData for this checkout
+make build         # Build this checkout's Debug app
+make dev           # Build and launch this checkout's Debug app
+make test          # Rust, OpenCode plugin, and Swift tests
+make lint          # Rust and Swift lint, localization, and script checks
+make review-core   # Separate terminal-probe scenario; not in make test
+make release-check # Unsigned Release archive and packaging checks
 ```
 
-Each target is a thin wrapper around the underlying tool (`xcodebuild`,
-`xcodegen`, `scripts/*.sh`) — call those directly if you need flags the
-Makefile doesn't expose.
-
-Agent-side tips:
-
-- Prefer the Xcode MCP (`mcp__xcode__BuildProject`, `RunSomeTests`, etc.) when
-  available. It returns structured diff logs and reuses Xcode's index cache, so
-  iteration is dramatically faster than `make build` shelling out to
-  `xcodebuild`.
-- Debug builds are ad-hoc signed by default. The approval service then never
-  becomes ready, and Claude and Codex use their own permission prompts. To
-  exercise native approvals, set `WEIR_DEVELOPMENT_TEAM`; `CONTRIBUTING.md`
-  has the details.
-- Use `make build` (or direct `xcodebuild`) for the initial full build, CI
-  repros, or when the MCP is not reachable.
-- `vendor/ghostty` is a git submodule; run `make ghostty` after a fresh clone
-  or submodule bump so `libghostty` is available to the linker.
+- Use the available Xcode build and test tools for focused iteration when
+  they provide the checks needed. Use `make build` for the initial full
+  build, CI reproduction, or when those tools are unavailable.
+- Direct tool commands may supply flags the Makefile does not expose. Keep
+  the same project, scheme, destination, and signing settings; see
+  [Running the checks](CONTRIBUTING.md#running-the-checks).
+- Ad-hoc Debug builds cannot exercise native approvals. Use the
+  [signed Debug setup](CONTRIBUTING.md#native-approvals-in-a-debug-build)
+  when checking the approval service.
+- `make build` and `make test` do not rebuild libghostty. Run `make ghostty`
+  if the framework is missing or the Ghostty submodule pin or build inputs
+  changed.
 
 ## 2. Repository layout
 
@@ -88,13 +76,13 @@ project.yml    xcodegen source of truth for the .xcodeproj
 
 ## 3. Code conventions
 
-Most of the style is enforced by `make lint` (`cargo fmt`, Clippy,
+Code formatting and many style rules are enforced by `make lint` (`cargo fmt`, Clippy,
 `swiftformat --lint`, and `swiftlint --strict`).
 
 Before writing or reviewing comments, documents, commit messages, or PR text,
 read the relevant section of [the writing guide](docs/writing-guide.md).
 
-The rules a linter can't check:
+Additional conventions:
 
 - **English only** for source, comments, commits, and PR titles and bodies.
   Use US spelling even where older files use British spelling. No emoji
@@ -115,10 +103,11 @@ The rules a linter can't check:
   `GhosttyFFI.swift`. `nonisolated(unsafe)` is reserved for `deinit`
   cleanup of resources captured during a known-safe lifetime.
   Document the safety argument in the property's doc comment.
-- **Comments** describe API contracts or explain implementation reasons;
+- **Comments** describe API contracts or explain implementation choices;
   use `we` / `our`, not `I`, when explaining our choices. Follow the
   [comment guide](docs/writing-guide.md#code-comments) for sentence forms.
-  Every Swift file starts with a banner: `// FileName.swift` / `// Weir — one-line description`.
+  Every Swift file starts with a banner: `// FileName.swift` /
+  `// Weir — one-line description`.
 - **Booleans read as predicates** (`isFocused`, `hasPendingChanges`),
   never bare `focused` / `pending`.
 - **No force-unwrap (`!`)** in production. Document *why* a stored
@@ -126,24 +115,26 @@ The rules a linter can't check:
 - **`throws` for recoverable failures**; `try?` is fine when the
   failure mode is "use a default" — document the intent inline.
   User-facing errors implement `LocalizedError`.
-- **Every user-visible `Text` / `Label` / dialog button** routes through
-  `Localizable.xcstrings` with both `en` and `ja`. Internal log
-  messages stay English.
+- **All user-facing app strings**, including tooltips, alerts, and
+  accessibility text, use `Localizable.xcstrings` with both `en` and `ja`.
+  `WeirDomain` also uses the app catalog; the build fails if its new strings
+  are missing. Internal log messages stay English.
 - **One subsystem (`com.nekoder.weir`)**. User content (paths, prompts,
   hostnames) is `privacy: .private`. No `print()` in production.
 - **Accessibility:** every interactive element has an
   `.accessibilityLabel`. Read `@Environment(\.accessibilityReduceMotion)`
   and gate decorative transitions on it. Liquid Glass appearance
   must not be the only thing that carries meaning.
-- **Tests use Swift Testing** (`@Test`, `#expect`). Reuse fixtures
-  from `WeirTests/Support/`. Never write to `~/Library/...` from a
-  test — inject the directory.
+- **Tests use Swift Testing** (`@Test`, `#expect`), not XCTest. Reuse
+  `WeirTests/Support/` fixtures and follow [the test rules](CONTRIBUTING.md#tests).
+  Never write to the real `~/Library` or `~/.codex` from a test; inject a
+  temporary directory. Use `SecureFileWrite` for Weir's data files so the
+  test write guard can reject writes to real user data.
 
 ## 4. Architecture pointers
 
-Short index of load-bearing files. Skim these before touching their domain.
-Why the agent integration and the verification channel are shaped as they
-are is in `docs/adr/`.
+Read the relevant files before changing a subsystem. The ADRs in `docs/adr/`
+explain the design of agent integration and the verification channel.
 
 - `Weir/Core/Settings/GhosttyConfigBridge.swift` — four-layer config model
   and the forced-override keys handed to `libghostty`.
@@ -158,13 +149,12 @@ are is in `docs/adr/`.
   commands act on, and how a window switches projects in place.
 - `Weir/Presentation/Attention/AttentionQueueStore.swift` — the app's one
   attention list behind ⌘J, Needs Attention, and the decision bars.
-- `Weir/Core/Agent/ApprovalPresentationStore.swift` — native approvals as
-  the app holds them: the requests, their ledger, and the hand-overs to the
-  agent's own prompt (the person's, the hidden setting's, and the quit's).
+- `Weir/Core/Agent/ApprovalPresentationStore.swift` — native approval
+  requests, their ledger, and handoffs to the agent's own permission prompt.
   Each window's approval card is
   `Weir/Presentation/Approval/WindowApprovalCard.swift`.
-- `Weir/Core/Persistence/TurnReadStore.swift` — which turns are read; with
-  `ViewedLineStore`, what decides an unread turn.
+- `Weir/Core/Persistence/TurnReadStore.swift` — tracks read turns and works
+  with `ViewedLineStore` to determine which turns are unread.
 - `Weir/Core/Review/ReviewSession.swift` — the review's state machine: what
   each comment state means, why a comment is validated against Git rather than
   trusted, and which failures the banner is allowed to clear.
@@ -200,99 +190,46 @@ are is in `docs/adr/`.
 
 ## 6. PR & workflow
 
-- Branch names use conventional prefixes: `feat/<short>`, `fix/<short>`,
-  `docs/<short>`, `chore/<short>`, `refactor/<short>`, `test/<short>`.
-- Commit messages follow Conventional Commits: `feat(scope): summary`,
-  `fix(scope): summary`, etc. Scopes are lowercase (kebab-case if
-  multi-word); reuse a scope that already appears in `git log` when
-  one fits, and coin a new one only when nothing matches. Singular
-  vs. plural follows what reads naturally for the area
-  (`fix(tab)`, `chore(deps)`).
-- Do not append `Co-Authored-By` trailers — no AI / agent attribution
-  in commits.
-- PRs must follow `.github/pull_request_template.md`. Use
-  `gh pr create --body-file` so the template is honored.
-- CI runs the build, test, lint, review-core, release-archive, and site jobs (a
-  pull request that changes only `site/` skips the app's), the
-  guardrails (secrets, forbidden terms, notices), PR title check, CodeQL,
-  release-please, and dependabot auto-merge. See `.github/workflows/` for the
-  exact matrix.
-- The contributor checklist lives in `CONTRIBUTING.md`, and the security
-  disclosure policy in `SECURITY.md`.
+Follow [the contribution workflow](CONTRIBUTING.md#pull-requests) for branch
+names, commit scopes, required checks, and PR creation.
+
+- Use conventional branch prefixes and Conventional Commits subjects.
+- Do not add AI attribution or `Co-Authored-By` trailers to commits.
+- Fill in every section of `.github/pull_request_template.md` and pass the
+  completed body to `gh pr create --body-file`.
+- Report checks performed and their outcomes. Reuse passing results only
+  while their relevant inputs remain unchanged; never report an incomplete
+  check as passed.
 
 ## 7. Agent-specific tips
 
-- **Parallel agents**: when running multiple agents simultaneously, use
-  `isolation: worktree` so changes stay separated. Merge by cherry-pick after
-  each agent finishes.
-- **Always verify the build**: after a change, run `make build` (or the Xcode
-  MCP equivalent) and confirm zero warnings before declaring done.
-- **Checking a change without taking over the screen**: the `verify-in-app`
-  skill runs this checkout's Debug build behind the person's windows and
-  drives it with `scripts/weir-automation.py`. Prefer it to full-screen
-  computer use. After changing `Weir/Automation`, run `make check-automation`.
-- **Skills**: procedures an agent loads when a task needs them live in
-  `.agents/skills/` (each linked from `.claude/skills/`). `.agents/skills/README.md`
-  says what belongs in one and how to keep one true; a change to what a skill
-  describes updates the skill in the same pull request.
-- **Decision records**: an ADR under `docs/adr/` records a decision that is
-  hard to reverse and whose reason the code does not show. Read an area's
-  ADRs before changing its shape. An ADR changes only when a decision
-  changes; `docs/README.md`, "Decision records", says how.
-- **Documents**: `docs/README.md` lists every document and the subject each
-  one is the home of, and says how one is written. A change to what a
-  document describes updates it in the same pull request.
-- **Localization is a hard requirement**: any new user-facing string must be
-  added to `Localizable.xcstrings` with both `en` and `ja` translations. An
-  English-only entry is considered incomplete.
-  `WeirDomain` is a static module whose strings live in the app's catalog, and
-  the build fails until a new string in `Weir/Core/Domain` is there.
-- **Never edit `project.pbxproj` by hand**: add files via `project.yml`, then
-  run `make xcodegen` to regenerate the project.
-- **Tests**: every test file uses Swift Testing (`@Test`, `#expect`);
-  XCTest is not used. Reuse fixtures from `WeirTests/Support/`
-  (`RepoFixture`, `TempGitRepo`, `WithTempDir`, `FakeGit`,
-  `WorkspaceSessionFixture`, `TurnSummaryFixture`, `Tags`) instead of
-  rolling your own. Give tests descriptive function names with no `test_`
-  prefix, since `@Test` already marks them (e.g.
-  `@Test func addOrActivateProject_existingPath_activatesContainer()`).
-  Stateful and UI suites need `@MainActor`. Smoke tests that require a
-  local repo gate on
-  `.disabled(if: !RepoFixture.hasLocalRepo)`. **Never** write to
-  `~/Library/...` from a test — inject the directory via `init(directory:)`
-  (see `NotificationHistoryStore`) or use `WithTempDir`. Real user data
-  has been corrupted this way before. Under the test host,
-  `WeirPaths.applicationSupportDirectory()` is a per-run folder in the
-  temporary directory, and `TestWriteGuard` refuses any change under the
-  real `~/Library` or `~/.codex` that goes through `SecureFileWrite`
-  (search the `com.nekoder.weir` / `fs.guard` log for a fault after a run).
-  Change files in Weir's data folder through `SecureFileWrite`, not
-  `FileManager`.
-- **Site**: `make build`, `make test`, and `make lint` do not cover `site/`, so
-  run `pnpm build` there after a change to it. Its words need both `en` and `ja`
-  in `site/src/site.ts`, not in `Localizable.xcstrings`. A change to what the documents
-  describe updates `site/src/content/docs/` in every language. `site/README.md` has the rest.
-- **README**: `README.md` and `README.ja.md` change together in one pull request.
-- **When stuck**, search GitHub issues/PRs, OSS projects, and WWDC sessions
-  before guessing. Web-first beats trial-and-error rebuilds.
-- **Demo mode**: set `WEIR_DEMO=1` in the launching shell to swap the
-  on-disk session for `DemoFixture` (a made-up invoicing product: 3
-  projects, 18 worktree rows (one ready to clean up, five other worktrees,
-  one project folded) with staged agents, turns, Git facts, and pane
-  output, in one 1440×900 window with the Changes panel open).
-  Persistence is short-circuited while the variable is set, so the
-  user's real `state.json` is not touched. Its panes run a zsh of their
-  own (`DemoFixture+Shell.swift`) that reads none of the user's startup
-  files and keeps no history. Demo mode also skips the
-  approval service, so a demo run does not replace the running app's
-  service and agents use their native prompts. It starts no updater
-  either. `WEIR_DEMO_APPEARANCE=dark` shows it in the dark look, and
-  `WEIR_DEMO_LAYER=needs-attention`, `all-projects`, `review`, `approval-list`, or `approval-card` opens that layer.
-  `WEIR_DEMO_LANGUAGE=ja` shows the Japanese UI. `WEIR_DEMO_TIME=09:15` sets
-  the time of day it shows, 14:30 by default. `make screenshot` regenerates the hero screenshot at
-  `.github/assets/hero.png`. It needs a one-time Screen Recording grant
-  for the calling terminal and a 2x display with room for the window,
-  and it depends on demo mode being reproducible. When you change the
-  shape of `Tab`, `SplitTree`, or `SessionSnapshot`, run
-  `DemoFixtureTests` first and update the fixture before shipping the
-  model change.
+- **Parallel agents:** use separate worktrees for concurrent edits
+  (`isolation: worktree` where supported). Integrate completed commits by
+  cherry-pick.
+- **App verification:** use [verify-in-app](.agents/skills/verify-in-app/SKILL.md)
+  to check this checkout's Debug app behind the person's windows with its own
+  data. Prefer it to full-screen computer use. Channel changes, including
+  `scripts/weir-automation.py`, require `make check-automation`; the skill
+  defines the additional `--keys` and `--agents` checks.
+- **Skills:** procedures live in `.agents/skills/`, with links in
+  `.claude/skills/`. Follow [the skill guide](.agents/skills/README.md) and
+  update a skill in the same PR as changes to the procedure it describes.
+- **Documents and decisions:** read the relevant ADRs before changing an
+  area's design. Follow [the document guide](docs/README.md) for ownership
+  and ADR maintenance. Update affected documents in the same PR. Record a
+  changed decision in a new ADR; follow the guide for corrections to an
+  existing record.
+- **Site:** app checks do not cover `site/`. Run `pnpm build` there and follow
+  [the site guide](site/README.md). When a change affects what a site document
+  describes, update `site/src/content/docs/` in every language in the same PR.
+  Site UI text needs English and Japanese updates in `site/src/site.ts`; it
+  does not use the app's string catalog.
+- **README:** update `README.md` and `README.ja.md` together.
+- **Demo mode:** it uses fixture data and skips persistence, the approval
+  service, and the updater. It cannot verify normal-session behavior or
+  native approvals. See [the capture procedure](CONTRIBUTING.md#regenerating-the-hero-screenshot)
+  for controls and display requirements. After changing `Tab`, `SplitTree`,
+  or `SessionSnapshot`, run `DemoFixtureTests` and update the fixture before
+  shipping the model change.
+- **When stuck:** consult relevant issues, upstream sources, and platform
+  documentation before guessing or repeatedly rebuilding.
