@@ -543,6 +543,7 @@ final class ReviewSession {
             // mid-line would leave the last marker describing half a line.
             code: excerpt.text,
             codeMarkers: excerpt.markers,
+            codeCut: excerpt.cut,
             body: text
         )
         return commit(comments + [comment])

@@ -602,6 +602,16 @@ A version 2 comment whose only scopes are `turn:<tree>` also reads as legacy
 (`ReviewComment.isLegacy`). Development builds before 0.1.10 wrote that scope
 for the per-pane "This turn" review. The `turn` layer it names still decodes.
 
+A version 2 comment whose quoted code was cut at the excerpt limit carries
+`codeCut`: `withinLine` when the quote is the start of one long line, and
+`betweenLines` when it holds whole lines and leaves the rest out. A value this
+build does not know reads as `betweenLines`. The key is additive. A comment
+written before it, or with a whole quote, has none. Its quote is sent as whole.
+When it is one line within four bytes of the limit, which is how the build
+before cut a long line, the checks against Git compare that line by its start.
+A build from before the key skips it and reads the quote as whole, as it always
+did. Rewriting the draft drops the key.
+
 0.1.9 reads version 1 only. It sets a version 2 draft aside as
 `<hash>.json.bak-decode-failed-<unix>` and starts that review empty.
 

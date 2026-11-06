@@ -324,6 +324,24 @@ struct ReviewAnchor: Codable, Equatable {
     let newLine: Int?
 }
 
+/// Where a comment's quote stops before the run it names
+/// (`ReviewSession.excerpt`).
+enum ReviewQuoteCut: String, Codable, Equatable {
+    /// The run's first line alone is longer than the budget, and the quote
+    /// is its start.
+    case withinLine
+    /// The quote holds whole lines, and the run's later lines are left out.
+    case betweenLines
+
+    /// Decoded by hand, like the other stored enums: a cut this build does
+    /// not know is still a cut, read as the one that compares every line
+    /// whole, rather than a reason to refuse the draft it is in.
+    init(from decoder: any Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = ReviewQuoteCut(rawValue: raw) ?? .betweenLines
+    }
+}
+
 struct ReviewComment: Identifiable, Codable, Equatable {
     var id = UUID()
     /// The scopes this comment belongs to (`ReviewScope.scopeID`), each one
@@ -355,6 +373,10 @@ struct ReviewComment: Identifiable, Codable, Equatable {
     /// stored, where the excerpt is all there is — those go out unmarked, as
     /// they always did.
     var codeMarkers: String?
+    /// Where `code` stops before the run does (`ReviewSession.excerpt`).
+    /// `nil` on a quote that is whole, and on every draft saved before this
+    /// was stored, which is what makes it safe to add to the stored form.
+    var codeCut: ReviewQuoteCut?
     var body: String
     /// When this comment was last handed to an agent, or `nil` if it never
     /// has been.
@@ -377,6 +399,32 @@ struct ReviewComment: Identifiable, Codable, Equatable {
 
     var isResolved: Bool {
         resolvedAt != nil
+    }
+
+    /// Whether the quote stops before the run it names (`codeCut`). What the
+    /// prompt says: only a recorded cut.
+    var isQuoteCut: Bool {
+        codeCut != nil
+    }
+
+    /// Where the quote stops, as the checks against Git read it
+    /// (`ReviewCommentRelocation`): `codeCut`, or for a comment saved before
+    /// that was recorded, what its quote shows.
+    ///
+    /// The build that saved such a comment cut a long line the same way,
+    /// between scalars, so its quote is one line within a scalar of the limit:
+    /// the cut stopped before a scalar that did not fit, and no scalar is
+    /// longer than four bytes. Read as whole, it matched no line of any file,
+    /// and a comment on a minified line was held back on every insert.
+    /// Not for the prompt: a whole line of that same length reads as cut
+    /// here, which only lets a line that starts with it match as well, but
+    /// would tell the agent code is missing that is not.
+    var comparedCut: ReviewQuoteCut? {
+        if let codeCut {
+            return codeCut
+        }
+        let isLineCut = !code.contains("\n") && code.utf8.count > ReviewSession.maxCodeExcerpt - 4
+        return isLineCut ? .withinLine : nil
     }
 
     /// Whether the supervision review has no scope to show this comment in:
@@ -748,11 +796,13 @@ enum ReviewPromptBuilder {
         // Neutralized like every other piece of repository text: a control
         // character in a file name is not the reader's to fix, and refusing the
         // whole prompt for it left a comment that could be written and never
-        // sent.
+        // sent. A quote cut short says so, so the agent reads the rest of
+        // `lines` in the file rather than taking the code shown for all of it.
         return "<comment file=\(attribute(ReviewText.neutralized(comment.file.path))) "
             + "lines=\(attribute(lines)) side=\(attribute(side)) "
             + "layer=\(attribute(comment.file.layer.rawValue))>\n"
-            + "<code>\n" + escaped(ReviewText.neutralized(marked(comment))) + "\n</code>\n"
+            + (comment.isQuoteCut ? "<code truncated=\"true\">\n" : "<code>\n")
+            + escaped(ReviewText.neutralized(marked(comment))) + "\n</code>\n"
             + escaped(comment.body) + "\n</comment>"
     }
 
