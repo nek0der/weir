@@ -66,7 +66,7 @@ sets them:
 | `WEIR_AGENT_TMUX_HOST_MODE` | Set by the shim: `weirHosted` for automatic hosting, `manual` inside the user's own tmux |
 | `WEIR_SHIM_DIR` | This directory, so `zdotdir/.zshrc` can re-prepend it in a shell an earlier build started |
 | `WEIR_SHIM_DIRS` | Every agent's shim directory, colon-separated, in the order they lead `PATH`; `zdotdir/.zshrc` re-prepends each in that order |
-| `WEIR_CLAUDE_HOOK_NAMESPACE` | Bundle identity used to keep the no-space hook link separate between Dev and Release builds |
+| `WEIR_CLAUDE_HOOK_NAMESPACE` | The build's identity, which names the folder of no-space hook links, `$TMPDIR/weir-claude-shim-<identity>`, so no build changes the hooks another build's sessions run: the bundle id for the Release app (`com.nekoder.Weir`), and for a Debug build its bundle id and the first 8 hex digits of the SHA-256 of its bundle's path (`com.nekoder.Weir.dev-1a2b3c4d`), since every Debug build, one per worktree, shares one bundle id (`WeirPaths.buildIdentity`) |
 | `WEIR_SESSIONS_DIR` | Directory to write session records into |
 | `WEIR_AGENT_STATES_DIR` | Directory to write agent-state records into |
 | `WEIR_CWD_EVENTS_DIR` | Directory to write cwd-change records into |

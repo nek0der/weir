@@ -208,9 +208,10 @@ approval_helper="$self_dir/../../MacOS/AgentIntegrationHookHelper"
 # typically contains `Weir Dev.app`, so we expose the hooks under a
 # no-space TMPDIR symlink: the command stays a bare path, and the status
 # line relay below can be offered. Without the links the paths are quoted
-# instead (`template_value`). Re-created on every invocation; cheap and idempotent. The app
-# identity keeps concurrently installed Dev and Release builds from changing
-# the live target underneath each other's sessions.
+# instead (`template_value`). Re-created on every invocation; cheap and idempotent. The build
+# identity keeps builds running at the same time (the Release app, and a
+# Debug build from each worktree) from changing the live target underneath
+# each other's sessions (`WeirPaths.buildIdentity`).
 hook_namespace="${WEIR_CLAUDE_HOOK_NAMESPACE:-default}"
 case "$hook_namespace" in
   '' | *[!A-Za-z0-9._-]*) hook_namespace="default" ;;

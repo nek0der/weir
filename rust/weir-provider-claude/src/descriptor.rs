@@ -95,7 +95,7 @@ pub(crate) fn install_recipe() -> InstallRecipe {
             },
             RecipeVariable {
                 name: "WEIR_CLAUDE_HOOK_NAMESPACE".to_owned(),
-                value: RecipePlaceholder::BundleId,
+                value: RecipePlaceholder::BuildIdentity,
             },
             RecipeVariable {
                 name: "WEIR_USAGE_DIR".to_owned(),

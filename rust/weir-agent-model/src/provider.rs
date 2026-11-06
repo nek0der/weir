@@ -317,9 +317,11 @@ pub enum RecipePlaceholder {
     SessionDirectory,
     /// Where this provider's working-directory events go.
     CwdEventsDirectory,
-    /// The running application's bundle identifier, which namespaces hooks so
-    /// a Debug and a Release install do not answer for each other.
-    BundleId,
+    /// The running build's identity, which namespaces hooks so two builds on
+    /// one Mac do not answer for each other: the bundle identifier, and for a
+    /// Debug build also a hash of where its bundle is, since every Debug
+    /// build shares one bundle identifier.
+    BuildIdentity,
     /// The arguments the provider's hook command needs, as the platform builds
     /// them.
     HookArguments,
@@ -338,7 +340,7 @@ impl RecipePlaceholder {
             Self::StateDirectory => "@@STATE_DIRECTORY@@",
             Self::SessionDirectory => "@@SESSION_DIRECTORY@@",
             Self::CwdEventsDirectory => "@@CWD_EVENTS_DIRECTORY@@",
-            Self::BundleId => "@@BUNDLE_ID@@",
+            Self::BuildIdentity => "@@BUILD_IDENTITY@@",
             Self::HookArguments => "@@HOOK_ARGUMENTS@@",
             Self::UsageDirectory => "@@USAGE_DIRECTORY@@",
         }

@@ -199,7 +199,7 @@ struct AgentInstallRecipe: Decodable, Sendable {
         case stateDirectory = "state_directory"
         case sessionDirectory = "session_directory"
         case cwdEventsDirectory = "cwd_events_directory"
-        case bundleID = "bundle_id"
+        case buildIdentity = "build_identity"
         case hookArguments = "hook_arguments"
         case usageDirectory = "usage_directory"
         case unknown
@@ -243,8 +243,8 @@ extension AgentProviderRegistry {
     /// still named, with empty values. A demo build is often launched from a
     /// Weir pane, whose own values it inherits; left in place they would
     /// point the demo's agent at that build's records. The hook reads an
-    /// empty value as unset and writes nothing. The bundle id stays, so the
-    /// shim keeps its links apart from the other build's.
+    /// empty value as unset and writes nothing. The build identity stays, so
+    /// the shim keeps its links apart from the other build's.
     static func environment(
         for provider: String,
         state: URL,
@@ -263,7 +263,7 @@ extension AgentProviderRegistry {
                 if let cwdEvents {
                     environment[variable.name] = path(cwdEvents)
                 }
-            case .bundleID: environment[variable.name] = WeirPaths.bundleID
+            case .buildIdentity: environment[variable.name] = WeirPaths.buildIdentity
             case .usageDirectory: environment[variable.name] = path(usage)
             // The hook's own arguments are assembled where the hook path is
             // known, which is not here.

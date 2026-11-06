@@ -3,8 +3,10 @@
 // bundle id so the dmg-installed Release ("com.nekoder.Weir") and a
 // Debug build running out of DerivedData ("com.nekoder.Weir.dev")
 // can coexist on the same Mac without trampling each other's
-// state.json, notifications.json, or scrollback dumps.
+// state.json, notifications.json, or scrollback dumps; and gives each
+// build an identity of its own for the hook links.
 
+import CryptoKit
 import Foundation
 
 enum WeirPaths {
@@ -40,6 +42,32 @@ enum WeirPaths {
     /// from under the Xcode runner.
     static var isDevBuild: Bool {
         bundleID.hasSuffix(".dev")
+    }
+
+    /// The identity of this one build, for what each build must keep to
+    /// itself on a Mac where several run at once: the no-space hook links
+    /// a Claude shim makes in the user's temporary folder
+    /// (`WEIR_CLAUDE_HOOK_NAMESPACE`). The Release app is its bundle id, as
+    /// it always was, so a Claude session it started before this build keeps
+    /// the links it was given. Every Debug build shares one bundle id, and
+    /// people run one from each worktree's DerivedData, so a Debug build
+    /// adds a hash of its bundle's path: by the bundle id alone, one build's
+    /// `claude` start would point the other builds' running sessions at its
+    /// own hooks, whose approvals the other builds never see.
+    static var buildIdentity: String {
+        buildIdentity(bundleID: bundleID, bundlePath: Bundle.main.bundleURL.resolvingSymlinksInPath().path)
+    }
+
+    /// Returns the build identity of a bundle with `bundleID` at
+    /// `bundlePath`, which need not be the running one, so tests can name
+    /// two. We cut the path's SHA-256 to 8 hex digits: enough to tell a
+    /// handful of worktrees apart, and short enough that the link folder's
+    /// name stays well inside the 128 characters the shim accepts.
+    static func buildIdentity(bundleID: String, bundlePath: String) -> String {
+        guard bundleID.hasSuffix(".dev") else { return bundleID }
+        let digest = SHA256.hash(data: Data(bundlePath.utf8))
+        let prefix = digest.prefix(4).map { String(format: "%02x", $0) }.joined()
+        return "\(bundleID)-\(prefix)"
     }
 
     /// Folder name under `~/Library/Application Support/` where the
