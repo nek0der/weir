@@ -10,6 +10,7 @@
 // tagged `.smoke` individually.
 
 import Foundation
+import os
 import Testing
 @testable import Weir
 
@@ -127,6 +128,45 @@ struct ForgeResolverTests {
 
         await resolver.invalidate()
         #expect(await resolver.forge(for: repo.url) == .gitHub)
+    }
+
+    /// Remotes that could not be read are no answer, and are not kept: the
+    /// next ask reads them again rather than take the checkout for one with
+    /// no forge.
+    @Test("remotes that could not be read are no answer, asked again next time")
+    func answer_unreadRemotes_isUnavailable_andNotKept() async {
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let resolver = ForgeResolver(locator: ToolLocator()) { _, _ in
+            let read = reads.withLock { reads in
+                reads += 1
+                return reads
+            }
+            return read == 1 ? nil : ToolResult(exitCode: 0, stdout: "remote.origin.url git@github.com:acme/app.git\n", stderr: "")
+        }
+        let folder = URL(fileURLWithPath: "/nonexistent/checkout")
+        #expect(await resolver.answer(for: folder) == .unavailable)
+        #expect(await resolver.answer(for: folder) == .known(.gitHub))
+        #expect(reads.withLock { $0 } == 2)
+    }
+
+    /// A checkout with no remote, or one on a host no forge serves, is a
+    /// known no, not a read that failed. It is read again on the next ask,
+    /// so a remote added since shows its pull request without a Refresh.
+    @Test("no remote, or a host no forge serves, is a known no, read again next time", arguments: [
+        "",
+        "remote.origin.url git@example.org:acme/app.git\n"
+    ])
+    func answer_noForge_isKnown_andReadAgain(remotes: String) async {
+        let reads = OSAllocatedUnfairLock(initialState: 0)
+        let none = ToolLocator(known: ["gh": nil, "glab": nil])
+        let resolver = ForgeResolver(locator: none) { _, _ in
+            reads.withLock { $0 += 1 }
+            return ToolResult(exitCode: remotes.isEmpty ? 1 : 0, stdout: remotes, stderr: "")
+        }
+        let folder = URL(fileURLWithPath: "/nonexistent/checkout")
+        #expect(await resolver.answer(for: folder) == .known(nil))
+        #expect(await resolver.answer(for: folder) == .known(nil))
+        #expect(reads.withLock { $0 } == 2)
     }
 
     /// A checkout with no remote must resolve to nil so the syncer

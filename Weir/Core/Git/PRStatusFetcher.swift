@@ -156,8 +156,22 @@ struct PRStatusFetcher: PRStatusLookups {
 
     func lookup(_ rows: [PRStatusRow]) async -> PRStatusBatch {
         guard let directory = rows.first?.workingDirectory else { return PRStatusBatch() }
-        let noForge = PRStatusBatch(lookups: Dictionary(rows.map { ($0.container, Lookup()) }, uniquingKeysWith: { first, _ in first }))
-        guard let forge = await resolver.forge(for: directory) else { return noForge }
+        func batch(_ lookup: Lookup) -> PRStatusBatch {
+            PRStatusBatch(lookups: Dictionary(rows.map { ($0.container, lookup) }, uniquingKeysWith: { first, _ in first }))
+        }
+        let noForge = batch(Lookup())
+        let forge: ForgeKind
+        switch await resolver.answer(for: directory) {
+        case let .known(known?):
+            forge = known
+        case .known(nil):
+            return noForge
+        case .unavailable:
+            // Remotes that could not be read say nothing of the rows, so
+            // each keeps what it showed until the next lookup.
+            log.debug("the checkout's remotes could not be read; no answer")
+            return batch(Lookup(isAnswered: false))
+        }
         guard let executable = await locator.locate(forge.executableName) else {
             log.debug("\(forge.executableName, privacy: .public) not installed")
             return noForge
