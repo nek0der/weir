@@ -306,6 +306,17 @@ as they are fixed or confirmed.
 - **Claude Code's usage needs a status line of your own.** Claude Code keeps
   a row for a status line even when it prints nothing, so Weir takes the
   slot only when you have set one up, and runs yours in it.
+- **`--setting-sources` given as another option's value can hide your
+  status line.** Weir runs your status line only from the settings files the
+  launch reads. It reads `--setting-sources` and `--restricted` wherever they
+  appear in the arguments, including as another option's value or after
+  `--`, and takes only the files every one of them allows. Claude Code goes
+  by the real flag alone, so such a launch can show no status line, and send
+  the panel no usage, where Claude Code would have shown yours.
+- **A launch with `--project-config-root` shows no status line from the
+  project's settings.** The flag moves both project settings files to
+  another folder, which Weir does not follow, so it runs only a status line
+  from your user settings or `--settings` for such a launch.
 - **A status line your organization sets through managed-settings drop-in
   files or a device management profile is not seen.** Weir reads
   `managed-settings.json` itself, and otherwise runs the status line from

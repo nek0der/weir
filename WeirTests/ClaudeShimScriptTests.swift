@@ -651,6 +651,33 @@ struct ClaudeShimScriptTests {
         #expect(payload?["hooks"] != nil)
     }
 
+    /// The status line relay takes the person's status line only from the
+    /// settings files Claude Code reads for this launch, which it learns from
+    /// what the shim writes: Claude Code's default, then each value as
+    /// written, an empty line for `--restricted`, and `user` for
+    /// `--project-config-root`.
+    @Test("hands the agent the launch's setting sources for the status line relay")
+    func launch_passesTheSettingSources() throws {
+        let variable = try StatusLineContract.settingSourcesVariable()
+        let every = StatusLineContract.everySource
+        let plain = try runShimHosted([], underPTY: false)
+        #expect(plain.claudeEnvironment[variable] == every)
+
+        let chosen = try runShimHosted(
+            ["--setting-sources", "user", "--setting-sources=project, local", "--restricted", "--project-config-root=x"],
+            underPTY: false
+        )
+        #expect(chosen.claudeEnvironment[variable] == "\(every)\nuser\nproject, local\n\nuser")
+
+        let hosted = try runShimHosted(["--resume", "abc", "--setting-sources", "user"])
+        #expect(!hosted.tmux.isEmpty)
+        #expect(hosted.claudeEnvironment[variable] == "\(every)\nuser")
+
+        // A value an enclosing claude's shim wrote belongs to that launch.
+        let nested = try runShimHosted([], environment: [variable: "\(every)\n"], underPTY: false)
+        #expect(nested.claudeEnvironment[variable] == every)
+    }
+
     @Test("starts a hosted agent with an emptied record directory empty")
     func hostedLaunch_passesEmptyRecordDirectories() throws {
         // A demo pane empties them; the session must not take the tmux

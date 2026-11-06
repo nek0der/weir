@@ -10,7 +10,8 @@ use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use weir_agent_model::{
-    PlanUsage, PlanUsageWindow, SettingsSource, StatusLineAdapter, format_utc_seconds, parse_object,
+    LaunchVariables, PlanUsage, PlanUsageWindow, SettingsFiles, SettingsSource, StatusLineAdapter,
+    format_utc_seconds, parse_object,
 };
 
 const MAX_STATUS_LINE_INPUT_BYTES: usize = 1024 * 1024;
@@ -62,7 +63,12 @@ impl StatusLineAdapter for AntigravityStatusLine {
 
     /// `agy` reads its settings from this one file (`--settings` aside: the
     /// shim adds no relay to a launch that passes its own).
-    fn settings_sources(&self, _project: Option<&Path>) -> Vec<SettingsSource> {
+    fn settings_sources(
+        &self,
+        _project: Option<&Path>,
+        _launch: &LaunchVariables<'_>,
+        _files: &dyn SettingsFiles,
+    ) -> Vec<SettingsSource> {
         vec![SettingsSource::UserHomeFile(
             ".gemini/antigravity-cli/settings.json",
         )]
@@ -93,7 +99,12 @@ impl StatusLineAdapter for AntigravityStatusLine {
             .filter(|command| !command.trim().is_empty())
     }
 
-    fn relay(&self, user: &Map<String, Value>, relay_command: &str) -> Value {
+    fn relay(
+        &self,
+        user: &Map<String, Value>,
+        relay_command: &str,
+        _launch: &LaunchVariables<'_>,
+    ) -> Value {
         let mut setting = user.clone();
         setting.insert("command".to_owned(), Value::from(relay_command));
         Value::Object(setting)

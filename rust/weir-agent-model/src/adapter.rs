@@ -81,6 +81,49 @@ pub enum NormalizeError {
 /// adapter reads no file itself.
 pub type ListDirectory<'a> = dyn Fn(&Path) -> Vec<PathBuf> + 'a;
 
+/// Reads one variable of the environment the status line runs in, the one the
+/// shim launched the provider with: how an adapter learns what the launch's
+/// arguments chose. `None` for a variable that is not set.
+pub type LaunchVariables<'a> = dyn Fn(&str) -> Option<&'a str> + 'a;
+
+/// What a path names, as `SettingsFiles::entry` reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileKind {
+    Directory,
+    File,
+    Link,
+    Other,
+}
+
+/// One entry of the file system: what it is, and the user id that owns it
+/// (`None` where the platform has none, as on Windows).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileEntry {
+    pub kind: FileKind,
+    pub owner: Option<u32>,
+}
+
+/// The few facts of the file system an adapter needs to find where its
+/// provider keeps a settings document (Claude Code keeps a project's local
+/// settings at its Git repository's root). The runtime's, since an adapter
+/// reads no file itself.
+pub trait SettingsFiles {
+    /// The entry at `path` itself, a link not followed. `None` when there is
+    /// none or it cannot be read.
+    fn entry(&self, path: &Path) -> Option<FileEntry>;
+    /// The entry `path` leads to, links followed.
+    fn target(&self, path: &Path) -> Option<FileEntry>;
+    /// `path` with every link resolved; `None` when it does not lead to an
+    /// entry.
+    fn real_path(&self, path: &Path) -> Option<PathBuf>;
+    /// A small text file's contents; `None` for anything else.
+    fn read_text(&self, path: &Path) -> Option<String>;
+    /// The user id the runtime runs as, `None` where there is none.
+    fn user_id(&self) -> Option<u32>;
+    /// The person's home folder, links resolved.
+    fn home(&self) -> Option<PathBuf>;
+}
+
 /// Where one settings document comes from, as a provider lists them for its
 /// status line, highest precedence first. The adapter names the places; the
 /// runtime reads them, since an adapter reads no file itself.
@@ -112,8 +155,17 @@ pub trait StatusLineAdapter: Send + Sync {
     fn project_directory(&self, input: &[u8]) -> Option<PathBuf>;
 
     /// The settings documents that can set a status line, highest
-    /// precedence first, for a session in `project`.
-    fn settings_sources(&self, project: Option<&Path>) -> Vec<SettingsSource>;
+    /// precedence first, for a session in `project`: only those the provider
+    /// itself reads for this launch, which `launch` tells. A launch the
+    /// adapter cannot read lists none of the documents it may leave out,
+    /// since the relay runs the command it finds in them. `files` tells
+    /// where in `project` the provider keeps them.
+    fn settings_sources(
+        &self,
+        project: Option<&Path>,
+        launch: &LaunchVariables<'_>,
+        files: &dyn SettingsFiles,
+    ) -> Vec<SettingsSource>;
 
     /// The person's own status line among `layers`, read from
     /// `settings_sources` in the same order (`None` for one that is absent or
@@ -124,8 +176,15 @@ pub trait StatusLineAdapter: Send + Sync {
     fn command<'a>(&self, status_line: &'a Map<String, Value>) -> Option<&'a str>;
 
     /// The setting the provider is launched with: the person's own status
-    /// line with `relay_command` in place of theirs.
-    fn relay(&self, user: &Map<String, Value>, relay_command: &str) -> Value;
+    /// line with `relay_command` in place of theirs. Whatever the relay must
+    /// know of `launch` goes into the command itself: the settings the
+    /// provider loads can change the environment its status line runs in.
+    fn relay(
+        &self,
+        user: &Map<String, Value>,
+        relay_command: &str,
+        launch: &LaunchVariables<'_>,
+    ) -> Value;
 }
 
 /// What a host's watcher knows about the transcript it reads.

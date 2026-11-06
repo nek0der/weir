@@ -8,6 +8,7 @@ mod awaited;
 mod cache;
 mod descriptor;
 mod normalize;
+mod project_settings;
 mod settings;
 mod status_line;
 mod tokens;
@@ -31,7 +32,7 @@ pub struct ClaudeAdapter;
 /// Stable provider id.
 pub const PROVIDER_ID: &str = "claude";
 
-pub use status_line::{LAUNCH_SETTINGS_VARIABLE, RELAY_ARGUMENTS};
+pub use status_line::{LAUNCH_SETTINGS_VARIABLE, RELAY_ARGUMENTS, SETTING_SOURCES_VARIABLE};
 
 impl ProviderAdapter for ClaudeAdapter {
     fn descriptor(&self) -> &ProviderDescriptor {

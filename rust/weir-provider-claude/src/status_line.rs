@@ -10,13 +10,16 @@
 //! place the plan's usage is given out. So when the person has a status line,
 //! the shim puts our relay in its slot, and the relay runs theirs after it
 //! has read the usage; `user_status_line` decides which one is theirs the way
-//! Claude Code would have.
+//! Claude Code would have, from only the settings Claude Code reads for that
+//! launch (`settings_sources`).
 
+use crate::project_settings::project_files;
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use weir_agent_model::{
-    PlanUsage, PlanUsageWindow, SettingsSource, StatusLineAdapter, format_utc_seconds, parse_object,
+    LaunchVariables, PlanUsage, PlanUsageWindow, SettingsFiles, SettingsSource, StatusLineAdapter,
+    format_utc_seconds, parse_object,
 };
 
 /// The largest status line input we read. Claude Code's document is a few
@@ -32,6 +35,97 @@ pub const RELAY_ARGUMENTS: &str = "statusline claude";
 /// The variable the shim moves a person's own `--settings` value into, since
 /// its flag has to carry ours.
 pub const LAUNCH_SETTINGS_VARIABLE: &str = "WEIR_CLAUDE_USER_SETTINGS";
+
+/// The variable the shim writes the launch's setting sources into, as
+/// `rust/fixtures/contract/shared-values.json` pins it: one line per value,
+/// the first `user,project,local` (Claude Code's own default), then each
+/// `--setting-sources` value the arguments hold, and an empty line for
+/// `--restricted`, which loads none of the three files. The launch reads the
+/// sources every line names (`LoadedSources::from_launch`). The relay's own
+/// command sets it again, to the one value those lines come to (`relay`).
+pub const SETTING_SOURCES_VARIABLE: &str = "WEIR_CLAUDE_SETTING_SOURCES";
+
+/// The settings files a Claude Code launch reads, besides the managed
+/// settings and `--settings`, which it always reads.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct LoadedSources {
+    user: bool,
+    project: bool,
+    local: bool,
+}
+
+impl LoadedSources {
+    const NONE: Self = Self {
+        user: false,
+        project: false,
+        local: false,
+    };
+
+    /// The sources one `--setting-sources` value names, read as Claude Code
+    /// 2.1.319 reads it: names split at commas with the blanks around each
+    /// trimmed, matched exactly, and an empty value naming none. `None` for a
+    /// value Claude Code refuses to start with (an unknown or empty name).
+    fn from_flag(value: &str) -> Option<Self> {
+        let mut sources = Self::NONE;
+        if value.is_empty() {
+            return Some(sources);
+        }
+        for name in value.split(',') {
+            match name.trim() {
+                "user" => sources.user = true,
+                "project" => sources.project = true,
+                "local" => sources.local = true,
+                _ => return None,
+            }
+        }
+        Some(sources)
+    }
+
+    /// The sources as one `--setting-sources` value names them, in Claude
+    /// Code's order: plain words and commas, which need no quoting in a
+    /// shell command.
+    fn flag_value(self) -> String {
+        [
+            (self.user, "user"),
+            (self.project, "project"),
+            (self.local, "local"),
+        ]
+        .into_iter()
+        .filter_map(|(loaded, name)| loaded.then_some(name))
+        .collect::<Vec<_>>()
+        .join(",")
+    }
+
+    /// The sources a launch reads, from what the shim wrote into
+    /// `SETTING_SOURCES_VARIABLE`: those every line names. Claude Code takes
+    /// the last `--setting-sources` and the shim cannot always tell a flag
+    /// from another option's value, so taking the sources all of them name
+    /// never reads one the launch does not. With the variable unset, or a
+    /// line Claude Code would refuse, the launch cannot be read and none is.
+    fn from_launch(value: Option<&str>) -> Self {
+        let Some(value) = value else {
+            return Self::NONE;
+        };
+        value
+            .split('\n')
+            .try_fold(
+                Self {
+                    user: true,
+                    project: true,
+                    local: true,
+                },
+                |loaded, line| {
+                    let named = Self::from_flag(line)?;
+                    Some(Self {
+                        user: loaded.user && named.user,
+                        project: loaded.project && named.project,
+                        local: loaded.local && named.local,
+                    })
+                },
+            )
+            .unwrap_or(Self::NONE)
+    }
+}
 
 /// Claude Code's status line.
 #[derive(Debug, Default, Clone, Copy)]
@@ -73,22 +167,35 @@ impl StatusLineAdapter for ClaudeStatusLine {
     /// Claude Code's settings precedence
     /// (<https://code.claude.com/docs/en/settings#settings-precedence>):
     /// managed, the launch's `--settings`, the project's local and shared
-    /// files, then the user file in the configuration directory, which
-    /// `CLAUDE_CONFIG_DIR` moves.
-    fn settings_sources(&self, project: Option<&Path>) -> Vec<SettingsSource> {
+    /// files where Claude Code keeps them (`project_settings`), then the user
+    /// file in the configuration directory, which `CLAUDE_CONFIG_DIR` moves.
+    /// The three kinds of file only as far as the launch
+    /// loads them (`--setting-sources`, `--restricted`), which the shim
+    /// writes into `SETTING_SOURCES_VARIABLE`; managed settings and
+    /// `--settings` are read whatever those say.
+    fn settings_sources(
+        &self,
+        project: Option<&Path>,
+        launch: &LaunchVariables<'_>,
+        files: &dyn SettingsFiles,
+    ) -> Vec<SettingsSource> {
+        let loaded = LoadedSources::from_launch(launch(SETTING_SOURCES_VARIABLE));
         let mut sources = vec![
             SettingsSource::File(managed_settings_path()),
             SettingsSource::LaunchVariable(LAUNCH_SETTINGS_VARIABLE),
         ];
-        if let Some(project) = project {
-            sources.push(SettingsSource::File(
-                project.join(".claude").join("settings.local.json"),
-            ));
-            sources.push(SettingsSource::File(
-                project.join(".claude").join("settings.json"),
-            ));
+        if let Some(project) = project.filter(|_| loaded.local || loaded.project) {
+            let project = project_files(project, files);
+            if loaded.local {
+                sources.extend(project.local.into_iter().map(SettingsSource::File));
+            }
+            if loaded.project {
+                sources.extend(project.shared.map(SettingsSource::File));
+            }
         }
-        sources.push(SettingsSource::HomeFile("settings.json"));
+        if loaded.user {
+            sources.push(SettingsSource::HomeFile("settings.json"));
+        }
         sources
     }
 
@@ -119,10 +226,25 @@ impl StatusLineAdapter for ClaudeStatusLine {
     }
 
     /// Their setting with our command, so the options they chose (`padding`)
-    /// still apply to what they see.
-    fn relay(&self, user: &Map<String, Value>, relay_command: &str) -> Value {
+    /// still apply to what they see. The command sets
+    /// `SETTING_SOURCES_VARIABLE` to the sources this launch loads before it
+    /// starts the relay: a settings file's `env` block reaches the status
+    /// line's environment too, and one the launch loads could otherwise name
+    /// a file it does not. `--settings`, which carries this command, outranks
+    /// every file but managed settings.
+    fn relay(
+        &self,
+        user: &Map<String, Value>,
+        relay_command: &str,
+        launch: &LaunchVariables<'_>,
+    ) -> Value {
+        let loaded = LoadedSources::from_launch(launch(SETTING_SOURCES_VARIABLE));
+        let command = format!(
+            "{SETTING_SOURCES_VARIABLE}={} {relay_command}",
+            loaded.flag_value()
+        );
         let mut setting = user.clone();
-        setting.insert("command".to_owned(), Value::from(relay_command));
+        setting.insert("command".to_owned(), Value::from(command));
         Value::Object(setting)
     }
 }
@@ -240,19 +362,147 @@ mod tests {
         );
     }
 
+    /// The sources for a launch whose shim wrote `value`.
+    fn sources(project: Option<&Path>, value: Option<&str>) -> Vec<SettingsSource> {
+        ClaudeStatusLine.settings_sources(
+            project,
+            &|name| {
+                (name == SETTING_SOURCES_VARIABLE)
+                    .then_some(value)
+                    .flatten()
+            },
+            &NoRepository,
+        )
+    }
+
+    /// A file system with no Git repository anywhere, so both project files
+    /// are in the project folder (`project_settings` covers the rest).
+    struct NoRepository;
+
+    impl SettingsFiles for NoRepository {
+        fn entry(&self, _path: &Path) -> Option<weir_agent_model::FileEntry> {
+            None
+        }
+        fn target(&self, _path: &Path) -> Option<weir_agent_model::FileEntry> {
+            None
+        }
+        fn real_path(&self, _path: &Path) -> Option<PathBuf> {
+            None
+        }
+        fn read_text(&self, _path: &Path) -> Option<String> {
+            None
+        }
+        fn user_id(&self) -> Option<u32> {
+            Some(501)
+        }
+        fn home(&self) -> Option<PathBuf> {
+            None
+        }
+    }
+
+    // Built by joining, and compared as paths rather than as text, so the
+    // tests hold whatever separator the platform writes.
+    fn local() -> SettingsSource {
+        SettingsSource::File(Path::new("/w").join(".claude").join("settings.local.json"))
+    }
+
+    fn shared() -> SettingsSource {
+        SettingsSource::File(Path::new("/w").join(".claude").join("settings.json"))
+    }
+
+    const USER: SettingsSource = SettingsSource::HomeFile("settings.json");
+
     #[test]
     fn settings_sources_follow_claude_precedence() {
-        let sources = ClaudeStatusLine.settings_sources(Some(Path::new("/w")));
+        let listed = sources(Some(Path::new("/w")), Some("user,project,local"));
         assert_eq!(
-            sources[1..],
+            listed[1..],
             [
                 SettingsSource::LaunchVariable(LAUNCH_SETTINGS_VARIABLE),
-                SettingsSource::File(PathBuf::from("/w/.claude/settings.local.json")),
-                SettingsSource::File(PathBuf::from("/w/.claude/settings.json")),
-                SettingsSource::HomeFile("settings.json"),
+                local(),
+                shared(),
+                USER,
             ]
         );
-        assert_eq!(ClaudeStatusLine.settings_sources(None).len(), 3);
+        assert_eq!(sources(None, Some("user,project,local")).len(), 3);
+    }
+
+    /// `claude --setting-sources user` reads no project file, so its
+    /// status line command must not run either (`--restricted` reads none of
+    /// the three files).
+    #[test]
+    fn settings_sources_keep_only_what_the_launch_loads() {
+        let project = Some(Path::new("/w"));
+        let default = "user,project,local";
+        for (value, expected) in [
+            (format!("{default}\nuser"), vec![USER]),
+            (
+                format!("{default}\n project , local"),
+                vec![local(), shared()],
+            ),
+            (format!("{default}\nlocal"), vec![local()]),
+            (format!("{default}\n"), vec![]),
+            (format!("{default}\nuser\n"), vec![]),
+        ] {
+            assert_eq!(sources(project, Some(&value))[2..], expected, "{value:?}");
+        }
+    }
+
+    /// The shim writes every value it saw, since Claude Code takes the last
+    /// and the shim may take another option's value for a flag. Only what
+    /// all of them name is read, which is never more than the last names.
+    #[test]
+    fn settings_sources_take_what_every_value_names() {
+        let value = "user,project,local\nuser,project\nproject,local";
+        assert_eq!(sources(Some(Path::new("/w")), Some(value))[2..], [shared()]);
+    }
+
+    /// Without the shim's word, or with a value Claude Code would not start
+    /// with, Weir cannot tell which files the launch reads, so it reads none
+    /// of them: only managed settings and `--settings`, which every launch
+    /// reads.
+    #[test]
+    fn settings_sources_fail_closed_on_a_launch_they_cannot_read() {
+        let project = Some(Path::new("/w"));
+        for value in [
+            None,
+            Some("user,project,local\nbogus"),
+            Some("user,project,local\nUser"),
+            Some("user,project,local\nuser,"),
+            Some("user,project,local\n "),
+            Some("nonsense"),
+        ] {
+            assert_eq!(
+                sources(project, value),
+                [
+                    SettingsSource::File(managed_settings_path()),
+                    SettingsSource::LaunchVariable(LAUNCH_SETTINGS_VARIABLE),
+                ],
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_flag_value_is_read_as_claude_code_reads_it() {
+        let all = LoadedSources {
+            user: true,
+            project: true,
+            local: true,
+        };
+        assert_eq!(LoadedSources::from_flag("user,project,local"), Some(all));
+        assert_eq!(
+            LoadedSources::from_flag(" local ,user"),
+            Some(LoadedSources {
+                user: true,
+                project: false,
+                local: true
+            })
+        );
+        assert_eq!(LoadedSources::from_flag(""), Some(LoadedSources::NONE));
+        for refused in ["bogus", "USER", "user,,local", "user,", " ", "-p"] {
+            assert_eq!(LoadedSources::from_flag(refused), None, "{refused:?}");
+        }
     }
 
     #[test]
@@ -329,16 +579,50 @@ mod tests {
             shared["claudeStatusLineRelayArguments"].as_str(),
             Some(RELAY_ARGUMENTS)
         );
+        assert_eq!(
+            shared["claudeSettingSourcesVariable"].as_str(),
+            Some(SETTING_SOURCES_VARIABLE)
+        );
     }
 
     #[test]
     fn relay_keeps_the_person_s_options() {
         let user = json!({ "type": "command", "command": "user.sh", "padding": 0 });
-        let relay =
-            ClaudeStatusLine.relay(user.as_object().expect("object"), "/h statusline claude");
+        let relay = ClaudeStatusLine.relay(
+            user.as_object().expect("object"),
+            "/h statusline claude",
+            &|_| Some("user,project,local"),
+        );
         assert_eq!(
             relay,
-            json!({ "type": "command", "command": "/h statusline claude", "padding": 0 })
+            json!({ "type": "command",
+                "command": format!("{SETTING_SOURCES_VARIABLE}=user,project,local /h statusline claude"),
+                "padding": 0 })
         );
+        assert!(is_relay(&relay));
+    }
+
+    /// The relay's command names the sources the launch loads itself, so
+    /// an `env` block in a settings file the launch loads cannot widen them.
+    #[test]
+    fn relay_names_the_sources_the_launch_loads() {
+        let user = json!({ "type": "command", "command": "user.sh" });
+        for (value, named) in [
+            (Some("user,project,local\nuser"), "user"),
+            (Some("user,project,local\n local,project"), "project,local"),
+            (Some("user,project,local\n"), ""),
+            (None, ""),
+        ] {
+            let relay = ClaudeStatusLine.relay(
+                user.as_object().expect("object"),
+                "/h statusline claude",
+                &|_| value,
+            );
+            assert_eq!(
+                relay["command"],
+                format!("{SETTING_SOURCES_VARIABLE}={named} /h statusline claude"),
+                "{value:?}"
+            );
+        }
     }
 }
