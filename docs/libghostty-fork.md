@@ -129,3 +129,20 @@ file.
 Keep the Weir-side calls that reach a fork-only entry point behind a single
 wrapper. Retiring the patch then changes the call sites in one file, and the
 submodule bump and the inventory row stay separate, small edits.
+
+## Bundled shell integration
+
+`Weir/Resources/ghostty/shell-integration` is Weir's own copy of the scripts
+upstream keeps in `src/shell-integration`, not a view of the submodule.
+libghostty loads it into the shells a pane starts. The copy differs from the
+submodule's in more places than the changes listed below, so bring in an
+upstream change to these scripts by hand and keep the listed changes.
+
+- **Working directory report.** zsh, bash, and elvish send OSC 7 as a
+  `file://` URL with every byte outside the unreserved set and `/`
+  percent-encoded, as fish's script already does. libghostty drops a control
+  character inside an OSC string, and it decodes a `file://` path but reads
+  the other scheme it accepts verbatim. A raw path with a newline in a folder
+  name therefore reached Weir as the path of a different folder.
+  `scripts/test-shell-integration-pwd.sh` checks each installed shell's
+  report.

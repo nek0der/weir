@@ -188,6 +188,33 @@ fi
 _ghostty_executing=""
 _ghostty_last_reported_cwd=""
 
+# Sets __ghostty_encoded_path to $1 with every byte outside the unreserved
+# set and "/" percent-encoded, for the path of the file:// URL in OSC 7. The
+# terminal drops control characters such as a newline inside an OSC string,
+# and decodes the path of a file:// URL but takes a kitty-shell-cwd:// path
+# as is.
+function __ghostty_url_encode_path() {
+  builtin local LC_ALL=C
+  builtin local path="$1" encoded="" char code i
+  if [[ "$path" != *[!A-Za-z0-9/._~-]* ]]; then
+    __ghostty_encoded_path=$path
+    builtin return
+  fi
+  for (( i = 0; i < ${#path}; i++ )); do
+    char=${path:i:1}
+    case "$char" in
+      [A-Za-z0-9/._~-]) encoded+=$char ;;
+      *)
+        # bash 3.2 reads a byte above 0x7F as negative, so keep the low byte.
+        builtin printf -v code '%d' "'$char"
+        builtin printf -v char '%%%02X' $(( code & 255 ))
+        encoded+=$char
+        ;;
+    esac
+  done
+  __ghostty_encoded_path=$encoded
+}
+
 function __ghostty_precmd() {
   local ret="$?"
   if test "$_ghostty_executing" != "0"; then
@@ -248,7 +275,8 @@ function __ghostty_precmd() {
   # command like cd /test && cat. PS0 is evaluated before cd is run.
   if [[ "$_ghostty_last_reported_cwd" != "$PWD" ]]; then
     _ghostty_last_reported_cwd="$PWD"
-    builtin printf "\e]7;kitty-shell-cwd://%s%s\a" "$HOSTNAME" "$PWD"
+    __ghostty_url_encode_path "$PWD"
+    builtin printf "\e]7;file://%s%s\a" "$HOSTNAME" "$__ghostty_encoded_path"
   fi
 
   _ghostty_executing=0

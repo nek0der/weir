@@ -1,5 +1,6 @@
 {
   use platform
+  use re
   use str
 
   # Clean up XDG_DATA_DIRS by removing GHOSTTY_SHELL_INTEGRATION_XDG_DIR
@@ -183,8 +184,17 @@
     edit:add-var ssh~ $ssh-integration~
   }
 
-  # Report changes to the current directory.
-  fn report-pwd { printf "\e]7;kitty-shell-cwd://%s%s\a" (platform:hostname) $pwd }
+  # Report changes to the current directory as a file:// URL with every
+  # byte outside the unreserved set and "/" percent-encoded: the terminal
+  # drops control characters such as a newline inside an OSC string, and
+  # decodes the path of a file:// URL but takes a kitty-shell-cwd:// path
+  # as is.
+  fn report-pwd {
+    var path-url = (re:replace '[^A-Za-z0-9/._~-]' {|char|
+      str:join '' [(str:to-utf8-bytes $char | each {|byte| printf '%%%02X' $byte })]
+    } $pwd)
+    printf "\e]7;file://%s%s\a" (platform:hostname) $path-url
+  }
   set after-chdir = (conj $after-chdir {|_| report-pwd })
   report-pwd
 }
