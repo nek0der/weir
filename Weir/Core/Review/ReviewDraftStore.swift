@@ -102,13 +102,31 @@ struct FileReviewDraftStore: ReviewDraftStoring {
 
     func load(root: URL) throws -> ReviewDraft? {
         let file = Self.url(root: root, directory: directory)
-        guard FileManager.default.fileExists(atPath: file.path) else { return nil }
-        let data: Data
-        let outcome: VersionedDocumentMigrator.Outcome
+        // Only a draft that is not there is none. A check that it exists
+        // answers no for a folder that cannot be searched too, and the
+        // review's next save would then replace the comments in it once the
+        // folder opens up again.
+        let handle: FileHandle
         do {
-            let handle = try FileHandle(forReadingFrom: file)
+            handle = try FileHandle(forReadingFrom: file)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+            return nil
+        } catch {
+            log.error("review draft unreadable: \(String(describing: error), privacy: .private)")
+            try Self.setAsideUnreadable(file)
+        }
+        let data: Data
+        do {
             defer { try? handle.close() }
             data = try handle.read(upToCount: Self.maxBytes + 1) ?? Data()
+        } catch {
+            // Opened but not read (an I/O error): there and unread, not
+            // a draft that does not decode.
+            log.error("review draft unreadable: \(String(describing: error), privacy: .private)")
+            try Self.setAsideUnreadable(file)
+        }
+        let outcome: VersionedDocumentMigrator.Outcome
+        do {
             guard data.count <= Self.maxBytes else { throw ReviewError.storageFailed }
             outcome = try Self.migrator.migrate(data)
         } catch {
@@ -141,7 +159,17 @@ struct FileReviewDraftStore: ReviewDraftStoring {
     /// it cannot be moved it is the only copy, so the writer must not save
     /// over it this launch (`ReviewDraftLoadError.keptInPlace`).
     private static func setAside(_ file: URL, reason: String) throws -> Never {
-        switch SecureFileWrite.setAside(file, reason: reason) {
+        try refuse(SecureFileWrite.setAside(file, reason: reason))
+    }
+
+    /// `setAside` for a draft that is there but could not be opened
+    /// (`SecureFileWrite.setAsideUnreadable`).
+    private static func setAsideUnreadable(_ file: URL) throws -> Never {
+        try refuse(SecureFileWrite.setAsideUnreadable(file))
+    }
+
+    private static func refuse(_ result: SecureFileWrite.SetAsideResult) throws -> Never {
+        switch result {
         case .cleared: throw ReviewError.storageFailed
         case .keptInPlace: throw ReviewDraftLoadError.keptInPlace
         }
@@ -301,6 +329,17 @@ final class ReviewDraftWriteCoordinator: @unchecked Sendable {
                     return true
                 })
             }
+        }
+    }
+
+    /// `saveNavigation` on the calling thread, for quitting, when no edit
+    /// or deletion has come since `generation`'s navigation began. Whether
+    /// the draft was written.
+    func saveNavigationNow(_ draft: ReviewDraft, root: URL, storage: any ReviewDraftStoring, generation: UUID) throws -> Bool {
+        try queue.sync {
+            guard generationLock.withLock({ generations[root] == generation }) else { return false }
+            try storage.save(draft, root: root)
+            return true
         }
     }
 

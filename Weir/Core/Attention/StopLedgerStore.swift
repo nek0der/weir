@@ -207,8 +207,14 @@ final class StopLedgerStore {
     @ObservationIgnored private let writesFiles: Bool
     /// False after finding a newer build's file: its stops are listed when
     /// they can be read, but rewriting it in this version's shape could
-    /// drop what it added.
+    /// drop what it added. False too after a file that could not be read
+    /// or decoded could not be moved aside: writing would replace the only
+    /// copy.
     @ObservationIgnored private var isWritable = true
+    /// Whether `isWritable` is false because a file that could not be read
+    /// or decoded could not be moved aside, rather than because a newer
+    /// build wrote it.
+    @ObservationIgnored private var isKeptUnread = false
     /// What the file holds as far as we know: what `load` read, then each
     /// write that landed. A write that failed (a full disk, a read-only
     /// folder) leaves it as it was, so the same stops are written again,
@@ -227,6 +233,13 @@ final class StopLedgerStore {
     /// is logged once, not at every try.
     @ObservationIgnored private var isFailing = false
     @ObservationIgnored private let retryDelay: Duration
+
+    /// `stops.json` while a file this build could not take in keeps it from
+    /// being saved, for the notice that tells the person
+    /// (`SavingSuspendedNotice`).
+    var suspendedFile: URL? {
+        isKeptUnread ? fileURL : nil
+    }
 
     /// Whether a resume is still waiting on its time, for tests.
     var hasResumeClock: Bool {
@@ -447,7 +460,21 @@ final class StopLedgerStore {
     // MARK: - Persistence
 
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL) else { return }
+        // Only a file that is not there holds no stops. One that cannot be
+        // read (its permissions, a folder that cannot be searched) still
+        // holds the stops of the last launch, which the next save would
+        // replace with this launch's.
+        let data: Data
+        switch PersistedRead.read(fileURL) {
+        case .absent:
+            return
+        case let .data(bytes):
+            data = bytes
+        case let .unreadable(error):
+            log.error("stops unreadable: \(String(describing: error), privacy: .private)")
+            suspendSaving(unless: SecureFileWrite.setAsideUnreadable(fileURL))
+            return
+        }
         do {
             if case .newer = try Self.migrator.migrate(data) {
                 // Read for its stops, which are listed as any, and left
@@ -462,11 +489,22 @@ final class StopLedgerStore {
             onDisk = Self.document(of: ledger)
             log.notice("stops kept from the last launch: \(document.records.count, privacy: .public)")
         } catch {
-            // Unreadable stops cost the stops of the last launch, whose
-            // panes stay as the shells they are; nothing is listed that
-            // did not stop.
-            log.error("stops unreadable: \(String(describing: error), privacy: .private)")
+            // Stops that do not decode are not listed: nothing is listed
+            // that did not stop. The file is moved aside first, so the next
+            // save does not replace the stops it holds; a newer build's
+            // file is already kept from being rewritten.
+            log.error("stops do not decode: \(String(describing: error), privacy: .private)")
+            if isWritable {
+                suspendSaving(unless: SecureFileWrite.setAside(fileURL, reason: "decode-failed"))
+            }
         }
+    }
+
+    private func suspendSaving(unless result: SecureFileWrite.SetAsideResult) {
+        guard result == .keptInPlace else { return }
+        log.error("stops.json stays in place; saving is suspended for this launch")
+        isWritable = false
+        isKeptUnread = true
     }
 
     /// The file's shape of `ledger`: its stops in a fixed order, so two

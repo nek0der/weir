@@ -58,10 +58,10 @@ enum TurnDeletionFile {
         log: log
     )
 
-    /// The entries `url` holds. A file that is missing, does not read, or
-    /// comes from a newer build holds none: what it loses is the span of a
-    /// turn deleted unheard.
-    static func read(_ url: URL) -> [TurnDeletionEntry] {
+    /// The entries `url` holds, and whether the file may be written
+    /// (`VersionedListFile.read`): one this build cannot use holds the spans
+    /// of turns deleted unheard, which a write would lose.
+    static func read(_ url: URL) -> VersionedListRead<TurnDeletionEntry> {
         file.read(url)
     }
 

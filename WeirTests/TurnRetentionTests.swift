@@ -107,7 +107,7 @@ struct TurnRetentionTests {
             })) { _ in Fixture.conversation }
             earlier.queue(ids, in: root, sweptWith: TurnProtection(protectedTurnIDs: [], shownConversations: []))
             _ = earlier.nextBatch(protection: TurnProtection(protectedTurnIDs: [], shownConversations: []))
-            #expect(TurnDeletionFile.read(file).map(\.turnID) == ids.sorted())
+            #expect(TurnDeletionFile.read(file).elements.map(\.turnID) == ids.sorted())
 
             var queue = TurnDeletionQueue(url: file)
             queue.isHistoryComplete = true
@@ -124,11 +124,11 @@ struct TurnRetentionTests {
             #expect(report.gone == [TurnID("finished"): Fixture.conversation, TurnID("unheard"): Fixture.conversation])
             #expect(report.deletedIn["/repo"]?.map(\.start).sorted() == [span(1000), span(2000)].map(\.interval.start))
             #expect(
-                TurnDeletionFile.read(file).map(\.turnID) == ["aside", "finished", "unheard"],
+                TurnDeletionFile.read(file).elements.map(\.turnID) == ["aside", "finished", "unheard"],
                 "the spans stay until they are saved"
             )
             queue.spansSaved(report.spanTurnIDs)
-            #expect(TurnDeletionFile.read(file).map(\.turnID) == ["aside"])
+            #expect(TurnDeletionFile.read(file).elements.map(\.turnID) == ["aside"])
         }
     }
 
@@ -154,7 +154,7 @@ struct TurnRetentionTests {
                 TurnDeletion(outcome: .deleted, turnID: "B", reason: nil, roots: nil)
             ], now: Self.now)
             #expect(report.spanTurnIDs == ["A"], "B has no span to keep")
-            let kept = TurnDeletionFile.read(file)
+            let kept = TurnDeletionFile.read(file).elements
             #expect(kept.map(\.turnID) == ["A"])
             #expect(kept.first?.span == span)
             #expect(kept.first?.conversation == nil, "the report handed it over")
@@ -165,7 +165,7 @@ struct TurnRetentionTests {
             let again = relaunched.recovered([]) { _ in .gone }
             #expect(again.deletedIn == ["/repo": [span.interval]])
             #expect(again.gone == [TurnID("A"): ConversationKey?.none])
-            #expect(TurnDeletionFile.read(file).map(\.turnID) == ["A"])
+            #expect(TurnDeletionFile.read(file).elements.map(\.turnID) == ["A"])
             relaunched.spansSaved(again.spanTurnIDs)
             #expect(!FileManager.default.fileExists(atPath: file.path), "nothing is left to keep")
         }
@@ -502,7 +502,7 @@ struct TurnRetentionTests {
             let scene = try scene(in: root, collector: first, turnDeletionsURL: file)
             scene.adapter.refresh()
             await pollUntilTurnsDeleted { first.batches.count == 1 }
-            #expect(TurnDeletionFile.read(file).map(\.turnID) == [scene.old], "kept before the batch goes")
+            #expect(TurnDeletionFile.read(file).elements.map(\.turnID) == [scene.old], "kept before the batch goes")
             // As the bridge leaves it when the quit comes: moved aside.
             let record = try scene.recordURL(scene.old)
             try FileManager.default.moveItem(

@@ -427,4 +427,42 @@ struct NotificationHistoryStoreTests {
             #expect(try Data(contentsOf: file) == garbled)
         }
     }
+
+    /// A folder that cannot be searched hides the file in it, which is not
+    /// a first launch: the check that a file exists answers no there too.
+    /// Saving stops, and says so, so a save once the folder opens up again
+    /// cannot replace the file with what this launch recorded.
+    @Test func aHistoryInAFolderThatCannotBeSearched_isNeverSavedOver() throws {
+        try withTempDir { root in
+            let dir = root.appendingPathComponent("support")
+            let manager = FileManager.default
+            try manager.createDirectory(at: dir, withIntermediateDirectories: false)
+            let file = dir.appendingPathComponent("notifications.json")
+            let original = Data("[]".utf8)
+            try original.write(to: file)
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dir.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+            let history = NotificationHistoryStore(directory: dir)
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            history.record(NotificationEntry.test(kind: .bell, title: "make", body: ""))
+            history.flushSynchronously()
+
+            #expect(try Data(contentsOf: file) == original)
+            #expect(history.suspendedFile == file)
+        }
+    }
+
+    /// No file at all is a first launch: nothing is suspended, and the
+    /// first save writes the file.
+    @Test func noHistoryFile_isAFirstLaunch_andSaves() throws {
+        try withTempDir { dir in
+            let history = NotificationHistoryStore(directory: dir)
+            history.record(NotificationEntry.test(kind: .bell, title: "make", body: ""))
+            history.flushSynchronously()
+
+            #expect(history.suspendedFile == nil)
+            #expect(NotificationHistoryStore(directory: dir).entries.count == 1)
+        }
+    }
 }

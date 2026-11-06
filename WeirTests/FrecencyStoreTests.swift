@@ -146,4 +146,46 @@ struct FrecencyStoreTests {
             #expect(try Data(contentsOf: file) == written)
         }
     }
+
+    /// A folder that cannot be searched hides the file in it, which is not
+    /// a first launch: the check that a file exists answers no there too.
+    /// Saving stops, and says so, so a save once the folder opens up again
+    /// cannot replace the file with what this launch recorded.
+    @Test func aRankingInAFolderThatCannotBeSearched_isNeverSavedOver() throws {
+        try withTempDir { root in
+            let dir = root.appendingPathComponent("support")
+            let manager = FileManager.default
+            try manager.createDirectory(at: dir, withIntermediateDirectories: false)
+            let file = dir.appendingPathComponent("frecency.json")
+            let original = Data(#"{"tab.a":{"count":1,"lastUsed":"2026-11-01T00:00:00Z"}}"#.utf8)
+            try original.write(to: file)
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dir.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+            let store = FrecencyStore(directory: dir)
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            store.record("new")
+            store.flushSynchronously()
+
+            #expect(try Data(contentsOf: file) == original)
+            #expect(store.suspendedFile == file)
+        }
+    }
+
+    /// A demo run neither reads nor moves the person's ranking, even one
+    /// that does not decode.
+    @Test func aRunThatWritesNoFiles_leavesAnUndecodableRankingInPlace() throws {
+        try withTempDir { dir in
+            let file = dir.appendingPathComponent("frecency.json")
+            let garbled = Data(#"{ "broken": "#.utf8)
+            try garbled.write(to: file)
+
+            let store = FrecencyStore(directory: dir, writesFiles: false)
+            store.record("new")
+            store.flushSynchronously()
+
+            #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["frecency.json"])
+            #expect(try Data(contentsOf: file) == garbled)
+        }
+    }
 }

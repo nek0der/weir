@@ -168,4 +168,28 @@ struct TurnReadStoreTests {
             #expect(!store.isRead(Self.mark("a", tree: "tree-2")), "held to the end it was read at from now on")
         }
     }
+
+    /// A folder that cannot be searched hides turn-reads.json, which is not
+    /// a first launch: the marks it holds are kept, not written over.
+    @Test func marksInAFolderThatCannotBeSearched_areNeverSavedOver() throws {
+        try withTempDir { root in
+            let dir = root.appendingPathComponent("support")
+            let manager = FileManager.default
+            try manager.createDirectory(at: dir, withIntermediateDirectories: false)
+            let earlier = TurnReadStore(directory: dir)
+            earlier.markRead([Self.mark("a")])
+            earlier.flushSynchronously()
+            let original = try Data(contentsOf: file(in: dir))
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dir.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+            let store = TurnReadStore(directory: dir)
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            store.markRead([Self.mark("b")])
+            store.flushSynchronously()
+
+            #expect(try Data(contentsOf: file(in: dir)) == original)
+            #expect(store.suspendedFile == file(in: dir))
+        }
+    }
 }

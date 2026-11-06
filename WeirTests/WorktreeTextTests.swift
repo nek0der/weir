@@ -102,6 +102,8 @@ struct WorktreeTextTests {
         "This session was saved by a different version of Weir, so this version can’t open it. A fresh window was opened instead.",
         "Your sessions aren’t being saved: state.json can’t be read by this version and couldn’t be set aside. "
             + "Move it out of the folder, then quit and reopen Weir.",
+        "Your sessions couldn’t be saved: writing state.json failed. Check that the disk has free space and that "
+            + "its folder can be written to. Weir saves again with the next change.",
         "Running in tmux — the session survives quitting Weir",
         "Starts each agent in a tmux session of its own. The agent keeps running when Weir quits, including "
             + "the relaunch after an update, and the pane reconnects to the same session on the next launch. "

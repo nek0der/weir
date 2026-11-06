@@ -87,7 +87,7 @@ final class AgentProjectionAdapter {
     /// Tried again before every pass and at quit, kept from the rules
     /// meanwhile, and kept in a file (`AgentForgottenHintQueue`), so the
     /// ended session is neither shown again nor resumed by any launch.
-    private var forgottenHintQueue: AgentForgottenHintQueue
+    private(set) var forgottenHintQueue: AgentForgottenHintQueue
     var forgottenHints: [AgentForgottenHint] {
         forgottenHintQueue.hints
     }

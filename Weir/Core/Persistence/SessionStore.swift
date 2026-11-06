@@ -10,6 +10,7 @@
 // few seconds into a burst that does not stop (`DebouncedSave`).
 
 import Foundation
+import Observation
 import OSLog
 
 private let log = Logger.weir("session.store")
@@ -26,24 +27,33 @@ extension VersionedDocumentMigrator {
 }
 
 @MainActor
+@Observable
 final class SessionStore {
     /// `state.json`. Read outside for the notice that names it while
     /// saving is suspended.
-    let fileURL: URL
-    private let migrator: VersionedDocumentMigrator
-    private let saveDebounce = DebouncedSave()
-    private let queue = DispatchQueue(label: "com.nekoder.weir.session-store")
+    @ObservationIgnored let fileURL: URL
+    @ObservationIgnored private let migrator: VersionedDocumentMigrator
+    @ObservationIgnored private let saveDebounce = DebouncedSave()
+    @ObservationIgnored private let queue = DispatchQueue(label: "com.nekoder.weir.session-store")
     /// Set when the file this build cannot use could not be moved aside.
     /// Saving would then write over the only copy, so every save is skipped
     /// until the next launch tries again.
-    private(set) var isSavingSuspended = false
+    @ObservationIgnored private(set) var isSavingSuspended = false
+    /// Whether the last save did not reach disk (a full disk, a folder that
+    /// cannot be written). Observed, for the notice that tells the person
+    /// (`SavingSuspendedNotice`): without it the session they go on
+    /// changing is lost when Weir quits. The next save that lands clears
+    /// it; a save that fails at quit has no next change to try again and
+    /// no one left to tell. Only `WriteResult.isWritten` decides it; a
+    /// ledger that lags behind a written file is not a failed save.
+    private(set) var hasFailedToSave = false
     /// A migration whose copy and ledger exist but whose write failed. The
     /// session is in use from memory, and the first save that reaches disk
     /// finishes the ledger with the bytes it wrote, so the ledger says the
     /// migration was written, as it would have.
-    private var pendingMigration: MigrationBackupRecord?
+    @ObservationIgnored private var pendingMigration: MigrationBackupRecord?
     /// See `init`.
-    private let writesFiles: Bool
+    @ObservationIgnored private let writesFiles: Bool
 
     /// The app builds it with the support directory and its own decision on
     /// writing; tests pass an isolated temp directory so they don't clobber
@@ -168,12 +178,10 @@ final class SessionStore {
         isSavingSuspended = true
     }
 
-    /// `setAside` for a file that could not be read. Saving goes on only
-    /// once the file has actually moved: a folder that cannot be searched
-    /// hides the file from `setAside`'s check that it is still there, and
-    /// the file would then be replaced once the folder opens up again.
+    /// `setAside` for a file that could not be read
+    /// (`SecureFileWrite.setAsideUnreadable`).
     private func setAsideUnread() {
-        guard SecureFileWrite.quarantine(fileURL, reason: "read-failed") == nil else { return }
+        guard SecureFileWrite.setAsideUnreadable(fileURL) == .keptInPlace else { return }
         log.error("unreadable state.json stays in place; saving is suspended for this launch")
         isSavingSuspended = true
     }
@@ -222,6 +230,7 @@ final class SessionStore {
             // `backedUp`, so a relaunch first reuses the same copy.
             log.error("migrated snapshot write failed: \(String(describing: error), privacy: .private)")
             pendingMigration = record
+            hasFailedToSave = true
             return .loaded(snapshot)
         }
         do {
@@ -252,8 +261,8 @@ final class SessionStore {
             // scheduled.
             let pendingMigration = self?.pendingMigration
             queue.async {
-                guard Self.write(snapshot, to: url, finishing: pendingMigration).hasFinishedMigration else { return }
-                DispatchQueue.main.async { self?.didFinishMigration() }
+                let result = Self.write(snapshot, to: url, finishing: pendingMigration)
+                DispatchQueue.main.async { self?.didSave(result) }
             }
         }
     }
@@ -267,15 +276,21 @@ final class SessionStore {
         guard writesFiles, !isSavingSuspended else { return }
         saveDebounce.cancel()
         let url = fileURL
-        if queue.sync(execute: { Self.write(snapshot, to: url, finishing: pendingMigration) }).hasFinishedMigration {
-            didFinishMigration()
-        }
+        didSave(queue.sync { Self.write(snapshot, to: url, finishing: pendingMigration) })
     }
 
-    /// The migrated session reached disk through an ordinary save, and the
-    /// ledger says so: later saves have nothing left to finish.
-    private func didFinishMigration() {
-        pendingMigration = nil
+    /// Takes in what one save did, on the main actor. A migrated session
+    /// that reached disk through an ordinary save, with the ledger saying
+    /// so, leaves later saves nothing to finish. Saves run in order on
+    /// `queue` and report back in that order, so the last report is the
+    /// file's state.
+    private func didSave(_ result: WriteResult) {
+        if result.hasFinishedMigration {
+            pendingMigration = nil
+        }
+        if hasFailedToSave == result.isWritten {
+            hasFailedToSave = !result.isWritten
+        }
     }
 
     /// What one save did. The two answers are kept apart because they

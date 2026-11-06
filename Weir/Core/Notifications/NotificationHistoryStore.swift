@@ -39,6 +39,12 @@ final class NotificationHistoryStore {
     /// An unreadable notifications.json could not be moved aside; saving
     /// would replace it with what this launch records, so it stops.
     private var isSavingSuspended = false
+    /// `notifications.json` while its saving is suspended, for the notice
+    /// in Settings → General that tells the person (`SavingSuspendedNotice`).
+    var suspendedFile: URL? {
+        isSavingSuspended ? fileURL : nil
+    }
+
     /// False in demo mode: the history starts empty and stays in memory.
     /// The file belongs to the build the person runs, which demo mode
     /// shares (`SettingsStore.writesFiles`), and its rows (real paths and
@@ -158,23 +164,19 @@ final class NotificationHistoryStore {
     // MARK: - Persistence
 
     private func load() {
-        // No file yet is the first launch; a file that is there but cannot
-        // be read is kept like one that does not decode.
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        // Only a file that is not there is the first launch. A check that it
+        // exists answers no for a folder that cannot be searched too, and the
+        // history this launch records would then replace the file once the
+        // folder opens up again.
         let data: Data
         switch PersistedRead.read(fileURL) {
         case .absent:
-            // The check above found a file and the read did not. It goes
-            // aside as an unreadable one does, so a file put back in the
-            // meantime is not saved over.
-            log.error("notifications.json gone before it was read")
-            setAside(reason: "read-failed")
             return
         case let .data(bytes):
             data = bytes
         case let .unreadable(error):
             log.error("failed to read notifications.json: \(String(describing: error), privacy: .private)")
-            setAside(reason: "read-failed")
+            suspendSaving(unless: SecureFileWrite.setAsideUnreadable(fileURL))
             return
         }
         do {
@@ -192,10 +194,13 @@ final class NotificationHistoryStore {
     /// cannot be moved.
     private func setAside(reason: String) {
         guard writesFiles else { return }
-        if SecureFileWrite.setAside(fileURL, reason: reason) == .keptInPlace {
-            log.error("notifications.json stays in place; saving is suspended for this launch")
-            isSavingSuspended = true
-        }
+        suspendSaving(unless: SecureFileWrite.setAside(fileURL, reason: reason))
+    }
+
+    private func suspendSaving(unless result: SecureFileWrite.SetAsideResult) {
+        guard result == .keptInPlace else { return }
+        log.error("notifications.json stays in place; saving is suspended for this launch")
+        isSavingSuspended = true
     }
 
     private func scheduleSave() {

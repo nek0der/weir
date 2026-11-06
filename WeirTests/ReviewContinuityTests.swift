@@ -116,4 +116,71 @@ struct ReviewContinuityTests {
             #expect(!FileManager.default.fileExists(atPath: draft.path))
         }
     }
+
+    /// Quitting writes the file a review had open while its save still
+    /// waits on the timer, which would not run again. It is written for a
+    /// review already closed too, whose writer the waiting save holds.
+    @Test func quitting_writesTheOpenFileStillWaitingOnItsTimer() {
+        let root = URL(fileURLWithPath: "/tmp/weir-review-quit")
+        let drafts = RecordingReviewDraftStore()
+        let pool = ReviewDraftWriterPool(drafts: drafts, git: FakeReviewRepository())
+        var writer: ReviewDraftWriter? = pool.writer(root: root)
+        let scopeID = ReviewScope.uncommitted.scopeID
+        writer?.rememberOpenFile("b.swift", in: scopeID) { _ in }
+        writer = nil
+        #expect(drafts.saves == 0, "still waiting on its timer")
+
+        pool.flushNavigationSaves()
+
+        #expect(drafts.saves == 1)
+        #expect(ReviewDraftWriter(root: root, drafts: drafts).lastFileIDs[scopeID] == "b.swift")
+    }
+
+    /// A worktree deleted while its navigation save waits gets no draft
+    /// back at quit: a new worktree at the same path would inherit it.
+    @Test func quitting_afterTheWorktreeWasDeleted_writesNoDraft() throws {
+        try withTempDir { dir in
+            let root = URL(fileURLWithPath: "/tmp/weir-review-quit-deleted")
+            let drafts = RecordingReviewDraftStore()
+            let pool = ReviewDraftWriterPool(drafts: drafts, git: FakeReviewRepository())
+            let writer = pool.writer(root: root)
+            writer.rememberOpenFile("b.swift", in: ReviewScope.uncommitted.scopeID) { _ in }
+
+            ReviewDraftWriter.removeDraft(root: root, directory: dir)
+            pool.flushNavigationSaves()
+
+            #expect(drafts.saves == 0)
+        }
+    }
+
+    /// A navigation save that failed is tried once more at quit.
+    @Test func quitting_triesAFailedNavigationSaveAgain() async {
+        let root = URL(fileURLWithPath: "/tmp/weir-review-quit-retry")
+        let drafts = RecordingReviewDraftStore()
+        let pool = ReviewDraftWriterPool(drafts: drafts, git: FakeReviewRepository())
+        let writer = pool.writer(root: root)
+        drafts.isFailing = true
+        writer.rememberOpenFile("b.swift", in: ReviewScope.uncommitted.scopeID) { _ in }
+        await writer.flushNavigationSave()
+        drafts.isFailing = false
+
+        pool.flushNavigationSaves()
+
+        #expect(ReviewDraftWriter(root: root, drafts: drafts).lastFileIDs[ReviewScope.uncommitted.scopeID] == "b.swift")
+    }
+
+    /// Nothing waiting, nothing written: a quit after the last save adds none.
+    @Test func quitting_withNothingWaiting_writesNothing() async {
+        let root = URL(fileURLWithPath: "/tmp/weir-review-quit-idle")
+        let drafts = RecordingReviewDraftStore()
+        let pool = ReviewDraftWriterPool(drafts: drafts, git: FakeReviewRepository())
+        let writer = pool.writer(root: root)
+        writer.rememberOpenFile("b.swift", in: ReviewScope.uncommitted.scopeID) { _ in }
+        await writer.flushNavigationSave()
+        #expect(drafts.saves == 1)
+
+        pool.flushNavigationSaves()
+
+        #expect(drafts.saves == 1)
+    }
 }

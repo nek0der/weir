@@ -576,7 +576,7 @@ struct RestoreCoordinatorTests {
             for _ in 0..<3 {
                 #expect(await first.recover(roots: ["/repo"]).stops.isEmpty)
             }
-            #expect(RestorePendingStopFile.read(file).map(\.settledID) == ["U"])
+            #expect(RestorePendingStopFile.read(file).elements.map(\.settledID) == ["U"])
 
             // Never readable this launch either: kept, and never told.
             let second = Self.readingInTurn(Recorded([unreadable, unreadable]), pending: file)
@@ -598,6 +598,36 @@ struct RestoreCoordinatorTests {
             ]), pending: file)
             #expect(fourth.pendingStopRoots.isEmpty)
             #expect(await fourth.recover(roots: ["/repo"]).stops.isEmpty)
+        }
+    }
+
+    /// A folder that cannot be searched hides the pending notices' file,
+    /// which may hold a discard's only way back: it is kept as it is, not
+    /// written over by this launch's notices, and reported.
+    @Test func pendingNoticesInAFolderThatCannotBeSearched_areNeverSavedOver() async throws {
+        try await withTempDir { root in
+            let directory = root.appendingPathComponent("support")
+            let manager = FileManager.default
+            try manager.createDirectory(at: directory, withIntermediateDirectories: false)
+            let file = directory.appendingPathComponent(RestorePendingStopFile.fileName)
+            let earlier = RestorePendingStop(root: "/earlier", settledID: "E", undoableID: "D", since: Date())
+            RestorePendingStopFile.write([earlier], to: file)
+            let original = try Data(contentsOf: file)
+            let undo = try Self.decodedJournal(root: "/repo", opID: "U", undoes: "R", stage: Self.cutShort)
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: directory.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
+
+            let coordinator = Self.readingInTurn(Recorded([
+                RestoreRecovery(journals: [undo], settled: ["U"], isIncomplete: true)
+            ]), pending: file)
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            // Settles an undo whose operation cannot be read yet: a notice
+            // to keep, which writes the file.
+            #expect(await coordinator.recover(roots: ["/repo"]).stops.isEmpty)
+
+            #expect(coordinator.pendingStopRoots == ["/repo"], "kept in memory for this launch")
+            #expect(coordinator.suspendedPendingStopsFile == file)
+            #expect(try Data(contentsOf: file) == original)
         }
     }
 

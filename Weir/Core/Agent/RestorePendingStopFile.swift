@@ -55,10 +55,10 @@ enum RestorePendingStopFile {
         log: log
     )
 
-    /// The notices `url` holds. A file that is missing, does not read, or
-    /// comes from a newer build holds none: what it loses is the launch
-    /// notice of an undo cut short, whose restore still has its record.
-    static func read(_ url: URL) -> [RestorePendingStop] {
+    /// The notices `url` holds, and whether the file may be written
+    /// (`VersionedListFile.read`): one this build cannot use may hold a
+    /// discard's only way back, which a write would lose.
+    static func read(_ url: URL) -> VersionedListRead<RestorePendingStop> {
         file.read(url)
     }
 

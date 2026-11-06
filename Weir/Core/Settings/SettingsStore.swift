@@ -171,6 +171,14 @@ final class SettingsStore {
     /// (`reloadFromDisk`) takes the notice down.
     private(set) var savingSuspension: SettingsSavingSuspension?
 
+    /// Whether the last save did not reach disk (a full disk, a folder that
+    /// cannot be written), for the notice that tells the person
+    /// (`SavingSuspendedNotice`). Observed; the next save that lands
+    /// clears it. A save that fails at quit has no next change to try
+    /// again and no one left to tell. A save skipped while saving is
+    /// suspended is not a failure: `savingSuspension` tells that one.
+    private(set) var hasFailedToSave = false
+
     /// See `LoadResult.pendingMigration`.
     @ObservationIgnored
     private var pendingMigration: MigrationBackupRecord?
@@ -185,9 +193,10 @@ final class SettingsStore {
     @ObservationIgnored
     private var lastSyncedBytes: Data?
 
-    /// Whether the launch found no `settings.json` and nothing has written
-    /// or read one since: a first launch, until the first save. A reload
-    /// that finds no file then has nothing new (`reload(from:)`).
+    /// Whether the launch found no `settings.json`, or moved the one it
+    /// found aside, and nothing has written or read one since: a first
+    /// launch, until the first save. A reload that finds no file then has
+    /// nothing new (`reload(from:)`).
     @ObservationIgnored
     private var hasNoFileYet = false
 
@@ -255,10 +264,17 @@ final class SettingsStore {
         self.isSavingSuspended = result.suspendsSaving
         self.savingSuspension = writesFiles ? result.suspension : nil
         self.pendingMigration = result.pendingMigration
-        // The launch's own move to the current schema, should the watcher
-        // report it, is nothing new (`reloadFromDisk`).
-        self.lastSyncedBytes = result.writtenBytes
-        self.hasNoFileYet = read.isAbsent
+        // What the file holds now, so the watcher's next event, which a save
+        // of `state.json` in the same folder also raises, finds nothing new
+        // in it (`reload(from:)`). Read as new, those bytes replaced the
+        // first change made after the launch before its save could land.
+        // That is the launch's own move to the current schema when it wrote
+        // one, and the bytes read otherwise, unless the file went aside.
+        self.lastSyncedBytes = result.writtenBytes ?? (result.hasMovedFile ? nil : read.data)
+        // A file the launch moved aside leaves none, as a first launch does.
+        self.hasNoFileYet = read.isAbsent || result.hasMovedFile
+        // The launch's move to the current schema is a save too.
+        self.hasFailedToSave = result.hasFailedToWrite
         // The hero screenshot pipeline runs under `WEIR_DEMO=1`.
         // Force the toolbar opaque there so the captured PNG doesn't
         // depend on whatever wallpaper / other windows happen to sit
@@ -334,6 +350,12 @@ final class SettingsStore {
         /// current schema and the write landed: the file now holds these
         /// bytes, not the ones read (`lastSyncedBytes`).
         var writtenBytes: Data?
+        /// Whether the load moved the file aside, so nothing is at its name
+        /// now and the bytes read are not what it holds.
+        var hasMovedFile = false
+        /// Whether the load's write of the file moved to the current schema
+        /// did not reach disk (`hasFailedToSave`).
+        var hasFailedToWrite = false
     }
 
     /// The settings in `url`, moved to the current schema when they are
@@ -444,7 +466,9 @@ final class SettingsStore {
             // them; that save finishes the ledger with the bytes it writes,
             // which are not the ones recorded.
             log.error("migrated settings.json write failed: \(String(describing: error), privacy: .private)")
-            return LoadResult(settings: settings, pendingMigration: record)
+            var result = LoadResult(settings: settings, pendingMigration: record)
+            result.hasFailedToWrite = true
+            return result
         }
         log.notice("migrated settings.json from v\(from, privacy: .public)")
         do {
@@ -496,15 +520,20 @@ final class SettingsStore {
         if suspendsSaving {
             log.error("settings.json stays in place; saving is suspended for this launch")
         }
-        return LoadResult(settings: .default, suspendsSaving: suspendsSaving, suspension: suspendsSaving ? .unreadable : nil)
+        var result = LoadResult(settings: .default, suspendsSaving: suspendsSaving, suspension: suspendsSaving ? .unreadable : nil)
+        result.hasMovedFile = !suspendsSaving
+        return result
     }
 
-    /// `setAside` for a file that could not be read. Saving goes on only
-    /// once the file has actually moved: `setAside` counts a file it cannot
-    /// see as cleared, and an unreadable folder hides the file it holds.
+    /// `setAside` for a file that could not be read
+    /// (`SecureFileWrite.setAsideUnreadable`).
     private static func setAsideUnread(_ url: URL, writes: Bool) -> LoadResult {
         guard writes else { return LoadResult(settings: .default) }
-        guard SecureFileWrite.quarantine(url, reason: "read-failed") == nil else { return LoadResult(settings: .default) }
+        guard SecureFileWrite.setAsideUnreadable(url) == .keptInPlace else {
+            var result = LoadResult(settings: .default)
+            result.hasMovedFile = true
+            return result
+        }
         log.error("unreadable settings.json stays in place; saving is suspended for this launch")
         return LoadResult(settings: .default, suspendsSaving: true, suspension: .unreadable)
     }
@@ -589,9 +618,15 @@ final class SettingsStore {
             lastSyncedBytes = data
             hasNoFileYet = false
             finishPendingMigration(written: data, at: url)
+            if hasFailedToSave {
+                hasFailedToSave = false
+            }
             return true
         } catch {
             log.error("settings.json save failed: \(String(describing: error), privacy: .private)")
+            if !hasFailedToSave {
+                hasFailedToSave = true
+            }
             return false
         }
     }

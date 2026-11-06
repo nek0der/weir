@@ -68,11 +68,10 @@ extension EnvironmentValues {
     /// context menu for a manual refresh. `nil` in Previews / tests.
     @Entry var prStatusSyncer: PRStatusSyncer?
 
-    /// `state.json` while this launch has stopped saving it
-    /// (`AppState.suspendedSessionFile`), for the notice Settings → General
-    /// shows; `nil` while it is saved. A plain value: the session store is
-    /// not `@Observable`, and it decides this once, when it loads.
-    @Entry var suspendedSessionFile: URL?
+    /// Which of the app's files are not being saved, apart from the
+    /// settings (`AppState.savingStatus`), for the notice Settings → General
+    /// shows. Empty while every one is saved.
+    @Entry var savingStatus = SavingStatus()
 
     /// `nil` in Previews and tests, where no records are known and there is
     /// no terminal to reload.

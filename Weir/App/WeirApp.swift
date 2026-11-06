@@ -131,6 +131,21 @@ final class AppState {
     /// may never open: every change they make is lost when Weir quits.
     /// `nil` once answered, and while settings are saved.
     private(set) var launchSavingSuspension: SettingsSavingSuspension?
+    /// The smaller stores whose saving stopped as this launch began, until
+    /// the alert that tells them is answered: they are kept from saving for
+    /// the whole launch, as the settings are (`launchSavingSuspension`).
+    /// Empty once answered.
+    private(set) var launchSuspendedStores: [SuspendedStore] = []
+    /// Whether a save of `state.json` or `settings.json` failed and the
+    /// alert that tells it is not answered yet. Told as it happens rather
+    /// than left to Settings → General, for the same reason as
+    /// `launchSavingSuspension`. Once per run of failures
+    /// (`noteSaveFailures`).
+    private(set) var isSaveFailureAlertPending = false
+    /// Whether the current run of failing saves was told already. A save of
+    /// each file that lands ends the run, and the next failure is told
+    /// again.
+    @ObservationIgnored private var hasToldSaveFailure = false
     /// The window that alert is shown in (`startNoticePlacement`). `nil`
     /// while there is none.
     private(set) var savingNoticeWindowID: WindowID?
@@ -598,19 +613,43 @@ final class AppState {
         // Read once, as the launch began: a file fixed by hand later takes
         // the Settings notice down, and an alert already answered stays so.
         launchSavingSuspension = settingsStore.savingSuspension
+        launchSuspendedStores = savingStatus.suspendedStores.filter(\.kind.isToldInAlert)
         observeRepeatedly { [weak self] in
             guard let self else { return }
             _ = agentIntegrationServiceRegistrar.issue
             _ = clipboardConfirmation.pending?.id
             _ = launchSavingSuspension
+            _ = launchSuspendedStores
+            _ = store.hasFailedToSave
+            _ = settingsStore.hasFailedToSave
             _ = sessionLoadIssue
             for window in windowRegistry.windows {
                 _ = window.isHidden
             }
         } onChange: { [weak self] in
+            self?.noteSaveFailures()
             self?.placeNotices()
         }
+        // A launch's own write (a file moved to the current schema) may
+        // already have failed.
+        noteSaveFailures()
         placeNotices()
+    }
+
+    /// Raises the alert when a save starts failing, once for the run of
+    /// failures, and takes it down when every save lands again: what it
+    /// told is no longer so.
+    private func noteSaveFailures() {
+        let isFailing = savingStatus.failedSessionFile != nil || settingsStore.hasFailedToSave
+        if isFailing, !hasToldSaveFailure {
+            hasToldSaveFailure = true
+            isSaveFailureAlertPending = true
+        } else if !isFailing {
+            hasToldSaveFailure = false
+            if isSaveFailureAlertPending {
+                isSaveFailureAlertPending = false
+            }
+        }
     }
 
     private func startAppVisibilityObserver() {
@@ -655,9 +694,10 @@ final class AppState {
         if loadIssueWindowID != (loadWaits ? nil : loadWindow) {
             loadIssueWindowID = loadWaits ? nil : loadWindow
         }
-        let savingWindow = launchSavingSuspension.map { _ in
-            windows.placeNotice(keeping: savingNoticeWindowID) { windows.noticeWindow }
-        }
+        let isSavingAlertShown = launchSavingSuspension != nil || !launchSuspendedStores.isEmpty || isSaveFailureAlertPending
+        let savingWindow = isSavingAlertShown
+            ? windows.placeNotice(keeping: savingNoticeWindowID) { windows.noticeWindow }
+            : nil
         let savingWaits = savingWindow != nil
             && (placement?.window == savingWindow || issueWindow == savingWindow || loadWindow == savingWindow)
         if savingNoticeWindowID != (savingWaits ? nil : savingWindow) {
@@ -671,9 +711,11 @@ final class AppState {
         placeNotices()
     }
 
-    /// Takes down the launch's saving alert once answered.
+    /// Takes down the saving alert once answered.
     func dismissSavingNotice() {
         launchSavingSuspension = nil
+        launchSuspendedStores = []
+        isSaveFailureAlertPending = false
         placeNotices()
     }
 
@@ -685,9 +727,25 @@ final class AppState {
         writesUserFiles && store.isSavingSuspended
     }
 
-    /// `state.json` while `isSessionSavingSuspended`.
-    var suspendedSessionFile: URL? {
-        isSessionSavingSuspended ? store.fileURL : nil
+    /// Which of the app's files are not being saved, apart from the
+    /// settings, for the notice Settings → General shows
+    /// (`SavingSuspendedNotice`) and the alert. Nothing in demo mode, which
+    /// neither loads nor saves the person's files.
+    var savingStatus: SavingStatus {
+        guard writesUserFiles else { return SavingStatus() }
+        let stores: [(SuspendedStore.Kind, URL?)] = [
+            (.notificationHistory, historyStore.suspendedFile),
+            (.paletteRanking, frecencyStore.suspendedFile),
+            (.viewedTurns, viewedLines.suspendedFile),
+            (.turnReads, turnReads.suspendedFile),
+            (.stops, stopLedger.suspendedFile)
+        ] + (agentProjection.suspendedFiles + [restores.suspendedPendingStopsFile].compactMap(\.self))
+            .map { (.pendingWork, $0) }
+        return SavingStatus(
+            suspendedSessionFile: store.isSavingSuspended ? store.fileURL : nil,
+            failedSessionFile: store.hasFailedToSave ? store.fileURL : nil,
+            suspendedStores: stores.compactMap { kind, file in file.map { .init(kind: kind, file: $0) } }
+        )
     }
 
     /// Where each window is now.
@@ -849,7 +907,7 @@ struct WeirApp: App {
                 .environment(state.reduceTransparencyResolver)
                 .environment(\.updaterStack, updaterStack)
                 .environment(updaterStack.stateModel)
-                .environment(\.suspendedSessionFile, state.suspendedSessionFile)
+                .environment(\.savingStatus, state.savingStatus)
                 .environment(\.settingsAppActions, state.settingsAppActions)
                 // Settings is where the accent picker lives — inject
                 // the same accent so the swatch row previews the live

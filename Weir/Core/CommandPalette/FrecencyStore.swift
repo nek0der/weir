@@ -47,6 +47,11 @@ final class FrecencyStore {
     /// either. Saving would then write over the only copy, so every save is
     /// skipped until the next launch tries again.
     private var isSavingSuspended = false
+    /// `frecency.json` while its saving is suspended, for the notice in
+    /// Settings → General that tells the person (`SavingSuspendedNotice`).
+    var suspendedFile: URL? {
+        isSavingSuspended ? fileURL : nil
+    }
 
     convenience init(writesFiles: Bool) {
         self.init(directory: WeirPaths.applicationSupportDirectory(), writesFiles: writesFiles)
@@ -101,23 +106,19 @@ final class FrecencyStore {
     }
 
     private func load() {
-        // No file yet is the first launch; a file that is there but cannot
-        // be read is kept like one that does not decode.
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        // Only a file that is not there is the first launch. A check that it
+        // exists answers no for a folder that cannot be searched too, and
+        // this launch's ranking would then replace the file once the folder
+        // opens up again.
         let data: Data
         switch PersistedRead.read(fileURL) {
         case .absent:
-            // The check above found a file and the read did not. It goes
-            // aside as an unreadable one does, so a file put back in the
-            // meantime is not saved over.
-            log.error("frecency.json gone before it was read")
-            setAside(reason: "read-failed")
             return
         case let .data(bytes):
             data = bytes
         case let .unreadable(error):
             log.error("failed to read frecency.json: \(String(describing: error), privacy: .private)")
-            setAside(reason: "read-failed")
+            suspendSaving(unless: SecureFileWrite.setAsideUnreadable(fileURL))
             return
         }
         do {
@@ -133,11 +134,17 @@ final class FrecencyStore {
     /// The next `record` would otherwise write over the file with this
     /// launch's ranking alone. Move it aside first, as the other stores do,
     /// or stop saving when it cannot be moved.
+    /// Only a run that writes the person's files moves theirs, as in
+    /// `NotificationHistoryStore`.
     private func setAside(reason: String) {
-        if SecureFileWrite.setAside(fileURL, reason: reason) == .keptInPlace {
-            log.error("frecency.json stays in place; saving is suspended for this launch")
-            isSavingSuspended = true
-        }
+        guard writesFiles else { return }
+        suspendSaving(unless: SecureFileWrite.setAside(fileURL, reason: reason))
+    }
+
+    private func suspendSaving(unless result: SecureFileWrite.SetAsideResult) {
+        guard result == .keptInPlace else { return }
+        log.error("frecency.json stays in place; saving is suspended for this launch")
+        isSavingSuspended = true
     }
 
     /// Drop entries whose recency weight has decayed to nothing. Runs on

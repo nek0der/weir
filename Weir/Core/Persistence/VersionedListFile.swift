@@ -14,6 +14,25 @@ protocol VersionedListDocument: Codable {
     init(schemaVersion: Int, elements: [Element])
 }
 
+/// What one read of a `VersionedListFile` found.
+struct VersionedListRead<Element> {
+    /// The list, or none when there is no file, or the file this build
+    /// could not use was moved aside or kept.
+    var elements: [Element]
+    /// Whether this launch may write the file. False while it keeps a file
+    /// it could not use: one it could neither read nor move aside, or one a
+    /// newer build wrote, which this build's shape could drop part of.
+    var isWritable: Bool
+    /// Whether the file is kept because it could not be read or decoded and
+    /// could not be moved aside, which the person is told; a newer build's
+    /// file is kept as a matter of course.
+    var isKeptUnread: Bool
+
+    static func usable(_ elements: [Element]) -> Self {
+        Self(elements: elements, isWritable: true, isKeptUnread: false)
+    }
+}
+
 /// Reads and writes a list that must outlive a relaunch but is not worth a
 /// migration: the files that keep work still to finish
 /// (`AgentForgottenHintFile`, `TurnDeletionFile`, `RestorePendingStopFile`).
@@ -26,18 +45,48 @@ struct VersionedListFile<Document: VersionedListDocument>: Sendable {
     let label: String
     let log: Logger
 
-    /// The elements `url` holds. A file that is missing, does not read, or
-    /// comes from a newer build holds none: each caller's doc says what
-    /// that loses, and why it is the safe answer.
-    func read(_ url: URL) -> [Document.Element] {
-        guard let data = try? Data(contentsOf: url) else { return [] }
+    /// The elements `url` holds. Only a missing file holds none and may be
+    /// written: a file that cannot be read, or does not decode as this
+    /// version, is moved aside first, and one that cannot be moved, or that
+    /// a newer build wrote, is kept as it is and not written this launch.
+    /// Each holds work still to finish, which a write of this launch's list
+    /// would replace.
+    func read(_ url: URL) -> VersionedListRead<Document.Element> {
+        let data: Data
+        switch PersistedRead.read(url) {
+        case .absent:
+            return .usable([])
+        case let .data(bytes):
+            data = bytes
+        case let .unreadable(error):
+            log.error("\(label, privacy: .public) unreadable: \(String(describing: error), privacy: .private)")
+            return keep(url, unless: SecureFileWrite.setAsideUnreadable(url))
+        }
+        if let found = (try? JSONDecoder().decode(Version.self, from: data))?.schemaVersion, found > schemaVersion {
+            log.notice("\(label, privacy: .public) from a newer build; kept and not written")
+            return VersionedListRead(elements: [], isWritable: false, isKeptUnread: false)
+        }
         guard let document = try? JSONDecoder().decode(Document.self, from: data),
               document.schemaVersion == schemaVersion
         else {
-            log.error("\(label, privacy: .public) do not read; dropped")
-            return []
+            log.error("\(label, privacy: .public) do not decode")
+            return keep(url, unless: SecureFileWrite.setAside(url, reason: "decode-failed"))
         }
-        return document.elements
+        return .usable(document.elements)
+    }
+
+    /// No elements, and no writes this launch when the file stayed where
+    /// it was.
+    private func keep(_ url: URL, unless result: SecureFileWrite.SetAsideResult) -> VersionedListRead<Document.Element> {
+        guard result == .keptInPlace else { return .usable([]) }
+        log.error("\(label, privacy: .public) stay in place; not written this launch")
+        return VersionedListRead(elements: [], isWritable: false, isKeptUnread: true)
+    }
+
+    /// The version alone, read before the rest so a newer build's file is
+    /// told from one that does not decode.
+    private struct Version: Decodable {
+        let schemaVersion: Int
     }
 
     /// Writes `elements` to `url`, or removes the file when there are none.

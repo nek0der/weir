@@ -293,7 +293,7 @@ struct AgentProjectionAdapterTests {
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: sessions.path)
             #expect(quitting.forgottenHints == forgotten, "a failed removal is tried again, not settled")
             #expect(FileManager.default.fileExists(atPath: hintURL.path))
-            #expect(AgentForgottenHintFile.read(fileURL) == forgotten)
+            #expect(AgentForgottenHintFile.read(fileURL).elements == forgotten)
 
             // The next launch, with a hook holding the lock.
             let relaunched = ProjectionFixture.adapter(
@@ -358,7 +358,7 @@ struct AgentProjectionAdapterTests {
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: kept.path)
             adapter.refresh()
             #expect(adapter.forgottenHints == forgotten, "the hook still holds the hint")
-            #expect(AgentForgottenHintFile.read(fileURL) == forgotten)
+            #expect(AgentForgottenHintFile.read(fileURL).elements == forgotten)
 
             // At quit, with no pass between.
             let quitURL = root.appendingPathComponent("quit", isDirectory: true)
@@ -372,7 +372,7 @@ struct AgentProjectionAdapterTests {
             #expect(!FileManager.default.fileExists(atPath: quitFileURL.path))
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: quitURL.path)
             quitting.prepareForTermination()
-            #expect(AgentForgottenHintFile.read(quitFileURL) == forgotten)
+            #expect(AgentForgottenHintFile.read(quitFileURL).elements == forgotten)
         }
     }
 

@@ -17261,6 +17261,176 @@
         }
       }
     },
+    "Your sessions couldn’t be saved: writing state.json failed. Check that the disk has free space and that its folder can be written to. Weir saves again with the next change.": {
+      "comment": "Settings, General, and an alert: the last save of the sessions did not reach disk",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your sessions couldn’t be saved: writing state.json failed. Check that the disk has free space and that its folder can be written to. Weir saves again with the next change."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "セッションを保存できませんでした。state.json に書き込めませんでした。ディスクの空き容量と、フォルダーに書き込めるかを確認してください。次に変更したときにもう一度保存します。"
+          }
+        }
+      }
+    },
+    "Your settings couldn’t be saved: writing settings.json failed. Check that the disk has free space and that its folder can be written to. Weir saves again with the next change.": {
+      "comment": "Settings, General, and an alert: the last save of the settings did not reach disk",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your settings couldn’t be saved: writing settings.json failed. Check that the disk has free space and that its folder can be written to. Weir saves again with the next change."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定を保存できませんでした。settings.json に書き込めませんでした。ディスクの空き容量と、フォルダーに書き込めるかを確認してください。次に変更したときにもう一度保存します。"
+          }
+        }
+      }
+    },
+    "Your notification history isn’t being saved: notifications.json can’t be used and couldn’t be set aside. Check the permissions of its folder or move it out, then quit and reopen Weir.": {
+      "comment": "Settings, General: saving the notification history is suspended, as its file cannot be read",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Your notification history isn’t being saved: notifications.json can’t be used and couldn’t be set aside. Check the permissions of its folder or move it out, then quit and reopen Weir."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "通知履歴を保存していません。notifications.json を使用できず、退避もできませんでした。フォルダーのアクセス権を確認するか、ファイルをフォルダーの外に移動してから、Weir を終了して再度開いてください。"
+          }
+        }
+      }
+    },
+    "The command palette’s ranking isn’t being saved: frecency.json can’t be used and couldn’t be set aside. Check the permissions of its folder or move it out, then quit and reopen Weir.": {
+      "comment": "Settings, General: saving how the command palette ranks its rows is suspended, as its file cannot be read",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The command palette’s ranking isn’t being saved: frecency.json can’t be used and couldn’t be set aside. Check the permissions of its folder or move it out, then quit and reopen Weir."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コマンドパレットの並び順を保存していません。frecency.json を使用できず、退避もできませんでした。フォルダーのアクセス権を確認するか、ファイルをフォルダーの外に移動してから、Weir を終了して再度開いてください。"
+          }
+        }
+      }
+    },
+    "The turns you’ve viewed aren’t being saved: viewed-lines.json can’t be used and couldn’t be set aside. Check the permissions of its folder or move it out, then quit and reopen Weir.": {
+      "comment": "Settings, General, and an alert: saving which turns are viewed is suspended, as its file cannot be read",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The turns you’ve viewed aren’t being saved: viewed-lines.json can’t be used and couldn’t be set aside. Check the permissions of its folder or move it out, then quit and reopen Weir."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "確認済みのターンを保存していません。viewed-lines.json を使用できず、退避もできませんでした。フォルダーのアクセス権を確認するか、ファイルをフォルダーの外に移動してから、Weir を終了して再度開いてください。"
+          }
+        }
+      }
+    },
+    "The turns you’ve read aren’t being saved: turn-reads.json can’t be used and couldn’t be set aside. Check the permissions of its folder or move it out, then quit and reopen Weir.": {
+      "comment": "Settings, General: saving which turns are read is suspended, as its file cannot be read",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The turns you’ve read aren’t being saved: turn-reads.json can’t be used and couldn’t be set aside. Check the permissions of its folder or move it out, then quit and reopen Weir."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "既読のターンを保存していません。turn-reads.json を使用できず、退避もできませんでした。フォルダーのアクセス権を確認するか、ファイルをフォルダーの外に移動してから、Weir を終了して再度開いてください。"
+          }
+        }
+      }
+    },
+    "The agents that stopped aren’t being saved: stops.json can’t be used and couldn’t be set aside. Check the permissions of its folder or move it out, then quit and reopen Weir.": {
+      "comment": "Settings, General, and an alert: saving the agents that stopped is suspended, as its file cannot be read",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The agents that stopped aren’t being saved: stops.json can’t be used and couldn’t be set aside. Check the permissions of its folder or move it out, then quit and reopen Weir."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止したエージェントを保存していません。stops.json を使用できず、退避もできませんでした。フォルダーのアクセス権を確認するか、ファイルをフォルダーの外に移動してから、Weir を終了して再度開いてください。"
+          }
+        }
+      }
+    },
+    "Weir isn’t saving %@: it can’t be used and couldn’t be set aside. Check the permissions of its folder or move it out, then quit and reopen Weir.": {
+      "comment": "Settings, General, and an alert: a file of work still to finish cannot be read or saved; the argument is its name",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weir isn’t saving %@: it can’t be used and couldn’t be set aside. Check the permissions of its folder or move it out, then quit and reopen Weir."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ を保存していません。使用できず、退避もできませんでした。フォルダーのアクセス権を確認するか、ファイルをフォルダーの外に移動してから、Weir を終了して再度開いてください。"
+          }
+        }
+      }
+    },
+    "Weir Isn’t Saving Some Files": {
+      "comment": "The alert at launch while saving some of Weir's own files is suspended: its title",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weir Isn’t Saving Some Files"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一部のファイルを保存していません"
+          }
+        }
+      }
+    },
+    "Weir Couldn’t Save Your Changes": {
+      "comment": "The alert while a save of the sessions or the settings fails: its title",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weir Couldn’t Save Your Changes"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "変更を保存できませんでした"
+          }
+        }
+      }
+    },
     "Project · Other projects need attention: %lld": {
       "comment": "Title bar project control tooltip; how many items need attention in the other projects",
       "localizations": {

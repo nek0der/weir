@@ -116,11 +116,20 @@ struct TurnDeletionQueue {
     /// Where the turns with the collector are kept between launches; `nil`
     /// keeps them in memory only, as a run that writes no files does.
     let url: URL?
+    /// Whether the file may be written this launch
+    /// (`VersionedListRead.isWritable`): one this build could not use is
+    /// kept, with the spans it holds, rather than replaced.
+    private let isWritable: Bool
+    /// The file while it is kept unread and not written, for the notice
+    /// that tells the person.
+    let suspendedFile: URL?
 
     init(url: URL? = nil) {
         self.url = url
-        let entries = url.map(TurnDeletionFile.read) ?? []
-        unheard = Dictionary(entries.map { ($0.turnID, $0) }) { first, _ in first }
+        let read = url.map(TurnDeletionFile.read) ?? .usable([])
+        isWritable = read.isWritable
+        suspendedFile = read.isKeptUnread ? url : nil
+        unheard = Dictionary(read.elements.map { ($0.turnID, $0) }) { first, _ in first }
     }
 
     /// Forgets the waits that have passed, so the record holds only turns
@@ -312,7 +321,7 @@ struct TurnDeletionQueue {
     /// left unheard, and the spans not saved yet to the file, each with
     /// what it was.
     private func save() {
-        guard let url else { return }
+        guard isWritable, let url else { return }
         var entries = unheard.merging(unsaved) { kept, _ in kept }
         if let sending {
             for turnID in sending.turnIDs {

@@ -2,6 +2,9 @@
 // Weir — the one writer of a worktree's review draft, shared by every review of that worktree.
 
 import Foundation
+import OSLog
+
+private let log = Logger.weir("review.draft")
 
 /// What a reader has done with one worktree's review: the comments, the read
 /// marks, the file last open in each scope, the fixed ranges those belong to,
@@ -75,6 +78,11 @@ final class ReviewDraftWriter {
     /// Present while navigation metadata is waiting to be persisted.
     @ObservationIgnored private var navigationSaveTask: Task<Void, Never>?
     @ObservationIgnored private var navigationGeneration = UUID()
+    /// The coordinator's generation of navigation metadata that is waiting
+    /// for its timer or its write, or whose write failed, and that no later
+    /// write has carried (`flushNavigationSaveSynchronously`). `nil` while
+    /// nothing waits.
+    @ObservationIgnored private var pendingNavigation: UUID?
 
     private final class WeakSession {
         weak var value: ReviewSession?
@@ -181,6 +189,9 @@ final class ReviewDraftWriter {
     func commit(_ next: [ReviewComment], viewed nextViewed: [String: [String: ReviewViewMark]]? = nil) throws {
         navigationSaveTask?.cancel()
         navigationGeneration = UUID()
+        // The draft below carries the navigation, and an edit that fails
+        // was told to the reader; either way the quit has nothing to add.
+        pendingNavigation = nil
         let marks = nextViewed ?? viewedByScope
         if !isSavingSuspended {
             do {
@@ -281,6 +292,7 @@ final class ReviewDraftWriter {
         let token = UUID()
         navigationGeneration = token
         let writeGeneration = ReviewDraftWriteCoordinator.shared.beginNavigation(for: root)
+        pendingNavigation = writeGeneration
         // We retain the writer through this bounded save so closing review immediately
         // after selecting a file does not discard the pending navigation hint.
         navigationSaveTask = Task { @MainActor in
@@ -288,10 +300,16 @@ final class ReviewDraftWriter {
                 try await Task.sleep(for: PersistenceTiming.coalescing)
                 try Task.checkCancellation()
                 let snapshot = makeDraft(comments: comments, viewed: viewedByScope)
+                // Written, or superseded by an edit or a deletion: nothing is
+                // left for the quit either way.
                 _ = try await Self.writeNavigation(snapshot, root: root, storage: drafts, generation: writeGeneration)
+                if navigationGeneration == token {
+                    pendingNavigation = nil
+                }
             } catch is CancellationError {
                 // A newer navigation or a synchronous edit owns persistence now.
             } catch {
+                // Still pending, so the quit tries once more.
                 guard navigationGeneration == token, !Task.isCancelled else { return }
                 report(error as? ReviewError ?? .storageFailed)
             }
@@ -317,6 +335,33 @@ final class ReviewDraftWriter {
     /// Wait for navigation metadata when verifying persistence across reopenings.
     func flushNavigationSave() async {
         await navigationSaveTask?.value
+    }
+
+    /// Writes navigation metadata still waiting on its timer, or whose
+    /// write failed, now, on the calling thread, for quitting: the timer's
+    /// task would never run again. Through the coordinator's queue like
+    /// every draft write, so a navigation write already on it lands first
+    /// and this newer draft last. Under the same generation as the waiting
+    /// save: a worktree deleted since (`removeDraft`) gets no draft back.
+    func flushNavigationSaveSynchronously() {
+        guard let generation = pendingNavigation, !isSavingSuspended else { return }
+        navigationSaveTask?.cancel()
+        navigationSaveTask = nil
+        navigationGeneration = UUID()
+        pendingNavigation = nil
+        do {
+            _ = try ReviewDraftWriteCoordinator.shared.saveNavigationNow(
+                makeDraft(comments: comments, viewed: viewedByScope),
+                root: root,
+                storage: drafts,
+                generation: generation
+            )
+        } catch {
+            // Quitting, so no one is left to tell; the file keeps the draft
+            // the last save wrote, and only the open file and read marks
+            // since then are lost.
+            log.error("review navigation not saved at quit: \(String(describing: error), privacy: .private)")
+        }
     }
 }
 
@@ -389,6 +434,18 @@ final class ReviewDraftWriterPool: @unchecked Sendable {
     func openTurnRanges() -> [ReviewTurnRange] {
         let writers = lock.withLock { openWriters.values.compactMap(\.value) }
         return writers.flatMap(\.turnRanges.values)
+    }
+
+    /// Writes every open writer's waiting navigation now, for quitting
+    /// (`ReviewDraftWriter.flushNavigationSaveSynchronously`). A writer
+    /// whose reviews have closed is still here while its navigation save
+    /// holds it.
+    @MainActor
+    func flushNavigationSaves() {
+        let writers = lock.withLock { openWriters.values.compactMap(\.value) }
+        for writer in writers {
+            writer.flushNavigationSaveSynchronously()
+        }
     }
 
     /// A new view of `root`'s review, writing through the shared writer.

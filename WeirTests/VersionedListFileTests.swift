@@ -19,7 +19,7 @@ struct VersionedListFileTests {
         try withTempDir { root in
             let url = root.appendingPathComponent("nested/names.json")
             #expect(file.write(["a", "b"], to: url))
-            #expect(file.read(url) == ["a", "b"])
+            #expect(file.read(url).elements == ["a", "b"])
             let object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
             #expect(object["schemaVersion"] as? Int == 2)
             #expect(object["names"] as? [String] == ["a", "b"])
@@ -38,15 +38,96 @@ struct VersionedListFileTests {
         }
     }
 
-    @Test("a missing, unreadable, or other-version file holds nothing")
-    func read_unusableFileIsEmpty() throws {
+    @Test("a missing file holds nothing and may be written")
+    func read_missingFileIsEmptyAndWritable() throws {
+        try withTempDir { root in
+            let read = file.read(root.appendingPathComponent("names.json"))
+            #expect(read.elements.isEmpty)
+            #expect(read.isWritable)
+            #expect(!read.isKeptUnread)
+        }
+    }
+
+    @Test("a file that does not decode is moved aside, and the list starts empty")
+    func read_undecodableFileIsSetAside() throws {
         try withTempDir { root in
             let url = root.appendingPathComponent("names.json")
-            #expect(file.read(url).isEmpty)
             try Data("not json".utf8).write(to: url)
-            #expect(file.read(url).isEmpty)
-            try Data(#"{"schemaVersion": 3, "names": ["a"]}"#.utf8).write(to: url)
-            #expect(file.read(url).isEmpty)
+            let read = file.read(url)
+            #expect(read.elements.isEmpty)
+            #expect(read.isWritable)
+            let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            let aside = try #require(names.first { $0.hasPrefix("names.json.bak-decode-failed-") })
+            #expect(try Data(contentsOf: root.appendingPathComponent(aside)) == Data("not json".utf8))
+        }
+    }
+
+    @Test("a newer build's file is kept as it is and not written")
+    func read_newerFileIsKeptAndNotWritable() throws {
+        try withTempDir { root in
+            let url = root.appendingPathComponent("names.json")
+            let newer = Data(#"{"schemaVersion": 3, "names": ["a"]}"#.utf8)
+            try newer.write(to: url)
+            let read = file.read(url)
+            #expect(read.elements.isEmpty)
+            #expect(!read.isWritable)
+            #expect(!read.isKeptUnread, "a newer build's file is not a trouble to report")
+            #expect(try Data(contentsOf: url) == newer)
+        }
+    }
+
+    /// A folder that cannot be searched hides the file in it, which is not
+    /// a missing file: it is kept, not written, and reported.
+    @Test("a file in a folder that cannot be searched is kept and not written")
+    func read_fileInUnsearchableFolderIsKept() throws {
+        try withTempDir { root in
+            let dir = root.appendingPathComponent("support")
+            let manager = FileManager.default
+            try manager.createDirectory(at: dir, withIntermediateDirectories: false)
+            let url = dir.appendingPathComponent("names.json")
+            #expect(file.write(["a"], to: url))
+            let original = try Data(contentsOf: url)
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dir.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+            let read = file.read(url)
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+
+            #expect(read.elements.isEmpty)
+            #expect(!read.isWritable)
+            #expect(read.isKeptUnread)
+            #expect(try Data(contentsOf: url) == original)
+        }
+    }
+
+    /// The queues that read these files write nothing over one kept: the
+    /// turns on their way and the ended sessions' hints.
+    @Test("the queues leave a kept file as it is")
+    func queues_leaveAKeptFile() throws {
+        try withTempDir { root in
+            let dir = root.appendingPathComponent("support")
+            let manager = FileManager.default
+            try manager.createDirectory(at: dir, withIntermediateDirectories: false)
+            let hints = dir.appendingPathComponent(AgentForgottenHintFile.fileName)
+            let turns = dir.appendingPathComponent(TurnDeletionFile.fileName)
+            let hintBytes = Data(#"{"schemaVersion": 1, "hints": []}"#.utf8)
+            let turnBytes = Data(#"{"schemaVersion": 1, "turns": [{"turnId": "t1", "directory": "/d"}]}"#.utf8)
+            try hintBytes.write(to: hints)
+            try turnBytes.write(to: turns)
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dir.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+
+            var hintQueue = AgentForgottenHintQueue(url: hints)
+            var turnQueue = TurnDeletionQueue(url: turns)
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            hintQueue.add(AgentForgottenHint(provider: "claude", pane: UUID(), sessionID: "S"))
+            // A recovery with nothing heard writes the queue's file again.
+            _ = turnQueue.recovered([]) { _ in .gone }
+
+            #expect(hintQueue.suspendedFile == hints)
+            #expect(turnQueue.suspendedFile == turns)
+            #expect(try Data(contentsOf: hints) == hintBytes)
+            #expect(try Data(contentsOf: turns) == turnBytes)
         }
     }
 
@@ -60,13 +141,13 @@ struct VersionedListFileTests {
             try Data(#"""
             {"schemaVersion": 1, "hints": [{"provider": "claude", "pane": "\#(pane.uuidString)", "sessionID": "S"}]}
             """#.utf8).write(to: hints)
-            #expect(AgentForgottenHintFile.read(hints) == [AgentForgottenHint(provider: "claude", pane: pane, sessionID: "S")])
+            #expect(AgentForgottenHintFile.read(hints).elements == [AgentForgottenHint(provider: "claude", pane: pane, sessionID: "S")])
 
             let turns = root.appendingPathComponent(TurnDeletionFile.fileName)
             try Data(#"""
             {"schemaVersion": 1, "turns": [{"turnId": "t1", "directory": "/d"}]}
             """#.utf8).write(to: turns)
-            #expect(TurnDeletionFile.read(turns).map(\.turnID) == ["t1"])
+            #expect(TurnDeletionFile.read(turns).elements.map(\.turnID) == ["t1"])
         }
     }
 }
