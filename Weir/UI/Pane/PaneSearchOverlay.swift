@@ -40,9 +40,17 @@ struct PaneSearchOverlay: View {
                 .frame(maxWidth: .infinity)
             ultraCompactSearchField
         }
+        // Over a pane without the focus the bar stays drawn but takes no
+        // input, so VoiceOver must not reach its field. Hidden alone, it
+        // kept the elements it had vended; as one element that ignores
+        // its children, hiding removes it (as `PaneAreaView` does for
+        // review). Before the frame, so the element is the bar's size,
+        // not the pane's width.
+        .accessibilityElement(children: isInteractive ? .contain : .ignore)
+        .accessibilityLabel(Text("Find Bar", comment: "VoiceOver: the find bar over a pane, which holds its field and buttons"))
+        .accessibilityHidden(!isInteractive)
         .frame(maxWidth: .infinity, alignment: .trailing)
         .allowsHitTesting(isInteractive)
-        .accessibilityHidden(!isInteractive)
         .onAppear {
             guard isInteractive else { return }
             // `ViewThatFits` chooses and mounts its winning TextField after

@@ -101,6 +101,43 @@ struct AttentionQueueStoreTests {
         #expect(input.runtimes.first?.paneIDs.count == 2)
     }
 
+    /// While the service runs, the input leaves unannounced only a wait the
+    /// service will receive a request for, as the providers' descriptors
+    /// say: Claude's question comes as a request, Codex's waits at its own
+    /// prompt.
+    @Test func whileTheServiceRuns_aCodexQuestionIsAnnounced_andAClaudeOneIsLeftToItsRequest() throws {
+        let fixture = WorkspaceSessionFixture.withTwoLooseTabs()
+        func asking(_ kind: AgentKind, in pane: UUID) -> AgentRuntimePresentation {
+            var badge = AgentBadge(state: .needsInput, updatedAt: Date(timeIntervalSince1970: 100))
+            badge.waitKind = PromptWaitKind.question.rawValue
+            return AgentRuntimePresentation.test(
+                kind: kind,
+                runID: kind.rawValue,
+                badge: badge,
+                paneIDs: [pane],
+                stateEpisodeToken: "episode"
+            )
+        }
+        let input = AttentionQueueStore.makeInput(
+            runtimes: [asking(.codex, in: fixture.paneA), asking(.claude, in: fixture.paneB)],
+            isRead: { _ in false },
+            approvals: [],
+            session: fixture.session,
+            isApprovalServiceRunning: true
+        )
+
+        let (queue, effects) = AttentionQueueReducer.reduce(AttentionQueue(), input: input)
+
+        func wait(of kind: AgentKind) throws -> AttentionItemID {
+            let fact = try #require(input.runtimes.first { $0.provider == kind })
+            return .prompt(EpisodeKey(origin: .runtime(fact.runtimeID), episodeToken: "episode"))
+        }
+        let codex = try wait(of: .codex)
+        let claude = try wait(of: .claude)
+        #expect(Set(queue.items.map(\.id)) == [codex, claude], "both waits are listed")
+        #expect(effects == [.announce(codex)])
+    }
+
     @Test func newItems_areAnnouncedOnlyOnceRuntimesAreMatched() {
         let store = AttentionQueueStore()
         var performed: [[AttentionEffect]] = []

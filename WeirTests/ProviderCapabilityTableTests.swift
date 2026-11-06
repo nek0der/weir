@@ -42,6 +42,18 @@ struct ProviderCapabilityTableTests {
         #expect(AgentProviderRegistry.has(ProviderCapabilityName.questionAnsweredByAgent, kind) == (kind == .codex))
     }
 
+    /// The waits the approval service receives as requests are read from
+    /// the descriptors: every permission request of a provider with an
+    /// approval hook, and only Claude's questions, since Codex's and
+    /// OpenCode's wait at their own prompt and Antigravity has no hook.
+    @Test("the service's requests are the descriptors' approval hooks")
+    func serviceRequests_comeFromTheDescriptors() {
+        #expect(AttentionQueueReducer.ServiceRequests.ofInstalledProviders() == .init(
+            approvals: [.claude, .codex, .opencode],
+            questions: [.claude]
+        ))
+    }
+
     /// The Rust registry and `AgentKind` name the same agents, so a case
     /// added on one side alone fails here.
     @Test("the registry's providers are AgentKind's cases")

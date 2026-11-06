@@ -251,17 +251,54 @@ struct AttentionQueueReducerTests {
         #expect(queue.items.map(\.id) == [.approval(held.fact.key), .prompt(episode)])
     }
 
-    @Test func aWaitWhileTheServiceRuns_isListedButNotAnnounced() {
+    /// The service as this build's providers describe it: Claude, Codex,
+    /// and OpenCode send their permission requests through their hook, and
+    /// only Claude its questions too (`ServiceRequests.ofInstalledProviders`).
+    private static let installedServiceRequests = AttentionQueueReducer.ServiceRequests(
+        approvals: [.claude, .codex, .opencode],
+        questions: [.claude]
+    )
+
+    @Test func aWaitARequestStandsFor_isListedButNotAnnounced() {
         // Its request is usually on the way; announcing both would ask twice.
         let waiting = Self.runtime("a", .needsInput)
-        let result = Self.reduce(.init(runtimes: [waiting], isApprovalServiceRunning: true))
+        let result = Self.reduce(.init(runtimes: [waiting], serviceRequests: Self.installedServiceRequests))
 
         #expect(result.queue.items.count == 1)
         #expect(result.effects.isEmpty)
 
         let stop = Self.runtime("b", .error, pane: Self.paneB)
-        let stopped = Self.reduce(.init(runtimes: [waiting, stop], isApprovalServiceRunning: true), from: result.queue)
+        let stopped = Self.reduce(.init(runtimes: [waiting, stop], serviceRequests: Self.installedServiceRequests), from: result.queue)
         #expect(stopped.effects.count == 1, "a stop is still announced")
+    }
+
+    /// While the service runs, only a wait its request will stand for is
+    /// left unannounced. A wait no hook sends there (Antigravity's
+    /// permission prompt, Codex's and OpenCode's questions, a sign-in) is
+    /// announced, or VoiceOver would never hear it.
+    @Test(arguments: [
+        (AgentKind.claude, PromptWaitKind.approval, false),
+        (.claude, .question, false),
+        (.claude, .signIn, true),
+        (.codex, .approval, false),
+        (.codex, .question, true),
+        (.opencode, .approval, false),
+        (.opencode, .question, true),
+        (.antigravity, .approval, true),
+        (.antigravity, .question, true)
+    ])
+    func aWaitWhileTheServiceRuns_isAnnouncedUnlessARequestStandsForIt(
+        provider: AgentKind,
+        kind: PromptWaitKind,
+        isAnnounced: Bool
+    ) {
+        var waiting = Self.runtime("a", .needsInput, provider: provider)
+        waiting.waitKind = kind
+        let result = Self.reduce(.init(runtimes: [waiting], serviceRequests: Self.installedServiceRequests))
+
+        let wait = AttentionItemID.prompt(EpisodeKey(origin: .runtime("a"), episodeToken: "1"))
+        #expect(result.queue.items.map(\.id) == [wait])
+        #expect(result.effects == (isAnnounced ? [.announce(wait)] : []))
     }
 
     @Test func aStop_isListedUntilItsEpisodeEnds_andAnotherFailureIsNew() {

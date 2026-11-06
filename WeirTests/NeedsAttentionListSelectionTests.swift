@@ -21,7 +21,7 @@ struct NeedsAttentionListSelectionTests {
                 state: .stopped,
                 title: "\(index)",
                 place: nil,
-                fact: "",
+                fact: "Stopped",
                 placeLead: "",
                 action: action,
                 arrivedAt: .distantPast
@@ -210,22 +210,23 @@ struct NeedsAttentionListSelectionTests {
     }
 
     /// The list holds the keyboard, not a row, so VoiceOver hears the row
-    /// the keys are on as the list's value: nothing on opening, the row as
-    /// ↑↓ reach it, and nothing again on the heading's ⋯.
+    /// the keys are on as the list's value: nothing on opening, the row with
+    /// its fact as ↑↓ reach it, and nothing again on the heading's ⋯.
     @Test func theListsSpokenValue_isTheRowTheKeysAreOn() {
+        let english = Locale(identifier: "en")
         let rows = Self.rows([nil, nil])
         var selection = NeedsAttentionListSelection(rows: rows, opening: .nothing)
-        #expect(selection.spokenRow(in: rows).isEmpty)
+        #expect(selection.spokenRow(in: rows, locale: english).isEmpty)
 
         selection.move(forward: true, in: rows)
-        #expect(selection.spokenRow(in: rows) == rows[0].title)
+        #expect(selection.spokenRow(in: rows, locale: english) == "0, Stopped")
         selection.move(forward: true, in: rows)
-        #expect(selection.spokenRow(in: rows) == rows[1].title)
+        #expect(selection.spokenRow(in: rows, locale: english) == "1, Stopped")
 
         selection = NeedsAttentionListSelection(rows: rows, opening: .nothing)
         selection.nextControl(count: 0, backward: true, in: rows)
         #expect(selection.isOnHeading)
-        #expect(selection.spokenRow(in: rows).isEmpty)
+        #expect(selection.spokenRow(in: rows, locale: english).isEmpty)
     }
 
     @Test func thePointer_lightsTheRowUnderIt_andLeavesNoneLit() {

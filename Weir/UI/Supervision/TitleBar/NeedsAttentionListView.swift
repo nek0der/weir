@@ -69,7 +69,7 @@ struct NeedsAttentionListView: View {
         // heading when it opens, and the row the keys are on as they move.
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(verbatim: AgentStatusText.spoken(model.heading.resolved(in: locale), locale: locale)))
-        .accessibilityValue(Text(verbatim: selection.spokenRow(in: model.rows)))
+        .accessibilityValue(Text(verbatim: selection.spokenRow(in: model.rows, locale: locale)))
         .onKeyPress(.downArrow) {
             selection.move(forward: true, in: model.rows)
             keyboardMoves += 1

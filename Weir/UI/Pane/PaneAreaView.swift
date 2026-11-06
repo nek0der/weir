@@ -57,6 +57,12 @@ struct PaneAreaView: View {
                     .id(tab.opening)
                     .opacity(tab.isShown ? 1 : 0)
                     .allowsHitTesting(tab.isShown)
+                    // Behind a terminal tab, VoiceOver must not reach it.
+                    // Hidden alone, it kept every element it had vended,
+                    // its diff table and scope menu included; one element
+                    // that ignores its children is one that hiding removes.
+                    .accessibilityElement(children: tab.isShown ? .contain : .ignore)
+                    .accessibilityLabel(Text("Review"))
                     .accessibilityHidden(!tab.isShown)
             }
             if window.review?.isShown != true {

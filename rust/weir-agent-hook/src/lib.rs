@@ -2050,6 +2050,9 @@ mod registry_tests {
                 .map(|descriptor| descriptor.id.as_str())
                 .collect()
         };
+        // Codex's `request_user_input` and OpenCode's form wait at the
+        // agent's own prompt, which no hook sends to the service.
+        assert_eq!(with(Capability::ApprovalHookAsksQuestions), ["claude"]);
         assert_eq!(with(Capability::QuestionEndsWithTurn), ["claude"]);
         assert_eq!(with(Capability::QuestionAnsweredByAgent), ["codex"]);
         assert_eq!(with(Capability::ApprovalHookRecordsLifecycle), ["codex"]);

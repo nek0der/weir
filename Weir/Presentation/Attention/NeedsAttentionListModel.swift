@@ -76,6 +76,23 @@ struct NeedsAttentionListModel: Equatable {
         /// as a list, a turn as "Turn 7". Empty reads
         /// the line as drawn.
         var spokenDetail = ""
+
+        /// The row as VoiceOver reads it, wherever the row is read: the
+        /// session, the agent, and the second line, whose fact says the
+        /// row's state ("alpha, Claude, weir, Waiting for approval: swift
+        /// test"; "Stopped: Rate limited"; "T7 Unread"). The time since the
+        /// item arrived is not part of it, so the list's value does not
+        /// change while the keys rest on a row.
+        func spoken(locale: Locale) -> String {
+            AgentStatusText.spokenList(
+                [
+                    title,
+                    agent.map { SessionRowFactText.agentName(.agent($0), locale: locale) } ?? "",
+                    spokenDetail.isEmpty ? AgentStatusText.spoken(placeLead + fact, locale: locale) : spokenDetail
+                ],
+                locale: locale
+            )
+        }
     }
 
     /// Names an item's place, looked up by whoever holds the session.
@@ -406,13 +423,14 @@ struct NeedsAttentionListSelection: Equatable {
         actionIndex != nil
     }
 
-    /// What VoiceOver hears as the list's value: the title of the row the
-    /// keys are on, empty while they are on none or on the heading. The
-    /// list, not a row, holds the keyboard, so without it VoiceOver would
-    /// say nothing as ↑↓ move.
-    func spokenRow(in rows: [NeedsAttentionListModel.Row]) -> String {
+    /// What VoiceOver hears as the list's value: the row the keys are on,
+    /// as the row itself reads (`Row.spoken`), its state included; empty
+    /// while they are on none or on the heading. The list, not a row,
+    /// holds the keyboard, so without it VoiceOver would say nothing as ↑↓
+    /// move.
+    func spokenRow(in rows: [NeedsAttentionListModel.Row], locale: Locale) -> String {
         guard !isOnHeading else { return "" }
-        return rows.first { $0.id == rowID }?.title ?? ""
+        return rows.first { $0.id == rowID }?.spoken(locale: locale) ?? ""
     }
 
     /// The buttons a list row has: its one button, when it offers one.

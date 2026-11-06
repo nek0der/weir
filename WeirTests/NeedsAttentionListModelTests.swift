@@ -111,6 +111,41 @@ struct NeedsAttentionListModelTests {
             == ["weir、ターン 6 から 7、未読、2 ファイル +94 −2", "weir、ターン 3、未読、ファイルの変更なし"])
     }
 
+    /// The list, not a row, holds the keyboard, so the row the keys are on
+    /// is the list's value: VoiceOver hears it as the row reads, with the
+    /// fact that says its state, so a stop is told from a request without
+    /// the glyph's color.
+    @Test(arguments: [
+        (english, [
+            "session 1, Claude, weir, Waiting for approval: swift test",
+            "session 2, Claude, weir, Stopped: Rate limited",
+            "session 3, Claude, weir, Needs sign-in"
+        ]),
+        (japanese, [
+            "session 1、Claude、weir、承認待ち：swift test",
+            "session 2、Claude、weir、停止：Rate limited",
+            "session 3、Claude、weir、サインイン待ち"
+        ])
+    ])
+    func theListsValue_saysTheRowsState(locale: Locale, expected: [String]) {
+        let approval = ApprovalFact.test()
+        let queue = Self.queue([
+            Entry(.approval(approval.key), .approval(approval), Self.runtime("a")),
+            Entry(.stop(Self.episode("b")), .stop(.error("Rate limited")), Self.runtime("b")),
+            Entry(.prompt(Self.episode("c")), .prompt(.signIn), Self.runtime("c"))
+        ])
+        let request = NeedsAttentionListModel.RequestText(summary: "swift test", question: nil, toolName: "Bash")
+        let rows = Self.model(queue, requests: [approval.key: request], locale: locale).rows
+        var selection = NeedsAttentionListSelection(rows: rows)
+
+        var heard: [String] = []
+        for _ in rows {
+            heard.append(selection.spokenRow(in: rows, locale: locale))
+            selection.move(forward: true, in: rows)
+        }
+        #expect(heard == expected)
+    }
+
     @Test func anApprovalWeirStillHolds_offersAnswer_andNamesItsCommand() {
         let approval = ApprovalFact.test()
         let queue = Self.queue([Entry(.approval(approval.key), .approval(approval), Self.runtime("a"))])

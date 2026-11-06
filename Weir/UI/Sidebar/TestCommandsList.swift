@@ -111,12 +111,17 @@ struct EditableRowList<Draft: EditableRowsDraft, Trailing: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .focused($focusedRow, equals: row.id)
             .accessibilityLabel(Text(text.rowLabel))
-            .accessibilityValue(problem.map { Text(text.reason($0)) } ?? Text(verbatim: ""))
+            // The field's value is what is typed in it, which VoiceOver
+            // reads as it reads any field's. Why the row is not saved is
+            // said after it, as the mark beside the field says it.
+            .accessibilityHint(problem.map { Text(text.reason($0)) } ?? Text(verbatim: ""))
             if let problem {
+                // Its own element, after the field, so the reason is read
+                // even with VoiceOver's hints off or not reached yet.
                 Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(SupervisionTokens.waitingText.color)
                     .help(Text(text.reason(problem)))
-                    .accessibilityHidden(true)
+                    .accessibilityLabel(Text(text.reason(problem)))
             }
         }
         .padding(.horizontal, WeirLayout.Supervision.spaceS)
