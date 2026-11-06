@@ -1,0 +1,17 @@
+{
+  "cwd": "/tmp/example",
+  "hook_event_name": "PostToolUse",
+  "model": "gpt-6-astra",
+  "permission_mode": "default",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "tool_input": {
+    "fork_turns": "none",
+    "message": "gAAAAABq7T-O7tge7fxpm0K8EfJ9jYOaXOU-cz_E9jSVr4JUyihS7ZneNesEJkQnIbgrlD9Y888u7E4JvD0RjyuNz0f1iYBxhvZiL-ig_XSO-IGIdEmOZe6o24z0vkMarSCVypXcYTvVuZtZOBq3uaPCgR6waTzMvA_Sryr3Yqkxiyd5QsYg0aDum_vsgq-4RkVoOVdCIkuu6ZedVLPxGvJBpLG4-r1bXA_o7UbcUd9x6ZZ7i4oP8f9mjv0KcwGDnAmxyAzbI0kKX51zDcNlIrdZT-cq74Z7obrT6Lgwk2Tx_roImg2BV7LM9CIbKYv2_eDywn-5raiiJIC5aaIGBm05hHp31SxK7KcB6-3BJ87fDBXj4-aPe6so4EVRPfOs4ZnaQkxVL5TkSaw80fJ5XX1E-InaYTt3Ub2bXac01ANx7rM5NODGvACChGUSvP-qtUyYNAWlmtwDoFGTmPwEB37FXYmrksVNWGNqjTwGq7lsxmpawH-N6UiMTZtbyfU2BozpqURJNFHvI1iKtbe42eProxwlyYL27YlhxMFpNUN4Z350ffVFwF3PdgAekH0wKfmM_FHADZPrMnhfSKU_13FzvLITowkCcA==",
+    "task_name": "touch_file"
+  },
+  "tool_name": "collaborationspawn_agent",
+  "tool_response": "{\"task_name\":\"/root/touch_file\"}",
+  "tool_use_id": "toolu_00000000000000000000000",
+  "transcript_path": "/Users/example/.codex/sessions/2026/11/06/rollout-2026-11-06T11-46-19-00000000-0000-4000-8000-0000000000ff.jsonl",
+  "turn_id": "00000000-0000-4000-8000-000000000003"
+}

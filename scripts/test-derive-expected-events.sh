@@ -71,6 +71,7 @@ expect(
 )
 
 subagent = {"agent_id": "019a0000-0000-7000-8000-000000000001", "agent_type": "explorer"}
+named = {"subagent": "019a0000-0000-7000-8000-000000000001"}
 expect(
     "codex: a subagent's prompt is no turn",
     derive.codex_event({"hook_event_name": "UserPromptSubmit", "prompt": "look", **subagent}, None),
@@ -82,12 +83,22 @@ expect(
         {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}, **subagent},
         None,
     ),
-    {"type": "tool_started", "tool": "Bash", "detail": "Bash: ls", "by_subagent": True},
+    {"type": "tool_started", "tool": "Bash", "detail": "Bash: ls", "caller": named},
 )
 expect(
     "codex: a subagent's tool end is marked",
     derive.codex_event({"hook_event_name": "PostToolUse", "tool_name": "Bash", **subagent}, None),
-    {"type": "tool_finished", "tool": "Bash", "by_subagent": True},
+    {"type": "tool_finished", "tool": "Bash", "caller": named},
+)
+expect(
+    "codex: a subagent's permission request names it",
+    derive.codex_event({"hook_event_name": "PermissionRequest", "tool_name": "Bash", **subagent}, None),
+    {"type": "approval_requested", "caller": named},
+)
+expect(
+    "codex: the agent's own permission request names no one",
+    derive.codex_event({"hook_event_name": "PermissionRequest", "tool_name": "Bash"}, None),
+    {"type": "approval_requested"},
 )
 expect(
     "codex: the agent's own tool end is not",
@@ -99,13 +110,31 @@ for name in ["PostToolUse", "PostToolUseFailure"]:
     expect(
         f"claude: a subagent's {name} of its question is marked",
         derive.claude_event({"hook_event_name": name, "tool_name": "AskUserQuestion", **subagent}, None),
-        {"type": "tool_finished", "tool": "AskUserQuestion", "by_subagent": True},
+        {"type": "tool_finished", "tool": "AskUserQuestion", "caller": named},
     )
     expect(
         f"claude: the agent's own {name} of its question is not",
         derive.claude_event({"hook_event_name": name, "tool_name": "AskUserQuestion"}, None),
         {"type": "tool_finished", "tool": "AskUserQuestion"},
     )
+
+expect(
+    "claude: a subagent's question names it",
+    derive.claude_event(
+        {"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion",
+         "tool_input": {"questions": [{"question": "Which?"}]}, **subagent},
+        None,
+    ),
+    {"type": "waiting_for_input", "detail": "Which?", "caller": named},
+)
+expect(
+    "claude: the permission prompt names no one",
+    derive.claude_event(
+        {"hook_event_name": "Notification", "notification_type": "permission_prompt", "message": "m"},
+        None,
+    ),
+    {"type": "approval_requested", "detail": "m", "caller": "unnamed"},
+)
 
 sys.exit(1 if failures else 0)
 PYTHON

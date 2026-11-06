@@ -17,7 +17,7 @@ fn bash(command: &str) -> AgentEvent {
     AgentEvent::ToolStarted {
         tool: "Bash".into(),
         detail: Some(format!("Bash: {command}")),
-        by_subagent: false,
+        caller: Caller::Agent,
     }
 }
 
@@ -104,12 +104,12 @@ fn a_tool_outside_a_turn_runs_in_the_rests_episode_until_the_agent_is_idle() {
             tool: AgentEvent::ToolStarted {
                 tool: "shell".into(),
                 detail: Some("shell".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             },
             returns_to: RunState::Finished,
             end: AgentEvent::ToolFinished {
                 tool: Some("shell".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             },
             ends_as: RunState::Running,
         },
@@ -190,6 +190,7 @@ fn the_idle_prompt_writes_nothing_for_a_run_at_rest_or_waiting() {
             prompt("first"),
             AgentEvent::WaitingForInput {
                 detail: Some("Which color?".into()),
+                caller: Caller::Agent,
             },
         ]),
         None
@@ -200,7 +201,10 @@ fn the_idle_prompt_writes_nothing_for_a_run_at_rest_or_waiting() {
             prompt("first"),
             stop(),
             bash("rm notes.txt"),
-            AgentEvent::ApprovalRequested { detail: None },
+            AgentEvent::ApprovalRequested {
+                detail: None,
+                caller: Caller::Agent
+            },
         ]),
         None
     );
@@ -266,6 +270,7 @@ fn a_permission_prompt_after_a_late_tool_names_the_tool_not_the_old_error() {
         &tool,
         &AgentEvent::ApprovalRequested {
             detail: Some("Claude needs your permission".into()),
+            caller: Caller::Agent,
         },
         &claude(),
     );
@@ -370,6 +375,7 @@ fn the_idle_prompt_ends_a_declined_question_or_permission_as_an_interrupt() {
     // transcript the idle prompt reads is what says the call was declined.
     let question = AgentEvent::WaitingForInput {
         detail: Some("Which color?".into()),
+        caller: Caller::Agent,
     };
     let cases = [
         vec![started(None), prompt("first"), question.clone()],
@@ -380,13 +386,17 @@ fn the_idle_prompt_ends_a_declined_question_or_permission_as_an_interrupt() {
             question,
             AgentEvent::ApprovalRequested {
                 detail: Some("Claude needs your permission".into()),
+                caller: Caller::Agent,
             },
         ],
         vec![
             started(None),
             prompt("first"),
             bash("rm notes.txt"),
-            AgentEvent::ApprovalRequested { detail: None },
+            AgentEvent::ApprovalRequested {
+                detail: None,
+                caller: Caller::Unnamed,
+            },
         ],
     ];
     for events in cases {
@@ -412,6 +422,7 @@ fn the_idle_prompt_leaves_a_wait_the_transcript_shows_open() {
             prompt("first"),
             AgentEvent::WaitingForInput {
                 detail: Some("Which color?".into()),
+                caller: Caller::Agent,
             },
         ],
     );
@@ -422,7 +433,34 @@ fn the_idle_prompt_leaves_a_wait_the_transcript_shows_open() {
     // A declined call in a turn too young to have sat idle is the idle
     // prompt of the stretch before, delivered late.
     assert_eq!(idle_seeing(&waiting, true, LATER), None);
-    // A late tool's permission outside a turn has no turn for it to end.
+    // Outside a turn, a subagent's wait is not in the agent's transcript, so
+    // the transcript says nothing of it; nor of a wait whose caller the
+    // record does not know.
+    for caller in [subagent(), Caller::Unnamed] {
+        let (late, _, _) = run(
+            &claude(),
+            &[
+                started(None),
+                prompt("first"),
+                stop(),
+                AgentEvent::ApprovalRequested {
+                    detail: None,
+                    caller,
+                },
+            ],
+        );
+        assert_eq!(late.state, RunState::NeedsInput);
+        assert_eq!(idle_seeing(&late, true, A_MINUTE_LATER), None);
+    }
+}
+
+/// The agent's own late tool asks permission outside a turn, and the person
+/// declines it: the transcript shows the call ended, so the idle prompt ends
+/// the stretch and the run returns to its finish, in the wait's episode, as
+/// the stretch's tool would have. Before, the wait stayed until the next
+/// prompt.
+#[test]
+fn the_idle_prompt_ends_the_agents_own_wait_declined_outside_a_turn() {
     let (late, _, _) = run(
         &claude(),
         &[
@@ -430,10 +468,22 @@ fn the_idle_prompt_leaves_a_wait_the_transcript_shows_open() {
             prompt("first"),
             stop(),
             bash("rm notes.txt"),
-            AgentEvent::ApprovalRequested { detail: None },
+            AgentEvent::ApprovalRequested {
+                detail: None,
+                caller: Caller::Unnamed,
+            },
         ],
     );
-    assert_eq!(idle_seeing(&late, true, A_MINUTE_LATER), None);
+    assert_eq!(late.caller, Some(Caller::Agent), "the tool's call asks");
+    // Still open, the wait stays.
+    assert_eq!(idle_seeing(&late, false, A_MINUTE_LATER), None);
+    let ended = idle_seeing(&late, true, A_MINUTE_LATER).expect("record");
+    assert_eq!(ended.state, RunState::Finished);
+    assert_eq!(ended.run_started_at, None);
+    assert_eq!(ended.wait_kind, None);
+    assert_eq!(ended.caller, None);
+    assert_eq!(ended.outside_turn_rest, None);
+    assert_eq!(ended.state_episode_token, late.state_episode_token);
 }
 
 fn idle_at(prev: &RunRecord, now: &str) -> Option<RunRecord> {
@@ -458,7 +508,10 @@ fn the_rest_work_outside_a_turn_left_is_kept_only_while_it_lasts() {
     assert_eq!(tool.outside_turn_rest, Some(RunState::Finished));
     let waiting = step(
         &tool,
-        &AgentEvent::ApprovalRequested { detail: None },
+        &AgentEvent::ApprovalRequested {
+            detail: None,
+            caller: Caller::Unnamed,
+        },
         &claude(),
     );
     assert_eq!(waiting.outside_turn_rest, Some(RunState::Finished));

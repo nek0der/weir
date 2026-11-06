@@ -9,8 +9,8 @@ use crate::{transcript, usage};
 use serde_json::{Map, Value, json};
 use std::time::SystemTime;
 use weir_agent_model::{
-    AgentEvent, MAX_HOOK_INPUT_BYTES, NormalizeError, RawHookInput, RunRecord, SessionSettings,
-    SessionSource, WorktreeIntent, parse_object,
+    AgentEvent, Caller, MAX_HOOK_INPUT_BYTES, NormalizeError, RawHookInput, RunRecord,
+    SessionSettings, SessionSource, WorktreeIntent, parse_object,
 };
 
 /// The tool `agy` asks the person a question with.
@@ -145,18 +145,19 @@ pub(crate) fn normalize(input: RawHookInput<'_>) -> Result<Vec<AgentEvent>, Norm
         }
         Some("PreToolUse") if tool() == QUESTION_TOOL => vec![AgentEvent::WaitingForInput {
             detail: question(&object),
+            caller: Caller::Agent,
         }],
         Some("PreToolUse") => vec![AgentEvent::ToolStarted {
             tool: tool().to_owned(),
             detail: Some(tool_detail(&object, tool())),
-            by_subagent: false,
+            caller: Caller::Agent,
         }],
         // A daemon's call ends after the `Stop` of the turn that started it
         // (agy 1.4.12); the turn its end begins reports by itself.
         Some("PostInvocation" | "PostToolUse") if is_invisible(&object) => Vec::new(),
         Some("PostToolUse") => vec![AgentEvent::ToolFinished {
             tool: Some(tool().to_owned()),
-            by_subagent: false,
+            caller: Caller::Agent,
         }],
         Some("Stop") => stop_events(&object, input),
         Some(name) => vec![AgentEvent::Extension {

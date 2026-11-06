@@ -80,10 +80,11 @@ fn a_wait_records_its_kind_and_the_tool_it_waits_to_use() {
     let tool = AgentEvent::ToolStarted {
         tool: "Write".into(),
         detail: Some("Write: /repo/notes.txt".into()),
-        by_subagent: false,
+        caller: Caller::Agent,
     };
     let approval = AgentEvent::ApprovalRequested {
         detail: Some("Claude needs your permission to use Write".into()),
+        caller: Caller::Agent,
     };
     let (record, _, _) = run(
         &claude(),
@@ -103,7 +104,7 @@ fn a_wait_records_its_kind_and_the_tool_it_waits_to_use() {
             approval.clone(),
             AgentEvent::ToolFinished {
                 tool: Some("Write".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             },
         ],
     );
@@ -128,6 +129,7 @@ fn a_wait_records_its_kind_and_the_tool_it_waits_to_use() {
             prompt("go"),
             AgentEvent::WaitingForInput {
                 detail: Some("Read: which file first?".into()),
+                caller: Caller::Agent,
             },
         ],
     );
@@ -141,9 +143,11 @@ fn a_wait_records_its_kind_and_the_tool_it_waits_to_use() {
 fn a_permission_prompt_after_a_question_leaves_the_question_waiting() {
     let question = AgentEvent::WaitingForInput {
         detail: Some("Which color?".into()),
+        caller: Caller::Agent,
     };
     let prompt_shown = AgentEvent::ApprovalRequested {
         detail: Some("Claude needs your permission to use AskUserQuestion".into()),
+        caller: Caller::Agent,
     };
     let (record, _, _) = run(
         &claude(),
@@ -187,6 +191,7 @@ fn a_turn_keeps_the_transcript_its_prompt_named_until_it_ends() {
         Some(&asked),
         &AgentEvent::WaitingForInput {
             detail: Some("Which color?".into()),
+            caller: Caller::Agent,
         },
         &named,
         &claude(),
@@ -200,7 +205,10 @@ fn a_turn_keeps_the_transcript_its_prompt_named_until_it_ends() {
     // the wait keeps the question's.
     let prompt_shown = apply(
         Some(&waiting),
-        &AgentEvent::ApprovalRequested { detail: None },
+        &AgentEvent::ApprovalRequested {
+            detail: None,
+            caller: Caller::Agent,
+        },
         &context(),
         &claude(),
         NOW,
@@ -218,7 +226,7 @@ fn a_turn_keeps_the_transcript_its_prompt_named_until_it_ends() {
         Some(&prompt_shown),
         &AgentEvent::ToolFinished {
             tool: Some("AskUserQuestion".into()),
-            by_subagent: false,
+            caller: Caller::Agent,
         },
         &context(),
         &claude(),
@@ -256,7 +264,10 @@ fn a_turn_keeps_the_transcript_its_prompt_named_until_it_ends() {
     };
     let record = apply(
         Some(&asked),
-        &AgentEvent::WaitingForInput { detail: None },
+        &AgentEvent::WaitingForInput {
+            detail: None,
+            caller: Caller::Agent,
+        },
         &long,
         &claude(),
         NOW,
@@ -281,6 +292,7 @@ fn a_permission_prompt_takes_only_a_tool_events_words() {
             },
             AgentEvent::ApprovalRequested {
                 detail: Some("Claude needs your permission to use Bash".into()),
+                caller: Caller::Agent,
             },
         ],
     );
@@ -302,10 +314,11 @@ fn a_turn_carries_prompts_and_ends_without_erasing_them() {
             AgentEvent::ToolStarted {
                 tool: "Bash".into(),
                 detail: Some("Bash: ls".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             },
             AgentEvent::ApprovalRequested {
                 detail: Some("Claude needs your permission".into()),
+                caller: Caller::Agent,
             },
         ],
     );
@@ -406,7 +419,10 @@ fn a_finished_turn_records_its_cache_window_and_quiet_events_keep_it() {
             finished_with(NOW),
             // A waiting-for-input event neither starts nor ends work, so
             // the window still describes the cache.
-            AgentEvent::WaitingForInput { detail: None },
+            AgentEvent::WaitingForInput {
+                detail: None,
+                caller: Caller::Agent,
+            },
         ],
     );
     assert_eq!(record.cache_window, Some(window(NOW)));
@@ -681,9 +697,11 @@ fn episode_token_survives_repeated_states_and_changes_with_the_state() {
             prompt("first"),
             AgentEvent::WaitingForInput {
                 detail: Some("Which color?".into()),
+                caller: Caller::Agent,
             },
             AgentEvent::WaitingForInput {
                 detail: Some("Which color?".into()),
+                caller: Caller::Agent,
             },
         ],
     );
@@ -909,6 +927,7 @@ fn version_two_text_is_cleaned_and_bounded_when_the_writer_changes() {
         Some(&previous),
         &AgentEvent::ApprovalRequested {
             detail: Some("generic approval".into()),
+            caller: Caller::Agent,
         },
         &context(),
         &claude(),
@@ -973,6 +992,7 @@ fn a_stopped_turn_ends_in_the_episode_the_person_stopped_and_keeps_the_rest() {
         Some(&asked),
         &AgentEvent::WaitingForInput {
             detail: Some("Which color?".into()),
+            caller: Caller::Agent,
         },
         &named,
         &claude(),
@@ -980,10 +1000,14 @@ fn a_stopped_turn_ends_in_the_episode_the_person_stopped_and_keeps_the_rest() {
     )
     .run
     .expect("record");
+    assert_eq!(waiting.wait_started_at.as_deref(), Some(NOW));
+    assert_eq!(waiting.caller, Some(Caller::Agent));
     let ended = end_stopped_turn(&waiting, LATER).expect("a wait inside a turn ends");
     assert_eq!(ended.state, RunState::Finished);
     assert_eq!(ended.run_started_at, None);
     assert_eq!(ended.wait_kind, None);
+    assert_eq!(ended.wait_started_at, None, "the wait's time goes with it");
+    assert_eq!(ended.caller, None);
     assert_eq!(ended.detail, None);
     assert_eq!(ended.transcript_path, None);
     assert_eq!(ended.cache_window, None);

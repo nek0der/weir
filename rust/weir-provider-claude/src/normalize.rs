@@ -14,7 +14,7 @@
 
 use serde_json::{Map, Value};
 use weir_agent_model::{
-    AgentEvent, BackgroundWork, CommandRun, DeniedAction, EventId, HookContext,
+    AgentEvent, BackgroundWork, Caller, CommandRun, DeniedAction, EventId, HookContext,
     MAX_HOOK_INPUT_BYTES, NormalizeError, ProviderId, RawHookInput, SessionSource, Titles,
     UsageLimit, parse_object, transcript_path_for_events,
 };
@@ -49,12 +49,15 @@ pub(crate) fn normalize(input: RawHookInput<'_>) -> Result<Vec<AgentEvent>, Norm
         {
             AgentEvent::ToolFinished {
                 tool: Some(crate::approval::QUESTION_TOOL.to_owned()),
-                by_subagent: is_by_subagent(&object),
+                caller: caller(&object),
             }
         }
         "Notification" => match string(&object, "notification_type") {
+            // The prompt names no one, a subagent's included: the tool event
+            // before it says whose call asks (`lifecycle`).
             Some("permission_prompt") => AgentEvent::ApprovalRequested {
                 detail: string(&object, "message").map(str::to_owned),
+                caller: Caller::Unnamed,
             },
             Some("idle_prompt") => AgentEvent::AwaitingPrompt {
                 awaited_call_ended: input
@@ -68,17 +71,20 @@ pub(crate) fn normalize(input: RawHookInput<'_>) -> Result<Vec<AgentEvent>, Norm
         // waits for the hook to return, so the hook answers nothing and
         // only the wait is recorded. A subagent's request carries no
         // `agent_id`, and a background subagent's comes after the turn's
-        // `Stop`; it is a wait all the same, as the subagent's question is.
+        // `Stop`; it is a wait all the same, as the subagent's question is,
+        // and the MCP tool's call before it says whose (`lifecycle`).
         "Elicitation" => AgentEvent::WaitingForInput {
             detail: string(&object, "message")
                 .filter(|message| !message.trim().is_empty())
                 .map(str::to_owned),
+            caller: Caller::Unnamed,
         },
         // The person answered, declined, or dismissed the request with Esc;
-        // each ends the wait, and the tool call that asked goes on.
+        // each ends the wait, and the tool call that asked goes on. It names
+        // no one either, and ends the request it answers whoever made it.
         "ElicitationResult" => AgentEvent::ToolFinished {
             tool: None,
-            by_subagent: false,
+            caller: Caller::Unnamed,
         },
         "PreCompact" => AgentEvent::Compacting,
         "Stop" => AgentEvent::TurnFinished {
@@ -217,14 +223,16 @@ fn pre_tool_use(object: &Map<String, Value>) -> AgentEvent {
                     .and_then(Value::as_str)
             })
             .filter(|question| !question.trim().is_empty());
+        // A subagent's question names it as its other tool calls do.
         return AgentEvent::WaitingForInput {
             detail: question.map(str::to_owned),
+            caller: caller(object),
         };
     }
     AgentEvent::ToolStarted {
         tool: tool.to_owned(),
         detail: Some(tool_detail(tool, tool_input)),
-        by_subagent: is_by_subagent(object),
+        caller: caller(object),
     }
 }
 
@@ -264,11 +272,11 @@ pub(crate) fn denied_action(input: RawHookInput<'_>) -> Option<DeniedAction> {
     })
 }
 
-/// Whether a tool hook is a subagent's. Recorded in 2.1.312: a subagent's
-/// tool call carries `agent_id` and `agent_type`; the agent's own, a stop
-/// hook's continuation included, carries neither.
-fn is_by_subagent(object: &Map<String, Value>) -> bool {
-    string(object, "agent_id").is_some_and(|id| !id.is_empty())
+/// Whose a tool hook is. Recorded in 2.1.312: a subagent's tool call
+/// carries `agent_id` and `agent_type`; the agent's own, a stop hook's
+/// continuation included, carries neither.
+fn caller(object: &Map<String, Value>) -> Caller {
+    Caller::from_agent_id(string(object, "agent_id"))
 }
 
 /// The titles a transcript holds: the latest `custom-title` line, which
@@ -705,14 +713,18 @@ mod tests {
         assert_eq!(
             events(payload, None),
             vec![AgentEvent::WaitingForInput {
-                detail: Some("Which color?".into())
+                detail: Some("Which color?".into()),
+                caller: Caller::Agent,
             }]
         );
         let payload =
             r#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{}}"#;
         assert_eq!(
             events(payload, None),
-            vec![AgentEvent::WaitingForInput { detail: None }]
+            vec![AgentEvent::WaitingForInput {
+                detail: None,
+                caller: Caller::Agent
+            }]
         );
     }
 
@@ -722,13 +734,17 @@ mod tests {
         assert_eq!(
             events(payload, None),
             vec![AgentEvent::WaitingForInput {
-                detail: Some("Pick a color".into())
+                detail: Some("Pick a color".into()),
+                caller: Caller::Unnamed,
             }]
         );
         let payload = r#"{"hook_event_name":"Elicitation","mcp_server_name":"probe","message":" ","mode":"url","url":"https://example.com"}"#;
         assert_eq!(
             events(payload, None),
-            vec![AgentEvent::WaitingForInput { detail: None }]
+            vec![AgentEvent::WaitingForInput {
+                detail: None,
+                caller: Caller::Unnamed
+            }]
         );
         for action in ["accept", "decline", "cancel"] {
             let payload = format!(
@@ -738,7 +754,7 @@ mod tests {
                 events(&payload, None),
                 vec![AgentEvent::ToolFinished {
                     tool: None,
-                    by_subagent: false,
+                    caller: Caller::Unnamed,
                 }]
             );
         }
@@ -753,7 +769,7 @@ mod tests {
                 events(&payload, None),
                 vec![AgentEvent::ToolFinished {
                     tool: Some("AskUserQuestion".into()),
-                    by_subagent: false,
+                    caller: Caller::Agent,
                 }]
             );
             let payload = format!(
@@ -763,7 +779,7 @@ mod tests {
                 events(&payload, None),
                 vec![AgentEvent::ToolFinished {
                     tool: Some("AskUserQuestion".into()),
-                    by_subagent: true,
+                    caller: Caller::Subagent("a1".into()),
                 }]
             );
             let payload = format!(r#"{{"hook_event_name":"{name}","tool_name":"Bash"}}"#);
@@ -816,7 +832,7 @@ mod tests {
             vec![AgentEvent::ToolStarted {
                 tool: "Edit".into(),
                 detail: Some("Edit: /a.txt".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             }]
         );
         let payload = r#"{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{}}"#;
@@ -825,7 +841,7 @@ mod tests {
             vec![AgentEvent::ToolStarted {
                 tool: "Read".into(),
                 detail: Some("Read".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             }]
         );
         // A `command` that is there but empty says what the tool runs is
@@ -839,7 +855,7 @@ mod tests {
             vec![AgentEvent::ToolStarted {
                 tool: "Edit".into(),
                 detail: Some("Edit".into()),
-                by_subagent: false,
+                caller: Caller::Agent,
             }]
         );
     }

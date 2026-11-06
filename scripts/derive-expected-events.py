@@ -246,6 +246,15 @@ def optional(event, key, value):
         event[key] = value
 
 
+def with_caller(event, obj):
+    """Names the subagent whose call `obj` is, as the adapters do from its
+    `agent_id`; the agent's own call is left unnamed in the event."""
+    agent_id = string(obj, "agent_id")
+    if agent_id:
+        event["caller"] = {"subagent": agent_id}
+    return event
+
+
 def session_source(obj):
     """The `source` word both providers spell the same way; None for one the adapters do not know."""
     source = string(obj, "source")
@@ -286,23 +295,19 @@ def claude_event(obj, transcript_path):
                 question = string(questions[0], "question")
             if question is None:
                 question = string(tool_input, "question")
-            return {"type": "waiting_for_input", "detail": question or "AskUserQuestion"}
+            return with_caller({"type": "waiting_for_input", "detail": question or "AskUserQuestion"}, obj)
         argument = tool_argument(tool_input, text)
         detail = f"{tool}: {argument}" if argument else tool
-        event = {"type": "tool_started", "tool": tool, "detail": detail}
         # A subagent's tool call names the subagent; the agent's own does not.
-        if string(obj, "agent_id"):
-            event["by_subagent"] = True
-        return event
+        return with_caller({"type": "tool_started", "tool": tool, "detail": detail}, obj)
     if name in ("PostToolUse", "PostToolUseFailure") and string(obj, "tool_name") == "AskUserQuestion":
-        event = {"type": "tool_finished", "tool": "AskUserQuestion"}
-        if string(obj, "agent_id"):
-            event["by_subagent"] = True
-        return event
+        return with_caller({"type": "tool_finished", "tool": "AskUserQuestion"}, obj)
     if name == "Notification":
         if string(obj, "notification_type") == "permission_prompt":
+            # The prompt names no one; the tool event before it says whose.
             event = {"type": "approval_requested"}
             optional(event, "detail", string(obj, "message"))
+            event["caller"] = "unnamed"
             return event
         if string(obj, "notification_type") == "idle_prompt":
             event = {"type": "awaiting_prompt"}
@@ -311,12 +316,14 @@ def claude_event(obj, transcript_path):
             return event
         return {"type": "extension", "name": name, "payload": obj}
     if name == "Elicitation":
+        # Neither the request nor its result names whose it is.
         event = {"type": "waiting_for_input"}
         message = string(obj, "message")
         optional(event, "detail", message if message and message.strip() else None)
+        event["caller"] = "unnamed"
         return event
     if name == "ElicitationResult":
-        return {"type": "tool_finished"}
+        return {"type": "tool_finished", "caller": "unnamed"}
     if name == "PreCompact":
         return {"type": "compacting"}
     if name == "Stop":
@@ -402,22 +409,18 @@ def codex_event(obj, _transcript_path):
                 question = string(questions[0], "question")
             event = {"type": "waiting_for_input"}
             optional(event, "detail", question if question and question.strip() else None)
-            return event
+            return with_caller(event, obj)
         argument = tool_argument(tool_input, codex_argument)
         detail = f"{tool}: {argument}" if argument else tool
-        event = {"type": "tool_started", "tool": tool, "detail": detail}
         # A subagent's tool call names the subagent, as Claude's does.
-        if string(obj, "agent_id"):
-            event["by_subagent"] = True
-        return event
+        return with_caller({"type": "tool_started", "tool": tool, "detail": detail}, obj)
     if name == "PostToolUse":
         event = {"type": "tool_finished"}
         optional(event, "tool", string(obj, "tool_name"))
-        if string(obj, "agent_id"):
-            event["by_subagent"] = True
-        return event
+        return with_caller(event, obj)
     if name == "PermissionRequest":
-        return {"type": "approval_requested"}
+        # A subagent's request names it, as its tool calls do.
+        return with_caller({"type": "approval_requested"}, obj)
     if name == "PreCompact":
         return {"type": "compacting"}
     if name == "PostCompact":

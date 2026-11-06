@@ -285,6 +285,16 @@ Cases that could not be recorded as planned:
   parent's `Stop`, and its own end reached no hook. The ids were replaced by
   hand as in `codex/2026-10/subagent`, the project folder became
   `/tmp/example`, and the `ls` output became `README.md`.
+- `codex/2026-11/subagent-wait-before-stop` records Codex CLI 0.166.0 run
+  with `-a on-request -s read-only` and asked to start one subagent that ran
+  `touch made-by-subagent`, to run `sleep 12` itself, and to end its turn
+  without waiting. The subagent's `PermissionRequest` came during the
+  parent's `sleep`, and the parent's `PostToolUse` and `Stop` followed while
+  the request was still on screen. The person then declined it with Esc,
+  which stopped the subagent's turn (`turn_aborted` in its rollout) and ran
+  no hook, so the case ends at the `Stop`. The ids were replaced by hand as
+  in `codex/2026-10/subagent`, and the request's `description`, which Codex
+  wrote in the session's language, became a placeholder.
 - `claude/2026-10/background-task` was recorded with Claude Code 2.1.312 in
   print mode (`claude -p`), with a user `--settings` value whose hooks saved
   each payload and the transcript beside it, rather than under the Debug

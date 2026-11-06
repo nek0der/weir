@@ -8,6 +8,7 @@ mod run_records;
 mod sibling_runs;
 mod sight;
 mod stopped_turns;
+mod subagent_waits;
 mod turn_records;
 
 const PANE: &str = "11111111-1111-4111-8111-111111111111";

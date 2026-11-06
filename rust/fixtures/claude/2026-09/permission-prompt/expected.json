@@ -92,6 +92,7 @@
   ],
   [
     {
+      "caller": "unnamed",
       "detail": "Claude needs your permission",
       "type": "approval_requested"
     }

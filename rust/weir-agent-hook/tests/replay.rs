@@ -1782,6 +1782,51 @@ fn a_codex_subagents_tool_after_the_parents_stop_begins_no_turn() {
     );
 }
 
+/// A subagent's permission request before the parent's `Stop`, as Codex
+/// 0.166.0 sent it (`fixtures/codex/2026-11/subagent-wait-before-stop`): the
+/// parent's own tool and its `Stop` leave the wait open, the turn ends
+/// finished all the same, and the subagent's next tool returns the run to
+/// that finish without beginning a turn.
+#[test]
+fn a_codex_subagents_wait_outlives_the_parents_stop_and_its_turn_ends() {
+    let scratch = Scratch::new("codex-subagent-wait-before-stop");
+    let codex = |payload: &str| {
+        scratch.call_as("codex", RUN, Some(&new_call()), payload.as_bytes());
+    };
+    let subagent = r#""agent_id":"019a0000-0000-7000-8000-000000000001","agent_type":"default""#;
+    codex(r#"{"hook_event_name":"SessionStart","session_id":"p","source":"startup"}"#);
+    codex(
+        r#"{"hook_event_name":"UserPromptSubmit","session_id":"p","turn_id":"t1","prompt":"fix it"}"#,
+    );
+    codex(&format!(
+        r#"{{"hook_event_name":"PermissionRequest","session_id":"p","turn_id":"t2",{subagent},"tool_name":"Bash","tool_input":{{"command":"touch x"}}}}"#
+    ));
+    let state = || scratch.record().map(|record| record.state);
+    assert_eq!(
+        state(),
+        Some(RunState::NeedsInput),
+        "the subagent's request"
+    );
+    codex(
+        r#"{"hook_event_name":"PostToolUse","session_id":"p","turn_id":"t1","tool_name":"Bash","tool_input":{"command":"sleep 12"},"tool_response":""}"#,
+    );
+    assert_eq!(state(), Some(RunState::NeedsInput), "the parent's own tool");
+    codex(r#"{"hook_event_name":"Stop","session_id":"p","turn_id":"t1"}"#);
+    assert_eq!(state(), Some(RunState::NeedsInput), "the parent's stop");
+    let turns = scratch.turns();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].phase, TurnPhase::Finished, "the turn ended");
+    codex(&format!(
+        r#"{{"hook_event_name":"PreToolUse","session_id":"p","turn_id":"t2",{subagent},"tool_name":"Bash","tool_input":{{"command":"ls"}}}}"#
+    ));
+    assert_eq!(
+        state(),
+        Some(RunState::Finished),
+        "the subagent's next tool"
+    );
+    assert_eq!(scratch.turns().len(), 1, "no turn begins");
+}
+
 /// A goal turn that ran no hooked tool is first seen at its `Stop`. It
 /// changed whatever it changed before that hook, so its begin is missing,
 /// not taken then and shown changing nothing; it still shows the goal.

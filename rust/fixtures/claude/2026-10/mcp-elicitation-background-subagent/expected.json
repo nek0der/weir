@@ -15,7 +15,9 @@
   ],
   [
     {
-      "by_subagent": true,
+      "caller": {
+        "subagent": "a0000000000000001"
+      },
       "detail": "ToolSearch",
       "tool": "ToolSearch",
       "type": "tool_started"
@@ -32,7 +34,9 @@
   ],
   [
     {
-      "by_subagent": true,
+      "caller": {
+        "subagent": "a0000000000000001"
+      },
       "detail": "mcp__probe__ask",
       "tool": "mcp__probe__ask",
       "type": "tool_started"
@@ -40,12 +44,14 @@
   ],
   [
     {
+      "caller": "unnamed",
       "detail": "Pick a color for the probe",
       "type": "waiting_for_input"
     }
   ],
   [
     {
+      "caller": "unnamed",
       "type": "tool_finished"
     }
   ],
@@ -67,7 +73,9 @@
   ],
   [
     {
-      "by_subagent": true,
+      "caller": {
+        "subagent": "a0000000000000001"
+      },
       "detail": "SubagentHandback",
       "tool": "SubagentHandback",
       "type": "tool_started"

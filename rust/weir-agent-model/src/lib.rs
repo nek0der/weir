@@ -47,7 +47,7 @@ pub use command::{
     NotifyCommand, OnMismatch, PaneStoreKind, Patch, Precondition, RETIRED_RECORD_LIFETIME_SECS,
     RecordPatch, ResumeIntent, Target,
 };
-pub use event::{AgentEvent, EventId, FailureKind, SessionSource, Titles};
+pub use event::{AgentEvent, Caller, EventId, FailureKind, SessionSource, Titles};
 pub use layout::{
     CWD_EVENT_FILE_SUFFIX, LOCK_FILE_SUFFIX, SESSION_HINT_FILE_SUFFIX, TURNS_DIRECTORY,
     WORKTREE_EVENT_FILE_SUFFIX, WORKTREE_EVENTS_DIRECTORY, cwd_event_file_name,

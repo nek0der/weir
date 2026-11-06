@@ -22,6 +22,7 @@
   ],
   [
     {
+      "caller": "unnamed",
       "detail": "Pick a color for the probe",
       "type": "waiting_for_input"
     }

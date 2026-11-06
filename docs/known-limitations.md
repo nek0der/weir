@@ -255,10 +255,22 @@ as they are fixed or confirmed.
 - **A Codex subagent still at work after its turn is not shown.** Codex's
   `Stop` does not wait for it or count it, and no hook reports its end, so
   the pane shows the turn finished while the subagent works on.
-- **A Codex subagent's permission request made before its turn's `Stop`
-  shows as finished.** The `Stop` ends the wait, so the pane shows the turn
-  finished while Codex still waits on the person. The run record holds one
-  wait and does not record whose it is.
+- **A subagent's wait that the person declines shows until the next prompt
+  inside tmux.** Codex runs no hook when its subagent's request is declined,
+  and a Claude subagent declined at its prompt may run no tool again. Outside
+  tmux the agent's status report shows the wait gone, unless it was declined
+  within the second the request opened; inside tmux, or with
+  `CLAUDE_CODE_DISABLE_TERMINAL_TITLE` set, nothing does.
+- **A Claude subagent's permission prompt or MCP server request ends with any
+  tool.** Neither names who asks, so the wait is taken for the call of the tool
+  event just before it, which another subagent or the agent itself may have
+  started. A wait taken so ends with anyone's next tool, which can show the run
+  working while the subagent still waits. A Claude subagent's prompt after the
+  parent's `Stop` has no tool event before it (its tools write nothing then),
+  so its wait also ends with the next `Stop`, as before.
+- **Two waits at once show as one.** The record holds the latest request.
+  Answering it ends the wait while an earlier one still waits, and Claude
+  Code's permission prompt during a question is taken for the question.
 
 ## Pane headers
 
