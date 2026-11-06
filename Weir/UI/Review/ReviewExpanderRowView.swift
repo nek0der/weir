@@ -32,7 +32,7 @@ final class ReviewExpanderRowView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         count.translatesAutoresizingMaskIntoConstraints = false
-        count.font = .monospacedSystemFont(ofSize: WeirFont.Supervision.Size.micro.rawValue, weight: .regular)
+        count.font = MonospacedSystemFont.font(ofSize: WeirFont.Supervision.Size.micro.rawValue, weight: .regular)
         count.textColor = SupervisionTokens.muted.nsColor
         count.lineBreakMode = .byTruncatingTail
         addSubview(count)

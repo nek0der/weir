@@ -75,7 +75,7 @@ struct PlainTextEditor: NSViewRepresentable {
     private func configure(_ textView: NSTextView, with coordinator: Coordinator) {
         textView.delegate = coordinator
         textView.string = text
-        textView.font = .monospacedSystemFont(
+        textView.font = MonospacedSystemFont.font(
             ofSize: NSFont.systemFontSize,
             weight: .regular
         )
