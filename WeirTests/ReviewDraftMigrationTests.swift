@@ -31,8 +31,10 @@ struct ReviewDraftMigrationTests {
             let json = """
             {"version":1,
              "comments":[\(Self.comment("8B2D3B22-3E0B-4D2E-9E33-3F0C4E1F9A21", layer: "unstaged")),
-                         \(Self.comment("8B2D3B22-3E0B-4D2E-9E33-3F0C4E1F9A22", layer: "untracked"))],
-             "viewed":{"unstaged:a.swift":{"added":1,"removed":0},"turn:a.swift":{"added":2,"removed":0}},
+                         \(Self.comment("8B2D3B22-3E0B-4D2E-9E33-3F0C4E1F9A22", layer: "untracked")),
+                         \(Self.comment("8B2D3B22-3E0B-4D2E-9E33-3F0C4E1F9A23", layer: "staged"))],
+             "viewed":{"unstaged:a.swift":{"added":1,"removed":0},"turn:a.swift":{"added":2,"removed":0},
+                       "branch:a.swift":{"added":3,"removed":0}},
              "lastFileID":"staged:b.swift"}
             """
             _ = try Self.write(json, in: directory)
@@ -40,43 +42,40 @@ struct ReviewDraftMigrationTests {
             let draft = try #require(try FileReviewDraftStore(directory: directory).load(root: Self.root))
 
             #expect(draft.version == 2)
-            #expect(draft.comments.map(\.scopeIDs) == [["uncommitted"], ["uncommitted"]])
+            #expect(draft.comments.map(\.id.uuidString) == [
+                "8B2D3B22-3E0B-4D2E-9E33-3F0C4E1F9A21",
+                "8B2D3B22-3E0B-4D2E-9E33-3F0C4E1F9A22",
+                "8B2D3B22-3E0B-4D2E-9E33-3F0C4E1F9A23"
+            ])
+            #expect(draft.comments.map(\.file.layer) == [.unstaged, .untracked, .staged])
+            #expect(draft.comments.allSatisfy { $0.scopeIDs == ["uncommitted"] })
             #expect(draft.legacy == nil)
             #expect(draft.viewed == ["uncommitted": ["unstaged:a.swift": ReviewViewMark(added: 1, removed: 0)]])
             #expect(draft.lastFileID == ["uncommitted": "staged:b.swift"])
         }
     }
 
-    @Test func aTurnsComment_isAlwaysLegacy() throws {
-        // Version 1 recorded neither the snapshot nor the conversation, so no
-        // record can prove which turn it was about.
+    /// Version 1 kept neither the turn snapshot nor the branch base needed to prove what was reviewed.
+    @Test(arguments: ["turn", "branch"])
+    func aVersion1ComparisonWithoutItsBase_becomesLegacy(_ layer: String) throws {
         try withTempDir { directory in
+            let id = "8B2D3B22-3E0B-4D2E-9E33-3F0C4E1F9A21"
             let json = """
-            {"version":1,"comments":[\(Self.comment("8B2D3B22-3E0B-4D2E-9E33-3F0C4E1F9A21", layer: "turn"))],
-             "lastFileID":"turn:a.swift"}
+            {"version":1,"comments":[\(Self.comment(id, layer: layer))],
+             "viewed":{"\(layer):a.swift":{"added":1,"removed":0}},"lastFileID":"\(layer):a.swift"}
             """
             _ = try Self.write(json, in: directory)
 
             let draft = try #require(try FileReviewDraftStore(directory: directory).load(root: Self.root))
 
             #expect(draft.comments.isEmpty)
-            #expect(draft.legacy?.map(\.body) == ["Why?"])
-            #expect(draft.legacy?.allSatisfy(\.scopeIDs.isEmpty) == true)
+            let legacy = try #require(draft.legacy)
+            #expect(legacy.map(\.id.uuidString) == [id])
+            #expect(legacy.map(\.body) == ["Why?"])
+            #expect(legacy.map(\.file.id) == ["\(layer):a.swift"])
+            #expect(legacy.map(\.scopeIDs) == [[]])
+            #expect(draft.viewed.isEmpty)
             #expect(draft.lastFileID.isEmpty)
-        }
-    }
-
-    @Test func aBranchComment_isLegacy_sinceVersion1KeptNoBase() throws {
-        try withTempDir { directory in
-            let json = """
-            {"version":1,"comments":[\(Self.comment("8B2D3B22-3E0B-4D2E-9E33-3F0C4E1F9A21", layer: "branch"))]}
-            """
-            _ = try Self.write(json, in: directory)
-
-            let draft = try #require(try FileReviewDraftStore(directory: directory).load(root: Self.root))
-
-            #expect(draft.comments.isEmpty)
-            #expect(draft.legacy?.count == 1)
         }
     }
 
@@ -139,22 +138,13 @@ struct ReviewDraftMigrationTests {
             let record = try #require(MigrationBackup.readLedger(for: file))
             #expect(record.fromVersion == 1)
             #expect(record.toVersion == 2)
+            #expect(record.stage == .written)
             let copy = directory.appendingPathComponent(record.backupFileName)
             #expect(try Data(contentsOf: copy) == Data(original.utf8))
             #expect(Self.version(of: file) == 2)
             // The second launch reads version 2 and takes no second copy.
             _ = try store.load(root: Self.root)
             #expect(MigrationBackup.readLedger(for: file) == record)
-        }
-    }
-
-    @Test func theLedger_recordsTheWrite() throws {
-        try withTempDir { directory in
-            let file = try Self.write(#"{"version":1,"comments":[]}"#, in: directory)
-
-            _ = try FileReviewDraftStore(directory: directory).load(root: Self.root)
-
-            #expect(MigrationBackup.readLedger(for: file)?.stage == .written)
         }
     }
 
@@ -182,23 +172,35 @@ struct ReviewDraftMigrationTests {
         try encoder.encode(record).write(to: MigrationBackup.ledgerURL(for: file))
     }
 
-    @Test func aLaunchThatEndedBeforeTheLedger_isFinishedByTheNextRead() throws {
+    @Test(arguments: [true, false])
+    func readingVersion2_finishesTheLedgerOnlyForMatchingBytes(_ matchesMigration: Bool) throws {
         try withTempDir { directory in
             let file = try Self.write(#"{"version":1,"comments":[]}"#, in: directory)
             let store = FileReviewDraftStore(directory: directory)
             _ = try store.load(root: Self.root)
             try Self.rewindLedger(for: file)
+            let interrupted = try #require(MigrationBackup.readLedger(for: file))
+            if !matchesMigration {
+                let unrelated = #"{"version":2,"comments":[],"viewed":{},"lastFileID":{"uncommitted":"unstaged:other.swift"}}"#
+                try Data(unrelated.utf8).write(to: file)
+            }
+            let bytes = try Data(contentsOf: file)
+            #expect((SHA256.hash(data: bytes).hexString == interrupted.migratedSHA256) == matchesMigration)
 
-            _ = try store.load(root: Self.root)
+            let draft = try #require(try store.load(root: Self.root))
 
-            #expect(MigrationBackup.readLedger(for: file)?.stage == .written)
+            #expect(draft.lastFileID == (matchesMigration ? [:] : ["uncommitted": "unstaged:other.swift"]))
+            var expected = interrupted
+            if matchesMigration {
+                expected.stage = .written
+            }
+            #expect(MigrationBackup.readLedger(for: file) == expected)
+            #expect(try Data(contentsOf: file) == bytes)
         }
     }
 
-    /// The migration's own write failed, so the original is still on disk;
-    /// the first save of the migrated draft finishes the ledger with the
-    /// bytes it wrote, which the next read then matches.
-    @Test func aFailedMigrationWrite_isFinishedByTheFirstSave() throws {
+    /// Seed the state left by a failed migration write: the original is still on disk and its backup has a ledger.
+    @Test func aSaveWithTheOriginalStillInPlace_finishesTheMigrationLedger() throws {
         try withTempDir { directory in
             let original = #"{"version":1,"comments":[]}"#
             let file = try Self.write(original, in: directory)
@@ -232,12 +234,20 @@ struct ReviewDraftMigrationTests {
             let store = FileReviewDraftStore(directory: directory)
             _ = try store.load(root: Self.root)
             try Self.rewindLedger(for: file)
-            try Data(#"{"version":3,"comments":[]}"#.utf8).write(to: file)
-            #expect(throws: ReviewError.self) { try store.load(root: Self.root) }
+            let interrupted = try #require(MigrationBackup.readLedger(for: file))
+            let newer = Data(#"{"version":3,"comments":[]}"#.utf8)
+            try newer.write(to: file)
+            #expect(throws: ReviewError.storageFailed) { try store.load(root: Self.root) }
+            #expect(!FileManager.default.fileExists(atPath: file.path))
+            let setAside = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+                .filter { $0.hasPrefix(file.lastPathComponent + ".bak-newer-version-") }
+            try #require(setAside.count == 1)
+            #expect(try Data(contentsOf: directory.appendingPathComponent(setAside[0])) == newer)
 
-            try store.save(ReviewDraft(), root: Self.root)
+            try store.save(ReviewDraft(lastFileID: ["uncommitted": "unstaged:fresh.swift"]), root: Self.root)
 
-            #expect(MigrationBackup.readLedger(for: file)?.stage == .backedUp)
+            #expect(try store.load(root: Self.root)?.lastFileID == ["uncommitted": "unstaged:fresh.swift"])
+            #expect(MigrationBackup.readLedger(for: file) == interrupted)
         }
     }
 
@@ -309,7 +319,7 @@ struct ReviewDraftMigrationTests {
             json: #"{"version":1,"comments":[],"lastFileID":7}"#,
             setAside: ".bak-decode-failed-"
         ),
-        Unreadable(name: "a version no step reaches", json: #"{"version":0,"comments":[]}"#, setAside: ".bak-"),
+        Unreadable(name: "a version no step reaches", json: #"{"version":0,"comments":[]}"#, setAside: ".bak-decode-failed-"),
         Unreadable(
             name: "a newer build's draft",
             json: #"{"version":3,"comments":[],"somethingNew":true}"#,
@@ -325,13 +335,16 @@ struct ReviewDraftMigrationTests {
         try withTempDir { directory in
             let file = try Self.write(draft.json, in: directory)
 
-            #expect(throws: ReviewError.self) { try FileReviewDraftStore(directory: directory).load(root: Self.root) }
+            #expect(throws: ReviewError.storageFailed) { try FileReviewDraftStore(directory: directory).load(root: Self.root) }
 
             #expect(!FileManager.default.fileExists(atPath: file.path))
             #expect(MigrationBackup.readLedger(for: file) == nil)
             let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
             #expect(!names.contains { $0.contains(".pre-v2") })
-            #expect(names.contains { $0.contains(draft.setAside) })
+            let backups = names.filter { $0.hasPrefix(file.lastPathComponent + draft.setAside) }
+            try #require(backups.count == 1)
+            let backupName = backups[0]
+            #expect(try Data(contentsOf: directory.appendingPathComponent(backupName)) == Data(draft.json.utf8))
         }
     }
 
@@ -470,6 +483,8 @@ struct ReviewDraftCapacityTests {
         try withTempDir { directory in
             let storage = FileReviewDraftStore(directory: directory)
             try storage.save(ReviewDraft(lastFileID: ["uncommitted": "saved"]), root: directory)
+            let savedURL = FileReviewDraftStore.url(root: directory, directory: directory)
+            let original = try Data(contentsOf: savedURL)
             let file = ReviewFile(path: "a.swift", layer: .unstaged, status: .modified)
             let comments = (0..<400).map { index in
                 ReviewComment(
@@ -481,8 +496,9 @@ struct ReviewDraftCapacityTests {
             #expect(throws: ReviewError.resolvedBacklogTooLarge) {
                 try storage.save(ReviewDraft(comments: comments), root: directory)
             }
+            #expect(try Data(contentsOf: savedURL) == original)
             let saved = try storage.load(root: directory)
-            #expect(saved?.lastFileID["uncommitted"] == "saved")
+            #expect(saved?.lastFileID == ["uncommitted": "saved"])
         }
     }
 }

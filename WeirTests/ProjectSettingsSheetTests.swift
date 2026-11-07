@@ -28,9 +28,12 @@ struct ProjectSettingsSheetTests {
     @Test func editorEsc_withOnCancel_callsIt_andTakesTheCommand() {
         var cancels = 0
         let coordinator = PlainTextEditor.Coordinator(text: .constant(""), onCancel: { cancels += 1 })
-        let handled = coordinator.textView(NSTextView(), doCommandBy: #selector(NSResponder.cancelOperation(_:)))
+        let editor = NSTextView()
+        editor.string = "make test"
+        let handled = coordinator.textView(editor, doCommandBy: #selector(NSResponder.cancelOperation(_:)))
         #expect(handled)
         #expect(cancels == 1)
+        #expect(editor.string == "make test")
     }
 
     /// The other editors keep the text view's own Esc.

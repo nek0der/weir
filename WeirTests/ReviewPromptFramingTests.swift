@@ -7,7 +7,7 @@ import Testing
 
 struct ReviewPromptFramingTests {
     @Test func reviewPromptQuotesPathsAndCodeAndHonorsInstructions() throws {
-        let file = ReviewFile(path: "a\nfile.swift", layer: .unstaged, status: .modified)
+        let file = ReviewFile(path: "a\"\u{200D}\nfile.swift", layer: .unstaged, status: .modified)
         let comment = ReviewComment(
             file: file,
             fingerprint: "snapshot",
@@ -24,7 +24,7 @@ struct ReviewPromptFramingTests {
         #expect(text.contains("lines=\"12\" side=\"old\""), "The side that carries a position, and only that one")
         // A path may hold anything a filesystem allows, including the quote
         // that would end the attribute and the newline that would end the tag.
-        #expect(text.contains("file=\"a&#10;file.swift\""), "Path escaped into the attribute")
+        #expect(text.contains("file=\"a&quot;\u{200D}&#10;file.swift\""), "Path escaped into the attribute")
         #expect(text.contains(comment.body), "Comment preserved")
         // The excerpt used to be JSON-encoded, which folded it onto one line
         // and doubled every backslash: a key path arrived as something the
@@ -142,11 +142,14 @@ struct ReviewPromptFramingTests {
         // Refused for two different reasons, and told apart: what the reader
         // wrote is theirs to shorten, and a review that has outgrown one send
         // is not the same problem.
+        let maxBytes = ReviewPromptBuilder.maxBytes
+        let atLimit = String(repeating: "é", count: maxBytes / 2) + String(repeating: "x", count: maxBytes % 2)
+        try ReviewPromptBuilder.validate(atLimit)
         let refused: [(String, ReviewError)] = [
             ("text\u{1B}[201~", .invalidText),
             ("text\u{0}", .invalidText),
             ("text\r", .invalidText),
-            (String(repeating: "x", count: ReviewPromptBuilder.maxBytes + 1), .promptTooLong)
+            (atLimit + "x", .promptTooLong)
         ]
         for (invalid, expected) in refused {
             #expect(throws: expected, "Unsafe paste accepted, or refused for the other reason") {

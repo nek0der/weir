@@ -86,7 +86,7 @@ fn recorded(case: &str) -> Vec<(String, Vec<u8>)> {
         .join(case);
     let mut names: Vec<_> = std::fs::read_dir(&case)
         .expect("case")
-        .flatten()
+        .map(|entry| entry.expect("fixture entry"))
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| {
             name.starts_with('0')
@@ -236,6 +236,28 @@ fn a_second_request_renews_the_waits_caller_and_time() {
     assert_eq!(second.state, RunState::NeedsInput);
     assert_eq!(second.caller, Some(other_subagent()));
     assert_eq!(second.wait_started_at.as_deref(), Some(LATER));
+    let old_tool = apply(
+        Some(&second),
+        &tool_end(subagent()),
+        &context(),
+        &codex(),
+        LATER,
+    );
+    assert_eq!(
+        old_tool.run, None,
+        "the older caller cannot end the new wait"
+    );
+    let ended = apply(
+        Some(&second),
+        &tool_end(other_subagent()),
+        &context(),
+        &codex(),
+        LATER,
+    )
+    .run
+    .expect("the latest caller ends its wait");
+    assert_eq!(ended.state, RunState::Running);
+    assert_eq!(ended.wait_kind, None);
 }
 
 /// An inferred wait at the parent's stop is a subagent's, whatever caller
@@ -270,9 +292,14 @@ fn the_agents_own_wait_ends_with_its_stop() {
         &codex(),
         &[started(None), prompt("go"), approval(Caller::Agent), stop()],
     );
-    let stopped = seen.last().expect("record");
+    let waiting = &seen[2];
+    assert_eq!(waiting.state, RunState::NeedsInput);
+    assert_eq!(waiting.caller, Some(Caller::Agent));
+    let stopped = &seen[3];
     assert_eq!(stopped.state, RunState::Finished);
     assert_eq!(stopped.wait_kind, None);
+    assert_eq!(stopped.wait_started_at, None);
+    assert_eq!(stopped.caller, None);
 }
 
 /// One subagent's tool, or the agent's own, leaves another subagent's wait
@@ -350,9 +377,13 @@ fn a_wait_of_no_known_caller_ends_as_before() {
         &codex(),
         NOW,
     );
-    assert_eq!(by_subagent.run.expect("record").state, RunState::Running);
+    let ended = by_subagent.run.expect("record");
+    assert_eq!(ended.state, RunState::Running);
+    assert_eq!(ended.wait_kind, None);
     let stopped = apply(Some(&unknown), &stop(), &context(), &codex(), NOW);
-    assert_eq!(stopped.run.expect("record").state, RunState::Finished);
+    let stopped = stopped.run.expect("record");
+    assert_eq!(stopped.state, RunState::Finished);
+    assert_eq!(stopped.wait_kind, None);
 }
 
 /// A subagent's wait opened at a rest returns to that rest: `idle` after a

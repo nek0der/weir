@@ -1189,6 +1189,13 @@ mod contract_tests {
         let ours: BTreeSet<&str> = REPOSITORY_VARIABLES.into_iter().collect();
         assert_eq!(ours.len(), REPOSITORY_VARIABLES.len(), "no name twice");
         assert_eq!(ours, listed);
+        let git = git_command();
+        let removed: BTreeSet<_> = git
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(name, _)| name.to_str().expect("repository variable"))
+            .collect();
+        assert_eq!(removed, listed);
     }
 
     #[test]
@@ -1217,9 +1224,11 @@ mod contract_tests {
                 .collect()
         };
         assert_eq!(leading(&git_command()), expected);
+        let snapshot = GitSnapshots::command(Path::new("/"), &["status"], None);
+        assert_eq!(leading(&snapshot), expected);
         assert_eq!(
-            leading(&GitSnapshots::command(Path::new("/"), &["status"], None)),
-            expected
+            snapshot.get_args().skip(expected.len()).collect::<Vec<_>>(),
+            ["-C", "/", "status"]
         );
     }
 }

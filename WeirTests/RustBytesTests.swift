@@ -46,11 +46,15 @@ struct RustBytesTests {
     func call_copiesAndFreesWhatTheCallHandedOut() throws {
         let log = FreeLog()
         var handed: FreedPair?
+        var original: Data?
         let output = RustBytes.call(free: log.free) { out, outCount in
-            Self.handOut(out, outCount, into: &handed)
+            let status = Self.handOut(out, outCount, into: &handed)
+            original = out.pointee.map { Data(bytes: $0, count: outCount.pointee) }
+            return status
         }
         #expect(output.status == Int32(WEIR_PROJECTION_OK.rawValue))
         let body = try #require(output.body)
+        #expect(body == original)
         #expect(try AgentProviderDescriptor.registry(from: body)["codex"] != nil)
         #expect(handed?.address != nil)
         #expect(log.freed == [handed])
@@ -111,7 +115,10 @@ struct RustBytesTests {
         var outCount = 0
         #expect(weir_projection_providers_v1(&out, &outCount) == Int32(WEIR_PROJECTION_OK.rawValue))
         let log = FreeLog()
-        let copy = RustBytes.consume(out, count: outCount, free: log.free) { buffer in buffer.map { Data($0) } }
+        let copy = RustBytes.consume(out, count: outCount, free: log.free) { buffer in
+            #expect(log.freed.isEmpty)
+            return buffer.map { Data($0) }
+        }
         #expect(copy?.count == outCount)
         #expect(log.freed == [FreedPair(address: out.map { UInt(bitPattern: $0) }, count: outCount)])
 

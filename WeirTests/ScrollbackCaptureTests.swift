@@ -27,13 +27,22 @@ struct ScrollbackCaptureTests {
         try withFiles { files in
             let kept = files.directory.appendingPathComponent("\(UUID().uuidString).vt")
             try Data("scrollback".utf8).write(to: kept)
-            let session = WorkspaceSession()
+            let stray = files.directory.appendingPathComponent("\(UUID().uuidString).vt")
+            try Data("another session".utf8).write(to: stray)
+            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
             session.scrollbackFiles = files
+            session.update(tab.id) { $0.scrollbackPaths[pane] = kept.path }
             session.writesUserFiles = false
+            let registry = RecordingSurfaceRegistry()
+            registry.scrollback[pane] = "new demo scrollback"
 
-            session.captureScrollbackPaths(from: NoopSurfaceRegistry())
+            session.captureScrollbackPaths(from: registry)
 
-            #expect(FileManager.default.fileExists(atPath: kept.path))
+            #expect(session.tab(tab.id)?.scrollbackPaths == [pane: kept.path])
+            #expect(try Data(contentsOf: kept) == Data("scrollback".utf8))
+            #expect(try Data(contentsOf: stray) == Data("another session".utf8))
+            let entries = try FileManager.default.contentsOfDirectory(atPath: files.directory.path)
+            #expect(Set(entries) == [kept.lastPathComponent, stray.lastPathComponent])
         }
     }
 
@@ -73,7 +82,8 @@ struct ScrollbackCaptureTests {
 
             let saved = files.directory.appendingPathComponent("\(pane.uuidString).vt")
             #expect(session.tab(tab.id)?.scrollbackPaths[pane] == saved.path)
-            #expect(FileManager.default.fileExists(atPath: setAsidePanes.path))
+            #expect(try Data(contentsOf: setAsidePanes) == Data("set aside".utf8))
+            #expect(try Data(contentsOf: saved) == Data("prompt$ ls".utf8))
         }
     }
 
@@ -90,7 +100,7 @@ struct ScrollbackCaptureTests {
             session.captureScrollbackPaths(from: RecordingSurfaceRegistry())
 
             #expect(session.tab(tab.id)?.scrollbackPaths[pane] == earlier.path)
-            #expect(FileManager.default.fileExists(atPath: earlier.path))
+            #expect(try Data(contentsOf: earlier) == Data("earlier".utf8))
         }
     }
 
@@ -116,6 +126,8 @@ struct ScrollbackCaptureTests {
 
             let saved = files.directory.appendingPathComponent("\(pane.uuidString).vt")
             #expect(paths == [pane: saved.path])
+            let captured = try Data(contentsOf: saved)
+            #expect(captured == Data("fresh".utf8))
         }
     }
 
@@ -147,6 +159,8 @@ struct ScrollbackCaptureTests {
             let paths = files.capturePaths(of: [leaf], inheriting: [gone: "/gone.vt"], with: registry)
 
             #expect(paths.isEmpty)
+            let entries = try FileManager.default.contentsOfDirectory(atPath: files.directory.path)
+            #expect(entries.isEmpty)
         }
     }
 
@@ -214,8 +228,9 @@ struct ScrollbackCaptureTests {
             TabActions.reopenClosedTab(session)
             let revived = try #require(session.tabs.last)
             let revivedPane = try #require(revived.splitTree.allLeafIDs().first)
+            #expect(revivedPane != pane)
             #expect(revived.scrollbackPaths == [revivedPane: earlier.path])
-            #expect(FileManager.default.fileExists(atPath: earlier.path))
+            #expect(try Data(contentsOf: earlier) == Data("earlier".utf8))
         }
     }
 
@@ -231,6 +246,8 @@ struct ScrollbackCaptureTests {
 
             let saved = files.directory.appendingPathComponent("\(pane.uuidString).vt")
             #expect(session.closedTabStack.last?.tab.scrollbackPaths == [pane: saved.path])
+            let captured = try Data(contentsOf: saved)
+            #expect(captured == Data("fresh".utf8))
         }
     }
 
@@ -260,7 +277,7 @@ struct ScrollbackCaptureTests {
 
             #expect(!session.closedTabStack.contains { $0.tab.id == oldest.id })
             #expect(!FileManager.default.fileExists(atPath: ours.path))
-            #expect(FileManager.default.fileExists(atPath: outside.path))
+            #expect(try Data(contentsOf: outside) == Data("not ours".utf8))
         }
     }
 }

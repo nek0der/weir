@@ -217,6 +217,10 @@ mod tests {
             None
         );
         assert_eq!(
+            marker(r#"{"hook_event_name":"UserPromptSubmit","prompt_id":1}"#),
+            None
+        );
+        assert_eq!(
             marker(r#"{"hook_event_name":"Stop","prompt_id":"p1"}"#),
             None
         );

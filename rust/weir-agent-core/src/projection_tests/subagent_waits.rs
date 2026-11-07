@@ -98,8 +98,12 @@ fn a_subagents_wait_at_idle_returns_to_idle() {
         ProgramState::Done,
         "2026-09-14T12:03:10Z",
     );
-    let (_, projection, _) = pass(&ProjectionState::default(), &input);
-    assert_eq!(projection.runtimes[0].badge.state, RunState::Idle);
+    let (_, projection, commands) = pass(&ProjectionState::default(), &input);
+    let badge = &projection.runtimes[0].badge;
+    assert_eq!(badge.state, RunState::Idle);
+    assert_eq!(badge.wait_kind, None);
+    assert_eq!(badge.detail, None);
+    assert!(!notifies(&commands));
 }
 
 /// A report from before the wait opened, or from the second it opened (the
@@ -114,11 +118,10 @@ fn an_older_report_or_a_block_leaves_the_wait() {
     ] {
         let input = reporting(waiting(SUBAGENT, "finished"), report, at);
         let (_, projection, _) = pass(&ProjectionState::default(), &input);
-        assert_eq!(
-            projection.runtimes[0].badge.state,
-            RunState::NeedsInput,
-            "{report:?} at {at}"
-        );
+        let badge = &projection.runtimes[0].badge;
+        assert_eq!(badge.state, RunState::NeedsInput, "{report:?} at {at}");
+        assert_eq!(badge.wait_kind, Some(weir_agent_model::WaitKind::Approval));
+        assert_eq!(badge.detail.as_deref(), Some("Bash: touch x"));
     }
 }
 
@@ -134,11 +137,10 @@ fn the_agents_own_wait_or_one_of_no_known_caller_is_left() {
             "2026-09-14T12:03:10Z",
         );
         let (_, projection, _) = pass(&ProjectionState::default(), &input);
-        assert_eq!(
-            projection.runtimes[0].badge.state,
-            RunState::NeedsInput,
-            "{caller:?}"
-        );
+        let badge = &projection.runtimes[0].badge;
+        assert_eq!(badge.state, RunState::NeedsInput, "{caller:?}");
+        assert_eq!(badge.wait_kind, Some(weir_agent_model::WaitKind::Approval));
+        assert_eq!(badge.detail.as_deref(), Some("Bash: touch x"));
     }
 }
 
@@ -165,6 +167,10 @@ fn a_report_inside_the_turn_shows_the_run_at_work() {
     assert_eq!(badge.wait_kind, None);
     assert_eq!(badge.detail, None);
     assert_eq!(badge.tool, None);
+    assert_eq!(
+        badge.run_started_at.as_deref(),
+        Some("2026-09-14T12:02:00Z")
+    );
     assert!(!notifies(&commands));
     let input = reporting(in_a_turn(), ProgramState::Blocked, "2026-09-14T12:03:10Z");
     let (_, projection, _) = pass(&ProjectionState::default(), &input);

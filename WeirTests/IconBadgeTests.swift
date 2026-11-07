@@ -27,6 +27,8 @@ struct IconBadgeTests {
         #expect(IconBadge.counting(3, tone: .blocking) == .count(3, tone: .blocking))
         #expect(IconBadge.counting(0, tone: .blocking) == nil)
         #expect(IconBadge.counting(120) == .count(120))
+        #expect(IconBadge.text(for: 99) == "99")
+        #expect(IconBadge.text(for: 100) == "99+")
         #expect(IconBadge.text(for: 120) == "99+")
     }
 }

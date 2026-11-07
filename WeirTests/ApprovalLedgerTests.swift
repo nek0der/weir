@@ -49,24 +49,19 @@ struct ApprovalLedgerTests {
         #expect(ledger.trackedIDs == [request.id])
     }
 
-    @Test func theEndOfItsEpisode_forgetsARequest() {
-        let ledger = ApprovalLedger()
-        let epoch = UUID()
-        let request = ApprovalPresentation.test(epoch: epoch)
-        ledger.observe(pending: [request], epoch: epoch)
-
-        ledger.endEpisode(id: request.id)
-
-        #expect(ledger.entry(for: request) == nil)
-    }
-
     @Test func anEndedRequest_isNotBroughtBackByAStaleProjection() {
         let ledger = ApprovalLedger()
         let epoch = UUID()
         let request = ApprovalPresentation.test(epoch: epoch)
         ledger.observe(pending: [request], epoch: epoch)
 
+        #expect(ledger.entry(for: request)?.state == .held)
+        #expect(ledger.trackedIDs == [request.id])
         ledger.endEpisode(id: request.id)
+        #expect(ledger.entry(for: request) == nil)
+        #expect(ledger.entry(id: request.id) == nil)
+        #expect(ledger.trackedIDs.isEmpty)
+
         ledger.observe(pending: [request], epoch: epoch)
 
         #expect(ledger.entry(for: request) == nil)
@@ -118,11 +113,17 @@ struct ApprovalLedgerTests {
         let answered = ApprovalPresentation.test(epoch: epoch)
         let lost = ApprovalPresentation.test(epoch: epoch)
         ledger.observe(pending: [answered, lost], epoch: epoch)
+        #expect(ledger.trackedIDs == [answered.id, lost.id])
 
         ledger.settle(id: answered.id, by: .resolved(.deny), now: Self.now)
+
+        #expect(ledger.trackedIDs == [lost.id])
+        #expect(ledger.entry(for: answered)?.state == .answered(.deny))
+
         ledger.markMissing(id: lost.id, now: Self.now)
 
         #expect(ledger.trackedIDs.isEmpty)
+        #expect(ledger.entry(for: answered)?.state == .answered(.deny))
         #expect(ledger.entry(for: lost)?.state == .unknownResult)
     }
 
@@ -178,9 +179,23 @@ struct ApprovalLedgerTests {
         let store = ApprovalPresentationStore(decisionSender: { _, _ in })
         let request = ApprovalPresentation.test()
         store.receive([request], seenAt: Self.seenAt)
+        #expect(store.ledger.entry(for: request)?.firstSeenAt == Self.seenAt)
 
         store.receive([request], seenAt: Self.laterSight)
+
+        #expect(store.pending.map(\.id) == [request.id])
+        #expect(store.firstSeenAtByID[request.id] == Self.seenAt)
+        #expect(store.ledger.entry(for: request)?.firstSeenAt == Self.seenAt)
+
         store.receive([], epoch: request.epoch, seenAt: Self.laterSight)
+
+        #expect(store.pending.isEmpty)
+        #expect(store.firstSeenAt(for: request) == Self.seenAt)
+        #expect(store.ledger.entry(for: request)?.state == .held)
+        #expect(store.ledger.trackedIDs == [request.id])
+
+        // This injected relist checks retention, though an ordered broker
+        // stream does not put a request back after it leaves pending.
         store.receive([request], seenAt: Self.laterSight)
 
         #expect(store.ledger.entry(for: request)?.firstSeenAt == Self.seenAt)
@@ -239,17 +254,27 @@ struct ApprovalLedgerTests {
         let delegated = ApprovalPresentation.test(epoch: epoch)
         let expired = ApprovalPresentation.test(epoch: epoch)
         let held = ApprovalPresentation.test(epoch: epoch)
-        store.receive([delegated, expired, held])
-        store.receive([held], epoch: epoch, terminals: [delegated.id: .resolved(.delegate), expired.id: .expired])
+        store.receive([delegated, expired, held], seenAt: Self.seenAt)
+        store.apply(
+            .test(pending: [held], terminals: [delegated.id: .resolved(.delegate), expired.id: .expired]),
+            epoch: epoch,
+            now: Self.now,
+            seenAt: Self.laterSight
+        )
+        #expect(store.pending.map(\.id) == [held.id])
+        #expect(store.ledger.epoch == epoch)
+        #expect(store.ledger.trackedIDs == [held.id])
 
         store.stop()
 
-        #expect(store.ledger.entry(for: delegated)?.state.isLeftToTerminal == true)
+        #expect(store.ledger.entry(for: delegated)?.state == .handedToTerminal(since: Self.now))
         #expect(store.ledger.entry(for: expired)?.state == .timedOut)
         #expect(store.ledger.entry(for: held)?.state == .held)
-        #expect(store.ledger.trackedIDs.contains(held.id), "looked up on reconnect")
+        #expect(store.ledger.entry(for: held)?.firstSeenAt == Self.seenAt)
+        #expect(store.ledger.trackedIDs == [held.id], "looked up on reconnect")
         #expect(store.ledger.epoch == nil, "a stopped service has not been read")
         #expect(store.pending.isEmpty)
+        #expect(store.firstSeenAtByID.isEmpty)
     }
 
     @Test func stop_thenTheSameEpoch_keepsTheDelegatedAndTheHeldRequest() {
@@ -269,21 +294,41 @@ struct ApprovalLedgerTests {
         #expect(!store.ledger.trackedIDs.contains(delegated.id), "nothing left to ask the broker")
     }
 
-    @Test func stop_duringAHandOff_keepsTheRequest_andTheSendStillLands() async {
+    @Test func stop_duringAHandOff_keepsTheRequest_andTheSendStillLands() async throws {
         let gate = Gate<Void>()
-        let store = ApprovalPresentationStore(decisionSender: { _, _ in await gate.wait() })
+        defer { gate.open() }
+        let recorded = DecisionRecorder()
+        let store = ApprovalPresentationStore(decisionSender: { request, resolution in
+            await recorded.append(request.id, resolution)
+            await gate.wait()
+        })
         let request = ApprovalPresentation.test()
         store.receive([request])
         store.handOverHeldRequests()
-        await gate.waitUntilRequested()
+        await pollUntil { gate.requests == 1 }
+        try #require(gate.requests == 1)
+        let sending = try #require(store.ledger.entry(for: request)?.state)
+        guard case .sending(.delegate, _) = sending else {
+            Issue.record("expected the delegation to be in flight")
+            return
+        }
 
         store.stop()
-        #expect(store.ledger.entry(for: request) != nil, "the hand-off is in flight")
+        try #require(store.ledger.entry(for: request)?.state == sending)
+        try #require(store.resolvingIDs.contains(request.id))
         gate.open()
-        await pollUntil { store.ledger.entry(for: request)?.state.isLeftToTerminal == true }
+        await store.waitUntilResolved(request)
+        try #require(!store.resolvingIDs.contains(request.id))
+        let completed = try #require(store.ledger.entry(for: request)?.state)
+        guard case .handedToTerminal = completed else {
+            Issue.record("expected the completed delegation to leave the request at the terminal")
+            return
+        }
+        #expect(await recorded.entries.map(\.id) == [request.id])
+        #expect(await recorded.entries.map(\.resolution) == [.delegate])
         store.receive([], epoch: request.epoch)
 
-        #expect(store.ledger.entry(for: request)?.state.isLeftToTerminal == true)
+        #expect(store.ledger.entry(for: request)?.state == completed)
     }
 
     @Test func aNewEpoch_keepsARequestOurClockTimedOut_althoughTheNewBrokerCallsItMissing() {
@@ -302,13 +347,15 @@ struct ApprovalLedgerTests {
         #expect(store.ledger.trackedIDs.isEmpty)
     }
 
-    @Test func aSendThatLandsAfterANewEpoch_leavesTheRequestAtTheAgentsPrompt() async {
+    @Test func aSendThatLandsAfterANewEpoch_leavesTheRequestAtTheAgentsPrompt() async throws {
         let gate = Gate<Void>()
+        defer { gate.open() }
         let store = ApprovalPresentationStore(decisionSender: { _, _ in await gate.wait() })
         let request = ApprovalPresentation.test()
         store.receive([request])
         store.resolve(request, .allowOnce)
-        await gate.waitUntilRequested()
+        await pollUntil { gate.requests == 1 }
+        try #require(gate.requests == 1)
 
         store.receive([], epoch: UUID())
         #expect(store.ledger.entry(for: request)?.state == .unknownResult)
@@ -372,7 +419,7 @@ struct ApprovalLedgerTests {
         #expect(store.ledger.entry(for: delegated)?.state.isLeftToTerminal == true)
     }
 
-    @Test func facts_markCodexQuestionsAsAnsweredInTheTerminal() {
+    @Test func placedApprovals_carryWhetherWeirCanAnswerTheRequest() {
         let store = ApprovalPresentationStore()
         let epoch = UUID()
         let question = ApprovalQuestion(header: nil, prompt: "Which?", options: [], isMultiSelect: false)
@@ -381,26 +428,38 @@ struct ApprovalLedgerTests {
         let approval = ApprovalPresentation.test(epoch: epoch, provider: .codex)
         store.receive([codexQuestion, claudeQuestion, approval])
 
-        let facts = Dictionary(uniqueKeysWithValues: store.approvalFacts.map { ($0.key, $0) })
-        #expect(facts[codexQuestion.key]?.supportsNativeAnswer == false)
-        #expect(facts[claudeQuestion.key]?.supportsNativeAnswer == true)
-        #expect(facts[approval.key]?.supportsNativeAnswer == true)
-        #expect(facts[approval.key]?.state == .held)
+        let approvals = store.placedApprovals(in: WorkspaceSession())
+        let facts = Dictionary(uniqueKeysWithValues: approvals.map { ($0.fact.key, $0.fact) })
+        #expect(Set(facts.keys) == [codexQuestion.key, claudeQuestion.key, approval.key])
+        for (request, expected) in [
+            (codexQuestion, (isQuestion: true, supportsNativeAnswer: false)),
+            (claudeQuestion, (isQuestion: true, supportsNativeAnswer: true)),
+            (approval, (isQuestion: false, supportsNativeAnswer: true))
+        ] {
+            #expect(facts[request.key] == ApprovalFact(
+                key: request.key,
+                provider: request.provider,
+                isQuestion: expected.isQuestion,
+                supportsNativeAnswer: expected.supportsNativeAnswer,
+                state: .held,
+                deadline: nil
+            ))
+        }
     }
 
     @Test func nearCapacity_countsOnlyRecordsThatCannotMakeRoom() {
         let store = ApprovalPresentationStore()
         let epoch = UUID()
         let limit = ApprovalPresentationStore.nearCapacityRecordCount
-        func projection(unevictable: Int) -> ApprovalControllerConnection.Projection {
-            ApprovalControllerConnection.Projection(
-                sequence: 1, requests: [], terminals: [:], missingIDs: [], unevictableCount: unevictable, deadlines: [:]
+        // Unread terminal results count even with nothing pending.
+        for (index, sample) in [(limit - 1, false), (limit, true), (limit - 1, false)].enumerated() {
+            let (unevictable, expectedWarning) = sample
+            let projection = ApprovalControllerConnection.Projection(
+                sequence: UInt64(index + 1), requests: [], terminals: [:], missingIDs: [], unevictableCount: unevictable, deadlines: [:]
             )
+            store.apply(projection, epoch: epoch, now: Self.now)
+            #expect(store.pending.isEmpty)
+            #expect(store.isNearCapacity == expectedWarning, "unevictable count: \(unevictable)")
         }
-
-        store.apply(projection(unevictable: limit - 1), epoch: epoch, now: Self.now)
-        #expect(!store.isNearCapacity)
-        store.apply(projection(unevictable: limit), epoch: epoch, now: Self.now)
-        #expect(store.isNearCapacity)
     }
 }

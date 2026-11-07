@@ -78,9 +78,9 @@ struct SettingsOpenerTests {
     /// the menu, so it answers ⌘Q alone, the key the app menu's Quit Weir
     /// shows.
     @Test func quitKey_matchesCommandQAlone_withOrWithoutCapsLock() throws {
-        func press(_ characters: String, _ flags: NSEvent.ModifierFlags) throws -> NSEvent {
+        func press(_ characters: String, _ flags: NSEvent.ModifierFlags, type: NSEvent.EventType = .keyDown) throws -> NSEvent {
             try #require(NSEvent.keyEvent(
-                with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0,
+                with: type, location: .zero, modifierFlags: flags, timestamp: 0,
                 windowNumber: 0, context: nil, characters: characters,
                 charactersIgnoringModifiers: characters, isARepeat: false, keyCode: 12
             ))
@@ -89,6 +89,8 @@ struct SettingsOpenerTests {
         #expect(try StandardMenuShortcut.quit.isPressed(in: press("Q", [.command, .capsLock])))
         #expect(try !StandardMenuShortcut.quit.isPressed(in: press("q", [.command, .option])))
         #expect(try !StandardMenuShortcut.quit.isPressed(in: press("q", [])))
+        #expect(try !StandardMenuShortcut.quit.isPressed(in: press("x", [.command])))
+        #expect(try !StandardMenuShortcut.quit.isPressed(in: press("q", [.command], type: .keyUp)))
     }
 
     @Test func menuBarKeyPress_matchesQuitAndSettings_withOrWithoutCapsLock() {
@@ -100,11 +102,17 @@ struct SettingsOpenerTests {
             #expect(shortcut.isPressed(key: shifted, modifiers: [.command, .capsLock]))
             #expect(!shortcut.isPressed(key: key, modifiers: [.command, .option]))
             #expect(!shortcut.isPressed(key: key, modifiers: []))
+            #expect(!shortcut.isPressed(key: KeyEquivalent("x"), modifiers: .command))
         }
     }
 
     @Test func menuBarMoreMenu_keysSettingsAndQuitFromTheStandardMenuKeys() {
-        let entries = MenuBarMoreMenu.entries(onOpenWeir: {}, onOpenSettings: {}, onQuit: {})
+        var calls: [String] = []
+        let entries = MenuBarMoreMenu.entries(
+            onOpenWeir: { calls.append("open") },
+            onOpenSettings: { calls.append("settings") },
+            onQuit: { calls.append("quit") }
+        )
 
         let items: [PopUpMenuItem] = entries.compactMap { entry in
             if case let .item(item) = entry {
@@ -115,13 +123,10 @@ struct SettingsOpenerTests {
         }
 
         #expect(items.map(\.shortcut) == [nil, StandardMenuShortcut.settings, StandardMenuShortcut.quit])
-    }
-
-    @Test func menuBarKeyHandler_hearsTheStandardMenuKeys() {
-        let keys = [StandardMenuShortcut.settings, StandardMenuShortcut.quit].compactMap(\.swiftUIKeyEquivalent)
-
-        #expect(keys.count == 2)
-        #expect(SupervisionMenuBarContent.appMenuKeys.isSuperset(of: keys))
+        for item in items {
+            item.perform()
+        }
+        #expect(calls == ["open", "settings", "quit"])
     }
 
     /// A stored ⌫ is SwiftUI's `.delete`, U+0008, and a press of ⌫ carries
@@ -150,8 +155,9 @@ struct SettingsOpenerTests {
         #expect(SupervisionMenuBarContent.appMenuKeys == [",", "q", "Q"])
     }
 
-    @Test func shortcutList_namesAndKeysSettingsAsTheMenuDoes() throws {
-        let locale = Locale(identifier: "en")
+    @Test(arguments: ["en", "ja"])
+    func shortcutList_namesAndKeysSettingsAsTheMenuDoes(language: String) throws {
+        let locale = Locale(identifier: language)
         let sections = KeyboardShortcutCatalog.sections(keyboard: KeyboardSettings(), quickTerminalHotKey: nil, locale: locale)
 
         let entry = try #require(sections.flatMap(\.entries).first { $0.id == "fixed.settings" })
@@ -180,7 +186,8 @@ struct SettingsOpenerTests {
             ).first { $0.action == .openSettings }
         }
 
-        #expect(row?.icon == SettingsCommand.symbol)
-        #expect(row?.title == SettingsCommand.openTitle.resolved(in: locale))
+        let settingsRow = try #require(row)
+        #expect(settingsRow.icon == SettingsCommand.symbol)
+        #expect(settingsRow.title == SettingsCommand.openTitle.resolved(in: locale))
     }
 }

@@ -23,22 +23,21 @@ struct AgentInstallRecipeTests {
         let claude = AgentProviderRegistry.environment(
             for: "claude", state: state, sessions: sessions, cwdEvents: cwd, usage: usage
         )
-        #expect(claude["WEIR_AGENT_STATES_DIR"] == "/states")
-        // The status line relay keeps the plan usage here (`PlanUsageStore`).
-        #expect(claude["WEIR_USAGE_DIR"] == "/usage")
-        #expect(claude["WEIR_SESSIONS_DIR"] == "/sessions")
-        #expect(claude["WEIR_CWD_EVENTS_DIR"] == "/cwd")
-        #expect(claude["WEIR_CLAUDE_HOOK_NAMESPACE"] == WeirPaths.buildIdentity)
+        #expect(claude == [
+            "WEIR_AGENT_STATES_DIR": "/states",
+            "WEIR_USAGE_DIR": "/usage",
+            "WEIR_SESSIONS_DIR": "/sessions",
+            "WEIR_CWD_EVENTS_DIR": "/cwd",
+            "WEIR_CLAUDE_HOOK_NAMESPACE": WeirPaths.buildIdentity
+        ])
 
         let codex = AgentProviderRegistry.environment(
-            for: "codex", state: state, sessions: sessions, cwdEvents: nil, usage: usage
+            for: "codex", state: state, sessions: sessions, cwdEvents: cwd, usage: usage
         )
-        #expect(codex["WEIR_CODEX_AGENT_STATES_DIR"] == "/states")
-        #expect(codex["WEIR_CODEX_SESSIONS_DIR"] == "/sessions")
-        // Codex has no cwd events, so nothing claims to point at them.
-        #expect(codex.values.contains("/cwd") == false)
-        // Codex's usage is read from its app server, not written by a hook.
-        #expect(codex.values.contains("/usage") == false)
+        #expect(codex == [
+            "WEIR_CODEX_AGENT_STATES_DIR": "/states",
+            "WEIR_CODEX_SESSIONS_DIR": "/sessions"
+        ])
     }
 
     /// A pane's agent variables are merged locator by locator in `AgentKind`'s
@@ -59,7 +58,9 @@ struct AgentInstallRecipeTests {
         #expect(AgentProviderRegistry.hookArgumentsVariable(for: "codex") == "WEIR_CODEX_HOOK_ARGS")
         // Claude's hooks carry their arguments in the settings document, so
         // there is nothing for the installer to export.
-        #expect(AgentProviderRegistry.hookArgumentsVariable(for: "claude") == nil)
+        for kind in AgentKind.allCases where kind != .codex {
+            #expect(AgentProviderRegistry.hookArgumentsVariable(for: kind.rawValue) == nil, "\(kind)")
+        }
         #expect(AgentProviderRegistry.hookArgumentsVariable(for: "gemini") == nil)
     }
 

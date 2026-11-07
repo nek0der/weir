@@ -3,11 +3,12 @@
 
 import Foundation
 import Testing
+import WeirRustBridge
 @testable import Weir
 @testable import WeirDomain
 
 struct AgentIntegrationApprovalBridgeTests {
-    @Test func requesterCancellationReleasesOnlyItsOwnPendingQuestion() throws {
+    @Test func requesterCancellationCancelsOnlyTheNamedQuestionOfItsRun() throws {
         let service = try RustApprovalService(maximumRecords: 8)
         let runID = UUID()
         let requestID = UUID()
@@ -17,7 +18,7 @@ struct AgentIntegrationApprovalBridgeTests {
         let epoch = try completeHello(on: requester)
         _ = try completeHello(on: controller)
         for id in [requestID, otherRequestID] {
-            _ = try requester.exchange(AgentIntegrationApprovalWire.submit(
+            let response = try AgentIntegrationApprovalWire.object(from: requester.exchange(AgentIntegrationApprovalWire.submit(
                 epoch: epoch,
                 submission: AgentIntegrationApprovalSubmission(
                     runID: runID, requestID: id, provider: "claude", sessionID: "session",
@@ -25,20 +26,19 @@ struct AgentIntegrationApprovalBridgeTests {
                     input: ["questions": [["question": "Which color?"]]],
                     questions: nil, timeoutMilliseconds: 60000
                 )
-            ))
+            )))
+            try #require(try state(of: response)["status"] as? String == "pending")
         }
         let canceled = try AgentIntegrationApprovalWire.object(from: requester.exchange(
             AgentIntegrationApprovalWire.cancel(epoch: epoch, runID: runID, requestID: requestID)
         ))
-        let canceledBody = try #require(canceled["body"] as? [String: Any])
-        let canceledState = try #require(canceledBody["state"] as? [String: Any])
-        #expect(canceledState["status"] as? String == "canceled")
+        #expect(ApprovalControllerConnection.brokerTerminal(fromDetail: canceled) == .canceled)
+        let fromController = try get(on: controller, epoch: epoch, runID: runID, requestID: requestID)
+        #expect(ApprovalControllerConnection.brokerTerminal(fromDetail: fromController) == .canceled)
         let remaining = try AgentIntegrationApprovalWire.object(from: controller.exchange(
             AgentIntegrationApprovalWire.get(epoch: epoch, runID: runID, requestID: otherRequestID)
         ))
-        let remainingBody = try #require(remaining["body"] as? [String: Any])
-        let remainingState = try #require(remainingBody["state"] as? [String: Any])
-        #expect(remainingState["status"] as? String == "pending")
+        #expect(try state(of: remaining)["status"] as? String == "pending")
     }
 
     /// The broker refuses a field it does not know, so the run that asked
@@ -98,22 +98,23 @@ struct AgentIntegrationApprovalBridgeTests {
                 requestID: requestID
             ))
         )
-        let body = try #require(resolved["body"] as? [String: Any])
-        let state = try #require(body["state"] as? [String: Any])
-        #expect(state["status"] as? String == "resolved")
+        #expect(ApprovalControllerConnection.brokerTerminal(fromDetail: resolved) == .resolved(.allowOnce))
+        let waited = try AgentIntegrationProbeWire.requireType("approval.result", in: requester.exchange(
+            AgentIntegrationApprovalWire.wait(epoch: epoch, runID: runID, requestID: requestID, maximumWaitMilliseconds: 0)
+        ))
+        #expect(ApprovalControllerConnection.brokerTerminal(fromDetail: waited) == .resolved(.allowOnce))
     }
 
-    @Test func requesterPrincipalCannotBeUpgradedByPayload() throws {
+    @Test func aRequesterCannotResolveItsOwnPendingRequest() throws {
         let service = try RustApprovalService(maximumRecords: 8)
         let runID = UUID()
         let requestID = UUID()
         let requester = try service.requesterSession(runID: runID)
         let epoch = try completeHello(on: requester)
-        _ = try requester.exchange(AgentIntegrationProbeWire.submit(
-            epoch: epoch,
-            runID: runID,
-            requestID: requestID
+        let submitted = try AgentIntegrationProbeWire.requireType("approval.result", in: requester.exchange(
+            AgentIntegrationProbeWire.submit(epoch: epoch, runID: runID, requestID: requestID)
         ))
+        try #require(try state(of: submitted)["status"] as? String == "pending")
 
         let response = try AgentIntegrationProbeWire.response(requester.exchange(
             AgentIntegrationProbeWire.resolve(
@@ -125,6 +126,10 @@ struct AgentIntegrationApprovalBridgeTests {
         #expect(response["type"] as? String == "error")
         let body = try #require(response["body"] as? [String: Any])
         #expect(body["code"] as? String == "unauthorized")
+        let controller = try service.controllerSession()
+        try #require(try completeHello(on: controller) == epoch)
+        let untouched = try get(on: controller, epoch: epoch, runID: runID, requestID: requestID)
+        #expect(try state(of: untouched)["status"] as? String == "pending")
     }
 
     @Test func requesterCannotSubmitForAnotherRun() throws {
@@ -141,18 +146,31 @@ struct AgentIntegrationApprovalBridgeTests {
         #expect(response["type"] as? String == "error")
         let body = try #require(response["body"] as? [String: Any])
         #expect(body["code"] as? String == "unauthorized")
+        let controller = try service.controllerSession()
+        try #require(try completeHello(on: controller) == epoch)
+        let snapshot = try AgentIntegrationProbeWire.requireType(
+            "approval.snapshot.result",
+            in: controller.exchange(AgentIntegrationApprovalWire.snapshot(epoch: epoch))
+        )
+        let snapshotBody = try #require(snapshot["body"] as? [String: Any])
+        let requests = try #require(snapshotBody["requests"] as? [[String: Any]])
+        #expect(requests.isEmpty)
     }
 
     @Test func malformedDiscreteMessageFailsWithoutResponse() throws {
         let service = try RustApprovalService(maximumRecords: 8)
         let requester = try service.requesterSession(runID: UUID())
-        var didThrow = false
-        do {
-            _ = try requester.exchange(Data("not-json".utf8))
-        } catch {
-            didThrow = true
+        let error = #expect(throws: AgentIntegrationError.self) {
+            try requester.exchange(Data("not-json".utf8))
         }
-        #expect(didThrow)
+        guard case let .rustFailure(status)? = error else {
+            Issue.record("Expected the Rust JSON decode status")
+            return
+        }
+        #expect(status == Int32(WEIR_APPROVAL_INVALID_JSON.rawValue))
+        let epoch = try completeHello(on: requester)
+        let controller = try service.controllerSession()
+        #expect(try completeHello(on: controller) == epoch)
     }
 
     @Test func previousServiceEpochCannotResolveAfterRestart() throws {
@@ -162,23 +180,39 @@ struct AgentIntegrationApprovalBridgeTests {
 
         let currentService = try RustApprovalService(maximumRecords: 8)
         let currentController = try currentService.controllerSession()
-        _ = try completeHello(on: currentController)
-        let response = try AgentIntegrationProbeWire.response(currentController.exchange(
-            AgentIntegrationProbeWire.resolve(
-                epoch: previousEpoch,
-                runID: UUID(),
-                requestID: UUID()
-            )
+        let currentEpoch = try completeHello(on: currentController)
+        try #require(currentEpoch != previousEpoch)
+        let run = UUID()
+        let request = UUID()
+        let requester = try currentService.requesterSession(runID: run)
+        try #require(try completeHello(on: requester) == currentEpoch)
+        let submitted = try AgentIntegrationProbeWire.requireType("approval.result", in: requester.exchange(
+            AgentIntegrationProbeWire.submit(epoch: currentEpoch, runID: run, requestID: request)
         ))
+        try #require(try state(of: submitted)["status"] as? String == "pending")
 
-        #expect(response["type"] as? String == "error")
+        let response = try AgentIntegrationProbeWire.requireType("error", in: currentController.exchange(
+            AgentIntegrationProbeWire.resolve(epoch: previousEpoch, runID: run, requestID: request)
+        ))
         let body = try #require(response["body"] as? [String: Any])
         #expect(body["code"] as? String == "epoch_mismatch")
+        let untouched = try get(on: currentController, epoch: currentEpoch, runID: run, requestID: request)
+        #expect(try state(of: untouched)["status"] as? String == "pending")
+
+        let accepted = try AgentIntegrationProbeWire.requireType("approval.result", in: currentController.exchange(
+            AgentIntegrationProbeWire.resolve(epoch: currentEpoch, runID: run, requestID: request)
+        ))
+        #expect(ApprovalControllerConnection.brokerTerminal(fromDetail: accepted) == .resolved(.allowOnce))
     }
 
     /// The broker reads `body.questions` and `body.decision.answers` by name,
     /// so a renamed key would silently drop the question card or the answer.
     @Test func approvalWire_questionsAndAnswers_useTheBrokerKeys() throws {
+        let expectedQuestions: [[String: Any]] = [
+            ["prompt": "Which color?", "options": [["label": "Red", "description": "warm"]], "multi_select": false],
+            ["prompt": "Which sizes?", "header": "Size", "options": [["label": "Small"], ["label": "Large"]], "multi_select": true]
+        ]
+        let expectedAnswers = ["Which color?": "Red", "Which sizes?": "Small, Large"]
         let submission = AgentIntegrationApprovalSubmission(
             runID: UUID(),
             requestID: UUID(),
@@ -188,7 +222,7 @@ struct AgentIntegrationApprovalBridgeTests {
             toolName: "AskUserQuestion",
             summary: "Which color?",
             input: [String: Any](),
-            questions: [["prompt": "Which color?", "options": [["label": "Red"]], "multi_select": false]],
+            questions: expectedQuestions,
             timeoutMilliseconds: 1000
         )
         let submitted = try AgentIntegrationApprovalWire.object(from: AgentIntegrationApprovalWire.submit(
@@ -197,20 +231,21 @@ struct AgentIntegrationApprovalBridgeTests {
         ))
         let submitBody = try #require(submitted["body"] as? [String: Any])
         let questions = try #require(submitBody["questions"] as? [[String: Any]])
-        #expect(questions.first?["prompt"] as? String == "Which color?")
+        let written = try JSONSerialization.data(withJSONObject: questions, options: [.sortedKeys])
+        #expect(try written == (JSONSerialization.data(withJSONObject: expectedQuestions, options: [.sortedKeys])))
 
         let answered = try AgentIntegrationApprovalWire.object(from: AgentIntegrationApprovalWire.resolve(
             epoch: UUID(),
             runID: submission.runID,
             requestID: submission.requestID,
             decision: "answer",
-            answers: ["Which color?": "Red"]
+            answers: expectedAnswers
         ))
         let answerBody = try #require(answered["body"] as? [String: Any])
         let answerDecision = try #require(answerBody["decision"] as? [String: Any])
         #expect(answerDecision["decision"] as? String == "answer")
         let answers = try #require(answerDecision["answers"] as? [String: String])
-        #expect(answers["Which color?"] == "Red")
+        #expect(answers == expectedAnswers)
 
         let denied = try AgentIntegrationApprovalWire.object(from: AgentIntegrationApprovalWire.resolve(
             epoch: UUID(),
@@ -270,8 +305,28 @@ struct AgentIntegrationApprovalBridgeTests {
                 answers: resolution.answers
             )))
         }
-        #expect(try resolve(overLimit)["type"] as? String == "error")
-        #expect(try resolve(atLimit)["type"] as? String == "approval.result")
+        let refused = try resolve(overLimit)
+        #expect(refused["type"] as? String == "error")
+        let refusal = try #require(refused["body"] as? [String: Any])
+        #expect(refusal["code"] as? String == "invalid_request")
+        let pending = try get(on: controller, epoch: epoch, runID: runID, requestID: requestID)
+        #expect(try state(of: pending)["status"] as? String == "pending")
+        let accepted = try resolve(atLimit)
+        #expect(ApprovalControllerConnection.brokerTerminal(fromDetail: accepted) == .resolved(atLimit))
+        let confirmed = try get(on: controller, epoch: epoch, runID: runID, requestID: requestID)
+        #expect(ApprovalControllerConnection.brokerTerminal(fromDetail: confirmed) == .resolved(atLimit))
+    }
+
+    private func get(on session: RustApprovalSession, epoch: UUID, runID: UUID, requestID: UUID) throws -> [String: Any] {
+        try AgentIntegrationProbeWire.requireType("approval.result", in: session.exchange(
+            AgentIntegrationApprovalWire.get(epoch: epoch, runID: runID, requestID: requestID)
+        ))
+    }
+
+    private func state(of response: [String: Any]) throws -> [String: Any] {
+        try #require(response["type"] as? String == "approval.result")
+        let body = try #require(response["body"] as? [String: Any])
+        return try #require(body["state"] as? [String: Any])
     }
 
     private func completeHello(on session: RustApprovalSession) throws -> UUID {

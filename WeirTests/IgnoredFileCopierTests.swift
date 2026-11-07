@@ -32,29 +32,49 @@ struct IgnoredFileCopierTests {
         }
     }
 
-    @Test func aFileTheWorktreeHas_isNeverWrittenOver() async throws {
+    @Test(arguments: [false, true])
+    func aFileTheWorktreeHas_isNeverWrittenOver(isDanglingLink: Bool) async throws {
         try await withTempDir { dir in
             let (source, worktree) = try Self.folders(in: dir)
             try ScratchFile.write("main", to: ".env", in: source)
-            try ScratchFile.write("mine", to: ".env", in: worktree)
+            let target = worktree.appendingPathComponent(".env")
+            if isDanglingLink {
+                try FileManager.default.createSymbolicLink(atPath: target.path, withDestinationPath: "missing.env")
+            } else {
+                try ScratchFile.write("mine", to: ".env", in: worktree)
+            }
             let report = await IgnoredFileCopier.copy([".env"], from: source, to: worktree)
-            #expect(report.kept == [".env"])
-            #expect(try ScratchFile.read(".env", in: worktree) == "mine")
+            #expect(report == IgnoredFileCopier.Report(kept: [".env"]))
+            if isDanglingLink {
+                #expect(try FileManager.default.destinationOfSymbolicLink(atPath: target.path) == "missing.env")
+                #expect(!FileManager.default.fileExists(atPath: worktree.appendingPathComponent("missing.env").path))
+            } else {
+                #expect(try ScratchFile.read(".env", in: worktree) == "mine")
+            }
+            #expect(try ScratchFile.read(".env", in: source) == "main")
         }
     }
 
-    @Test func aLink_isCopiedAsTheLink() async throws {
+    @Test(arguments: [false, true])
+    func aLink_isCopiedAsTheLink(isDangling: Bool) async throws {
         try await withTempDir { dir in
             let (source, worktree) = try Self.folders(in: dir)
-            try ScratchFile.write("shared", to: "shared.env", in: dir)
+            if !isDangling {
+                try ScratchFile.write("shared", to: "shared.env", in: dir)
+            }
             try FileManager.default.createSymbolicLink(
                 atPath: source.appendingPathComponent(".env").path,
                 withDestinationPath: "../shared.env"
             )
             let report = await IgnoredFileCopier.copy([".env"], from: source, to: worktree)
-            #expect(report.copied == [".env"])
+            #expect(report == IgnoredFileCopier.Report(copied: [".env"]))
             let link = try FileManager.default.destinationOfSymbolicLink(atPath: worktree.appendingPathComponent(".env").path)
             #expect(link == "../shared.env")
+            if isDangling {
+                #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("shared.env").path))
+            } else {
+                #expect(try ScratchFile.read("shared.env", in: dir) == "shared")
+            }
         }
     }
 
@@ -67,41 +87,50 @@ struct IgnoredFileCopierTests {
             try ScratchFile.write("secret", to: "key", in: outside)
             try FileManager.default.createSymbolicLink(at: source.appendingPathComponent("config"), withDestinationURL: outside)
             let read = await IgnoredFileCopier.copy(["config/key"], from: source, to: worktree)
-            #expect(read.failed == ["config/key"])
+            #expect(read == IgnoredFileCopier.Report(failed: ["config/key"]))
             #expect(!FileManager.default.fileExists(atPath: worktree.appendingPathComponent("config/key").path))
 
             try ScratchFile.write("x", to: "certs/a.pem", in: source)
             try FileManager.default.createSymbolicLink(at: worktree.appendingPathComponent("certs"), withDestinationURL: outside)
             let written = await IgnoredFileCopier.copy(["certs/a.pem"], from: source, to: worktree)
-            #expect(written.failed == ["certs/a.pem"])
+            #expect(written == IgnoredFileCopier.Report(failed: ["certs/a.pem"]))
             #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("a.pem").path))
 
             // Two folders down the link: no folder is made out there either.
             try ScratchFile.write("y", to: "certs/sub/b.pem", in: source)
             let deeper = await IgnoredFileCopier.copy(["certs/sub/b.pem"], from: source, to: worktree)
-            #expect(deeper.failed == ["certs/sub/b.pem"])
+            #expect(deeper == IgnoredFileCopier.Report(failed: ["certs/sub/b.pem"]))
             #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("sub").path))
+            #expect(try ScratchFile.read("key", in: outside) == "secret")
+            #expect(try FileManager.default.contentsOfDirectory(atPath: outside.path) == ["key"])
         }
     }
 
     /// One path too big is left out; the small ones after it still go.
-    @Test func aPathOverTheLimit_isLeftOut_andTheRestStillGo() async throws {
+    @Test(arguments: [
+        (Int64(10), [".env", "z.key"], ["big", "middle.key"]),
+        (Int64(50), [".env", "middle.key", "z.key"], ["big"])
+    ])
+    func aPathOverTheLimit_isLeftOut_andTheRestStillGo(limit: Int64, copied: [String], overLimit: [String]) async throws {
         try await withTempDir { dir in
             let (source, worktree) = try Self.folders(in: dir)
             try ScratchFile.write("small", to: ".env", in: source)
             try ScratchFile.write(String(repeating: "x", count: 100), to: "big/blob", in: source)
+            try ScratchFile.write("1234567", to: "middle.key", in: source)
             try ScratchFile.write("later", to: "z.key", in: source)
-            let report = await IgnoredFileCopier.copy([".env", "big", "z.key"], from: source, to: worktree, byteLimit: 50)
-            #expect(report.copied == [".env", "z.key"])
-            #expect(report.overLimit == ["big"])
+            let report = await IgnoredFileCopier.copy([".env", "big", "middle.key", "z.key"], from: source, to: worktree, byteLimit: limit)
+            #expect(report == IgnoredFileCopier.Report(copied: copied, overLimit: overLimit))
+            #expect(try FileManager.default.contentsOfDirectory(atPath: worktree.path).sorted() == copied.sorted())
+            #expect(try ScratchFile.read(".env", in: worktree) == "small")
+            if limit == 50 {
+                #expect(try ScratchFile.read("middle.key", in: worktree) == "1234567")
+            }
             #expect(!FileManager.default.fileExists(atPath: worktree.appendingPathComponent("big").path))
             #expect(try ScratchFile.read("z.key", in: worktree) == "later")
         }
     }
 
-    /// A canceled copy copies nothing more, and a worktree gone meanwhile
-    /// is not made again.
-    @Test func aCanceledCopy_orAWorktreeGone_copiesNothing() async throws {
+    @Test func cancellationBeforeCopying_leavesTheDestinationEmpty() async throws {
         try await withTempDir { dir in
             let (source, worktree) = try Self.folders(in: dir)
             try ScratchFile.write("KEY=1", to: ".env", in: source)
@@ -114,12 +143,18 @@ struct IgnoredFileCopierTests {
             }
             task.cancel()
             let canceled = await task.value
-            #expect(canceled.isCanceled)
-            #expect(canceled.copied.isEmpty)
+            #expect(canceled == IgnoredFileCopier.Report(isCanceled: true))
+            #expect(try FileManager.default.contentsOfDirectory(atPath: worktree.path).isEmpty)
+        }
+    }
 
+    @Test func aDestinationRemovedBeforeCopying_isNotRecreated() async throws {
+        try await withTempDir { dir in
+            let (source, worktree) = try Self.folders(in: dir)
+            try ScratchFile.write("KEY=1", to: ".env", in: source)
             try FileManager.default.removeItem(at: worktree)
             let gone = await IgnoredFileCopier.copy([".env"], from: source, to: worktree)
-            #expect(gone.isDestinationGone)
+            #expect(gone == IgnoredFileCopier.Report(isDestinationGone: true))
             #expect(!FileManager.default.fileExists(atPath: worktree.path))
         }
     }

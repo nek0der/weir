@@ -38,14 +38,25 @@ struct PromptCacheRulesTests {
         #expect(expired.actions == [.summarize, .newConversation, .continueAsIs])
         #expect(expired.canTypeCommands)
 
+        let blocked = try #require(PromptCacheRules.panelContent(
+            status: .expired,
+            window: window(),
+            isAnswered: false,
+            commandBlock: .unsubmittedInput
+        ))
+        #expect(blocked.actions == [.summarize, .newConversation, .continueAsIs])
+        #expect(!blocked.canTypeCommands)
+        #expect(blocked.commandBlock == .unsubmittedInput)
+
         let soon = try #require(PromptCacheRules.panelContent(
             status: .expiringSoon,
             window: window(),
             isAnswered: false,
-            commandBlock: nil
+            commandBlock: .unsubmittedInput
         ))
         #expect(!soon.isExpired)
         #expect(soon.actions.isEmpty)
+        #expect(soon.commandBlock == nil)
         #expect(!soon.canTypeCommands, "nothing to type while it only informs")
         #expect(soon.title != expired.title)
 
@@ -73,9 +84,7 @@ struct PromptCacheRulesTests {
         let en = Locale(identifier: "en")
         let expiredLines = expired.lines(now: anchor.addingTimeInterval(3600 + 56 * 60), locale: en)
             .map { $0.resolved(in: en) }
-        #expect(expiredLines.count == 2)
-        #expect(expiredLines[0].contains(DurationText.compact(56 * 60, locale: en)))
-        #expect(expiredLines[1].contains("573k"))
+        #expect(expiredLines == ["Expired 56m ago.", "Continuing as is re-writes about 573k tokens."])
 
         let soon = try #require(PromptCacheRules.panelContent(
             status: .expiringSoon,
@@ -83,10 +92,19 @@ struct PromptCacheRulesTests {
             isAnswered: false,
             commandBlock: nil
         ))
-        let soonLines = soon.lines(now: anchor.addingTimeInterval(3600 - 120), locale: en)
-        #expect(soonLines == [soon.timeLine(now: anchor.addingTimeInterval(3600 - 120), locale: en)], "no size, no cost line")
-        #expect(soonLines[0].resolved(in: en).contains(DurationText.compact(120, locale: en)))
+        let beforeExpiry = anchor.addingTimeInterval(3600 - 120)
+        #expect(soon.lines(now: beforeExpiry, locale: en).map { $0.resolved(in: en) } == ["Expires in 2m."])
         #expect(soon.costLine == nil)
+
+        let soonWithCost = try #require(PromptCacheRules.panelContent(
+            status: .expiringSoon,
+            window: window(),
+            isAnswered: false,
+            commandBlock: nil
+        ))
+        #expect(soonWithCost.lines(now: beforeExpiry, locale: en).map { $0.resolved(in: en) } == [
+            "Expires in 2m.", "Once expired, continuing re-writes about 573k tokens."
+        ])
     }
 
     @Test func commandBlock_onlyAnEmptyPromptOfTheAgentInFrontTakesCommands() {
@@ -195,6 +213,11 @@ struct PromptCachePanelPresentationTests {
         presentation.clockExited(place: place, instance: clock)
         try await settle()
         #expect(presentation.request == nil)
+
+        presentation.clockEntered(place: place, instance: clock, anchor: frame, target: target)
+        await untilObserved { presentation.request != nil }
+        #expect(presentation.request?.target == target)
+        #expect(presentation.request?.trigger == .pointer)
     }
 
     @Test func panelHover_keepsItOpenAcrossTheGap() async throws {
@@ -228,14 +251,6 @@ struct PromptCachePanelPresentationTests {
         #expect(presentation.request == nil)
     }
 
-    @Test func click_underARestingPointer_staysOpen() async throws {
-        let presentation = makePresentation()
-        presentation.clockEntered(place: place, instance: clock, anchor: frame, target: target)
-        presentation.clockClicked(place: place, instance: clock, anchor: frame, target: target)
-        try await settle()
-        #expect(presentation.request != nil, "the pointer is still on the clock")
-    }
-
     @Test func hover_handsOverToTheClockThatReplacesIt() async throws {
         let presentation = makePresentation()
         let replacement = UUID()
@@ -260,10 +275,18 @@ struct PromptCachePanelPresentationTests {
         #expect(presentation.request == nil)
     }
 
-    @Test func click_opensAtOnceAndAgainKeepsTheSamePanel() throws {
+    @Test(arguments: [false, true])
+    func click_opensAtOnceAndAgainKeepsTheSamePanel(isPointerResting: Bool) async throws {
         let presentation = makePresentation()
+        if isPointerResting {
+            presentation.clockEntered(place: place, instance: clock, anchor: frame, target: target)
+        }
         presentation.clockClicked(place: place, instance: clock, anchor: frame, target: target)
         let first = try #require(presentation.request)
+        if isPointerResting {
+            try await settle()
+            #expect(presentation.request?.id == first.id)
+        }
         presentation.clockClicked(place: place, instance: clock, anchor: frame, target: target)
         #expect(presentation.request?.id == first.id)
     }
@@ -306,18 +329,26 @@ struct PromptCachePanelPresentationTests {
         #expect(presentation.request == nil)
     }
 
-    @Test func clockDisappearing_closesItsPanelUnlessAReplacementTookOver() async {
+    @Test(arguments: [false, true])
+    func clockDisappearing_closesItsPanelUnlessAReplacementTookOver(openedByClick: Bool) async throws {
         let presentation = PromptCachePanelPresentation()
-        let old = UUID()
-        let new = UUID()
-        presentation.clockMoved(place: place, instance: old, anchor: frame)
-        presentation.open(target: target, place: place, trigger: .accessibility)
-
-        // A row swapping layouts reports its new clock before the old one
-        // leaves.
         let moved = frame.offsetBy(dx: 30, dy: 0)
-        presentation.clockMoved(place: place, instance: new, anchor: moved)
-        presentation.clockDisappeared(place: place, instance: old)
+        let new = UUID()
+        if openedByClick {
+            presentation.clockMoved(place: place, instance: new, anchor: moved)
+            presentation.clockClicked(place: place, instance: clock, anchor: frame, target: target)
+        } else {
+            presentation.clockMoved(place: place, instance: clock, anchor: frame)
+            presentation.open(target: target, place: place, trigger: .accessibility)
+            presentation.clockMoved(place: place, instance: new, anchor: moved)
+        }
+        let first = try #require(presentation.request)
+        #expect(first.anchor == frame)
+        #expect(first.clock.instance == clock)
+
+        presentation.clockDisappeared(place: place, instance: clock)
+        #expect(presentation.request?.id == first.id)
+        #expect(presentation.request?.clock.instance == new)
         #expect(presentation.request?.anchor == moved)
         #expect(presentation.anchor(for: place) == moved)
 
@@ -369,16 +400,6 @@ struct PromptCachePanelPresentationTests {
         let presentation = PromptCachePanelPresentation()
         presentation.clockClicked(place: place, instance: clock, anchor: frame, target: target)
         #expect(presentation.request?.anchor == frame)
-    }
-
-    @Test func clockDisappearing_movesThePanelToAnotherClockOfThePlace() {
-        let presentation = PromptCachePanelPresentation()
-        let elsewhere = frame.offsetBy(dx: 0, dy: 200)
-        presentation.clockMoved(place: place, instance: UUID(), anchor: elsewhere)
-        presentation.clockClicked(place: place, instance: clock, anchor: frame, target: target)
-
-        presentation.clockDisappeared(place: place, instance: clock)
-        #expect(presentation.request?.anchor == elsewhere)
     }
 
     @Test func hover_opensNothingWhileAnotherPanelIsUp_butAClickStillDoes() async throws {
@@ -438,32 +459,32 @@ struct PromptCachePanelPresentationTests {
 // MARK: - Unsent input
 
 struct PromptInputEffectTests {
-    private func effect(
-        _ key: NamedKey?,
-        _ characters: String?,
-        _ modifiers: NSEvent.ModifierFlags = []
-    ) -> SurfaceView.PromptInputEffect {
-        SurfaceView.promptInputEffect(key: key, charactersIgnoringModifiers: characters, modifiers: modifiers)
+    private struct InputCase: Sendable {
+        let key: NamedKey?
+        let characters: String?
+        var modifiers: NSEvent.ModifierFlags = []
+        let effect: SurfaceView.PromptInputEffect
     }
 
-    @Test func plainReturnAndControlC_submit() {
-        #expect(effect(.return, "\r") == .submit)
-        #expect(effect(nil, "c", .control) == .submit)
-    }
-
-    @Test func lineBreaksAndEverythingElse_leaveADraft() {
-        #expect(effect(.return, "\r", .shift) == .draft, "Shift-Return inserts a line break")
-        #expect(effect(.return, "\r", .option) == .draft, "so does Option-Return")
-        #expect(effect(nil, "a") == .draft)
-        #expect(effect(.escape, "\u{1b}") == .draft, "an open picker may still be there")
-        #expect(effect(.up, nil) == .draft, "history recall fills the prompt")
-        #expect(effect(nil, "d", .control) == .draft)
-    }
-
-    @Test func commandShortcuts_doNotReachThePromptExceptPaste() {
-        #expect(effect(nil, "k", .command) == .none)
-        #expect(effect(nil, "j", .command) == .none)
-        #expect(effect(nil, "v", .command) == .draft)
+    @Test(arguments: [
+        InputCase(key: .return, characters: "\r", effect: .submit),
+        InputCase(key: nil, characters: "c", modifiers: .control, effect: .submit),
+        InputCase(key: .return, characters: "\r", modifiers: .shift, effect: .draft),
+        InputCase(key: .return, characters: "\r", modifiers: .option, effect: .draft),
+        InputCase(key: nil, characters: "a", effect: .draft),
+        InputCase(key: .escape, characters: "\u{1b}", effect: .draft),
+        InputCase(key: .up, characters: nil, effect: .draft),
+        InputCase(key: nil, characters: "d", modifiers: .control, effect: .draft),
+        InputCase(key: nil, characters: "k", modifiers: .command, effect: .none),
+        InputCase(key: nil, characters: "j", modifiers: .command, effect: .none),
+        InputCase(key: nil, characters: "v", modifiers: .command, effect: .draft)
+    ])
+    private func promptInputEffect_matchesTheKeyAndModifiers(input: InputCase) {
+        #expect(SurfaceView.promptInputEffect(
+            key: input.key,
+            charactersIgnoringModifiers: input.characters,
+            modifiers: input.modifiers
+        ) == input.effect)
     }
 }
 
@@ -496,7 +517,7 @@ struct PromptCachePaneLineTests {
         let en = Locale(identifier: "en")
         let header = attention.paneHeaderLabel(paneID: paneID, in: session, locale: en)
         #expect(attention.promptCachePaneLine(for: target, in: session, locale: en) == PromptCacheRules.paneLine(for: header))
-        #expect(attention.promptCachePaneLine(for: target, in: session, locale: en).hasSuffix(" · ~/work/tamurakanto"))
+        #expect(attention.promptCachePaneLine(for: target, in: session, locale: en) == "Fix the parser · ~/work/tamurakanto")
 
         // A name the user gave the pane wins over the agent's title.
         session.renamePane(paneID, to: "review")
@@ -505,20 +526,20 @@ struct PromptCachePaneLineTests {
 }
 
 struct PromptCacheReasonTests {
-    @Test func eachBlockSaysSomethingDifferent() {
-        let reasons = [
-            PromptCacheCommandBlock.notAtPrompt,
-            .notInFront,
-            .unsubmittedInput
-        ].map { $0.reason.resolved(in: Locale(identifier: "en")) }
-        #expect(Set(reasons).count == 3, "a shell in front is not the agent being busy")
+    @Test func missingPromptOrForegroundAgent_hasAnEnglishReason() {
+        let en = Locale(identifier: "en")
+        #expect(PromptCacheCommandBlock.notAtPrompt.reason.resolved(in: en) ==
+            "Available while the agent waits at its prompt.")
+        #expect(PromptCacheCommandBlock.notInFront.reason.resolved(in: en) ==
+            "Available while this pane is running an agent.")
     }
 
-    @Test func unsentInput_pointsAtWhatStillWorks() {
-        // The panel cannot type here until the next turn, so the advice is
-        // to type the command, not to clear the prompt.
-        #expect(PromptCacheCommandBlock.unsubmittedInput.reason.resolved(in: Locale(identifier: "en")).contains("/compact"))
-        #expect(PromptCacheCommandBlock.unsubmittedInput.reason.resolved(in: Locale(identifier: "ja")).contains("/compact"))
+    @Test func unsentInputReason_suggestsTypingCompactOrClear_inEnglishAndJapanese() {
+        let reason = PromptCacheCommandBlock.unsubmittedInput.reason
+        #expect(reason.resolved(in: Locale(identifier: "en")) ==
+            "You typed in this pane during or after the last turn. Type /compact or /clear yourself.")
+        #expect(reason.resolved(in: Locale(identifier: "ja")) ==
+            "前回のターンの実行中または終了後に、このペインで入力がありました。/compact または /clear を直接入力してください。")
     }
 }
 
@@ -529,6 +550,8 @@ struct PromptCacheAnchorTests {
         #expect(PromptCacheRules.isAnchorVisible(CGRect(x: 40, y: 80, width: 16, height: 16), in: window))
         #expect(!PromptCacheRules.isAnchorVisible(CGRect(x: 40, y: -300, width: 16, height: 16), in: window))
         #expect(!PromptCacheRules.isAnchorVisible(CGRect(x: 40, y: 900, width: 16, height: 16), in: window))
+        #expect(PromptCacheRules.isAnchorVisible(CGRect(x: -8, y: 80, width: 16, height: 16), in: window))
+        #expect(!PromptCacheRules.isAnchorVisible(CGRect(x: -17, y: 80, width: 16, height: 16), in: window))
         #expect(!PromptCacheRules.isAnchorVisible(.zero, in: window))
         #expect(!PromptCacheRules.isAnchorVisible(nil, in: window))
     }
@@ -564,7 +587,7 @@ struct PendingCommandSubmitTests {
     private final class Held {
         let gate: Gate<Void>
         let submit: PendingCommandSubmit
-        var hasRun = false
+        var runCount = 0
 
         init() {
             let gate = Gate<Void>()
@@ -574,7 +597,7 @@ struct PendingCommandSubmitTests {
 
         func schedule() {
             submit.schedule(after: SurfaceView.commandSubmitDelay) { [weak self] in
-                self?.hasRun = true
+                self?.runCount += 1
             }
         }
 
@@ -585,21 +608,37 @@ struct PendingCommandSubmitTests {
         }
     }
 
-    @Test func aSubmitLeftAlone_runs() async {
+    private func withHeldSubmit(_ body: (Held) async throws -> Void) async throws {
         let held = Held()
-        held.schedule()
-        await held.gate.waitUntilRequested()
-        await held.release()
-        #expect(held.hasRun)
-    }
-
-    @Test func aSubmitCanceledDuringItsWait_neverRuns() async {
-        let held = Held()
-        held.schedule()
-        await held.gate.waitUntilRequested()
+        do {
+            try await body(held)
+        } catch {
+            held.submit.cancel()
+            await held.release()
+            throw error
+        }
         held.submit.cancel()
         await held.release()
-        #expect(!held.hasRun)
+    }
+
+    @Test func aSubmitLeftAlone_runs() async throws {
+        try await withHeldSubmit { held in
+            held.schedule()
+            try await held.gate.waitUntilRequested()
+            #expect(held.runCount == 0)
+            await held.release()
+            #expect(held.runCount == 1)
+        }
+    }
+
+    @Test func aSubmitCanceledDuringItsWait_neverRuns() async throws {
+        try await withHeldSubmit { held in
+            held.schedule()
+            try await held.gate.waitUntilRequested()
+            held.submit.cancel()
+            await held.release()
+            #expect(held.runCount == 0)
+        }
     }
 
     @Test(.tags(.ffi), .enabled("libghostty is unavailable") { await GhosttyAvailability.isAvailable() })
@@ -612,13 +651,14 @@ struct PendingCommandSubmitTests {
         ]
         for input in inputs {
             let view = PaneHostRepresentable.makeSurfaceView(ghosttyApp: ghosttyApp, environment: [:])
-            let held = Held()
-            view.commandSubmit = held.submit
-            held.schedule()
-            await held.gate.waitUntilRequested()
-            try input(view)
-            await held.release()
-            #expect(!held.hasRun)
+            try await withHeldSubmit { held in
+                view.commandSubmit = held.submit
+                held.schedule()
+                try await held.gate.waitUntilRequested()
+                try input(view)
+                await held.release()
+                #expect(held.runCount == 0)
+            }
         }
     }
 }

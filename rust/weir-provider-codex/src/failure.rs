@@ -283,45 +283,49 @@ mod tests {
     }
 
     #[test]
-    fn only_a_usage_limit_hands_its_message_to_the_host() {
-        let line = failed_line(
-            "",
-            r#"{"message":"Overloaded","codex_error_info":{"http_connection_failed":{}}}"#,
-        );
-        let report = turn_failure_report(line.as_bytes(), &WATCH).unwrap();
-        assert_eq!(report.payload["weir_error_kind"], "http_connection_failed");
-        assert_eq!(report.usage_limit_message, None);
+    fn reports_keep_the_error_kind_without_a_usage_limit_message() {
+        for (error, kind) in [
+            (
+                r#"{"message":"Overloaded","codex_error_info":{"http_connection_failed":{}}}"#,
+                "http_connection_failed",
+            ),
+            (
+                r#"{"codex_error_info":"usage_limit_exceeded"}"#,
+                "usage_limit_exceeded",
+            ),
+            (
+                r#"{"message":"The 'no-such-model' model is not supported.","codex_error_info":"model_not_found"}"#,
+                "model_not_found",
+            ),
+        ] {
+            let line = failed_line("", error);
+            let report = turn_failure_report(line.as_bytes(), &WATCH).expect("failure report");
+            assert_eq!(report.payload["weir_error_kind"], kind, "{error}");
+            assert_eq!(report.usage_limit_message, None, "{error}");
+        }
     }
 
     #[test]
     fn a_time_is_read_with_or_without_a_fraction_or_an_offset() {
-        let utc = Some(1_791_853_200);
-        assert_eq!(line_seconds("2026-10-13T01:00:00Z"), utc);
-        assert_eq!(line_seconds("2026-10-13T01:00:00.500Z"), utc);
-        assert_eq!(line_seconds("2026-10-13T10:00:00+09:00"), utc);
-        assert_eq!(line_seconds("2026-10-13T10:00:00.500+09:00"), utc);
-        assert_eq!(line_seconds("2026-10-12T21:00:00-04:00"), utc);
-        assert_eq!(line_seconds("t"), None);
-        assert_eq!(line_seconds("2026-10-13T10:00:00+99:99"), None);
-        assert_eq!(line_seconds("2026-10-13T10:00:00++9:00"), None);
-        assert_eq!(line_seconds("2026-10-13T01:00:00"), None);
-    }
-
-    #[test]
-    fn a_usage_limit_with_no_message_is_still_named() {
-        let line = failed_line("", r#"{"codex_error_info":"usage_limit_exceeded"}"#);
-        let report = turn_failure_report(line.as_bytes(), &WATCH).unwrap();
-        assert_eq!(report.payload["weir_error_kind"], "usage_limit_exceeded");
-        assert_eq!(report.usage_limit_message, None);
-    }
-
-    /// Taken from what Codex CLI 0.165.0 wrote for a model it does not have.
-    #[test]
-    fn a_model_codex_does_not_have_is_named_by_its_kind() {
-        let line = r#"{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":null,"error":{"message":"The 'no-such-model' model is not supported.","codex_error_info":"model_not_found"}}}"#;
-        let report = turn_failure_report(line.as_bytes(), &WATCH).unwrap();
-        assert_eq!(report.payload["weir_error_kind"], "model_not_found");
-        assert_eq!(report.usage_limit_message, None);
+        for timestamp in [
+            "2026-10-13T01:00:00Z",
+            "2026-10-13T01:00:00.500Z",
+            "2026-10-13T10:00:00+09:00",
+            "2026-10-13T10:00:00.500+09:00",
+            "2026-10-12T21:00:00-04:00",
+        ] {
+            assert_eq!(line_seconds(timestamp), Some(1_791_853_200), "{timestamp}");
+        }
+        for timestamp in [
+            "t",
+            "2026-10-13T10:00:00+99:99",
+            "2026-10-13T10:00:00+24:00",
+            "2026-10-13T10:00:00+09:60",
+            "2026-10-13T10:00:00++9:00",
+            "2026-10-13T01:00:00",
+        ] {
+            assert_eq!(line_seconds(timestamp), None, "{timestamp}");
+        }
     }
 
     #[test]
@@ -383,27 +387,27 @@ mod tests {
                 r#"{{"timestamp":"t","type":"event_msg","payload":{{"type":"task_complete","turn_id":"a","last_agent_message":null,"error":{error}}}}}"#
             )
         };
-        let failure = |error: &str| rollout_failure(&rollout(&[STARTED, &failed(error)])).unwrap();
-        // Taken from what Codex CLI 0.165.0 wrote for a model it does not have.
-        let model = failure(
-            r#"{"message":"The 'no-such-model' model is not supported when using Codex with a ChatGPT account.","codex_error_info":"model_not_found"}"#,
-        );
-        assert_eq!(
-            model,
-            RolloutFailure {
-                error: "model_not_found".to_owned(),
-                usage_limit: None,
-            }
-        );
-        assert_eq!(
-            failure(r#"{"message":"lost","codex_error_info":{"http_connection_failed":{"http_status_code":502}}}"#).error,
-            "http_connection_failed"
-        );
-        assert_eq!(
-            failure(r#"{"message":"Something broke."}"#).error,
-            "Something broke."
-        );
-        assert_eq!(failure("{}").error, "error");
+        for (error, detail) in [
+            (
+                r#"{"message":"The 'no-such-model' model is not supported when using Codex with a ChatGPT account.","codex_error_info":"model_not_found"}"#,
+                "model_not_found",
+            ),
+            (
+                r#"{"message":"lost","codex_error_info":{"http_connection_failed":{"http_status_code":502}}}"#,
+                "http_connection_failed",
+            ),
+            (r#"{"message":"Something broke."}"#, "Something broke."),
+            ("{}", "error"),
+        ] {
+            assert_eq!(
+                rollout_failure(&rollout(&[STARTED, &failed(error)])),
+                Some(RolloutFailure {
+                    error: detail.to_owned(),
+                    usage_limit: None
+                }),
+                "{error}"
+            );
+        }
     }
 
     #[test]

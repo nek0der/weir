@@ -446,6 +446,7 @@ mod tests {
         let git_dir = temporary_git_dir();
         let paths = WorktreeLockPaths::new(git_dir.path());
         let restore = ExclusiveLock::acquire(&paths, Duration::ZERO, POLL).unwrap();
+        assert_eq!(restore.interruption(), None, "no hook, nothing to stop for");
         let barrier = Arc::new(Barrier::new(2));
         let hook = {
             let paths = paths.clone();
@@ -475,28 +476,6 @@ mod tests {
             markers(&paths.waiting()).is_empty(),
             "the marker goes before the hook returns"
         );
-    }
-
-    #[test]
-    fn restore_aborts_cooperatively_when_hook_waits() {
-        let git_dir = temporary_git_dir();
-        let paths = WorktreeLockPaths::new(git_dir.path());
-        let restore = ExclusiveLock::acquire(&paths, Duration::ZERO, POLL).unwrap();
-        assert_eq!(restore.interruption(), None, "no hook, nothing to stop for");
-        let hook = {
-            let paths = paths.clone();
-            thread::spawn(move || acquire_shared(&paths, "RUN", short(5_000, 10_000)))
-        };
-        // A restore writing paths one by one stops at the first check after
-        // the hook asks.
-        let mut written = 0;
-        while restore.interruption().is_none() {
-            written += 1;
-            thread::sleep(POLL);
-            assert!(written < 1_000, "the hook never asked");
-        }
-        drop(restore);
-        assert!(matches!(hook.join().unwrap(), Shared::Held(_)));
     }
 
     #[test]
@@ -652,6 +631,8 @@ mod tests {
             Shared::NotReleased
         ));
         assert_eq!(restore.interruption(), None);
+        assert!(!paths.waiting().exists());
+        assert!(!paths.abandoned().exists());
         drop(restore);
         // Not at once: another test's process starting in the moment keeps
         // a copy of the descriptor until it runs its program.

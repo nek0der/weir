@@ -38,29 +38,27 @@ struct QuickTerminalSettingsTests {
         ) == .ok)
     }
 
-    @Test func validateHotKey_rejectsDefaultMenuShortcut() {
-        let result = QuickTerminalSettings().validateHotKey(
-            .init(key: "t", modifiers: [.command]),
-            keyboard: KeyboardSettings(),
-            isTakenBySystem: Self.noSystemHotKeys
-        )
-        #expect(result == .conflictsWithMenu(.newTab))
-    }
-
-    @Test func validateHotKey_rejectsOverriddenMenuShortcut() {
+    @Test(arguments: [
+        (WeirShortcutAction.newTab, StoredShortcut(key: "t", modifiers: [.command])),
+        (.toggleSidebar, StoredShortcut(key: "k", modifiers: [.control, .option]))
+    ])
+    func validateHotKey_rejectsEffectiveMenuShortcuts(action: WeirShortcutAction, chord: StoredShortcut) {
         var keyboard = KeyboardSettings()
-        let custom = StoredShortcut(key: "k", modifiers: [.control, .option])
-        keyboard.setOverride(custom, for: .toggleSidebar)
-        #expect(QuickTerminalSettings()
-            .validateHotKey(custom, keyboard: keyboard, isTakenBySystem: Self.noSystemHotKeys) == .conflictsWithMenu(.toggleSidebar))
+        if action == .toggleSidebar {
+            keyboard.setOverride(chord, for: action)
+        }
+        let settings = QuickTerminalSettings()
+        #expect(settings.validateHotKey(chord, keyboard: keyboard, isTakenBySystem: Self.noSystemHotKeys)
+            == .conflictsWithMenu(action))
+        let nearMiss = StoredShortcut(key: chord.key, modifiers: [.command, .control, .option])
+        #expect(settings.validateHotKey(nearMiss, keyboard: keyboard, isTakenBySystem: Self.noSystemHotKeys) == .ok)
     }
 
-    @Test func validateHotKey_rejectsReservedTrigger() {
-        let settings = QuickTerminalSettings()
-        #expect(settings
-            .validateHotKey(.init(key: "q", modifiers: [.command]), keyboard: .init(), isTakenBySystem: Self.noSystemHotKeys) == .reserved)
-        #expect(settings
-            .validateHotKey(.init(key: "3", modifiers: [.command]), keyboard: .init(), isTakenBySystem: Self.noSystemHotKeys) == .reserved)
+    @Test(arguments: ["q", "3"], [false, true])
+    func validateHotKey_reservedChordWinsEvenWhenTakenByTheSystem(key: String, isSystemChord: Bool) {
+        let chord = StoredShortcut(key: key, modifiers: [.command])
+        let result = QuickTerminalSettings().validateHotKey(chord, keyboard: .init()) { isSystemChord && $0 == chord }
+        #expect(result == .reserved)
     }
 
     @Test func validateHotKey_takenBySystem_isRejected() {
@@ -84,17 +82,6 @@ struct QuickTerminalSettingsTests {
         ) == .ok)
     }
 
-    /// Reserved combinations keep their more specific message even when
-    /// macOS also uses them.
-    @Test func validateHotKey_reservedWinsOverSystem() {
-        let result = QuickTerminalSettings().validateHotKey(
-            .init(key: "q", modifiers: [.command]),
-            keyboard: .init(),
-            isTakenBySystem: { _ in true }
-        )
-        #expect(result == .reserved)
-    }
-
     // MARK: - App command warning
 
     @Test(arguments: [
@@ -112,24 +99,17 @@ struct QuickTerminalSettingsTests {
 
     // MARK: - Settings decoding
 
-    @Test func decode_settingsWithoutQuickTerminal_usesDefaults() throws {
-        let data = try JSONEncoder().encode(WeirSettings.default)
-        var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        object["quickTerminal"] = nil
-        let legacy = try JSONSerialization.data(withJSONObject: object)
-
-        let decoded = try JSONDecoder().decode(WeirSettings.self, from: legacy)
-
-        #expect(decoded.quickTerminal == QuickTerminalSettings())
+    @Test(arguments: [
+        #"{"schemaVersion":1,"appearance":{},"font":{},"terminal":{},"advanced":{}}"#,
+        #"{"schemaVersion":1,"appearance":{},"font":{},"terminal":{},"advanced":{},"quickTerminal":{}}"#
+    ])
+    func decode_legacySettingsUseDefaultsForMissingQuickTerminalValues(json: String) throws {
+        let decoded = try JSONDecoder().decode(WeirSettings.self, from: Data(json.utf8))
         #expect(decoded.quickTerminal.hotKey == nil)
         #expect(decoded.quickTerminal.position == .top)
         #expect(decoded.quickTerminal.sizePercent == 50)
         #expect(decoded.quickTerminal.hidesOnFocusLoss)
-    }
-
-    @Test func decode_emptySection_usesDefaults() throws {
-        let decoded = try JSONDecoder().decode(QuickTerminalSettings.self, from: Data("{}".utf8))
-        #expect(decoded == QuickTerminalSettings())
+        #expect(decoded.quickTerminal.unknownFields.isEmpty)
     }
 
     @Test func decode_partialSection_keepsPresentKeys() throws {
@@ -150,7 +130,7 @@ struct QuickTerminalSettingsTests {
     }
 
     @Test func decode_outOfRangeSize_isClampedAndSnapped() throws {
-        for (raw, expected) in [(5, 30), (95, 90), (44, 40), (46, 50), (70, 70)] {
+        for (raw, expected) in [(5, 30), (30, 30), (44, 40), (45, 50), (46, 50), (70, 70), (90, 90), (95, 90)] {
             let decoded = try JSONDecoder().decode(
                 QuickTerminalSettings.self,
                 from: Data(#"{"sizePercent":\#(raw)}"#.utf8)
@@ -160,16 +140,27 @@ struct QuickTerminalSettingsTests {
     }
 
     @Test func codable_roundTrip_preservesEveryField() throws {
-        var settings = QuickTerminalSettings()
-        settings.hotKey = StoredShortcut(key: "space", modifiers: [.command, .shift])
-        settings.position = .center
-        settings.sizePercent = 70
-        settings.hidesOnFocusLoss = false
-        let restored = try JSONDecoder().decode(
-            QuickTerminalSettings.self,
-            from: JSONEncoder().encode(settings)
-        )
-        #expect(restored == settings)
+        let json = """
+        {
+          "hotKey": {"key": "space", "modifiers": 3},
+          "position": "center",
+          "sizePercent": 70,
+          "hidesOnFocusLoss": false,
+          "future": {"style": "sheet"}
+        }
+        """
+        let fixture = Data(json.utf8)
+        let settings = try JSONDecoder().decode(QuickTerminalSettings.self, from: fixture)
+        #expect(settings.hotKey == StoredShortcut(key: "space", modifiers: [.command, .shift]))
+        #expect(settings.position == .center)
+        #expect(settings.sizePercent == 70)
+        #expect(!settings.hidesOnFocusLoss)
+
+        let expected = try #require(JSONSerialization.jsonObject(with: fixture) as? NSDictionary)
+        let encoded = try JSONEncoder().encode(settings)
+        let actual = try #require(JSONSerialization.jsonObject(with: encoded) as? NSDictionary)
+        #expect(actual == expected)
+        #expect(try JSONDecoder().decode(QuickTerminalSettings.self, from: encoded) == settings)
     }
 
     @Test func encode_unboundHotKey_omitsTheKey() throws {

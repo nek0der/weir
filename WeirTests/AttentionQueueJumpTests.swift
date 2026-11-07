@@ -34,13 +34,16 @@ struct AttentionQueueJumpTests {
 
         // Listed: through the item, so ⌘J continues from it.
         #expect(store.focus(runtimeID: "a", from: window))
-        #expect(navigator.visited.count == 1)
-        #expect(window.cursor.current == store.queue.items.first?.id)
+        let listed = TwoProjects.id("a")
+        #expect(navigator.visited == [listed])
+        #expect(window.cursor.current == listed)
 
         // Not listed (a turn already read): straight to where it runs.
         #expect(store.focus(runtimeID: "shown", from: window))
         #expect(!store.focus(runtimeID: "gone", from: window))
         #expect(navigator.runtimes == ["shown", "gone"])
+        #expect(navigator.visited == [listed])
+        #expect(window.cursor.current == listed)
     }
 
     private static func stop(_ name: String) -> RuntimeFact {
@@ -81,6 +84,8 @@ struct AttentionQueueJumpTests {
         // ⌘J names the item it would go to without moving there.
         let peeked = try #require(store.peekNext(from: window))
         #expect(window.cursor.current == nil)
+        #expect(navigator.visited.isEmpty)
+        #expect(window.decisionBarSelection.isEmpty)
 
         store.jump(forward: true, in: window)
         let first = try #require(store.queue.items.first)
@@ -106,10 +111,13 @@ struct AttentionQueueJumpTests {
         let window = ProjectWindowState(id: WindowID())
 
         let chosen = try #require(store.queue.items.dropFirst().first)
+        let next = try #require(store.queue.items.last)
         store.focus(chosen, from: window)
+        #expect(window.cursor.current == chosen.id)
         store.jump(forward: true, in: window)
 
-        #expect(navigator.visited.last == store.queue.items.last?.id)
+        #expect(navigator.visited == [chosen.id, next.id])
+        #expect(window.cursor.current == next.id)
     }
 }
 

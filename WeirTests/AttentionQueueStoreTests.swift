@@ -43,7 +43,10 @@ struct AttentionQueueStoreTests {
             isApprovalServiceRunning: false
         )
 
+        #expect(input.runtimes.count == 1)
         let fact = try #require(input.runtimes.first)
+        #expect(fact.runtimeID == runtime.id)
+        #expect(fact.provider == runtime.kind)
         // The pane in no tab is left out.
         #expect(fact.paneIDs == [paneID])
         #expect(fact.tabID == tab.id)
@@ -63,16 +66,24 @@ struct AttentionQueueStoreTests {
         #expect(input.runtimes.isEmpty)
     }
 
-    @Test func theReadMark_comesFromTheProjection() {
+    @Test(arguments: [false, true])
+    func theReadMark_comesFromTheProjection(isRead: Bool) {
         let (session, _, paneID) = WorkspaceSessionFixture.withLooseTab()
+        let runtime = Self.runtime(.finished, panes: [paneID])
+        var checked: [String] = []
         let input = AttentionQueueStore.makeInput(
-            runtimes: [Self.runtime(.finished, panes: [paneID])],
-            isRead: { _ in true },
+            runtimes: [runtime],
+            isRead: {
+                checked.append($0.id)
+                return isRead
+            },
             approvals: [],
             session: session,
             isApprovalServiceRunning: false
         )
-        #expect(input.runtimes.first?.isEpisodeRead == true)
+        #expect(checked == [runtime.id])
+        #expect(input.runtimes.count == 1)
+        #expect(input.runtimes.first?.isEpisodeRead == isRead)
     }
 
     @Test func onlyPanesComingIntoSight_areRead() {
@@ -98,7 +109,18 @@ struct AttentionQueueStoreTests {
 
         #expect(input.runtimes.first?.paneIDs.first == fixture.paneA)
         #expect(input.runtimes.first?.tabID == fixture.tabA.id)
-        #expect(input.runtimes.first?.paneIDs.count == 2)
+        #expect(input.runtimes.first?.paneIDs == [fixture.paneA, fixture.paneB])
+
+        fixture.session.setActiveTab(fixture.tabB.id, in: fixture.session.primaryWindowID, intent: .person)
+        let moved = AttentionQueueStore.makeInput(
+            runtimes: [Self.runtime(.error, panes: panes)],
+            isRead: { _ in false },
+            approvals: [],
+            session: fixture.session,
+            isApprovalServiceRunning: false
+        )
+        #expect(moved.runtimes.first?.paneIDs == [fixture.paneB, fixture.paneA])
+        #expect(moved.runtimes.first?.tabID == fixture.tabB.id)
     }
 
     /// While the service runs, the input leaves unannounced only a wait the
@@ -146,11 +168,15 @@ struct AttentionQueueStoreTests {
         let later = RuntimeFact.test("b", .error)
 
         store.apply(.init(runtimes: [stop]), announces: false)
-        #expect(store.queue.items.count == 1)
+        #expect(store.queue.items.map(\.id) == [.stop(EpisodeKey(origin: .runtime("a"), episodeToken: "1"))])
         #expect(performed.isEmpty, "what was waiting at launch is not read out")
 
         store.apply(.init(runtimes: [stop, later]), announces: true)
         #expect(performed == [[.announce(.stop(EpisodeKey(origin: .runtime("b"), episodeToken: "1")))]])
+
+        performed.removeAll()
+        store.apply(.init(runtimes: [stop, later]), announces: true)
+        #expect(performed.isEmpty, "unchanged items must not be announced again")
     }
 
     /// With and without an earlier turn the person has not viewed, which

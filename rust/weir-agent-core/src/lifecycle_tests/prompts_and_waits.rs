@@ -30,6 +30,10 @@ fn a_session_holds_a_conversation_once_prompted_or_resumed() {
     // A prompt gives it one, and a compaction keeps it.
     let prompted = run(Some(&fresh), &prompt("hello"));
     assert_eq!(prompted.has_prompt, Some(true));
+    for source in [SessionSource::Startup, SessionSource::Clear] {
+        let restarted = run(Some(&prompted), &start(Some(source)));
+        assert_eq!(restarted.has_prompt, Some(false), "{source:?}");
+    }
     let compacted = run(Some(&prompted), &start(Some(SessionSource::Compact)));
     assert_eq!(compacted.has_prompt, Some(true));
 
@@ -73,6 +77,30 @@ fn session_start_resets_the_run_and_remembers_the_session() {
         }]
     );
     assert_eq!(writes.snapshot, None);
+
+    let (active, _, _) = run(
+        &claude(),
+        &[started(Some("Old title")), prompt("previous turn")],
+    );
+    assert_eq!(active.state, RunState::Running);
+    assert_eq!(active.run_started_at.as_deref(), Some(NOW));
+    let writes = apply(
+        Some(&active),
+        &started(Some("Formal")),
+        &context(),
+        &claude(),
+        LATER,
+    );
+    let reset = writes.run.expect("record");
+    assert_eq!(reset.state, RunState::Idle);
+    assert_eq!(reset.run_started_at, None);
+    assert_eq!(reset.first_prompt, None);
+    assert_eq!(reset.last_prompt, None);
+    assert_eq!(reset.session_started_at.as_deref(), Some(LATER));
+    assert_eq!(reset.provider_session_title.as_deref(), Some("Formal"));
+    assert_eq!(reset.session_id.as_deref(), Some("session-1"));
+    assert_eq!(reset.revision, Some(3));
+    assert_eq!(writes.snapshot, None);
 }
 
 #[test]
@@ -86,40 +114,64 @@ fn a_wait_records_its_kind_and_the_tool_it_waits_to_use() {
         detail: Some("Claude needs your permission to use Write".into()),
         caller: Caller::Agent,
     };
-    let (record, _, _) = run(
+    let (waiting, _, _) = run(
         &claude(),
-        &[started(None), prompt("go"), tool.clone(), approval.clone()],
+        &[started(None), prompt("go"), tool, approval.clone()],
     );
-    assert_eq!(record.wait_kind, Some(WaitKind::Approval));
-    assert_eq!(record.tool.as_deref(), Some("Write"));
-    assert_eq!(record.detail.as_deref(), Some("Write: /repo/notes.txt"));
+    assert_eq!(waiting.state, RunState::NeedsInput);
+    assert_eq!(waiting.wait_kind, Some(WaitKind::Approval));
+    assert_eq!(waiting.tool.as_deref(), Some("Write"));
+    assert_eq!(waiting.detail.as_deref(), Some("Write: /repo/notes.txt"));
+    assert_eq!(waiting.caller, Some(Caller::Agent));
+    assert_eq!(waiting.wait_started_at.as_deref(), Some(NOW));
 
-    // Answered: the tool runs on, and the wait is gone with its kind.
-    let (record, _, _) = run(
+    let answered = apply(
+        Some(&waiting),
+        &AgentEvent::ToolFinished {
+            tool: Some("Write".into()),
+            caller: Caller::Agent,
+        },
+        &context(),
         &claude(),
-        &[
-            started(None),
-            prompt("go"),
-            tool,
-            approval.clone(),
-            AgentEvent::ToolFinished {
-                tool: Some("Write".into()),
-                caller: Caller::Agent,
-            },
-        ],
-    );
-    assert_eq!(record.wait_kind, None);
-    assert_eq!(record.tool, None);
+        LATER,
+    )
+    .run
+    .expect("record");
+    assert_eq!(answered.state, RunState::Running);
+    assert_eq!(answered.wait_kind, None);
+    assert_eq!(answered.tool, None);
+    assert_eq!(answered.caller, None);
+    assert_eq!(answered.wait_started_at, None);
+    assert_eq!(answered.detail, None);
 
-    // A request with no tool event before it names no tool: the
-    // provider's message is not one.
-    let (record, _, _) = run(&claude(), &[started(None), prompt("go"), approval]);
-    assert_eq!(record.wait_kind, Some(WaitKind::Approval));
-    assert_eq!(record.tool, None);
-    assert_eq!(
-        record.detail.as_deref(),
-        Some("Claude needs your permission to use Write")
-    );
+    // With no preceding tool, the provider's message is used, even after an error.
+    let (running, _, _) = run(&claude(), &[started(None), prompt("go")]);
+    let failed = apply(
+        Some(&running),
+        &AgentEvent::Failed {
+            error: "rate_limit".into(),
+            usage_limit: None,
+            kind: None,
+        },
+        &context(),
+        &claude(),
+        NOW,
+    )
+    .run
+    .expect("record");
+    assert_eq!(failed.detail.as_deref(), Some("rate_limit"));
+    for (previous, label) in [(&running, "no tool yet"), (&failed, "prior error")] {
+        let requested = apply(Some(previous), &approval, &context(), &claude(), LATER)
+            .run
+            .expect("record");
+        assert_eq!(requested.wait_kind, Some(WaitKind::Approval), "{label}");
+        assert_eq!(requested.tool, None, "{label}");
+        assert_eq!(
+            requested.detail.as_deref(),
+            Some("Claude needs your permission to use Write"),
+            "{label}"
+        );
+    }
 
     // A question is one whatever its words look like.
     let (record, _, _) = run(
@@ -135,8 +187,9 @@ fn a_wait_records_its_kind_and_the_tool_it_waits_to_use() {
     );
     assert_eq!(record.wait_kind, Some(WaitKind::Question));
     assert_eq!(record.tool, None);
-    let encoded = String::from_utf8(record.encode().expect("encodes")).expect("utf8");
-    assert!(encoded.contains(r#""waitKind":"question""#));
+    let encoded: serde_json::Value =
+        serde_json::from_slice(&record.encode().expect("encodes")).expect("json");
+    assert_eq!(encoded["waitKind"], "question");
 }
 
 #[test]
@@ -145,36 +198,64 @@ fn a_permission_prompt_after_a_question_leaves_the_question_waiting() {
         detail: Some("Which color?".into()),
         caller: Caller::Agent,
     };
-    let prompt_shown = AgentEvent::ApprovalRequested {
+    let (waiting, _, _) = run(&claude(), &[started(None), prompt("go"), question]);
+    let payload = weir_agent_model::RawHookInput {
+        bytes: br#"{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission to use AskUserQuestion"}"#,
+        transcript: None,
+    };
+    let events = weir_provider_claude::ClaudeAdapter
+        .normalize(payload, &weir_agent_model::HookContext::fixture())
+        .expect("normalize");
+    let [permission] = events.as_slice() else {
+        panic!("expected one permission event, got {events:?}");
+    };
+    assert!(matches!(
+        permission,
+        AgentEvent::ApprovalRequested {
+            caller: Caller::Unnamed,
+            ..
+        }
+    ));
+
+    let named = AgentEvent::ApprovalRequested {
         detail: Some("Claude needs your permission to use AskUserQuestion".into()),
         caller: Caller::Agent,
     };
-    let (record, _, _) = run(
-        &claude(),
-        &[
-            started(None),
-            prompt("go"),
-            question.clone(),
-            prompt_shown.clone(),
-        ],
-    );
-    assert_eq!(record.state, RunState::NeedsInput);
-    assert_eq!(record.wait_kind, Some(WaitKind::Question));
-    assert_eq!(record.detail.as_deref(), Some("Which color?"));
-    assert_eq!(record.tool, None);
-
-    // A record from before `waitKind` says it by its last event.
-    let (mut older, _, _) = run(&claude(), &[started(None), prompt("go"), question]);
-    older.wait_kind = None;
-    let record = apply(Some(&older), &prompt_shown, &context(), &claude(), NOW)
-        .run
-        .expect("record");
-    assert_eq!(record.wait_kind, Some(WaitKind::Question));
-    assert_eq!(record.detail.as_deref(), Some("Which color?"));
+    // A record from before waitKind and caller metadata says which wait it
+    // is by its last event.
+    let older = RunRecord {
+        wait_kind: None,
+        caller: None,
+        is_caller_inferred: None,
+        ..waiting.clone()
+    };
+    for (label, previous, permission, caller, inferred) in [
+        ("named caller", &waiting, &named, Some(Caller::Agent), None),
+        (
+            "unnamed caller",
+            &waiting,
+            permission,
+            Some(Caller::Agent),
+            Some(true),
+        ),
+        ("legacy wait", &older, permission, None, None),
+    ] {
+        let record = apply(Some(previous), permission, &context(), &claude(), LATER)
+            .run
+            .expect("record");
+        assert_eq!(record.state, RunState::NeedsInput);
+        assert_eq!(record.wait_kind, Some(WaitKind::Question));
+        assert_eq!(record.detail.as_deref(), Some("Which color?"));
+        assert_eq!(record.tool, None);
+        assert_eq!(record.wait_started_at.as_deref(), Some(NOW));
+        assert_eq!(record.state_episode_token, previous.state_episode_token);
+        assert_eq!(record.caller, caller);
+        assert_eq!(record.is_caller_inferred, inferred, "{label}");
+    }
 }
 
 #[test]
-fn a_turn_keeps_the_transcript_its_prompt_named_until_it_ends() {
+fn a_turn_keeps_its_latest_transcript_path_until_it_ends() {
     let named = ApplyContext {
         transcript_path: Some("/t/session.jsonl".into()),
         ..context()
@@ -187,19 +268,26 @@ fn a_turn_keeps_the_transcript_its_prompt_named_until_it_ends() {
     // transcript from its prompt on.
     assert_eq!(asked.state, RunState::Running);
     assert_eq!(asked.transcript_path.as_deref(), Some("/t/session.jsonl"));
+    let wait_path = ApplyContext {
+        transcript_path: Some("/t/question.jsonl".into()),
+        ..context()
+    };
     let waiting = apply(
         Some(&asked),
         &AgentEvent::WaitingForInput {
             detail: Some("Which color?".into()),
             caller: Caller::Agent,
         },
-        &named,
+        &wait_path,
         &claude(),
         NOW,
     )
     .run
     .expect("record");
-    assert_eq!(waiting.transcript_path.as_deref(), Some("/t/session.jsonl"));
+    assert_eq!(
+        waiting.transcript_path.as_deref(),
+        Some("/t/question.jsonl")
+    );
 
     // The permission prompt after the question names no path of its own;
     // the wait keeps the question's.
@@ -217,7 +305,7 @@ fn a_turn_keeps_the_transcript_its_prompt_named_until_it_ends() {
     .expect("record");
     assert_eq!(
         prompt_shown.transcript_path.as_deref(),
-        Some("/t/session.jsonl")
+        Some("/t/question.jsonl")
     );
 
     // The answer moves the run on in the same turn, which keeps the path,
@@ -237,7 +325,7 @@ fn a_turn_keeps_the_transcript_its_prompt_named_until_it_ends() {
     assert_eq!(answered.state, RunState::Running);
     assert_eq!(
         answered.transcript_path.as_deref(),
-        Some("/t/session.jsonl")
+        Some("/t/question.jsonl")
     );
     let ended = apply(
         Some(&answered),
@@ -275,33 +363,6 @@ fn a_turn_keeps_the_transcript_its_prompt_named_until_it_ends() {
     .run
     .expect("record");
     assert_eq!(record.transcript_path, None);
-}
-
-#[test]
-fn a_permission_prompt_takes_only_a_tool_events_words() {
-    // An error's words are not a request's.
-    let (record, _, _) = run(
-        &claude(),
-        &[
-            started(None),
-            prompt("go"),
-            AgentEvent::Failed {
-                error: "rate_limit".into(),
-                usage_limit: None,
-                kind: None,
-            },
-            AgentEvent::ApprovalRequested {
-                detail: Some("Claude needs your permission to use Bash".into()),
-                caller: Caller::Agent,
-            },
-        ],
-    );
-    assert_eq!(record.wait_kind, Some(WaitKind::Approval));
-    assert_eq!(
-        record.detail.as_deref(),
-        Some("Claude needs your permission to use Bash")
-    );
-    assert_eq!(record.tool, None);
 }
 
 #[test]
@@ -425,9 +486,18 @@ fn a_finished_turn_records_its_cache_window_and_quiet_events_keep_it() {
             },
         ],
     );
+    assert_eq!(record.state, RunState::NeedsInput);
+    assert_eq!(record.wait_kind, Some(WaitKind::Question));
     assert_eq!(record.cache_window, Some(window(NOW)));
-    let encoded = String::from_utf8(record.encode().expect("encodes")).expect("utf8");
-    assert!(encoded.contains("\"cacheWindow\":{"));
+    let encoded: serde_json::Value =
+        serde_json::from_slice(&record.encode().expect("encodes")).expect("json");
+    assert_eq!(
+        encoded["cacheWindow"],
+        serde_json::json!({
+            "observedAt": "2026-09-14T00:00:00Z",
+            "ttlSeconds": 3600, "rewriteTokens": 573_000, "precision": "estimated",
+        })
+    );
 
     // The next turn's window replaces it, and a turn that could not read
     // one leaves the cache unknown rather than reusing the old numbers.
@@ -462,33 +532,65 @@ fn a_finished_turn_records_its_cache_window_and_quiet_events_keep_it() {
 
 #[test]
 fn a_failure_sets_the_usage_limit_and_the_next_failure_replaces_it() {
-    let limit = weir_agent_model::UsageLimit {
-        resets_at: Some("2026-09-14T15:00:00Z".to_owned()),
-        window: Some("five_hour".to_owned()),
-        ..weir_agent_model::UsageLimit::default()
-    };
-    let limited = AgentEvent::Failed {
+    let limited = |resets_at: &str, window: &str| AgentEvent::Failed {
         error: "rate_limit".into(),
-        usage_limit: Some(limit.clone()),
+        usage_limit: Some(weir_agent_model::UsageLimit {
+            resets_at: Some(resets_at.into()),
+            window: Some(window.into()),
+            ..weir_agent_model::UsageLimit::default()
+        }),
         kind: None,
     };
-    let (record, _, _) = run(&claude(), &[started(None), prompt("go"), limited.clone()]);
+    let (record, _, _) = run(
+        &claude(),
+        &[
+            started(None),
+            prompt("go"),
+            limited("2026-09-14T15:00:00Z", "five_hour"),
+        ],
+    );
     assert_eq!(record.state, RunState::Error);
-    assert_eq!(record.usage_limit, Some(limit));
-    let encoded = String::from_utf8(record.encode().expect("encodes")).expect("utf8");
-    assert!(encoded.contains("\"usageLimit\":{"));
+    let first: serde_json::Value =
+        serde_json::from_slice(&record.encode().expect("encodes")).expect("json");
+    assert_eq!(
+        first["usageLimit"],
+        serde_json::json!({
+            "resetsAt": "2026-09-14T15:00:00Z", "window": "five_hour",
+        })
+    );
+
+    let replaced = apply(
+        Some(&record),
+        &limited("2026-09-17T10:00:00Z", "seven_day"),
+        &context(),
+        &claude(),
+        LATER,
+    )
+    .run
+    .expect("record");
+    assert_eq!(replaced.state, RunState::Error);
+    let second: serde_json::Value =
+        serde_json::from_slice(&replaced.encode().expect("encodes")).expect("json");
+    assert_eq!(
+        second["usageLimit"],
+        serde_json::json!({
+            "resetsAt": "2026-09-17T10:00:00Z", "window": "seven_day",
+        })
+    );
 
     let other = AgentEvent::Failed {
         error: "server_error".into(),
         usage_limit: None,
         kind: None,
     };
-    let (record, _, _) = run(&claude(), &[started(None), prompt("go"), limited, other]);
-    assert_eq!(record.usage_limit, None);
+    let failed = apply(Some(&replaced), &other, &context(), &claude(), LATER)
+        .run
+        .expect("record");
+    assert_eq!(failed.usage_limit, None);
 }
 
 #[test]
-fn every_event_that_starts_or_ends_work_clears_the_cache_window() {
+fn a_cache_window_clears_on_turn_boundaries_and_when_outside_work_ends() {
     let (finished, _, _) = run(&claude(), &[started(None), prompt("p"), finished_with(NOW)]);
     assert!(finished.cache_window.is_some());
     let clearing = [
@@ -521,30 +623,43 @@ fn every_event_that_starts_or_ends_work_clears_the_cache_window() {
         assert_eq!(next.cache_window, None, "{event:?} must clear the window");
         assert_eq!(next.revision, finished.revision.map(|it| it + 1));
     }
-}
 
-#[test]
-fn session_end_without_the_snapshot_capability_removes_nothing() {
-    let (record, _, _) = run(&claude(), &[started(None), prompt("first")]);
-    let writes = apply(
-        Some(&record),
-        &AgentEvent::SessionEnded {
-            reason: Some("exit".into()),
-            session_id: None,
+    let idle = AgentEvent::AwaitingPrompt {
+        awaited_call_ended: false,
+    };
+    assert_eq!(
+        apply(Some(&finished), &idle, &context(), &claude(), LATER),
+        RecordWrites::default()
+    );
+    let working = apply(
+        Some(&finished),
+        &AgentEvent::ToolFinished {
+            tool: Some("Bash".into()),
+            caller: Caller::Agent,
         },
         &context(),
-        &ProviderDescriptor::fixture("claude", [Capability::Resume]),
-        LATER,
-    );
-    assert_eq!(writes.snapshot, None);
-    assert_eq!(writes.run.expect("record").state, RunState::Unknown);
+        &claude(),
+        NOW,
+    )
+    .run
+    .expect("record");
+    assert_eq!(working.state, RunState::Running);
+    assert_eq!(working.run_started_at, None);
+    assert_eq!(working.cache_window, Some(window(NOW)));
+    let settled = apply(Some(&working), &idle, &context(), &claude(), LATER)
+        .run
+        .expect("record");
+    assert_eq!(settled.state, RunState::Finished);
+    assert_eq!(settled.cache_window, None);
+    assert_eq!(settled.revision, working.revision.map(|it| it + 1));
 }
 
 #[test]
 fn session_end_keeps_prompts_drops_the_hint_and_removes_the_snapshot() {
-    let (mut record, _, _) = run(&claude(), &[started(None), prompt("first")]);
+    let (mut record, _, _) = run(&claude(), &[started(None), prompt("first"), prompt("last")]);
     record.turn_base_tree = Some("abc".into());
     record.turn_root = Some("/repo".into());
+    record.worktree_root = Some("/worktree".into());
     let writes = apply(
         Some(&record),
         &AgentEvent::SessionEnded {
@@ -558,8 +673,12 @@ fn session_end_keeps_prompts_drops_the_hint_and_removes_the_snapshot() {
     let ended = writes.run.expect("record");
     assert_eq!(ended.state, RunState::Unknown);
     assert_eq!(ended.first_prompt.as_deref(), Some("first"));
+    assert_eq!(ended.last_prompt.as_deref(), Some("last"));
     assert_eq!(ended.session_started_at.as_deref(), Some(NOW));
+    assert_eq!(ended.run_started_at, None);
     assert_eq!(ended.turn_base_tree, None);
+    assert_eq!(ended.turn_root, None);
+    assert_eq!(ended.worktree_root, None);
     assert_eq!(
         writes.snapshot,
         Some(TurnSnapshotOp::Remove {
@@ -572,6 +691,22 @@ fn session_end_keeps_prompts_drops_the_hint_and_removes_the_snapshot() {
             session_id: "session-1".into()
         }]
     );
+
+    let writes = apply(
+        Some(&record),
+        &AgentEvent::SessionEnded {
+            reason: Some("exit".into()),
+            session_id: None,
+        },
+        &context(),
+        &ProviderDescriptor::fixture("claude", [Capability::Resume]),
+        LATER,
+    );
+    assert_eq!(writes.snapshot, None);
+    let ended = writes.run.expect("record");
+    assert_eq!(ended.state, RunState::Unknown);
+    assert_eq!(ended.turn_root, None);
+    assert_eq!(ended.worktree_root, None);
 
     // A signal keeps the hint for auto-resume.
     let writes = apply(
@@ -690,38 +825,36 @@ fn codex_compaction_and_interrupt_return_to_a_settled_state() {
 
 #[test]
 fn episode_token_survives_repeated_states_and_changes_with_the_state() {
-    let (record, _, _) = run(
+    let question = AgentEvent::WaitingForInput {
+        detail: Some("Which color?".into()),
+        caller: Caller::Agent,
+    };
+    let (first, _, _) = run(
         &claude(),
-        &[
-            started(None),
-            prompt("first"),
-            AgentEvent::WaitingForInput {
-                detail: Some("Which color?".into()),
-                caller: Caller::Agent,
-            },
-            AgentEvent::WaitingForInput {
-                detail: Some("Which color?".into()),
-                caller: Caller::Agent,
-            },
-        ],
+        &[started(None), prompt("first"), question.clone()],
     );
-    assert_eq!(record.revision, Some(4));
-    assert_eq!(record.state_episode_token.as_deref(), Some("3"));
+    assert_eq!(first.state, RunState::NeedsInput);
+    assert_eq!(first.revision, Some(3));
+    assert_eq!(first.state_episode_token.as_deref(), Some("3"));
+
+    let repeated = apply(Some(&first), &question, &context(), &claude(), LATER)
+        .run
+        .expect("record");
+    assert_eq!(repeated.state, RunState::NeedsInput);
+    assert_eq!(repeated.revision, Some(4));
+    assert_eq!(repeated.state_episode_token, first.state_episode_token);
+
     let finished = apply(
-        Some(&record),
-        &AgentEvent::TurnFinished {
-            continues_after_stop_hook: false,
-            titles: None,
-            cache: None,
-            reply: None,
-            background_work: None,
-        },
+        Some(&repeated),
+        &finished_with(LATER),
         &context(),
         &claude(),
         LATER,
     )
     .run
     .expect("record");
+    assert_eq!(finished.state, RunState::Finished);
+    assert_eq!(finished.revision, Some(5));
     assert_eq!(finished.state_episode_token.as_deref(), Some("5"));
 }
 
@@ -779,6 +912,24 @@ fn side_only_events_write_no_record() {
         apply(None, &extension, &context(), &claude(), NOW),
         RecordWrites::default()
     );
+
+    let (active, _, _) = run(&claude(), &[started(None), prompt("go")]);
+    let worktree = AgentEvent::WorktreeCreated {
+        repo_root: "/repo".into(),
+        worktree_path: "/repo-fork".into(),
+        branch: "fork".into(),
+    };
+    let writes = apply(Some(&active), &worktree, &context(), &claude(), LATER);
+    assert_eq!(writes.run, None);
+    assert_eq!(writes.snapshot, None);
+    assert_eq!(
+        writes.side,
+        [SideWrite::WorktreeEvent {
+            repo_root: "/repo".into(),
+            worktree_path: "/repo-fork".into(),
+            branch: "fork".into(),
+        }]
+    );
 }
 
 #[test]
@@ -811,25 +962,39 @@ fn titles_are_sanitized_and_absent_observations_keep_the_previous_value() {
         record.provider_generated_title.as_deref(),
         Some("Generated")
     );
+    let unobserved = apply(
+        Some(&record),
+        &finished_with(LATER),
+        &context(),
+        &claude(),
+        LATER,
+    )
+    .run
+    .expect("record");
+    assert_eq!(
+        unobserved.provider_session_title.as_deref(),
+        Some("Safe title")
+    );
+    assert_eq!(
+        unobserved.provider_generated_title.as_deref(),
+        Some("Generated")
+    );
 }
 
 #[test]
 fn prompts_keep_line_breaks_but_are_bounded_and_cleaned() {
-    let long = format!(
-        "line one\nline\u{202e} two{}",
-        "x".repeat(MAX_RECORD_TEXT_BYTES)
-    );
+    let prefix = "line one\nline two";
+    let padding = "x".repeat(MAX_RECORD_TEXT_BYTES - prefix.len() - 1);
+    let long = format!("line one\nline\u{202e} two{padding}😀rest");
     let writes = apply(None, &prompt(&long), &context(), &claude(), NOW);
     let record = writes.run.expect("record");
-    let stored = record.last_prompt.expect("prompt");
-    assert!(stored.starts_with("line one\nline two"));
-    assert_eq!(stored.len(), MAX_RECORD_TEXT_BYTES);
+    assert_eq!(record.last_prompt, Some(format!("{prefix}{padding}")));
     assert_eq!(sanitize_text("\u{1F600}\u{9f}ok"), "\u{1F600}ok");
 }
 
 #[test]
 fn detail_belongs_to_one_event_only() {
-    let (record, _, _) = run(
+    let (failed, _, _) = run(
         &claude(),
         &[
             started(None),
@@ -839,15 +1004,26 @@ fn detail_belongs_to_one_event_only() {
                 usage_limit: None,
                 kind: None,
             },
-            prompt("second"),
         ],
     );
+    assert_eq!(failed.detail.as_deref(), Some("server_error"));
+    let prompted = apply(
+        Some(&failed),
+        &prompt("second"),
+        &context(),
+        &claude(),
+        LATER,
+    )
+    .run
+    .expect("record");
+    assert_eq!(prompted.state, RunState::Running);
     assert_eq!(
-        record.detail, None,
+        prompted.detail, None,
         "a new prompt does not show the previous error"
     );
+
     let compacting = apply(
-        Some(&record),
+        Some(&failed),
         &AgentEvent::Compacting,
         &context(),
         &claude(),
@@ -855,24 +1031,30 @@ fn detail_belongs_to_one_event_only() {
     )
     .run
     .expect("record");
-    assert_eq!(compacting.detail, None);
+    assert_eq!(compacting.state, RunState::Compacting);
+    assert_eq!(
+        compacting.detail, None,
+        "compaction also clears a prior detail"
+    );
 }
 
 #[test]
 fn hostile_session_ids_never_become_hints() {
-    let event = AgentEvent::SessionStarted {
-        compact: false,
-        source: Some(SessionSource::Startup),
-        session_id: Some("bad\"id".into()),
-        session_title: None,
-        cwd: None,
-    };
-    let writes = apply(None, &event, &context(), &claude(), NOW);
-    assert!(writes.side.is_empty());
-    assert_eq!(
-        writes.run.expect("record").session_id.as_deref(),
-        Some("bad\"id")
-    );
+    for (case, session_id) in ["bad\"id", "bad\\id", ""].into_iter().enumerate() {
+        let event = AgentEvent::SessionStarted {
+            compact: false,
+            source: Some(SessionSource::Startup),
+            session_id: Some(session_id.into()),
+            session_title: None,
+            cwd: None,
+        };
+        let writes = apply(None, &event, &context(), &claude(), NOW);
+        assert!(writes.side.is_empty(), "case {case}");
+        assert_eq!(
+            writes.run.expect("record").session_id.as_deref(),
+            Some(session_id)
+        );
+    }
 }
 
 #[test]
@@ -898,8 +1080,13 @@ fn version_two_records_are_continued_with_a_higher_revision() {
     assert_eq!(record.revision, Some(8));
     assert_eq!(record.state_episode_token.as_deref(), Some("8"));
     assert_eq!(record.first_prompt.as_deref(), Some("old"));
+    assert_eq!(record.schema_version, 3);
     assert_eq!(record.extra.get("legacyField"), Some(&serde_json::json!(1)));
     assert_eq!(record.run_id.as_deref(), Some(context().run_id.as_str()));
+    let encoded: serde_json::Value =
+        serde_json::from_slice(&record.encode().expect("encode")).expect("json");
+    assert_eq!(encoded["schemaVersion"], 3);
+    assert_eq!(encoded["legacyField"], 1);
 }
 
 #[test]
@@ -937,11 +1124,15 @@ fn version_two_text_is_cleaned_and_bounded_when_the_writer_changes() {
     .expect("record");
 
     let last_prompt = record.last_prompt.expect("last prompt");
-    assert_eq!(last_prompt.len(), MAX_RECORD_TEXT_BYTES);
-    assert!(!last_prompt.contains('\u{202e}'));
+    assert_eq!(
+        last_prompt,
+        format!("old{}", "x".repeat(MAX_RECORD_TEXT_BYTES - 3))
+    );
     let detail = record.detail.expect("detail");
-    assert_eq!(detail.len(), MAX_RECORD_TEXT_BYTES);
-    assert!(!detail.contains('\u{202e}'));
+    assert_eq!(
+        detail,
+        format!("command{}", "y".repeat(MAX_RECORD_TEXT_BYTES - 7))
+    );
     assert_eq!(record.first_prompt.as_deref(), Some("opening prompt"));
     assert_eq!(record.provider_session_title.as_deref(), Some("Title line"));
     assert_eq!(
@@ -1000,14 +1191,23 @@ fn a_stopped_turn_ends_in_the_episode_the_person_stopped_and_keeps_the_rest() {
     )
     .run
     .expect("record");
+    let mut waiting = waiting;
     assert_eq!(waiting.wait_started_at.as_deref(), Some(NOW));
     assert_eq!(waiting.caller, Some(Caller::Agent));
+    waiting.tool = Some("AskUserQuestion".into());
+    waiting.is_caller_inferred = Some(true);
+    waiting.cache_window = Some(window(NOW));
+    waiting
+        .extra
+        .insert("futureMetadata".into(), serde_json::json!({"kept": true}));
     let ended = end_stopped_turn(&waiting, LATER).expect("a wait inside a turn ends");
     assert_eq!(ended.state, RunState::Finished);
     assert_eq!(ended.run_started_at, None);
     assert_eq!(ended.wait_kind, None);
     assert_eq!(ended.wait_started_at, None, "the wait's time goes with it");
     assert_eq!(ended.caller, None);
+    assert_eq!(ended.is_caller_inferred, None);
+    assert_eq!(ended.tool, None);
     assert_eq!(ended.detail, None);
     assert_eq!(ended.transcript_path, None);
     assert_eq!(ended.cache_window, None);
@@ -1020,20 +1220,35 @@ fn a_stopped_turn_ends_in_the_episode_the_person_stopped_and_keeps_the_rest() {
     assert_eq!(ended.state_episode_token, waiting.state_episode_token);
     // No hook call is behind the write, so who the run is stays as it was.
     assert_eq!(ended.pid, waiting.pid);
+    assert_eq!(ended.run_id, waiting.run_id);
+    assert_eq!(ended.pane_id, waiting.pane_id);
     assert_eq!(ended.session_id, waiting.session_id);
     assert_eq!(ended.last_prompt, waiting.last_prompt);
+    assert_eq!(ended.extra, waiting.extra);
 
     assert_eq!(ended.last_hook_event.as_deref(), Some("wait_declined"));
 
     // Work in a turn ends the same way, when the person stopped it with Esc
     // or Ctrl+C.
     assert_eq!(asked.state, RunState::Running);
-    let interrupted = end_stopped_turn(&asked, LATER).expect("work inside a turn ends");
-    assert_eq!(interrupted.state, RunState::Finished);
-    assert_eq!(interrupted.run_started_at, None);
-    assert_eq!(interrupted.tool, None);
-    assert_eq!(interrupted.state_episode_token, asked.state_episode_token);
-    assert_eq!(interrupted.last_hook_event.as_deref(), Some("interrupted"));
+    let compacting = apply(
+        Some(&asked),
+        &AgentEvent::Compacting,
+        &context(),
+        &claude(),
+        NOW,
+    )
+    .run
+    .expect("record");
+    assert_eq!(compacting.state, RunState::Compacting);
+    for active in [&asked, &compacting] {
+        let interrupted = end_stopped_turn(active, LATER).expect("work inside a turn ends");
+        assert_eq!(interrupted.state, RunState::Finished, "{:?}", active.state);
+        assert_eq!(interrupted.run_started_at, None);
+        assert_eq!(interrupted.tool, None);
+        assert_eq!(interrupted.state_episode_token, active.state_episode_token);
+        assert_eq!(interrupted.last_hook_event.as_deref(), Some("interrupted"));
+    }
 
     // Only work or a wait inside a turn ends this way, since the projection
     // reads no other as stopped.

@@ -103,6 +103,7 @@ struct ApprovalCardModelTests {
     @Test(arguments: [
         (Duration.seconds(522), "8:42"),
         (Duration.milliseconds(521_200), "8:42"),
+        (Duration.milliseconds(521_500), "8:42"),
         (Duration.seconds(59), "0:59"),
         (Duration.milliseconds(1), "0:01"),
         (Duration.zero, "0:00")
@@ -111,62 +112,50 @@ struct ApprovalCardModelTests {
         #expect(ApprovalCardModel.clockText(for: remaining) == text)
     }
 
-    @Test func aHeldRequestsClock_isMinutesAndSeconds_roundedUp() {
-        #expect(ApprovalCardModel.clockText(for: .seconds(522)) == "8:42")
-        #expect(ApprovalCardModel.clockText(for: .milliseconds(521_500)) == "8:42")
-    }
-
-    @Test func showDetails_isOfferedOnlyWhenTheInputHoldsMoreThanTheCardShows() {
-        let inputAdds = ApprovalControllerConnection.inputAddsToSummary
-        #expect(!inputAdds(["command": "ls", "description": "List"], "ls"))
-        #expect(inputAdds(["command": "ls", "timeout": 5], "ls"))
-        #expect(inputAdds(["file_path": "/a", "content": "b"], "/a"))
-        #expect(inputAdds(["command": ["ls", "-l"]], "ls -l"))
-        #expect(inputAdds(["command": "ls"], "a description"))
-    }
-
-    @Test func theCardsHeading_placesTheRequest_asTheNeedsAttentionListDoes() throws {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
-        let tab = session.openTab(container: .project(project.id))
+    @Test func approvalPlacement_usesTheSessionNameAndOtherWindowSuffix() throws {
+        let root = WorkspaceSessionFixture.projectRootURL("parent").appendingPathComponent("weir")
+        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir", rootURL: root)
+        let container = ContainerID.project(project.id)
+        session.renameRow(container, to: "Billing work", runtimes: [])
+        let tab = session.openTab(container: container)
         let paneID = try #require(tab.splitTree.allLeafIDs().first)
+        let fact = ApprovalFact.test()
         var queue = AttentionQueue()
         queue.insert(
-            id: .stop(EpisodeKey(origin: .runtime("a"), episodeToken: "1")),
-            kind: .stop(.processExited),
+            id: .approval(fact.key),
+            kind: .approval(fact),
             subject: .runtime(id: "a", provider: .claude, paneID: paneID, tabID: tab.id, projectID: project.id),
             arrivedAt: Date(timeIntervalSince1970: 0)
         )
-        let item = try #require(queue.items.first)
-        // The session by its sidebar row's name, as the list names it.
-        let name = SessionSidebarModel.rowName(of: tab.container, in: session, locale: Locale(identifier: "en"))
+        let item = try #require(queue.item(.approval(fact.key)))
 
         #expect(ApprovalCardModel.place(of: item, in: session, projectsInOtherWindows: [], locale: Locale(identifier: "en"))
-            == "\(name) · weir")
-        // Shown by another window: going there brings that window forward.
+            == "Billing work · weir")
         #expect(ApprovalCardModel.place(of: item, in: session, projectsInOtherWindows: [project.id], locale: Locale(identifier: "ja"))
-            == "\(name) · weir（別のウインドウ）")
+            == "Billing work · weir（別のウインドウ）")
     }
 
-    @Test func aRequestInNoPane_hasNoPlaceInTheHeading() {
+    @Test func anApprovalWithoutAPlacedPane_hasNoHeadingPlace() {
         let (session, _) = WorkspaceSessionFixture.withProject(name: "weir")
+        let unplaced = ApprovalFact.test()
+        let missing = ApprovalFact.test()
         var queue = AttentionQueue()
         queue.insert(
-            id: .stop(EpisodeKey(origin: .runtime("a"), episodeToken: "1")),
-            kind: .stop(.processExited),
+            id: .approval(unplaced.key),
+            kind: .approval(unplaced),
             subject: .unplaced(provider: .claude),
             arrivedAt: Date(timeIntervalSince1970: 0)
         )
         queue.insert(
-            id: .stop(EpisodeKey(origin: .runtime("b"), episodeToken: "1")),
-            kind: .stop(.processExited),
+            id: .approval(missing.key),
+            kind: .approval(missing),
             subject: .runtime(id: "b", provider: .claude, paneID: UUID(), tabID: UUID(), projectID: nil),
             arrivedAt: Date(timeIntervalSince1970: 1)
         )
-        // Not "Claude Claude": the heading already names the agent.
+        #expect(queue.items.map(\.id) == [.approval(unplaced.key), .approval(missing.key)])
         for item in queue.items {
             #expect(ApprovalCardModel.place(of: item, in: session, projectsInOtherWindows: [], locale: Locale(identifier: "en")) == nil)
         }
-        #expect(queue.items.count == 2)
     }
 
     @Test func theRequestsOwnWords_showOnlyWhenTheySayMoreThanItsSummary() {

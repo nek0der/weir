@@ -12,6 +12,9 @@ struct RestorePresentationTests {
     private static let other = ConversationKey(provider: .claude, conversationID: "s2", isFallback: false)
 
     private static let changes = #"{"kind":"changed","files":1,"added":10,"removed":2}"#
+    private static let appliedStage = #"{"kind":"applied"}"#
+    private static let wholeWithSaveStage = #"{"kind":"partiallyApplied","reason":"keptAside","currentTree":"c","#
+        + #""failed":[{"path":"a.txt","reason":"keptAside:.weir-OP/target/ready-1/a.txt"}]}"#
 
     private static func turn(
         _ number: Int,
@@ -63,10 +66,15 @@ struct RestorePresentationTests {
         ])
     }
 
-    @Test func oneTurn_isNamedAlone() throws {
-        let turn = try Self.turn(7)
-        let confirmation = RestoreConfirmation.make(turn: turn, undone: [turn], gate: Self.gate(turn), locale: Self.english)
-        #expect(confirmation.text == "Discard the changes in T7 (+10 −2) and restore the code to before turn 7.")
+    /// Unprompted work is counted without adding its turn number to the heading.
+    @Test(arguments: [(7, true, "+10 −2"), (5, false, "+20 −4")])
+    func aSingleNamedTurn_keepsUnpromptedChangesInItsCounts(number: Int, isAlone: Bool, counts: String) throws {
+        let turn = try Self.turn(number)
+        let turns = try isAlone ? [turn] : [turn, Self.turn(number + 1, hasPrompt: false)]
+        let undone = RestoreConfirmation.undone(by: turn, in: [turn.conversation: turns])
+        let confirmation = RestoreConfirmation.make(turn: turn, undone: undone, gate: Self.gate(turn), locale: Self.english)
+        #expect(undone.map(\.turnID) == turns.map(\.turnID))
+        #expect(confirmation.text == "Discard the changes in T\(number) (\(counts)) and restore the code to before turn \(number).")
     }
 
     @Test func aSharedWorktree_saysOthersChangesGoToo_andABlockedGateSaysWhy() throws {
@@ -86,8 +94,20 @@ struct RestorePresentationTests {
         #expect(english.blockedReason == "Unavailable while Codex is running in the same worktree.")
         #expect(english.help(locale: Self.english) == english.text
             + " The counts don’t include the lines of other conversations’ turns in this worktree.")
-        let alone = RestoreConfirmation.make(turn: turn, undone: [turn], gate: Self.gate(turn), locale: Self.english)
-        #expect(alone.help(locale: Self.english) == alone.text, "nothing else is in the worktree to leave out")
+        let own = RestoreGate.Agent(provider: .claude, state: .idle, isTurnsOwn: true)
+        let foreign = RestoreGate.Agent(provider: .codex, state: .idle, isTurnsOwn: false)
+        let sharedIdle = RestoreConfirmation.make(
+            turn: turn, undone: [turn], gate: Self.gate(turn, agents: [own, foreign]), locale: Self.japanese
+        )
+        #expect(sharedIdle.note == confirmation.note)
+        #expect(sharedIdle.blockedReason == nil)
+
+        let ownOnly = RestoreConfirmation.make(
+            turn: turn, undone: [turn], gate: Self.gate(turn, agents: [own]), locale: Self.english
+        )
+        #expect(ownOnly.blockedReason == nil)
+        #expect(ownOnly.note == "The conversation, staged changes, and commits aren’t changed")
+        #expect(ownOnly.help(locale: Self.english) == ownOnly.text)
         // Japanese sentences run on without a space between them.
         #expect(confirmation.help(locale: Self.japanese)
             == confirmation.text + RestoreText.countsOwnTurnsOnly(locale: Self.japanese))
@@ -95,44 +115,20 @@ struct RestorePresentationTests {
 
     @Test func undone_leavesEarlierTurnsOtherWorktreesAndRestoredTurnsOut() throws {
         let turns = try [Self.turn(4), Self.turn(5), Self.turn(6), Self.turn(8, root: "/other")]
-        let undone = RestoreConfirmation.undone(by: turns[1], in: [TurnSummaryFixture.conversation: turns]) {
-            $0.displayNumber == 6
-        }
-        #expect(undone.map(\.displayNumber) == [5])
-    }
-
-    /// A turn nobody prompted is not in the panel's list, so the range does
-    /// not name it, but its changes go too and are counted.
-    @Test func anUnpromptedTurn_isCounted_butNotNamed() throws {
-        let turns = try [Self.turn(5), Self.turn(6, hasPrompt: false)]
-        let undone = RestoreConfirmation.undone(by: turns[0], in: [TurnSummaryFixture.conversation: turns])
-        let confirmation = RestoreConfirmation.make(turn: turns[0], undone: undone, gate: Self.gate(turns[0]), locale: Self.english)
-        #expect(confirmation.text == "Discard the changes in T5 (+20 −4) and restore the code to before turn 5.")
+        let foreign = try Self.turn(7, conversationID: "s2")
+        let undone = RestoreConfirmation.undone(by: turns[1], in: [
+            TurnSummaryFixture.conversation: turns, foreign.conversation: [foreign]
+        ]) { $0.turnID == turns[2].turnID }
+        #expect(undone.map(\.turnID) == [turns[1].turnID])
     }
 
     @Test func theStrip_givesWayToWhatTheAgentAsks_butNotToUnreadTurnsOrAStop() {
-        let subject = AttentionSubject.runtime(id: "r", provider: .claude, paneID: UUID(), tabID: nil, projectID: nil)
-        var queue = AttentionQueue()
-        queue.insert(
-            id: .unread(TurnID("t")),
-            kind: .unread(UnreadTurn(turnID: TurnID("t"), changes: .unknown, conversation: nil)),
-            subject: subject,
-            arrivedAt: Date()
-        )
-        queue.insert(
-            id: .stop(EpisodeKey(origin: .runtime("r"), episodeToken: "0")),
-            kind: .stop(.processExited),
-            subject: subject,
-            arrivedAt: Date()
-        )
-        #expect(!RestoreStrip.yields(to: queue.items))
-        queue.insert(
-            id: .prompt(EpisodeKey(origin: .runtime("r"), episodeToken: "1")),
-            kind: .prompt(PromptWait(detail: nil)),
-            subject: subject,
-            arrivedAt: Date()
-        )
-        #expect(RestoreStrip.yields(to: queue.items))
+        let pane = UUID()
+        let passive = [AttentionItem.testUnread(pane: pane), .testStop(pane: pane)]
+        let request = AttentionItem.testPrompt(PromptWait(detail: nil), pane: pane)
+        #expect(!RestoreStrip.yields(to: []))
+        #expect(!RestoreStrip.yields(to: passive))
+        #expect(RestoreStrip.yields(to: passive + [request]))
     }
 
     // MARK: - The palette's turn
@@ -158,21 +154,30 @@ struct RestorePresentationTests {
         #expect(RestoreEntryTarget.turn(in: turns, line: allViewed)?.displayNumber == 8)
         #expect(RestoreEntryTarget.turn(in: [turns[1]], line: nil) == nil)
         // Still running, or its start not recorded: passed over.
-        let running = try TurnSummaryFixture.turn("run", phase: "started", changes: Self.changes, number: 9)
+        var recorded = TurnSummaryFixture.Extras()
+        recorded.beginTree = SnapshotTree(tree: TurnSummaryFixture.tree("b", 9), root: "/repo")
+        let running = try TurnSummaryFixture.turn("run", phase: "started", changes: Self.changes, number: 9, extras: recorded)
         var unrecorded = TurnSummaryFixture.Extras()
         unrecorded.beginTree = nil
         let unrecordedTurn = try TurnSummaryFixture.turn("unrec", changes: Self.changes, number: 10, extras: unrecorded)
-        #expect(RestoreEntryTarget.turn(in: [running, unrecordedTurn], line: nil) == nil)
+        #expect(RestoreEntryTarget.turn(in: [running], line: nil) == nil)
+        #expect(RestoreEntryTarget.turn(in: [unrecordedTurn], line: nil) == nil)
     }
 
     // MARK: - How it ended
 
     @Test func eachOutcome_endsAsTheAppTakesIt() throws {
-        let applied = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#)
-        #expect(RestoreEnding(.finished(applied)) == .applied(applied))
-        let partial = try RestoreJournalFixture
-            .restore(#"{"kind":"partiallyApplied","reason":"externalChangeDetected","kept":["a"],"currentTree":"c"}"#)
-        #expect(RestoreEnding(.finished(partial)) == .partial(partial, kept: ["a"], failed: []))
+        for stage in [Self.appliedStage, Self.wholeWithSaveStage] {
+            let journal = try RestoreJournalFixture.restore(stage)
+            #expect(RestoreEnding(.finished(journal)) == .applied(journal))
+        }
+        let partial = try RestoreJournalFixture.restore(
+            #"{"kind":"partiallyApplied","reason":"externalChangeDetected","kept":["a"],"currentTree":"c","failed":["#
+                + #"{"path":"b","reason":"writeFailed"},{"path":"c","reason":"keptAside:.weir-OP/ready/c"}]}"#
+        )
+        #expect(RestoreEnding(.finished(partial)) == .partial(
+            partial, kept: ["a"], failed: ["b"], keptAside: [RestoreKeptAside(path: "c", location: ".weir-OP/ready/c")]
+        ))
         let edited = try RestoreJournalFixture.restore(#"{"kind":"aborted","reason":"externalChangeDetected"}"#)
         #expect(RestoreEnding(.finished(edited)) == .canceled(.otherChanges))
         let prompted = try RestoreJournalFixture.restore(#"{"kind":"aborted","reason":"agentStarted"}"#)
@@ -187,7 +192,7 @@ struct RestorePresentationTests {
         #expect(try RestoreEnding(.finished(RestoreJournalFixture.restore(#"{"kind":"someday"}"#))) == .unknown(opID: "OP"))
     }
 
-    @Test func theStrip_saysWhetherFilesWereWritten() throws {
+    @Test func theStrip_saysWhetherFilesWereWritten() {
         #expect(RestoreText.ended(.canceled(.refused(.mergeInProgress)), locale: Self.english)
             == "Restore canceled. A merge, a rebase, or a conflict is in progress.")
         #expect(RestoreText.ended(.canceled(.otherChanges), locale: Self.japanese)
@@ -212,21 +217,17 @@ struct RestorePresentationTests {
             == "Restore canceled. These files can’t be swapped in one step where they are, so this isn’t available here.")
         #expect(RestoreText.ended(.canceled(.refused(.renamedInPlace(["Name.txt"]))), locale: Self.japanese)
             == "復元を中止しました。このボリュームが同じ名前として扱う名前への変更（大文字と小文字だけの違いなど）があります：Name.txt。")
-        // Whole, with a save moved aside: not called partial anywhere.
-        let whole = try RestoreJournalFixture.restore(#"{"kind":"partiallyApplied","reason":"keptAside","currentTree":"c","#
-            + #""failed":[{"path":"a.txt","reason":"keptAside:.weir-OP/target/ready-1/a.txt"}]}"#)
-        #expect(RestoreEnding(.finished(whole)) == .applied(whole))
+        #expect(RestoreText.ended(.unknown, locale: Self.english)
+            == "Couldn’t tell how the restore ended. Check the working tree before going on.")
+    }
+
+    @Test func aRecoveryToast_includesWhereAnInterveningSaveWasKept() throws {
+        let whole = try RestoreJournalFixture.restore(Self.wholeWithSaveStage)
         #expect(RestoreText.toast(
             ToastKind.restoreInterrupted.message.resolved(in: Self.japanese),
             note: RestoreText.keptAsideSentence(whole.stage.keptAside, locale: Self.japanese),
             locale: Self.japanese
         ) == "前回の終了時に、コードの復元が途中で中断されました。その間に保存された内容は .weir-OP/target/ready-1/a.txt に移動しました。")
-        #expect(RestoreText.record(whole, locale: Self.english) == RestoreText.record(
-            turnNumber: 5,
-            isPartial: false,
-            locale: Self.english
-        ))
-        #expect(RestoreText.ended(.unknown, locale: Self.english).hasPrefix("Couldn’t tell"))
     }
 
     @Test func theRecord_namesTheTurn_andSaysWhenOnlyPartIsThere() throws {
@@ -235,6 +236,8 @@ struct RestorePresentationTests {
         #expect(try RestoreText.record(RestoreJournalFixture.restore(partial), locale: Self.english) == "Partly restored to before T5")
         let unnamed = try RestoreJournalFixture.make(stageJSON: #"{"kind":"applied"}"#, fields: .init(turnID: "T5", at: "x"))
         #expect(RestoreText.record(unnamed, locale: Self.japanese) == "コードを復元済み")
+        let whole = try RestoreJournalFixture.restore(Self.wholeWithSaveStage)
+        #expect(RestoreText.record(whole, locale: Self.english) == "Restored to before T5")
         #expect(RestoreText.recordHelp(locale: Self.english).hasPrefix("Only the working tree was restored."))
     }
 
@@ -247,24 +250,23 @@ struct RestorePresentationTests {
         let aside = [RestoreKeptAside(path: "a.txt", location: ".weir-OP/out/a.txt")]
         #expect(RestoreText.undoResult(.partial(keptAside: aside), locale: Self.english)
             == "Undid only part of the restore. Saves made meanwhile were moved to .weir-OP/out/a.txt.")
+        #expect(RestoreText.undoResult(.unknown, locale: Self.japanese)
+            == "復元の取り消しの結果を確認できませんでした。続ける前に作業ツリーを確認してください。")
     }
 
     @Test func theUndoResult_isKeptOnlyWhenTheUndoFellShort() throws {
         let undone = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#)
         #expect(RestoreCoordinator.UndoResult(.finished(undone)) == nil)
-        let partial = try RestoreJournalFixture.restore(#"{"kind":"partiallyApplied","reason":"writeFailed","currentTree":"c"}"#)
-        #expect(RestoreCoordinator.UndoResult(.finished(partial)) == .partial(keptAside: []))
-        // An undo that is whole with a save moved aside took the restore
-        // back; a toast says where the save went.
-        let aside = try RestoreJournalFixture.restore(#"{"kind":"partiallyApplied","reason":"keptAside","currentTree":"c","#
-            + #""failed":[{"path":"a.txt","reason":"keptAside:.weir-OP/target/ready-1/a.txt"}]}"#)
+        let partial = try RestoreJournalFixture.restore(
+            #"{"kind":"partiallyApplied","reason":"writeFailed","currentTree":"c","failed":["#
+                + #"{"path":"a.txt","reason":"keptAside:.weir-OP/target/ready-1/a.txt"},"#
+                + #"{"path":"b.txt","reason":"writeFailed"}]}"#
+        )
+        #expect(RestoreCoordinator.UndoResult(.finished(partial)) == .partial(keptAside: [
+            RestoreKeptAside(path: "a.txt", location: ".weir-OP/target/ready-1/a.txt")
+        ]))
+        let aside = try RestoreJournalFixture.restore(Self.wholeWithSaveStage)
         #expect(RestoreCoordinator.UndoResult(.finished(aside)) == nil)
-        #expect(RestoreText.keptAsideNews(.finished(aside), locale: Self.japanese)
-            == "その間に保存された内容は .weir-OP/target/ready-1/a.txt に移動しました。")
-        #expect(RestoreText.keptAsideNews(.finished(undone), locale: Self.japanese) == nil)
-        // An undo's record also carries the saves of the restore it undid,
-        // which were told then: said once.
-        #expect(RestoreText.keptAsideNews(.finished(aside), besides: aside.stage.keptAside, locale: Self.japanese) == nil)
         // A refusal an agent's stop lifts may change; one of a gone
         // operation never does.
         #expect(RestoreCoordinator.UndoResult.refused(.agentActive(.claude)).mayChange)
@@ -275,16 +277,28 @@ struct RestorePresentationTests {
         let writing = try RestoreJournalFixture.restore(#"{"kind":"writing"}"#)
         #expect(RestoreCoordinator.UndoResult(.finished(writing)) == .unknown)
         #expect(RestoreCoordinator.UndoResult(nil) == .unknown)
-        #expect(RestoreText.undoResult(.unknown, locale: Self.japanese).hasPrefix("復元の取り消しの結果を確認できませんでした。"))
     }
 
-    @Test func everyBlocker_hasItsReason() {
-        let blockers: [RestoreGate.Blocker] = [
-            .notRecorded, .turnRunning, .agentRunning(other: nil), .agentRunning(other: .claude), .agentWaiting, .restoring
-        ]
-        let reasons = Set(blockers.map { RestoreText.blocker($0, locale: Self.japanese) })
-        #expect(reasons.count == blockers.count)
-        #expect(RestoreText.blocker(.agentRunning(other: nil), locale: Self.japanese) == "エージェントの実行中は使用できません。")
+    @Test func undoNews_saysWhereItKeptNewSavesOnlyOnce() throws {
+        let plain = try RestoreJournalFixture.restore(Self.appliedStage)
+        let aside = try RestoreJournalFixture.restore(Self.wholeWithSaveStage)
+        #expect(RestoreText.keptAsideNews(.finished(aside), locale: Self.japanese)
+            == "その間に保存された内容は .weir-OP/target/ready-1/a.txt に移動しました。")
+        #expect(RestoreText.keptAsideNews(.finished(plain), locale: Self.japanese) == nil)
+        let reported = [RestoreKeptAside(path: "a.txt", location: ".weir-OP/target/ready-1/a.txt")]
+        #expect(RestoreText.keptAsideNews(.finished(aside), besides: reported, locale: Self.japanese) == nil)
+    }
+
+    @Test(arguments: [
+        (RestoreGate.Blocker.notRecorded, "このターンの開始時点が記録されていないため、復元できません。"),
+        (.turnRunning, "ターンの実行中は使用できません。"),
+        (.agentRunning(other: nil), "エージェントの実行中は使用できません。"),
+        (.agentRunning(other: .codex), "同じワークツリーで Codex が実行中のため使用できません。"),
+        (.agentWaiting, "承認待ちまたは回答待ちのエージェントがあるため使用できません。"),
+        (.restoring, "このワークツリーで復元または破棄を実行中です。")
+    ])
+    func everyBlocker_hasItsReason(blocker: RestoreGate.Blocker, message: String) {
+        #expect(RestoreText.blocker(blocker, locale: Self.japanese) == message)
     }
 
     // MARK: - The turns a restore took back
@@ -309,6 +323,8 @@ struct RestorePresentationTests {
         var before = history
         before[TurnSummaryFixture.conversation]?.removeLast()
         #expect(!RestoredTurns.isSuperseded(journal, history: before, isRoot: Self.isRepo))
+        try before[Self.other]?.append(Self.turn(10, conversationID: "s2"))
+        #expect(RestoredTurns.isSuperseded(journal, history: before, isRoot: Self.isRepo))
     }
 
     /// The turns read as restored until the restore is undone, whichever
@@ -338,13 +354,26 @@ struct RestorePresentationTests {
             TurnSummaryFixture.conversation: [Self.turn(5), Self.turn(6)]
         ]
         let isRoot: (String) -> (String) -> Bool = { root in { $0 == root } }
-        let partial = try RestoreJournalFixture
-            .restore(#"{"kind":"partiallyApplied","reason":"externalChangeDetected","kept":["a"],"currentTree":"c"}"#)
-        #expect(RestoredTurns.ids(journals: ["/repo": [partial]], history: history, isRoot: isRoot).isEmpty)
-        let aside = try RestoreJournalFixture.restore(#"{"kind":"partiallyApplied","reason":"keptAside","currentTree":"c","#
-            + #""failed":[{"path":"a.txt","reason":"keptAside:.weir-OP/target/ready-1/a.txt"}]}"#)
-        #expect(aside.stage.isWhole)
-        #expect(RestoredTurns.ids(journals: ["/repo": [aside]], history: history, isRoot: isRoot).count == 2)
+        let whole = try RestoreJournalFixture.restore(Self.wholeWithSaveStage)
+        #expect(whole.stage.isWhole)
+        #expect(RestoredTurns.ids(journals: ["/repo": [whole]], history: history, isRoot: isRoot) == [
+            TurnID("s1-T5"), TurnID("s1-T6")
+        ])
+        let partial = try RestoreJournalFixture.restore(
+            #"{"kind":"partiallyApplied","reason":"externalChangeDetected","kept":["a"],"currentTree":"c"}"#
+        )
+        let discard = try RestoreJournalFixture.make(
+            stageJSON: Self.appliedStage, fields: .init(operation: "discard", turnID: "s1-T5")
+        )
+        let undo = try RestoreJournalFixture.make(
+            stageJSON: Self.appliedStage, fields: .init(turnID: "s1-T5", undoes: "prior")
+        )
+        let unknown = try RestoreJournalFixture.make(
+            stageJSON: Self.appliedStage, fields: .init(operation: "future", turnID: "s1-T5")
+        )
+        for journal in [partial, discard, undo, unknown] {
+            #expect(RestoredTurns.ids(journals: ["/repo": [journal]], history: history, isRoot: isRoot).isEmpty)
+        }
     }
 
     /// Times are kept to the second, so a turn can start in the second the
@@ -375,7 +404,7 @@ struct RestorePresentationTests {
     @Test func aRestoreWithNoTimeKnown_isNeverSuperseded() throws {
         let journal = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#, at: "someday")
         let history = try [TurnSummaryFixture.conversation: [Self.turn(5), Self.turn(9)]]
-        #expect(RestoredTurns.of(journal, history: history, isRoot: Self.isRepo).count == 2)
+        #expect(Set(RestoredTurns.of(journal, history: history, isRoot: Self.isRepo).map(\.turnID.rawValue)) == ["s1-T5", "s1-T9"])
         #expect(!RestoredTurns.isSuperseded(journal, history: history, isRoot: Self.isRepo))
     }
 
@@ -395,9 +424,9 @@ struct RestorePresentationTests {
     @Test func aJournalWithoutRanAt_ranWhenItWasWritten() throws {
         let journal = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#, at: "2026-10-12T00:20:00Z")
         #expect(journal.ranAt == "2026-10-12T00:20:00Z")
-        let history = try [TurnSummaryFixture.conversation: [Self.turn(5), Self.turn(9)]]
-        #expect(RestoredTurns.of(journal, history: history, isRoot: Self.isRepo).count == 2)
-        #expect(!RestoredTurns.isSuperseded(journal, history: history, isRoot: Self.isRepo))
+        let history = try [TurnSummaryFixture.conversation: [Self.turn(5), Self.turn(9), Self.turn(21)]]
+        #expect(Set(RestoredTurns.of(journal, history: history, isRoot: Self.isRepo).map(\.turnID.rawValue)) == ["s1-T5", "s1-T9"])
+        #expect(RestoredTurns.isSuperseded(journal, history: history, isRoot: Self.isRepo))
     }
 
     @Test func aRestoreWhoseTurnIsGone_tookBackNothingThatCanBeNamed() throws {
@@ -411,17 +440,27 @@ struct RestorePresentationTests {
     @Test func everyStandingRestore_readFromOneIndex_answersAsEachAlone() throws {
         let history: [ConversationKey: [TurnSummary]] = try [
             TurnSummaryFixture.conversation: [Self.turn(4), Self.turn(5), Self.turn(6), Self.turn(9)],
-            Self.other: [Self.turn(7, conversationID: "s2"), Self.turn(8, root: "/other", conversationID: "s2")]
+            Self.other: [
+                Self.turn(3, root: "/other", conversationID: "s2"),
+                Self.turn(5, root: "/other", conversationID: "s2"),
+                Self.turn(7, root: "/other-link", conversationID: "s2"),
+                Self.turn(8, root: "/other", conversationID: "s2")
+            ]
         ]
-        let first = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#)
-        let second = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#, turnID: "s1-T4", number: 4, at: "2026-10-12T00:05:30Z")
-        let isRoot: (String) -> (String) -> Bool = { root in { $0 == root } }
+        let first = try RestoreJournalFixture.restore(Self.appliedStage)
+        let second = try RestoreJournalFixture.make(
+            stageJSON: Self.appliedStage,
+            fields: .init(opID: "OTHER", root: "/other", turnID: "s2-T5", turnNumber: 5, at: "2026-10-12T00:07:30Z")
+        )
+        let isRoot: (String) -> (String) -> Bool = { root in
+            { $0 == root || (root == "/other" && $0 == "/other-link") }
+        }
 
-        let ids = RestoredTurns.ids(journals: ["/repo": [second, first]], history: history, isRoot: isRoot)
+        let ids = RestoredTurns.ids(journals: ["/repo": [first], "/other": [second]], history: history, isRoot: isRoot)
 
-        let alone = [first, second].flatMap { RestoredTurns.of($0, history: history, isRoot: Self.isRepo) }
+        let alone = [first, second].flatMap { RestoredTurns.of($0, history: history, isRoot: isRoot($0.root)) }
         #expect(ids == Set(alone.map(\.turnID)))
-        #expect(Set(ids.map(\.rawValue)) == ["s1-T4", "s1-T5", "s1-T6", "s2-T7"])
+        #expect(Set(ids.map(\.rawValue)) == ["s1-T5", "s1-T6", "s2-T5", "s2-T7"])
     }
 
     /// The restored turns are worked out again only when the history, the
@@ -430,34 +469,24 @@ struct RestorePresentationTests {
     @Test func theRestoredTurns_areWorkedOutAgain_onlyWhenASourceMoved() throws {
         let applied = try RestoreJournalFixture.restore(#"{"kind":"applied"}"#)
         let undone = try RestoreJournalFixture.restore(#"{"kind":"undone","by":"U"}"#)
-        let key = RestoredTurnsMemo.Key(historyRevision: 1, journals: ["/repo": [applied]], pathGeneration: 0)
+        let cases: [(RestoredTurnsMemo.Key, Set<TurnID>)] = [
+            (.init(historyRevision: 1, journals: ["/repo": [applied]], pathGeneration: 0), [TurnID("initial")]),
+            (.init(historyRevision: 2, journals: ["/repo": [applied]], pathGeneration: 0), [TurnID("history")]),
+            (.init(historyRevision: 2, journals: ["/repo": [undone]], pathGeneration: 0), []),
+            (.init(historyRevision: 2, journals: [:], pathGeneration: 0), [TurnID("swept")]),
+            (.init(historyRevision: 2, journals: [:], pathGeneration: 1), [TurnID("paths")])
+        ]
         var kept: RestoredTurnsMemo?
-        var computed = 0
-        let compute: (RestoredTurnsMemo.Key) -> Set<TurnID> = { key in
-            computed += 1
-            return key.journals.values.joined().contains(where: \.isUndoable) ? [TurnID("s1-T5")] : []
+        var computed: [RestoredTurnsMemo.Key] = []
+        for (key, result) in cases {
+            let compute: (RestoredTurnsMemo.Key) -> Set<TurnID> = { asked in
+                computed.append(asked)
+                return result
+            }
+            #expect(RestoredTurnsMemo.ids(for: key, kept: &kept, compute: compute) == result)
+            #expect(RestoredTurnsMemo.ids(for: key, kept: &kept, compute: compute) == result)
         }
-
-        #expect(RestoredTurnsMemo.ids(for: key, kept: &kept, compute: compute) == [TurnID("s1-T5")])
-        #expect(RestoredTurnsMemo.ids(for: key, kept: &kept, compute: compute) == [TurnID("s1-T5")])
-        #expect(computed == 1)
-
-        let changedHistory = RestoredTurnsMemo.Key(historyRevision: 2, journals: key.journals, pathGeneration: 0)
-        _ = RestoredTurnsMemo.ids(for: changedHistory, kept: &kept, compute: compute)
-        #expect(computed == 2)
-
-        let afterUndo = RestoredTurnsMemo.Key(historyRevision: 2, journals: ["/repo": [undone]], pathGeneration: 0)
-        #expect(RestoredTurnsMemo.ids(for: afterUndo, kept: &kept, compute: compute).isEmpty)
-        #expect(computed == 3)
-
-        let swept = RestoredTurnsMemo.Key(historyRevision: 2, journals: [:], pathGeneration: 0)
-        _ = RestoredTurnsMemo.ids(for: swept, kept: &kept, compute: compute)
-        #expect(computed == 4)
-
-        let forgotten = RestoredTurnsMemo.Key(historyRevision: 2, journals: [:], pathGeneration: 1)
-        _ = RestoredTurnsMemo.ids(for: forgotten, kept: &kept, compute: compute)
-        _ = RestoredTurnsMemo.ids(for: forgotten, kept: &kept, compute: compute)
-        #expect(computed == 5)
+        #expect(computed == cases.map(\.0))
     }
 
     /// The history's revision moves with its turns and only with them, so
@@ -465,13 +494,21 @@ struct RestorePresentationTests {
     @MainActor
     @Test func theHistorysRevision_movesOnlyWhenItsTurnsChange() throws {
         let history = TurnHistory()
+        let emptyRevision = history.revision
         let turns = try ConversationTurns(key: TurnSummaryFixture.conversation, turns: [Self.turn(5)])
         history.replace(with: [turns])
         let afterFirst = history.revision
+        #expect(afterFirst != emptyRevision)
         history.replace(with: [turns])
         #expect(history.revision == afterFirst)
-        try history.replace(with: [ConversationTurns(key: TurnSummaryFixture.conversation, turns: [Self.turn(5), Self.turn(6)])])
-        #expect(history.revision != afterFirst)
+        let changed = try ConversationTurns(key: turns.key, turns: [Self.turn(5, root: "/other")])
+        history.replace(with: [changed])
+        let afterReplacement = history.revision
+        #expect(afterReplacement != afterFirst)
+        history.replace(with: [changed])
+        #expect(history.revision == afterReplacement)
+        try history.replace(with: [ConversationTurns(key: turns.key, turns: [Self.turn(5), Self.turn(6)])])
+        #expect(history.revision != afterReplacement)
     }
 
     /// Letting go of a project's spellings moves the resolver's generation,
@@ -498,13 +535,17 @@ struct RestorePresentationTests {
         #expect(!model.isAtRest)
     }
 
-    @Test func theBar_isAtRest_onlyWhileTheAgentIsNotAtWork() {
-        let idle = DecisionBarModel(content: DecisionBarContent(body: .summary(.idle), position: nil, itemID: nil), locale: Self.english)
-        #expect(idle.isAtRest)
-        let running = DecisionBarModel(
-            content: DecisionBarContent(body: .summary(.running("Bash: swift test")), position: nil, itemID: nil),
-            locale: Self.english
-        )
-        #expect(!running.isAtRest)
+    @Test(arguments: [
+        (DecisionBarContent.Body.summary(.idle), true),
+        (.summary(.running("Bash: swift test")), false),
+        (.summary(.compacting), false),
+        (.lastTurn(UnreadTurn(turnID: TurnID("t"), changes: .unchanged)), true),
+        (.question(provider: .claude, answer: .terminal), false),
+        (.prompt(provider: .claude, wait: .signIn), false),
+        (.unread(UnreadTurn(turnID: TurnID("t"), changes: .unknown)), false)
+    ])
+    func theBar_yieldsToARestoreRecordOnlyAtRest(body: DecisionBarContent.Body, isAtRest: Bool) {
+        let content = DecisionBarContent(body: body, position: nil, itemID: nil)
+        #expect(DecisionBarModel(content: content, locale: Self.english).isAtRest == isAtRest)
     }
 }

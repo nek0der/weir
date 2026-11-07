@@ -69,8 +69,9 @@ struct DockBadgeRuleTests {
 
             // Back to zero: a bell or a command left a pane unread, and the
             // Dock shows a dot until the pane is looked at.
-            count.value = 0
             session.markUnread(paneID: paneID)
+            #expect(sync.badge == .count(2))
+            count.value = 0
             await shown.waitFor(.dot)
             session.clearUnread(paneID: paneID)
             await shown.waitFor(.none)

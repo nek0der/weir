@@ -44,8 +44,8 @@ struct PaneFrameSeamTests {
     // MARK: - Which edges reach
 
     @Test func anEdgeFacingOneFramedPaneOfTwo_reachesAsAWhole() {
-        #expect(reach(of: lower, framed: [upperLeft]).top)
-        #expect(reach(of: lower, framed: [upperRight]).top)
+        #expect(reach(of: lower, framed: [upperLeft]) == PaneFrameReach(top: true))
+        #expect(reach(of: lower, framed: [upperRight]) == PaneFrameReach(top: true))
     }
 
     @Test func anEdgeFacingNoFramedPane_staysOnItsOwnEdge() {
@@ -79,7 +79,8 @@ struct PaneFrameSeamTests {
             upperLeft: CGRect(x: 0, y: 0, width: 100, height: 50),
             upperRight: CGRect(x: 101, y: 0, width: 99, height: 50)
         ]
-        #expect(reach(of: upperRight, framed: [upperLeft], frames: frames, seamWidth: 1).leading)
+        #expect(reach(of: upperRight, framed: [upperLeft], frames: frames, seamWidth: 1) == PaneFrameReach(leading: true))
+        #expect(reach(of: upperRight, framed: [upperLeft], frames: frames, seamWidth: 0.5) == PaneFrameReach())
     }
 
     // MARK: - The band

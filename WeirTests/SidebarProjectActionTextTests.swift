@@ -9,17 +9,17 @@ struct SidebarProjectActionTextTests {
     private static let english = Locale(identifier: "en")
     private static let japanese = Locale(identifier: "ja")
 
-    @Test func theWorktreeOperations_nameAllOfTheProjectsWorktrees() {
-        #expect(SidebarProjectActionText.syncWorktrees.resolved(in: Self.english) == "Sync Worktrees")
-        #expect(SidebarProjectActionText.syncWorktrees.resolved(in: Self.japanese) == "ワークツリーを同期")
-        #expect(SidebarProjectActionText.showHiddenWorktrees.resolved(in: Self.english) == "Show Hidden Worktrees")
-        #expect(SidebarProjectActionText.showHiddenWorktrees.resolved(in: Self.japanese) == "非表示のワークツリーを表示")
-    }
-
-    /// Every missing row goes, so the Japanese says all of them, in the
-    /// words of the row's own state ("ワークツリーが見つかりません").
-    @Test func removeMissingWorktrees_saysItRemovesEveryMissingOne() {
-        #expect(SidebarProjectActionText.removeMissingWorktrees.resolved(in: Self.english) == "Remove Missing Worktrees")
-        #expect(SidebarProjectActionText.removeMissingWorktrees.resolved(in: Self.japanese) == "見つからないワークツリーをすべて外す")
+    @Test(arguments: [
+        (SidebarProjectActionText.syncWorktrees, "Sync Worktrees", "ワークツリーを同期"),
+        (SidebarProjectActionText.showHiddenWorktrees, "Show Hidden Worktrees", "非表示のワークツリーを表示"),
+        (SidebarProjectActionText.removeMissingWorktrees, "Remove Missing Worktrees", "見つからないワークツリーをすべて外す")
+    ])
+    func projectWorktreeActions_haveTheirEnglishAndJapaneseTitles(
+        title: LocalizedStringResource,
+        english: String,
+        japanese: String
+    ) {
+        #expect(title.resolved(in: Self.english) == english)
+        #expect(title.resolved(in: Self.japanese) == japanese)
     }
 }

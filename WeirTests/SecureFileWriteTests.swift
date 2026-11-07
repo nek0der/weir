@@ -16,7 +16,7 @@ struct SecureFileWriteTests {
                 reason: "decode-failed",
                 now: Date(timeIntervalSince1970: 1_790_000_000)
             )
-            #expect(backup?.lastPathComponent == "state.json.bak-decode-failed-1790000000")
+            #expect(backup == dir.appendingPathComponent("state.json.bak-decode-failed-1790000000"))
             #expect(!FileManager.default.fileExists(atPath: file.path))
             let moved = try #require(backup)
             let bytes = try Data(contentsOf: moved)

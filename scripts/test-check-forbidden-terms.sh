@@ -56,12 +56,12 @@ run_case() {
     actual="pass"
     rc=0
   else
-    actual="fail"
     rc=$?
+    actual="fail"
   fi
   popd >/dev/null
 
-  if [[ "$actual" == "$expect" ]]; then
+  if [[ "$actual" == "$expect" && ( "$rc" -eq 0 || "$rc" -eq 1 ) ]]; then
     note "$name (exit=$rc, expected $expect)"
   else
     warn "$name (exit=$rc, expected $expect, got $actual)"
@@ -86,6 +86,12 @@ run_case "cmux is caught" fail bash -c '
 run_case "Calyx is caught" fail bash -c '
   echo "Calyx-style worktree" > note.md
 '
+run_case "superisland is caught" fail bash -c '
+  echo "superisland integration" > note.md
+'
+run_case "notchi is caught" fail bash -c '
+  echo "notchi integration" > note.md
+'
 run_case "WezTerm is caught" fail bash -c '
   echo "Comparable to WezTerm" > note.md
 '
@@ -95,7 +101,10 @@ run_case "Alacritty is caught" fail bash -c '
 run_case "Kitty bare word is caught" fail bash -c '
   echo "Kitty would do" > note.md
 '
-run_case "iTerm and iTerm2 are caught" fail bash -c '
+run_case "iTerm is caught" fail bash -c '
+  echo "see iTerm docs" > note.md
+'
+run_case "iTerm2 is caught" fail bash -c '
   echo "see iTerm2 docs" > note.md
 '
 run_case "VS Code with space is caught" fail bash -c '

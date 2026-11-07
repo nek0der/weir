@@ -61,14 +61,17 @@ struct WindowVisibilityRoutingTests {
         let registry = WindowRegistry(primaryID: WindowID())
         let recorder = OcclusionRecorder()
         registry.occlusion = recorder
-        let pane = UUID()
+        let first = UUID()
+        let latest = UUID()
 
         registry.windowScreenPresenceChanged(registry.primary.id, isOnScreen: false)
-        registry.didReportVisibility(window: registry.primary.id, paneIDs: [pane])
+        registry.didReportVisibility(window: registry.primary.id, paneIDs: [first])
+        #expect(recorder.applied.last == [])
+        registry.didReportVisibility(window: registry.primary.id, paneIDs: [latest])
         #expect(recorder.applied.last == [])
 
         registry.windowScreenPresenceChanged(registry.primary.id, isOnScreen: true)
-        #expect(recorder.applied.last == [pane])
+        #expect(recorder.applied.last == [latest])
     }
 
     @Test func aWindowGoingOffScreen_leavesTheOtherWindowsPanesAwake() {
@@ -92,7 +95,8 @@ struct WindowVisibilityRoutingTests {
         let recorder = OcclusionRecorder()
         registry.occlusion = recorder
 
-        PaneVisibilityReporter().report(PaneAreaDisplay(leafIDs: [UUID()], zoomedLeafID: nil, review: .closed))
+        PaneVisibilityReporter(registry: registry)
+            .report(PaneAreaDisplay(leafIDs: [UUID()], zoomedLeafID: nil, review: .closed))
 
         #expect(recorder.applied.isEmpty)
     }
@@ -147,13 +151,24 @@ struct WindowVisibilityRoutingTests {
         PaneVisibilityReporter(windowID: registry.primary.id, registry: registry).wake([pane])
 
         #expect(recorder.applied.last == [pane])
+        #expect(registry.visibility.union == [pane])
+        #expect(registry.attention.attendedPanes.isEmpty)
         #expect(!registry.attention.isSeen(pane))
     }
 
     @Test func appFacts_reachTheAttentionValue() {
         let registry = WindowRegistry(primaryID: WindowID())
+        let pane = UUID()
+        registry.didReportDisplay(window: registry.primary.id, rendered: [pane], attended: [pane])
+
         registry.appActivityChanged(isActive: true)
         #expect(registry.attention.isAppActive)
+        #expect(registry.attention.isSeen(pane))
+
+        registry.appActivityChanged(isActive: false)
+        #expect(!registry.attention.isAppActive)
+        #expect(registry.attention.attendedPanes == [pane])
+        #expect(!registry.attention.isSeen(pane))
     }
 
     @Test func aWindowBackOnScreen_isSeenAgainWithoutANewReport() {
@@ -162,6 +177,7 @@ struct WindowVisibilityRoutingTests {
         registry.appActivityChanged(isActive: true)
         registry.didReportDisplay(window: registry.primary.id, rendered: [pane], attended: [pane])
         registry.windowScreenPresenceChanged(registry.primary.id, isOnScreen: false)
+        #expect(!registry.attention.isSeen(pane))
 
         registry.windowScreenPresenceChanged(registry.primary.id, isOnScreen: true)
 

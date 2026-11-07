@@ -11,6 +11,16 @@ import Testing
 struct ApprovalControllerConnectionTests {
     private static let now = SuspendingClock.now
 
+    @Test func inputDetails_addMoreThanACommandAndItsDescription() {
+        let inputAdds = ApprovalControllerConnection.inputAddsToSummary
+        #expect(!inputAdds(["command": "ls", "description": "List"], "ls"))
+        #expect(!inputAdds(["command": "ls"], "ls"))
+        #expect(inputAdds(["command": "ls", "timeout": 5], "ls"))
+        #expect(inputAdds(["file_path": "/a", "content": "b"], "/a"))
+        #expect(inputAdds(["command": ["ls", "-l"]], "ls -l"))
+        #expect(inputAdds(["command": "ls"], "a description"))
+    }
+
     /// One row of the broker's snapshot index for `approval`.
     private static func index(
         _ approval: ApprovalPresentation,
@@ -61,6 +71,7 @@ struct ApprovalControllerConnectionTests {
             "type": "approval.snapshot.result",
             "body": [
                 "sequence": NSNumber(value: 7),
+                "now_ms": NSNumber(value: 30000),
                 "requests": [
                     Self.index(pending, status: "pending"),
                     Self.index(tracked, status: "resolved"),
@@ -68,28 +79,39 @@ struct ApprovalControllerConnectionTests {
                 ]
             ]
         ]
-        var fetched: [UUID] = []
+        var fetched: [ApprovalKey] = []
 
         let projection = try ApprovalControllerConnection.projection(
             from: response,
             epoch: epoch,
             receivedAt: Self.now,
             trackedIDs: [tracked.id, evicted.id]
-        ) { _, requestID in
-            fetched.append(requestID)
-            if requestID == pending.requestID {
-                return Self.detail(["status": "pending"])
+        ) { runID, requestID in
+            let key = ApprovalKey(epoch: epoch, runID: runID, requestID: requestID)
+            fetched.append(key)
+            switch key {
+            case pending.key: return Self.detail(["status": "pending"])
+            case tracked.key: return Self.detail(["status": "resolved", "result": ["decision": "delegate"]])
+            default: throw AgentIntegrationError.invalidResponse
             }
-            return Self.detail(["status": "resolved", "result": ["decision": "delegate"]])
         }
 
         #expect(projection.sequence == 7)
-        #expect(projection.requests.map(\.id) == [pending.id])
+        #expect(projection.requests.map(\.key) == [pending.key])
+        let shown = try #require(projection.requests.first)
+        #expect(shown.provider == .claude)
+        #expect(shown.toolName == "Bash")
+        #expect(shown.command == "make test")
+        #expect(shown.hasInputCommand)
+        #expect(shown.deadlineMilliseconds == 600_000)
+        #expect(shown.questions.isEmpty)
+        #expect(projection.deadlines.mapValues { $0.remaining(at: Self.now) } == [pending.id: .seconds(570)])
         #expect(projection.terminals == [tracked.id: .resolved(.delegate)])
         #expect(projection.missingIDs == [evicted.id])
         // No split reported: every record counts.
         #expect(projection.unevictableCount == 3)
-        #expect(Set(fetched) == [pending.requestID, tracked.requestID])
+        #expect(fetched.count == 2)
+        #expect(Set(fetched) == [pending.key, tracked.key])
     }
 
     @Test func aLookupThatFindsNothing_countsAsMissing() throws {
@@ -114,17 +136,30 @@ struct ApprovalControllerConnectionTests {
     }
 
     @Test func aReportedSplit_isWhatCapacityCounts() throws {
+        let epoch = UUID()
+        let pending = ApprovalPresentation.test(epoch: epoch)
+        let resolved = ApprovalPresentation.test(epoch: epoch)
+        let canceled = ApprovalPresentation.test(epoch: epoch)
         let response: [String: Any] = [
             "type": "approval.snapshot.result",
-            "body": ["sequence": NSNumber(value: 1), "requests": [], "unevictable_records": NSNumber(value: 40)]
+            "body": [
+                "sequence": NSNumber(value: 1),
+                "requests": [Self.index(pending), Self.index(resolved, status: "resolved"), Self.index(canceled, status: "canceled")],
+                // The pending record and the resolved result the hook has yet to consume.
+                "unevictable_records": NSNumber(value: 2)
+            ]
         ]
         let projection = try ApprovalControllerConnection.projection(
             from: response,
-            epoch: UUID(),
+            epoch: epoch,
             receivedAt: Self.now,
             trackedIDs: []
-        ) { _, _ in [:] }
-        #expect(projection.unevictableCount == 40)
+        ) { runID, requestID in
+            try #require(runID == pending.runID && requestID == pending.requestID)
+            return Self.detail(["status": "pending"])
+        }
+        #expect(projection.requests.map(\.key) == [pending.key])
+        #expect(projection.unevictableCount == 2)
     }
 
     @Test func brokerStates_mapToEndings() {
@@ -142,30 +177,63 @@ struct ApprovalControllerConnectionTests {
         #expect(ending(["status": "resolved", "result": ["decision": "allow_always"]]) == nil)
     }
 
-    @Test func decode_questions_readsSnapshotShape() {
-        let decoded = ApprovalQuestion.decode([
-            [
-                "header": "Color",
-                "prompt": "Which color?",
-                "multi_select": true,
-                "options": [["label": "Red", "description": "warm"], ["label": "Blue"]]
-            ],
-            ["prompt": "Which size?"]
+    @Test func presentation_readsQuestionsFromTheRequestDetail() throws {
+        let epoch = UUID()
+        let runID = UUID()
+        let requestID = UUID()
+        let detail: [String: Any] = [
+            "type": "approval.result",
+            "body": [
+                "request": [
+                    "provider": "claude",
+                    "tool_name": "AskUserQuestion",
+                    "input": ["description": "Choose"],
+                    "questions": [
+                        [
+                            "header": "Color",
+                            "prompt": "Which color?",
+                            "multi_select": true,
+                            "options": [["label": "Red", "description": "warm"], ["label": "Blue"], ["description": "invalid"]]
+                        ],
+                        ["header": "Invalid"],
+                        ["prompt": "Which size?"]
+                    ]
+                ],
+                "deadline_ms": NSNumber(value: 600_000)
+            ]
+        ]
+
+        let shown = try ApprovalControllerConnection.presentation(from: detail, epoch: epoch, runID: runID, requestID: requestID)
+
+        #expect(shown.key == ApprovalKey(epoch: epoch, runID: runID, requestID: requestID))
+        #expect(shown.toolName == "AskUserQuestion")
+        #expect(shown.isQuestion)
+        #expect(shown.questions == [
+            ApprovalQuestion(header: "Color", prompt: "Which color?", options: [
+                .init(label: "Red", description: "warm"), .init(label: "Blue", description: nil)
+            ], isMultiSelect: true),
+            ApprovalQuestion(header: nil, prompt: "Which size?", options: [], isMultiSelect: false)
         ])
-        #expect(decoded.count == 2)
-        #expect(decoded[0].isMultiSelect)
-        #expect(decoded[0].options[1].description == nil)
-        #expect(decoded[1].options.isEmpty)
         #expect(ApprovalQuestion.decode(nil).isEmpty)
     }
 
-    @Test func presentationID_matchesTheKeyReadFromTheIndex() {
-        let approval = ApprovalPresentation.test(epoch: UUID())
-        #expect(approval.id == ApprovalPresentation.id(
-            epoch: approval.epoch,
-            runID: approval.runID,
-            requestID: approval.requestID
-        ))
+    @Test func presentationID_distinguishesEpochRunAndRequest() throws {
+        let epoch = UUID()
+        let run = UUID()
+        let request = UUID()
+        let keys = [
+            ApprovalKey(epoch: epoch, runID: run, requestID: request),
+            ApprovalKey(epoch: UUID(), runID: run, requestID: request),
+            ApprovalKey(epoch: epoch, runID: UUID(), requestID: request),
+            ApprovalKey(epoch: epoch, runID: run, requestID: UUID())
+        ]
+        let presentations = try keys.map { key in
+            try ApprovalControllerConnection.presentation(
+                from: Self.detail(["status": "pending"]), epoch: key.epoch, runID: key.runID, requestID: key.requestID
+            )
+        }
+        #expect(presentations.map(\.key) == keys)
+        #expect(Set(presentations.map(\.id)).count == keys.count)
     }
 
     // MARK: - The service clock
@@ -173,17 +241,17 @@ struct ApprovalControllerConnectionTests {
     @Test func snapshotBody_givesEachPendingRequestItsTimeLeft() {
         let epoch = UUID()
         let held = ApprovalPresentation.test(epoch: epoch)
+        let earlier = ApprovalPresentation.test(epoch: epoch)
         let answered = ApprovalPresentation.test(epoch: epoch)
         let body: [String: Any] = [
             "sequence": NSNumber(value: 4),
             "now_ms": NSNumber(value: 30000),
-            "requests": [Self.index(held), Self.index(answered, status: "resolved")]
+            "requests": [Self.index(held), Self.index(earlier, deadline: 95000), Self.index(answered, status: "resolved")]
         ]
 
         let deadlines = ApprovalControllerConnection.serviceDeadlines(fromSnapshotBody: body, epoch: epoch, receivedAt: Self.now)
 
-        #expect(deadlines.keys.sorted() == [held.id])
-        #expect(deadlines[held.id]?.remaining(at: Self.now) == .seconds(570))
+        #expect(deadlines.mapValues { $0.remaining(at: Self.now) } == [held.id: .seconds(570), earlier.id: .seconds(65)])
     }
 
     @Test func aBodyWithoutTheServiceClock_givesNoDeadlines() {
@@ -228,13 +296,20 @@ struct ApprovalControllerConnectionTests {
     /// A lookup that says the request is still pending contradicts the
     /// refusal, and any other code is no settlement at all: both leave the
     /// decision to be tried again.
-    @Test(arguments: ["already_terminal", "epoch_mismatch"])
-    func anUnsettledRefusal_isAFailureToRetry(code: String) {
-        #expect(throws: AgentIntegrationError.self) {
+    @Test(arguments: [("already_terminal", 1), ("epoch_mismatch", 0)])
+    func anUnsettledRefusal_isAFailureToRetry(code: String, expectedFetches: Int) {
+        var fetches = 0
+        let error = #expect(throws: AgentIntegrationError.self) {
             try ApprovalControllerConnection.refusal(of: Self.error(code)) {
-                Self.detail(["status": "pending"])
+                fetches += 1
+                return Self.detail(["status": "pending"])
             }
         }
+        guard case .invalidResponse? = error else {
+            Issue.record("Expected the invalid response error")
+            return
+        }
+        #expect(fetches == expectedFetches)
     }
 
     @Test func aLookupThatFails_passesItsErrorOn() {
@@ -248,27 +323,44 @@ struct ApprovalControllerConnectionTests {
 
     // MARK: - Sending before quit
 
-    /// One `approval.resolve` the quit sent.
-    private struct QuitExchange {
-        let requestID: String
+    private struct QuitExchange: Equatable {
+        let type: String
+        let epoch: UUID
+        let runID: UUID
+        let requestID: UUID
         let decision: String
+        let answers: [String: String]?
         let timeoutSeconds: Int
+
+        init(_ approval: ApprovalPresentation, decision: String, answers: [String: String]? = nil, timeoutSeconds: Int) {
+            type = "approval.resolve"
+            epoch = approval.epoch
+            runID = approval.runID
+            requestID = approval.requestID
+            self.decision = decision
+            self.answers = answers
+            self.timeoutSeconds = timeoutSeconds
+        }
+
+        init(object: [String: Any], timeoutSeconds: Int) throws {
+            let body = try #require(object["body"] as? [String: Any])
+            let decision = try #require(body["decision"] as? [String: Any])
+            type = try #require(object["type"] as? String)
+            epoch = try #require((object["service_epoch"] as? String).flatMap(UUID.init(uuidString:)))
+            runID = try #require((body["run_id"] as? String).flatMap(UUID.init(uuidString:)))
+            requestID = try #require((body["request_id"] as? String).flatMap(UUID.init(uuidString:)))
+            self.decision = try #require(decision["decision"] as? String)
+            answers = decision["answers"] as? [String: String]
+            self.timeoutSeconds = timeoutSeconds
+        }
     }
 
-    /// What the quit sends: the request each `approval.resolve` names and
-    /// the decision it carries, in order.
     private final class QuitExchanges {
         var sent: [QuitExchange] = []
 
         func exchange(_ request: Data, timeoutSeconds: Int) throws -> Data {
             let object = try AgentIntegrationApprovalWire.object(from: request)
-            let body = object["body"] as? [String: Any]
-            let decision = body?["decision"] as? [String: Any]
-            sent.append(QuitExchange(
-                requestID: body?["request_id"] as? String ?? "",
-                decision: decision?["decision"] as? String ?? "",
-                timeoutSeconds: timeoutSeconds
-            ))
+            try sent.append(QuitExchange(object: object, timeoutSeconds: timeoutSeconds))
             return Data()
         }
     }
@@ -277,17 +369,17 @@ struct ApprovalControllerConnectionTests {
         let epoch = UUID()
         let request = ApprovalPresentation.test(epoch: epoch)
         let exchanges = QuitExchanges()
+        var now = ContinuousClock.now
 
-        ApprovalControllerConnection.sendBeforeQuit([(request, .allowOnce)], budget: .milliseconds(50)) {
-            // An open as slow as the service allows takes longer than the
-            // whole budget.
-            Thread.sleep(forTimeInterval: 0.2)
-            return (epoch, exchanges.exchange)
-        }
+        ApprovalControllerConnection.sendBeforeQuit(
+            [(request, .allowOnce)], budget: .milliseconds(2250), now: { now },
+            open: {
+                now += .seconds(20)
+                return (epoch, exchanges.exchange)
+            }
+        )
 
-        #expect(exchanges.sent.map(\.requestID) == [request.requestID.uuidString])
-        #expect(exchanges.sent.map(\.decision) == [ApprovalResolution.allowOnce.wireDecision])
-        #expect(exchanges.sent.map(\.timeoutSeconds) == [1])
+        #expect(exchanges.sent == [QuitExchange(request, decision: "allow_once", timeoutSeconds: 3)])
     }
 
     @Test func sendBeforeQuit_aFailedExchange_doesNotStopTheRest() {
@@ -296,56 +388,67 @@ struct ApprovalControllerConnectionTests {
         let failing = ApprovalPresentation.test(epoch: epoch)
         let following = ApprovalPresentation.test(epoch: epoch)
         let exchanges = QuitExchanges()
+        let now = ContinuousClock.now
+        let answers = ["Which color?": "Blue"]
 
         ApprovalControllerConnection.sendBeforeQuit(
-            [(failing, .delegate), (following, .allowOnce)],
-            budget: .seconds(2)
-        ) {
-            (epoch, { request, timeoutSeconds in
-                _ = try exchanges.exchange(request, timeoutSeconds: timeoutSeconds)
-                if exchanges.sent.count == 1 {
-                    throw Dropped()
-                }
-                return Data()
-            })
-        }
+            [(failing, .delegate), (following, .answer(answers))],
+            budget: .seconds(2),
+            now: { now },
+            open: {
+                (epoch, { request, timeoutSeconds in
+                    let reply = try exchanges.exchange(request, timeoutSeconds: timeoutSeconds)
+                    if exchanges.sent.count == 1 {
+                        throw Dropped()
+                    }
+                    return reply
+                })
+            }
+        )
 
-        #expect(exchanges.sent.map(\.requestID) == [failing.requestID.uuidString, following.requestID.uuidString])
+        #expect(exchanges.sent == [
+            QuitExchange(failing, decision: "delegate", timeoutSeconds: 2),
+            QuitExchange(following, decision: "answer", answers: answers, timeoutSeconds: 2)
+        ])
     }
 
     @Test func sendBeforeQuit_stopsOnceTheBudgetIsSpent() {
         let epoch = UUID()
         let first = ApprovalPresentation.test(epoch: epoch)
         let second = ApprovalPresentation.test(epoch: epoch)
+        let third = ApprovalPresentation.test(epoch: epoch)
         let exchanges = QuitExchanges()
+        var now = ContinuousClock.now
 
         ApprovalControllerConnection.sendBeforeQuit(
-            [(first, .delegate), (second, .delegate)],
-            budget: .milliseconds(50)
-        ) {
-            (epoch, { request, timeoutSeconds in
-                // A service that answers only once its wait is up.
-                Thread.sleep(forTimeInterval: 0.2)
-                return try exchanges.exchange(request, timeoutSeconds: timeoutSeconds)
-            })
-        }
+            [(first, .delegate), (second, .delegate), (third, .delegate)], budget: .milliseconds(2250), now: { now },
+            open: {
+                (epoch, { request, timeoutSeconds in
+                    let reply = try exchanges.exchange(request, timeoutSeconds: timeoutSeconds)
+                    now += exchanges.sent.count == 1 ? .milliseconds(1500) : .milliseconds(750)
+                    return reply
+                })
+            }
+        )
 
-        #expect(exchanges.sent.map(\.requestID) == [first.requestID.uuidString])
+        #expect(exchanges.sent == [
+            QuitExchange(first, decision: "delegate", timeoutSeconds: 3),
+            QuitExchange(second, decision: "delegate", timeoutSeconds: 1)
+        ])
     }
 
     @Test func sendBeforeQuit_skipsARequestOfAnotherEpoch() {
         let epoch = UUID()
         let current = ApprovalPresentation.test(epoch: epoch)
-        let earlier = ApprovalPresentation.test(epoch: UUID())
+        let earlier = ApprovalPresentation.test(epoch: UUID(), runID: current.runID, requestID: current.requestID)
         let exchanges = QuitExchanges()
+        let now = ContinuousClock.now
 
         ApprovalControllerConnection.sendBeforeQuit(
-            [(earlier, .delegate), (current, .delegate)],
-            budget: .seconds(2)
-        ) {
-            (epoch, exchanges.exchange)
-        }
+            [(earlier, .allowOnce), (current, .delegate)], budget: .seconds(2), now: { now },
+            open: { (epoch, exchanges.exchange) }
+        )
 
-        #expect(exchanges.sent.map(\.requestID) == [current.requestID.uuidString])
+        #expect(exchanges.sent == [QuitExchange(current, decision: "delegate", timeoutSeconds: 2)])
     }
 }

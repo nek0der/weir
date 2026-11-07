@@ -22,7 +22,7 @@ fn a_turn_that_finishes_where_the_user_is_looking_is_marked_seen() {
     };
     let input = finished_input(vec![pane]);
     let (_, _, commands) = project(&ProjectionState::default(), &input, &now);
-    assert_eq!(viewed_marks(&commands), 1);
+    assert_eq!(viewed_runtimes(&commands), [format!("claude:{RUN}")]);
 
     // Out of sight (another pane, or the application in the background,
     // which the host reports as nothing seen) nobody saw it, even when
@@ -60,7 +60,7 @@ fn the_first_pass_after_launch_marks_nothing_seen() {
     // The pass after it behaves as usual.
     input.is_bootstrap = false;
     let (_, _, commands) = project(&state, &input, &now);
-    assert_eq!(viewed_marks(&commands), 1);
+    assert_eq!(viewed_runtimes(&commands), [format!("claude:{RUN}")]);
 }
 
 /// A finished record of `run`, hosted in tmux pane `tmux_pane` of the
@@ -120,7 +120,7 @@ fn a_tmux_pane_that_is_not_its_windows_active_one_is_out_of_sight() {
 
     attached(&mut input, pane, &[("/tmp/socket|42|100|%3", true)]);
     let (_, _, commands) = project(&ProjectionState::default(), &input, &now);
-    assert_eq!(viewed_marks(&commands), 1);
+    assert_eq!(viewed_runtimes(&commands), [format!("claude:{RUN}")]);
 }
 
 #[test]
@@ -312,6 +312,9 @@ fn the_wait_kind_and_tool_reach_the_badge_only_while_the_run_waits() {
     let badge = &projection.badges[&pane][&claude()];
     assert_eq!(badge.wait_kind, None);
     assert_eq!(badge.tool, None);
+    let json = serde_json::to_value(&projection).expect("encode");
+    assert!(json["runtimes"][0]["badge"].get("waitKind").is_none());
+    assert!(json["runtimes"][0]["badge"].get("tool").is_none());
 }
 
 #[test]

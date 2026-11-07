@@ -1,15 +1,13 @@
 // RepoFixture.swift
-// Weir — locates the repo root the test bundle was built from and gates smoke tests on a real `.git` directory.
+// Weir — locates the source checkout the test bundle was built from.
 
 import Foundation
 
 /// Anchors smoke-test discovery to the source tree the test bundle was
-/// compiled from instead of the runner's CWD. Without this, tests fall
-/// back to `NSHomeDirectory()` when the host is run under sandboxed CI.
+/// compiled from, independently of the runner's working directory.
 enum RepoFixture {
-    /// Walk up from this file until a `.git` directory is found.
-    /// Returns nil when the build was unpacked without source (e.g.
-    /// shipped test bundles).
+    /// Walks up from this file to find a `.git` directory or a linked
+    /// worktree's `.git` file. Returns nil if no marker is present.
     static let weirRoot: URL? = {
         var url = URL(fileURLWithPath: #filePath)
         for _ in 0..<10 {
@@ -21,8 +19,7 @@ enum RepoFixture {
         return nil
     }()
 
-    /// True when the test host can shell out to `git` against a real
-    /// working copy. Smoke tests gate on `.disabled(if: !RepoFixture.hasLocalRepo)`.
+    /// True when the source checkout has a Git marker.
     static var hasLocalRepo: Bool {
         weirRoot != nil
     }

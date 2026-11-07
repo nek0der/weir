@@ -57,17 +57,17 @@ struct PaneHeaderTests {
         #expect(!PaneHeaderRules.isZoomed(zoomed, in: nil))
 
         // A zoom id that no longer names a leaf renders the split.
-        session.update(tab.id) { $0.zoomedLeafID = UUID() }
+        let staleID = UUID()
+        session.update(tab.id) { $0.zoomedLeafID = staleID }
         let staleTab = try #require(session.tab(tab.id))
         #expect(!PaneHeaderRules.isZoomed(zoomed, in: staleTab))
+        #expect(!PaneHeaderRules.isZoomed(staleID, in: staleTab))
     }
 
-    @Test func zoomAction_flipsWhileZoomed() {
+    @Test func zoomActions_agreeAndTheMenuRequiresASplit() throws {
         #expect(PaneHeaderRules.zoomAction(isZoomed: false) == .zoom)
         #expect(PaneHeaderRules.zoomAction(isZoomed: true) == .unzoom)
-    }
 
-    @Test func menuZoomAction_flipsWhileZoomedAndHidesOnASinglePane() throws {
         let single = WorkspaceSessionFixture.withLooseTab().tab
         let lone = try #require(single.splitTree.allLeafIDs().first)
         #expect(PaneHeaderRules.menuZoomAction(for: lone, in: single) == nil)
@@ -89,37 +89,25 @@ struct PaneHeaderTests {
         #expect(!PaneHeaderRules.dragsPane(isEditing: true, isZoomed: true))
     }
 
-    @Test func metrics_zoomedHeaderKeepsTheUnzoomButtonBesideTheMenu() {
+    @Test func metrics_eachVisibleControlKeepsItsOwnInlineRenameSlot() {
+        let spacing = PaneHeaderMetrics.itemSpacing
+        let clock = spacing + PaneHeaderMetrics.markSlot
+        let warning = spacing + PaneHeaderMetrics.warningSlot
+        let unzoom = spacing + PaneHeaderMetrics.menuSlot
+        let baseChrome = PaneHeaderMetrics.minimumWidth + spacing + PaneHeaderMetrics.markSlot + spacing
+        let minimumField = PaneHeaderMetrics.inlineRenameFieldMinimumWidth
         let plain = PaneHeaderMetrics.inlineRenameMinimumWidth(showsPromptCacheClock: false, showsWarning: false, isZoomed: false)
-        let zoomed = PaneHeaderMetrics.inlineRenameMinimumWidth(showsPromptCacheClock: false, showsWarning: false, isZoomed: true)
-        #expect(zoomed - plain == PaneHeaderMetrics.itemSpacing + PaneHeaderMetrics.menuSlot)
         #expect(plain == PaneHeaderMetrics.inlineRenameMinimumWidth)
-    }
+        #expect(plain == baseChrome + minimumField)
 
-    @Test func metrics_theCacheClockKeepsAUsableRenameFieldBesideIt() {
-        let plain = PaneHeaderMetrics.inlineRenameMinimumWidth(showsPromptCacheClock: false, showsWarning: false, isZoomed: false)
-        let withClock = PaneHeaderMetrics.inlineRenameMinimumWidth(showsPromptCacheClock: true, showsWarning: false, isZoomed: false)
-        #expect(withClock - plain == PaneHeaderMetrics.itemSpacing + PaneHeaderMetrics.markSlot)
-        // Everything but the field, with the clock, still leaves the field
-        // its minimum.
-        let fixedParts = PaneHeaderMetrics.minimumWidth
-            + PaneHeaderMetrics.itemSpacing + PaneHeaderMetrics.markSlot // state mark
-            + PaneHeaderMetrics.itemSpacing + PaneHeaderMetrics.markSlot // clock
-            + PaneHeaderMetrics.itemSpacing // glyph to field
-        #expect(withClock - fixedParts >= PaneHeaderMetrics.inlineRenameFieldMinimumWidth)
-    }
-
-    @Test func metrics_theWarningKeepsAUsableRenameFieldBesideIt() {
-        let plain = PaneHeaderMetrics.inlineRenameMinimumWidth(showsPromptCacheClock: false, showsWarning: false, isZoomed: false)
-        let warned = PaneHeaderMetrics.inlineRenameMinimumWidth(showsPromptCacheClock: false, showsWarning: true, isZoomed: false)
-        #expect(warned - plain == PaneHeaderMetrics.itemSpacing + PaneHeaderMetrics.warningSlot)
-        // Everything but the field, with the warning, still leaves the field
-        // its minimum.
-        let fixedParts = PaneHeaderMetrics.minimumWidth
-            + PaneHeaderMetrics.itemSpacing + PaneHeaderMetrics.markSlot // state mark
-            + PaneHeaderMetrics.itemSpacing + PaneHeaderMetrics.warningSlot // warning
-            + PaneHeaderMetrics.itemSpacing // glyph to field
-        #expect(warned - fixedParts >= PaneHeaderMetrics.inlineRenameFieldMinimumWidth)
+        let clockOnly = PaneHeaderMetrics.inlineRenameMinimumWidth(showsPromptCacheClock: true, showsWarning: false, isZoomed: false)
+        let warningOnly = PaneHeaderMetrics.inlineRenameMinimumWidth(showsPromptCacheClock: false, showsWarning: true, isZoomed: false)
+        let zoomOnly = PaneHeaderMetrics.inlineRenameMinimumWidth(showsPromptCacheClock: false, showsWarning: false, isZoomed: true)
+        let all = PaneHeaderMetrics.inlineRenameMinimumWidth(showsPromptCacheClock: true, showsWarning: true, isZoomed: true)
+        #expect(clockOnly == plain + clock)
+        #expect(warningOnly == plain + warning)
+        #expect(zoomOnly == plain + unzoom)
+        #expect(all == plain + clock + warning + unzoom)
     }
 
     @Test func inlineRename_endsWhenTheHeaderNarrowsBelowAUsableField() {
@@ -146,30 +134,24 @@ struct PaneHeaderTests {
         #expect(label.detail == "/tmp/project")
         #expect(label.agentName == "Claude")
         #expect(label.isAgent)
+        #expect(label.isNamedByPerson)
     }
 
-    @Test func label_agentTitleWinsOverDirectory() {
+    @Test(arguments: [true, false])
+    func label_agentFallsBackToTheDirectoryWithoutATitle(hasTitle: Bool) {
+        let agent = hasTitle
+            ? PaneHeaderAgent(kind: .codex, providerName: "Codex", title: "Fix the build")
+            : PaneHeaderAgent(kind: .claude, providerName: "Claude", title: nil)
         let label = PaneHeaderRules.label(
             customName: nil,
-            agent: PaneHeaderAgent(kind: .codex, providerName: "Codex", title: "Fix the build"),
+            agent: agent,
             workingDirectory: "/tmp/project",
             fallbackName: "Terminal"
         )
-        #expect(label.name == "Fix the build")
+        #expect(label.name == (hasTitle ? "Fix the build" : "project"))
         #expect(label.detail == "/tmp/project")
-        #expect(label.agentName == "Codex")
-    }
-
-    @Test func label_agentWithoutTitle_fallsToDirectoryName() {
-        let label = PaneHeaderRules.label(
-            customName: nil,
-            agent: PaneHeaderAgent(kind: .claude, providerName: "Claude", title: nil),
-            workingDirectory: "/tmp/project",
-            fallbackName: "Terminal"
-        )
-        #expect(label.name == "project")
-        #expect(label.detail == "/tmp/project")
-        #expect(label.agentName == "Claude")
+        #expect(label.agentName == (hasTitle ? "Codex" : "Claude"))
+        #expect(!label.isNamedByPerson)
     }
 
     @Test func label_carriesTheAgentsModelAndMode() {
@@ -197,7 +179,7 @@ struct PaneHeaderTests {
         (nil, .some(.default), nil),
         (nil, nil, nil)
     ] as [Self.SettingsCase])
-    func settingsText_namesTheModelAndAnyModeButTheDefault(model: String?, mode: AgentPermissionMode?, text: String?) {
+    func settingsText_omitsDefaultAndBypassModes(model: String?, mode: AgentPermissionMode?, text: String?) {
         let label = PaneHeaderLabel(name: "x", detail: nil, agentKind: .claude, agentName: "Claude", model: model, permissionMode: mode)
         #expect(label.settingsText(locale: Locale(identifier: "en")) == text)
         #expect(label.runsWithoutAsking == (mode == .bypassPermissions))
@@ -229,6 +211,7 @@ struct PaneHeaderTests {
         #expect(label.name == "src")
         #expect(label.detail == "/tmp/project/src")
         #expect(!label.isAgent)
+        #expect(!label.isNamedByPerson)
     }
 
     @Test func label_shellInHome_abbreviatesAndDropsRepeatedDetail() {
@@ -266,7 +249,7 @@ struct PaneHeaderTests {
 
     // MARK: - Agent title
 
-    @Test func agentTitle_followsTabTitlePrecedence() {
+    @Test func agentTitle_requiresAConversationAndFollowsTabTitlePrecedence() {
         let all = Self.badge(
             conversationID: "c1",
             sessionTitle: "Session title",
@@ -280,9 +263,7 @@ struct PaneHeaderTests {
 
         let prompt = Self.badge(conversationID: "c1", firstPrompt: "  First\nprompt ")
         #expect(PaneHeaderRules.agentTitle(for: prompt) == "First prompt")
-    }
 
-    @Test func agentTitle_withoutConversation_hasNoTitle() {
         let stale = Self.badge(sessionTitle: "Left over", generatedTitle: "Also left", firstPrompt: "Old prompt")
         #expect(PaneHeaderRules.agentTitle(for: stale) == nil)
         #expect(PaneHeaderRules.agentTitle(for: Self.badge(conversationID: "c1")) == nil)
@@ -295,18 +276,24 @@ struct PaneHeaderTests {
         _ runID: String,
         _ state: AgentState,
         detail: String? = nil,
+        updatedAt: Date = Date(timeIntervalSince1970: 1),
         panes: [UUID]
     ) -> AgentRuntimePresentation {
-        var badge = Self.badge(state: state)
+        var badge = Self.badge(state: state, updatedAt: updatedAt)
         badge.detail = detail
         return AgentRuntimePresentation.test(kind: kind, runID: runID, badge: badge, paneIDs: Set(panes))
     }
 
     /// One item about `run`, placed in `pane` as the attention list places it.
-    private static func item(_ kind: AttentionItemKind, about run: AgentRuntimePresentation, in pane: UUID) -> AttentionItem {
+    private static func item(
+        id: AttentionItemID,
+        kind: AttentionItemKind,
+        about run: AgentRuntimePresentation,
+        in pane: UUID
+    ) -> AttentionItem {
         var queue = AttentionQueue()
         queue.insert(
-            id: .stop(EpisodeKey(origin: .runtime(run.id), episodeToken: "1")),
+            id: id,
             kind: kind,
             subject: .runtime(id: run.id, provider: run.kind, paneID: pane, tabID: nil, projectID: nil),
             arrivedAt: Date(timeIntervalSince1970: 0)
@@ -320,7 +307,7 @@ struct PaneHeaderTests {
     @Test func mark_twoRunsInAPane_areWeighedAsTheRowWeighsThem() throws {
         let (session, tab) = try Self.splitTab()
         let leaves = tab.splitTree.allLeafIDs()
-        let claude = Self.run(.claude, "c", .finished, detail: "done", panes: [leaves[0]])
+        let claude = Self.run(.claude, "c", .finished, detail: "done", updatedAt: Date(timeIntervalSince1970: 2), panes: [leaves[0]])
         let codex = Self.run(.codex, "x", .running, detail: "Bash: swift test", panes: [leaves[0]])
 
         let mark = PaneHeaderRules.mark(paneID: leaves[0], items: [], runtimes: [claude, codex], session: session)
@@ -335,11 +322,20 @@ struct PaneHeaderTests {
         let pane = tab.splitTree.allLeafIDs()[0]
         let claude = Self.run(.claude, "c", .finished, detail: "done", panes: [pane])
         let codex = Self.run(.codex, "x", .running, detail: "Bash: swift test", panes: [pane])
-        let unread = AttentionItemKind.unread(UnreadTurn(turnID: TurnID("t"), changes: .unknown))
+        let turn = UnreadTurn(turnID: TurnID("t"), changes: .unknown)
+        let unread = Self.item(id: .unread(turn.turnID), kind: .unread(turn), about: claude, in: pane)
+        let stop = Self.item(
+            id: .stop(EpisodeKey(origin: .runtime(claude.id), episodeToken: "1")),
+            kind: .stop(.processExited),
+            about: claude,
+            in: pane
+        )
+        let unreadOnly = PaneHeaderRules.mark(paneID: pane, items: [unread], runtimes: [claude], session: session)
+        #expect(unreadOnly == PaneHeaderMark(glyph: .unread, detail: "done"))
 
         let stopped = PaneHeaderRules.mark(
             paneID: pane,
-            items: [Self.item(.stop(.processExited), about: claude, in: pane)],
+            items: [stop],
             runtimes: [claude, codex],
             session: session
         )
@@ -347,7 +343,7 @@ struct PaneHeaderTests {
 
         let running = PaneHeaderRules.mark(
             paneID: pane,
-            items: [Self.item(unread, about: claude, in: pane)],
+            items: [unread],
             runtimes: [claude, codex],
             session: session
         )
@@ -364,7 +360,7 @@ struct PaneHeaderTests {
 
         for leaf in leaves {
             let mark = PaneHeaderRules.mark(paneID: leaf, items: [], runtimes: [codex], session: session)
-            #expect((mark != nil) == (leaf == placed))
+            #expect(mark == (leaf == placed ? PaneHeaderMark(glyph: .running, detail: nil) : nil))
         }
     }
 
@@ -382,18 +378,18 @@ struct PaneHeaderTests {
         let paneID = UUID()
         let older = AgentRuntimePresentation.test(
             runID: "older",
-            badge: Self.badge(state: .finished, updatedAt: Date(timeIntervalSinceNow: -60)),
+            badge: Self.badge(state: .running, updatedAt: Date(timeIntervalSince1970: 1)),
             paneIDs: [paneID]
         )
         let newer = AgentRuntimePresentation.test(
             kind: .codex,
             runID: "newer",
-            badge: Self.badge(state: .running, updatedAt: Date()),
+            badge: Self.badge(state: .finished, updatedAt: Date(timeIntervalSince1970: 2)),
             paneIDs: [paneID]
         )
         let unknown = AgentRuntimePresentation.test(
             runID: "unknown",
-            badge: Self.badge(state: .unknown, updatedAt: Date(timeIntervalSinceNow: 60)),
+            badge: Self.badge(state: .unknown, updatedAt: Date(timeIntervalSince1970: 3)),
             paneIDs: [paneID]
         )
         attention.replaceRuntimes([older, unknown], kind: .claude)
@@ -405,8 +401,7 @@ struct PaneHeaderTests {
 
     /// We keep the conversation selected for Changes while the model and
     /// permission warning follow tmux's active window, without a new hook.
-    @Test(arguments: [true, false])
-    func paneHeaderLabel_settingsFollowTheActiveTmuxAgent(isBypassActive: Bool) throws {
+    @Test func paneHeaderLabel_settingsFollowTheActiveTmuxAgent() throws {
         let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
         let pane = try #require(tab.splitTree.allLeafIDs().first)
         let attention = AttentionState()
@@ -416,29 +411,36 @@ struct PaneHeaderTests {
         var defaultBadge = Self.badge(conversationID: "b", sessionTitle: "Latest conversation", updatedAt: Date(timeIntervalSince1970: 2))
         defaultBadge.model = "gpt-6.1-sol"
         defaultBadge.permissionMode = "default"
-        let bypass = AgentRuntimePresentation.test(
-            runID: "bypass",
-            badge: bypassBadge,
-            paneIDs: [pane],
-            tmuxLocations: [pane: Self.tmuxLocation(window: "@1", pane: "%1", isActive: isBypassActive)]
-        )
-        let normal = AgentRuntimePresentation.test(
-            kind: .codex,
-            runID: "normal",
-            badge: defaultBadge,
-            paneIDs: [pane],
-            tmuxLocations: [pane: Self.tmuxLocation(window: "@2", pane: "%2", isActive: !isBypassActive)]
-        )
-        attention.replaceRuntimes([bypass], kind: .claude)
-        attention.replaceRuntimes([normal], kind: .codex)
+        let bypassConversation = ConversationKey(provider: .claude, conversationID: "a", isFallback: false)
+        let normalConversation = ConversationKey(provider: .codex, conversationID: "b", isFallback: false)
+        for isBypassActive in [true, false] {
+            let bypass = AgentRuntimePresentation.test(
+                runID: "bypass",
+                badge: bypassBadge,
+                paneIDs: [pane],
+                tmuxLocations: [pane: Self.tmuxLocation(window: "@1", pane: "%1", isActive: isBypassActive)],
+                conversation: bypassConversation
+            )
+            let normal = AgentRuntimePresentation.test(
+                kind: .codex,
+                runID: "normal",
+                badge: defaultBadge,
+                paneIDs: [pane],
+                tmuxLocations: [pane: Self.tmuxLocation(window: "@2", pane: "%2", isActive: !isBypassActive)],
+                conversation: normalConversation
+            )
+            attention.replaceRuntimes([bypass], kind: .claude)
+            attention.replaceRuntimes([normal], kind: .codex)
 
-        let label = attention.paneHeaderLabel(paneID: pane, in: session, locale: Locale(identifier: "en"))
-        #expect(label.model == (isBypassActive ? "Opus 5.5" : "gpt-6.1-sol"))
-        #expect(label.permissionMode == (isBypassActive ? .bypassPermissions : .default))
-        #expect(label.runsWithoutAsking == isBypassActive)
-        #expect(label.agentName == AgentProviderRegistry.displayName(for: isBypassActive ? .claude : .codex))
-        #expect(label.name == "Latest conversation")
-        #expect(attention.headerRuntime(inPane: pane)?.runID == "normal")
+            let label = attention.paneHeaderLabel(paneID: pane, in: session, locale: Locale(identifier: "en"))
+            #expect(label.model == (isBypassActive ? "Opus 5.5" : "gpt-6.1-sol"))
+            #expect(label.permissionMode == (isBypassActive ? .bypassPermissions : .default))
+            #expect(label.runsWithoutAsking == isBypassActive)
+            #expect(label.agentName == AgentProviderRegistry.displayName(for: isBypassActive ? .claude : .codex))
+            #expect(label.conversation == (isBypassActive ? bypassConversation : normalConversation))
+            #expect(label.name == "Latest conversation")
+            #expect(attention.headerRuntime(inPane: pane)?.conversation == normalConversation)
+        }
     }
 
     @Test func paneHeaderLabel_hiddenTmuxAgentDoesNotSupplySettings() throws {
@@ -529,6 +531,7 @@ struct PaneHeaderTests {
 
         let label = attention.paneHeaderLabel(paneID: pane, in: session, locale: Locale(identifier: "en"))
         #expect(!label.runsWithoutAsking)
+        #expect(!label.settingsAreAmbiguous)
         #expect(label.model == (newState == .unknown ? nil : "gpt-6.1-sol"))
         #expect(label.permissionMode == (newState == .unknown ? nil : .default))
         if newState != .unknown {
@@ -566,18 +569,30 @@ struct PaneHeaderTests {
         let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
         let pane = try #require(tab.splitTree.allLeafIDs().first)
         let attention = AttentionState()
+        let english = Locale(identifier: "en")
         var badge = Self.badge(updatedAt: Date(timeIntervalSince1970: 1))
+        badge.model = "Opus 5.5"
+        badge.effort = "high"
         badge.permissionMode = "bypassPermissions"
         let location = Self.tmuxLocation(window: "@1", pane: "%1", isActive: true, isVisible: true)
-        attention.replaceRuntimes([
-            .test(runID: "a", badge: badge, paneIDs: [pane], tmuxLocations: [pane: location]),
-            .test(runID: "b", badge: badge, paneIDs: [pane], tmuxLocations: [pane: location])
-        ], kind: .claude)
-        let label = attention.paneHeaderLabel(paneID: pane, in: session, locale: Locale(identifier: "en"))
+        let first = AgentRuntimePresentation.test(runID: "a", badge: badge, paneIDs: [pane], tmuxLocations: [pane: location])
+        attention.replaceRuntimes([first], kind: .claude)
+        let known = attention.paneHeaderLabel(paneID: pane, in: session, locale: english)
+        #expect(known.model == "Opus 5.5")
+        #expect(known.effort == "high")
+        #expect(known.runsWithoutAsking)
+        #expect(!known.settingsAreAmbiguous)
+
+        let second = AgentRuntimePresentation.test(runID: "b", badge: badge, paneIDs: [pane], tmuxLocations: [pane: location])
+        attention.replaceRuntimes([first, second], kind: .claude)
+        let label = attention.paneHeaderLabel(paneID: pane, in: session, locale: english)
         #expect(label.settingsAreAmbiguous)
+        #expect(label.showsWarning)
+        #expect(!label.runsWithoutAsking)
         #expect(label.model == nil)
+        #expect(label.effort == nil)
         #expect(label.permissionMode == nil)
-        #expect(label.settingsText(locale: Locale(identifier: "en")) == nil)
+        #expect(label.settingsText(locale: english) == nil)
         #expect(PaneHeaderLabel.unavailableSettings.resolved(in: Locale(identifier: "en")) == "Agent settings unavailable")
         #expect(PaneHeaderLabel.unavailableSettings.resolved(in: Locale(identifier: "ja")) == "エージェントの設定を特定できません")
     }
@@ -595,29 +610,25 @@ struct PaneHeaderTests {
         )
     }
 
-    // MARK: - Forms
+}
 
-    /// Narrowing drops the directory first, then the tokens, then the model
-    /// and mode, then the name; the warning stays while the state mark does,
-    /// in words only while the model and mode still show.
-    @Test func forms_dropDetailThenTokensThenSettingsThenNameThenMark() {
-        let forms = PaneHeaderRules.forms(isEditing: false, showsPromptCacheClock: false)
-        #expect(forms == [.all, .withTokens, .withSettings, .withName, .withMark, .kindAndMenu])
-        #expect(forms.map(\.showsDetail) == [true, false, false, false, false, false])
-        #expect(forms.map(\.showsTokens) == [true, true, false, false, false, false])
-        #expect(forms.map(\.showsSettings) == [true, true, true, false, false, false])
-        #expect(forms.map(\.showsName) == [true, true, true, true, false, false])
-        #expect(forms.map(\.showsMark) == [true, true, true, true, true, false])
-    }
+// MARK: - Forms and renaming
 
-    @Test func forms_withACacheClock_dropTheMarkBeforeTheClock() {
-        let forms = PaneHeaderRules.forms(isEditing: false, showsPromptCacheClock: true)
-        #expect(forms == [.all, .withTokens, .withSettings, .withName, .withMark, .withClock, .kindAndMenu])
-        #expect(forms.map(\.showsDetail) == [true, false, false, false, false, false, false])
-        #expect(forms.map(\.showsSettings) == [true, true, true, false, false, false, false])
-        #expect(forms.map(\.showsName) == [true, true, true, true, false, false, false])
-        #expect(forms.map(\.showsMark) == [true, true, true, true, true, false, false])
-        #expect(forms.map(\.showsPromptCacheClock) == [true, true, true, true, true, true, false])
+extension PaneHeaderTests {
+    /// The warning follows the state mark and keeps words while settings fit.
+    @Test(arguments: [false, true])
+    func forms_dropDetailThenTokensThenSettingsThenNameThenMark(showsClock: Bool) {
+        let forms = PaneHeaderRules.forms(isEditing: false, showsPromptCacheClock: showsClock)
+        let shared: [PaneHeaderForm] = [.all, .withTokens, .withSettings, .withName, .withMark]
+        #expect(forms == shared + (showsClock ? [.withClock, .kindAndMenu] : [.kindAndMenu]))
+        let narrow = showsClock ? [false, false] : [false]
+        #expect(forms.map(\.showsDetail) == [true, false, false, false, false] + narrow)
+        #expect(forms.map(\.showsTokens) == [true, true, false, false, false] + narrow)
+        #expect(forms.map(\.showsSettings) == [true, true, true, false, false] + narrow)
+        #expect(forms.map(\.showsName) == [true, true, true, true, false] + narrow)
+        #expect(forms.map(\.showsMark) == [true, true, true, true, true] + narrow)
+        let clockForms = showsClock ? [true, false] : [false]
+        #expect(forms.map(\.showsPromptCacheClock) == [true, true, true, true, true] + clockForms)
     }
 
     @Test func forms_whileEditing_keepTheName() {
@@ -727,6 +738,7 @@ struct PaneHeaderTests {
         #expect(session.paneState(paneID).name == nil)
 
         session.renamePane(paneID, to: "logs")
+        #expect(session.paneState(paneID).name == "logs")
         session.renamePane(paneID, to: nil)
         #expect(session.paneState(paneID).name == nil)
     }
@@ -789,13 +801,14 @@ extension PaneHeaderTests {
         #expect(label.runsWithoutAsking)
     }
 
-    @Test func paneHeaderLabel_parentAtAnotherEndpointIsNotAnAncestor() throws {
+    @Test(arguments: [AgentState.running, .unknown])
+    func paneHeaderLabel_parentAtAnotherEndpointIsNotAnAncestor(childState: AgentState) throws {
         let fixture = try Self.headerFamilyFixture()
         let session = fixture.session
         let pane = fixture.pane
         let attention = fixture.attention
         let parent = Self.familyRun("parent", launched: 100, observed: 110, pane: pane, bypasses: true, tmuxPane: "%2")
-        let child = Self.familyRun("child", parent: "parent", launched: 101, observed: 120, pane: pane, state: .unknown)
+        let child = Self.familyRun("child", parent: "parent", launched: 101, observed: 120, pane: pane, state: childState)
         attention.replaceRuntimes([parent, child], kind: .claude)
         let label = attention.paneHeaderLabel(paneID: pane, in: session, locale: Locale(identifier: "en"))
         #expect(label.model == "parent")
@@ -878,7 +891,10 @@ extension PaneHeaderTests {
         #expect(short.count == PaneHeaderLabel.modelCharacterLimit)
         #expect(short.hasPrefix("anthropic/claude"))
         #expect(short.hasSuffix("nded-1m"))
+        #expect(short.contains("…"))
         #expect(PaneHeaderLabel.shortModel("Opus 5.5") == "Opus 5.5")
+        let label = PaneHeaderLabel(name: "Pane", detail: nil, agentKind: .claude, agentName: "Claude", model: long)
+        #expect(label.settingsText(locale: Locale(identifier: "en")) == "anthropic/claude-o…tended-1m")
     }
 }
 
@@ -893,6 +909,7 @@ extension PaneHeaderTests {
         #expect(label.folder == "/tmp/weir-feat\u{240A}line")
         let trailing = PaneHeaderRules.label(customName: nil, agent: nil, workingDirectory: "/tmp/feat\n", fallbackName: "Terminal")
         #expect(trailing.name == "feat\u{240A}")
+        #expect(trailing.detail == "/tmp/feat\u{240A}")
         #expect(trailing.folder == "/tmp/feat\u{240A}")
     }
 }

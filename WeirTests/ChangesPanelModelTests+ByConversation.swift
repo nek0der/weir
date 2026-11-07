@@ -49,10 +49,10 @@ extension ChangesPanelModelTests {
         let b2 = try TurnSummaryFixture.timed(2, conversation: "b", start: 60, end: 70)
         let a3 = try TurnSummaryFixture.timed(3, conversation: "a", start: 80, end: 90)
 
-        let list = try Self.grouped([a1, b1, a2, b2, a3])
+        let list = try Self.grouped([b2, a3, b1, a1, a2])
 
         let sections = try #require(list.sections)
-        #expect(sections.map(\.id) == [a1.conversation, b1.conversation], "a ended last")
+        try #require(sections.map(\.id) == [a1.conversation, b1.conversation], "a ended last")
         #expect(sections[0].rows.map(\.id) == [a1, a2, a3].map(\.turnID))
         #expect(sections[1].rows.map(\.id) == [b1, b2].map(\.turnID))
         #expect(list.scrollTarget == b2.turnID, "the last unviewed row as drawn, not the one that ended last")
@@ -73,6 +73,7 @@ extension ChangesPanelModelTests {
 
         #expect(list.sections == nil)
         #expect(list == timeline)
+        #expect(list.rows.map(\.id) == [turns[0].turnID, turns[2].turnID])
     }
 
     /// One conversation needs no sections.
@@ -99,7 +100,8 @@ extension ChangesPanelModelTests {
 
         let list = try Panel.list(ChangesPanelModel.make(input))
 
-        #expect(list.conversations.count == 2, "both are in the filter")
+        #expect(Set(list.conversations.map(\.conversation)) == [turns[0].conversation, idle], "both are in the filter")
+        #expect(list.rows.map(\.id) == turns.map(\.turnID))
         #expect(list.sections == nil)
         #expect(!list.canGroup)
     }

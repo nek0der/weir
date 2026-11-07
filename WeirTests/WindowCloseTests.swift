@@ -81,7 +81,8 @@ struct WindowCloseTests {
         /// Tidies a window as it closes, telling its toasts in `toasts`, as
         /// the app does (`WindowClosing.tidy`).
         func tidiesOnClose(into toasts: ToastCenter) {
-            registry.onClose = { [session, registry] window in
+            registry.onClose = { [session, weak registry] window in
+                guard let registry else { return }
                 WindowClosing.tidy(window, session: session, registry: registry, toasts: toasts)
             }
         }
@@ -103,9 +104,8 @@ struct WindowCloseTests {
     @Test func closingOneOfTwoWindows_closesIt_andKeepsItsProjectsViewAndAgents() throws {
         let fixture = try Fixture()
         let pane = fixture.secondPane
-        fixture.session.update(fixture.secondTab.id) {
-            $0.agentBadges[.claude] = [pane: AgentBadge(state: .running, updatedAt: Date())]
-        }
+        let badge = AgentBadge(state: .running, updatedAt: Date(timeIntervalSince1970: 100))
+        fixture.session.update(fixture.secondTab.id) { $0.agentBadges[.claude] = [pane: badge] }
 
         fixture.close(fixture.other)
 
@@ -117,70 +117,85 @@ struct WindowCloseTests {
         // The project keeps what the window showed, and its session runs on.
         let view = try #require(fixture.session.projectViews[fixture.second.id])
         #expect(view.activeTabID == fixture.secondTab.id)
-        #expect(fixture.session.tab(fixture.secondTab.id) != nil)
-        #expect(fixture.session.hasLiveAgentAnywhere())
+        #expect(view.activeContainerID == fixture.secondTab.container)
+        #expect(fixture.registry.windows.map(\.id) == [fixture.primary.id])
+        #expect(fixture.presenter.isOnScreen(fixture.primary.id))
+        let tab = try #require(fixture.session.tab(fixture.secondTab.id))
+        #expect(tab.splitTree.allLeafIDs() == [pane])
+        #expect(tab.agentBadges[.claude] == [pane: badge])
+        #expect(fixture.session.hasLiveAgent(inProject: fixture.second.id))
+        let reopened = try #require(fixture.registry.openInNewWindow(
+            project: fixture.second.id,
+            in: fixture.session,
+            from: fixture.primary
+        ))
+        #expect(reopened.selection.activeTabID == tab.id)
+        #expect(reopened.selection.activeContainerID == tab.container)
+        #expect(fixture.session.projectViews[fixture.second.id] == nil)
     }
 
     @Test func closingTheLastWindow_hidesIt_andTheDockBringsItBack() throws {
         let fixture = try Fixture()
         fixture.close(fixture.other)
+        let primary = fixture.primary
+        let toasts = ToastCenter()
+        fixture.tidiesOnClose(into: toasts)
+        defer { fixture.registry.onClose = nil }
         fixture.presenter.shown = []
+        #expect(fixture.presenter.isOnScreen(primary.id))
 
-        fixture.close(fixture.primary)
+        fixture.close(primary)
 
-        #expect(fixture.primary.isHidden)
-        #expect(fixture.registry.windows.map(\.id) == [fixture.primary.id])
+        #expect(primary.isHidden)
+        #expect(!fixture.presenter.isOnScreen(primary.id))
+        #expect(fixture.registry.windows.map(\.id) == [primary.id])
         #expect(fixture.presenter.closed == [fixture.other.id])
-        #expect(fixture.session.hiddenWindowIDs == [fixture.primary.id])
-        // Still the project's window: it keeps its selection.
+        #expect(fixture.session.hiddenWindowIDs == [primary.id])
+        #expect(fixture.session.selection(primary.id) === primary.selection)
+        #expect(primary.selection.shownProjectID == fixture.first.id)
+        #expect(primary.selection.activeTabID == fixture.firstTab.id)
         #expect(fixture.session.projectViews[fixture.first.id] == nil)
+        #expect(toasts.items.isEmpty)
 
         fixture.registry.showLastWindow()
 
-        #expect(fixture.presenter.shown == [fixture.primary.id])
-        #expect(!fixture.primary.isHidden)
+        #expect(fixture.presenter.shown == [primary.id])
+        #expect(fixture.presenter.isOnScreen(primary.id))
+        #expect(!primary.isHidden)
+        #expect(fixture.session.hiddenWindowIDs.isEmpty)
+        #expect(fixture.session.selection(primary.id) === primary.selection)
+        #expect(primary.selection.activeTabID == fixture.firstTab.id)
     }
 
-    @Test func aMinimizedWindowCounts_soClosingTheOtherOneClosesIt() throws {
+    @Test(arguments: [false, true])
+    func closingThePrimaryPromotesTheOtherWindowEvenWhenMinimized(isMinimized: Bool) throws {
         let fixture = try Fixture()
-        // Minimized: off screen, but not hidden.
-        fixture.registry.windowScreenPresenceChanged(fixture.other.id, isOnScreen: false)
-        fixture.presenter.onScreen.remove(fixture.other.id)
         let closing = fixture.primary
+        fixture.registry.windowBecameKey(closing.id)
+        if isMinimized {
+            fixture.registry.windowScreenPresenceChanged(fixture.other.id, isOnScreen: false)
+            fixture.presenter.onScreen.remove(fixture.other.id)
+        }
+        #expect(!fixture.other.isHidden)
+        #expect(fixture.presenter.isOnScreen(fixture.other.id) != isMinimized)
 
         fixture.close(closing)
 
         #expect(fixture.presenter.closed == [closing.id])
         #expect(fixture.registry.window(closing.id) == nil)
-        #expect(fixture.primary === fixture.other)
-        #expect(!fixture.other.isHidden)
-    }
-
-    @Test func closingThePrimary_handsThePrimaryToAShownWindow() throws {
-        let fixture = try Fixture()
-        let closing = fixture.primary
-
-        fixture.close(closing)
-
+        #expect(fixture.session.selection(closing.id) == nil)
         #expect(fixture.registry.primary === fixture.other)
         #expect(fixture.registry.windows.map(\.id) == [fixture.other.id])
         #expect(fixture.session.primaryWindowID == fixture.other.id)
         #expect(fixture.session.primarySelection === fixture.other.selection)
         #expect(fixture.session.windowIDs == [fixture.other.id])
-        // What reads the primary now reads the window left.
+        #expect(fixture.session.hiddenWindowIDs.isEmpty)
         #expect(fixture.session.primarySelection.activeTabID == fixture.secondTab.id)
-        let view = try #require(fixture.session.projectViews[fixture.first.id])
-        #expect(view.activeTabID == fixture.firstTab.id)
-    }
-
-    @Test func commandTarget_afterThePrimaryCloses_isAShownWindow() throws {
-        let fixture = try Fixture()
-        fixture.registry.windowBecameKey(fixture.primary.id)
-
-        fixture.close(fixture.primary)
-
         #expect(fixture.registry.backgroundCommandTarget === fixture.other)
         #expect(fixture.registry.noticeWindow === fixture.other)
+        let view = try #require(fixture.session.projectViews[fixture.first.id])
+        #expect(view.activeTabID == fixture.firstTab.id)
+        #expect(view.activeContainerID == fixture.firstTab.container)
     }
 
     @Test func aClosedKeyWindow_leavesNoCommandTarget() throws {
@@ -201,62 +216,89 @@ struct WindowCloseTests {
         fixture.close(fixture.other)
         fixture.close(fixture.primary)
         let hidden = fixture.primary
-        // A window on the second project beside the hidden one, which no
-        // entry point opens (one asked of a hidden window switches it in
-        // place, `openInNewWindow`): the close must still leave one hidden.
+        let toasts = ToastCenter()
+        fixture.tidiesOnClose(into: toasts)
+        defer { fixture.registry.onClose = nil }
         let opened = fixture.windowBeside(hidden, showing: fixture.second)
-        #expect(opened !== hidden)
-        #expect(!opened.isHidden)
+        #expect(fixture.session.hiddenWindowIDs == [hidden.id])
+        #expect(fixture.presenter.isOnScreen(opened.id))
 
         fixture.close(opened)
 
         #expect(fixture.registry.windows.map(\.id) == [opened.id])
-        #expect(fixture.registry.windows.filter(\.isHidden).count == 1)
         #expect(opened.isHidden)
+        #expect(!fixture.presenter.isOnScreen(opened.id))
         #expect(fixture.registry.primary === opened)
+        #expect(fixture.session.primarySelection === opened.selection)
         #expect(fixture.session.windowIDs == [opened.id])
-        #expect(fixture.presenter.closed.last == hidden.id)
-        // The window that ended keeps its project's view.
+        #expect(fixture.session.hiddenWindowIDs == [opened.id])
+        #expect(fixture.presenter.closed == [fixture.other.id, hidden.id])
+        #expect(fixture.session.selection(hidden.id) == nil)
         let view = try #require(fixture.session.projectViews[fixture.first.id])
         #expect(view.activeTabID == fixture.firstTab.id)
+        #expect(view.activeContainerID == fixture.firstTab.container)
+        #expect(toasts.items.isEmpty)
     }
 
     // MARK: - What the closed window held
 
     @Test func aClosedWindowsPanes_stopCountingAsDrawnOrSeen() throws {
         let fixture = try Fixture()
-        let pane = fixture.secondPane
-        fixture.registry.didReportDisplay(window: fixture.other.id, rendered: [pane], attended: [pane])
-        #expect(fixture.registry.visibility.union.contains(pane))
-        #expect(fixture.registry.attention.attendedPanes == [pane])
+        let closedPane = fixture.secondPane
+        let survivingPane = try #require(fixture.firstTab.splitTree.allLeafIDs().first)
+        fixture.registry.didReportDisplay(window: fixture.primary.id, rendered: [survivingPane], attended: [survivingPane])
+        fixture.registry.didReportDisplay(window: fixture.other.id, rendered: [closedPane], attended: [closedPane])
+        #expect(fixture.registry.visibility.union == [survivingPane, closedPane])
+        #expect(fixture.registry.attention.attendedPanes == [survivingPane, closedPane])
 
         fixture.close(fixture.other)
-
-        #expect(!fixture.registry.visibility.union.contains(pane))
-        #expect(fixture.registry.attention.attendedPanes.isEmpty)
+        #expect(fixture.registry.visibility.union == [survivingPane])
+        #expect(fixture.registry.attention.attendedPanes == [survivingPane])
+        fixture.registry.didReportDisplay(window: fixture.other.id, rendered: [closedPane], attended: [closedPane])
+        #expect(fixture.registry.visibility.union == [survivingPane])
+        #expect(fixture.registry.attention.attendedPanes == [survivingPane])
     }
 
     @Test func aClosedWindowsToastsCardsAndAnchors_go() throws {
         let fixture = try Fixture()
         let toasts = ToastCenter()
         let approvals = ApprovalPresentationStore()
-        let card = fixture.other.approvalCard
+        let closingCard = fixture.other.approvalCard
+        let survivingCard = fixture.primary.approvalCard
         fixture.tidiesOnClose(into: toasts)
-        let request = ApprovalPresentation.test(deadlineMilliseconds: 0)
-        approvals.receive([request])
+        defer {
+            fixture.registry.onClose = nil
+            toasts.dismiss(in: fixture.other.id)
+            toasts.dismiss(in: fixture.primary.id)
+        }
+        let request = ApprovalPresentation.test()
+        let survivor = ApprovalPresentation.test(epoch: request.epoch)
+        approvals.receive([request, survivor])
         let closed = fixture.other.id
-        card.updateRowAnchor(CGRect(x: 0, y: 40, width: 200, height: 20), for: request, in: approvals)
-        card.present(key: request.key, from: approvals)
-        toasts.show(ToastItem(message: .verbatim("Done"), undo: nil), in: closed)
+        let anchor = CGRect(x: 0, y: 40, width: 200, height: 20)
+        let otherAnchor = CGRect(x: 20, y: 100, width: 200, height: 20)
+        closingCard.updateRowAnchor(anchor, for: request, in: approvals)
+        survivingCard.updateRowAnchor(otherAnchor, for: survivor, in: approvals)
+        #expect(closingCard.present(key: request.key, from: approvals))
+        #expect(survivingCard.present(key: survivor.key, from: approvals))
+        let closingToast = ToastItem(message: .verbatim("Done"), undo: nil)
+        let survivingToast = ToastItem(message: .verbatim("Undo this change"), undo: {})
+        toasts.show(closingToast, in: closed)
+        toasts.show(survivingToast, in: fixture.primary.id)
+        #expect(closingCard.rowAnchor(for: request) == anchor)
+        #expect(closingCard.presentedApproval(in: approvals) == request)
+        #expect(toasts.current(in: closed)?.id == closingToast.id)
 
         fixture.close(fixture.other)
 
         #expect(toasts.current(in: closed) == nil)
-        #expect(card.state == ApprovalCardState())
-        #expect(card.presentedApproval(in: approvals) == nil)
-        #expect(card.rowAnchor(for: request) == nil)
-        // The request itself waits on, to be opened again.
-        #expect(approvals.pending.map(\.id) == [request.id])
+        #expect(closingCard.state == ApprovalCardState())
+        #expect(closingCard.presentedApproval(in: approvals) == nil)
+        #expect(closingCard.rowAnchor(for: request) == nil)
+        #expect(survivingCard.presentedApproval(in: approvals) == survivor)
+        #expect(survivingCard.rowAnchor(for: survivor) == otherAnchor)
+        #expect(toasts.current(in: fixture.primary.id)?.id == survivingToast.id)
+        #expect(approvals.pending.map(\.id) == [request.id, survivor.id])
     }
 
     @Test func aNoticeFixedToAClosedWindow_movesToAShownOne() throws {
@@ -317,7 +359,11 @@ struct WindowCloseTests {
     @Test(.timeLimit(.minutes(1)))
     func aSetupFinishingAfterItsWindowClosed_movesNoOtherWindow() async throws {
         try await withTempDir { dir in
-            let fixture = try await SessionLaunchFixture.make(in: dir, bootstrap: [.shorthand("sleep 0.3")])
+            let started = dir.appendingPathComponent("started")
+            let release = dir.appendingPathComponent("release")
+            let command = "touch '\(started.path)'; while [ ! -f '\(release.path)' ]; do sleep 0.02; done"
+            let fixture = try await SessionLaunchFixture.make(in: dir, bootstrap: [.shorthand(command)])
+            defer { fixture.store.cancelAll() }
             let session = fixture.session
             let row = ContainerID.worktree(projectID: fixture.project.id, worktreeID: fixture.worktree.id)
             // The primary shows another project, on its empty row.
@@ -341,7 +387,17 @@ struct WindowCloseTests {
                 window: launching
             )
 
+            await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) {
+                FileManager.default.fileExists(atPath: started.path)
+            }
+            try #require(FileManager.default.fileExists(atPath: started.path))
+            try #require(fixture.store.launch(in: row)?.phase == .settingUp(stepIndex: 0, stepCount: 1, command: command))
+            #expect(fixture.tabs.isEmpty)
+
             registry.close(launching, in: session)
+            #expect(registry.window(launching) == nil)
+            #expect(session.selection(launching) == nil)
+            try Data().write(to: release)
             await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) {
                 !fixture.tabs.isEmpty
             }
@@ -354,6 +410,11 @@ struct WindowCloseTests {
             // shown again: the tab would have come to front there.
             #expect(session.projectViews[fixture.project.id]?.activeContainerID == row)
             #expect(session.projectViews[fixture.project.id]?.activeTabID == tab.id)
+            let reopened = try #require(registry.openInNewWindow(project: fixture.project.id, in: session, from: registry.primary))
+            #expect(reopened.selection.activeContainerID == row)
+            #expect(reopened.selection.activeTabID == tab.id)
+            #expect(session.projectViews[fixture.project.id] == nil)
+            #expect(session.primarySelection.activeContainerID == .project(elsewhere.id))
         }
     }
 
@@ -400,7 +461,7 @@ struct WindowCloseTests {
         #expect(!ranInPrimary.value)
     }
 
-    @Test func aRestoreFinishingAfterItsWindowClosed_offersUndoInAnotherWindow() throws {
+    @Test func restoreCompletionRoutingFollowsTheOriginThenItsSurvivorOrReopenedPane() throws {
         let fixture = try Fixture()
         let pane = fixture.secondPane
         let closed = fixture.other
@@ -411,8 +472,8 @@ struct WindowCloseTests {
 
         fixture.close(closed)
 
-        // No window shows the pane: the toast, with its Undo, is told in
-        // the window left, and no bar takes the "Done" line.
+        // No window shows the pane. The remaining window takes the toast
+        // route, and there is no decision bar destination.
         let gone = RestoreActions.places(forEndOf: closed, paneID: pane, registry: fixture.registry, session: fixture.session)
         #expect(gone.toast === fixture.primary)
         #expect(gone.bar == nil)
@@ -443,33 +504,21 @@ struct WindowCloseTests {
         #expect(toast.undo == nil)
     }
 
-    @Test func closingAnEmptyWindow_showsNoToast() throws {
-        let fixture = try Fixture()
-        let empty = try fixture.addEmptyWindow()
-        let toasts = ToastCenter()
-        fixture.tidiesOnClose(into: toasts)
+    @Test func closingAnEmptyWindow_showsNoToast_andTheFixtureReleasesItsRegistry() throws {
+        weak var registry: WindowRegistry?
+        do {
+            let fixture = try Fixture()
+            registry = fixture.registry
+            let empty = try fixture.addEmptyWindow()
+            let toasts = ToastCenter()
+            fixture.tidiesOnClose(into: toasts)
 
-        fixture.close(empty)
+            fixture.close(empty)
 
-        #expect(fixture.registry.window(empty.id) == nil)
-        #expect(toasts.items.isEmpty)
+            #expect(fixture.registry.window(empty.id) == nil)
+            #expect(toasts.items.isEmpty)
+        }
+        #expect(registry == nil)
     }
 
-    @Test func theLastWindowHidden_showsNoToast_norTheEarlierHiddenOneEnding() throws {
-        let fixture = try Fixture()
-        fixture.close(fixture.other)
-        let toasts = ToastCenter()
-        fixture.tidiesOnClose(into: toasts)
-
-        fixture.close(fixture.primary)
-        #expect(toasts.items.isEmpty)
-
-        // The hidden one ends as a window beside it is closed and hidden in
-        // turn: nothing is told in the window going away.
-        let opened = fixture.windowBeside(fixture.primary, showing: fixture.second)
-        fixture.close(opened)
-
-        #expect(fixture.registry.windows.map(\.id) == [opened.id])
-        #expect(toasts.items.isEmpty)
-    }
 }

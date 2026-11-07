@@ -12,52 +12,81 @@ struct SessionRowFactTests {
     private static let pane = UUID()
 
     private static func queue(_ kinds: [AttentionItemKind], provider: AgentKind = .claude) -> [AttentionItem] {
-        AttentionItem.testList(kinds, pane: pane, provider: provider)
+        var queue = AttentionQueue()
+        for (index, kind) in kinds.enumerated() {
+            let agent = kind.approvalFact?.provider ?? provider
+            let run = "\(agent.rawValue):r\(index)"
+            let episode = EpisodeKey(origin: .runtime(run), episodeToken: "1")
+            let id: AttentionItemID = switch kind {
+            case let .approval(fact): .approval(fact.key)
+            case let .question(fact): .question(fact.key)
+            case .prompt: .prompt(episode)
+            case .stop: .stop(episode)
+            case let .unread(turn): .unread(turn.turnID)
+            }
+            queue.insert(
+                id: id,
+                kind: kind,
+                subject: .runtime(id: run, provider: agent, paneID: pane, tabID: nil, projectID: nil),
+                arrivedAt: Date(timeIntervalSince1970: TimeInterval(index))
+            )
+        }
+        return queue.items
     }
 
     private static let unread = AttentionItemKind.unread(
         UnreadTurn(turnID: TurnID("t"), changes: .changed(files: 2, added: 94, removed: 2))
     )
 
-    @Test func aQuestion_comesBeforeAnApproval_aStop_andAnUnreadTurn() {
-        let question = ApprovalFact.test(isQuestion: true)
+    @Test func theRowUsesTheHighestPriorityItemAndItsCompleteFact() {
+        let question = ApprovalFact.test(isQuestion: true, provider: .codex, supportsNativeAnswer: false)
         let approval = ApprovalFact.test()
-        let fact = SessionRowFact.make(.init(
-            items: Self.queue([Self.unread, .stop(.processExited), .approval(approval), .question(question)]),
-            requestText: [question.key: "Which branch?", approval.key: "swift test"]
-        ))
-
-        #expect(fact == SessionRowFact(glyph: .needsAnswer, fact: .question("Which branch?"), badge: .agent(.claude)))
+        let items = Self.queue([Self.unread, .stop(.processExited), .approval(approval), .question(question)])
+        let expected: [SessionRowFact] = [
+            .init(glyph: .unread, fact: .unread(.changed(files: 2, added: 94, removed: 2)), badge: .agent(.claude)),
+            .init(glyph: .stopped, fact: .stopped(.processExited), badge: .agent(.claude)),
+            .init(glyph: .needsApproval, fact: .approval("swift test"), badge: .agent(.claude)),
+            .init(glyph: .needsAnswer, fact: .question("Which branch?"), badge: .agent(.codex))
+        ]
+        for (index, row) in expected.enumerated() {
+            let fact = SessionRowFact.make(.init(
+                items: Array(items.prefix(index + 1)),
+                requestText: [question.key: "Which branch?", approval.key: "swift test"]
+            ))
+            #expect(fact == row)
+        }
     }
 
-    @Test func withoutAQuestion_theApprovalShows_withItsCommand_thenAStop_thenUnread() {
-        let approval = ApprovalFact.test()
-        #expect(SessionRowFact.make(.init(
-            items: Self.queue([.stop(.processExited), .approval(approval)]),
-            requestText: [approval.key: "swift test"]
-        )).fact == .approval("swift test"))
-        #expect(SessionRowFact.make(.init(items: Self.queue([Self.unread, .stop(.processExited)]))).glyph == .stopped)
-        #expect(SessionRowFact.make(.init(items: Self.queue([Self.unread]))).fact == .unread(.changed(files: 2, added: 94, removed: 2)))
-    }
-
-    @Test func aWaitWithNoRequest_showsWithTheApprovalsGlyph_andItsWait() {
-        let wait = PromptWait(detail: "Bash: swift test")
-        let fact = SessionRowFact.make(.init(items: Self.queue([.prompt(wait)], provider: .codex)))
-        #expect(fact == SessionRowFact(glyph: .needsApproval, fact: .prompt(wait), badge: .agent(.codex)))
-        // A question its record names wears a held question's glyph.
-        let question = PromptWait(detail: "Which color?", kind: .question, tool: nil)
-        let asked = SessionRowFact.make(.init(items: Self.queue([.prompt(question)])))
-        #expect(asked.glyph == .needsAnswer)
-        // A wait we cannot name wears the state's neutral name.
-        let unnamed = SessionRowFact.make(.init(items: Self.queue([.prompt(PromptWait(detail: "Which color?"))])))
-        #expect(unnamed.glyph == .needsResponse)
-        #expect(SessionRowFactText.stateName(unnamed.glyph, locale: Locale(identifier: "ja")) == "応答待ち")
-    }
-
-    @Test func aRecordedApproval_ofAnUnlistedTool_isWaitingForThatTool() {
-        let fact = SessionRowFact.Fact.prompt(PromptWait(detail: "Monitor", kind: .approval, tool: "Monitor"))
-        #expect(SessionRowFactText.make(fact, locale: Locale(identifier: "en")) == "Waiting for approval: Monitor")
-        #expect(SessionRowFactText.make(fact, locale: Locale(identifier: "ja")) == "承認待ち：Monitor")
+    @Test(arguments: [
+        (
+            PromptWait(detail: "Bash: swift test"),
+            SessionRowFact.Glyph.needsApproval,
+            "Waiting for approval: swift test",
+            "承認待ち：swift test"
+        ),
+        (
+            PromptWait(detail: "Monitor", kind: .approval, tool: "Monitor"),
+            .needsApproval,
+            "Waiting for approval: Monitor",
+            "承認待ち：Monitor"
+        ),
+        (.question(detail: "Which color?"), .needsAnswer, "Question: Which color?", "質問：Which color?"),
+        (.question(detail: nil), .needsAnswer, "Needs answer", "回答待ち"),
+        (.unclassified(detail: "Which color?"), .needsResponse, "Needs response: Which color?", "応答待ち：Which color?")
+    ])
+    func aPromptWithoutARequest_hasItsOwnGlyphFactAndLocalizedWording(
+        wait: PromptWait,
+        glyph: SessionRowFact.Glyph,
+        english: String,
+        japanese: String
+    ) {
+        let row = SessionRowFact.make(.init(items: Self.queue([.prompt(wait)], provider: .codex)))
+        #expect(row == SessionRowFact(glyph: glyph, fact: .prompt(wait), badge: .agent(.codex)))
+        #expect(SessionRowFactText.make(row.fact, locale: Self.english) == english)
+        #expect(SessionRowFactText.make(row.fact, locale: Self.japanese) == japanese)
+        if glyph == .needsResponse {
+            #expect(SessionRowFactText.stateName(row.glyph, locale: Self.japanese) == "応答待ち")
+        }
     }
 
     @Test(arguments: [
@@ -74,14 +103,6 @@ struct SessionRowFactTests {
         #expect(SessionRowFactText.make(fact, locale: Locale(identifier: "ja")) == japanese)
     }
 
-    @Test func aRecordedQuestion_isWordedAsAHeldOneIs() {
-        let worded = SessionRowFact.Fact.prompt(PromptWait(detail: "Which color?", kind: .question, tool: nil))
-        #expect(SessionRowFactText.make(worded, locale: Locale(identifier: "en")) == "Question: Which color?")
-        #expect(SessionRowFactText.make(worded, locale: Locale(identifier: "ja")) == "質問：Which color?")
-        let bare = SessionRowFact.Fact.prompt(.question(detail: nil))
-        #expect(SessionRowFactText.make(bare, locale: Locale(identifier: "ja")) == "回答待ち")
-    }
-
     @Test func withNothingWaiting_aRunningAgent_showsWhatItIsDoing() {
         let fact = SessionRowFact.make(.init(agents: [
             .init(provider: .claude, state: .idle, detail: nil),
@@ -91,63 +112,69 @@ struct SessionRowFactTests {
         #expect(SessionRowFact.make(.init(agents: [.init(provider: .claude, state: .compacting, detail: nil)])).fact == .compacting)
     }
 
-    /// A row at rest keeps its resting glyph, the idle ring for an agent and
-    /// the shell's for none, and states its pull request when it has one.
-    struct RestCase: Sendable {
-        let agents: [SessionRowFact.Agent]
-        let glyph: SessionRowFact.Glyph
-        let badge: SessionRowFact.Badge
-    }
-
-    @Test(arguments: [
-        RestCase(agents: [.init(provider: .claude, state: .idle, detail: nil)], glyph: .idle, badge: .agent(.claude)),
-        RestCase(agents: [], glyph: .shell, badge: .shell)
-    ])
-    func aRowAtRest_keepsItsRestingGlyph_andAttachesItsPullRequest(_ test: RestCase) {
-        let (agents, glyph, badge) = (test.agents, test.glyph, test.badge)
-        let pullRequest = SessionRowFact.PullRequest(number: 128, state: .open, isDraft: false)
-        #expect(SessionRowFact.make(.init(agents: agents, pullRequest: pullRequest)) == SessionRowFact(
-            glyph: glyph,
-            fact: .pullRequest(number: 128, state: .open, isDraft: false),
-            badge: badge,
-            pullRequest: pullRequest
-        ))
-        #expect(SessionRowFact.make(.init(agents: agents)) == SessionRowFact(glyph: glyph, fact: .idle, badge: badge))
-    }
-
-    /// One case per state a row shows: the glyph is the state's own, never
-    /// the pull request, and the request is attached whatever the state.
     struct AttachedCase: Sendable, CustomTestStringConvertible {
         let items: [AttentionItemKind]
-        let agents: [AgentState]
+        let state: AgentState?
         let glyph: SessionRowFact.Glyph
+        let fact: SessionRowFact.Fact
+        var backgroundWork: BackgroundWork?
+        var putsPullRequestOnSecondLine = false
 
         var testDescription: String {
             "\(glyph)"
         }
     }
 
+    private static let work = BackgroundWork(shells: 1)
+    private static let response = PromptWait.unclassified(detail: nil)
+
     @Test(arguments: [
-        AttachedCase(items: [.approval(ApprovalFact.test())], agents: [.idle], glyph: .needsApproval),
-        AttachedCase(items: [.question(ApprovalFact.test(isQuestion: true))], agents: [.idle], glyph: .needsAnswer),
-        AttachedCase(items: [.prompt(.unclassified(detail: nil))], agents: [.needsInput], glyph: .needsResponse),
-        AttachedCase(items: [.prompt(.signIn)], agents: [.needsInput], glyph: .needsSignIn),
-        AttachedCase(items: [.stop(.processExited)], agents: [.error], glyph: .stopped),
-        AttachedCase(items: [Self.unread], agents: [.finished], glyph: .unread),
-        AttachedCase(items: [], agents: [.running], glyph: .running),
-        AttachedCase(items: [], agents: [.idle], glyph: .idle),
-        AttachedCase(items: [], agents: [.unknown], glyph: .unknown),
-        AttachedCase(items: [], agents: [], glyph: .shell)
+        AttachedCase(items: [.approval(ApprovalFact.test())], state: .idle, glyph: .needsApproval, fact: .approval(nil)),
+        AttachedCase(items: [.question(ApprovalFact.test(isQuestion: true))], state: .idle, glyph: .needsAnswer, fact: .question(nil)),
+        AttachedCase(items: [.prompt(response)], state: .needsInput, glyph: .needsResponse, fact: .prompt(response)),
+        AttachedCase(items: [.prompt(.signIn)], state: .needsInput, glyph: .needsSignIn, fact: .prompt(.signIn)),
+        AttachedCase(items: [.stop(.processExited)], state: .error, glyph: .stopped, fact: .stopped(.processExited)),
+        AttachedCase(items: [unread], state: .finished, glyph: .unread, fact: .unread(.changed(files: 2, added: 94, removed: 2))),
+        AttachedCase(
+            items: [unread],
+            state: .finished,
+            glyph: .unreadWorkingAfterTurn,
+            fact: .unread(.changed(files: 2, added: 94, removed: 2)),
+            backgroundWork: work
+        ),
+        AttachedCase(items: [], state: .running, glyph: .running, fact: .running(nil)),
+        AttachedCase(
+            items: [],
+            state: .finished,
+            glyph: .workingAfterTurn,
+            fact: .workingAfterTurn(work),
+            backgroundWork: work,
+            putsPullRequestOnSecondLine: true
+        ),
+        AttachedCase(items: [], state: .idle, glyph: .idle, fact: .idle, putsPullRequestOnSecondLine: true),
+        AttachedCase(items: [], state: .unknown, glyph: .unknown, fact: .unknown, putsPullRequestOnSecondLine: true),
+        AttachedCase(items: [], state: nil, glyph: .shell, fact: .idle, putsPullRequestOnSecondLine: true)
     ])
     func everyState_keepsItsGlyph_andShowsThePullRequestOnlyWhenThereIsOne(_ test: AttachedCase) {
-        let pullRequest = SessionRowFact.PullRequest(number: 7, state: .merged, isDraft: false)
-        let agents = test.agents.map { SessionRowFact.Agent(provider: .claude, state: $0, detail: nil) }
-        let withPR = SessionRowFact.make(.init(items: Self.queue(test.items), agents: agents, pullRequest: pullRequest))
-        let without = SessionRowFact.make(.init(items: Self.queue(test.items), agents: agents))
-        #expect(withPR.glyph == test.glyph)
-        #expect(without.glyph == test.glyph, "the request never changes the left glyph")
-        #expect(withPR.pullRequest == pullRequest)
-        #expect(without.pullRequest == nil)
+        let items = Self.queue(test.items)
+        let agents = test.state.map {
+            [SessionRowFact.Agent(provider: .claude, state: $0, detail: nil, backgroundWork: test.backgroundWork, runtimeID: "claude:r0")]
+        } ?? []
+        let badge: SessionRowFact.Badge = test.state == nil ? .shell : .agent(.claude)
+        let without = SessionRowFact.make(.init(items: items, agents: agents))
+        #expect(without == SessionRowFact(glyph: test.glyph, fact: test.fact, badge: badge))
+
+        let requests = [
+            SessionRowFact.PullRequest(number: 128, state: .open, isDraft: false),
+            SessionRowFact.PullRequest(number: 7, state: .merged, isDraft: false)
+        ]
+        for request in requests {
+            let with = SessionRowFact.make(.init(items: items, agents: agents, pullRequest: request))
+            let withFact: SessionRowFact.Fact = test.putsPullRequestOnSecondLine
+                ? .pullRequest(number: request.number, state: request.state, isDraft: request.isDraft)
+                : test.fact
+            #expect(with == SessionRowFact(glyph: test.glyph, fact: withFact, badge: badge, pullRequest: request))
+        }
     }
 
     /// The glyph and the line agree: an agent not matched yet is unknown
@@ -177,11 +204,13 @@ struct SessionRowFactTests {
 
     // MARK: - A pane's glyph
 
-    /// Each row glyph draws one icon, and a shell has no state to draw.
+    /// The adapter maps each row glyph to the corresponding icon kind.
+    /// The shell's icon is selected separately by its view.
     @Test(arguments: [
         (SessionRowFact.Glyph.needsAnswer, StateGlyph.Kind.needsAnswer),
         (.needsApproval, .needsApproval),
         (.needsResponse, .needsResponse),
+        (.needsSignIn, .needsSignIn),
         (.stopped, .stopped),
         (.unread, .unread),
         (.unreadWorkingAfterTurn, .unreadWorkingAfterTurn),
@@ -191,7 +220,7 @@ struct SessionRowFactTests {
         (.unknown, .unknown),
         (.shell, .unknown)
     ])
-    func eachRowGlyph_drawsOneStateIcon(glyph: SessionRowFact.Glyph, kind: StateGlyph.Kind) {
+    func rowGlyphs_mapToStateIconKinds(glyph: SessionRowFact.Glyph, kind: StateGlyph.Kind) {
         #expect(StateGlyph.Kind(glyph) == kind)
     }
 
@@ -203,6 +232,7 @@ struct SessionRowFactTests {
         let items: [AttentionItemKind]
         let states: [AgentState]
         let kind: StateGlyph.Kind
+        var hasHeaderMark = true
     }
 
     @Test(arguments: [
@@ -214,9 +244,9 @@ struct SessionRowFactTests {
         PaneCase(items: [.stop(.processExited)], states: [.error], kind: .stopped),
         PaneCase(items: [], states: [.running], kind: .running),
         PaneCase(items: [], states: [.compacting], kind: .running),
-        PaneCase(items: [], states: [.finished], kind: .idle),
-        PaneCase(items: [], states: [.idle], kind: .idle),
-        PaneCase(items: [], states: [.unknown], kind: .unknown),
+        PaneCase(items: [], states: [.finished], kind: .idle, hasHeaderMark: false),
+        PaneCase(items: [], states: [.idle], kind: .idle, hasHeaderMark: false),
+        PaneCase(items: [], states: [.unknown], kind: .unknown, hasHeaderMark: false),
         // Two runs in one pane: a finished Claude beside a running Codex,
         // and a stop beside a running run.
         PaneCase(items: [], states: [.finished, .running], kind: .running),
@@ -226,11 +256,20 @@ struct SessionRowFactTests {
     ])
     func aPanesGlyph_isTheGlyphOfItsOnePaneRow(_ test: PaneCase) {
         let providers: [AgentKind] = [.claude, .codex]
-        let agents = test.states.enumerated().map { index, state in
-            SessionRowFact.Agent(provider: providers[index % providers.count], state: state, detail: nil)
+        let runtimes = test.states.enumerated().map { index, state in
+            AgentRuntimePresentation.test(
+                kind: providers[index % providers.count],
+                runID: "r\(index)",
+                badge: AgentBadge(state: state, updatedAt: Date(timeIntervalSince1970: TimeInterval(index))),
+                paneIDs: [Self.pane]
+            )
         }
-        let row = SessionRowFact.make(.init(items: Self.queue(test.items), agents: agents))
+        let items = Self.queue(test.items)
+        let row = SessionRowFact.make(.init(items: items, agents: runtimes.map(SessionRowFact.Agent.init(runtime:))))
+        let mark = PaneHeaderRules.mark(paneItems: items, shown: runtimes)
+
         #expect(StateGlyph.Kind(row.glyph) == test.kind)
+        #expect(mark.map { StateGlyph.Kind($0.glyph) } == (test.hasHeaderMark ? test.kind : nil))
     }
 
     @Test func atRest_theSecondLineStatesUncommittedFiles_elseThePullRequest_elseCommits_elseNoChanges() {
@@ -286,6 +325,10 @@ struct SessionRowFactTests {
         #expect(SessionRowFactText.make(.pullRequest(number: 128, state: .open, isDraft: true), locale: Self.japanese) == "PR #128 · ドラフト")
         #expect(SessionRowFactText.make(.stopped(.processExited), locale: Self.japanese) == "停止：プロセスが異常終了しました。")
         #expect(SessionRowFactText.badge(.agent(.codex), locale: Self.english) == "Cx")
+        #expect(SessionRowFactText.badge(.agent(.claude), locale: Self.japanese) == "Cl")
+        for locale in [Self.english, Self.japanese] {
+            #expect(SessionRowFactText.badge(.shell, locale: locale).isEmpty)
+        }
     }
 
     @Test func theTime_isTheLargestWholeUnit_inTheUnitsATurnsDurationHas() {
@@ -311,17 +354,4 @@ struct SessionRowFactTests {
         #expect(ChangesPanelText.compactDuration(12 * 60, locale: Self.japanese) == elapsed(12 * 60, Self.japanese))
     }
 
-    @Test func aShell_hasNoBadgeWord_itsGlyphSaysIt() {
-        for locale in [Self.english, Self.japanese] {
-            #expect(SessionRowFactText.badge(.shell, locale: locale).isEmpty)
-        }
-        #expect(SessionRowFactText.badge(.agent(.claude), locale: Self.japanese) == "Cl")
-    }
-
-    @Test func anAgentNotMatchedYet_keepsTheUnknownGlyph_overItsPullRequest() {
-        let pullRequest = SessionRowFact.PullRequest(number: 7, state: .open, isDraft: false)
-        let fact = SessionRowFact.make(.init(agents: [.init(provider: .codex, state: .unknown, detail: nil)], pullRequest: pullRequest))
-        #expect(fact.glyph == .unknown)
-        #expect(fact.fact == .pullRequest(number: 7, state: .open, isDraft: false))
-    }
 }

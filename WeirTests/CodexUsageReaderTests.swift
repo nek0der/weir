@@ -12,23 +12,31 @@ struct CodexUsageReaderTests {
     /// A stand-in for `codex app-server`: it reads the handshake and the
     /// request, answers the request, and leaves when its input closes, as the
     /// real server does.
-    private static let fakeServer = #"""
-    #!/bin/sh
-    read -r initialize
-    read -r initialized
-    read -r request
-    echo '{"method":"configWarning","params":{}}'
-    echo '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":5,"windowDurationMins":300}}}}'
-    while read -r line; do :; done
-    """#
+    private static func fakeServer(answer: String) -> String {
+        #"""
+        #!/bin/sh
+        read -r initialize
+        read -r initialized
+        read -r request
+        echo '{"method":"configWarning","params":{}}'
+        echo '{"id":1,"result":{}}'
+        echo '{"id":2,"method":"probe","params":{}}'
+        echo '{"id":2}'
+        echo '\#(answer)'
+        while read -r line; do :; done
+        """#
+    }
 
     @Test("asks for the rate limits after the handshake, one message per line")
-    func requestLines_holdTheHandshakeAndTheRequest() {
-        let lines = (String(bytes: CodexUsageReader.requestLines, encoding: .utf8) ?? "")
-            .split(separator: "\n")
-            .map { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }
-        #expect(lines.count == 3)
-        #expect(lines.map { $0?["method"] as? String } == ["initialize", "initialized", "account/rateLimits/read"])
+    func requestLines_holdTheHandshakeAndTheRequest() throws {
+        let text = try #require(String(bytes: CodexUsageReader.requestLines, encoding: .utf8))
+        #expect(text.hasSuffix("\n"))
+        let lines = try text.dropLast().split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            try #require(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+        }
+        #expect(lines.map { $0["method"] as? String } == ["initialize", "initialized", "account/rateLimits/read"])
+        #expect(lines.map { $0["id"] as? Int } == [1, nil, 2])
+        #expect(lines.map { $0["jsonrpc"] as? String } == ["2.0", "2.0", "2.0"])
     }
 
     @Test("knows the answer to the usage request from the rest of the stream")
@@ -47,14 +55,17 @@ struct CodexUsageReaderTests {
         #expect(!CodexUsageReader.isAnswer(Data("not json".utf8)))
     }
 
-    @Test("keeps the server's input open until the answer comes, then ends it")
-    func exchange_returnsTheAnswerLine() async throws {
+    @Test("skips other messages and returns the exact usage response", arguments: [
+        #"{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":5,"windowDurationMins":300}}}}"#,
+        #"{"id":2,"error":{"code":-32600,"message":"failed"}}"#
+    ])
+    func exchange_returnsTheAnswerLine(expected: String) async throws {
         try await withTempDir { dir in
             let server = dir.appendingPathComponent("codex")
-            try ShimHarness.writeExecutable(Self.fakeServer, at: server)
+            try ShimHarness.writeExecutable(Self.fakeServer(answer: expected), at: server)
             let answer = await CodexUsageReader.exchange(executable: server.path, path: ShimHarness.systemPath)
             let line = try #require(answer)
-            #expect(CodexUsageReader.isAnswer(line))
+            #expect(line == Data(expected.utf8))
         }
     }
 
@@ -111,16 +122,29 @@ struct CodexUsageReaderTests {
         try await withTempDir { dir in
             let server = dir.appendingPathComponent("codex")
             try ShimHarness.writeExecutable("#!/bin/sh\nwhile read -r line; do :; done\n", at: server)
-            for delay in [0, 1, 5, 20] {
-                let read = Task {
-                    await CodexUsageReader.exchange(executable: server.path, path: ShimHarness.systemPath)
-                }
-                if delay > 0 {
-                    try await Task.sleep(for: .milliseconds(delay))
-                }
-                read.cancel()
-                #expect(await read.value == nil)
+            let canceledBeforeStart = Task {
+                withUnsafeCurrentTask { $0?.cancel() }
+                return await CodexUsageReader.exchange(executable: server.path, path: ShimHarness.systemPath)
             }
+            #expect(await canceledBeforeStart.value == nil)
+
+            let hasStarted = OSAllocatedUnfairLock(initialState: false)
+            let didTimeOut = OSAllocatedUnfairLock(initialState: false)
+            let canceledAfterStart = Task {
+                await CodexUsageReader
+                    .exchange(executable: server.path, path: ShimHarness.systemPath, timeout: .seconds(2)) { delay, fire in
+                        hasStarted.withLock { $0 = true }
+                        CodexUsageReader.dispatchTimer(delay) {
+                            didTimeOut.withLock { $0 = true }
+                            fire()
+                        }
+                    }
+            }
+            await pollUntil(interval: .milliseconds(10)) { hasStarted.withLock { $0 } }
+            canceledAfterStart.cancel()
+            #expect(await canceledAfterStart.value == nil)
+            #expect(hasStarted.withLock { $0 })
+            #expect(!didTimeOut.withLock { $0 })
         }
     }
 
@@ -134,7 +158,9 @@ struct CodexUsageReaderTests {
             Issue.record("expected the usage")
             return
         }
-        #expect(usage.windows.map(\.kind) == [PlanUsageWindow.sevenDay])
+        #expect(usage.windows == [
+            PlanUsageWindow(kind: PlanUsageWindow.sevenDay, usedPercent: 12, resetsAt: Date(timeIntervalSince1970: 1_793_776_116))
+        ])
         #expect(usage.resetCredits == nil)
 
         let noPlan = Data(#"{"id":2,"result":{"rateLimits":{"primary":null,"secondary":null}}}"#.utf8)

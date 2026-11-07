@@ -75,7 +75,18 @@ struct ProjectBootstrapTests {
         let encoded = try JSONEncoder().encode(project)
         let decoded = try JSONDecoder().decode(Project.self, from: encoded)
 
-        #expect(decoded.bootstrap.count == 3)
+        let written = try JSONObjectFixture.object(encoding: project)
+        let items = try #require(written["bootstrap"] as? [Any])
+        try #require(items.count == 3)
+        #expect(items[0] as? String == "pnpm install")
+        let detailed = try #require(items[1] as? [String: Any])
+        #expect(detailed["cmd"] as? String == "make ghostty")
+        #expect(detailed["timeout"] as? Int == 1800)
+        let relative = try #require(items[2] as? [String: Any])
+        #expect(relative["cmd"] as? String == "prisma migrate dev")
+        #expect(relative["cwd"] as? String == "apps/api")
+
+        try #require(decoded.bootstrap.count == 3)
         #expect(decoded.bootstrap[0].cmd == "pnpm install")
         #expect(decoded.bootstrap[0].timeout == BootstrapDetail.defaultTimeoutSeconds)
         #expect(decoded.bootstrap[0].cwd == nil)
@@ -131,13 +142,13 @@ struct ProjectBootstrapTests {
         let encoded = try JSONEncoder().encode(
             BootstrapItem.detailed(BootstrapDetail(cmd: "make"))
         )
-        let parsed = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
-        #expect(parsed?["cmd"] as? String == "make")
+        let parsed = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(parsed["cmd"] as? String == "make")
         // `timeout` / `cwd` stayed nil so they shouldn't appear at all
         // (otherwise the hook script would have to special-case
         // `null` vs absent when reading via jq).
-        #expect(parsed?["timeout"] == nil)
-        #expect(parsed?["cwd"] == nil)
+        #expect(parsed["timeout"] == nil)
+        #expect(parsed["cwd"] == nil)
     }
 
     @Test

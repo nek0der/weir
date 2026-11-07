@@ -10,10 +10,10 @@ import Testing
 
 @MainActor
 struct SessionSidebarModelTests {
-    private static let english = Locale(identifier: "en")
+    static let english = Locale(identifier: "en")
     private static let japanese = Locale(identifier: "ja")
 
-    private static func project() -> (session: WorkspaceSession, project: Project) {
+    static func project() -> (session: WorkspaceSession, project: Project) {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
         let index = session.projects.firstIndex { $0.id == project.id } ?? 0
         session.projects[index].mainBranchName = "main"
@@ -44,7 +44,7 @@ struct SessionSidebarModelTests {
         return (session, session.projects[index])
     }
 
-    private static func model(
+    static func model(
         _ session: WorkspaceSession,
         _ project: Project,
         locale: Locale = english,
@@ -62,15 +62,20 @@ struct SessionSidebarModelTests {
         )
     }
 
-    @Test func rows_areTheFolder_thenTheShownWorktreesInTheOrderTheyWereMade() {
+    @Test func rows_areTheFolder_thenTheShownWorktreesInTheOrderTheyWereMade() throws {
         let (session, project) = Self.project()
-        let rows = Self.model(session, project).rows
+        let index = try #require(session.projects.firstIndex { $0.id == project.id })
+        let peer = Worktree(
+            label: "aaa", workingDirectory: URL(fileURLWithPath: "/tmp/weir-sidebar-aaa"),
+            gitRef: GitRef(branchName: "feat/aaa"), origin: .gitWorktree, admission: .created
+        )
+        session.projects[index].worktrees.append(peer)
+        let rows = Self.model(session, session.projects[index]).rows
 
-        // The missing worktree is listed under its own line, after the
-        // working rows.
-        #expect(rows.map(\.name) == ["main", "feat/spike", "gone"])
-        #expect(rows.map(\.isMainFolder) == [true, false, false])
-        #expect(rows.map(\.isMissing) == [false, false, true])
+        // Working peers keep their original order even when their names sort differently.
+        #expect(rows.map(\.name) == ["main", "feat/spike", "feat/aaa", "gone"])
+        #expect(rows.map(\.isMainFolder) == [true, false, false, false])
+        #expect(rows.map(\.isMissing) == [false, false, false, true])
     }
 
     @Test func aRowsName_isTheNameAPersonGave_beforeTheBranch() {
@@ -253,12 +258,17 @@ struct SessionSidebarModelTests {
 
     @Test func aRowAtRest_statesItsFoldersGitFacts_eachRowItsOwn() throws {
         let (session, project) = Self.project()
-        let facts = GitFactsFixture.make(branch: "main", commits: nil, unpushed: nil, uncommitted: 2, base: nil)
-        let rows = Self.model(session, project) { $0 == .project(project.id) ? facts : nil }.rows
-        let folder = try #require(rows.first { $0.isMainFolder })
+        let folder = ContainerID.project(project.id)
+        let spike = try ContainerID.worktree(projectID: project.id, worktreeID: #require(project.worktrees.first?.id))
+        let gone = try ContainerID.worktree(projectID: project.id, worktreeID: #require(project.worktrees.last?.id))
+        let facts: [ContainerID: GitFacts] = [
+            folder: GitFactsFixture.make(branch: "main", commits: nil, unpushed: nil, uncommitted: 2, base: nil),
+            spike: GitFactsFixture.make(branch: "feat/spike", commits: nil, unpushed: nil, uncommitted: 5, base: nil)
+        ]
+        let rows = Self.model(session, project) { facts[$0] }.rows
 
-        #expect(folder.factText == "2 files uncommitted")
-        #expect(rows.first { !$0.isMainFolder }?.factText == "Idle")
+        #expect(rows.map(\.id) == [folder, spike, gone])
+        #expect(rows.map(\.factText) == ["2 files uncommitted", "5 files uncommitted", "Idle"])
     }
 
     @Test func anApprovalsCommand_isFoundInItsLine_whateverTheLanguage() throws {
@@ -318,15 +328,35 @@ struct SessionSidebarModelTests {
     @Test func aRowCountsItsAgents() {
         let agents = SessionSidebarModel.Row.test(.test(fact: .init(agents: [
             .init(provider: .claude, state: .running, detail: nil),
+            .init(provider: .claude, state: .idle, detail: nil),
             .init(provider: .codex, state: .idle, detail: nil)
         ])))
 
-        #expect(agents.agentCount == 2)
+        #expect(agents.agentCount == 3)
+        #expect(Set(agents.agentKinds) == [.claude, .codex])
         #expect(SessionSidebarModel.Row.test(.test(name: "shell")).agentCount == 0)
     }
 
     private static func items(_ kinds: [AttentionItemKind]) -> [AttentionItem] {
-        AttentionItem.testList(kinds)
+        var queue = AttentionQueue()
+        for (offset, kind) in kinds.enumerated() {
+            let run = "r\(offset)"
+            let episode = EpisodeKey(origin: .runtime(run), episodeToken: "1")
+            let id: AttentionItemID = switch kind {
+            case let .approval(fact): .approval(fact.key)
+            case let .question(fact): .question(fact.key)
+            case .prompt: .prompt(episode)
+            case .stop: .stop(episode)
+            case let .unread(turn): .unread(turn.turnID)
+            }
+            queue.insert(
+                id: id,
+                kind: kind,
+                subject: .runtime(id: run, provider: kind.approvalFact?.provider ?? .claude, paneID: UUID(), tabID: nil, projectID: nil),
+                arrivedAt: Date(timeIntervalSince1970: TimeInterval(offset))
+            )
+        }
+        return queue.items
     }
 
     private static func row(
@@ -357,7 +387,10 @@ struct SessionSidebarModelTests {
 
         // Codex's questions are answered in the TUI.
         let codex = ApprovalFact.test(isQuestion: true, provider: .codex, supportsNativeAnswer: false)
-        #expect(Self.row(Self.items([.question(codex)])).answerKey == nil)
+        let unsupported = Self.row(Self.items([.question(codex)]), heldRequests: [codex.key])
+        #expect(unsupported.leadItemID == .question(codex.key))
+        #expect(unsupported.answerKey == nil)
+        #expect(unsupported.requiresTerminalAnswer)
     }
 
     /// A row waiting on a request Weir does not hold offers no "Answer…";
@@ -382,7 +415,9 @@ struct SessionSidebarModelTests {
         }
 
         // One Weir holds is answered from the row's own "Answer…".
-        let held = Self.row(Self.items([.approval(ApprovalFact.test())]))
+        let approval = ApprovalFact.test()
+        let held = Self.row(Self.items([.approval(approval)]), heldRequests: [approval.key])
+        #expect(held.answerKey == approval.key)
         #expect(!held.requiresTerminalAnswer)
         #expect(SessionRowFactText.tooltip(for: held, now: .now, locale: Self.english) == "main")
     }
@@ -413,7 +448,7 @@ struct SessionSidebarModelTests {
     @Test @MainActor func theWindowsShownTab_putsTheRowsPaneInView() throws {
         let (session, project) = WorkspaceSessionFixture.withProject()
         let tab = session.openTab(container: .project(project.id))
-        session.setActiveContainer(.project(project.id))
+        let other = session.openTab(container: .project(project.id))
         let paneID = try #require(tab.splitTree.allLeafIDs().first)
         var queue = AttentionQueue()
         queue.insert(
@@ -422,19 +457,38 @@ struct SessionSidebarModelTests {
             subject: .runtime(id: "r", provider: .claude, paneID: paneID, tabID: tab.id, projectID: project.id),
             arrivedAt: Date(timeIntervalSince1970: 0)
         )
-        let row = try #require(SessionSidebarModel(
-            project: project, session: session, queue: queue, runtimes: [], approvals: ApprovalLedger(),
-            pullRequest: { _ in nil }, gitFacts: { _ in nil }, locale: Self.english
-        ).rows.first)
+        func row() throws -> SessionSidebarModel.Row {
+            try #require(SessionSidebarModel(
+                project: project, session: session, queue: queue, runtimes: [], approvals: ApprovalLedger(),
+                pullRequest: { _ in nil }, gitFacts: { _ in nil }, locale: Self.english
+            ).rows.first)
+        }
 
-        #expect(row.isActive)
-        #expect(row.isLeadPaneShown)
-        #expect(!row.suggestsOpeningPane)
+        session.setActiveTab(tab.id)
+        let inView = try row()
+        #expect(inView.isActive)
+        #expect(inView.leadPaneID == paneID)
+        #expect(inView.isLeadPaneShown)
+        #expect(!inView.suggestsOpeningPane)
+
+        session.setActiveTab(other.id)
+        let outOfView = try row()
+        #expect(outOfView.isActive)
+        #expect(outOfView.leadPaneID == paneID)
+        #expect(!outOfView.isLeadPaneShown)
+        #expect(outOfView.suggestsOpeningPane)
     }
 
-    @Test func aStop_isRed_andUnreadTurnsAreCounted() {
-        let unread = AttentionItemKind.unread(UnreadTurn(turnID: TurnID("t"), changes: .unknown))
-        let row = Self.row(Self.items([unread, .stop(.processExited), unread]))
+    @Test func aStop_takesTheStoppedTone_andKeepsTheUnreadCount() {
+        let first = TurnID("first")
+        let second = TurnID("second")
+        let items = Self.items([
+            .unread(UnreadTurn(turnID: first, changes: .unknown)),
+            .stop(.processExited),
+            .unread(UnreadTurn(turnID: second, changes: .unknown))
+        ])
+        #expect(items.map(\.id) == [.unread(first), .stop(EpisodeKey(origin: .runtime("r1"), episodeToken: "1")), .unread(second)])
+        let row = Self.row(items)
         #expect(row.tone == .stopped)
         #expect(row.unreadCount == 2)
         #expect(SessionRowFactText.tooltip(for: row, now: .now, locale: Self.english) == "main · 2 unread turns")
@@ -491,27 +545,31 @@ struct SessionSidebarModelTests {
             == "Idle, main, weir, PR #128, Open, Checks failed, 3 of 4 passed, Claude")
     }
 
-    @Test func sessionKeys_openRows_andSkipHiddenWorktrees() {
+    @Test func sessionKeys_openWorkingRows_andOnlyCyclingIncludesScratch() throws {
         let (session, project) = Self.project()
         let window = ProjectWindowState(selection: session.primarySelection)
         session.primarySelection.projectID = project.id
+        let folder = ContainerID.project(project.id)
+        let spike = try ContainerID.worktree(projectID: project.id, worktreeID: #require(project.worktrees.first?.id))
+        let sections = SidebarPresentedSections.computed(
+            project: project, session: session, window: window.id, queue: AttentionQueue(),
+            pullRequest: { _ in nil }, gitFacts: { _ in nil }
+        )
+        #expect(SessionRowNavigation.workingRows(in: window, session: session, sections: sections) == [folder, spike])
+        #expect(SessionRowNavigation.rows(in: window, session: session, sections: sections) == [folder, spike, .loose])
 
-        let sections = SidebarPresentedSections()
-
-        // The folder opens the working rows, so ⌃⌘1 is always it.
+        session.setActiveContainer(spike, in: window.id, intent: .repair)
+        try #require(window.selection.activeContainerID == spike)
         SessionRowNavigation.activate(at: 0, in: window, session: session, sections: sections)
-        #expect(session.primarySelection.activeContainerID == .project(project.id))
+        #expect(window.selection.activeContainerID == folder)
         SessionRowNavigation.cycle(forward: true, in: window, session: session, sections: sections)
-        #expect(session.primarySelection.activeContainerID == .worktree(projectID: project.id, worktreeID: project.worktrees[0].id))
+        #expect(window.selection.activeContainerID == spike)
         SessionRowNavigation.cycle(forward: true, in: window, session: session, sections: sections)
-        // The hidden worktree is not a row; the missing one is. Scratch
-        // comes after the working rows.
-        #expect(session.primarySelection.activeContainerID == .worktree(projectID: project.id, worktreeID: project.worktrees[2].id))
+        #expect(window.selection.activeContainerID == .loose)
+        SessionRowNavigation.activate(at: 2, in: window, session: session, sections: sections)
+        #expect(window.selection.activeContainerID == .loose)
         SessionRowNavigation.cycle(forward: true, in: window, session: session, sections: sections)
-        #expect(session.primarySelection.activeContainerID == .loose)
-        // ⌃⌘n counts the working rows only, not scratch.
-        SessionRowNavigation.activate(at: 3, in: window, session: session, sections: sections)
-        #expect(session.primarySelection.activeContainerID == .loose, "past the last row nothing happens")
+        #expect(window.selection.activeContainerID == folder)
     }
 
     /// ⌃⌘n and ⌘[ ⌘] count the rows the sidebar shows, in the sections it
@@ -602,17 +660,22 @@ struct SessionSidebarModelTests {
 
     // MARK: - A row's lead
 
-    @Test func aRowsLeadAgent_isTheFirstRunning_elseTheFirst() {
+    @Test func aRowsLeadAgent_prefersActiveThenBackgroundWork_thenTheFirstAgent() {
         func lead(_ states: [AgentState]) -> Int? {
             SessionRowFact.leadAgentIndex(of: states.map { SessionRowFact.Agent(provider: .claude, state: $0, detail: nil) })
         }
         #expect(lead([.idle, .running]) == 1)
         #expect(lead([.idle, .compacting, .running]) == 1)
+        let idle = SessionRowFact.Agent(provider: .claude, state: .idle, detail: nil)
+        let background = SessionRowFact.Agent(provider: .codex, state: .finished, detail: nil, backgroundWork: .init(shells: 1))
+        let running = SessionRowFact.Agent(provider: .claude, state: .running, detail: nil)
+        #expect(SessionRowFact.leadAgentIndex(of: [idle, background]) == 1)
+        #expect(SessionRowFact.leadAgentIndex(of: [idle, background, running]) == 2)
         #expect(lead([.idle, .unknown]) == 0)
         #expect(lead([]) == nil)
     }
 
-    @Test func aFolderWithNothingOpen_isARowWithoutTabs_andItsTabsPaneLeads() {
+    @Test func aFolderWithNothingOpen_isARowWithoutTabs_andItsTabsFocusedPaneLeads() throws {
         let (session, project) = WorkspaceSessionFixture.withProject()
         let empty = SessionSidebarModel(
             project: project, session: session, queue: AttentionQueue(), runtimes: [], approvals: ApprovalLedger(),
@@ -622,12 +685,19 @@ struct SessionSidebarModelTests {
         #expect(empty.rows.first?.leadPaneID == nil)
 
         let tab = session.openTab(container: .project(project.id))
+        let first = try #require(tab.splitTree.allLeafIDs().first)
+        let split = tab.splitTree.insert(at: first, direction: .horizontal)
+        try #require(split.tree.allLeafIDs() == [first, split.newLeafID])
+        session.update(tab.id) {
+            $0.splitTree = split.tree
+            $0.splitTree.focusedLeafID = split.newLeafID
+        }
         let opened = SessionSidebarModel(
             project: project, session: session, queue: AttentionQueue(), runtimes: [], approvals: ApprovalLedger(),
             pullRequest: { _ in nil }, gitFacts: { _ in nil }, locale: Locale(identifier: "en")
         )
         #expect(opened.rows.first?.hasTabs == true)
-        #expect(opened.rows.first?.leadPaneID == tab.splitTree.effectiveFocusedLeafID)
+        #expect(opened.rows.first?.leadPaneID == split.newLeafID)
         #expect(opened.rows.first?.leadItemID == nil)
     }
 }
@@ -636,6 +706,9 @@ extension SessionSidebarModelTests {
     /// A worktree deleted outside Weir stops its row, which says why.
     @Test func aMissingWorktreesRow_saysItsWorktreeIsNotFound() throws {
         let (session, project) = Self.project()
+        let index = try #require(session.projects.firstIndex { $0.id == project.id })
+        let hidden = try #require(project.worktrees.firstIndex { $0.isHidden })
+        session.projects[index].worktrees[hidden].missingSince = Date(timeIntervalSince1970: 0)
         let input = AttentionQueueStore.makeInput(
             runtimes: [],
             isRead: { _ in false },
@@ -645,7 +718,7 @@ extension SessionSidebarModelTests {
         )
         let (queue, _) = AttentionQueueReducer.reduce(AttentionQueue(), input: input)
         let model = SessionSidebarModel(
-            project: project,
+            project: session.projects[index],
             session: session,
             queue: queue,
             runtimes: [],
@@ -657,293 +730,12 @@ extension SessionSidebarModelTests {
         let gone = try #require(model.rows.first { $0.isMissing })
         #expect(gone.name == "gone")
         #expect(gone.factText == "Stopped: Worktree not found.")
-        // The hidden one is not listed, nor are the ones that are there.
-        #expect(queue.items.count == 1)
-    }
-}
-
-// MARK: - Sections
-
-extension SessionSidebarModelTests {
-    /// A project with a worktree for each section: one with a tab, one
-    /// Weir made whose request is merged, two agents' worktrees nobody
-    /// opened, and the folder.
-    struct SectionedRows {
-        let working: ContainerID
-        let merged: ContainerID
-        let agentA: ContainerID
-        let agentB: ContainerID
-        let folder: ContainerID
-
-        var all: Set<ContainerID> {
-            [working, merged, agentA, agentB, folder]
-        }
-    }
-
-    // swiftlint:disable:next large_tuple
-    private static func sectionedProject() throws -> (session: WorkspaceSession, project: Project, ids: SectionedRows) {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
-        let working = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, admission: .discovered)
-        let merged = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, admission: .created)
-        let agentA = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, admission: .discovered)
-        let agentB = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, admission: .discovered)
-        let row = { (worktree: Worktree) in ContainerID.worktree(projectID: project.id, worktreeID: worktree.id) }
-        session.openTab(container: row(working), in: session.primaryWindowID, intent: .repair, selects: false)
-        let ids = SectionedRows(
-            working: row(working),
-            merged: row(merged),
-            agentA: row(agentA),
-            agentB: row(agentB),
-            folder: .project(project.id)
-        )
-        return try (session, #require(session.project(project.id)), ids)
-    }
-
-    private static func sectionedModel(
-        _ session: WorkspaceSession,
-        _ project: Project,
-        merged: ContainerID,
-        open: Set<SidebarSection>
-    ) -> SessionSidebarModel {
-        let pullRequest = { (row: ContainerID) in row == merged ? PRInfoFixture.make(number: 127, state: .merged) : nil }
-        let sections = SidebarPresentedSections.computed(
-            project: project,
-            session: session,
-            window: session.primaryWindowID,
-            queue: AttentionQueue(),
-            pullRequest: pullRequest,
-            gitFacts: { _ in nil }
-        )
-        return SessionSidebarModel(
-            project: project,
-            session: session,
-            window: session.primaryWindowID,
-            queue: AttentionQueue(),
-            runtimes: [],
-            approvals: ApprovalLedger(),
-            pullRequest: pullRequest,
-            gitFacts: { _ in nil },
-            locale: english,
-            layout: .init(sections: sections, openSections: open)
-        )
-    }
-
-    /// The working rows, then a line for each folded list that holds a row,
-    /// whose rows are not built while it is folded.
-    @Test func theRows_areTheWorkingOnes_thenAFoldLineForEachList_whoseRowsAreNotBuilt() throws {
-        let (session, project, ids) = try Self.sectionedProject()
-        let model = Self.sectionedModel(session, project, merged: ids.merged, open: [])
-
-        #expect(model.rows.map(\.id) == [ids.folder, ids.working])
-        #expect(model.items.map(\.id) == [
-            .row(ids.folder),
-            .row(ids.working),
-            .fold(project.id, .cleanable),
-            .fold(project.id, .other)
-        ])
-        let folds = model.items.compactMap { item -> SessionSidebarModel.Fold? in
-            if case let .fold(fold) = item {
-                fold
-            } else {
-                nil
-            }
-        }
-        #expect(folds.map(\.count) == [1, 2])
-        #expect(folds.allSatisfy { !$0.isOpen })
-    }
-
-    /// An open list's rows follow its line, each in its section, and the
-    /// row ready to clean up says its request first.
-    @Test func anOpenList_listsItsRowsUnderItsLine() throws {
-        let (session, project, ids) = try Self.sectionedProject()
-        let merged = ids.merged
-        let model = Self.sectionedModel(session, project, merged: merged, open: [.cleanable, .other])
-
-        #expect(model.items.map(\.id) == [
-            .row(ids.folder),
-            .row(ids.working),
-            .fold(project.id, .cleanable),
-            .row(merged),
-            .fold(project.id, .other),
-            .row(ids.agentA),
-            .row(ids.agentB)
-        ])
-        let cleanable = try #require(model.rows.first { $0.id == merged })
-        #expect(cleanable.section == .cleanable)
-        #expect(cleanable.factText == "PR #127 · Merged")
-        #expect(model.rows.first { $0.id == ids.agentA }?.section == .other)
-    }
-
-    /// A worktree whose folder is gone folds under its own line, before the
-    /// rows ready to clean up, and comes out of it once a tab opens there.
-    @Test func aMissingWorktree_foldsUnderItsOwnLine_untilATabOpensThere() throws {
-        let (session, project) = Self.project()
-        let spikeID = try #require(project.worktrees.first?.id)
-        let goneID = try #require(project.worktrees.last?.id)
-        let spike = ContainerID.worktree(projectID: project.id, worktreeID: spikeID)
-        let gone = ContainerID.worktree(projectID: project.id, worktreeID: goneID)
-        let folded = Self.sectionedModel(session, project, merged: .loose, open: [])
-        let expected: [SidebarItemID] = [.row(.project(project.id)), .row(spike), .fold(project.id, .missing)]
-        #expect(folded.items.map(\.id) == expected)
-
-        let opened = Self.sectionedModel(session, project, merged: .loose, open: [.missing])
-        #expect(opened.items.last?.id == .row(gone))
-        #expect(opened.rows.first { $0.id == gone }?.section == .missing)
-
-        _ = session.openTab(container: gone)
-        session.setActiveContainer(.project(project.id))
-        let withTab = Self.sectionedModel(session, project, merged: .loose, open: [])
-        #expect(withTab.rows.first { $0.id == gone }?.section == .working)
-    }
-
-    /// A list with no row has no line.
-    @Test func aListWithNoRow_hasNoLine() {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
-        let model = Self.sectionedModel(session, project, merged: .loose, open: [])
-        #expect(model.items.map(\.id) == [.row(.project(project.id))])
-    }
-
-    /// Without the window's layout (the worktree menu, all projects), every
-    /// row is built, each in the section it is placed in now.
-    @Test func withoutAWindowsLayout_everyRowIsBuilt() throws {
-        let (session, project, ids) = try Self.sectionedProject()
-        let rows = Self.model(session, project).rows
-        #expect(Set(rows.map(\.id)) == ids.all)
-        #expect(rows.first { $0.id == ids.agentA }?.section == .other)
-    }
-
-    /// The selected row stays a working one, so choosing a row never hides
-    /// it.
-    @Test func theSelectedRow_isAWorkingRow() throws {
-        let (session, project, ids) = try Self.sectionedProject()
-        let agent = ids.agentA
-        // Moved there, not chosen: a choice would admit the row.
-        session.setActiveContainer(.project(project.id))
-        session.setActiveContainer(agent, in: session.primaryWindowID, intent: .repair)
-        let agentID = try #require(agent.worktreeID)
-        #expect(session.worktree(projectID: project.id, worktreeID: agentID)?.admission == .discovered)
-        let model = Self.sectionedModel(session, project, merged: ids.merged, open: [])
-        #expect(model.rows.first { $0.id == agent }?.section == .working)
-        #expect(model.rows.first { $0.id == agent }?.isActive == true)
-    }
-
-    /// An item on a row's pane keeps the row working, found through the
-    /// pane's tab; one for a session that stopped before its pane opened,
-    /// through the row's folder.
-    @Test func anItemForARow_keepsItWorking() throws {
-        let (session, project, ids) = try Self.sectionedProject()
-        let agentA = ids.agentA
-        let root = try #require(session.rootDirectory(of: agentA))
-        var queue = AttentionQueue()
-        queue.insert(
-            id: .stop(EpisodeKey(origin: .sessionRow(worktreeRoot: root), episodeToken: "1")),
-            kind: .stop(.processExited),
-            subject: .sessionRow(projectID: project.id, worktreeRoot: root),
-            arrivedAt: Date(timeIntervalSince1970: 0)
-        )
-        let sections = SidebarPresentedSections.computed(
-            project: project,
-            session: session,
-            window: session.primaryWindowID,
-            queue: queue,
-            pullRequest: { _ in nil },
-            gitFacts: { _ in nil }
-        )
-        #expect(sections.section(of: agentA) == .working)
-        #expect(sections.section(of: ids.agentB) == .other)
-    }
-
-    /// One of the other worktrees says it is not a working row and how it becomes one,
-    /// and VoiceOver names its list, which on screen only the line above says.
-    @Test func anOtherWorktree_saysOpeningItMakesItAWorkingRow() throws {
-        let (session, project, ids) = try Self.sectionedProject()
-        let model = Self.sectionedModel(session, project, merged: ids.merged, open: [.other])
-        let row = try #require(model.rows.first { $0.id == ids.agentA })
-
-        let tooltip = SessionRowFactText.tooltip(for: row, now: .now, locale: Self.english)
-        #expect(tooltip.hasSuffix("\nNot among the worktrees above. Opening it adds it there."), "\(tooltip)")
-        let spoken = SessionRowFactText.spokenLabel(for: row, projectName: "weir", now: .now, locale: Self.english)
-        #expect(spoken.contains(", weir, Other Worktrees, "), "\(spoken)")
-        let working = try #require(model.rows.first { $0.id == ids.working })
-        #expect(!SessionRowFactText.tooltip(for: working, now: .now, locale: Self.english).contains("Not among the worktrees above"))
-    }
-
-    /// Move to Other Worktrees is offered only where it would move the row: not
-    /// on the selected row, one with a tab, one already among the others,
-    /// a pinned folder, or one whose folder is gone.
-    @Test func removeFromWorking_isOfferedOnlyWhereItMovesTheRow() throws {
-        let (session, project, ids) = try Self.sectionedProject()
-        let model = Self.sectionedModel(session, project, merged: ids.merged, open: [.other])
-        let made = ids.merged
-        // One of the other worktrees has nowhere further to go.
-        let other = try #require(model.rows.first { $0.id == ids.agentA })
-        let otherWorktree = try #require(project.worktrees
-            .first { ContainerID.worktree(projectID: project.id, worktreeID: $0.id) == ids.agentA })
-        #expect(!SessionSidebarModel.offersRemoveFromWorking(other, worktree: otherWorktree, hasTabs: false))
-
-        // Without its merged request, the row Weir made is a working one.
-        let working = Self.sectionedModel(session, project, merged: .loose, open: [])
-        let madeRow = try #require(working.rows.first { $0.id == made })
-        let madeWorktree = try #require(project.worktrees.first { ContainerID.worktree(projectID: project.id, worktreeID: $0.id) == made })
-        #expect(SessionSidebarModel.offersRemoveFromWorking(madeRow, worktree: madeWorktree, hasTabs: false))
-        #expect(!SessionSidebarModel.offersRemoveFromWorking(madeRow, worktree: madeWorktree, hasTabs: true))
-        var pinned = madeWorktree
-        pinned.origin = .userPinned
-        #expect(!SessionSidebarModel.offersRemoveFromWorking(madeRow, worktree: pinned, hasTabs: false))
-        var gone = madeWorktree
-        gone.missingSince = Date(timeIntervalSince1970: 0)
-        #expect(!SessionSidebarModel.offersRemoveFromWorking(madeRow, worktree: gone, hasTabs: false))
-
-        session.setActiveContainer(made, in: session.primaryWindowID, intent: .person)
-        let selected = try Self.sectionedModel(session, #require(session.project(project.id)), merged: .loose, open: [])
-        let selectedRow = try #require(selected.rows.first { $0.id == made })
-        #expect(!SessionSidebarModel.offersRemoveFromWorking(selectedRow, worktree: madeWorktree, hasTabs: false))
-    }
-
-    /// The folder's row is named as any row is, and its tooltip and VoiceOver
-    /// say in words that it is the repository. Its line at rest
-    /// states its Git facts, as any row's does.
-    @Test func theFoldersRow_saysItIsTheRepository() throws {
-        let (session, project) = Self.project()
-        let folder = try #require(Self.model(session, project).rows.first { $0.isMainFolder })
-
-        #expect(folder.factText == "Idle")
-        #expect(SessionRowFactText.tooltip(for: folder, now: .now, locale: Self.english) == "main · Repository folder")
-        let spoken = SessionRowFactText.spokenLabel(for: folder, projectName: "weir", now: .now, locale: Self.english)
-        #expect(spoken == "Shell, main, weir, Repository folder, Idle", "\(spoken); a shell says Shell once")
-        let clean = GitFactsFixture.make(branch: "main", commits: nil, unpushed: nil, uncommitted: 0, base: nil)
-        let read = try #require(Self.model(session, project) { _ in clean }.rows.first { $0.isMainFolder })
-        #expect(read.factText == "No changes")
-        // A worktree's row at rest is idle.
-        #expect(Self.model(session, project).rows.first { !$0.isMainFolder }?.factText == "Idle")
-    }
-
-    /// A detached worktree has no branch: its folder names it.
-    @Test func aDetachedWorktree_isNamedByItsFolder() throws {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "alpha")
-        let index = try #require(session.projects.firstIndex { $0.id == project.id })
-        session.projects[index].worktrees = [Worktree(
-            label: "(unnamed)",
-            workingDirectory: URL(fileURLWithPath: "/tmp/alpha-detached"),
-            gitRef: GitRef(branchName: nil, headSHA: "abc"),
-            origin: .gitWorktree,
-            admission: .opened
-        )]
-        let row = try #require(Self.model(session, session.projects[index]).rows.first { !$0.isMainFolder })
-        #expect(row.name == "alpha-detached")
-        #expect(row.nameTruncation == .name)
-    }
-
-    /// Opening one of the other worktrees makes it a working row for good:
-    /// it stays one after the person moves to another row.
-    @Test func anOtherWorktreeThePersonOpens_staysAWorkingRow() throws {
-        let (session, project, ids) = try Self.sectionedProject()
-        session.setActiveContainer(ids.agentA, in: session.primaryWindowID, intent: .person)
-        session.setActiveContainer(ids.folder, in: session.primaryWindowID, intent: .person)
-
-        let model = try Self.sectionedModel(session, #require(session.project(project.id)), merged: ids.merged, open: [])
-        #expect(model.rows.first { $0.id == ids.agentA }?.section == .working)
-        #expect(!model.rows.contains { $0.id == ids.agentB })
+        let expected = AttentionItemID.stop(EpisodeKey(
+            origin: .sessionRow(worktreeRoot: URL(fileURLWithPath: "/tmp/gone")), episodeToken: "worktreeMissing"
+        ))
+        #expect(gone.leadItemID == expected)
+        #expect(queue.items.map(\.id) == [expected])
+        #expect(!model.rows.contains { $0.name == "old" })
     }
 }
 
@@ -970,7 +762,38 @@ struct SessionRowAttachedPullRequestTests {
         #expect(row.fact.glyph == .stopped)
         #expect(row.pullRequestText == "PR #128 · Open")
         let spoken = SessionRowFactText.spokenLabel(for: row, projectName: "weir", now: .now, locale: Self.english)
-        #expect(spoken.hasPrefix("Stopped, main, weir, "), "\(spoken)")
-        #expect(spoken.hasSuffix(", PR #128, Open, Checks failed, 3 of 4 passed, Claude"), "\(spoken)")
+        #expect(spoken ==
+            "Stopped, main, weir, Stopped: The process exited unexpectedly., PR #128, Open, Checks failed, 3 of 4 passed, Claude")
     }
+}
+
+extension SessionSidebarModelTests {
+    /// A question the ledger holds offers Answer… even when it has no text
+    /// to show: an empty first prompt and no summary.
+    @Test func aSidebarRowsHeldQuestionWithNoText_stillOffersAnswer() throws {
+        let (session, project) = WorkspaceSessionFixture.withProject()
+        let tab = session.openTab(container: .project(project.id))
+        let paneID = try #require(tab.splitTree.allLeafIDs().first)
+        let request = ApprovalPresentation.test(
+            summary: nil,
+            questions: [ApprovalQuestion(header: nil, prompt: "", options: [], isMultiSelect: false)]
+        )
+        #expect(ApprovalRequestText(request).questionText == nil)
+        let ledger = ApprovalLedger()
+        ledger.observe(pending: [request], epoch: request.epoch)
+        var queue = AttentionQueue()
+        queue.insert(
+            id: .question(request.key),
+            kind: .question(ApprovalFact.test(key: request.key, isQuestion: true)),
+            subject: .runtime(id: "r", provider: .claude, paneID: paneID, tabID: tab.id, projectID: project.id),
+            arrivedAt: Date(timeIntervalSince1970: 0)
+        )
+        let row = try #require(SessionSidebarModel(
+            project: project, session: session, queue: queue, runtimes: [], approvals: ledger,
+            pullRequest: { _ in nil }, gitFacts: { _ in nil }, locale: Locale(identifier: "en")
+        ).rows.first)
+
+        #expect(row.answerKey == request.key)
+    }
+
 }

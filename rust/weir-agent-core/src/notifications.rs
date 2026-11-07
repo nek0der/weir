@@ -765,25 +765,25 @@ mod tests {
 
     #[test]
     fn a_wait_or_a_failure_is_not_held() {
-        let mut outbox = OutboxState::default();
-        let input = input();
-        assert!(
-            pass(
-                &mut outbox,
-                &runtime(RunState::Running, "1", "1"),
-                &input,
-                0
-            )
-            .is_empty()
-        );
-        let commands = pass(
-            &mut outbox,
-            &runtime(RunState::NeedsInput, "2", "2"),
-            &input,
-            10,
-        );
-        assert_eq!(kinds(&commands), vec![NotificationKind::NeedsInput]);
-        assert_eq!(next_pass_in_ms(&outbox, &at(10)), None);
+        for (state, kind) in [
+            (RunState::NeedsInput, NotificationKind::NeedsInput),
+            (RunState::Error, NotificationKind::Failed),
+        ] {
+            let mut outbox = OutboxState::default();
+            let input = input();
+            assert!(
+                pass(
+                    &mut outbox,
+                    &runtime(RunState::Running, "1", "1"),
+                    &input,
+                    0
+                )
+                .is_empty()
+            );
+            let commands = pass(&mut outbox, &runtime(state, "2", "2"), &input, 10);
+            assert_eq!(kinds(&commands), vec![kind], "{state:?}");
+            assert_eq!(next_pass_in_ms(&outbox, &at(10)), None, "{state:?}");
+        }
     }
 
     #[test]
@@ -809,6 +809,15 @@ mod tests {
         let again = runtime(RunState::NeedsInput, "3", "episode-2");
         let commands = pass(&mut outbox, &again, &input, 20);
         assert_eq!(kinds(&commands), vec![NotificationKind::NeedsInput]);
+
+        let commands = pass(&mut outbox, &again, &delivered, 30);
+        assert_eq!(kinds(&commands), vec![NotificationKind::NeedsInput]);
+        assert_eq!(outbox.pending.len(), 1);
+        let CommandOp::Notify(notice) = &commands[0].op else {
+            panic!("expected a notification");
+        };
+        assert_eq!(notice.event_token, "3");
+        assert_eq!(notice.episode_token, "episode-2");
     }
 
     #[test]
@@ -877,12 +886,24 @@ mod tests {
         pass(&mut outbox, &unresolved, &input, 10);
         assert_eq!(outbox.pending.len(), 1);
 
-        // Well past the window, and the moment has gone.
-        pass(
-            &mut outbox,
-            &unresolved,
-            &input,
-            NOTIFICATION_PENDING_LIFETIME_MS + 1_000,
+        assert!(
+            pass(
+                &mut outbox,
+                &unresolved,
+                &input,
+                10 + NOTIFICATION_PENDING_LIFETIME_MS - 1,
+            )
+            .is_empty()
+        );
+        assert_eq!(outbox.pending.len(), 1);
+        assert!(
+            pass(
+                &mut outbox,
+                &unresolved,
+                &input,
+                10 + NOTIFICATION_PENDING_LIFETIME_MS,
+            )
+            .is_empty()
         );
         assert!(outbox.pending.is_empty());
     }
@@ -923,6 +944,7 @@ mod tests {
         let mut failed = runtime(RunState::Error, "1", "1");
         failed.badge.detail = Some("server_error".to_owned());
         let commands = pass(&mut outbox, &failed, &input, 0);
+        assert_eq!(commands.len(), 1);
         let CommandOp::Notify(notify) = &commands[0].op else {
             panic!("expected a notification");
         };
@@ -1020,6 +1042,8 @@ mod tests {
         let CommandOp::Notify(notify) = &commands[0].op else {
             panic!("expected a notification");
         };
+        assert_eq!(commands.len(), 1);
+        assert_eq!(notify.tab, tab());
         assert_eq!(notify.pane, second);
         // The pane is not the active one in its tmux window, so the host is
         // told not to suppress the banner just because it has focus.
@@ -1053,6 +1077,11 @@ mod tests {
         assert_eq!(clipped.chars().count(), NOTIFICATION_BODY_CHARS);
         assert!(clipped.starts_with("a very long prompt"), "{clipped}");
         assert!(clipped.ends_with('…'), "{clipped}");
+        let exact = "界".repeat(NOTIFICATION_BODY_CHARS);
+        assert_eq!(truncated(&exact), Some(exact.clone()));
+        let over = exact + "界";
+        let expected = "界".repeat(NOTIFICATION_BODY_CHARS - 1) + "…";
+        assert_eq!(truncated(&over), Some(expected));
         assert!(truncated("   \n ").is_none());
     }
 }

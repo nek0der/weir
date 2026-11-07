@@ -82,27 +82,30 @@ struct QuickTerminalLayoutTests {
     /// Two displays stacked: the lower one at the origin, the upper one
     /// directly above it. Sliding from the lower display's top edge would
     /// be drawn on the upper display, so the panel fades in place instead.
-    @Test func animationFrame_slideIntoDisplayAbove_fadesInPlace() {
-        let lower = CGRect(x: 0, y: 0, width: 1000, height: 800)
-        let upper = CGRect(x: 0, y: 800, width: 1000, height: 800)
-        let target = QuickTerminalLayout.targetFrame(position: .top, sizePercent: 50, visibleFrame: lower)
-        let start = QuickTerminalLayout.animationFrame(position: .top, target: target, otherScreenFrames: [upper])
-        #expect(start == target)
+    struct DisplayCollision: Sendable {
+        let position: QuickTerminalPosition
+        let visible: CGRect
+        let neighbor: CGRect
     }
 
-    @Test func animationFrame_slideIntoDisplayBelow_fadesInPlace() {
-        let upper = CGRect(x: 0, y: 800, width: 1000, height: 800)
-        let lower = CGRect(x: 0, y: 0, width: 1000, height: 800)
-        let target = QuickTerminalLayout.targetFrame(position: .bottom, sizePercent: 50, visibleFrame: upper)
-        let start = QuickTerminalLayout.animationFrame(position: .bottom, target: target, otherScreenFrames: [lower])
-        #expect(start == target)
-    }
-
-    @Test func animationFrame_slideIntoDisplayBeside_fadesInPlace() {
-        let left = CGRect(x: 0, y: 0, width: 1000, height: 800)
+    private nonisolated static let adjacentDisplays: [DisplayCollision] = {
+        let origin = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        let above = CGRect(x: 0, y: 800, width: 1000, height: 800)
         let right = CGRect(x: 1000, y: 0, width: 1000, height: 800)
-        let target = QuickTerminalLayout.targetFrame(position: .left, sizePercent: 50, visibleFrame: right)
-        let start = QuickTerminalLayout.animationFrame(position: .left, target: target, otherScreenFrames: [left])
+        return [
+            .init(position: .top, visible: origin, neighbor: above),
+            .init(position: .bottom, visible: above, neighbor: origin),
+            .init(position: .left, visible: right, neighbor: origin),
+            .init(position: .right, visible: origin, neighbor: right)
+        ]
+    }()
+
+    @Test(arguments: adjacentDisplays)
+    func animationFrame_slideIntoAnotherDisplay_fadesInPlace(_ collision: DisplayCollision) {
+        let target = QuickTerminalLayout.targetFrame(position: collision.position, sizePercent: 50, visibleFrame: collision.visible)
+        let start = QuickTerminalLayout.animationFrame(
+            position: collision.position, target: target, otherScreenFrames: [collision.neighbor]
+        )
         #expect(start == target)
     }
 

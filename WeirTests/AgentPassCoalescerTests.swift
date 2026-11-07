@@ -16,39 +16,31 @@ struct AgentPassCoalescerTests {
         var now: TimeInterval = 100
     }
 
-    @Test("the first request of a burst runs at once")
-    func firstRequest_runsImmediately() {
-        let clock = Clock()
-        var passes = 0
-        let coalescer = AgentPassCoalescer(window: 0.05, now: { clock.now }, run: { passes += 1 })
-
-        coalescer.request()
-
-        // The badge a hook just wrote must not wait for the window to close.
-        #expect(passes == 1)
-    }
-
     @Test("requests inside the window fold into a single trailing pass")
     func burst_foldsIntoOneTrailingPass() {
         let clock = Clock()
         let timer = ManualTimer()
         var passes = 0
-        let coalescer = AgentPassCoalescer(window: 0.02, now: { clock.now }, timer: timer.timer, run: { passes += 1 })
+        let coalescer = AgentPassCoalescer(window: 0.125, now: { clock.now }, timer: timer.timer, run: { passes += 1 })
 
         coalescer.request()
-        clock.now += 0.005
-        coalescer.request()
-        clock.now += 0.005
-        coalescer.request()
-        clock.now += 0.005
-        coalescer.request()
+        #expect(passes == 1, "the leading pass must run without waiting")
+        for _ in 0..<3 {
+            clock.now += 0.03125
+            timer.advance(by: .microseconds(31250))
+            coalescer.request()
+        }
         #expect(passes == 1, "the burst must not run a pass per event")
 
-        // The trailing pass is what carries the last write of the burst; a
-        // coalescer that only dropped events would leave the interface on
-        // whatever the first pass saw.
+        clock.now += 0.03025
+        timer.advance(by: .microseconds(30250))
+        #expect(passes == 1)
+        clock.now += 0.001
+        timer.advance(by: .milliseconds(1))
+        #expect(passes == 2, "later events must not postpone the original deadline")
+        clock.now += 0.02
         timer.advance(by: .milliseconds(20))
-        #expect(passes == 2)
+        #expect(passes == 2, "the burst owes only one trailing pass")
     }
 
     @Test("a pass another route ran cancels the trailing pass it was owed")
@@ -89,11 +81,21 @@ struct AgentPassCoalescerTests {
         timer.advance(by: .milliseconds(1))
         #expect(passes == 1)
 
+        coalescer.request(in: .milliseconds(20))
+        timer.advance(by: .milliseconds(10))
+        coalescer.request(in: .milliseconds(30))
+        timer.advance(by: .milliseconds(10))
+        #expect(passes == 1, "the superseded deadline must not run")
+        timer.advance(by: .milliseconds(19))
+        #expect(passes == 1)
+        timer.advance(by: .milliseconds(1))
+        #expect(passes == 2)
+
         // The next answer holds nothing, so nothing is owed.
         coalescer.request(in: .milliseconds(20))
         coalescer.request(in: nil)
         timer.advance(by: .milliseconds(20))
-        #expect(passes == 1)
+        #expect(passes == 2)
     }
 
     /// The one case on the timer the app uses: the passes above run by hand.
@@ -111,14 +113,14 @@ struct AgentPassCoalescerTests {
         #expect(passes == 2)
     }
 
-    @Test("a request after the window has closed runs at once again")
-    func requestAfterTheWindow_runsImmediately() {
+    @Test("a request at or after the window end runs at once again", arguments: [0.125, 1.0])
+    func requestAfterTheWindow_runsImmediately(elapsed: TimeInterval) {
         let clock = Clock()
         var passes = 0
-        let coalescer = AgentPassCoalescer(window: 0.05, now: { clock.now }, run: { passes += 1 })
+        let coalescer = AgentPassCoalescer(window: 0.125, now: { clock.now }, run: { passes += 1 })
 
         coalescer.request()
-        clock.now += 1
+        clock.now += elapsed
         coalescer.request()
 
         #expect(passes == 2)

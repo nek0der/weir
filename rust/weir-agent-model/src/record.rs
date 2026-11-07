@@ -610,7 +610,12 @@ mod tests {
                 run_observed_order: Some(u64::MAX),
                 ..record
             };
-            let again = RunRecord::decode(&ordered.encode().expect("encodes")).expect("decodes");
+            let encoded = ordered.encode().expect("encodes");
+            let value: Value = serde_json::from_slice(&encoded).expect("json");
+            assert_eq!(value["runLaunchOrder"].as_u64(), Some(u64::MAX));
+            assert_eq!(value["runObservedOrder"].as_u64(), Some(u64::MAX));
+            assert_eq!(value["parentRunID"], "6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F10");
+            let again = RunRecord::decode(&encoded).expect("decodes");
             assert_eq!(again.run_launch_order, Some(u64::MAX));
             assert_eq!(again.parent_run_id, ordered.parent_run_id);
             assert_eq!(again.run_observed_order, Some(u64::MAX));
@@ -646,9 +651,9 @@ mod tests {
         let again = RunRecord::decode(&encoded).expect("decodes again");
         assert_eq!(again, record);
         let text = String::from_utf8(encoded).expect("utf8");
-        assert!(text.contains("\"futureField\":{\"nested\":true}"));
-        assert!(text.contains("\"schemaVersion\":3"));
         let value: Value = serde_json::from_str(&text).expect("json");
+        assert_eq!(value["futureField"], serde_json::json!({"nested": true}));
+        assert_eq!(value["schemaVersion"], 3);
         assert_eq!(value["runStartedAt"], Value::Null);
     }
 
@@ -684,7 +689,16 @@ mod tests {
         };
         let encoded = with_window.encode().expect("encodes");
         let text = String::from_utf8(encoded.clone()).expect("utf8");
-        assert!(text.contains(r#""cacheWindow":{"observedAt":"2026-09-14T00:00:00Z","#));
+        let value: Value = serde_json::from_str(&text).expect("json");
+        assert_eq!(
+            value["cacheWindow"],
+            serde_json::json!({
+                "observedAt": "2026-09-14T00:00:00Z",
+                "ttlSeconds": 3600,
+                "rewriteTokens": 573_000,
+                "precision": "estimated"
+            })
+        );
         let again = RunRecord::decode(&encoded).expect("decodes again");
         assert_eq!(again.cache_window, Some(window));
         assert!(!again.extra.contains_key("cacheWindow"));
@@ -704,7 +718,9 @@ mod tests {
         .encode()
         .expect("encodes");
         let text = String::from_utf8(encoded.clone()).expect("utf8");
-        assert!(text.contains(r#""tool":"AskUserQuestion","waitKind":"question""#));
+        let value: Value = serde_json::from_str(&text).expect("json");
+        assert_eq!(value["tool"], "AskUserQuestion");
+        assert_eq!(value["waitKind"], "question");
         let again = RunRecord::decode(&encoded).expect("decodes again");
         assert_eq!(again.wait_kind, Some(WaitKind::Question));
         assert!(!again.extra.contains_key("waitKind"));
@@ -746,6 +762,10 @@ mod tests {
         let unreadable = json.replace("\"revision\":1", r#""revision":1,"caller":{"team":"x"}"#);
         let record = RunRecord::decode(unreadable.as_bytes()).expect("the record survives");
         assert_eq!(record.caller, None);
+        assert_eq!(
+            record,
+            RunRecord::decode(json.as_bytes()).expect("baseline")
+        );
     }
 
     #[test]
@@ -795,22 +815,28 @@ mod tests {
             );
         let record = RunRecord::decode(unreadable.as_bytes()).expect("the record survives");
         assert_eq!(record.usage_limit, None);
+        let baseline = RunRecord::decode(json.as_bytes()).expect("baseline");
+        assert_eq!(record, baseline);
     }
 
     #[test]
     fn a_cache_window_this_build_cannot_read_costs_only_the_window() {
+        let baseline_json = V2.replace("\"schemaVersion\":2", "\"schemaVersion\":3");
+        let baseline = RunRecord::decode(baseline_json.as_bytes()).expect("baseline");
         let json = V2.replace("\"schemaVersion\":2", "\"schemaVersion\":3").replace(
             "\"revision\":1",
             r#""revision":1,"cacheWindow":{"observedAt":"2026-09-14T00:00:00Z","ttlSeconds":3600,"precision":"measured"}"#,
         );
         let record = RunRecord::decode(json.as_bytes()).expect("the record still decodes");
         assert_eq!(record.cache_window, None);
+        assert_eq!(record, baseline);
         assert_eq!(record.revision, Some(1));
         let json = V2
             .replace("\"schemaVersion\":2", "\"schemaVersion\":3")
             .replace("\"revision\":1", r#""revision":1,"cacheWindow":"soon""#);
         let record = RunRecord::decode(json.as_bytes()).expect("the record still decodes");
         assert_eq!(record.cache_window, None);
+        assert_eq!(record, baseline);
     }
 
     #[test]
@@ -832,7 +858,11 @@ mod tests {
         };
         let encoded = with_work.encode().expect("encodes");
         let text = String::from_utf8(encoded.clone()).expect("utf8");
-        assert!(text.contains(r#""backgroundWork":{"shells":2,"others":1}"#));
+        let value: Value = serde_json::from_str(&text).expect("json");
+        assert_eq!(
+            value["backgroundWork"],
+            serde_json::json!({"shells": 2, "others": 1})
+        );
         let again = RunRecord::decode(&encoded).expect("decodes again");
         assert_eq!(again.background_work, Some(work));
         assert!(!again.extra.contains_key("backgroundWork"));
@@ -847,6 +877,12 @@ mod tests {
             let record = RunRecord::decode(json.as_bytes()).expect("the record still decodes");
             assert_eq!(record.background_work, None, "{shape}");
             assert_eq!(record.revision, Some(1));
+            let baseline = V2.replace("\"schemaVersion\":2", "\"schemaVersion\":3");
+            assert_eq!(
+                record,
+                RunRecord::decode(baseline.as_bytes()).expect("baseline"),
+                "{shape}"
+            );
         }
     }
 
@@ -875,12 +911,15 @@ mod tests {
             with_settings
         );
 
-        let json = V2
-            .replace("\"schemaVersion\":2", "\"schemaVersion\":3")
-            .replace("\"revision\":1", r#""revision":1,"permissionMode":"yolo""#);
-        let record = RunRecord::decode(json.as_bytes()).expect("the record still decodes");
-        assert_eq!(record.permission_mode, None);
-        assert_eq!(record.revision, Some(1));
+        let mut invalid: Value = serde_json::from_slice(&encoded).expect("json");
+        invalid["permissionMode"] = serde_json::json!("yolo");
+        let record = RunRecord::decode(&serde_json::to_vec(&invalid).expect("json"))
+            .expect("the record still decodes");
+        let expected = RunRecord {
+            permission_mode: None,
+            ..with_settings
+        };
+        assert_eq!(record, expected);
     }
 
     #[test]
@@ -924,6 +963,7 @@ mod tests {
             RunState::Running.priority(),
             RunState::Compacting.priority()
         );
+        assert!(RunState::Running.priority() > RunState::Idle.priority());
         assert!(RunState::Idle.priority() > RunState::Unknown.priority());
     }
 

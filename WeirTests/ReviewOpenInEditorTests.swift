@@ -8,16 +8,18 @@ import Testing
 
 @MainActor
 struct ReviewOpenInEditorTests {
-    /// Context at 10, then line 11 replaced, then context at 12.
+    /// A replacement at line 11 with context on both sides.
     private let lines = [
         ReviewLine(id: 0, kind: .context, text: "a", oldLine: 10, newLine: 10),
         ReviewLine(id: 1, kind: .removed, text: "b", oldLine: 11, newLine: nil),
         ReviewLine(id: 2, kind: .added, text: "c", oldLine: nil, newLine: 11),
-        ReviewLine(id: 3, kind: .context, text: "d", oldLine: 12, newLine: 12)
+        ReviewLine(id: 3, kind: .context, text: "d", oldLine: 12, newLine: 12),
+        ReviewLine(id: 4, kind: .context, text: "e", oldLine: 13, newLine: 13),
+        ReviewLine(id: 5, kind: .context, text: "f", oldLine: 14, newLine: 14)
     ]
 
     private final class Opened {
-        var line: Int?
+        var lines: [Int] = []
     }
 
     /// The selection behind a live binding, for the paths that write it.
@@ -55,38 +57,33 @@ struct ReviewOpenInEditorTests {
             composer: .closed,
             locale: locale,
             onCompose: { live?.composeCount += 1 },
-            onOpenLine: { line, _ in opened.line = line }
+            onOpenLine: { line, _ in opened.lines.append(line) }
         )
     }
 
-    /// The key never does nothing: with no selection it opens the first
-    /// change, here a removal, which lands where the replacement starts.
     @Test func keyWithNothingSelectedOpensTheFirstChange() {
         let opened = Opened()
-        makeTable(selecting: [], opened: opened).makeCoordinator().openInEditor(clickedRow: nil)
-        #expect(opened.line == 11)
+        let coordinator = makeTable(selecting: [], opened: opened).makeCoordinator()
+        #expect(coordinator.handle(.openInEditor))
+        #expect(opened.lines == [11])
     }
 
-    @Test func keyOpensTheTopOfTheSelection() {
+    @Test("The open key uses the top line regardless of selection direction", arguments: [[3, 4], [4, 3]])
+    func keyOpensTheTopOfTheSelection(ids: [Int]) {
         let opened = Opened()
-        makeTable(selecting: [3, 2], opened: opened).makeCoordinator().openInEditor(clickedRow: nil)
-        #expect(opened.line == 11)
+        let coordinator = makeTable(selecting: ids, opened: opened).makeCoordinator()
+        #expect(coordinator.handle(.openInEditor))
+        #expect(opened.lines == [12])
     }
 
-    /// A right-click inside the selection acts on the selection, like every
-    /// other item in the menu.
-    @Test func clickInsideTheSelectionOpensItsTop() {
+    @Test("The menu opens the selection's top inside the run and the clicked line outside it", arguments: [
+        (5, 12),
+        (1, 10)
+    ])
+    func clickOpensTheSelectionOrTheClickedLine(row: Int, expectedLine: Int) {
         let opened = Opened()
-        makeTable(selecting: [2, 3], opened: opened).makeCoordinator().openInEditor(clickedRow: 4)
-        #expect(opened.line == 11)
-    }
-
-    /// Outside the selection — a line that could not be selected — the
-    /// clicked line is the target.
-    @Test func clickOutsideTheSelectionOpensTheClickedLine() {
-        let opened = Opened()
-        makeTable(selecting: [3], opened: opened).makeCoordinator().openInEditor(clickedRow: 1)
-        #expect(opened.line == 10)
+        makeTable(selecting: [3, 5], opened: opened).makeCoordinator().openInEditor(clickedRow: row)
+        #expect(opened.lines == [expectedLine])
     }
 
     /// The menu names the line, so a removal's new place is visible before
@@ -101,9 +98,7 @@ struct ReviewOpenInEditorTests {
     @Test func titleFollowsTheTablesLocale() {
         let ja = Locale(identifier: "ja")
         let coordinator = makeTable(selecting: [1], opened: Opened(), locale: ja).makeCoordinator()
-        let title = coordinator.openInEditorTitle(clickedRow: 2)
-        #expect(title == FileApplicationResolution.macOSDefault.openLineActionTitle(line: 11).resolved(in: ja))
-        #expect(title != "Open Line 11 in Default Application")
+        #expect(coordinator.openInEditorTitle(clickedRow: 2) == "デフォルトのアプリケーションで 11 行目を開く")
     }
 
     /// Text dragged over lines 2 and 3, which are rows 3 and 4 under the
@@ -122,28 +117,33 @@ struct ReviewOpenInEditorTests {
         #expect(ReviewTextSelection().rowRange == nil)
     }
 
-    /// With only dragged text, the key opens its top rather than the file's
-    /// first change.
-    @Test func keyOpensTheTopOfDraggedText() {
+    @Test("The open key and a click inside dragged text open its top", arguments: [nil as Int?, 5])
+    func openInEditorOpensTheTopOfDraggedText(clickedRow: Int?) {
         let opened = Opened()
-        makeTable(selecting: [], text: draggedText, opened: opened).makeCoordinator().openInEditor(clickedRow: nil)
-        #expect(opened.line == 11)
-        let later = Opened()
-        var belowTheChange = ReviewTextSelection()
-        belowTheChange.select(
+        var text = ReviewTextSelection()
+        text.select(
+            from: ReviewTextPosition(rowIndex: 6, lineID: 5, side: nil, utf16Offset: 1),
+            to: ReviewTextPosition(rowIndex: 4, lineID: 3, side: nil, utf16Offset: 0)
+        )
+        let coordinator = makeTable(selecting: [], text: text, opened: opened).makeCoordinator()
+        if let clickedRow {
+            coordinator.openInEditor(clickedRow: clickedRow)
+        } else {
+            #expect(coordinator.handle(.openInEditor))
+        }
+        #expect(opened.lines == [12])
+    }
+
+    @Test func keyOpensALaterSingleRowTextSelection() {
+        let opened = Opened()
+        var text = ReviewTextSelection()
+        text.select(
             from: ReviewTextPosition(rowIndex: 4, lineID: 3, side: nil, utf16Offset: 0),
             to: ReviewTextPosition(rowIndex: 4, lineID: 3, side: nil, utf16Offset: 1)
         )
-        makeTable(selecting: [], text: belowTheChange, opened: later).makeCoordinator().openInEditor(clickedRow: nil)
-        #expect(later.line == 12)
-    }
-
-    /// A right-click inside dragged text opens its top, the same line the
-    /// key opens, rather than the line under the pointer.
-    @Test func clickInsideDraggedTextOpensItsTop() {
-        let opened = Opened()
-        makeTable(selecting: [], text: draggedText, opened: opened).makeCoordinator().openInEditor(clickedRow: 4)
-        #expect(opened.line == 11)
+        let coordinator = makeTable(selecting: [], text: text, opened: opened).makeCoordinator()
+        #expect(coordinator.handle(.openInEditor))
+        #expect(opened.lines == [12])
     }
 
     /// The comment key comments on the lines the dragged text covers, in

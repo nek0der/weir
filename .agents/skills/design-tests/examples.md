@@ -30,6 +30,39 @@ Hold the first read, change the visible files, release the read, and observe
 completion. Assert which required files were read and which excluded files
 were not. Keep an upper-bound assertion when the bound itself is a contract.
 
+## A later operation hides an earlier failure
+
+A persistence test loads a viewed position, advances it, then checks that an
+older item is viewed. Advancing the position can satisfy that assertion even
+if loading did nothing. Assert the loaded position before changing it, then
+check the new position and the required disk result separately.
+
+## Setup hides a missing save request
+
+When testing whether an update schedules a save, first persist the initial
+state and confirm it through a new reader. Before the update, also clear any
+pending save or unflushed-change state left by setup. A completed automatic
+save does not necessarily clear that state. Otherwise, a later flush can
+write the updated state even when the update never schedules its own save.
+For Weir stores using `DebouncedSave`, explicitly flush the initial state
+to clear its scheduling state before applying the update.
+
+After the update, observe the save through another reader. When checking
+automatic saving, await its result without forcing a flush. Use an explicit
+flush when checking the flush contract; it does not establish that automatic
+saving is wired correctly.
+
+## Repeated results can agree without the operation succeeding
+
+An approval test sends the same decision twice and compares the responses.
+Both responses can still be `Pending` if the decision is never applied.
+First assert that the initial decision produces the specified resolved state.
+Then repeat it and check that the result is unchanged. Verify that sequence
+numbers do not advance and side effects do not repeat where the contract
+requires it. If the contract forbids replacing a settled decision, submit a
+different decision and verify that it is rejected and the first decision remains.
+Equality between two calls establishes consistency, not successful execution.
+
 ## A fixture does not establish the scenario
 
 A shutdown test claims to bypass a stalled hook, but its hook fake resolves
@@ -76,6 +109,31 @@ effects. Keep it if those failures are otherwise untested. Two pure cases
 with the same inputs and expectations can be consolidated only after checking
 that their replacements run in the same required environments.
 
+## A parsed field disappears when the value is copied
+
+A diff parser fills a hunk's line metadata, and a parser test confirms it.
+The closed-file stack then constructs a new row with a shifted ID but omits
+the metadata. Its optional default lets the code compile, and the accessible
+label becomes a generic "Comment" instead of naming the line.
+
+Exercise the copy through its caller and check both the changed identity and
+the preserved metadata, including the label that uses it. When adding a field,
+inspect places that reconstruct its value. Keep a focused boundary case for
+the missing guarantee; repeating every parser input through the stack is not
+necessary.
+
+## A valid input number exceeds the destination's range
+
+A usage response contains an unsigned epoch value that JSON can represent,
+but adding it to the platform's epoch can panic. Tests with ordinary dates
+and an assertion that the result exists do not check that conversion.
+
+Include an unrepresentable value when reviewing this boundary. If the contract
+treats the timestamp as optional, check that only the timestamp is omitted
+and that valid usage windows or credit counts remain. Preserve an exact normal
+timestamp as a positive control. An error returned through the FFI does not
+show whether the valid parts of the response survived.
+
 ## Smaller tests still need sufficient assertions
 
 For a failed move, checking only the error leaves data loss undetected.
@@ -85,6 +143,16 @@ and contract stay the same; retain separate cases for a concurrent writer
 whose files must survive cleanup.
 
 ## Expected data can be independent without being duplicated
+
+A migration writes a required ordering field, but the decoder can reconstruct
+that order when the field is missing. Reading the migrated data through that
+decoder cannot establish that the migration wrote the field. Check the raw
+output against independently specified keys and values when those bytes are
+part of the migration contract. Keep the decoded-model check to establish
+that the reader can consume the migrated output. If fallback behavior is
+also part of the contract, check it separately with input that deliberately
+omits the field. Likewise, a current encoder and decoder can share a mistake;
+use independently authored historical input to establish compatibility.
 
 A shared Swift/Rust fixture can specify a wire value once and verify both
 implementations. That is different from asking the Swift implementation to

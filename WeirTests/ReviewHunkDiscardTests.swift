@@ -60,6 +60,11 @@ struct ReviewHunkDiscardTests {
             == .discard(blockedReason: "Checking whether a later turn changed this file…"))
         #expect(ReviewHunkDiscardRules.action(Self.input(later: .failed), locale: Self.english)
             == .discard(blockedReason: "Couldn’t check whether a later turn changed this file."))
+        let ambiguous = ReviewHunkDiscardRules.action(Self.input(later: .undecidable), locale: Self.english)
+        #expect(ambiguous == .discard(blockedReason:
+            "Another turn ended in the same second as this scope’s end, so whether it changed this file afterward can’t be checked, "
+                + "and the hunk can’t be discarded. Start from the latest turn."
+        ))
         #expect(ReviewHunkDiscardRules.action(Self.input(later: .unchanged), locale: Self.english) == .discard(blockedReason: nil))
     }
 
@@ -105,15 +110,19 @@ struct ReviewHunkDiscardTests {
         {"kind":"partiallyApplied","reason":"writeFailed","currentTree":"c",
          "failed":[{"path":"f.txt","reason":"keptAside:.weir-OP/ready-1/f.txt"}]}
         """, fields: .init(operation: "discard"))
+        let otherFile = ReviewHunkKey(
+            scopeID: Self.key.scopeID, root: Self.key.root, fromTree: Self.key.fromTree, toTree: Self.key.toTree,
+            path: "g.txt", header: Self.key.header
+        )
         let outcome = DiscardOutcome.finished(journal, [
-            DiscardHunkResult(path: "f.txt", header: Self.key.header, result: .discarded)
+            DiscardHunkResult(path: Self.key.path, header: Self.key.header, result: .discarded),
+            DiscardHunkResult(path: otherFile.path, header: otherFile.header, result: .discarded)
         ])
-        let records = ReviewHunkDiscardRules.records(outcome, keys: [Self.key], locale: Self.english)
-        #expect(records[Self.key] == .discarded(
-            opID: "OP",
-            root: "/repo",
-            note: "Saves made meanwhile were moved to .weir-OP/ready-1/f.txt."
-        ))
+        let records = ReviewHunkDiscardRules.records(outcome, keys: [Self.key, otherFile], locale: Self.english)
+        #expect(records == [
+            Self.key: .discarded(opID: "OP", root: "/repo", note: "Saves made meanwhile were moved to .weir-OP/ready-1/f.txt."),
+            otherFile: .discarded(opID: "OP", root: "/repo", note: nil)
+        ])
     }
 
     /// Not read to its end: it may have been written, so its undo stays,

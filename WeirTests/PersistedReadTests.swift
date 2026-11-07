@@ -24,7 +24,8 @@ struct PersistedReadTests {
         }
     }
 
-    @Test func read_fileWithoutReadPermission_isUnreadable() throws {
+    @Test(.disabled(if: geteuid() == 0, "root reads files without read permission"))
+    func read_fileWithoutReadPermission_isUnreadable() throws {
         try withTempDir { dir in
             let file = dir.appendingPathComponent("state.json")
             try Data("{}".utf8).write(to: file)
@@ -41,7 +42,8 @@ struct PersistedReadTests {
 
     /// The case an existence check gets wrong: a folder that cannot be
     /// searched hides a file that is there.
-    @Test func read_fileInAFolderThatCannotBeSearched_isUnreadable() throws {
+    @Test(.disabled(if: geteuid() == 0, "root can search folders without search permission"))
+    func read_fileInAFolderThatCannotBeSearched_isUnreadable() throws {
         try withTempDir { dir in
             let folder = dir.appendingPathComponent("Weir")
             let manager = FileManager.default
@@ -51,7 +53,7 @@ struct PersistedReadTests {
             try manager.setAttributes([.posixPermissions: 0o000], ofItemAtPath: folder.path)
             defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: folder.path) }
 
-            #expect(!manager.fileExists(atPath: file.path), "the check this read replaces answers no here")
+            try #require(!manager.fileExists(atPath: file.path), "the check this read replaces answers no here")
             guard case .unreadable = PersistedRead.read(file) else {
                 Issue.record("a file hidden by its folder's permissions is not absent")
                 return

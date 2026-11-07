@@ -6,7 +6,8 @@
 # on a pseudo-terminal with Weir's integration loaded, in a folder whose name
 # holds a newline, a space, "%", "?", "#", and Japanese, and reads back the
 # last OSC 7 it wrote. The report must be a file:// URL for this
-# host with no control character in it, and its percent-decoded path must be
+# host with only unreserved bytes, slashes, and percent escapes in its path.
+# Its percent-decoded path must be
 # the folder's path, byte for byte. libghostty drops a control character
 # inside an OSC string, so a raw path with a newline would reach Weir as a
 # different folder.
@@ -72,7 +73,10 @@ if any(b < 0x20 or b == 0x7F for b in report):
 prefix = b"file://" + host
 if not report.startswith(prefix + b"/"):
     sys.exit(f"not a file:// URL for {host!r}: {report!r}")
-path = urllib.parse.unquote_to_bytes(report[len(prefix):])
+encoded_path = report[len(prefix):]
+if not re.fullmatch(rb"(?:[A-Za-z0-9/._~-]|%[0-9A-Fa-f]{2})+", encoded_path):
+    sys.exit(f"unescaped byte or invalid percent escape in the path: {encoded_path!r}")
+path = urllib.parse.unquote_to_bytes(encoded_path)
 if path != target:
     sys.exit(f"decoded {path!r}, expected {target!r}")
 PY

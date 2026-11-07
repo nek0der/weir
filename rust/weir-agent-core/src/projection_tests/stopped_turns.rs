@@ -113,7 +113,11 @@ fn a_declined_wait_asks_the_host_to_write_its_end_until_the_record_says_it() {
     assert_eq!(ends[0].expect, Precondition::None);
     // The next pass asks again, since the host settles it, not the rules.
     let (state, _, commands, _) = pass(&state, &input, true);
-    assert_eq!(stopped_turn_ends(&commands).len(), 1);
+    let repeated = stopped_turn_ends(&commands);
+    assert_eq!(repeated.len(), 1);
+    assert_eq!(repeated[0].op, ends[0].op);
+    assert_eq!(repeated[0].target, ends[0].target);
+    assert_eq!(repeated[0].expect, ends[0].expect);
 
     // The writer's record is finished in the wait's episode, so nothing is
     // asked, and the finish the badge already showed is not announced.
@@ -157,13 +161,17 @@ fn only_a_wait_inside_a_turn_that_names_its_transcript_is_asked_about() {
     assert_eq!(projection.runtimes[0].badge.state, RunState::NeedsInput);
 
     // A run at work or at rest is never read for, whatever it names.
-    for state in ["running", "finished", "compacting"] {
+    for (state, expected) in [
+        ("running", RunState::Running),
+        ("finished", RunState::Finished),
+        ("compacting", RunState::Compacting),
+    ] {
         let other = waiting("").replace_records(|content| {
             content.replace(r#""state":"needsInput""#, &format!(r#""state":"{state}""#))
         });
         let (_, projection, _, asked) = pass(&ProjectionState::default(), &other, true);
         assert!(asked.is_empty(), "{state}");
-        assert_ne!(projection.runtimes[0].badge.state, RunState::NeedsInput);
+        assert_eq!(projection.runtimes[0].badge.state, expected);
     }
 }
 
@@ -185,8 +193,11 @@ fn a_waiting_run_whose_process_died_shows_as_stopped_by_the_exit() {
 
 #[test]
 fn a_host_that_reads_no_transcript_keeps_the_wait() {
-    let (_, projection, _) = project(&ProjectionState::default(), &waiting(""), &now());
-    assert_eq!(projection.runtimes[0].badge.state, RunState::NeedsInput);
+    let (_, projection, commands) = project(&ProjectionState::default(), &waiting(""), &now());
+    let badge = &projection.runtimes[0].badge;
+    assert_eq!(badge.state, RunState::NeedsInput);
+    assert_eq!(badge.stop_reason, None);
+    assert!(stopped_turn_ends(&commands).is_empty());
 }
 
 trait ReplaceRecords {
@@ -293,8 +304,10 @@ fn an_idle_report_after_the_wait_ends_it_without_the_transcript() {
         .get_mut(&claude())
         .expect("claude")
         .program_status_app = None;
-    let (_, projection, _, _) = pass(&ProjectionState::default(), &input, false);
+    let (_, projection, commands, asked) = pass(&ProjectionState::default(), &input, false);
     assert_eq!(projection.runtimes[0].badge.state, RunState::NeedsInput);
+    assert_eq!(asked, [TRANSCRIPT]);
+    assert!(stopped_turn_ends(&commands).is_empty());
 }
 
 /// Builds a run at work on a tool inside a turn, whose record last changed

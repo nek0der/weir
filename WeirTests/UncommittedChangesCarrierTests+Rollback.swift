@@ -7,54 +7,73 @@ import Testing
 @testable import WeirDomain
 
 extension UncommittedChangesCarrierTests {
-    /// A file a hook still running makes where the changes add one, after
-    /// the new worktree was checked: Git refuses to write over it, and the
-    /// hook's file is not taken for ours and removed.
-    @Test func aFileAHookMakesWhileTheChangesGoIn_isKept() async throws {
+    private static func injectHook(_ operation: () async throws -> Void) async {
+        do {
+            try await operation()
+        } catch {
+            Issue.record(error)
+        }
+    }
+
+    /// After the target precheck, Git refuses both an untracked obstruction
+    /// to an addition and an unstaged edit to a tracked file.
+    @Test(arguments: [false, true])
+    func aHookChangeBeforeTheWrite_isKept(isTracked: Bool) async throws {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
-        try repo.write("new\n", to: "notes.txt")
+        let path = isTracked ? "a.txt" : "notes.txt"
+        try repo.write("carried\n", to: path)
         let before = try await Self.state(repo.url)
         let target = try await Self.addTarget(repo, branch: "carried")
+        let targetTree = try await TempGitRepo.git(["write-tree"], in: target)
         let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
 
         let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, checked: {
-            try? ScratchFile.write("made by a hook\n", to: "notes.txt", in: target)
+            await Self.injectHook {
+                try ScratchFile.write("made by a hook\n", to: path, in: target)
+            }
         })
 
         #expect(outcome == .notApplied)
-        #expect(try ScratchFile.read("notes.txt", in: target) == "made by a hook\n")
-        #expect(try await Self.status(target) == "?? notes.txt")
+        #expect(try ScratchFile.read(path, in: target) == "made by a hook\n")
+        #expect(try await TempGitRepo.git(["write-tree"], in: target) == targetTree)
+        #expect(try await Self.status(target) == (isTracked ? "M a.txt" : "?? notes.txt"))
         #expect(try await Self.state(repo.url) == before)
     }
 
-    /// A hook still running changes a tracked file the changes change too,
-    /// after the new worktree was checked: Git refuses to write over it,
-    /// and the hook's edit is not put back to the start as if it were ours.
-    @Test func aTrackedFileAHookChangesWhileTheChangesGoIn_isKept() async throws {
-        let repo = try await Self.makeRepository()
-        defer { repo.cleanup() }
-        try repo.write("a\nB\nc\n", to: "a.txt")
-        let before = try await Self.state(repo.url)
-        let target = try await Self.addTarget(repo, branch: "carried")
-        let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
-        let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
+    /// Verify the same Git transition without rollback in a separate
+    /// worktree, where the otherwise transient partial write remains.
+    private static func expectPartialWrite(
+        _ repo: TempGitRepo,
+        placement: UncommittedChangesCarrier.Placement,
+        written: String,
+        content: String,
+        emptyParent: String? = nil
+    ) async throws {
+        let control = try await Self.addTarget(repo, branch: "partial-control")
+        if let emptyParent {
+            try FileManager.default.createDirectory(at: control.appendingPathComponent(emptyParent), withIntermediateDirectories: false)
+        }
+        let locked = control.appendingPathComponent("z-locked")
+        try ScratchFile.write("made by a hook\n", to: "z-locked/hook.txt", in: control)
+        let manager = FileManager.default
+        try manager.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
+        defer { try? manager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
 
-        let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, checked: {
-            try? ScratchFile.write("made by a hook\n", to: "a.txt", in: target)
-        })
+        let result = try await GitProcess.run(["read-tree", "-m", "-u", "HEAD", placement.fullTree], cwd: control)
 
-        #expect(outcome == .notApplied)
-        #expect(try ScratchFile.read("a.txt", in: target) == "made by a hook\n")
-        #expect(try await Self.state(repo.url) == before)
+        #expect(!result.succeeded)
+        #expect(try ScratchFile.read(written, in: control) == content)
+        #expect(!manager.fileExists(atPath: locked.appendingPathComponent("new.txt").path))
     }
 
     /// The changes turn a file into a folder (`conf` into `conf/b.txt`),
     /// and Git stops part way at a folder its hook made that may not be
     /// written in: the file comes back as the start has it, the folder Git
     /// made goes, and the hook's own file stays.
-    @Test func aFileTurnedFolder_whoseWriteStopsPartWay_isPutBackToTheStart() async throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aFileTurnedFolder_whoseWriteStopsPartWay_isPutBackToTheStart() async throws {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
         try repo.write("file\n", to: "conf")
@@ -69,8 +88,16 @@ extension UncommittedChangesCarrierTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
 
-        let (_, outcome) = try await Self.carry(repo, target: target)
+        try #require(throws: (any Error).self) { try Data().write(to: locked.appendingPathComponent("probe")) }
+        let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
+        let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
+        try await Self.expectPartialWrite(repo, placement: placement, written: "conf/b.txt", content: "inner\n")
+        let started = Recorded(false)
+        let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, checked: {
+            started.value = true
+        })
 
+        #expect(started.value)
         #expect(outcome == .notApplied)
         #expect(try ScratchFile.read("conf", in: target) == "file\n")
         #expect(try ScratchFile.read("z-locked/hook.txt", in: target) == "made by a hook\n")
@@ -92,7 +119,11 @@ extension UncommittedChangesCarrierTests {
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
 
         let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, placed: {
-            try? ScratchFile.write("made by a hook\n", to: "notes.txt", in: target)
+            await Self.injectHook {
+                #expect(try ScratchFile.read("notes.txt", in: target) == "new\n")
+                #expect(try ScratchFile.read("a.txt", in: target) == "a\nB\nc\n")
+                try ScratchFile.write("made by a hook\n", to: "notes.txt", in: target)
+            }
         })
 
         #expect(outcome == .notApplied)
@@ -118,10 +149,15 @@ extension UncommittedChangesCarrierTests {
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
 
         let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, placed: {
-            try? ScratchFile.write("new\r\n", to: "notes.txt", in: target)
+            await Self.injectHook {
+                #expect(try Data(contentsOf: target.appendingPathComponent("notes.txt")) == Data("new\n".utf8))
+                try ScratchFile.write("new\r\n", to: "notes.txt", in: target)
+            }
         })
 
         #expect(outcome == .notApplied)
+        #expect(try Data(contentsOf: repo.url.appendingPathComponent("a.txt")) == Data("a\r\nCRLF\r\n".utf8))
+        #expect(try repo.read("notes.txt") == "new\n")
         #expect(try Data(contentsOf: target.appendingPathComponent("notes.txt")) == Data("new\r\n".utf8))
         #expect(try ScratchFile.read("a.txt", in: target) == "a\nb\nc\n")
     }
@@ -141,14 +177,19 @@ extension UncommittedChangesCarrierTests {
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
 
         let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, placed: {
-            let dir = target.appendingPathComponent("dir")
-            try? FileManager.default.removeItem(at: dir)
-            try? FileManager.default.createSymbolicLink(at: dir, withDestinationURL: outside)
-            // The check fails on this one, so the changes are put back.
-            try? ScratchFile.write("made by a hook\n", to: "a.txt", in: target)
+            await Self.injectHook {
+                let dir = target.appendingPathComponent("dir")
+                #expect(try ScratchFile.read("dir/new.txt", in: target) == "new\n")
+                try FileManager.default.removeItem(at: dir)
+                try FileManager.default.createSymbolicLink(at: dir, withDestinationURL: outside)
+                // The check fails on this one, so the changes are put back.
+                try ScratchFile.write("made by a hook\n", to: "a.txt", in: target)
+            }
         })
 
         #expect(outcome == .notApplied)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: target.appendingPathComponent("dir").path) == outside.path)
+        #expect(try ScratchFile.read("a.txt", in: target) == "made by a hook\n")
         #expect(try ScratchFile.read("new.txt", in: outside) == "new\n")
     }
 
@@ -159,20 +200,28 @@ extension UncommittedChangesCarrierTests {
     @Test func aHooksFileUnderAttributesItChanged_isKept() async throws {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
-        try repo.write("*.txt text eol=lf\n", to: ".gitattributes")
+        try repo.write("notes.txt text eol=lf\n", to: ".gitattributes")
         try await repo.git(["add", ".gitattributes"])
         try await repo.git(["commit", "-q", "-m", "attributes"])
         try repo.write("new\n", to: "notes.txt")
+        try repo.write("a\nB\nc\n", to: "a.txt")
         let target = try await Self.addTarget(repo, branch: "carried")
         let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
 
         let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, placed: {
-            try? ScratchFile.write("*.txt text eol=crlf\n", to: ".gitattributes", in: target)
-            try? ScratchFile.write("new\r\n", to: "notes.txt", in: target)
+            await Self.injectHook {
+                #expect(try ScratchFile.read("notes.txt", in: target) == "new\n")
+                #expect(try ScratchFile.read("a.txt", in: target) == "a\nB\nc\n")
+                try ScratchFile.write("notes.txt text eol=crlf\n", to: ".gitattributes", in: target)
+                try ScratchFile.write("new\r\n", to: "notes.txt", in: target)
+            }
         })
 
         #expect(outcome == .notApplied)
+        #expect(try ScratchFile.read(".gitattributes", in: target) == "notes.txt text eol=crlf\n")
+        #expect(try ScratchFile.read("a.txt", in: target) == "a\nb\nc\n")
+        #expect(try repo.read("a.txt") == "a\nB\nc\n")
         #expect(try Data(contentsOf: target.appendingPathComponent("notes.txt")) == Data("new\r\n".utf8))
     }
 
@@ -196,7 +245,11 @@ extension UncommittedChangesCarrierTests {
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
 
         let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, placed: {
-            try? ScratchFile.write("made by a hook\n", to: "conf/c.txt", in: target)
+            await Self.injectHook {
+                #expect(try ScratchFile.read("conf/b.txt", in: target) == "inner\n")
+                #expect(try ScratchFile.read("a.txt", in: target) == "a\nCRLF\n")
+                try ScratchFile.write("made by a hook\n", to: "conf/c.txt", in: target)
+            }
         })
 
         #expect(outcome == .notApplied)
@@ -220,9 +273,11 @@ extension UncommittedChangesCarrierTests {
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
 
         let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, checked: {
-            try? ScratchFile.write("staged by a hook\n", to: "a.txt", in: target)
-            _ = try? await TempGitRepo.git(["add", "a.txt"], in: target)
-            try? ScratchFile.write("written by a hook\n", to: "a.txt", in: target)
+            await Self.injectHook {
+                try ScratchFile.write("staged by a hook\n", to: "a.txt", in: target)
+                try await TempGitRepo.git(["add", "a.txt"], in: target)
+                try ScratchFile.write("written by a hook\n", to: "a.txt", in: target)
+            }
         })
 
         #expect(outcome == .notApplied)
@@ -243,11 +298,13 @@ extension UncommittedChangesCarrierTests {
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
 
         let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, checked: {
-            try? FileManager.default.removeItem(at: target.appendingPathComponent("deleted.txt"))
-            try? ScratchFile.write("staged by a hook\n", to: "deleted.txt/hook.txt", in: target)
-            _ = try? await TempGitRepo.git(["add", "deleted.txt/hook.txt"], in: target)
-            try? ScratchFile.write("written by a hook\n", to: "deleted.txt/hook.txt", in: target)
-            try? ScratchFile.write("made by a hook\n", to: "a.txt", in: target)
+            await Self.injectHook {
+                try FileManager.default.removeItem(at: target.appendingPathComponent("deleted.txt"))
+                try ScratchFile.write("staged by a hook\n", to: "deleted.txt/hook.txt", in: target)
+                try await TempGitRepo.git(["add", "deleted.txt/hook.txt"], in: target)
+                try ScratchFile.write("written by a hook\n", to: "deleted.txt/hook.txt", in: target)
+                try ScratchFile.write("made by a hook\n", to: "a.txt", in: target)
+            }
         })
 
         #expect(outcome == .notApplied)
@@ -272,11 +329,13 @@ extension UncommittedChangesCarrierTests {
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
 
         let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, checked: {
-            _ = try? await TempGitRepo.git(["rm", "-q", "-r", "dir"], in: target)
-            try? ScratchFile.write("staged by a hook\n", to: "dir", in: target)
-            _ = try? await TempGitRepo.git(["add", "dir"], in: target)
-            try? ScratchFile.write("written by a hook\n", to: "dir", in: target)
-            try? ScratchFile.write("made by a hook\n", to: "a.txt", in: target)
+            await Self.injectHook {
+                try await TempGitRepo.git(["rm", "-q", "-r", "dir"], in: target)
+                try ScratchFile.write("staged by a hook\n", to: "dir", in: target)
+                try await TempGitRepo.git(["add", "dir"], in: target)
+                try ScratchFile.write("written by a hook\n", to: "dir", in: target)
+                try ScratchFile.write("made by a hook\n", to: "a.txt", in: target)
+            }
         })
 
         #expect(outcome == .notApplied)
@@ -287,7 +346,8 @@ extension UncommittedChangesCarrierTests {
     /// A folder the new worktree's checkout hook made, empty, where the
     /// changes add a file, and a write Git stops part way: the file goes,
     /// and the hook's folder stays.
-    @Test func anEmptyFolderAHookMade_staysAfterThePutBack() async throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func anEmptyFolderAHookMade_staysAfterThePutBack() async throws {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
         try repo.write("log line\n", to: "a-log/x.txt")
@@ -299,13 +359,25 @@ extension UncommittedChangesCarrierTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
 
-        let (_, outcome) = try await Self.carry(repo, target: target)
+        try #require(throws: (any Error).self) { try Data().write(to: locked.appendingPathComponent("probe")) }
+        let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
+        let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
+        try await Self.expectPartialWrite(
+            repo, placement: placement, written: "a-log/x.txt", content: "log line\n", emptyParent: "a-log"
+        )
+        let started = Recorded(false)
+        let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, checked: {
+            started.value = true
+        })
 
+        #expect(started.value)
         #expect(outcome == .notApplied)
         #expect(!FileManager.default.fileExists(atPath: target.appendingPathComponent("a-log/x.txt").path))
         var isFolder: ObjCBool = false
         #expect(FileManager.default.fileExists(atPath: target.appendingPathComponent("a-log").path, isDirectory: &isFolder))
         #expect(isFolder.boolValue)
+        #expect(try ScratchFile.read("z-locked/hook.txt", in: target) == "made by a hook\n")
+        #expect(!FileManager.default.fileExists(atPath: locked.appendingPathComponent("new.txt").path))
     }
 
     /// An agent edits a file the changes touch in the source, under the
@@ -321,12 +393,25 @@ extension UncommittedChangesCarrierTests {
         let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
         let source = repo.url
+        let index = source.appendingPathComponent(".git/index")
+        let originalIndex = try Data(contentsOf: index)
+        let originalHead = try await repo.git(["rev-parse", "HEAD"])
+        let wasLocked = Recorded(false)
 
         let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, clearing: {
-            try? ScratchFile.write("an agent's edit\n", to: "a.txt", in: source)
+            await Self.injectHook {
+                wasLocked.value = FileManager.default.fileExists(atPath: source.appendingPathComponent(".git/index.lock").path)
+                try ScratchFile.write("an agent's edit\n", to: "a.txt", in: source)
+            }
         })
 
         #expect(outcome == .leftInSource)
+        #expect(wasLocked.value)
+        #expect(try Data(contentsOf: index) == originalIndex)
+        #expect(try await repo.git(["rev-parse", "HEAD"]) == originalHead)
+        #expect(try await TempGitRepo.git(["write-tree"], in: target) == placement.indexTree)
+        #expect(try ScratchFile.read("a.txt", in: target) == "a\nB\nc\n")
+        #expect(try ScratchFile.read("x.txt", in: target) == "changed\n")
         #expect(try repo.read("a.txt") == "an agent's edit\n")
         #expect(try repo.read("x.txt") == "changed\n")
         #expect(try await repo.git(["stash", "list"]).isEmpty)
@@ -342,6 +427,7 @@ extension UncommittedChangesCarrierTests {
         defer { repo.cleanup() }
         try repo.write("new\n", to: "notes.txt")
         try repo.write("a\nB\nc\n", to: "a.txt")
+        let sourceBefore = try await Self.state(repo.url)
         let target = try await Self.addTarget(repo, branch: "carried")
         let lock = try await URL(fileURLWithPath: TempGitRepo.git(
             ["rev-parse", "--path-format=absolute", "--git-path", "index.lock"],
@@ -351,12 +437,19 @@ extension UncommittedChangesCarrierTests {
         let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
 
+        let lockBytes = Data("another Git".utf8)
         let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, placed: {
-            FileManager.default.createFile(atPath: lock.path, contents: Data())
-            try? ScratchFile.write("made by a hook\n", to: "a.txt", in: target)
+            await Self.injectHook {
+                #expect(try ScratchFile.read("notes.txt", in: target) == "new\n")
+                try lockBytes.write(to: lock, options: .withoutOverwriting)
+                try ScratchFile.write("made by a hook\n", to: "a.txt", in: target)
+            }
         })
 
         #expect(outcome == .notPutBack)
+        #expect(try Data(contentsOf: lock) == lockBytes)
+        #expect(try await TempGitRepo.git(["show", ":notes.txt"], in: target) == "new")
+        #expect(try await Self.state(repo.url) == sourceBefore)
         #expect(!FileManager.default.fileExists(atPath: target.appendingPathComponent("notes.txt").path))
         #expect(try ScratchFile.read("a.txt", in: target) == "made by a hook\n")
     }
@@ -383,6 +476,9 @@ extension UncommittedChangesCarrierTests {
 
         #expect(outcome == .notPutBack)
         #expect(try ScratchFile.read("a-new.txt", in: target) == "first\n")
+        #expect(!FileManager.default.fileExists(atPath: target.appendingPathComponent("x.boom").path))
+        #expect(try repo.read("a-new.txt") == "first\n")
+        #expect(try repo.read("x.boom") == "filtered\n")
         #expect(try await Self.state(repo.url) == before)
     }
 }

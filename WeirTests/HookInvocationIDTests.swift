@@ -35,7 +35,7 @@ struct HookInvocationIDTests {
                 process.environment = environment
                 process.standardInput = FileHandle.nullDevice
                 try process.run()
-                #expect(process.waitUntilExit(within: 10), "the wrapper did not exit within ten seconds")
+                try #require(process.waitUntilExit(within: 10), "the wrapper did not exit within ten seconds")
                 #expect(process.terminationStatus == 0)
             }
             return try String(contentsOf: ids, encoding: .utf8)
@@ -60,6 +60,7 @@ struct HookInvocationIDTests {
         let ids = try invocationIDs(provider: provider, preset: leaked)
         #expect(ids.count == 2)
         #expect(!ids.contains(leaked))
+        #expect(ids.allSatisfy { UUID(uuidString: $0) != nil })
         #expect(Set(ids).count == 2)
     }
 }

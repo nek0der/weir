@@ -105,6 +105,11 @@ struct SessionSnapshotV6MigrationTests {
         return try PersistenceCoders.makeDecoder().decode(SessionSnapshot.self, from: data)
     }
 
+    private static func rawMigration(_ v5: Version5) throws -> [String: Any] {
+        let data = try SessionSnapshotV5.migrate(v5.data())
+        return try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
     // MARK: - Groups
 
     @Test func groups_becomeScratchTabs_withPrefixColorCwd() throws {
@@ -117,7 +122,17 @@ struct SessionSnapshotV6MigrationTests {
 
         let snapshot = try Self.migrated(v5)
 
+        let raw = try Self.rawMigration(v5)
+        let tabs = try #require(raw["tabs"] as? [String: [String: Any]])
+        let tab = try #require(tabs[ssh.id.uuidString])
+        let container = try #require(tab["container"] as? [String: [String: String]])
+        let record = try #require((raw["windows"] as? [[String: Any]])?.first)
+        #expect(container == ["loose": [:]])
+        #expect(record["activeContainerID"] as? [String: [String: String]] == ["loose": [:]])
+        #expect(record["activeTabID"] as? String == ssh.id.uuidString)
+
         let moved = try #require(snapshot.tabs.first)
+        #expect(moved.id == ssh.id)
         #expect(moved.container == .loose)
         #expect(moved.namePrefix == "prod")
         #expect(moved.displayTitle == "prod · ssh")
@@ -142,30 +157,26 @@ struct SessionSnapshotV6MigrationTests {
 
         let snapshot = try Self.migrated(v5)
 
-        #expect(snapshot.tabs.map(\.id) == [scratch.id, later.id, a1.id, a2.id, b1.id])
+        let expected = [scratch.id, later.id, a1.id, a2.id, b1.id]
+        #expect(try Self.rawMigration(v5)["tabOrder"] as? [String] == expected.map(\.uuidString))
+        #expect(snapshot.tabs.map(\.id) == expected)
     }
 
     @Test func orphanGroupTab_becomesScratchTab() throws {
         let orphan = Self.tab("orphan", inGroup: UUID())
 
-        let snapshot = try Self.migrated(Version5(tabs: [orphan]))
+        let input = Version5(tabs: [orphan])
+        let raw = try Self.rawMigration(input)
+        let movedTab = try #require((raw["tabs"] as? [String: [String: Any]])?[orphan.id.uuidString])
+        #expect(movedTab["container"] as? [String: [String: String]] == ["loose": [:]])
+        let snapshot = try Self.migrated(input)
 
         let moved = try #require(snapshot.tabs.first)
         #expect(moved.container == .loose)
         #expect(moved.namePrefix == nil)
         #expect(moved.paletteIndex == nil)
         #expect(moved.cwdMode == nil)
-    }
-
-    @Test func aGroupWithoutAFolderDefault_keepsItsContinueWhereYouAre() throws {
-        var group = Group5(name: "plain")
-        group.paletteIndex = nil
-        let tab = Self.tab("t", inGroup: group.id)
-
-        let snapshot = try Self.migrated(Version5(groups: [group], tabs: [tab]))
-
-        #expect(snapshot.tabs.first?.cwdMode == .inheritPrevious)
-        #expect(snapshot.tabs.first?.paletteIndex == nil)
+        #expect(moved.cwdPath == nil)
     }
 
     /// How a version 5 group spelled its working-directory mode.
@@ -174,8 +185,8 @@ struct SessionSnapshotV6MigrationTests {
         case absent
         /// `null`, which version 5 read as absent (`decodeIfPresent`).
         case null
-        /// A value that names no mode, which version 5 refused.
-        case notAName
+        /// A value of the wrong JSON type.
+        case nonString
         /// A string that does not name a version 5 mode.
         case unknownName
         /// "Continue where the active tab is", written out.
@@ -183,7 +194,7 @@ struct SessionSnapshotV6MigrationTests {
     }
 
     /// A tab whose shell moved away from where it opened, after the
-    /// migration and again after the store wrote and read it back, keeps
+    /// migration and a codec round trip, keeps
     /// starting its new panes where it is, as its group had it, however the
     /// group spelled its default.
     @Test(arguments: GroupCwdMode.allCases)
@@ -202,7 +213,7 @@ struct SessionSnapshotV6MigrationTests {
         switch mode {
         case .absent: fields.removeValue(forKey: "cwdMode")
         case .null: fields["cwdMode"] = NSNull()
-        case .notAName: fields["cwdMode"] = 3
+        case .nonString: fields["cwdMode"] = 3
         case .unknownName: fields["cwdMode"] = "futureMode"
         case .inheritPrevious: fields["cwdMode"] = "inheritPrevious"
         }
@@ -218,6 +229,8 @@ struct SessionSnapshotV6MigrationTests {
         for migrated in [snapshot, reread] {
             let result = try #require(migrated.tabs.first)
             #expect(result.cwdMode == .inheritPrevious)
+            #expect(result.paletteIndex == nil)
+            #expect(result.workingDirectory == "/tmp/opened-here")
             #expect(result.newPaneWorkingDirectory == "/tmp/moved-here")
         }
     }
@@ -229,16 +242,22 @@ struct SessionSnapshotV6MigrationTests {
         var version5 = Version5(tabs: [tab])
         version5.root["activeTabID"] = tab.id.uuidString
         version5.root["activeContainerID"] = try Version5.json(.loose)
-        #expect(Set(SessionSnapshotV5.movedRootKeys).isSubset(of: version5.root.keys))
+        version5.root["futureRoot"] = "kept"
+        let historical = [
+            "activeTabID", "activeContainerID", "sidebarWidth", "sidebarHidden",
+            "tabColumnHorizontal", "windowFrame", "tabColumnWidth", "attentionHeightFraction"
+        ]
+        try #require(Set(historical).isSubset(of: version5.root.keys))
         let data = try SessionSnapshotV5.migrate(version5.data())
         let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        for key in SessionSnapshotV5.movedRootKeys {
+        for key in historical {
             #expect(object[key] == nil, "\(key)")
         }
 
         let snapshot = try PersistenceCoders.makeDecoder().decode(SessionSnapshot.self, from: data)
         #expect(snapshot.version == 6)
-        #expect(snapshot.unknownFields.isEmpty)
+        #expect(object["futureRoot"] as? String == "kept")
+        #expect(snapshot.unknownFields == ["futureRoot": .string("kept")])
     }
 
     @Test func singleWindow_isCreatedForActiveProject() throws {
@@ -270,6 +289,8 @@ struct SessionSnapshotV6MigrationTests {
         #expect(record.sidebarWidth == 304)
         let object = try JSONObjectFixture.object(encoding: snapshot, with: PersistenceCoders.makeEncoder())
         let written = try #require((object["windows"] as? [[String: Any]])?.first)
+        let migrated = try #require((Self.rawMigration(v5)["windows"] as? [[String: Any]])?.first)
+        #expect(migrated["sidebarWidth"] as? Double == 304)
         #expect(written["tabOrientation"] == nil)
         #expect(written["tabColumnWidth"] == nil)
         #expect(object["tabColumnHorizontal"] == nil)
@@ -290,26 +311,41 @@ struct SessionSnapshotV6MigrationTests {
             ],
             [
                 "activeContainerID": otherContainer, "projectID": other.id.uuidString,
-                "sidebarWidth": 280, "tabOrientation": "column", "tabColumnWidth": 111
+                "sidebarWidth": 280, "sidebarHidden": true, "changesPanelWidth": 470, "isFullScreen": true,
+                "frame": ["x": 25, "y": 35, "width": 900, "height": 600],
+                "tabOrientation": "column", "tabColumnWidth": 111
             ]
         ]
 
         let snapshot = try Self.migrated(v5)
 
-        #expect(snapshot.windows.count == 2)
+        try #require(snapshot.windows.count == 2)
         let primary = snapshot.windows[0]
         #expect(primary.projectID == project.id)
+        #expect(primary.activeContainerID == .project(project.id))
+        #expect(primary.sidebarHidden)
         #expect(primary.frame == WindowFrame(CGRect(x: 10, y: 20, width: 1100, height: 700)))
         #expect(primary.sidebarWidth == 304)
         #expect(primary.isChangesPanelPresented)
         #expect(primary.isFront)
-        let later = snapshot.windows[1]
-        #expect(later.projectID == other.id)
-        #expect(later.sidebarWidth == 280)
-        // A later window that had its tabs in the column is written with
-        // neither the column nor its width.
+        var later = WindowRecord(
+            projectID: other.id,
+            activeContainerID: .project(other.id),
+            frame: WindowFrame(CGRect(x: 25, y: 35, width: 900, height: 600)),
+            sidebarWidth: 280
+        )
+        later.sidebarHidden = true
+        later.changesPanelWidth = 470
+        later.isFullScreen = true
+        #expect(snapshot.windows[1] == later)
+        let raw = try #require(Self.rawMigration(v5)["windows"] as? [[String: Any]])
+        try #require(raw.count == 2)
+        #expect(raw[0]["sidebarWidth"] as? Double == 304)
+        // The decoder reads past a later window's old tab-column fields,
+        // so the next save leaves them out.
         let written = try #require(JSONObjectFixture
             .object(encoding: snapshot, with: PersistenceCoders.makeEncoder())["windows"] as? [[String: Any]])
+        try #require(written.count == 2)
         #expect(written.allSatisfy { $0["tabOrientation"] == nil && $0["tabColumnWidth"] == nil })
     }
 
@@ -355,19 +391,35 @@ struct SessionSnapshotV6MigrationTests {
 
     @Test func projects_keepTheirContainersShape() throws {
         let project = Project(name: "repo", rootURL: URL(fileURLWithPath: "/tmp/repo"))
-        let data = try SessionSnapshotV5.migrate(Version5(groups: [Group5(name: "g")], projects: [project]).data())
+        let version5 = try Version5(groups: [Group5(name: "g")], projects: [project]).data()
+        var input = try #require(JSONSerialization.jsonObject(with: version5) as? [String: Any])
+        var inputContainers = try #require(input["containers"] as? [[String: Any]])
+        let index = try #require(inputContainers.firstIndex { $0["kind"] as? String == "project" })
+        var projectFields = try #require(inputContainers[index]["project"] as? [String: Any])
+        projectFields["futureProjectField"] = ["remembered": "value"]
+        inputContainers[index]["project"] = projectFields
+        input["containers"] = inputContainers
+
+        let data = try SessionSnapshotV5.migrate(JSONSerialization.data(withJSONObject: input))
         let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let containers = try #require(object["containers"] as? [[String: Any]])
 
         #expect(containers.count == 1)
         #expect(containers.first?["kind"] as? String == "project")
-        #expect((containers.first?["project"] as? [String: Any])?["rootURL"] != nil)
+        let fields = try #require(containers.first?["project"] as? [String: Any])
+        #expect(fields["id"] as? String == project.id.uuidString)
+        #expect(fields["name"] as? String == "repo")
+        #expect(fields["rootURL"] as? String == "file:///tmp/repo")
+        #expect(fields["futureProjectField"] as? [String: String] == ["remembered": "value"])
     }
 
     @Test func aVersion5File_isBackedUpOnce_andWrittenAsVersion6() throws {
         try withTempDir { dir in
             let group = Group5(name: "prod", paletteIndex: 1)
-            let original = try Version5(groups: [group], tabs: [Self.tab("ssh", inGroup: group.id)]).data()
+            let tab = Self.tab("ssh", inGroup: group.id)
+            var v5 = Version5(groups: [group], tabs: [tab])
+            v5.extraTabFields = ["futureField": "kept"]
+            let original = try v5.data()
             let file = dir.appendingPathComponent("state.json")
             try original.write(to: file)
 
@@ -376,8 +428,14 @@ struct SessionSnapshotV6MigrationTests {
                 return
             }
             #expect(snapshot.tabs.first?.namePrefix == "prod")
-            let written = try PersistenceCoders.makeDecoder().decode(SessionSnapshot.self, from: Data(contentsOf: file))
+            let rewritten = try Data(contentsOf: file)
+            let written = try PersistenceCoders.makeDecoder().decode(SessionSnapshot.self, from: rewritten)
+            let raw = try #require(JSONSerialization.jsonObject(with: rewritten) as? [String: Any])
+            let writtenTab = try #require((raw["tabs"] as? [String: [String: Any]])?[tab.id.uuidString])
             #expect(written.version == 6)
+            #expect(written.tabs.first?.id == tab.id)
+            #expect(written.tabs.first?.namePrefix == "prod")
+            #expect(writtenTab["futureField"] as? String == "kept")
             #expect(try Data(contentsOf: dir.appendingPathComponent("state.json.pre-v6")) == original)
 
             // Read again: already version 6, nothing more is set aside.
@@ -385,6 +443,8 @@ struct SessionSnapshotV6MigrationTests {
                 Issue.record("expected the version 6 file to load")
                 return
             }
+            #expect(try Data(contentsOf: file) == rewritten)
+            #expect(try Data(contentsOf: dir.appendingPathComponent("state.json.pre-v6")) == original)
             let backups = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.contains(".pre-v6") }
             #expect(backups == ["state.json.pre-v6"])
         }
@@ -393,9 +453,10 @@ struct SessionSnapshotV6MigrationTests {
     /// A version 5 file without its shape (no containers or tabs) makes
     /// the step throw, which the store sets aside unchanged
     /// (`SessionStoreTests.throwingStep_movesTheFileAsideUnchanged`).
-    @Test func aVersion5FileWithoutItsShape_makesTheStepThrow() {
-        #expect(throws: (any Error).self) {
-            try SessionSnapshotV5.migrate(Data(#"{"version":5,"something":"else"}"#.utf8))
+    @Test(arguments: [#"{"version":5,"tabs":{}}"#, #"{"version":5,"containers":[]}"#])
+    func aVersion5FileWithoutItsShape_makesTheStepThrow(json: String) {
+        #expect(throws: SessionSnapshotV5.MigrationError.notVersion5) {
+            try SessionSnapshotV5.migrate(Data(json.utf8))
         }
     }
 
@@ -409,15 +470,18 @@ struct SessionSnapshotV6MigrationTests {
         withOrder.order = [listed.id]
 
         let ordered = try Self.migrated(withOrder)
+        #expect(try Self.rawMigration(withOrder)["tabOrder"] as? [String] == [listed.id.uuidString, unlisted.id.uuidString])
         #expect(ordered.tabs.map(\.id) == [listed.id, unlisted.id])
         #expect(ordered.tabs.allSatisfy { $0.container == .loose && $0.namePrefix == "g" })
 
         var object = try #require(JSONSerialization.jsonObject(with: withOrder.data()) as? [String: Any])
         object.removeValue(forKey: "tabOrder")
         let migrated = try SessionSnapshotV5.migrate(JSONSerialization.data(withJSONObject: object))
+        let raw = try #require(JSONSerialization.jsonObject(with: migrated) as? [String: Any])
+        #expect((raw["tabOrder"] as? [String])?.sorted() == [listed.id.uuidString, unlisted.id.uuidString].sorted())
         let unordered = try PersistenceCoders.makeDecoder().decode(SessionSnapshot.self, from: migrated)
-        #expect(Set(unordered.tabs.map(\.id)) == [listed.id, unlisted.id])
-        #expect(unordered.tabs.allSatisfy { $0.container == .loose })
+        #expect(unordered.tabs.map(\.id.uuidString).sorted() == [listed.id.uuidString, unlisted.id.uuidString].sorted())
+        #expect(unordered.tabs.allSatisfy { $0.container == .loose && $0.namePrefix == "g" })
     }
 
     @Test func aLaterWindowOnAGroup_isOnTheScratchTabs() throws {
@@ -429,6 +493,10 @@ struct SessionSnapshotV6MigrationTests {
 
         let snapshot = try Self.migrated(version5)
 
+        let raw = try Self.rawMigration(version5)
+        let later = try #require((raw["windows"] as? [[String: Any]])?.last)
+        #expect(later["activeContainerID"] as? [String: [String: String]] == ["loose": [:]])
+        #expect(later["projectID"] as? String == project.id.uuidString)
         #expect(snapshot.windows.last?.activeContainerID == .loose)
         #expect(snapshot.windows.last?.projectID == project.id)
     }
@@ -447,12 +515,15 @@ struct SessionSnapshotV6MigrationTests {
         // A saved record that was on a project is older than the root,
         // which has moved to the scratch tabs since: it names nothing.
         version5.windows = try [["activeContainerID": Version5.json(.project(project.id)), "projectID": project.id.uuidString]]
-        #expect(try Self.migrated(version5).windows.first?.projectID == nil)
+        let restored = try Self.migrated(version5)
+        let primary = try #require(restored.windows.first)
+        #expect(primary.projectID == nil)
     }
 
     @Test func aTabFieldALaterBuildAdded_passesThroughTheStep() throws {
-        let tab = Self.tab("t", in: .loose)
-        var version5 = Version5(tabs: [tab])
+        let group = Group5(name: "g")
+        let tab = Self.tab("t", inGroup: group.id)
+        var version5 = Version5(groups: [group], tabs: [tab])
         version5.extraTabFields = ["futureField": "kept"]
 
         let data = try SessionSnapshotV5.migrate(version5.data())
@@ -461,27 +532,7 @@ struct SessionSnapshotV6MigrationTests {
         let migrated = try #require(tabs[tab.id.uuidString] as? [String: Any])
 
         #expect(migrated["futureField"] as? String == "kept")
-    }
-
-    /// And through the store, which decodes the step's result and writes it
-    /// again: the field is still in the file it writes.
-    @Test func aTabFieldALaterBuildAdded_isInTheFileTheStoreWrites() throws {
-        try withTempDir { dir in
-            let tab = Self.tab("t", in: .loose)
-            var version5 = Version5(tabs: [tab])
-            version5.extraTabFields = ["futureField": "kept"]
-            let file = dir.appendingPathComponent("state.json")
-            try version5.data().write(to: file)
-
-            guard case .loaded = SessionStore(directory: dir).load() else {
-                Issue.record("expected the version 5 file to load")
-                return
-            }
-            let object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
-            let tabs = try #require(object["tabs"] as? [String: Any])
-            let written = try #require(tabs[tab.id.uuidString] as? [String: Any])
-            #expect(written["futureField"] as? String == "kept")
-        }
+        #expect(migrated["namePrefix"] as? String == "g")
     }
 
     /// A value of the wrong type fails the read of the migrated file,
@@ -500,19 +551,29 @@ struct SessionSnapshotV6MigrationTests {
         object["containers"] = containers
         let data = try JSONSerialization.data(withJSONObject: object)
 
-        #expect(throws: (any Error).self) {
-            try PersistenceCoders.makeDecoder().decode(SessionSnapshot.self, from: SessionSnapshotV5.migrate(data))
+        let migrated = try SessionSnapshotV5.migrate(data)
+        let raw = try #require(JSONSerialization.jsonObject(with: migrated) as? [String: Any])
+        let tab = try #require((raw["tabs"] as? [String: [String: Any]])?.values.first)
+        #expect(tab["paletteIndex"] as? String == "3")
+        do {
+            _ = try PersistenceCoders.makeDecoder().decode(SessionSnapshot.self, from: migrated)
+            Issue.record("Expected the invalid palette index to fail decoding")
+        } catch let DecodingError.typeMismatch(type, context) {
+            #expect(ObjectIdentifier(type) == ObjectIdentifier(Int.self))
+            #expect(context.codingPath.last?.stringValue == "paletteIndex")
         }
     }
 
     @Test func aMigratedSession_opensAtTheSidebarDefault_onTheMovedTab() throws {
         let group = Group5(name: "prod")
         let ssh = Self.tab("ssh", inGroup: group.id)
-        var version5 = Version5(groups: [group], tabs: [ssh])
+        let first = Self.tab("first", in: .loose)
+        var version5 = Version5(groups: [group], tabs: [first, ssh])
         version5.root["activeTabID"] = ssh.id.uuidString
         version5.root["activeContainerID"] = Version5.json(group: group.id)
 
         let session = WorkspaceSession()
+        session.primarySelection.sidebarWidth = 420
         try session.restore(from: Self.migrated(version5))
 
         #expect(session.primarySelection.sidebarWidth == 304)
@@ -537,10 +598,21 @@ struct SessionSnapshotV6MigrationTests {
             activeTabID: aTab.id,
             sidebarWidth: 399,
             sidebarHidden: true,
-            isChangesPanelPresented: false,
+            isChangesPanelPresented: true,
             changesPanelWidth: 555
         )
-        let data = try JSONEncoder().encode(SessionSnapshot(projects: [a, b], tabs: [aTab, bTab], windows: [], projectViews: [view]))
+        let parked = ProjectView(
+            projectID: b.id,
+            activeContainerID: .project(b.id),
+            activeTabID: bTab.id,
+            sidebarWidth: 275,
+            sidebarHidden: false,
+            isChangesPanelPresented: false,
+            changesPanelWidth: 480
+        )
+        let data = try JSONEncoder().encode(SessionSnapshot(
+            projects: [a, b], tabs: [aTab, bTab], windows: [], projectViews: [view, parked]
+        ))
         let session = WorkspaceSession()
         try session.restore(from: JSONDecoder().decode(SessionSnapshot.self, from: data))
         let selection = session.primarySelection
@@ -548,9 +620,10 @@ struct SessionSnapshotV6MigrationTests {
         #expect(selection.shownProjectID == a.id)
         #expect(selection.sidebarWidth == 399)
         #expect(selection.sidebarHidden)
-        #expect(!selection.isChangesPanelPresented)
+        #expect(selection.isChangesPanelPresented)
         #expect(selection.changesPanelWidth == 555)
-        // The window holds the project now: its view goes.
-        #expect(session.projectViews.isEmpty)
+        #expect(selection.activeTabID == aTab.id)
+        // The window consumes the view it opens and leaves the other project parked.
+        #expect(session.projectViews == [b.id: parked])
     }
 }

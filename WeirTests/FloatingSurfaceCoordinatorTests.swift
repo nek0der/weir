@@ -25,7 +25,7 @@ struct FloatingSurfaceRulesTests {
     }
 
     @Test func aWorkingSurface_closesTheCacheAndColorPanels_butLeavesARenameToEndItself() {
-        for kind in [FloatingSurfaceKind.commandPalette, .approvalCard, .notificationHistory, .review] {
+        for kind in [FloatingSurfaceKind.commandPalette, .approvalCard, .notificationHistory, .planUsage, .review, .titleBarMenu] {
             #expect(
                 FloatingSurfaceRules.surfacesToClose(
                     whenPresenting: kind,
@@ -60,7 +60,7 @@ struct FloatingSurfaceRulesTests {
     }
 
     @Test func workingSurfaces_keepTheCacheAndColorPanelsFromOpening() {
-        for working in [FloatingSurfaceKind.commandPalette, .approvalCard, .notificationHistory, .review] {
+        for working in [FloatingSurfaceKind.commandPalette, .approvalCard, .notificationHistory, .planUsage, .review, .titleBarMenu] {
             #expect(FloatingSurfaceRules.isOpeningBlocked(.promptCache, open: [working]))
             #expect(FloatingSurfaceRules.isOpeningBlocked(.containerColor, open: [working]))
             #expect(!FloatingSurfaceRules.isOpeningBlocked(.paneRename, open: [working]), "a rename is not one of them")
@@ -89,27 +89,31 @@ struct FloatingSurfaceCoordinatorTests {
         )
     }
 
-    @Test func colorPickerOpening_closesTheCachePanelAndEndsARename() {
+    @Test func colorPickerOpening_closesTheCachePanelAndEndsARename() throws {
         let cache = PromptCachePanelPresentation()
         let color = ContainerColorPresentation()
         var renameEnded = false
         let coordinator = FloatingSurfaceCoordinator(promptCache: cache, containerColor: color) { renameEnded = true }
         openCache(cache)
         color.open(projectID: UUID(), anchor: anchor)
+        try #require(cache.request != nil)
+        let colorRequest = try #require(color.request)
 
         coordinator.makeWay(for: .containerColor, open: [.promptCache, .containerColor, .paneRename])
         #expect(cache.request == nil)
-        #expect(color.request != nil)
+        #expect(color.request == colorRequest)
         #expect(renameEnded, "opened by keyboard or VoiceOver, nothing else would end it")
     }
 
-    @Test func commandPaletteOpening_closesBothPanels() {
+    @Test func commandPaletteOpening_closesBothPanels() throws {
         let cache = PromptCachePanelPresentation()
         let color = ContainerColorPresentation()
         var renameEnded = false
         let coordinator = FloatingSurfaceCoordinator(promptCache: cache, containerColor: color) { renameEnded = true }
         openCache(cache)
         color.open(projectID: UUID(), anchor: anchor)
+        try #require(cache.request != nil)
+        try #require(color.request != nil)
 
         coordinator.makeWay(for: .commandPalette, open: [.commandPalette, .promptCache, .containerColor, .paneRename])
         #expect(cache.request == nil)
@@ -151,9 +155,18 @@ struct FloatingSurfaceCoordinatorTests {
         cache.clockClicked(place: place, instance: UUID(), anchor: anchor, target: target)
         #expect(cache.request == nil, "a click is refused too")
         #expect(!cache.open(target: target, place: place, trigger: .automatic), "and the panel that opens by itself")
+        #expect(!cache.open(target: target, place: place, trigger: .accessibility))
+        #expect(cache.request == nil)
+
+        coordinator.updateGates(open: [])
+        let projectID = UUID()
+        color.open(projectID: projectID, anchor: anchor)
+        #expect(color.request?.projectID == projectID)
+        #expect(cache.open(target: target, place: place, trigger: .automatic))
+        #expect(cache.request?.target == target)
     }
 
-    @Test func makeWay_handlesEachNewlyPresentedSurfaceAgainstTheLiveSet() {
+    @Test func makeWay_handlesEachNewlyPresentedSurfaceAgainstTheLiveSet() throws {
         let cache = PromptCachePanelPresentation()
         let color = ContainerColorPresentation()
         let coordinator = FloatingSurfaceCoordinator(promptCache: cache, containerColor: color) {}
@@ -172,6 +185,7 @@ struct FloatingSurfaceCoordinatorTests {
             }
             return open
         }
+        try #require(live() == [.promptCache, .containerColor])
         // Both appeared in one update. In `FloatingSurfaceKind` order the
         // cache panel goes first and closes the color picker, which then has
         // nothing left to close.

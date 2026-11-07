@@ -223,20 +223,22 @@ enum AgentRecordFixtures {
             // tests run in parallel, and a child another test started
             // meanwhile would inherit the descriptor and hold the lock on
             // after this releases it.
-            descriptor = try open(AgentRecordFixtures.lockURL(for: url).path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-            #expect(descriptor >= 0)
-            #expect(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+            let descriptor = try open(AgentRecordFixtures.lockURL(for: url).path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+            guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+            guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+                let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+                close(descriptor)
+                throw error
+            }
+            self.descriptor = descriptor
         }
 
         deinit {
-            if descriptor >= 0 {
-                // Unlocked by name, as `AgentFileLock` does. A close alone
-                // lets go only once every copy of the descriptor has closed,
-                // and a child another test is starting holds one until its
-                // exec, close-on-exec or not.
-                flock(descriptor, LOCK_UN)
-                close(descriptor)
-            }
+            // A close alone releases the lock only once every copy of the
+            // descriptor has closed. A child another test is starting holds
+            // one until exec, even with close-on-exec.
+            flock(descriptor, LOCK_UN)
+            close(descriptor)
         }
     }
 

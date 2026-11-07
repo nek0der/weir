@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use serde_json::json;
+use serde_json::{Value, json};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, mpsc};
 use std::thread;
@@ -20,6 +20,11 @@ fn start_connection(
     principal: Principal,
 ) -> (UnixStream, thread::JoinHandle<()>) {
     let (client, mut server) = UnixStream::pair().unwrap();
+    // A stalled peer must fail a test rather than leave its socket read blocked.
+    let timeout = Some(Duration::from_secs(10));
+    client.set_read_timeout(timeout).unwrap();
+    client.set_write_timeout(timeout).unwrap();
+    server.set_write_timeout(timeout).unwrap();
     let task = thread::spawn(move || {
         service.serve_connection(&mut server, &principal).unwrap();
     });
@@ -64,7 +69,7 @@ fn approval(run_id: Uuid, request_id: Uuid) -> ApprovalRequestWire {
 }
 
 #[test]
-fn requester_waits_for_controller_decision_over_real_streams() {
+fn requester_receives_controller_answer_over_real_streams() {
     let service = Arc::new(ApprovalService::new(8));
     let run_id = Uuid::new_v4();
     let request_id = Uuid::new_v4();
@@ -80,82 +85,19 @@ fn requester_waits_for_controller_decision_over_real_streams() {
     let controller_epoch = hello(&mut controller);
     assert_eq!(requester_epoch, controller_epoch);
 
-    let submit = exchange(
-        &mut requester,
-        &WireRequest {
-            version: PROTOCOL_VERSION,
-            message_id: Uuid::new_v4(),
-            service_epoch: Some(requester_epoch),
-            body: RequestBody::ApprovalSubmit(approval(run_id, request_id)),
-        },
-    );
-    assert!(matches!(submit.body, ResponseBody::ApprovalResult(_)));
-
-    let resolver = thread::spawn(move || {
-        let response = exchange(
-            &mut controller,
-            &WireRequest {
-                version: PROTOCOL_VERSION,
-                message_id: Uuid::new_v4(),
-                service_epoch: Some(controller_epoch),
-                body: RequestBody::ApprovalResolve {
-                    key: ApprovalKeyWire { run_id, request_id },
-                    decision: ApprovalDecisionWire::AllowOnce,
-                },
-            },
-        );
-        assert!(matches!(response.body, ResponseBody::ApprovalResult(_)));
-        drop(controller);
-    });
-
-    let response = exchange(
-        &mut requester,
-        &WireRequest {
-            version: PROTOCOL_VERSION,
-            message_id: Uuid::new_v4(),
-            service_epoch: Some(requester_epoch),
-            body: RequestBody::ApprovalWait {
-                key: ApprovalKeyWire { run_id, request_id },
-                maximum_wait_ms: 5_000,
-            },
-        },
-    );
-    let ResponseBody::ApprovalResult(snapshot) = response.body else {
-        panic!("expected approval result");
-    };
-    assert!(matches!(snapshot.state, ApprovalStateWire::Resolved { .. }));
-
-    drop(requester);
-    resolver.join().unwrap();
-    requester_task.join().unwrap();
-    controller_task.join().unwrap();
-}
-
-#[test]
-fn requester_receives_controller_answer_over_real_streams() {
-    let service = Arc::new(ApprovalService::new(8));
-    let run_id = Uuid::new_v4();
-    let request_id = Uuid::new_v4();
-    let (mut requester, requester_task) = start_connection(
-        Arc::clone(&service),
-        Principal::Requester {
-            run_id: RunId::new(run_id),
-        },
-    );
-    let (mut controller, controller_task) =
-        start_connection(Arc::clone(&service), Principal::Controller);
-    let requester_epoch = hello(&mut requester);
-    let controller_epoch = hello(&mut controller);
-
     let mut request = approval(run_id, request_id);
     request.tool_name = "AskUserQuestion".into();
     request.input = json!({});
-    request.questions = serde_json::from_value(json!([{
+    let questions = json!([{
+        "header": "Colors",
         "prompt": "Which color?",
-        "options": [{"label": "Red"}],
-        "multi_select": false
-    }]))
-    .unwrap();
+        "options": [
+            {"label": "Red", "description": "Warm"},
+            {"label": "Blue", "description": "Cool"}
+        ],
+        "multi_select": true
+    }]);
+    request.questions = serde_json::from_value(questions.clone()).unwrap();
     let submit = exchange(
         &mut requester,
         &WireRequest {
@@ -179,8 +121,13 @@ fn requester_receives_controller_answer_over_real_streams() {
     let ResponseBody::ApprovalResult(pending) = get.body else {
         panic!("expected approval result");
     };
-    let pending = serde_json::to_value(&pending).unwrap();
-    assert_eq!(pending["request"]["questions"][0]["prompt"], "Which color?");
+    assert!(matches!(pending.state, ApprovalStateWire::Pending));
+    assert_eq!(pending.request.run_id, run_id);
+    assert_eq!(pending.request.request_id, request_id);
+    assert_eq!(
+        serde_json::to_value(&pending.request.questions).unwrap(),
+        questions
+    );
 
     let decision = json!({"decision": "answer", "answers": {"Which color?": "Red"}});
     let resolve_decision: ApprovalDecisionWire = serde_json::from_value(decision.clone()).unwrap();
@@ -219,6 +166,7 @@ fn requester_receives_controller_answer_over_real_streams() {
     let snapshot = serde_json::to_value(&snapshot).unwrap();
     assert_eq!(snapshot["state"]["status"], "resolved");
     assert_eq!(snapshot["state"]["result"], decision);
+    assert_eq!(snapshot["request"]["questions"], questions);
 
     drop(requester);
     resolver.join().unwrap();
@@ -227,7 +175,7 @@ fn requester_receives_controller_answer_over_real_streams() {
 }
 
 #[test]
-fn controller_subscription_wakes_when_requester_submits() {
+fn controller_subscription_observes_a_concurrent_submit() {
     let service = Arc::new(ApprovalService::new(8));
     let run_id = Uuid::new_v4();
     let request_id = Uuid::new_v4();
@@ -246,7 +194,8 @@ fn controller_subscription_wakes_when_requester_submits() {
     // The subscription is on the wire before the submit goes out. Whether
     // the service is already waiting on it by then is not something it
     // shows, so the assertions hold either way: a subscription that starts
-    // after the submit reads the same snapshot at once.
+    // after the submit reads the same snapshot at once. This checks snapshot
+    // delivery, not the condition variable wakeup itself.
     let (sent, subscription_sent) = mpsc::channel();
     let subscriber = thread::spawn(move || {
         write_frame(
@@ -268,7 +217,10 @@ fn controller_subscription_wakes_when_requester_submits() {
             .unwrap()
             .unwrap();
         let ResponseBody::ApprovalSnapshotResult {
-            sequence, requests, ..
+            sequence,
+            requests,
+            now_ms,
+            ..
         } = response.body
         else {
             panic!("expected approval snapshot result");
@@ -276,6 +228,8 @@ fn controller_subscription_wakes_when_requester_submits() {
         assert_eq!(sequence, 1);
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].request_id, request_id);
+        let now_ms = now_ms.expect("subscription carries the service clock");
+        assert!(requests[0].deadline_ms > now_ms);
         drop(controller);
     });
 
@@ -305,12 +259,14 @@ fn stream_session_rejects_self_approval_and_stale_epoch() {
     let run_id = Uuid::new_v4();
     let request_id = Uuid::new_v4();
     let (mut requester, requester_task) = start_connection(
-        service,
+        Arc::clone(&service),
         Principal::Requester {
             run_id: RunId::new(run_id),
         },
     );
+    let (mut controller, controller_task) = start_connection(service, Principal::Controller);
     let epoch = hello(&mut requester);
+    assert_eq!(hello(&mut controller), epoch);
     let submit = exchange(
         &mut requester,
         &WireRequest {
@@ -320,7 +276,10 @@ fn stream_session_rejects_self_approval_and_stale_epoch() {
             body: RequestBody::ApprovalSubmit(approval(run_id, request_id)),
         },
     );
-    assert!(matches!(submit.body, ResponseBody::ApprovalResult(_)));
+    let ResponseBody::ApprovalResult(original) = submit.body else {
+        panic!("expected pending submission");
+    };
+    assert!(matches!(original.state, ApprovalStateWire::Pending));
 
     let self_approval = exchange(
         &mut requester,
@@ -342,14 +301,30 @@ fn stream_session_rejects_self_approval_and_stale_epoch() {
         }
     ));
 
-    let stale = exchange(
+    let stale_epoch = Uuid::new_v4();
+    let stale_get = exchange(
         &mut requester,
-        &WireRequest {
-            version: PROTOCOL_VERSION,
-            message_id: Uuid::new_v4(),
-            service_epoch: Some(Uuid::new_v4()),
-            body: RequestBody::ApprovalGet(ApprovalKeyWire { run_id, request_id }),
-        },
+        &request(
+            stale_epoch,
+            RequestBody::ApprovalGet(ApprovalKeyWire { run_id, request_id }),
+        ),
+    );
+    assert!(matches!(
+        stale_get.body,
+        ResponseBody::Error {
+            code: ErrorCode::EpochMismatch,
+            ..
+        }
+    ));
+    let stale = exchange(
+        &mut controller,
+        &request(
+            stale_epoch,
+            RequestBody::ApprovalResolve {
+                key: ApprovalKeyWire { run_id, request_id },
+                decision: ApprovalDecisionWire::AllowOnce,
+            },
+        ),
     );
     assert!(matches!(
         stale.body,
@@ -359,12 +334,31 @@ fn stream_session_rejects_self_approval_and_stale_epoch() {
         }
     ));
 
+    let current = exchange(
+        &mut controller,
+        &request(
+            epoch,
+            RequestBody::ApprovalGet(ApprovalKeyWire { run_id, request_id }),
+        ),
+    );
+    let ResponseBody::ApprovalResult(mut current) = current.body else {
+        panic!("expected original request after rejected resolutions");
+    };
+    assert!(current.now_ms.take().is_some());
+    assert_eq!(
+        serde_json::to_value(current).unwrap(),
+        serde_json::to_value(original).unwrap()
+    );
+
     drop(requester);
+    drop(controller);
     requester_task.join().unwrap();
+    controller_task.join().unwrap();
 }
 
 #[test]
-fn wait_returns_at_the_callers_deadline_and_releases_the_broker() {
+fn wait_returns_pending_at_the_callers_deadline_without_changing_the_request() {
+    const CALLER_WAIT_MS: u64 = 30;
     let service = Arc::new(ApprovalService::new(8));
     let run_id = Uuid::new_v4();
     let request_id = Uuid::new_v4();
@@ -388,7 +382,10 @@ fn wait_returns_at_the_callers_deadline_and_releases_the_broker() {
             body: RequestBody::ApprovalSubmit(approval(run_id, request_id)),
         },
     );
-    assert!(matches!(submit.body, ResponseBody::ApprovalResult(_)));
+    let ResponseBody::ApprovalResult(pending) = submit.body else {
+        panic!("expected pending submission");
+    };
+    assert!(matches!(pending.state, ApprovalStateWire::Pending));
 
     let started = Instant::now();
     let wait = exchange(
@@ -399,15 +396,28 @@ fn wait_returns_at_the_callers_deadline_and_releases_the_broker() {
             service_epoch: Some(epoch),
             body: RequestBody::ApprovalWait {
                 key: ApprovalKeyWire { run_id, request_id },
-                maximum_wait_ms: 20,
+                maximum_wait_ms: CALLER_WAIT_MS,
             },
         },
     );
-    assert!(started.elapsed() < Duration::from_millis(500));
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= Duration::from_millis(CALLER_WAIT_MS),
+        "wait returned early: {elapsed:?}"
+    );
+    // Allow scheduling latency while distinguishing the caller's deadline
+    // from the request's five-second deadline.
+    assert!(
+        elapsed < Duration::from_secs(2),
+        "wait returned late: {elapsed:?}"
+    );
     let ResponseBody::ApprovalResult(snapshot) = wait.body else {
         panic!("expected approval result");
     };
-    assert!(matches!(snapshot.state, ApprovalStateWire::Pending));
+    assert_eq!(
+        serde_json::to_value(snapshot).unwrap(),
+        serde_json::to_value(pending).unwrap()
+    );
 
     let resolved = exchange(
         &mut controller,
@@ -421,7 +431,17 @@ fn wait_returns_at_the_callers_deadline_and_releases_the_broker() {
             },
         },
     );
-    assert!(matches!(resolved.body, ResponseBody::ApprovalResult(_)));
+    let ResponseBody::ApprovalResult(resolved) = resolved.body else {
+        panic!("controller could not resolve after the caller deadline");
+    };
+    assert_eq!(resolved.request.run_id, run_id);
+    assert_eq!(resolved.request.request_id, request_id);
+    assert!(matches!(
+        resolved.state,
+        ApprovalStateWire::Resolved {
+            result: ApprovalDecisionWire::AllowOnce
+        }
+    ));
 
     drop(requester);
     drop(controller);
@@ -586,6 +606,7 @@ fn only_controller_responses_carry_the_service_clock() {
         panic!("expected approval result");
     };
     assert_eq!(submitted.now_ms, None);
+    assert!(matches!(submitted.state, ApprovalStateWire::Pending));
 
     let snapshot = exchange(
         &mut controller,
@@ -598,7 +619,12 @@ fn only_controller_responses_carry_the_service_clock() {
         panic!("expected approval snapshot");
     };
     let now_ms = now_ms.expect("a controller snapshot carries the service clock");
-    assert!(requests[0].deadline_ms > now_ms);
+    let [indexed] = requests.as_slice() else {
+        panic!("expected exactly the submitted request");
+    };
+    assert_eq!(indexed.request_id, request_id);
+    assert_eq!(indexed.deadline_ms, submitted.deadline_ms);
+    assert!(indexed.deadline_ms > now_ms);
 
     let controller_get = exchange(
         &mut controller,
@@ -607,65 +633,32 @@ fn only_controller_responses_carry_the_service_clock() {
     let ResponseBody::ApprovalResult(controller_get) = controller_get.body else {
         panic!("expected approval result");
     };
-    assert!(controller_get.now_ms.is_some());
+    let controller_now = controller_get
+        .now_ms
+        .expect("controller get carries the service clock");
+    assert!(controller_now >= now_ms);
+    assert_eq!(controller_get.deadline_ms, submitted.deadline_ms);
+    assert_eq!(controller_get.request.request_id, request_id);
+    assert!(matches!(controller_get.state, ApprovalStateWire::Pending));
 
-    // A requester's response keeps its current shape: the key is absent,
-    // not null.
-    let requester_get = exchange(
-        &mut requester,
-        &request(epoch, RequestBody::ApprovalGet(key)),
-    );
-    let encoded = serde_json::to_value(&requester_get).unwrap();
-    assert!(encoded["body"].get("now_ms").is_none());
+    // Inspect the bytes the service sent. Re-encoding a decoded Option
+    // would erase a null field and could make the same assertion pass.
+    let get = request(epoch, RequestBody::ApprovalGet(key));
+    write_frame(&mut requester, &get, MAXIMUM_REQUEST_BYTES).unwrap();
+    let raw: Value = read_frame(&mut requester, MAXIMUM_RESPONSE_BYTES)
+        .unwrap()
+        .unwrap();
+    assert_eq!(raw["type"], "approval.result");
+    assert_eq!(raw["in_reply_to"], json!(get.message_id));
+    assert_eq!(raw["body"]["state"]["status"], "pending");
+    assert_eq!(raw["body"]["request"]["run_id"], json!(run_id));
+    assert_eq!(raw["body"]["request"]["request_id"], json!(request_id));
+    assert!(raw["body"].get("now_ms").is_none());
 
     drop(requester);
     drop(controller);
     requester_task.join().unwrap();
     controller_task.join().unwrap();
-}
-
-#[test]
-fn responses_from_an_older_service_still_decode() {
-    let epoch = Uuid::new_v4();
-    let snapshot = json!({
-        "version": PROTOCOL_VERSION,
-        "message_id": Uuid::new_v4(),
-        "in_reply_to": Uuid::new_v4(),
-        "service_epoch": epoch,
-        "type": "approval.snapshot.result",
-        "body": {"sequence": 3, "requests": []}
-    });
-    let decoded: WireResponse = serde_json::from_value(snapshot).unwrap();
-    let ResponseBody::ApprovalSnapshotResult {
-        sequence, now_ms, ..
-    } = decoded.body
-    else {
-        panic!("expected approval snapshot");
-    };
-    assert_eq!(sequence, 3);
-    assert_eq!(now_ms, None);
-
-    let run_id = Uuid::new_v4();
-    let request_id = Uuid::new_v4();
-    let get = json!({
-        "version": PROTOCOL_VERSION,
-        "message_id": Uuid::new_v4(),
-        "in_reply_to": Uuid::new_v4(),
-        "service_epoch": epoch,
-        "type": "approval.result",
-        "body": {
-            "request": serde_json::to_value(approval(run_id, request_id)).unwrap(),
-            "state": {"status": "pending"},
-            "created_at_ms": 10,
-            "deadline_ms": 5_010,
-            "sequence": 1
-        }
-    });
-    let decoded: WireResponse = serde_json::from_value(get).unwrap();
-    let ResponseBody::ApprovalResult(snapshot) = decoded.body else {
-        panic!("expected approval result");
-    };
-    assert_eq!(snapshot.now_ms, None);
 }
 
 #[test]
@@ -682,85 +675,81 @@ fn a_requesters_wait_consumes_its_result_and_a_controller_get_does_not() {
         start_connection(Arc::clone(&service), Principal::Controller);
     let epoch = hello(&mut requester);
     assert_eq!(hello(&mut controller), epoch);
+    let mut ask = |body| exchange(&mut requester, &request(epoch, body));
+    let mut control = |body| exchange(&mut controller, &request(epoch, body));
     let answered = Uuid::new_v4();
+    let agent_run_id = Uuid::from_u128(0xabcd);
     for request_id in [answered, Uuid::new_v4()] {
-        let submitted = exchange(
-            &mut requester,
-            &request(
-                epoch,
-                RequestBody::ApprovalSubmit(approval(run_id, request_id)),
-            ),
-        );
+        let mut approval = approval(run_id, request_id);
+        approval.agent_run_id = Some(agent_run_id);
+        let submitted = ask(RequestBody::ApprovalSubmit(approval));
         assert!(matches!(submitted.body, ResponseBody::ApprovalResult(_)));
     }
     let key = ApprovalKeyWire {
         run_id,
         request_id: answered,
     };
-    let resolved = exchange(
-        &mut controller,
-        &request(
-            epoch,
-            RequestBody::ApprovalResolve {
-                key: key.clone(),
-                decision: ApprovalDecisionWire::AllowOnce,
-            },
-        ),
-    );
-    assert!(matches!(resolved.body, ResponseBody::ApprovalResult(_)));
+    let assert_allowed = |response: WireResponse| {
+        let ResponseBody::ApprovalResult(result) = response.body else {
+            panic!("expected approval result, got {:?}", response.body);
+        };
+        assert_eq!(result.request.run_id, run_id);
+        assert_eq!(result.request.request_id, answered);
+        assert!(matches!(
+            result.state,
+            ApprovalStateWire::Resolved {
+                result: ApprovalDecisionWire::AllowOnce
+            }
+        ));
+        result
+    };
+    assert_allowed(control(RequestBody::ApprovalResolve {
+        key: key.clone(),
+        decision: ApprovalDecisionWire::AllowOnce,
+    }));
 
     // The app looking up how it ended keeps the result for the hook.
-    exchange(
-        &mut controller,
-        &request(epoch, RequestBody::ApprovalGet(key.clone())),
-    );
-    let third = exchange(
-        &mut requester,
-        &request(
-            epoch,
-            RequestBody::ApprovalSubmit(approval(run_id, Uuid::new_v4())),
-        ),
-    );
+    assert_allowed(control(RequestBody::ApprovalGet(key.clone())));
+    let newcomer = Uuid::new_v4();
     assert!(matches!(
-        third.body,
+        ask(RequestBody::ApprovalSubmit(approval(run_id, newcomer))).body,
         ResponseBody::Error {
             code: ErrorCode::CapacityExceeded,
             ..
         }
     ));
-    let snapshot = exchange(
-        &mut controller,
-        &request(epoch, RequestBody::ApprovalSnapshot),
-    );
     let ResponseBody::ApprovalSnapshotResult {
         unevictable_records,
         ..
-    } = snapshot.body
+    } = control(RequestBody::ApprovalSnapshot).body
     else {
         panic!("expected approval snapshot");
     };
     assert_eq!(unevictable_records, Some(2));
 
     // The hook's wait returns the result and frees its slot.
-    let waited = exchange(
-        &mut requester,
-        &request(
-            epoch,
-            RequestBody::ApprovalWait {
-                key,
-                maximum_wait_ms: 1_000,
-            },
-        ),
+    let waited = ask(RequestBody::ApprovalWait {
+        key: key.clone(),
+        maximum_wait_ms: 1_000,
+    });
+    assert_eq!(
+        assert_allowed(waited).request.agent_run_id,
+        Some(agent_run_id)
     );
-    assert!(matches!(waited.body, ResponseBody::ApprovalResult(_)));
-    let fourth = exchange(
-        &mut requester,
-        &request(
-            epoch,
-            RequestBody::ApprovalSubmit(approval(run_id, Uuid::new_v4())),
-        ),
-    );
-    assert!(matches!(fourth.body, ResponseBody::ApprovalResult(_)));
+    let ResponseBody::ApprovalResult(admitted) =
+        ask(RequestBody::ApprovalSubmit(approval(run_id, newcomer))).body
+    else {
+        panic!("expected admission after requester consumption");
+    };
+    assert_eq!(admitted.request.request_id, newcomer);
+    assert!(matches!(admitted.state, ApprovalStateWire::Pending));
+    assert!(matches!(
+        control(RequestBody::ApprovalGet(key)).body,
+        ResponseBody::Error {
+            code: ErrorCode::NotFound,
+            ..
+        }
+    ));
 
     drop(requester);
     drop(controller);

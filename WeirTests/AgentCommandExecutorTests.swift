@@ -95,6 +95,7 @@ struct AgentCommandExecutorTests {
             try writeRecord(fixture)
             try writeHint(fixture, runID: Self.run)
 
+            let original = try Data(contentsOf: fixture.record)
             let outcomes = try fixture.executor.run(commands(retirementChain(hintRunID: Self.run)))
             #expect(outcomes.count == 2)
 
@@ -106,8 +107,10 @@ struct AgentCommandExecutorTests {
             let retired = try FileManager.default.contentsOfDirectory(
                 atPath: fixture.state.appendingPathComponent("retired").path
             )
-            #expect(retired.count == 1)
+            try #require(retired.count == 1)
             #expect(retired[0].hasPrefix(Self.run))
+            let moved = fixture.state.appendingPathComponent("retired").appendingPathComponent(retired[0])
+            #expect(try Data(contentsOf: moved) == original)
         }
     }
 
@@ -118,12 +121,13 @@ struct AgentCommandExecutorTests {
             try writeRecord(fixture)
             try writeHint(fixture, runID: "SOMEONE-ELSE")
 
+            let originalHint = try Data(contentsOf: fixture.hint)
             let outcomes = try fixture.executor.run(commands(retirementChain(hintRunID: Self.run)))
             #expect(outcomes.count == 2)
 
             // The pane has moved on, so the hint stays where it is. The dead
             // record still has to go or it would be re-examined forever.
-            #expect(FileManager.default.fileExists(atPath: fixture.hint.path))
+            #expect(try Data(contentsOf: fixture.hint) == originalHint)
             #expect(!FileManager.default.fileExists(atPath: fixture.record.path))
         }
     }
@@ -136,8 +140,15 @@ struct AgentCommandExecutorTests {
             try writeRecord(fixture, revision: 5)
             try writeHint(fixture, runID: Self.run)
 
-            try fixture.executor.run(commands(retirementChain(hintRunID: Self.run)))
-            #expect(FileManager.default.fileExists(atPath: fixture.record.path))
+            let original = try Data(contentsOf: fixture.record)
+            let outcomes = try fixture.executor.run(commands(retirementChain(hintRunID: Self.run)))
+            try #require(outcomes.count == 2)
+            guard case .mismatched = outcomes[1] else {
+                Issue.record("expected the stale record to be reported as mismatched")
+                return
+            }
+            #expect(try Data(contentsOf: fixture.record) == original)
+            #expect(!FileManager.default.fileExists(atPath: fixture.state.appendingPathComponent("retired").path))
         }
     }
 
@@ -184,8 +195,35 @@ struct AgentCommandExecutorTests {
             let outcomes = try withExtendedLifetime(held) {
                 try fixture.executor.run(commands(retirementChain(hintRunID: Self.run)))
             }
-            #expect(outcomes.count == 1)
+            try #require(outcomes.count == 1)
+            guard case .busy = outcomes[0] else {
+                Issue.record("expected the held hint lock to be reported as busy")
+                return
+            }
             #expect(FileManager.default.fileExists(atPath: fixture.record.path))
+            #expect(FileManager.default.fileExists(atPath: fixture.hint.path))
+        }
+    }
+
+    @Test func heldLock_failsWhenTheParentIsMissingOrTheSidecarIsHeld() throws {
+        try withTempDir { root in
+            let missing = root.appendingPathComponent("missing/record")
+            let missingError = #expect(throws: POSIXError.self) {
+                _ = try AgentRecordFixtures.HeldLock(on: missing)
+            }
+            #expect(missingError?.code == .ENOENT)
+
+            let record = root.appendingPathComponent("record")
+            do {
+                let held = try AgentRecordFixtures.HeldLock(on: record)
+                withExtendedLifetime(held) {
+                    let busyError = #expect(throws: POSIXError.self) {
+                        _ = try AgentRecordFixtures.HeldLock(on: record)
+                    }
+                    #expect(busyError?.code == .EWOULDBLOCK)
+                }
+            }
+            _ = try AgentRecordFixtures.HeldLock(on: record)
         }
     }
 
@@ -200,10 +238,12 @@ struct AgentCommandExecutorTests {
             // cap.
             let stamp = Int(Date().timeIntervalSince1970)
             let directories = AgentDirectories(state: fixture.state, sessions: fixture.sessions, cwdEvents: nil)
+            var names: [String] = []
             for index in 0..<5 {
                 let name = try #require(
                     directories.retiredRecordName(storageID: UUID().uuidString, retiredAt: stamp - index)
                 )
+                names.append(name)
                 try Data("{}".utf8).write(to: retired.appendingPathComponent(name))
             }
             // A name that does not parse says nothing about when it was
@@ -221,8 +261,7 @@ struct AgentCommandExecutorTests {
             try fixture.executor.run(commands(json))
 
             let remaining = try FileManager.default.contentsOfDirectory(atPath: retired.path)
-            #expect(remaining.filter { $0 != "stray.json" }.count == 2)
-            #expect(remaining.contains("stray.json"))
+            #expect(Set(remaining) == Set(names.prefix(2)).union(["stray.json"]))
             #expect(FileManager.default.fileExists(atPath: fixture.record.path))
         }
     }

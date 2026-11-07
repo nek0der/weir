@@ -17,29 +17,46 @@ struct UsageLimitTests {
     }
 
     @Test func badge_readsTheLimitFromTheProjection() throws {
-        let json = #"{"state":"error","updatedAt":"2026-10-13T05:00:00Z","#
-            + #""usageLimit":{"resetsAt":"2026-10-13T06:40:00Z","window":"five_hour"}}"#
-        let badge = try JSONDecoder().decode(AgentProjectedBadge.self, from: Data(json.utf8)).asAgentBadge
-        #expect(badge.usageLimit == UsageLimit(resetAt: AgentDateParsing.parseISO8601("2026-10-13T06:40:00Z"), window: "five_hour"))
-    }
-
-    /// A shape this build cannot read costs the time, never the badge or
-    /// the limit.
-    @Test func badge_aLimitItCannotReadStillStands() throws {
-        let json = #"{"state":"error","updatedAt":"2026-10-13T05:00:00Z","usageLimit":{"resetsAt":7}}"#
-        let badge = try JSONDecoder().decode(AgentProjectedBadge.self, from: Data(json.utf8)).asAgentBadge
-        #expect(badge.usageLimit == UsageLimit(resetAt: nil, window: nil))
-        let none = #"{"state":"error","updatedAt":"2026-10-13T05:00:00Z"}"#
-        #expect(try JSONDecoder().decode(AgentProjectedBadge.self, from: Data(none.utf8)).asAgentBadge.usageLimit == nil)
+        let reset = Date(timeIntervalSince1970: 1_791_873_600)
+        let cases: [(json: String, expected: UsageLimit?)] = [
+            (
+                #"{"resetsAt":"2026-10-13T06:40:00Z","window":"five_hour"}"#,
+                UsageLimit(resetAt: reset, window: "five_hour", scope: .account)
+            ),
+            (
+                #"{"resetsAt":7,"window":"five_hour","scope":"upstream","label":"Over"}"#,
+                UsageLimit(window: "five_hour", scope: .upstream, label: "Over")
+            ),
+            (
+                #"{"resetsAt":"invalid","window":"seven_day_opus","label":"Over"}"#,
+                UsageLimit(window: "seven_day_opus", scope: .model, label: "Over")
+            ),
+            (
+                #"{"resetsAt":"2026-10-13T06:40:00Z","scope":"from-a-newer-build","label":"Over"}"#,
+                UsageLimit(resetAt: reset, scope: .upstream, label: "Over")
+            ),
+            (#"{"window":"seven_day_sonnet"}"#, UsageLimit(window: "seven_day_sonnet", scope: .model)),
+            (#"{"window":"seven_day_opus","scope":"account"}"#, UsageLimit(window: "seven_day_opus", scope: .account)),
+            ("7", UsageLimit()),
+            ("{}", UsageLimit()),
+            ("null", nil)
+        ]
+        for sample in cases {
+            let badge = try runtime(provider: "opencode", badge: ",\"usageLimit\":\(sample.json)").badge.asAgentBadge
+            #expect(badge.state == .error, "\(sample.json)")
+            #expect(badge.usageLimit == sample.expected, "\(sample.json)")
+        }
+        #expect(try runtime(provider: "opencode").badge.asAgentBadge.usageLimit == nil)
     }
 
     @Test func reducer_anErrorAtTheLimitIsAUsageLimitStop() {
         let limited = Self.runtime("r1", limit: UsageLimit(resetAt: Self.reset, window: "five_hour"))
         let other = Self.runtime("r2", limit: nil)
         let (queue, _) = AttentionQueueReducer.reduce(AttentionQueue(), input: .init(runtimes: [limited, other]))
-        let kinds = queue.items.map(\.kind)
-        #expect(kinds.contains(.stop(.usageLimit(UsageLimit(resetAt: Self.reset, window: "five_hour")))))
-        #expect(kinds.contains(.stop(.error("rate_limit"))))
+        #expect(queue.items.count == 2)
+        #expect(queue.items.first { $0.subject.runtimeID == "r1" }?.kind ==
+            .stop(.usageLimit(UsageLimit(resetAt: Self.reset, window: "five_hour"))))
+        #expect(queue.items.first { $0.subject.runtimeID == "r2" }?.kind == .stop(.error("rate_limit")))
         #expect(queue.counts().stops == 2)
     }
 
@@ -74,14 +91,24 @@ struct UsageLimitTests {
     /// run's next turn. The stop itself stays. A prompt taken, a session
     /// started, a turn from before the stop, another provider's turn, or a
     /// model's own weekly limit lifts nothing.
-    @Test func limits_aTurnServedAfterTheStop_liftsTheAccountWideLimit() {
-        let limited = Self.runtime("r1", limit: UsageLimit(resetAt: nil, window: "five_hour"))
-        var stopped = AttentionQueue()
-        (stopped, _) = AttentionQueueReducer.reduce(stopped, input: .init(runtimes: [limited]))
-        #expect(UsageLimits(queue: stopped).accountWide(of: .claude).count == 1)
+    @Test(arguments: [nil, Self.reset] as [Date?])
+    func limits_aTurnServedAfterTheStop_liftsTheAccountWideLimit(resetAt: Date?) throws {
+        let limit = UsageLimit(resetAt: resetAt, window: "five_hour")
+        let limited = Self.runtime("r1", limit: limit)
+        let otherLimit = UsageLimit(resetAt: Self.reset)
+        let other = Self.runtime("codex", provider: .codex, limit: otherLimit)
+        let stopped = AttentionQueueReducer.reduce(AttentionQueue(), input: .init(runtimes: [limited, other])).0
+        let original = try #require(stopped.items.first { $0.subject.runtimeID == "r1" })
+        #expect(original.kind == .stop(.usageLimit(limit)))
+        #expect(UsageLimits(queue: stopped).accountWide(of: .claude) == [limit])
+        var notices: [AgentKind: Date] = [.codex: Self.reset]
+        if let resetAt {
+            notices[.claude] = resetAt
+        }
+        #expect(UsageLimits(queue: stopped).pendingResetNotifications(isEnabled: true, now: Self.start) == notices)
 
         func after(_ runtime: RuntimeFact) -> AttentionQueue {
-            AttentionQueueReducer.reduce(stopped, input: .init(runtimes: [limited, runtime])).0
+            AttentionQueueReducer.reduce(stopped, input: .init(runtimes: [limited, other, runtime])).0
         }
         let later = Self.start.addingTimeInterval(60)
         for runtime in [
@@ -90,18 +117,20 @@ struct UsageLimitTests {
             RuntimeFact.test("r2", .finished, updatedAt: Self.start),
             RuntimeFact.test("r2", .finished, provider: .codex, updatedAt: later)
         ] {
-            #expect(UsageLimits(queue: after(runtime)).accountWide(of: .claude).count == 1)
+            #expect(UsageLimits(queue: after(runtime)).accountWide(of: .claude) == [limit])
         }
 
         let lifted = after(RuntimeFact.test("r2", .finished, updatedAt: later))
-        #expect(UsageLimits(queue: lifted).limits.isEmpty)
-        #expect(lifted.counts().stops == 1)
-        // Its next turn under way, the limit stays lifted.
+        #expect(UsageLimits(queue: lifted).limits == [.codex: [otherLimit]])
+        #expect(lifted.items.first { $0.id == original.id } == original)
+        #expect(lifted.counts().stops == 2)
+        #expect(UsageLimits(queue: lifted).pendingResetNotifications(isEnabled: true, now: later) == [.codex: Self.reset])
         let next = AttentionQueueReducer.reduce(
             lifted,
-            input: .init(runtimes: [limited, RuntimeFact.test("r2", .running, updatedAt: later.addingTimeInterval(5))])
+            input: .init(runtimes: [limited, other, RuntimeFact.test("r2", .running, updatedAt: later.addingTimeInterval(5))])
         ).0
-        #expect(UsageLimits(queue: next).limits.isEmpty)
+        #expect(UsageLimits(queue: next).limits == [.codex: [otherLimit]])
+        #expect(next.items.first { $0.id == original.id } == original)
 
         let opus = AttentionItem.testUsageLimitStop(UsageLimit(resetAt: Self.reset, window: "seven_day_opus"), arrivedAt: Self.start)
         #expect(!UsageLimits.isLifted(opus, by: RuntimeFact.test("r2", .finished, updatedAt: later)))
@@ -148,10 +177,12 @@ struct UsageLimitTests {
         #expect(StopReasonText.usageLimit(UsageLimit(), locale: en, now: Self.start) == "Usage limit reached")
         #expect(StopReasonText.usageLimit(UsageLimit(resetAt: Self.start), locale: en, now: Self.start) == "Usage limit reached")
         let fiveHour = UsageLimit(resetAt: Self.reset, window: "five_hour")
-        #expect(StopReasonText.usageLimit(fiveHour, locale: en, now: Self.start).hasPrefix("5-hour limit reached · resets "))
+        #expect(StopReasonText.usageLimit(fiveHour, locale: en, now: Self.start) ==
+            "5-hour limit reached · resets \(StopReasonText.resetTime(Self.reset, locale: en, now: Self.start))")
         #expect(StopReasonText.usageLimit(UsageLimit(window: "seven_day"), locale: en, now: Self.start) == "Weekly limit reached")
         #expect(StopReasonText.usageLimit(UsageLimit(), locale: ja, now: Self.start) == "利用上限に達しました")
-        #expect(StopReasonText.usageLimit(fiveHour, locale: ja, now: Self.start).hasPrefix("5 時間枠の上限に達しました · "))
+        #expect(StopReasonText.usageLimit(fiveHour, locale: ja, now: Self.start) ==
+            "5 時間枠の上限に達しました · \(StopReasonText.resetTime(Self.reset, locale: ja, now: Self.start)) に解除")
         #expect(StopReasonText.make(.usageLimit(UsageLimit()), locale: en, now: Self.start) == "Stopped: Usage limit reached")
     }
 
@@ -163,20 +194,25 @@ struct UsageLimitTests {
         let today = now.addingTimeInterval(3 * 3600 + 40 * 60)
         let tomorrow = now.addingTimeInterval(24 * 3600)
         #expect(StopReasonText.resetTime(today, locale: en, now: now, calendar: calendar) == "12:40\u{202F}PM")
-        #expect(StopReasonText.resetTime(tomorrow, locale: en, now: now, calendar: calendar).hasPrefix("Wed"))
+        #expect(StopReasonText.resetTime(tomorrow, locale: en, now: now, calendar: calendar) == "Wed 9:00\u{202F}AM")
         let ja = Locale(identifier: "ja")
         #expect(StopReasonText.resetTime(today, locale: ja, now: now, calendar: calendar) == "12:40")
-        #expect(StopReasonText.resetTime(tomorrow, locale: ja, now: now, calendar: calendar).contains("水"))
+        #expect(StopReasonText.resetTime(tomorrow, locale: ja, now: now, calendar: calendar) == "水 9:00")
     }
 
     @Test func chip_goesOnceAKnownResetHasPassed() {
         let en = Locale(identifier: "en_US")
         let limit = UsageLimit(resetAt: Self.reset)
-        #expect(SessionRowFactText.usageLimitChip([limit], locale: en, now: Self.start)?.hasPrefix("Limit · ") == true)
+        #expect(SessionRowFactText.usageLimitChip([limit], locale: en, now: Self.start) ==
+            "Limit · \(StopReasonText.resetTime(Self.reset, locale: en, now: Self.start))")
+        #expect(SessionRowFactText.usageLimitSpoken([limit], locale: en, now: Self.start) ==
+            "Usage limit reached · resets \(StopReasonText.resetTime(Self.reset, locale: en, now: Self.start))")
         #expect(SessionRowFactText.usageLimitChip([limit], locale: en, now: Self.reset) == nil)
         #expect(SessionRowFactText.usageLimitSpoken([limit], locale: en, now: Self.reset) == nil)
         #expect(SessionRowFactText.usageLimitChip([limit, UsageLimit()], locale: en, now: Self.reset) == "Limit")
+        #expect(SessionRowFactText.usageLimitSpoken([limit, UsageLimit()], locale: en, now: Self.reset) == "Usage limit reached")
         #expect(SessionRowFactText.usageLimitChip([], locale: en, now: Self.start) == nil)
+        #expect(SessionRowFactText.usageLimitSpoken([], locale: en, now: Self.start) == nil)
     }
 
     @Test func badge_keepsTheLimitThroughPersistence() throws {
@@ -186,9 +222,9 @@ struct UsageLimitTests {
     }
 
     @Test func sidebar_everyRowWithALimitedAgentShowsTheChip() {
-        func row(_ name: String, _ provider: AgentKind) -> SessionSidebarModel.RowInput {
+        func row(_ name: String, _ providers: [AgentKind]) -> SessionSidebarModel.RowInput {
             var fact = SessionRowFact.Input()
-            fact.agents = [.init(provider: provider, state: .idle, detail: nil)]
+            fact.agents = providers.map { .init(provider: $0, state: .idle, detail: nil) }
             return SessionSidebarModel.RowInput(
                 container: .worktree(projectID: UUID(), worktreeID: UUID()),
                 name: name,
@@ -207,17 +243,21 @@ struct UsageLimitTests {
             arrivedAt: Self.start
         )
         let model = SessionSidebarModel(
-            rows: [row("a", .claude), row("b", .codex)],
+            rows: [row("a", [.claude]), row("b", [.claude]), row("mixed", [.codex, .claude]), row("other", [.codex])],
             activeContainer: .loose,
             usageLimits: UsageLimits(items: [stop]),
             locale: Locale(identifier: "en_US")
         )
         let en = Locale(identifier: "en_US")
-        #expect(model.rows.map { SessionRowFactText.usageLimitChip($0.usageLimits, locale: en, now: Self.start) } == ["Limit", nil])
-        #expect(SessionRowFactText
-            .usageLimitSpoken(model.rows.first?.usageLimits ?? [], locale: en, now: Self.start) == "Usage limit reached")
-        #expect(SessionRowFactText.spokenLabel(for: model.rows[0], projectName: nil, now: Self.start, locale: en)
-            .contains("Usage limit reached"))
+        #expect(model.rows.map(\.name) == ["a", "b", "mixed", "other"])
+        #expect(model.rows.map(\.usageLimits) == [[UsageLimit()], [UsageLimit()], [UsageLimit()], []])
+        #expect(model.rows.map { SessionRowFactText.usageLimitChip($0.usageLimits, locale: en, now: Self.start) } ==
+            ["Limit", "Limit", "Limit", nil])
+        #expect(model.rows.map { SessionRowFactText.usageLimitSpoken($0.usageLimits, locale: en, now: Self.start) } ==
+            ["Usage limit reached", "Usage limit reached", "Usage limit reached", nil])
+        #expect(model.rows.map {
+            SessionRowFactText.spokenLabel(for: $0, projectName: nil, now: Self.start, locale: en).contains("Usage limit reached")
+        } == [true, true, true, false])
     }
 
     /// The stopped row names its reset only while it is ahead, against the
@@ -246,13 +286,27 @@ struct UsageLimitTests {
 
     // MARK: - Whom a limit holds
 
-    @Test func aLimitOnOneServiceMarksNoOtherAgent_andOffersNoWaitInPlaceOfGoingOn() {
+    @Test func aLimitOnOneServiceMarksNoOtherAgent_andOffersNoWaitInPlaceOfGoingOn() throws {
         let upstream = UsageLimit(resetAt: Self.reset, scope: .upstream, label: "Free usage limit reached")
-        let item = AttentionItem.testUsageLimitStop(upstream, arrivedAt: Self.start)
+        let item = AttentionItem.testUsageLimitStop(upstream, provider: .opencode, arrivedAt: Self.start)
         let limits = UsageLimits(items: [item])
-        #expect(!upstream.isAccountWide)
-        #expect(limits.accountWide(of: item.subject.provider ?? .claude).isEmpty)
-        #expect(UsageLimitResetNotice.of(item, in: limits, isRequested: { _ in false }, now: Self.reset.addingTimeInterval(-60)) == nil)
+        #expect(limits.limits == [.opencode: [upstream]])
+        for provider in AgentKind.allCases {
+            #expect(limits.accountWide(of: provider).isEmpty)
+        }
+        for requested in [false, true] {
+            let notice = UsageLimitResetNotice.of(item, in: limits, isRequested: { _ in requested }, now: Self.start)
+            #expect(notice == nil)
+            let row = NeedsAttentionListModel.Row(
+                id: item.id, state: .stopped, title: "OpenCode", place: nil,
+                fact: "Free usage limit reached", placeLead: "", action: nil, arrivedAt: Self.start
+            )
+            let menu = MenuBarModel(rows: [row], request: { _ in nil }, canResume: { $0 == item.id }, resetNotice: { _ in notice })
+            let entry = try #require(menu.items.first)
+            #expect(menu.items.count == 1)
+            #expect(entry.actions == [.resume])
+            #expect(entry.note == nil)
+        }
     }
 
     @Test func aClaudeModelsWeeklyLimit_keepsItsNotice() {
@@ -265,25 +319,42 @@ struct UsageLimitTests {
         }, now: Self.reset.addingTimeInterval(-60)) == .offered)
     }
 
-    @Test func aScopeThisBuildDoesNotKnow_readsTheSameKept_asProjected() throws {
-        let kept = try JSONDecoder().decode(UsageLimit.self, from: Data(#"{"scope":"from-a-newer-build"}"#.utf8))
-        #expect(kept.scope == .upstream)
-    }
-
     @Test func aLimitKeptFromBeforeScopes_readsAsItDidThen() throws {
-        let decode = { (json: String) in try JSONDecoder().decode(UsageLimit.self, from: Data(json.utf8)) }
-        #expect(try decode(#"{"window":"five_hour"}"#).scope == .account)
-        #expect(try decode(#"{"window":"seven_day_opus"}"#).scope == .model)
-        #expect(try decode(#"{"window":"seven_day_opus","scope":"account"}"#).scope == .account)
-        #expect(try decode(#"{"scope":"upstream","label":"Over"}"#).label == "Over")
+        let cases: [(String, UsageLimit)] = [
+            (#"{"window":"five_hour"}"#, UsageLimit(window: "five_hour", scope: .account)),
+            (#"{"window":"seven_day_opus"}"#, UsageLimit(window: "seven_day_opus", scope: .model)),
+            (#"{"window":"seven_day_sonnet"}"#, UsageLimit(window: "seven_day_sonnet", scope: .model)),
+            (#"{"window":"seven_day_opus","scope":"account"}"#, UsageLimit(window: "seven_day_opus", scope: .account)),
+            (
+                #"{"scope":"from-a-newer-build","window":"five_hour","label":"Over"}"#,
+                UsageLimit(window: "five_hour", scope: .upstream, label: "Over")
+            )
+        ]
+        for (json, expected) in cases {
+            #expect(try JSONDecoder().decode(UsageLimit.self, from: Data(json.utf8)) == expected, "\(json)")
+        }
         let kept = UsageLimit(window: "five_hour", scope: .upstream, label: "Over")
-        #expect(try JSONDecoder().decode(UsageLimit.self, from: JSONEncoder().encode(kept)) == kept)
+        let bytes = try JSONEncoder().encode(kept)
+        let object = try #require(JSONSerialization.jsonObject(with: bytes) as? [String: String])
+        #expect(object == ["window": "five_hour", "scope": "upstream", "label": "Over"])
+        #expect(try JSONDecoder().decode(UsageLimit.self, from: bytes) == kept)
     }
 
     @Test func aLimitInTheAgentsOwnWords_isShownAsItIsSaid() {
         let english = Locale(identifier: "en")
-        let limit = UsageLimit(scope: .upstream, label: "Free usage limit reached")
-        #expect(StopReasonText.usageLimit(limit, locale: english, now: Self.reset) == "Free usage limit reached")
+        let label = "Free usage limit reached"
+        let unknown = UsageLimit(scope: .upstream, label: label)
+        let timed = UsageLimit(resetAt: Self.reset, scope: .upstream, label: label)
+        for locale in [english, Locale(identifier: "ja")] {
+            #expect(StopReasonText.usageLimit(unknown, locale: locale, now: Self.start) == label)
+            #expect(StopReasonText.usageLimit(timed, locale: locale, now: Self.reset) == label)
+            #expect(StopReasonText.usageLimit(timed, locale: locale, now: Self.reset.addingTimeInterval(1)) == label)
+        }
+        #expect(StopReasonText.usageLimit(timed, locale: english, now: Self.start) ==
+            "\(label) · resets \(StopReasonText.resetTime(Self.reset, locale: english, now: Self.start))")
+        let japanese = Locale(identifier: "ja")
+        #expect(StopReasonText.usageLimit(timed, locale: japanese, now: Self.start) ==
+            "\(label) · \(StopReasonText.resetTime(Self.reset, locale: japanese, now: Self.start)) に解除")
     }
 
     // MARK: - Who a run is, and what stopped it
@@ -301,27 +372,41 @@ struct UsageLimitTests {
         #expect(try AgentRuntimePresentation(projected: runtime(provider: "opencode"), tmuxLocationsByEndpoint: [:])?.kind == .opencode)
     }
 
+    @MainActor
     @Test func aFailureOfItsOwnKind_namesTheServiceOrModelItNeeds() throws {
-        let badge = { (kind: String) in
-            try self.runtime(provider: "opencode", badge: #","failureKind":"\#(kind)","model":"GPT-5.5","modelUpstream":"OpenRouter""#)
-                .badge.asAgentBadge
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        struct FailureCase {
+            let kind: String
+            let reason: StopReason
+            let text: String
         }
-        #expect(try badge("signIn").runtimeFailure == .signIn(upstream: "OpenRouter"))
-        #expect(try badge("modelUnavailable").runtimeFailure == .modelUnavailable(model: "GPT-5.5"))
-        #expect(try badge("from-a-newer-build").runtimeFailure == nil)
-        let english = Locale(identifier: "en")
-        #expect(StopReasonText.message(.signInRequired(upstream: "OpenRouter"), locale: english) == "Sign in to OpenRouter to go on.")
-        #expect(StopReasonText.message(.modelUnavailable(model: "GPT-5.5"), locale: english) == "Can’t use the model GPT-5.5.")
+        let cases = [
+            FailureCase(kind: "signIn", reason: .signInRequired(upstream: "OpenRouter"), text: "Sign in to OpenRouter to go on."),
+            FailureCase(kind: "modelUnavailable", reason: .modelUnavailable(model: "GPT-5.5"), text: "Can’t use the model GPT-5.5."),
+            FailureCase(kind: "from-a-newer-build", reason: .error(nil), text: "Stopped")
+        ]
+        for sample in cases {
+            var projected = try runtime(
+                provider: "opencode",
+                badge: #","failureKind":"\#(sample.kind)","model":"GPT-5.5","modelUpstream":"OpenRouter""#
+            )
+            projected.panes = [pane]
+            let runtime = try #require(AgentRuntimePresentation(projected: projected, tmuxLocationsByEndpoint: [:]))
+            let input = AttentionQueueStore.makeInput(
+                runtimes: [runtime], isRead: { _ in false }, approvals: [], session: session, isApprovalServiceRunning: false
+            )
+            let (queue, _) = AttentionQueueReducer.reduce(AttentionQueue(), input: input)
+            let item = try #require(queue.items.first)
+            #expect(queue.items.count == 1)
+            #expect(item.subject == .runtime(id: "r", provider: .opencode, paneID: pane, tabID: tab.id, projectID: nil))
+            #expect(item.kind == .stop(sample.reason), "\(sample.kind)")
+            guard case let .stop(reason) = item.kind else {
+                Issue.record("Expected a stop for the projected failure.")
+                continue
+            }
+            let expected = sample.kind == "from-a-newer-build" ? sample.text : "Stopped: \(sample.text)"
+            #expect(StopReasonText.make(reason, locale: Locale(identifier: "en")) == expected)
+        }
     }
 
-    @Test func aProjectedLimit_readsItsScope_andAWordThisBuildDoesNotKnowHoldsNoOtherAgent() throws {
-        let limit = { (fields: String) in
-            try self.runtime(provider: "opencode", badge: #","usageLimit":{\#(fields)}"#).badge.asAgentBadge.usageLimit
-        }
-        #expect(try limit(#""scope":"upstream","label":"Over""#)?.scope == .upstream)
-        #expect(try limit(#""scope":"upstream","label":"Over""#)?.label == "Over")
-        #expect(try limit(#""scope":"from-a-newer-build""#)?.scope == .upstream)
-        #expect(try limit(#""window":"seven_day_opus""#)?.scope == .model)
-        #expect(try limit(#""window":"five_hour""#)?.scope == .account)
-    }
 }

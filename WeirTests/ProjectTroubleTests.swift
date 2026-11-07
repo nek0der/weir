@@ -54,12 +54,14 @@ struct ProjectTroubleTests {
         let (session, project) = try Self.projectWithDeletedRoot()
         let index = try #require(session.projects.firstIndex { $0.id == project.id })
         let worktree = WorktreeFixture.make(workingDirectory: URL(fileURLWithPath: "/tmp/gone-feat"), admission: .opened)
-        session.projects[index].worktrees.append(worktree)
+        let missing = WorktreeFixture.make(isMissing: true, admission: .opened)
+        session.projects[index].worktrees.append(contentsOf: [worktree, missing])
 
         #expect(session.isFolderMissing(.project(project.id)))
         // A worktree's folder is somewhere else, and its own sync says
         // whether it is gone.
         #expect(!session.isFolderMissing(.worktree(projectID: project.id, worktreeID: worktree.id)))
+        #expect(session.isFolderMissing(.worktree(projectID: project.id, worktreeID: missing.id)))
         #expect(!session.isFolderMissing(.loose))
     }
 
@@ -105,13 +107,18 @@ struct ProjectTroubleTests {
     }
 
     @Test func aDeletedRoot_cannotBeChosenInTheWorktreeDropdown() throws {
-        let (_, project) = try Self.projectWithDeletedRoot()
-        let sections = SidebarPresentedSections(sections: [.project(project.id): .working])
+        let (session, project) = try Self.projectWithDeletedRoot()
+        let worktree = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, admission: .opened)
+        let current = try #require(session.project(project.id))
+        let main = ContainerID.project(project.id)
+        let other = ContainerID.worktree(projectID: project.id, worktreeID: worktree.id)
+        let sections = SidebarPresentedSections(sections: [main: .working, other: .working])
 
-        let entries = WorktreeDropdownEntry.entries(of: project, in: sections, rows: [:])
+        let entries = WorktreeDropdownEntry.entries(of: current, in: sections, rows: [:])
 
-        #expect(entries.map(\.isMissing) == [true])
-        #expect(WorktreeDropdownEntry.choosable(entries).isEmpty)
+        #expect(entries.map(\.container) == [main, other])
+        #expect(entries.map(\.isMissing) == [true, false])
+        #expect(WorktreeDropdownEntry.choosable(entries) == [other])
     }
 
     @Test func theHeader_carriesTheTrouble_withTheFolderItsSentenceNames() throws {

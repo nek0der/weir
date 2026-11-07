@@ -29,7 +29,10 @@ struct ConversationHoverPresentationTests {
 
     @Test func enterFromCard_isImmediate() {
         let presentation = makePresentation()
+        presentation.enter([second], from: tab)
         presentation.enter([first], from: cardA)
+        #expect(presentation.hovered == .init(conversations: [first], source: .card))
+        clock.advance(by: .milliseconds(150))
         #expect(presentation.hovered == .init(conversations: [first], source: .card))
     }
 
@@ -49,6 +52,10 @@ struct ConversationHoverPresentationTests {
         presentation.leave([first], from: tab)
         clock.advance(by: .milliseconds(100))
         #expect(presentation.hovered == nil)
+
+        presentation.enter([first], from: tab)
+        clock.advance(by: .milliseconds(150))
+        #expect(presentation.hovered == .init(conversations: [first], source: .tab))
     }
 
     /// Card A to card B of one conversation, B's enter delivered before

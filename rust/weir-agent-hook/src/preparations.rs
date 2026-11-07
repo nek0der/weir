@@ -145,6 +145,7 @@ mod tests {
         store(state.path(), "RUN", "two", taken("bbb"), &log);
         assert_eq!(take(state.path(), "RUN", "one"), None);
         assert_eq!(take(state.path(), "RUN", "two"), Some(taken("bbb")));
+        assert_eq!(take(state.path(), "RUN", "two"), None);
     }
 
     #[test]
@@ -153,6 +154,8 @@ mod tests {
         let log = HookLog::disabled();
         store(state.path(), "A", "one", taken("aaa"), &log);
         assert_eq!(take(state.path(), "B", "one"), None);
+        store(state.path(), "B", "one", taken("bbb"), &log);
         assert_eq!(take(state.path(), "A", "one"), Some(taken("aaa")));
+        assert_eq!(take(state.path(), "B", "one"), Some(taken("bbb")));
     }
 }

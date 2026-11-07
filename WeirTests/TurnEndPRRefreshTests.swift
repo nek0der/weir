@@ -48,6 +48,13 @@ struct TurnEndPRRefreshTests {
         refresh.reconcile()
         refresh.reconcile()
         #expect(refreshed.containers == [container])
+
+        show(.running)
+        refresh.reconcile()
+        #expect(refreshed.containers == [container])
+        show(.finished)
+        refresh.reconcile()
+        #expect(refreshed.containers == [container, container])
     }
 
     @Test func aRunThatQuitInItsTurn_looksItsRowUp() {
@@ -89,6 +96,6 @@ struct TurnEndPRRefreshTests {
         show(.idle)
         await pollUntil(timeout: .seconds(30), interval: .milliseconds(1)) { !refreshed.containers.isEmpty }
         #expect(refreshed.containers == [container])
-        _ = refresh
+        withExtendedLifetime(refresh) {}
     }
 }

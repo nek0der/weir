@@ -69,7 +69,8 @@ struct WorktreeDropdownTextTests {
     /// the sidebar has no row for it.
     @Test func theEntries_followTheSidebarsOrder_andItsNames() {
         let rootURL = URL(fileURLWithPath: "/tmp/alpha")
-        let working = Worktree(label: "feat/a", workingDirectory: URL(fileURLWithPath: "/tmp/alpha-a"), origin: .gitWorktree)
+        var working = Worktree(label: "alpha-a", workingDirectory: URL(fileURLWithPath: "/tmp/alpha-a"), origin: .gitWorktree)
+        working.gitRef = GitRef(branchName: "feat/a")
         let other = Worktree(
             label: "agent-1",
             workingDirectory: URL(fileURLWithPath: "/tmp/alpha/.claude/worktrees/agent-1"),
@@ -81,15 +82,16 @@ struct WorktreeDropdownTextTests {
         let mergedRow = ContainerID.worktree(projectID: project.id, worktreeID: merged.id)
         let otherRow = ContainerID.worktree(projectID: project.id, worktreeID: other.id)
         let workingRow = ContainerID.worktree(projectID: project.id, worktreeID: working.id)
+        let hiddenRow = ContainerID.worktree(projectID: project.id, worktreeID: hidden.id)
         let sections = SidebarPresentedSections(sections: [
-            otherRow: .other, mergedRow: .cleanable, workingRow: .working, .project(project.id): .working
+            otherRow: .other, mergedRow: .cleanable, workingRow: .working, hiddenRow: .working, .project(project.id): .working
         ])
         let named = SessionSidebarModel.Row.test(.test(container: workingRow, name: "Fix login"))
 
         let entries = WorktreeDropdownEntry.entries(of: project, in: sections, rows: [workingRow: named])
 
         #expect(entries.map(\.container) == [.project(project.id), workingRow, mergedRow, otherRow])
-        #expect(entries.map(\.name) == [CheckoutName.label(of: project), "Fix login", "fix/done", "agent-1"])
+        #expect(entries.map(\.name) == ["alpha", "Fix login", "fix/done", "agent-1"])
         #expect(entries.first { $0.container == workingRow }?.branch == "feat/a")
     }
 }

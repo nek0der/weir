@@ -81,6 +81,10 @@ struct UncommittedChangesCarrierTests {
     @Test func everyKindOfChange_moves_stagedAndUnstagedApart_andTheSourceIsClean() async throws {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
+        try repo.write("someone else's\n", to: "a.txt")
+        try await repo.git(["stash", "push", "-q", "-m", "another-session"])
+        let stashes = try await repo.git(["stash", "list", "--format=%H %gs"])
+        try #require(stashes.hasSuffix("On main: another-session"))
         try await Self.makeChanges(in: repo.url)
         let before = try await Self.state(repo.url)
         let target = try await Self.addTarget(repo, branch: "carried")
@@ -98,19 +102,25 @@ struct UncommittedChangesCarrierTests {
         #expect(!FileManager.default.fileExists(atPath: repo.url.appendingPathComponent("dir").path))
         #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: repo.url.appendingPathComponent("link").path)) == "a.txt")
         #expect(try repo.read("deleted.txt") == "gone\n")
+        #expect(try await repo.git(["stash", "list", "--format=%H %gs"]) == stashes)
     }
 
-    /// Onto a start a commit ahead that touches other files, the changes
-    /// are merged onto it.
+    /// A later start keeps its own file and its nonoverlapping edit to
+    /// the carried file, in both the index and working tree.
     @Test func ontoAnotherStart_theChangesAreMergedOntoIt() async throws {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
+        try repo.write("a\nb\nc\nd\ne\nf\ng\nh\n", to: "a.txt")
+        try await repo.commit("separate lines")
         let ahead = try await Self.addTarget(repo, branch: "ahead")
         try ScratchFile.write("theirs\n", to: "other.txt", in: ahead)
-        try await TempGitRepo.git(["add", "other.txt"], in: ahead)
+        try ScratchFile.write("a\nb\nc\nd\ne\nf\ng\nTHEIRS\n", to: "a.txt", in: ahead)
+        try await TempGitRepo.git(["add", "a.txt", "other.txt"], in: ahead)
         try await TempGitRepo.git(["commit", "-q", "-m", "ahead"], in: ahead)
         let start = try await TempGitRepo.git(["rev-parse", "HEAD"], in: ahead)
-        try await Self.makeChanges(in: repo.url)
+        try repo.write("a\nB\nc\nd\ne\nf\ng\nh\n", to: "a.txt")
+        try await repo.git(["add", "a.txt"])
+        try repo.write("A\nB\nc\nd\ne\nf\ng\nh\n", to: "a.txt")
         let target = try await Self.addTarget(repo, branch: "carried", start: start)
 
         let (_, outcome) = try await Self.carry(repo, onto: start, target: target)
@@ -120,8 +130,9 @@ struct UncommittedChangesCarrierTests {
             return
         }
         #expect(try ScratchFile.read("other.txt", in: target) == "theirs\n")
-        #expect(try ScratchFile.read("a.txt", in: target) == "a\nB\nc\nd\n")
-        #expect(try await TempGitRepo.git(["diff", "--cached", "--name-status", "--no-renames", "--", "a.txt"], in: target) == "M\ta.txt")
+        #expect(try ScratchFile.read("a.txt", in: target) == "A\nB\nc\nd\ne\nf\ng\nTHEIRS\n")
+        #expect(try await TempGitRepo.git(["show", ":a.txt"], in: target) == "a\nB\nc\nd\ne\nf\ng\nTHEIRS")
+        #expect(try await TempGitRepo.git(["rev-parse", "HEAD"], in: target) == start)
         #expect(try await Self.status(repo.url).isEmpty)
     }
 
@@ -174,15 +185,24 @@ struct UncommittedChangesCarrierTests {
     @Test func anUntrackedFileWhereADeletionWas_isKept() async throws {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
-        try await Self.makeChanges(in: repo.url)
+        try await repo.git(["rm", "-q", "deleted.txt"])
+        try repo.write("new\n", to: "notes.txt")
         let target = try await Self.addTarget(repo, branch: "carried")
         let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
         try repo.write("agent wrote this\n", to: "deleted.txt")
 
+        let before = try await Self.status(repo.url)
+        try #require(before.split(separator: "\n").contains("D  deleted.txt"))
+        try #require(before.split(separator: "\n").contains("?? deleted.txt"))
+        let index = try Data(contentsOf: repo.url.appendingPathComponent(".git/index"))
         #expect(await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target) == .notApplied)
         #expect(try repo.read("deleted.txt") == "agent wrote this\n")
         #expect(try repo.read("notes.txt") == "new\n")
+        #expect(try Data(contentsOf: repo.url.appendingPathComponent(".git/index")) == index)
+        #expect(try await Self.status(repo.url) == before)
+        #expect(try ScratchFile.read("deleted.txt", in: target) == "gone\n")
+        #expect(try await Self.status(target).isEmpty)
     }
 
     /// A commit made meanwhile: going back to the old HEAD would undo it.
@@ -194,10 +214,15 @@ struct UncommittedChangesCarrierTests {
         let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
         try await repo.git(["commit", "-q", "-m", "meanwhile"])
+        let committed = try await repo.git(["rev-parse", "HEAD"])
         let now = try await Self.state(repo.url)
 
         #expect(await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target) == .leftInSource)
         #expect(try await Self.state(repo.url) == now)
+        #expect(try await repo.git(["rev-parse", "HEAD"]) == committed)
+        #expect(try await TempGitRepo.git(["write-tree"], in: target) == snapshot.indexTree)
+        #expect(try ScratchFile.read("a.txt", in: target) == "a\nB\nc\nd\n")
+        #expect(try ScratchFile.read("notes.txt", in: target) == "new\n")
     }
 
     /// Another Git holds the source's index: the source is left as it is,
@@ -210,12 +235,19 @@ struct UncommittedChangesCarrierTests {
         let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
         let lock = repo.url.appendingPathComponent(".git/index.lock")
-        try Data().write(to: lock)
+        let lockBytes = Data("other process".utf8)
+        try lockBytes.write(to: lock)
+        let index = repo.url.appendingPathComponent(".git/index")
+        let indexBytes = try Data(contentsOf: index)
         defer { try? FileManager.default.removeItem(at: lock) }
         let now = try repo.read("a.txt")
 
         #expect(await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target) == .leftInSource)
-        #expect(FileManager.default.fileExists(atPath: lock.path))
+        #expect(try Data(contentsOf: lock) == lockBytes)
+        #expect(try Data(contentsOf: index) == indexBytes)
+        #expect(try await TempGitRepo.git(["write-tree"], in: target) == snapshot.indexTree)
+        #expect(try ScratchFile.read("a.txt", in: target) == "a\nB\nc\nd\n")
+        #expect(try ScratchFile.read("notes.txt", in: target) == "new\n")
         #expect(try repo.read("a.txt") == now)
         #expect(try repo.read("notes.txt") == "new\n")
     }
@@ -231,10 +263,12 @@ struct UncommittedChangesCarrierTests {
         let target = try await Self.addTarget(repo, branch: "carried")
         try ScratchFile.write("made by a hook\n", to: "notes.txt", in: target)
 
+        let targetBefore = try await Self.state(target)
         let (_, outcome) = try await Self.carry(repo, target: target)
 
         #expect(outcome == .notApplied)
         #expect(try await Self.state(repo.url) == before)
+        #expect(try await Self.state(target) == targetBefore)
         #expect(try ScratchFile.read("notes.txt", in: target) == "made by a hook\n")
     }
 
@@ -249,9 +283,15 @@ struct UncommittedChangesCarrierTests {
         let target = try await Self.addTarget(repo, branch: "carried")
         try ScratchFile.write("made by a hook\n", to: "x.txt", in: target)
 
-        let (_, outcome) = try await Self.carry(repo, target: target)
+        let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
+        let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
+        let reachedWrite = Recorded(false)
+        let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, checked: {
+            reachedWrite.value = true
+        })
 
         #expect(outcome == .notApplied)
+        #expect(!reachedWrite.value)
         #expect(try ScratchFile.read("x.txt", in: target) == "made by a hook\n")
         #expect(try ScratchFile.read("a.txt", in: target) == "a\nb\nc\n")
         #expect(try await Self.status(target) == "M x.txt")
@@ -273,58 +313,56 @@ struct UncommittedChangesCarrierTests {
         let target = try await Self.addTarget(repo, branch: "carried")
         try ScratchFile.write("installed by a hook\n", to: "vendor/lib.txt", in: target)
 
-        let (_, outcome) = try await Self.carry(repo, target: target)
+        let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
+        let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
+        let sourceBefore = try await Self.state(repo.url)
+        let index = repo.url.appendingPathComponent(".git/index")
+        let indexBytes = try Data(contentsOf: index)
+        let written = Recorded<[Data?]>([])
+        let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, placed: {
+            written.value = ["a.txt", "notes.txt"].map {
+                try? Data(contentsOf: target.appendingPathComponent($0))
+            }
+        })
 
+        #expect(written.value == [Data("a\nCRLF\n".utf8), Data("new\n".utf8)])
         #expect(outcome == .notApplied)
+        #expect(try Data(contentsOf: repo.url.appendingPathComponent("a.txt")) == Data("a\r\nCRLF\r\n".utf8))
+        #expect(try Data(contentsOf: index) == indexBytes)
+        #expect(try await Self.state(repo.url) == sourceBefore)
         #expect(try ScratchFile.read("vendor/lib.txt", in: target) == "installed by a hook\n")
         #expect(!FileManager.default.fileExists(atPath: target.appendingPathComponent("notes.txt").path))
         #expect(try ScratchFile.read("a.txt", in: target) == "a\nb\nc\n")
         #expect(try await Self.status(target) == "?? vendor/lib.txt")
     }
 
-    /// A file the new worktree's checkout hook made, which Git ignores,
-    /// where the changes add one (`.env`, added with `--force` in the
-    /// source): `read-tree` would write over it, so nothing is written.
-    @Test func anIgnoredFileInTheNewWorktree_whereTheChangesAddOne_isKept() async throws {
+    /// An ignored checkout file may obstruct either the added path itself
+    /// or a directory needed by the added path.
+    @Test(arguments: [false, true])
+    func anIgnoredTargetObstruction_isKept(needsFolder: Bool) async throws {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
-        try repo.write(".env\n", to: ".gitignore")
-        try await repo.git(["add", ".gitignore"])
-        try await repo.git(["commit", "-q", "-m", "ignore"])
-        try repo.write("SECRET=carried\n", to: ".env")
-        try await repo.git(["add", "--force", ".env"])
-        let before = try await Self.status(repo.url)
+        let obstruction = needsFolder ? "build" : ".env"
+        let carried = needsFolder ? "build/out.txt" : ".env"
+        try repo.write(obstruction + "\n", to: ".gitignore")
+        try await repo.commit("ignore", paths: [".gitignore"])
+        try repo.write("carried\n", to: carried)
+        try await repo.git(["add", "--force", carried])
         let target = try await Self.addTarget(repo, branch: "carried")
-        try ScratchFile.write("SECRET=hook\n", to: ".env", in: target)
+        try ScratchFile.write("made by a hook\n", to: obstruction, in: target)
+        let sourceTree = try await repo.git(["write-tree"])
+        let targetTree = try await TempGitRepo.git(["write-tree"], in: target)
+        try #require(try await Self.status(target).isEmpty)
+        try await TempGitRepo.git(["check-ignore", "--", obstruction], in: target)
 
         let (_, outcome) = try await Self.carry(repo, target: target)
 
         #expect(outcome == .notApplied)
-        #expect(try ScratchFile.read(".env", in: target) == "SECRET=hook\n")
+        #expect(try ScratchFile.read(obstruction, in: target) == "made by a hook\n")
+        #expect(try repo.read(carried) == "carried\n")
         #expect(try await Self.status(target).isEmpty)
-        #expect(try await Self.status(repo.url) == before)
-        #expect(try repo.read(".env") == "SECRET=carried\n")
-    }
-
-    /// A file Git ignores in the new worktree where the changes need a
-    /// folder (`build` for `build/out.txt`): Git would put the folder in
-    /// its place.
-    @Test func anIgnoredFileInTheNewWorktree_whereTheChangesNeedAFolder_isKept() async throws {
-        let repo = try await Self.makeRepository()
-        defer { repo.cleanup() }
-        try repo.write("build\n", to: ".gitignore")
-        try await repo.git(["add", ".gitignore"])
-        try await repo.git(["commit", "-q", "-m", "ignore"])
-        try repo.write("carried\n", to: "build/out.txt")
-        try await repo.git(["add", "--force", "build/out.txt"])
-        let target = try await Self.addTarget(repo, branch: "carried")
-        try ScratchFile.write("made by a hook\n", to: "build", in: target)
-
-        let (_, outcome) = try await Self.carry(repo, target: target)
-
-        #expect(outcome == .notApplied)
-        #expect(try ScratchFile.read("build", in: target) == "made by a hook\n")
-        #expect(try repo.read("build/out.txt") == "carried\n")
+        #expect(try await repo.git(["write-tree"]) == sourceTree)
+        #expect(try await TempGitRepo.git(["write-tree"], in: target) == targetTree)
     }
 
     /// Git stops part way through writing the new worktree (a folder its
@@ -332,7 +370,8 @@ struct UncommittedChangesCarrierTests {
     /// and the hook's own file stays. The first file goes where an empty
     /// folder was, which Git replaces, so a path that held something before
     /// may be ours too.
-    @Test func aWriteThatStopsPartWay_inTheNewWorktree_isPutBack() async throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aWriteThatStopsPartWay_inTheNewWorktree_isPutBack() async throws {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
         try repo.write("first\n", to: "a-new.txt")
@@ -345,19 +384,27 @@ struct UncommittedChangesCarrierTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
 
+        let probe = locked.appendingPathComponent("probe")
+        try #require(throws: (any Error).self) { try Data("probe".utf8).write(to: probe) }
+        let targetTree = try await TempGitRepo.git(["write-tree"], in: target)
         let (_, outcome) = try await Self.carry(repo, target: target)
 
         #expect(outcome == .notApplied)
         #expect(!FileManager.default.fileExists(atPath: target.appendingPathComponent("a-new.txt").path))
         #expect(try ScratchFile.read("locked/hook.txt", in: target) == "made by a hook\n")
         #expect(try await Self.status(target) == "?? locked/hook.txt")
+        #expect(!FileManager.default.fileExists(atPath: locked.appendingPathComponent("new.txt").path))
+        #expect(try repo.read("a-new.txt") == "first\n")
+        #expect(try repo.read("locked/new.txt") == "second\n")
+        #expect(try await TempGitRepo.git(["write-tree"], in: target) == targetTree)
         #expect(try await Self.state(repo.url) == before)
     }
 
     /// Git stops part way through taking the changes out of the source (a
     /// folder that may not be written in), after it put one file back: the
     /// source is cleared part way, not left as it was, and a copy is kept.
-    @Test func aClearThatStopsPartWay_isPartlyCleared_withACopyKept() async throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aClearThatStopsPartWay_isPartlyCleared_withACopyKept() async throws {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
         try repo.write("inner\n", to: "locked/inner.txt")
@@ -368,6 +415,8 @@ struct UncommittedChangesCarrierTests {
         let locked = repo.url.appendingPathComponent("locked")
         try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: locked.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+        try #require(throws: (any Error).self) { try Data().write(to: locked.appendingPathComponent("probe")) }
+        let originalTree = try await repo.git(["write-tree"])
         let target = try await Self.addTarget(repo, branch: "carried")
 
         let (snapshot, outcome) = try await Self.carry(repo, target: target)
@@ -381,8 +430,15 @@ struct UncommittedChangesCarrierTests {
         #expect(try await repo.git(["rev-parse", "stash@{0}^{tree}"]) == snapshot.fullTree)
         #expect(try ScratchFile.read("a.txt", in: target) == "a\nB\nc\n")
         #expect(try ScratchFile.read("locked/inner.txt", in: target) == "changed\n")
+        #expect(try repo.read("a.txt") == "a\nb\nc\n")
         #expect(try repo.read("locked/inner.txt") == "changed\n")
+        #expect(try await repo.git(["write-tree"]) == originalTree)
+        #expect(try await TempGitRepo.git(["write-tree"], in: target) == snapshot.indexTree)
     }
+
+}
+
+extension UncommittedChangesCarrierTests {
 
     // MARK: - What stops it first
 
@@ -410,14 +466,22 @@ struct UncommittedChangesCarrierTests {
         try await TempGitRepo.git(["commit", "-q", "-am", "other"], in: other)
         try repo.write("a\nMINE\nc\n", to: "a.txt")
         try await repo.git(["commit", "-q", "-am", "mine"])
-        _ = try? await repo.git(["merge", "-q", "other"])
+        await #expect(throws: TempGitRepo.GitFailure.self) { try await repo.git(["merge", "-q", "other"]) }
+        let mergeHead = repo.url.appendingPathComponent(".git/MERGE_HEAD")
+        let headBytes = try Data(contentsOf: mergeHead)
         let before = try await Self.status(repo.url)
+        let unmerged = try await repo.git(["ls-files", "-u"])
+        try #require(!unmerged.isEmpty)
+        let index = repo.url.appendingPathComponent(".git/index")
+        let indexBytes = try Data(contentsOf: index)
 
         await #expect(throws: UncommittedCarryRefusal.operationInProgress) {
             try await UncommittedChangesCarrier.snapshot(of: repo.url)
         }
+        #expect(try Data(contentsOf: mergeHead) == headBytes)
+        #expect(try Data(contentsOf: index) == indexBytes)
+        #expect(try await repo.git(["ls-files", "-u"]) == unmerged)
         #expect(try await Self.status(repo.url) == before)
-        #expect(FileManager.default.fileExists(atPath: repo.url.appendingPathComponent(".git/MERGE_HEAD").path))
     }
 
     @Test func aRepositoryInsideTheWorktree_isRefused() async throws {
@@ -453,32 +517,32 @@ struct UncommittedChangesCarrierTests {
         let index = repo.url.appendingPathComponent(".git/index")
         let indexBefore = try Data(contentsOf: index)
 
-        _ = try await UncommittedChangesCarrier.snapshot(of: repo.url)
+        let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
 
+        #expect(snapshot.fileCount == 8)
         #expect(try Data(contentsOf: index) == indexBefore)
         #expect(try await Self.state(repo.url) == before)
     }
 
-    /// A file marked skip-worktree: only the index holds the mark, and
-    /// taking the changes away replaces the index.
-    @Test func aFileMarkedSkipWorktree_isRefused() async throws {
+    /// Neither skip-worktree nor intent-to-add is represented by the
+    /// trees the carry would put back.
+    @Test(arguments: [false, true])
+    func anIndexOnlyFlag_isRefused(intentToAdd: Bool) async throws {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
-        try await repo.git(["update-index", "--skip-worktree", "x.txt"])
-        try repo.write("x\n", to: "a.txt")
+        if intentToAdd {
+            try repo.write("later\n", to: "later.txt")
+            try await repo.git(["add", "-N", "later.txt"])
+        } else {
+            try await repo.git(["update-index", "--skip-worktree", "x.txt"])
+            try repo.write("x\n", to: "a.txt")
+        }
+        let index = repo.url.appendingPathComponent(".git/index")
+        let indexBytes = try Data(contentsOf: index)
         await #expect(throws: UncommittedCarryRefusal.indexOnlyState) {
             try await UncommittedChangesCarrier.snapshot(of: repo.url)
         }
-    }
-
-    @Test func aFileAddedWithIntentToAdd_isRefused() async throws {
-        let repo = try await Self.makeRepository()
-        defer { repo.cleanup() }
-        try repo.write("later\n", to: "later.txt")
-        try await repo.git(["add", "-N", "later.txt"])
-        await #expect(throws: UncommittedCarryRefusal.indexOnlyState) {
-            try await UncommittedChangesCarrier.snapshot(of: repo.url)
-        }
+        #expect(try Data(contentsOf: index) == indexBytes)
     }
 
     /// A tracked file turned into a folder that holds a file Git ignores:
@@ -540,25 +604,6 @@ struct UncommittedChangesCarrierTests {
         #expect(try repo.read("build") == "mine\n")
     }
 
-    /// Git stores a file as its line-ending setting says, so a file with
-    /// CRLF line ends could come out with LF ones and still match: the new
-    /// worktree is compared byte for byte, and the source keeps its file.
-    @Test func aFileGitWouldStoreOtherwise_isNotApplied_andTheSourceKeepsItsBytes() async throws {
-        let repo = try await Self.makeRepository()
-        defer { repo.cleanup() }
-        try repo.write("* text=auto\n", to: ".gitattributes")
-        try await repo.git(["add", ".gitattributes"])
-        try await repo.git(["commit", "-q", "-m", "attributes"])
-        try repo.write("a\r\nCRLF\r\n", to: "a.txt")
-        let target = try await Self.addTarget(repo, branch: "carried")
-
-        let (_, outcome) = try await Self.carry(repo, target: target)
-
-        #expect(outcome == .notApplied)
-        #expect(try Data(contentsOf: repo.url.appendingPathComponent("a.txt")) == Data("a\r\nCRLF\r\n".utf8))
-        #expect(try await TempGitRepo.git(["status", "--porcelain"], in: target).isEmpty)
-    }
-
     /// A commit made while the carry waits for the index (an agent's
     /// `git commit` holds the lock): going back to the old HEAD would undo
     /// it, so the source is left with it.
@@ -576,25 +621,32 @@ struct UncommittedChangesCarrierTests {
         let commit = try await repo.git(["commit-tree", "-p", "HEAD", "-m", "agent", tree])
         let lock = repo.url.appendingPathComponent(".git/index.lock")
         try Data().write(to: lock)
-        // HEAD moves only once the carry has found it unmoved, and before
-        // it can hold the index: only the check under the lock sees it.
-        let (checked, didCheck) = AsyncStream<Void>.makeStream()
-        let moving = Task {
-            let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target) {
-                didCheck.yield()
+        defer { try? FileManager.default.removeItem(at: lock) }
+        let index = repo.url.appendingPathComponent(".git/index")
+        let indexBytes = try Data(contentsOf: index)
+        let movedHead = Recorded(false)
+        let beganClearing = Recorded(false)
+        let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, headChecked: {
+            do {
+                try await repo.git(["update-ref", "HEAD", commit])
+                try FileManager.default.removeItem(at: lock)
+                movedHead.value = true
+            } catch {
+                Issue.record(error)
             }
-            didCheck.finish()
-            return outcome
-        }
-        var checks = checked.makeAsyncIterator()
-        #expect(await checks.next() != nil, "the carry reached its first check of HEAD")
-        try await repo.git(["update-ref", "HEAD", commit])
-        try FileManager.default.removeItem(at: lock)
+        }, clearing: {
+            beganClearing.value = true
+        })
 
-        #expect(await moving.value == .leftInSource)
+        try #require(movedHead.value)
+        #expect(!beganClearing.value)
+        #expect(outcome == .leftInSource)
         #expect(try await repo.git(["rev-parse", "HEAD"]) == commit)
+        #expect(try Data(contentsOf: index) == indexBytes)
         #expect(try repo.read("a.txt") == "a\nB\nc\n")
-        #expect(try await repo.git(["status", "--porcelain"]).isEmpty, "the commit holds the change, as it did")
+        #expect(try ScratchFile.read("a.txt", in: target) == "a\nB\nc\n")
+        #expect(try await TempGitRepo.git(["write-tree"], in: target) == snapshot.indexTree)
+        #expect(try await repo.git(["status", "--porcelain"]).isEmpty)
     }
 
     /// A linked worktree is a source as the project's folder is: its index
@@ -616,26 +668,6 @@ struct UncommittedChangesCarrierTests {
     }
 
     // MARK: - The stash stack
-
-    /// A carry that moves the changes leaves the stash stack every worktree
-    /// shares as it was.
-    @Test func otherStashes_areLeftAsTheyWere() async throws {
-        let repo = try await Self.makeRepository()
-        defer { repo.cleanup() }
-        try repo.write("someone else's\n", to: "a.txt")
-        try await repo.git(["stash", "push", "-q", "-m", "another-session"])
-        let stashes = try await repo.git(["stash", "list", "--format=%H %gs"])
-        try await Self.makeChanges(in: repo.url)
-        let target = try await Self.addTarget(repo, branch: "carried")
-
-        let (_, outcome) = try await Self.carry(repo, target: target)
-
-        guard case .moved = outcome else {
-            Issue.record("not moved: \(outcome)")
-            return
-        }
-        #expect(try await repo.git(["stash", "list", "--format=%H %gs"]) == stashes)
-    }
 
     /// The copy kept when the source cannot be cleared all the way is a
     /// stash entry `git stash apply --index` takes back exactly.
@@ -662,7 +694,15 @@ struct UncommittedChangesCarrierTests {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
         #expect(await UncommittedChangesCarrier.changedFileCount(in: repo.url) == 0)
+        try await repo.git(["config", "status.renames", "true"])
         try await Self.makeChanges(in: repo.url)
+        let status = try await repo.git(["status", "--porcelain=v2"])
+        try #require(status.split(separator: "\n").filter { $0.hasPrefix("2 ") }.count == 1)
+        guard case let .facts(facts) = await ReviewGit.facts(at: repo.url) else {
+            Issue.record("expected sidebar Git facts")
+            return
+        }
+        #expect(facts.uncommittedFiles == 8)
         #expect(await UncommittedChangesCarrier.changedFileCount(in: repo.url) == 8)
     }
 }

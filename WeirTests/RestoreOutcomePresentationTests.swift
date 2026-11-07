@@ -8,7 +8,6 @@ import Testing
 
 struct RestoreOutcomePresentationTests {
     private static let english = Locale(identifier: "en")
-    private static let japanese = Locale(identifier: "ja")
     private static let opID = "6F1C2A40-8C1E-4B7A-9D55-2E0B6A3C9F10"
     private static let other = ConversationKey(provider: .claude, conversationID: "s2", isFallback: false)
 
@@ -30,13 +29,17 @@ struct RestoreOutcomePresentationTests {
     private static func finish(
         _ ending: RestoreEnding,
         recordedOpIDs: Set<String> = [],
+        recordQueries: Recorded<[String]>? = nil,
         locale: Locale = english
     ) throws -> RestoreOutcomePresentation.Finish {
         try RestoreOutcomePresentation.finish(
             ending,
             history: history(),
             isRoot: isRoot,
-            isRecorded: { recordedOpIDs.contains($0) },
+            isRecorded: { id in
+                recordQueries?.update { $0.append(id) }
+                return recordedOpIDs.contains(id)
+            },
             locale: locale
         )
     }
@@ -90,7 +93,7 @@ struct RestoreOutcomePresentationTests {
             return
         }
         #expect(applied.toast == nil)
-        #expect(applied.restoredTurns.count == 3)
+        #expect(Set(applied.restoredTurns.map(\.turnID.rawValue)) == ["s1-T5", "s1-T6", "s2-T7"])
         #expect(applied.done == RestoreDone(opID: Self.opID, root: "/repo", turnNumber: nil))
     }
 
@@ -100,8 +103,9 @@ struct RestoreOutcomePresentationTests {
             Issue.record("an applied restore is taken as applied")
             return
         }
-        #expect(applied.toast != nil)
-        #expect(applied.toast?.id == nil)
+        let toast = try #require(applied.toast)
+        #expect(toast.id == nil)
+        #expect(applied.done == RestoreDone(opID: "OP", root: "/repo", turnNumber: 5))
     }
 
     /// Part of it is in the working tree: the strip stays and says what,
@@ -111,32 +115,39 @@ struct RestoreOutcomePresentationTests {
             #"{"kind":"partiallyApplied","reason":"writeFailed","currentTree":"c"}"#,
             opID: Self.opID
         )
-        let finish = try Self.finish(.partial(journal, kept: ["a.txt"], failed: ["b"]))
-        #expect(finish == .explain(RestoreText.ended(.partial(kept: ["a.txt"], failed: ["b"]), locale: Self.english)))
-        // Recorded or not, a partial restore's strip says what it left.
-        #expect(try Self.finish(.partial(journal, kept: ["a.txt"], failed: ["b"]), recordedOpIDs: [Self.opID]) == finish)
+        let aside = [RestoreKeptAside(path: "c.txt", location: ".weir-OP/target/c.txt")]
+        let ending = RestoreEnding.partial(journal, kept: ["a.txt"], failed: ["b"], keptAside: aside)
+        let queries = Recorded<[String]>([])
+        let finish = try Self.finish(ending, recordQueries: queries)
+        #expect(finish == .explain(RestoreText.ended(.partial(kept: ["a.txt"], failed: ["b"], keptAside: aside), locale: Self.english)))
+        #expect(try Self.finish(ending, recordedOpIDs: [Self.opID], recordQueries: queries) == finish)
+        #expect(queries.value.isEmpty, "a known partial result does not need to read the restore record")
     }
 
     /// The words themselves are `RestorePresentationTests`'s; here, that the
     /// strip says them for this reason, in the language asked for.
-    @Test func refused_keepsTheStrip_sayingWhy() throws {
-        #expect(try Self.finish(.canceled(.refused(.mergeInProgress)))
-            == .explain(RestoreText.ended(.canceled(.refused(.mergeInProgress)), locale: Self.english)))
-        #expect(try Self.finish(.canceled(.otherChanges), locale: Self.japanese)
-            == .explain(RestoreText.ended(.canceled(.otherChanges), locale: Self.japanese)))
-        #expect(try Self.finish(.canceled(.unknown))
-            == .explain(RestoreText.ended(.canceled(.unknown), locale: Self.english)))
+    @Test(arguments: [
+        (RestoreEnding.Reason.refused(.mergeInProgress), Locale(identifier: "en")),
+        (.otherChanges, Locale(identifier: "ja")),
+        (.unknown, Locale(identifier: "en"))
+    ])
+    func refused_keepsTheStrip_sayingWhy(reason: RestoreEnding.Reason, locale: Locale) throws {
+        #expect(try Self.finish(.canceled(reason), locale: locale)
+            == .explain(RestoreText.ended(.canceled(reason), locale: locale)))
     }
 
-    /// The bridge failed or the journal was read before it settled: the
-    /// strip says so, unless the record, read again after the restore,
-    /// shows this very operation and says what it holds.
-    @Test func failed_saysTheEndIsNotKnown_unlessTheRecordShowsIt() throws {
-        let unknown = RestoreText.ended(.unknown, locale: Self.english)
-        #expect(try Self.finish(.unknown(opID: nil), recordedOpIDs: [Self.opID]) == .explain(unknown))
-        #expect(try Self.finish(.unknown(opID: Self.opID)) == .explain(unknown))
-        #expect(try Self.finish(.unknown(opID: Self.opID), recordedOpIDs: ["another"]) == .explain(unknown))
-        #expect(try Self.finish(.unknown(opID: Self.opID), recordedOpIDs: [Self.opID]) == .closeStrip)
+    /// Only a matching restore record settles an unknown outcome.
+    @Test(arguments: [
+        (nil as String?, ["6F1C2A40-8C1E-4B7A-9D55-2E0B6A3C9F10"], false),
+        ("6F1C2A40-8C1E-4B7A-9D55-2E0B6A3C9F10", [], false),
+        ("6F1C2A40-8C1E-4B7A-9D55-2E0B6A3C9F10", ["another"], false),
+        ("6F1C2A40-8C1E-4B7A-9D55-2E0B6A3C9F10", ["6F1C2A40-8C1E-4B7A-9D55-2E0B6A3C9F10"], true)
+    ])
+    func failed_saysTheEndIsNotKnown_unlessTheRecordShowsIt(opID: String?, recorded: [String], closes: Bool) throws {
+        let queries = Recorded<[String]>([])
+        let expected: RestoreOutcomePresentation.Finish = closes ? .closeStrip : .explain(RestoreText.ended(.unknown, locale: Self.english))
+        #expect(try Self.finish(.unknown(opID: opID), recordedOpIDs: Set(recorded), recordQueries: queries) == expected)
+        #expect(queries.value == opID.map { [$0] } ?? [])
     }
 
     // MARK: - An undo's end
@@ -156,27 +167,50 @@ struct RestoreOutcomePresentationTests {
         let restore = try RestoreJournalFixture.restore(Self.applied, opID: Self.opID)
         let undoJournal = try RestoreJournalFixture.restore(Self.keptAside, opID: "U")
         let undone = try #require(RestoreOutcomePresentation.undo(.finished(undoJournal), of: restore, locale: Self.english))
-        #expect(undone.news == RestoreText.keptAsideSentence(undoJournal.stage.keptAside, locale: Self.english))
+        #expect(undone.news == "Saves made meanwhile were moved to .weir-OP/target/ready-1/a.txt.")
 
         let movedAlready = try RestoreJournalFixture.restore(Self.keptAside, opID: Self.opID)
         let again = try #require(RestoreOutcomePresentation.undo(.finished(undoJournal), of: movedAlready, locale: Self.english))
         #expect(again.news == nil)
+
+        let mixed = try RestoreJournalFixture.restore(
+            #"{"kind":"partiallyApplied","reason":"keptAside","currentTree":"c","failed":["#
+                + #"{"path":"a.txt","reason":"keptAside:.weir-OP/target/ready-1/a.txt"},"#
+                + #"{"path":"b.txt","reason":"keptAside:.weir-U/target/ready-1/b.txt"}]}"#,
+            opID: "U"
+        )
+        let newSave = try #require(RestoreOutcomePresentation.undo(.finished(mixed), of: movedAlready, locale: Self.english))
+        #expect(newSave.news == "Saves made meanwhile were moved to .weir-U/target/ready-1/b.txt.")
     }
 
     /// An undo that fell short, or did not run, changes nothing: the record
     /// stays and says why.
-    @Test func anUndoThatFellShortOrDidNotRun_doesNothing() throws {
-        let journal = try RestoreJournalFixture.restore(Self.applied, opID: Self.opID)
-        let short = try [
-            RestoreJournalFixture.restore(#"{"kind":"partiallyApplied","reason":"writeFailed","currentTree":"c"}"#, opID: "U"),
-            RestoreJournalFixture.restore(#"{"kind":"aborted","reason":"externalChangeDetected"}"#, opID: "U"),
-            RestoreJournalFixture.restore(#"{"kind":"writing"}"#, opID: "U")
-        ]
-        for undo in short {
-            #expect(RestoreOutcomePresentation.undo(.finished(undo), of: journal, locale: Self.english) == nil)
+    enum ShortUndo: Sendable, CaseIterable {
+        case partial, aborted, writing, refused, missing
+
+        func outcome() throws -> RestoreOutcome? {
+            switch self {
+            case .partial:
+                try .finished(RestoreJournalFixture.restore(
+                    #"{"kind":"partiallyApplied","reason":"writeFailed","currentTree":"c"}"#,
+                    opID: "U"
+                ))
+            case .aborted:
+                try .finished(RestoreJournalFixture.restore(#"{"kind":"aborted","reason":"externalChangeDetected"}"#, opID: "U"))
+            case .writing:
+                try .finished(RestoreJournalFixture.restore(#"{"kind":"writing"}"#, opID: "U"))
+            case .refused:
+                .refused(.changedSinceRestore(paths: ["a.txt"]))
+            case .missing:
+                nil
+            }
         }
-        #expect(RestoreOutcomePresentation.undo(.refused(.changedSinceRestore(paths: ["a.txt"])), of: journal, locale: Self.english) == nil)
-        #expect(RestoreOutcomePresentation.undo(nil, of: journal, locale: Self.english) == nil)
+    }
+
+    @Test(arguments: ShortUndo.allCases)
+    func anUndoThatFellShortOrDidNotRun_doesNothing(_ shortfall: ShortUndo) throws {
+        let journal = try RestoreJournalFixture.restore(Self.applied, opID: Self.opID)
+        #expect(try RestoreOutcomePresentation.undo(shortfall.outcome(), of: journal, locale: Self.english) == nil)
     }
 
     /// Every "Done" line that offers this restore's Undo goes, shown or
@@ -188,14 +222,17 @@ struct RestoreOutcomePresentationTests {
             of: journal,
             locale: Self.english
         ))
-        let (mine, anotherRestore, marked, answered) = (UUID(), UUID(), UUID(), UUID())
+        let (mine, alsoMine, anotherRestore, marked, answered) = (UUID(), UUID(), UUID(), UUID(), UUID())
         let lines: [UUID: DecisionBarContent.DoneResult] = [
             mine: .restored(RestoreDone(opID: Self.opID, root: "/repo", turnNumber: 5)),
+            alsoMine: .restored(RestoreDone(opID: Self.opID, root: "/repo", turnNumber: 5)),
             anotherRestore: .restored(RestoreDone(opID: "another", root: "/repo", turnNumber: 3)),
             marked: .markedViewed(ViewedLineUndo(conversation: TurnSummaryFixture.conversation, changeID: UUID())),
             answered: .answeredInTerminal
         ]
-        #expect(undone.lapsedPanes(in: lines) == [mine])
+        let lapsed = undone.lapsedPanes(in: lines)
+        #expect(lapsed.count == 2)
+        #expect(Set(lapsed) == [mine, alsoMine])
         #expect(undone.lapsedPanes(in: [:]).isEmpty)
     }
 }

@@ -128,20 +128,18 @@ mod tests {
 
     #[test]
     fn a_subagent_message_reads_as_one_with_or_without_attributes() {
-        let head = r#"<agent-message from="ade08c9a2d0c40ca0"> [Subagent hand-back]"#;
-        assert_eq!(classify_prompt(head).0, PromptKind::SubagentMessage);
-        assert_eq!(
-            classify_prompt("<agent-message>done").0,
-            PromptKind::SubagentMessage
-        );
+        for head in [
+            r#"<agent-message from="ade08c9a2d0c40ca0"> [Subagent hand-back]"#,
+            "<agent-message>done",
+        ] {
+            assert_eq!(classify_prompt(head), (PromptKind::SubagentMessage, head));
+        }
     }
 
     #[test]
     fn leading_whitespace_does_not_hide_the_tag() {
-        assert_eq!(
-            classify_prompt("  \n<task-notification>x").0,
-            PromptKind::BackgroundTask
-        );
+        let head = "  \n<task-notification>x";
+        assert_eq!(classify_prompt(head), (PromptKind::BackgroundTask, head));
     }
 
     #[test]
@@ -157,16 +155,13 @@ mod tests {
     }
 
     #[test]
-    fn a_reminder_whose_end_is_cut_off_reads_as_injected() {
-        let head =
-            "<system-reminder> The user opened the file foo.swift in the IDE. This may or may";
-        assert_eq!(classify_prompt(head), (PromptKind::Injected, head));
-    }
-
-    #[test]
-    fn a_reminder_alone_reads_as_injected() {
-        let head = "<system-reminder>Plan mode is active.</system-reminder> ";
-        assert_eq!(classify_prompt(head), (PromptKind::Injected, head));
+    fn a_reminder_without_personal_words_reads_as_injected() {
+        for head in [
+            "<system-reminder> The user opened the file foo.swift in the IDE. This may or may",
+            "<system-reminder>Plan mode is active.</system-reminder> ",
+        ] {
+            assert_eq!(classify_prompt(head), (PromptKind::Injected, head));
+        }
     }
 
     #[test]
@@ -214,23 +209,18 @@ mod tests {
 
     #[test]
     fn kinds_serialize_in_camel_case() {
-        let words: Vec<String> = [
-            PromptKind::Text,
-            PromptKind::BackgroundTask,
-            PromptKind::SubagentMessage,
-            PromptKind::Injected,
-        ]
-        .iter()
-        .map(|kind| serde_json::to_string(kind).expect("kind"))
-        .collect();
-        assert_eq!(
-            words,
-            [
-                r#""text""#,
-                r#""backgroundTask""#,
-                r#""subagentMessage""#,
-                r#""injected""#
-            ]
-        );
+        for (kind, word) in [
+            (PromptKind::Text, r#""text""#),
+            (PromptKind::BackgroundTask, r#""backgroundTask""#),
+            (PromptKind::SubagentMessage, r#""subagentMessage""#),
+            (PromptKind::Injected, r#""injected""#),
+            (PromptKind::Goal, r#""goal""#),
+        ] {
+            assert_eq!(serde_json::to_string(&kind).expect("encode"), word);
+            assert_eq!(
+                serde_json::from_str::<PromptKind>(word).expect("decode"),
+                kind
+            );
+        }
     }
 }

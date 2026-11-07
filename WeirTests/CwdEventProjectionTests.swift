@@ -12,13 +12,19 @@ import Testing
 @MainActor
 @Suite("CwdEventProjection")
 struct CwdEventProjectionTests {
+    private struct Move {
+        let pane: UUID
+        let newCwd: String
+        let oldCwd: String?
+    }
+
     private struct Harness {
         let adapter: AgentProjectionAdapter
         let session: WorkspaceSession
         let pane: UUID
         let events: URL
         /// Every cwd change the projection reported, in order.
-        let moves: Recorded<[(pane: UUID, newCwd: String)]>
+        let moves: Recorded<[Move]>
     }
 
     private func harness(in root: URL) throws -> Harness {
@@ -36,8 +42,8 @@ struct CwdEventProjectionTests {
             cwdEvents: events,
             processStatus: { _ in .dead }
         )
-        let moves = Recorded<[(pane: UUID, newCwd: String)]>([])
-        adapter.onCwdChanged = { pane, newCwd, _ in moves.update { $0.append((pane, newCwd)) } }
+        let moves = Recorded<[Move]>([])
+        adapter.onCwdChanged = { pane, newCwd, oldCwd in moves.update { $0.append(Move(pane: pane, newCwd: newCwd, oldCwd: oldCwd)) } }
         return Harness(adapter: adapter, session: session, pane: pane, events: events, moves: moves)
     }
 
@@ -73,7 +79,10 @@ struct CwdEventProjectionTests {
             try write(harness, pane: harness.pane, updatedAt: "2026-09-14T12:01:00Z")
             harness.adapter.refresh()
             #expect(harness.moves.value.count == 1)
+            #expect(harness.moves.value.first?.pane == harness.pane)
             #expect(harness.moves.value.first?.newCwd == "/tmp/after")
+            #expect(harness.moves.value.first?.oldCwd == "/tmp/before")
+            #expect(try exists(harness, pane: harness.pane))
 
             // Freshness is the timestamp, not the file: another pass over the
             // same record does nothing even though the file is still there.
@@ -83,6 +92,7 @@ struct CwdEventProjectionTests {
             try write(harness, pane: harness.pane, newCwd: "/tmp/later", updatedAt: "2026-09-14T12:02:00Z")
             harness.adapter.refresh()
             #expect(harness.moves.value.count == 2)
+            #expect(harness.moves.value.last?.pane == harness.pane)
             #expect(harness.moves.value.last?.newCwd == "/tmp/later")
         }
     }
@@ -99,6 +109,10 @@ struct CwdEventProjectionTests {
 
             #expect(try !exists(harness, pane: closed))
             #expect(try exists(harness, pane: harness.pane))
+            // The startup pass remembers existing moves without offering them.
+            #expect(harness.moves.value.isEmpty)
+            harness.adapter.refresh()
+            #expect(harness.moves.value.isEmpty)
         }
     }
 }

@@ -23,33 +23,26 @@ struct PaneInitialCommandPrecedenceTests {
         TmuxBinding(socketPath: "/tmp/s", sessionID: "$1", sessionName: "work")
     }
 
-    /// Lets the main queue run what was queued on it before, a few hops
-    /// deep, so a test can say nothing came of it without waiting a time.
-    private static func drainMainQueue(hops: Int = 5) async {
-        for _ in 0..<hops {
-            await withCheckedContinuation { continuation in
-                DispatchQueue.main.async { continuation.resume() }
-            }
-        }
-    }
-
-    @Test("a staged command outranks everything, once")
-    func staged_beatsTmuxAndAgents_once() {
+    @Test("a staged command outranks tmux and an eligible resume")
+    func stagedBeatsTmuxAndResume_thenClearingItExposesTmux() {
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
         session.update(tab.id) { tab in
             tab.initialCommands[pane] = "echo staged"
             tab.tmuxBindings[pane] = binding()
             tab.agentSessions[.claude, default: [:]][pane] = AgentSessionInfo(sessionId: "c1", cwd: nil)
+            tab.agentResumeCandidates[pane] = [.claude]
         }
         #expect(PaneHostRepresentable.launch(session: session, paneID: pane).command == "echo staged")
         session.clearStagedLaunch(paneID: pane)
-        #expect(PaneHostRepresentable.launch(session: session, paneID: pane).command?.hasPrefix("tmux -S ") == true)
+        #expect(PaneHostRepresentable.launch(session: session, paneID: pane).command == "tmux -S '/tmp/s' attach -t '=work'")
+        session.update(tab.id) { $0.tmuxBindings[pane] = nil }
+        #expect(PaneHostRepresentable.launch(session: session, paneID: pane).command == "claude --resume c1")
     }
 
     /// A staged agent left in the saved tab would start a fresh
     /// conversation at every launch instead of resuming this one.
     @Test("after its staged command, a pane resumes its conversation")
-    func staged_thenResume() throws {
+    func staged_thenResume() {
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
         session.update(tab.id) { tab in
             tab.initialCommands[pane] = AgentKind.claude.launchCommand
@@ -58,8 +51,7 @@ struct PaneInitialCommandPrecedenceTests {
         }
         #expect(PaneHostRepresentable.launch(session: session, paneID: pane).command == "claude")
         session.clearStagedLaunch(paneID: pane)
-        let command = try #require(PaneHostRepresentable.launch(session: session, paneID: pane).command)
-        #expect(command.contains("--resume"))
+        #expect(PaneHostRepresentable.launch(session: session, paneID: pane).command == "claude --resume c1")
     }
 
     @Test("an empty staged command, or a pane in no tab, stages nothing")
@@ -94,7 +86,7 @@ struct PaneInitialCommandPrecedenceTests {
     /// made, or one that failed to start) typed nothing, so nothing waits
     /// to fail into a stop.
     @Test(.tags(.ffi), .enabled("libghostty is unavailable") { await GhosttyAvailability.isAvailable() })
-    func aRestoredResume_isWatchedFromWhenItIsTyped_andNotWhenNothingIsTyped() async throws {
+    func aRestoredResume_isWatchedWhenTheTypingCallbackReportsIt() throws {
         let ghosttyApp = try #require(GhosttyApp.placeholder.target)
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
         session.writesUserFiles = false
@@ -111,19 +103,25 @@ struct PaneInitialCommandPrecedenceTests {
             hostsAgentsInTmux: false,
             stopLedger: stops
         )
-        // Made, with its command not typed yet: what the main actor had
-        // queued runs, and nothing is watched.
-        await Self.drainMainQueue()
-        #expect(stops.ledger.launchResumes.isEmpty)
-        // Its turn to type came with no terminal: still nothing.
-        view.typeInitialCommand("claude --resume c1")
+        #expect(view.initialCommand == "cd '/tmp/repo' && claude --resume c1")
         #expect(stops.ledger.launchResumes.isEmpty)
         #expect(!stops.hasResumeClock)
-        // Typed: watched, from the moment it was.
+
+        let onTyped = try #require(view.onInitialCommandTyped)
+        view.typeInitialCommand("cd '/tmp/repo' && claude --resume c1")
+        #expect(stops.ledger.launchResumes.isEmpty)
+        #expect(!stops.hasResumeClock)
+
+        // Simulate the terminal's completion callback with a known timestamp.
         let typedAt = Date(timeIntervalSince1970: 5000)
-        view.onInitialCommandTyped?(typedAt)
-        #expect(stops.ledger.launchResumes[pane]?.since == typedAt)
-        #expect(stops.ledger.launchResumes[pane]?.sessionID == "c1")
+        onTyped(typedAt)
+        #expect(stops.ledger.launchResumes.count == 1)
+        let resume = try #require(stops.ledger.launchResumes[pane])
+        #expect(resume.paneID == pane)
+        #expect(resume.provider == .claude)
+        #expect(resume.sessionID == "c1")
+        #expect(resume.cwd == "/tmp/repo")
+        #expect(resume.since == typedAt)
         #expect(stops.hasResumeClock)
     }
 
@@ -152,12 +150,11 @@ struct PaneInitialCommandPrecedenceTests {
     }
 
     @Test("an agent resume still fires when the pane was not in tmux")
-    func noBinding_fallsThroughToAgentResume() throws {
+    func noBinding_fallsThroughToAgentResume() {
         var tab = tab()
         tab.agentSessions[.claude, default: [:]][pane] = AgentSessionInfo(sessionId: "c1", cwd: nil)
         tab.agentResumeCandidates[pane] = [.claude]
-        let command = try #require(PaneHostRepresentable.resolveInitialCommand(tab: tab, paneID: pane))
-        #expect(!command.hasPrefix("tmux -S "))
+        #expect(PaneHostRepresentable.resolveInitialCommand(tab: tab, paneID: pane) == "claude --resume c1")
     }
 
     @Test("a pane with nothing recorded just gets its shell")

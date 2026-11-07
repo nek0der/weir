@@ -12,7 +12,7 @@ struct ApprovalRequestTextTests {
         #expect(!ApprovalRequestText(summary: nil, question: nil, toolName: "Bash").isFileChange)
     }
 
-    @Test func onlyARunsCommand_isACommand() {
+    @Test func commandText_requiresACommandSummary_andIsNotAFileChange() {
         #expect(ApprovalRequestText(summary: "swift test", question: nil, toolName: "Bash", isSummaryCommand: true).isCommand)
         // Codex's shell with its command as a list, and Claude's Task: the
         // summary fell back to the input's description, which is prose.
@@ -29,5 +29,15 @@ struct ApprovalRequestTextTests {
             deadlineMilliseconds: 0
         )
         #expect(!ApprovalRequestText(request).isCommand)
+        let command = ApprovalPresentation.test(
+            provider: .codex,
+            toolName: "shell",
+            summary: "swift test",
+            deadlineMilliseconds: 0,
+            hasInputCommand: true
+        )
+        let text = ApprovalRequestText(command)
+        #expect(text.isCommand)
+        #expect(text.summary == "swift test")
     }
 }

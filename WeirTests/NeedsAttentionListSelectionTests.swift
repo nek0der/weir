@@ -40,10 +40,12 @@ struct NeedsAttentionListSelectionTests {
         var selection = NeedsAttentionListSelection(rows: rows)
 
         Self.tab(&selection, in: rows)
+        #expect(selection.rowID == rows[0].id)
         #expect(!selection.isOnAction)
 
         selection.move(forward: true, in: rows)
         Self.tab(&selection, in: rows)
+        #expect(selection.rowID == rows[1].id)
         #expect(selection.isOnAction)
         Self.tab(&selection, in: rows)
         #expect(!selection.isOnAction)
@@ -51,6 +53,7 @@ struct NeedsAttentionListSelectionTests {
         // Moving to another row puts the keyboard back on the row.
         Self.tab(&selection, in: rows)
         selection.move(forward: false, in: rows)
+        #expect(selection.rowID == rows[0].id)
         #expect(!selection.isOnAction)
     }
 
@@ -58,7 +61,7 @@ struct NeedsAttentionListSelectionTests {
     /// (`ListKeyboardSelectionTests`); the keyboard lands on the row, not
     /// on a button it was on in the row that left.
     @Test func anItemThatLeaves_handsTheSelectionToTheRowInItsPlace_onTheRowItself() {
-        let rows = Self.rows([nil, Self.answer, nil])
+        let rows = Self.rows([nil, Self.answer, Self.answer])
         var selection = NeedsAttentionListSelection(rows: rows)
         selection.select(rows[1].id)
         Self.tab(&selection, in: rows)
@@ -155,6 +158,7 @@ struct NeedsAttentionListSelectionTests {
         selection.move(forward: true, in: rows)
         selection.nextControl(count: 0, backward: true, in: rows)
         #expect(!selection.isOnHeading)
+        #expect(selection.rowID == rows[1].id)
 
         // An arrow from the heading lands on the row it left.
         selection.move(forward: false, in: rows)

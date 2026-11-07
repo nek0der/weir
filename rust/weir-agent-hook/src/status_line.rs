@@ -303,6 +303,8 @@ mod tests {
         let stored: PlanUsage =
             serde_json::from_slice(&fs::read(fixture.usage.join("claude.json")).expect("usage"))
                 .expect("json");
+        assert_eq!(stored.windows.len(), 1);
+        assert_eq!(stored.observed_at, "1970-01-01T00:01:40Z");
         assert_eq!(stored.windows[0].kind, "five_hour");
         assert!((stored.windows[0].used_percent - 42.0).abs() < f64::EPSILON);
     }
@@ -534,7 +536,13 @@ mod tests {
             run_status_line("claude", &input(&fixture, 1.0), &env(&fixture, &[]), at(0)),
             None
         );
-        assert!(fixture.usage.join("claude.json").exists());
+        let stored: PlanUsage =
+            serde_json::from_slice(&fs::read(fixture.usage.join("claude.json")).expect("usage"))
+                .expect("json");
+        assert_eq!(stored.windows.len(), 1);
+        assert_eq!(stored.windows[0].kind, "five_hour");
+        assert!((stored.windows[0].used_percent - 1.0).abs() < f64::EPSILON);
+        assert_eq!(stored.observed_at, "1970-01-01T00:00:00Z");
     }
 
     #[test]
@@ -564,8 +572,14 @@ mod tests {
         let _ = run_status_line("claude", &input(&fixture, 6.0), &env, at(1_031));
         assert_ne!(observed(&path), first, "changed: rewritten");
         let changed = observed(&path);
-        let _ = run_status_line("claude", &input(&fixture, 6.0), &env, at(1_100));
-        assert_ne!(observed(&path), changed, "aged: rewritten");
+        let _ = run_status_line("claude", &input(&fixture, 6.0), &env, at(1_090));
+        assert_eq!(observed(&path), changed, "before refresh deadline: kept");
+        let _ = run_status_line("claude", &input(&fixture, 6.0), &env, at(1_091));
+        assert_eq!(
+            observed(&path),
+            "1970-01-01T00:18:11Z",
+            "at refresh deadline: rewritten"
+        );
     }
 
     #[test]

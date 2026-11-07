@@ -57,7 +57,7 @@ struct ClipboardWriteTextTests {
     }
 
     @Test func aWriteWithoutPlainText_takesItsFirst() {
-        let text = withContents([("text/html", Array("<b>x</b>".utf8))]) {
+        let text = withContents([("text/html", Array("<b>x</b>".utf8)), ("text/rtf", Array("other".utf8))]) {
             GhosttyFFI.clipboardWriteText($0, count: $1)
         }
         #expect(text == "<b>x</b>")

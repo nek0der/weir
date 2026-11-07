@@ -21,11 +21,20 @@ struct ReviewRepositoryTests {
             _ = try await ReviewGitFixture.checked(["config", "diff.outputIndicatorNew", ">"], cwd: root)
             _ = try await ReviewGitFixture.checked(["config", "diff.suppressBlankEmpty", "true"], cwd: root)
             let files = try await ReviewGit.files(at: root)
-            #expect(files.count == names.count * 2, "Staged and unstaged files stay separate")
+            let staged = names.map { ReviewFile(path: $0, layer: .staged, status: .added) }
+            let unstaged = names.map { ReviewFile(path: $0, layer: .unstaged, status: .modified) }
+            #expect(files == (staged + unstaged).sorted { $0.id < $1.id })
+            for file in files.filter({ $0.layer == .staged }) {
+                let diff = try await ReviewGit.diff(file, root: root)
+                #expect(diff.lines.filter { $0.kind == .added }.map(\.text) == ["before"])
+            }
             for file in files.filter({ $0.layer == .unstaged }) {
                 let diff = try await ReviewGit.diff(file, root: root)
                 #expect(try await ReviewGit.fingerprint(file, root: root) == diff.fingerprint, "Polling and display fingerprints agree")
-                #expect(diff.lines.filter { $0.kind == .added }.map(\.newLine) == [1, 2], "Actual Git line numbers")
+                let added = diff.lines.filter { $0.kind == .added }
+                #expect(added.map(\.newLine) == [1, 2])
+                #expect(added.map(\.text) == ["after", "extra"])
+                #expect(diff.lines.filter { $0.kind == .removed }.map(\.text) == ["before"])
                 // The fixture above is CRLF. A carriage return belongs to the
                 // file's encoding rather than to the line being reviewed, and one
                 // left on the end is refused on the way to a terminal — a comment
@@ -40,27 +49,29 @@ struct ReviewRepositoryTests {
             let newFile = root.appendingPathComponent("new.txt")
             try "new\r\n".write(to: newFile, atomically: true, encoding: .utf8)
             let updated = try await ReviewGit.files(at: root)
-            let untracked = try #require(updated.first(where: { $0.path == "new.txt" }), "Untracked file missing")
+            let expectedUntracked = ReviewFile(path: "new.txt", layer: .untracked, status: .untracked)
+            #expect(updated.filter { $0.layer == .untracked } == [expectedUntracked])
+            let untracked = try #require(updated.first { $0 == expectedUntracked })
             let diff = try await ReviewGit.diff(untracked, root: root)
             try #require(diff.lines.count == 1, "Untracked additions")
             #expect(diff.lines[0].newLine == 1, "Untracked additions")
             // The untracked route builds its rows without going through `parse`,
             // and used to keep the carriage return the tracked one drops.
             #expect(diff.lines[0].text == "new", "Untracked lines read like tracked ones")
-            // Direct symlinks are refused even when both targets are inside the worktree.
-            let outside = directory.appendingPathComponent("outside.txt")
-            try "secret\n".write(to: outside, atomically: true, encoding: .utf8)
-            let escaping = root.appendingPathComponent("escaping.txt")
+            // Direct symlinks are refused even when their targets are inside the worktree.
+            let secret = root.appendingPathComponent("secret.txt")
+            try "secret\n".write(to: secret, atomically: true, encoding: .utf8)
+            let otherLink = root.appendingPathComponent("other-link.txt")
             let inside = root.appendingPathComponent("inside.txt")
-            try FileManager.default.createSymbolicLink(at: escaping, withDestinationURL: outside)
+            try FileManager.default.createSymbolicLink(at: otherLink, withDestinationURL: secret)
             try FileManager.default.createSymbolicLink(at: inside, withDestinationURL: newFile)
             defer {
-                try? FileManager.default.removeItem(at: escaping)
+                try? FileManager.default.removeItem(at: otherLink)
                 try? FileManager.default.removeItem(at: inside)
-                try? FileManager.default.removeItem(at: outside)
+                try? FileManager.default.removeItem(at: secret)
             }
             let withLinks = try await ReviewGit.files(at: root)
-            for name in ["escaping.txt", "inside.txt"] {
+            for name in ["other-link.txt", "inside.txt"] {
                 let link = try #require(withLinks.first(where: { $0.path == name }), "Symlink not listed: \(name)")
                 await #expect(throws: ReviewError.unsupported, "A symlink was read as a file: \(name)") {
                     try await ReviewGit.diff(link, root: root)
@@ -71,15 +82,15 @@ struct ReviewRepositoryTests {
             try await TempGitRepo.initialize(nested)
             let nestedRoot = try await ReviewGit.root(at: nested)
             try FileManager.default.createSymbolicLink(at: nestedRoot.appendingPathComponent("link"), withDestinationURL: root)
-            let escaped = ReviewFile(path: "link/outside.txt", layer: .untracked, status: .untracked)
+            let escaped = ReviewFile(path: "link/secret.txt", layer: .untracked, status: .untracked)
             #expect(await ReviewGit.source(escaped, root: nestedRoot).isEmpty, "A parent symlink escaped the repository")
             await #expect(throws: ReviewError.unsupported, "A parent symlink exposed external file content") {
                 try await ReviewGit.diff(escaped, root: nestedRoot)
             }
             try Data([0, 1]).write(to: newFile)
-            await #expect(throws: ReviewError.self, "Binary accepted") { try await ReviewGit.diff(untracked, root: root) }
+            await #expect(throws: ReviewError.unsupported, "Binary accepted") { try await ReviewGit.diff(untracked, root: root) }
             try Data(repeating: 97, count: ReviewGit.maxDiffBytes + 1).write(to: newFile)
-            await #expect(throws: ReviewError.self, "Oversized file accepted") { try await ReviewGit.diff(untracked, root: root) }
+            await #expect(throws: ReviewError.tooLarge, "Oversized file accepted") { try await ReviewGit.diff(untracked, root: root) }
         }
     }
 
@@ -246,12 +257,15 @@ struct ReviewRepositoryTests {
             try await ReviewGitFixture.checked(["commit", "-qam", "main"], cwd: directory)
             let merge = try await ReviewGitFixture.run(["merge", "other"], cwd: directory)
             try #require(!merge.succeeded, "The fixture must have a merge conflict")
-            let conflicts = try await ReviewGit.files(at: directory).filter { $0.path == "conflict.txt" }
-            try #require(conflicts.count == 1, "A conflict must appear exactly once")
-            #expect(conflicts[0].status == .unmerged, "A conflict must appear exactly once")
-            let diff = try await ReviewGit.diff(conflicts[0], root: directory)
-            #expect(diff.lines.isEmpty && diff.notice != nil, "A conflict must explain why it has no diff")
-            #expect(try await ReviewGit.fingerprint(conflicts[0], root: directory) == diff.fingerprint, "Conflict fingerprint agreement")
+            let conflicts = try await ReviewGit.files(at: directory)
+            #expect(conflicts.map(\.path) == ["conflict.txt"])
+            let conflict = try #require(conflicts.first)
+            #expect(conflict.status == .unmerged)
+            let diff = try await ReviewGit.diff(conflict, root: directory)
+            #expect(diff.file == conflict)
+            #expect(diff.lines.isEmpty)
+            #expect(diff.notice?.resolved(in: Locale(identifier: "en")) == "Resolve merge conflicts before reviewing this file.")
+            #expect(try await ReviewGit.fingerprint(conflict, root: directory) == diff.fingerprint)
             let huge = ReviewFile(path: "huge.txt", layer: .untracked, status: .untracked)
             try String(repeating: "x\n", count: ReviewDiffParser.maxRows + 1)
                 .write(to: directory.appendingPathComponent(huge.path), atomically: true, encoding: .utf8)

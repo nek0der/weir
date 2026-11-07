@@ -12,14 +12,16 @@ struct AgentFileLockTests {
         try withTempDir { directory in
             let sidecar = directory.appendingPathComponent("run.json.flock").path
             let stale = open(sidecar, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
-            #expect(stale >= 0)
+            try #require(stale >= 0)
             defer { close(stale) }
             #expect(AgentFileLock.isAtPath(stale, sidecar))
 
             // What a sweep does to a sidecar whose file is gone, and what the
             // next writer's open does after it.
-            unlink(sidecar)
+            try #require(unlink(sidecar) == 0)
+            #expect(!AgentFileLock.isAtPath(stale, sidecar))
             let next = open(sidecar, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
+            try #require(next >= 0)
             defer { close(next) }
 
             #expect(!AgentFileLock.isAtPath(stale, sidecar))

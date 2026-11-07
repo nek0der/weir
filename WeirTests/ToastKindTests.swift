@@ -103,8 +103,9 @@ struct ToastKindTests {
         #expect(center.current(in: window) == nil)
 
         center.show(ToastItem(.markedViewed(through: 7), id: id) {}, in: window)
-        center.show(ToastItem(.testNotificationSent), in: window)
+        let newer = ToastItem(.testNotificationSent)
+        center.show(newer, in: window)
         center.dismiss(id)
-        #expect(center.current(in: window) != nil, "a newer toast stays")
+        #expect(center.current(in: window)?.id == newer.id, "the newer toast stays")
     }
 }

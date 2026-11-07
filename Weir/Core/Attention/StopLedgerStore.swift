@@ -397,12 +397,13 @@ final class StopLedgerStore {
     /// the agent in front of the pane is the conversation back, and the
     /// stop ends; the shell there is the resume failed. Asked from
     /// `window`, whose bar says it is back; `nil` when no window asked.
-    func markResuming(_ itemID: AttentionItemID, window: WindowID?, now: Date = Date()) {
+    @discardableResult
+    func markResuming(_ itemID: AttentionItemID, window: WindowID?, now: Date = Date()) -> Task<Void, Never> {
         ledger.markResuming(itemID, at: now, window: window)
         persist()
         timeouts.removeValue(forKey: itemID)?.cancel()
         let timeout = resumeTimeout
-        timeouts[itemID] = Task { [weak self] in
+        let clock = Task { [weak self] in
             try? await Task.sleep(for: timeout)
             guard !Task.isCancelled, let self else { return }
             var isAgentInFront = false
@@ -417,6 +418,8 @@ final class StopLedgerStore {
             persist()
             onResumeTimedOut?()
         }
+        timeouts[itemID] = clock
+        return clock
     }
 
     /// Whether `provider` is in front of `paneID`'s terminal now, as the

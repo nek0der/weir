@@ -36,6 +36,13 @@ struct RustBridgeTests {
             firstPrompt: String(repeating: "x", count: 4097)
         )
 
-        #expect(title?.utf8.count == 4096)
+        #expect(title == String(repeating: "x", count: 4096))
+
+        let prefix = String(repeating: "x", count: 4095)
+        #expect(WeirRustTitleResolver.resolve(
+            providerSessionTitle: nil,
+            providerGeneratedTitle: nil,
+            firstPrompt: prefix + "あ"
+        ) == prefix)
     }
 }

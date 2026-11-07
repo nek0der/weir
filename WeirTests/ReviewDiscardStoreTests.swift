@@ -16,64 +16,117 @@ import Testing
 struct ReviewDiscardStoreTests {
     typealias Fixture = ProjectWindowsFixture
 
-    @Test func theMarks_surviveASwitch_aClose_aReopenFromAnotherOwner_andARoundTrip() throws {
+    @Test func discardMarksSurviveProjectSwitches_ownerChanges_andWindowClosure() throws {
         let fixture = Fixture()
         let (tab, hunk) = try ProjectWindowsFixture.reviewAndHunk()
         let other = try fixture.window(showing: fixture.c)
+        let original = fixture.primary
+        let scratchPane = try #require(fixture.scratchTab().splitTree.allLeafIDs().first)
+        let projectPane = try #require(fixture.aTab.splitTree.allLeafIDs().first)
         fixture.primary.review = tab
         fixture.primary.hunkDiscards[hunk] = ProjectWindowsFixture.discarded
 
         // A switch, and back.
-        fixture.choose(fixture.bTab, in: fixture.primary)
-        #expect(fixture.primary.hunkDiscards[hunk] == ProjectWindowsFixture.discarded)
-        fixture.choose(fixture.aTab, in: fixture.primary)
-        #expect(fixture.primary.review?.opening == tab.opening)
+        fixture.choose(fixture.bTab, in: original)
+        #expect(original.selection.shownProjectID == fixture.b.id)
+        #expect(original.hunkDiscards[hunk] == ProjectWindowsFixture.discarded)
+        fixture.choose(fixture.aTab, in: original)
+        #expect(original.selection.shownProjectID == fixture.a.id)
+        #expect(original.review?.opening == tab.opening)
         #expect(fixture.primary.hunkDiscards[hunk] == ProjectWindowsFixture.discarded)
 
         // The same tab opened again from a scratch pane, then a project's.
         var context = ReviewTabModel.Context(turns: [], isViewed: { _ in false }, branchBase: nil)
         context.isAgentPaneOfNoProject = true
-        let scratchOwned = try ReviewTabModel.open(.uncommitted, context, root: tab.root, agentPaneID: UUID(), current: tab).get()
-        fixture.primary.review = scratchOwned
-        #expect(fixture.primary.hunkDiscards[hunk] == ProjectWindowsFixture.discarded)
+        let scratchOwned = try ReviewTabModel.open(.uncommitted, context, root: tab.root, agentPaneID: scratchPane, current: tab).get()
+        original.review = scratchOwned
+        #expect(scratchOwned.agentPaneID == scratchPane)
+        #expect(scratchOwned.isOfNoProjectNow(in: fixture.session))
+        #expect(original.hunkDiscards[hunk] == ProjectWindowsFixture.discarded)
         context.isAgentPaneOfNoProject = false
-        fixture.primary.review = try ReviewTabModel.open(.uncommitted, context, root: tab.root, agentPaneID: UUID(), current: scratchOwned)
+        let projectOwned = try ReviewTabModel.open(.uncommitted, context, root: tab.root, agentPaneID: projectPane, current: scratchOwned)
             .get()
-        #expect(fixture.primary.hunkDiscards[hunk] == ProjectWindowsFixture.discarded)
+        original.review = projectOwned
+        #expect(projectOwned.agentPaneID == projectPane)
+        #expect(!projectOwned.isOfNoProjectNow(in: fixture.session))
+        #expect(original.hunkDiscards[hunk] == ProjectWindowsFixture.discarded)
 
-        // A close: the window left reads them.
-        fixture.registry.close(fixture.primary.id, in: fixture.session)
+        fixture.registry.close(original.id, in: fixture.session)
+        #expect(fixture.registry.window(original.id) == nil)
+        #expect(other.reviewDiscards === original.reviewDiscards)
         #expect(other.hunkDiscards[hunk] == ProjectWindowsFixture.discarded)
     }
 
-    @Test func aDiscardOrAnUndoStillRunning_endsInTheStore_whateverItsWindowDidMeanwhile() throws {
+    @Test func anUndoWithTheBridge_whenItsWindowCloses_clearsOnlyItsOperationsHunks() async throws {
         let fixture = Fixture()
-        let (tab, hunk) = try ProjectWindowsFixture.reviewAndHunk()
+        let (tab, hunk) = try Fixture.reviewAndHunk()
         let closing = try fixture.window(showing: fixture.c)
         closing.review = tab
-        // The records the discard holds as it begins (`ReviewHunkDiscardActions`).
-        let records = closing.reviewDiscards
-        records.hunkDiscards[hunk] = .running
+        let journal = try RestoreJournalFixture.make(
+            stageJSON: #"{"kind":"applied"}"#,
+            fields: .init(opID: "discard", operation: "discard", root: hunk.root)
+        )
+        let undone = try RestoreJournalFixture.make(
+            stageJSON: #"{"kind":"applied"}"#,
+            fields: .init(opID: "undo", operation: "undo", root: hunk.root, undoes: journal.opID)
+        )
+        let sibling = ReviewHunkKey(
+            scopeID: hunk.scopeID, root: hunk.root, fromTree: hunk.fromTree, toTree: hunk.toTree,
+            path: hunk.path, header: "@@ -10 +10 @@"
+        )
+        let unrelated = Fixture.scratchHunk
+        let discarded = ReviewHunkDiscardRecord.discarded(opID: journal.opID, root: journal.root, note: nil)
+        closing.hunkDiscards[hunk] = discarded
+        closing.hunkDiscards[sibling] = discarded
+        closing.hunkDiscards[unrelated] = Fixture.discarded
 
+        let request = Recorded<[String]?>(nil)
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let bridge = RestoreCoordinator.Bridge(
+            restore: { _, _, _, _ in .refused(.unknown) },
+            undo: { root, opID, _ in
+                request.value = [root, opID]
+                guard release.wait(timeout: .now() + 10) == .success else { return .refused(.unknown) }
+                return .finished(undone)
+            },
+            recover: { _ in RestoreRecovery(journals: [journal], settled: []) }
+        )
+        let stores = try Self.stores(fixture, bridge: bridge)
+        _ = await stores.restores.recover(roots: [journal.root])
+        try #require(stores.restores.journal(journal.opID, in: journal.root) == journal)
+        ReviewHunkDiscardActions.undo(Self.action(tab, hunk), window: closing, stores: stores, locale: Locale(identifier: "en"))
+        await pollUntil(timeout: .seconds(5)) { request.value != nil }
+        try #require(request.value == [journal.root, journal.opID])
+        #expect(closing.hunkDiscards[hunk] == .running)
+        #expect(closing.hunkDiscards[sibling] == discarded)
         fixture.registry.close(closing.id, in: fixture.session)
-        records.hunkDiscards[hunk] = ProjectWindowsFixture.discarded
-        #expect(fixture.primary.hunkDiscards[hunk] == ProjectWindowsFixture.discarded)
+        #expect(fixture.registry.window(closing.id) == nil)
+        release.signal()
 
-        // The undo ends the same way.
-        records.hunkDiscards[hunk] = nil
+        await pollUntil(timeout: .seconds(5)) { fixture.primary.hunkDiscards[hunk] != .running }
         #expect(fixture.primary.hunkDiscards[hunk] == nil)
+        #expect(fixture.primary.hunkDiscards[sibling] == nil)
+        #expect(fixture.primary.hunkDiscards[unrelated] == Fixture.discarded)
     }
 
-    /// This is the same through the action itself: the discard is with the bridge
-    /// when its window closes, and what the bridge answers still reaches
-    /// the records every other window reads.
-    @Test func aDiscardWithTheBridge_whenItsWindowCloses_endsInTheStore() async throws {
+    /// The bridge's result reaches the shared records after the initiating window closes.
+    @Test(arguments: [true, false])
+    func aDiscardWithTheBridge_whenItsWindowCloses_endsInTheStore(_ didWrite: Bool) async throws {
         let fixture = Fixture()
         let (tab, hunk) = try ProjectWindowsFixture.reviewAndHunk()
         let closing = try fixture.window(showing: fixture.c)
         closing.review = tab
+        let journal = try RestoreJournalFixture.make(
+            stageJSON: #"{"kind":"applied"}"#,
+            fields: .init(opID: "discard", operation: "discard", root: hunk.root)
+        )
+        let outcome: DiscardOutcome = didWrite
+            ? .finished(journal, [DiscardHunkResult(path: hunk.path, header: hunk.header, result: .discarded)])
+            : .refused(.unknown)
         let reached = Recorded(false)
         let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
         let bridge = RestoreCoordinator.Bridge(
             restore: { _, _, _, _ in .refused(.unknown) },
             undo: { _, _, _ in .refused(.unknown) },
@@ -82,14 +135,37 @@ struct ReviewDiscardStoreTests {
                 reached.value = true
                 // The wait is bounded, so a test that fails before letting
                 // it go does not hold the bridge's queue for good.
-                _ = release.wait(timeout: .now() + 10)
-                return .refused(.unknown)
+                guard release.wait(timeout: .now() + 10) == .success else { return .refused(.unknown) }
+                return outcome
             }
         )
+        let stores = try Self.stores(fixture, bridge: bridge)
+        let english = Locale(identifier: "en")
+        let unrelated = Fixture.scratchHunk
+        fixture.primary.hunkDiscards[unrelated] = Fixture.discarded
+        ReviewHunkDiscardActions.discard(Self.action(tab, hunk), window: closing, stores: stores, locale: english)
+        #expect(closing.hunkDiscards[hunk] == .running)
+        await pollUntil(timeout: .seconds(5)) { reached.value }
+        try #require(reached.value, "the discard is with the bridge")
+        #expect(fixture.primary.hunkDiscards[hunk] == .running)
+
+        fixture.registry.close(closing.id, in: fixture.session)
+        #expect(fixture.registry.window(closing.id) == nil)
+        release.signal()
+
+        await pollUntil(timeout: .seconds(5)) { fixture.primary.hunkDiscards[hunk] != .running }
+        let expected: ReviewHunkDiscardRecord = didWrite
+            ? .discarded(opID: journal.opID, root: journal.root, note: nil)
+            : .failed(ReviewHunkDiscardText.refused(.unknown, locale: english))
+        #expect(fixture.primary.hunkDiscards[hunk] == expected)
+        #expect(fixture.primary.hunkDiscards[unrelated] == Fixture.discarded)
+    }
+
+    private static func stores(_ fixture: Fixture, bridge: RestoreCoordinator.Bridge) throws -> ReviewHunkDiscardStores {
         let history = TurnHistory()
         let turn = try TurnSummaryFixture.recordedTurn(number: 7)
         history.replace(with: [ConversationTurns(key: turn.conversation, turns: [turn])])
-        let stores = ReviewHunkDiscardStores(
+        return ReviewHunkDiscardStores(
             session: fixture.session,
             windows: fixture.registry,
             toasts: ToastCenter(),
@@ -99,25 +175,10 @@ struct ReviewDiscardStoreTests {
             restoreGateInput: { RestoreGate.Input(turn: $0, agents: [], isWaiting: false, isRestoring: false) },
             laterTurns: ReviewLaterTurns()
         )
-        let english = Locale(identifier: "en")
+    }
 
-        ReviewHunkDiscardActions.discard(
-            .init(tab: tab, file: ReviewFile(path: hunk.path, layer: .unstaged, status: .modified), header: hunk.header),
-            window: closing,
-            stores: stores,
-            locale: english
-        )
-        #expect(closing.hunkDiscards[hunk] == .running)
-        await pollUntil(timeout: .seconds(5)) { reached.value }
-        #expect(reached.value, "the discard is with the bridge")
-
-        fixture.registry.close(closing.id, in: fixture.session)
-        #expect(fixture.registry.window(closing.id) == nil)
-        release.signal()
-
-        let expected = ReviewHunkDiscardRules.records(.refused(.unknown), keys: [hunk], locale: english)[hunk]
-        await pollUntil(timeout: .seconds(5)) { fixture.primary.hunkDiscards[hunk] != .running }
-        #expect(fixture.primary.hunkDiscards[hunk] == expected)
+    private static func action(_ tab: ReviewTabState, _ hunk: ReviewHunkKey) -> ReviewHunkDiscardActions.Hunk {
+        .init(tab: tab, file: ReviewFile(path: hunk.path, layer: .unstaged, status: .modified), header: hunk.header)
     }
 
     @Test func twoWindowsOnOneWorktree_seeTheSameMarks() throws {
@@ -133,10 +194,10 @@ struct ReviewDiscardStoreTests {
 
     /// A record of the hunk discarded in the worktree at `root`, keyed as
     /// a discard keys it (`ReviewHunkDiscardActions.key`).
-    private static func hunk(at root: String, scope: String = "s") -> ReviewHunkKey {
+    private static func hunk(at root: String, scope: String = "s", resolvesLinks: Bool = true) -> ReviewHunkKey {
         ReviewHunkKey(
             scopeID: scope,
-            root: WorktreePathResolver().resolved(root),
+            root: resolvesLinks ? WorktreePathResolver().resolved(root) : root,
             fromTree: "f",
             toTree: "t",
             path: "a.swift",
@@ -205,20 +266,6 @@ struct ReviewDiscardStoreTests {
         #expect(fixture.primary.hunkDiscards[inner] == ProjectWindowsFixture.discarded)
     }
 
-    @Test func aFolderOfRepositoriesAsAProject_keepsItsRepositorysRecords_untilItIsRemoved() {
-        let fixture = Fixture()
-        let inner = Self.hunk(at: fixture.a.rootURL.appendingPathComponent("repo").path)
-        fixture.primary.hunkDiscards[inner] = ProjectWindowsFixture.discarded
-
-        fixture.session.removeProject(fixture.b.id)
-        Self.projectsChanged(fixture)
-        #expect(fixture.primary.hunkDiscards[inner] == ProjectWindowsFixture.discarded)
-
-        fixture.session.removeProject(fixture.a.id)
-        Self.projectsChanged(fixture)
-        #expect(fixture.primary.hunkDiscards[inner] == nil)
-    }
-
     @Test func removingAProject_keepsWhatAProjectLeftHolds_eitherWay() {
         let fixture = Fixture()
         // `d` is a folder inside `a`; `e` is inside a repository.
@@ -236,12 +283,16 @@ struct ReviewDiscardStoreTests {
             fixture.primary.hunkDiscards[key] = ProjectWindowsFixture.discarded
         }
 
+        fixture.session.removeProject(fixture.b.id)
+        Self.projectsChanged(fixture)
+        #expect(fixture.primary.hunkDiscards[ofAOnly] == ProjectWindowsFixture.discarded)
+
         fixture.session.removeProject(fixture.a.id)
         Self.projectsChanged(fixture)
         // `d` still holds it.
         #expect(fixture.primary.hunkDiscards[ofD] == ProjectWindowsFixture.discarded)
         #expect(fixture.primary.hunkDiscards[ofAOnly] == nil)
-        // `b`, `c` and `d` are still in it.
+        // `c` and `d` are still in it.
         #expect(fixture.primary.hunkDiscards[holdingAll] == ProjectWindowsFixture.discarded)
 
         // A project inside a repository: the repository's records go with it.
@@ -275,16 +326,20 @@ struct ReviewDiscardStoreTests {
             )
             let viaLink = fixture.session.addOrActivateProject(rootURL: link, suggestedName: "link")
             Self.projectsChanged(fixture)
-            let ofOne = Self.hunk(at: parentLink.appendingPathComponent("one").path)
+            let ofOne = Self.hunk(at: parentLink.appendingPathComponent("one").path, resolvesLinks: false)
             let ofTwo = Self.hunk(at: two.resolvingSymlinksInPath().path)
             fixture.primary.hunkDiscards[ofOne] = ProjectWindowsFixture.discarded
             fixture.primary.hunkDiscards[ofTwo] = ProjectWindowsFixture.discarded
 
+            #expect(ofOne.root != viaTarget.rootURL.path)
+            #expect(ofTwo.root != viaLink.rootURL.path)
             fixture.session.removeProject(viaTarget.id)
+            Self.projectsChanged(fixture)
+            #expect(fixture.primary.hunkDiscards[ofOne] == nil)
+            #expect(fixture.primary.hunkDiscards[ofTwo] == ProjectWindowsFixture.discarded)
+
             fixture.session.removeProject(viaLink.id)
             Self.projectsChanged(fixture)
-
-            #expect(fixture.primary.hunkDiscards[ofOne] == nil)
             #expect(fixture.primary.hunkDiscards[ofTwo] == nil)
         }
     }

@@ -26,11 +26,24 @@ final class FakeGit: GitRunning, Sendable {
         let force: Bool
     }
 
+    struct FetchCall: Equatable {
+        let repoRoot: URL
+        let remote: String
+        let branch: String
+    }
+
+    struct ComparisonCall: Equatable {
+        let repoRoot: URL
+        let local: String
+        let upstream: String
+    }
+
     private struct State {
         var createCalls: [CreateCall] = []
         var removeCalls: [RemoveCall] = []
         var nextCreateResult: GitResult = .init(exitCode: 0, stdout: "", stderr: "")
         var nextCreateError: GitProcessError?
+        var worktreeAddGate: Gate<Void>?
         var leavesFolderOnError = false
         var pruneCalls: [URL] = []
         var nextRemoveResult: GitResult = .init(exitCode: 0, stdout: "", stderr: "")
@@ -39,7 +52,8 @@ final class FakeGit: GitRunning, Sendable {
         var branchCalls: [BranchCall] = []
         var nextBranchResult: GitResult = .init(exitCode: 0, stdout: "", stderr: "")
         var createsDirectoryOnSuccess = false
-        var fetchCalls: [String] = []
+        var branchFetchCalls: [FetchCall] = []
+        var comparisonCalls: [ComparisonCall] = []
         var nextFetchResult: GitResult = .init(exitCode: 0, stdout: "", stderr: "")
         var nextFetchError: GitProcessError?
         var ignored: [String] = []
@@ -80,7 +94,15 @@ final class FakeGit: GitRunning, Sendable {
 
     /// The remotes fetched, in order.
     var fetchCalls: [String] {
-        state.withLock { $0.fetchCalls }
+        branchFetchCalls.map(\.remote)
+    }
+
+    var branchFetchCalls: [FetchCall] {
+        state.withLock { $0.branchFetchCalls }
+    }
+
+    var comparisonCalls: [ComparisonCall] {
+        state.withLock { $0.comparisonCalls }
     }
 
     /// What `listIgnored(...)` returns.
@@ -128,6 +150,12 @@ final class FakeGit: GitRunning, Sendable {
     var nextCreateError: GitProcessError? {
         get { state.withLock { $0.nextCreateError } }
         set { state.withLock { $0.nextCreateError = newValue } }
+    }
+
+    /// When set, holds an add after it is recorded. The test must open the gate.
+    var worktreeAddGate: Gate<Void>? {
+        get { state.withLock { $0.worktreeAddGate } }
+        set { state.withLock { $0.worktreeAddGate = newValue } }
     }
 
     /// Whether a create that throws leaves its folder behind, as a
@@ -190,15 +218,16 @@ final class FakeGit: GitRunning, Sendable {
         path: URL,
         baseBranch: String
     ) async throws -> GitResult {
-        let (result, error, leavesFolder) = state.withLock {
+        let (result, error, leavesFolder, gate) = state.withLock {
             $0.createCalls.append(.init(
                 repoRoot: repoRoot,
                 path: path,
                 baseBranch: baseBranch
             ))
             $0.operations.append("worktree add")
-            return ($0.nextCreateResult, $0.nextCreateError, $0.leavesFolderOnError)
+            return ($0.nextCreateResult, $0.nextCreateError, $0.leavesFolderOnError, $0.worktreeAddGate)
         }
+        await gate?.wait()
         if let error {
             if leavesFolder {
                 try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
@@ -248,7 +277,7 @@ final class FakeGit: GitRunning, Sendable {
 
     func fetch(repoRoot: URL, remote: String, branch: String) async throws -> GitResult {
         let (result, error) = state.withLock {
-            $0.fetchCalls.append(remote)
+            $0.branchFetchCalls.append(.init(repoRoot: repoRoot, remote: remote, branch: branch))
             $0.operations.append("fetch")
             return ($0.nextFetchResult, $0.nextFetchError)
         }
@@ -278,7 +307,10 @@ final class FakeGit: GitRunning, Sendable {
     }
 
     func commitsBehind(repoRoot: URL, local: String, upstream: String) async -> Int? {
-        state.withLock { $0.behind }
+        state.withLock {
+            $0.comparisonCalls.append(.init(repoRoot: repoRoot, local: local, upstream: upstream))
+            return $0.behind
+        }
     }
 }
 

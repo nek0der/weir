@@ -65,7 +65,10 @@ struct AgentForegroundTests {
         )
         #expect(job == .pane(["node", "codex"]))
         #expect(asked == [binding])
-        #expect(TmuxPaneJob.read(binding, activePaneTTY: { _ in nil }, foregroundNames: { _ in ["codex"] }) == .unknown)
+        #expect(TmuxPaneJob.read(binding, activePaneTTY: { _ in nil }, foregroundNames: { _ in
+            Issue.record("A missing tty must not trigger a process lookup")
+            return ["codex"]
+        }) == .unknown)
         #expect(TmuxPaneJob.read(binding, activePaneTTY: { _ in "/dev/ttys042" }, foregroundNames: { _ in [] }) == .unknown)
     }
 
@@ -82,9 +85,18 @@ struct AgentForegroundTests {
             return .pane(["zsh"])
         }
 
-        let notTmux = await TmuxPaneJob.inFront(of: ["zsh"], isAgentHost: { true }, client: { binding }, read: read)
+        let notTmux = await TmuxPaneJob.inFront(of: ["zsh"], isAgentHost: {
+            Issue.record("A non-tmux process must not query host ownership")
+            return true
+        }, client: {
+            Issue.record("A non-tmux process must not query a client")
+            return binding
+        }, read: read)
         #expect(notTmux == .unknown)
-        let host = await TmuxPaneJob.inFront(of: ["tmux"], isAgentHost: { true }, client: { binding }, read: read)
+        let host = await TmuxPaneJob.inFront(of: ["tmux"], isAgentHost: { true }, client: {
+            Issue.record("An agent host must not query a user client")
+            return binding
+        }, read: read)
         #expect(host == .agentHost)
         #expect(asked.isEmpty, "neither a pane without tmux nor Weir's own host is asked")
 
@@ -97,30 +109,68 @@ struct AgentForegroundTests {
         #expect(asked == [binding])
     }
 
-    /// A resume's deadline is handed the agent itself in front, and a
-    /// launch the agent or its tmux client: the two differ behind the
-    /// person's own tmux showing the shell, where the deadline must read a
-    /// failed resume, not a tmux client taken for the agent.
-    @Test func theResumeDeadline_readsTheAgentItself_andALaunch_itsTmuxClientToo() async {
-        final class Reader: PaneForegroundReading {
-            func isAgentInFront(_: AgentKind, inPane _: UUID) -> Bool {
-                true
-            }
+    private struct Read: Equatable {
+        let agent: AgentKind
+        let pane: UUID
+    }
 
-            func isAgentRunningInFront(_: AgentKind, inPane _: UUID) async -> Bool {
-                false
-            }
+    private final class Reader: PaneForegroundReading {
+        var launchCalls: [Read] = []
+        var deadlineCalls: [Read] = []
+        var badgeCalls: [UUID] = []
 
-            func agentInFrontReading(inPane _: UUID) async -> AgentInFrontReading {
-                .undetermined
-            }
+        func isAgentInFront(_ agent: AgentKind, inPane pane: UUID) -> Bool {
+            launchCalls.append(Read(agent: agent, pane: pane))
+            return true
         }
+
+        func isAgentRunningInFront(_ agent: AgentKind, inPane pane: UUID) async -> Bool {
+            deadlineCalls.append(Read(agent: agent, pane: pane))
+            return false
+        }
+
+        func agentInFrontReading(inPane pane: UUID) async -> AgentInFrontReading {
+            badgeCalls.append(pane)
+            return .agent(.codex)
+        }
+    }
+
+    /// The launch accepts a tmux client as the agent, while the resume deadline
+    /// needs proof that the agent itself runs. The badge needs the agent's identity.
+    @Test func eachForegroundConsumer_getsItsOwnReading() async {
         let reader = Reader()
         let deadline = PaneForegroundWiring.resumeDeadline(reader)
         let launch = PaneForegroundWiring.launchFollow(reader)
+        let badge = PaneForegroundWiring.agentInFront(reader)
 
-        #expect(await deadline(UUID(), .codex) == false)
-        #expect(launch(UUID(), .codex))
-        withExtendedLifetime(reader) {}
+        let deadlinePane = UUID()
+        let launchPane = UUID()
+        let badgePane = UUID()
+        #expect(await deadline(deadlinePane, .codex) == false)
+        #expect(launch(launchPane, .claude))
+        #expect(await badge(badgePane) == .agent(.codex))
+        #expect(reader.deadlineCalls == [Read(agent: .codex, pane: deadlinePane)])
+        #expect(reader.launchCalls == [Read(agent: .claude, pane: launchPane)])
+        #expect(reader.badgeCalls == [badgePane])
+    }
+
+    @Test func foregroundReaders_reportNoProofAfterTheOwnerIsReleased() async {
+        let deadline: @MainActor (UUID, AgentKind) async -> Bool
+        let launch: @MainActor (UUID, AgentKind) -> Bool
+        let badge: @MainActor (UUID) async -> AgentInFrontReading
+        weak var owner: Reader?
+        do {
+            let reader = Reader()
+            owner = reader
+            deadline = PaneForegroundWiring.resumeDeadline(reader)
+            launch = PaneForegroundWiring.launchFollow(reader)
+            badge = PaneForegroundWiring.agentInFront(reader)
+        }
+
+        #expect(owner == nil)
+        let pane = UUID()
+        #expect(await deadline(pane, .codex) == false)
+        #expect(!launch(pane, .codex))
+        #expect(await badge(pane) == .undetermined)
     }
 }

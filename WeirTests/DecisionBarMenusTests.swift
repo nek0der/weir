@@ -7,53 +7,94 @@ import Testing
 
 @MainActor
 struct DecisionBarMenusTests {
-    private final class Opened {
-        var count = 0
-    }
+    @MainActor
+    private final class MenuProbe {
+        var isShown: Bool
+        private(set) var opens = 0
 
-    private static func menu(owner: UUID, isShown: Bool, opened: Opened) -> DecisionBarMenus.Menu {
-        DecisionBarMenus.Menu(owner: owner, isShown: { isShown }, open: { opened.count += 1 })
+        init(isShown: Bool = true) {
+            self.isShown = isShown
+        }
+
+        func menu(owner: UUID = UUID()) -> DecisionBarMenus.Menu {
+            .init(owner: owner, isShown: { self.isShown }, open: { self.opens += 1 })
+        }
     }
 
     @Test func open_opensThePanesMenu_onlyWhileItIsShown() {
         var menus = DecisionBarMenus()
-        let pane = UUID()
-        let opened = Opened()
-        #expect(!menus.open(inPane: pane), "a pane with no bar")
+        let (pane, otherPane) = (UUID(), UUID())
+        let target = MenuProbe(isShown: false)
+        let other = MenuProbe()
+        menus.set(other.menu(), inPane: otherPane)
+        #expect(!menus.open(inPane: pane))
+        #expect(other.opens == 0)
 
-        menus.set(Self.menu(owner: UUID(), isShown: false, opened: opened), inPane: pane)
+        menus.set(target.menu(), inPane: pane)
         #expect(!menus.isShown(inPane: pane))
-        #expect(!menus.open(inPane: pane), "a bar with no ⋯")
+        #expect(!menus.open(inPane: pane))
+        #expect(target.opens == 0)
 
-        menus.set(Self.menu(owner: UUID(), isShown: true, opened: opened), inPane: pane)
+        target.isShown = true
         #expect(menus.isShown(inPane: pane))
         #expect(menus.open(inPane: pane))
-        #expect(opened.count == 1)
+        #expect(target.opens == 1)
+        #expect(other.opens == 0)
+
+        target.isShown = false
+        #expect(!menus.open(inPane: pane))
+        #expect(menus.open(inPane: otherPane))
+        #expect(target.opens == 1)
+        #expect(other.opens == 1)
     }
 
-    /// A pane's next bar may be drawn before the last one goes; the last
-    /// one going leaves the next one's ⋯ in place.
     @Test func forget_takesAwayOnlyTheMenuItsOwnBarSet() {
         var menus = DecisionBarMenus()
         let pane = UUID()
         let (old, new) = (UUID(), UUID())
-        let opened = Opened()
-        menus.set(Self.menu(owner: old, isShown: true, opened: opened), inPane: pane)
-        menus.set(Self.menu(owner: new, isShown: true, opened: opened), inPane: pane)
+        let removed = MenuProbe()
+        let replacement = MenuProbe()
+        menus.set(removed.menu(owner: old), inPane: pane)
+        #expect(menus.open(inPane: pane))
+        menus.set(replacement.menu(owner: new), inPane: pane)
+
         menus.forget(pane: pane, by: old)
         #expect(menus.isShown(inPane: pane))
+        #expect(menus.open(inPane: pane))
+        #expect(removed.opens == 1)
+        #expect(replacement.opens == 1)
+
         menus.forget(pane: pane, by: new)
         #expect(!menus.isShown(inPane: pane))
+        #expect(!menus.open(inPane: pane))
+        #expect(replacement.opens == 1)
     }
 
-    /// The focused pane's, and none while the review stands where the
-    /// panes were.
-    @Test func thePaneItOpens_isTheFocusedOne_whileThePanesShow() {
-        let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+    @Test func thePaneItOpens_isTheFocusedOne_whileThePanesShow() throws {
+        let (session, tab, firstPane) = WorkspaceSessionFixture.withLooseTab()
         let window = ProjectWindowState(selection: session.primarySelection)
-        let focused = session.activeTab(in: session.primaryWindowID)?.splitTree.effectiveFocusedLeafID
-        #expect(focused != nil)
-        #expect(window.decisionBarMenuPane(in: session) == focused)
+        PaneActions.split(session, direction: .horizontal, in: session.primaryWindowID)
+        let panes = try #require(session.tab(tab.id)?.splitTree.allLeafIDs())
+        #expect(panes.count == 2)
+        let secondPane = try #require(panes.first { $0 != firstPane })
+        let first = MenuProbe()
+        let second = MenuProbe()
+        window.decisionBarMenus.set(first.menu(), inPane: firstPane)
+        window.decisionBarMenus.set(second.menu(), inPane: secondPane)
+
+        session.update(tab.id) { $0.splitTree.focusedLeafID = firstPane }
+        #expect(window.decisionBarMenuPane(in: session) == firstPane)
+        #expect(window.hasDecisionBarMenu(in: session))
+        SupervisionWindowActions.showDecisionBarMenu(in: window, session: session)
+        #expect(first.opens == 1)
+        #expect(second.opens == 0)
+
+        session.update(tab.id) { $0.splitTree.focusedLeafID = secondPane }
+        #expect(window.decisionBarMenuPane(in: session) == secondPane)
+        #expect(window.hasDecisionBarMenu(in: session))
+        SupervisionWindowActions.showDecisionBarMenu(in: window, session: session)
+        #expect(first.opens == 1)
+        #expect(second.opens == 1)
 
         window.review = ReviewTabState(
             root: "/repo",
@@ -65,5 +106,6 @@ struct DecisionBarMenusTests {
         )
         #expect(window.arePanesHidden)
         #expect(window.decisionBarMenuPane(in: session) == nil)
+        #expect(!window.hasDecisionBarMenu(in: session))
     }
 }

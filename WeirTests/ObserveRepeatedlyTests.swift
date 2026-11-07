@@ -13,7 +13,8 @@ struct ObserveRepeatedlyTests {
     @MainActor
     private final class TestObserver {
         let session: WorkspaceSession
-        var fireCount: Int = 0
+        var fireCount = 0
+        var trackCount = 0
 
         init(session: WorkspaceSession) {
             self.session = session
@@ -21,14 +22,16 @@ struct ObserveRepeatedlyTests {
 
         func start() {
             observeRepeatedly { [weak self] in
-                _ = self?.session.primarySelection.activeTabID
+                guard let self else { return }
+                trackCount += 1
+                _ = session.primarySelection.activeTabID
             } onChange: { [weak self] in
                 self?.fireCount += 1
             }
         }
     }
 
-    @Test func anOwnerReleased_afterTheChainReArmed_deinits() async {
+    @Test func anOwnerReleased_afterTheChainReArmed_deinits() async throws {
         let session = WorkspaceSession()
 
         weak var weakObserver: TestObserver?
@@ -36,13 +39,17 @@ struct ObserveRepeatedlyTests {
             let observer = TestObserver(session: session)
             weakObserver = observer
             observer.start()
+            #expect(observer.trackCount == 1)
             // Two changes: the second is seen only if the first re-armed
             // the observation, so the owner is released with the chain
             // already re-armed and no change in flight.
             _ = session.openTabInActiveScope()
-            await pollUntil { observer.fireCount == 1 }
+            await pollUntil { observer.trackCount == 2 }
+            try #require(observer.trackCount == 2)
+            #expect(observer.fireCount == 1)
             _ = session.openTabInActiveScope()
-            await pollUntil { observer.fireCount == 2 }
+            await pollUntil { observer.trackCount == 3 }
+            try #require(observer.trackCount == 3)
             #expect(observer.fireCount == 2)
         }
 

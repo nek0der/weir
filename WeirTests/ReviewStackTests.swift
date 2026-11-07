@@ -1,6 +1,7 @@
 // ReviewStackTests.swift
 // Weir — the review tab's stacked diff: every file under its header, the reading marks and moving between files.
 
+import AppKit
 import Foundation
 import Testing
 @testable import Weir
@@ -40,7 +41,7 @@ struct ReviewStackTests {
     /// The review tab's list opens at 240, wide enough for the
     /// checkbox before each name.
     @Test func theTabsFileList_opensAtTheDefaultWidth() {
-        #expect(ReviewPresentation().railWidth == ReviewRail.default)
+        #expect(ReviewPresentation().railWidth == 240)
     }
 
     @Test func progress_countsTheCheckedFilesOfTheList() {
@@ -50,17 +51,25 @@ struct ReviewStackTests {
         #expect(progress.total == 3)
         #expect(ReviewStackText.progress(progress, locale: Self.en) == "1 / 3 viewed")
         #expect(ReviewStackText.progress(progress, locale: Self.ja) == "確認済み 1 / 3")
+        #expect(ReviewStackText.spokenProgress(progress, locale: Self.en) == "1 of 3 viewed")
+        #expect(ReviewStackText.spokenProgress(progress, locale: Self.ja) == "3 件中 1 件を確認済み")
     }
 
     @Test func theSummary_readsTheDiffsCountsInTheReceiptsOrder() {
         let stats = [
             Self.first.id: ReviewFileStat(added: 2, removed: 1),
-            Self.second.id: ReviewFileStat(added: 3, removed: 0)
+            Self.second.id: ReviewFileStat(added: 3, removed: 0),
+            Self.third.id: ReviewFileStat(added: -1, removed: -1),
+            "turns:gone.swift": ReviewFileStat(added: 99, removed: 99)
         ]
-        let summary = ReviewStackText.summary(files: [Self.first, Self.second], stats: stats, locale: Self.en)
+        let noStat = ReviewFile(path: "new.swift", layer: .turns, status: .modified)
+        let summary = ReviewStackText.summary(files: Self.files + [noStat], stats: stats, locale: Self.en)
 
-        #expect(summary.map(\.text).joined() == "2 files +5 −1", "as the receipt and the changes panel write it")
-        #expect(summary.contains(ReceiptRun(text: "+5", role: .added(isEmphasized: false))))
+        #expect(summary.map(\.text).joined() == "4 files +5 −1")
+        #expect(summary.filter { $0.role != .plain } == [
+            ReceiptRun(text: "+5", role: .added(isEmphasized: false)),
+            ReceiptRun(text: "−1", role: .removed(isEmphasized: false))
+        ])
         #expect(ReviewStackText.summary(files: [Self.first], stats: stats, locale: Self.ja).map(\.text).joined() == "1 ファイル +2 −1")
     }
 
@@ -147,6 +156,7 @@ struct ReviewStackTests {
         var opened = ReviewStackOpenedFiles()
         let first = [Self.second.id: Self.mark(at: 1)]
         opened.toggle(Self.second.id, isFolded: true, viewed: first)
+        #expect(opened.ids(viewed: first) == [Self.second.id])
         #expect(opened.ids(viewed: [:]).isEmpty, "unchecked, nothing is folded or opened")
 
         let again = [Self.second.id: Self.mark(at: 2)]
@@ -168,20 +178,20 @@ struct ReviewStackTests {
     /// files opened by hand; folded from its chevron then, it folds once
     /// the comment is closed rather than staying open.
     @Test func theComposerRule_holdsBesideTheFilesOpenedByHand() {
-        #expect(ReviewStackBuilder.unfolded(openFileID: "a", isComposerOpen: true, opened: ["b"]) == ["a", "b"])
-        #expect(ReviewStackBuilder.unfolded(openFileID: "a", isComposerOpen: false, opened: ["b"]) == ["b"])
-        #expect(ReviewStackBuilder.unfolded(openFileID: nil, isComposerOpen: true, opened: ["b"]) == ["b"])
-
-        let viewed = ["a": Self.mark(at: 1)]
+        let viewed = ["a": Self.mark(at: 1), "b": Self.mark(at: 1)]
         var opened = ReviewStackOpenedFiles()
-        // Held open by the composer, its header shows it open: the chevron
-        // folds it.
-        opened.toggle("a", isFolded: false, viewed: viewed)
-        #expect(opened.ids(viewed: viewed).isEmpty)
-        #expect(ReviewStackBuilder.unfolded(openFileID: "a", isComposerOpen: false, opened: opened.ids(viewed: viewed)).isEmpty)
-        // An unchecked file has nothing to open.
+        opened.toggle("a", isFolded: true, viewed: viewed)
         opened.toggle("b", isFolded: true, viewed: viewed)
-        #expect(opened.ids(viewed: viewed).isEmpty)
+        #expect(opened.ids(viewed: viewed) == ["a", "b"])
+
+        // The chevron clears the manual opening, but the active composer holds its file open.
+        opened.toggle("a", isFolded: false, viewed: viewed)
+        opened.toggle("c", isFolded: true, viewed: viewed)
+        let manual = opened.ids(viewed: viewed)
+        #expect(manual == ["b"])
+        #expect(ReviewStackBuilder.unfolded(openFileID: "a", isComposerOpen: true, opened: manual) == ["a", "b"])
+        #expect(ReviewStackBuilder.unfolded(openFileID: "a", isComposerOpen: false, opened: manual) == ["b"])
+        #expect(ReviewStackBuilder.unfolded(openFileID: nil, isComposerOpen: true, opened: manual) == ["b"])
     }
 
     /// Blue while the range holds turns past the viewed line, whatever the
@@ -212,7 +222,7 @@ struct ReviewStackTests {
 
     // MARK: - Scrolling to a file
 
-    @Test func choosingAFile_scrollsToItsHeader() throws {
+    @Test func aFileScrollRequest_putsItsHeaderAtTheTop() throws {
         let entries = try [
             Self.first: ReviewDiffFixture.rewritten(Self.first, lines: 2),
             Self.second: ReviewDiffFixture.rewritten(Self.second, lines: 5),
@@ -229,6 +239,40 @@ struct ReviewStackTests {
         #expect(stack.section(atRow: 7)?.file == Self.second, "a row belongs to the header above it")
         #expect(stack.section(atRow: stack.rows.count - 1)?.file == Self.third)
         #expect(stack.section(atRow: stack.rows.count) == nil)
+
+        var parent = ReviewDiffTable(
+            stack: stack, diffLines: [], contentKey: "file-scroll", widthKey: "file-scroll", layout: .unified,
+            files: Self.files, numberWidth: 26, expandedFileID: Self.first.id,
+            selection: .constant(ReviewDiffSelection()), composerLineID: nil, composerStartLine: nil,
+            composerIsEditing: false, composerText: .constant(""),
+            onSelectFile: { _ in }, onCompose: {}, onCancelCompose: {}, onCommit: {}, onInsert: {},
+            search: ReviewSearch(), onCloseSearch: {}, searchTargetLineID: nil, language: nil,
+            onToggleViewed: {}, fileApplication: .macOSDefault, onOpenLine: { _, _ in }, onExpand: { _, _ in },
+            onResolve: { _ in }, onEdit: { _ in }, onDelete: { _ in },
+            isOverlayPresented: false, onCloseOverlay: {}, onClose: {}, locale: Self.en
+        )
+        parent.scrollRequest = ReviewStackScroll(fileID: Self.second.id, serial: 1)
+        let coordinator = parent.makeCoordinator()
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 600, height: 40))
+        let table = NSTableView(frame: NSRect(x: 0, y: 0, width: 600, height: 0))
+        table.headerView = nil
+        table.addTableColumn(NSTableColumn(identifier: .init("review")))
+        table.delegate = coordinator
+        table.dataSource = coordinator
+        scroll.documentView = table
+        table.reloadData()
+        table.layoutSubtreeIfNeeded()
+
+        let header = try #require(stack.headerRow(of: Self.second.id))
+        let headerTop = table.rect(ofRow: header).minY
+        try #require(headerTop > scroll.documentVisibleRect.minY)
+        coordinator.applyFileChange(in: scroll, table: table)
+        #expect(scroll.documentVisibleRect.minY == headerTop)
+
+        parent.scrollRequest = ReviewStackScroll(fileID: "turns:missing.swift", serial: 2)
+        coordinator.parent = parent
+        coordinator.applyFileChange(in: scroll, table: table)
+        #expect(scroll.documentVisibleRect.minY == headerTop)
     }
 
     @Test func aFileNotYetRead_waitsUnderItsHeader() throws {
@@ -244,28 +288,40 @@ struct ReviewStackTests {
     @Test func anotherFilesLines_areNumberedApart_andLeadBackToTheirFile() throws {
         let entries = try Self.all()
         let stack = try Self.stack(open: Self.first, entries: entries)
-        let section = try #require(stack.section(of: Self.second.id))
-        let line = try #require(stack.rows[section.headerRow..<section.endRow].compactMap(\.line).first { $0.kind == .added })
-
-        #expect(line.id >= ReviewStackIDs.stride, "never an id of the open file")
-        let located = try #require(stack.locate(lineID: line.id))
-        #expect(located.fileID == Self.second.id)
-        #expect(entries[Self.second]?.lines.contains { $0.id == located.lineID && $0.kind == .added } == true)
-        #expect(stack.locate(lineID: 2)?.fileID == Self.first.id, "an id of the open file is the open file's")
+        var globalIDs: Set<Int> = []
+        for file in Self.files {
+            let section = try #require(stack.section(of: file.id))
+            let local = try #require(entries[file]?.lines.first { $0.kind == .added })
+            let line = try #require(stack.rows[section.headerRow..<section.endRow].compactMap(\.line).first { $0.kind == .added })
+            let located = try #require(stack.locate(lineID: line.id))
+            #expect(located.fileID == file.id)
+            #expect(located.lineID == local.id)
+            #expect(line.id == local.id + section.idOffset)
+            #expect(globalIDs.insert(line.id).inserted)
+        }
+        #expect(stack.section(of: Self.first.id)?.idOffset == 0)
+        #expect((stack.section(of: Self.second.id)?.idOffset ?? 0) >= ReviewStackIDs.stride)
     }
 
     // MARK: - Holding the reader's place
 
     @Test func theReadersPlace_holdsWhenAnotherFileIsOpened() throws {
-        let entries = try Self.all()
+        var entries = try Self.all()
+        entries[Self.second] = try ReviewDiffFixture.diff(of: Self.second, fingerprint: "second", patch: "@@ -1 +1 @@\n-old\n+unique")
         let before = try Self.stack(open: Self.first, entries: entries)
         let after = try Self.stack(open: Self.second, entries: entries)
         let section = try #require(before.section(of: Self.second.id))
-        let row = section.headerRow + 2
+        let row = section.endRow - 1
         let key = try #require(before.anchorKey(atRow: row))
+        let line = try #require(entries[Self.second]?.lines.first { $0.kind == .added })
 
         let moved = try #require(after.row(forAnchorKey: key))
-        #expect(after.rows[moved].anchorLine?.text == before.rows[row].anchorLine?.text, "the same line, now under the open file's ids")
+        let relocated = try #require(after.section(atRow: moved))
+        #expect(relocated.file == Self.second)
+        #expect(relocated.isOpen)
+        #expect(after.rows[moved].anchorLine == line)
+        #expect(after.rows[moved].anchorLine?.text == "unique")
+        #expect(before.rows[row].anchorLine?.id != after.rows[moved].anchorLine?.id)
         #expect(after.row(forAnchorKey: "h|" + Self.third.id) == after.headerRow(of: Self.third.id))
     }
 
@@ -313,23 +369,20 @@ struct ReviewStackTests {
         #expect(checked.restorePlacement(of: anchor, openFileID: Self.first.id, hasComposer: false)
             == .put(row: checked.headerRow(of: Self.second.id) ?? -1, offset: 0))
 
+        let failed = try ReviewStackFixture.stack(
+            Self.files,
+            open: Self.first,
+            entries: entries.filter { $0.key != Self.second },
+            failed: [Self.second: "Git couldn’t load the changes. Try again."]
+        )
+        let failedHeader = try #require(failed.headerRow(of: Self.second.id))
+        #expect(failed.restorePlacement(of: anchor, openFileID: Self.first.id, hasComposer: false)
+            == .put(row: failedHeader, offset: 0))
+
         // Its file gone from the range: the open file, or the composer.
         let missing = ReviewScrollAnchor(key: "l|3|fp|gone.swift", offset: 0)
         #expect(read.restorePlacement(of: missing, openFileID: Self.first.id, hasComposer: false) == .put(row: firstHeader, offset: 0))
         #expect(read.restorePlacement(of: missing, openFileID: Self.first.id, hasComposer: true) == .none)
-    }
-
-    @Test func aKeptPlaceInAFileGitCouldNotRead_doesNotWait() throws {
-        let failed = try ReviewStackFixture.stack(
-            Self.files,
-            open: Self.first,
-            entries: [:],
-            failed: [Self.second: "Git couldn’t load the changes. Try again."]
-        )
-        let anchor = ReviewScrollAnchor(key: "l|3|fp|" + Self.second.id, offset: 0)
-
-        #expect(failed.restorePlacement(of: anchor, openFileID: Self.first.id, hasComposer: false)
-            == .put(row: failed.headerRow(of: Self.second.id) ?? -1, offset: 0))
     }
 
     // MARK: - Marks
@@ -349,6 +402,10 @@ struct ReviewStackTests {
         #expect(marks(.modified).isEmpty)
         #expect(marks(.deleted).isEmpty)
         #expect(marks(.renamed).isEmpty)
+        #expect(marks(.typeChanged).isEmpty)
+        #expect(marks(.unmerged).isEmpty)
+        #expect(marks(.unknown).isEmpty)
+        #expect(marks(.modified, bash: ["b.swift"]).isEmpty)
         #expect(marks(.modified, bash: ["a.swift"]) == [.changedByBash])
         #expect(marks(.modified, outside: ["a.swift"]) == [.changedOutsideTurns])
         #expect(marks(.modified, outside: ["b.swift"]).isEmpty, "by path")
@@ -419,13 +476,25 @@ struct ReviewStackTests {
 
     @Test func theHeader_carriesTheMarksAndTheCounts() throws {
         var input = ReviewStackBuilder.Input(files: Self.files, slots: ReviewStackFixture.slots(Self.files))
-        input.stats = [Self.second.id: ReviewFileStat(added: 1234, removed: 2)]
-        input.marks = [Self.second.id: [.new, .changedOutsideTurns]]
+        input.stats = [
+            Self.second.id: ReviewFileStat(added: 1234, removed: 2),
+            Self.third.id: ReviewFileStat(added: 33, removed: 4)
+        ]
+        input.marks = [Self.second.id: [.new, .changedOutsideTurns], Self.third.id: [.changedByBash]]
+        var vanished = try ReviewDiffFixture.rewritten(Self.third)
+        vanished.hasVanished = true
+        input.entries = [Self.third.id: .loaded(vanished)]
         let stack = ReviewStackBuilder.build(input) { _, _, _ in ReviewStackPiece(rows: []) }
         let header = try #require(Self.header(stack, Self.second))
 
         #expect(header.marks == [.new, .changedOutsideTurns])
         #expect(header.stat == ReviewFileStat(added: 1234, removed: 2))
+        let absent = try #require(Self.header(stack, Self.first))
+        #expect(absent.marks.isEmpty)
+        #expect(absent.stat == nil)
+        let missing = try #require(Self.header(stack, Self.third))
+        #expect(missing.marks == [.changedByBash])
+        #expect(missing.stat == nil)
         #expect(ReviewStackText.checkboxLabel(path: "a.swift", locale: Self.ja) == "a.swift を確認済みにする")
     }
 
@@ -487,24 +556,29 @@ struct ReviewStackTests {
         let entries = try Self.all()
         let stack = try Self.stack(open: Self.first, entries: entries)
         let section = try #require(stack.section(of: Self.second.id))
-        let ids = stack.rows[section.headerRow..<section.endRow].compactMap(\.line).filter(\.isCommentable).map(\.id)
+        let closed = try #require(entries[Self.second])
+        let lines = closed.lines.filter { $0.kind == .added }
+        try #require(lines.count == 2)
+        let start = lines[0].id + section.idOffset
+        let end = lines[1].id + section.idOffset
         var run = ReviewSelection()
-        run.select(ids[0])
-        run.extend(to: ids[1])
+        run.select(start, on: .new)
+        run.extend(to: end)
 
-        let jump = try #require(stack.route(run, then: .compose))
-        #expect(jump.fileID == Self.second.id)
-        #expect(jump.start == ids[0] - section.idOffset && jump.end == ids[1] - section.idOffset, "in the file's own ids")
-        #expect(jump.then == .compose)
-        #expect(jump.fingerprint == Self.second.path)
+        #expect(stack.route(run, then: .compose) == ReviewJump(
+            fileID: Self.second.id, start: lines[0].id, end: lines[1].id, side: .new, then: .compose, fingerprint: closed.fingerprint
+        ))
 
+        let openLine = try #require(entries[Self.first]?.lines.first { $0.kind == .added })
         var crossing = ReviewSelection()
-        crossing.select(2)
-        crossing.extend(to: ids[1])
-        #expect(stack.route(crossing)?.start == ids[1] - section.idOffset, "a run that crossed starts over where it reached")
+        crossing.select(openLine.id, on: .new)
+        crossing.extend(to: end)
+        #expect(stack.route(crossing) == ReviewJump(
+            fileID: Self.second.id, start: lines[1].id, end: lines[1].id, side: .new, fingerprint: closed.fingerprint
+        ))
         var inOpen = ReviewSelection()
-        inOpen.select(2)
-        #expect(stack.route(inOpen) == nil, "the open file is acted on as it is")
+        inOpen.select(openLine.id)
+        #expect(stack.route(inOpen) == nil)
     }
 
     @Test func aJump_landsOnItsLines_unlessTheFileChanged() throws {
@@ -517,6 +591,9 @@ struct ReviewStackTests {
 
         #expect(ReviewStackNavigation.landing(jump, in: diff) == .select(start: 2, end: 3, side: nil, composes: true))
         #expect(ReviewStackNavigation.landing(moved, in: diff) == .header, "the ids name other code now")
+        let line = try #require(diff.lines.first { $0.kind == .added })
+        let selection = ReviewJump(fileID: Self.second.id, start: line.id, end: line.id, side: .new, fingerprint: diff.fingerprint)
+        #expect(ReviewStackNavigation.landing(selection, in: diff) == .select(start: line.id, end: line.id, side: .new, composes: false))
         #expect(ReviewStackNavigation.landing(
             ReviewJump(fileID: Self.second.id, start: 0, end: 0, then: .edit(comment), fingerprint: diff.fingerprint),
             in: diff
@@ -529,6 +606,10 @@ struct ReviewStackTests {
             ReviewJump(fileID: Self.second.id, start: hunk.id, end: hunk.id, then: .commentHunk(hunk.id)),
             in: diff
         ) == .commentHunk(hunk.id))
+        #expect(ReviewStackNavigation.landing(
+            ReviewJump(fileID: Self.second.id, start: line.id, end: line.id, then: .commentHunk(line.id)),
+            in: diff
+        ) == .header)
         #expect(ReviewStackNavigation.landing(
             ReviewJump(fileID: Self.second.id, start: 99, end: 99, then: .commentHunk(99)),
             in: diff

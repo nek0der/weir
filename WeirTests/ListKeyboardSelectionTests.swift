@@ -18,7 +18,9 @@ struct ListKeyboardSelectionTests {
         selection.move(forward: false, in: ids)
         #expect(selection.id == "a")
         selection.move(forward: true, in: ids)
+        #expect(selection.id == "b")
         selection.move(forward: true, in: ids)
+        #expect(selection.id == "c")
         selection.move(forward: true, in: ids)
         #expect(selection.id == "c")
     }

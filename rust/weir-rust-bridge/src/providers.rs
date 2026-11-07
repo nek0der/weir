@@ -488,6 +488,18 @@ fn provider_boundary(operation: impl FnOnce() -> Result<i32, i32>) -> Result<i32
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::take_bytes;
+    use serde_json::json;
+
+    const UNWRITTEN_LEN: usize = usize::MAX;
+
+    // Reject an untouched output before treating it as an owned allocation.
+    fn take_output(out: *mut u8, out_len: usize) -> Option<Vec<u8>> {
+        assert_ne!(out, ptr::dangling_mut(), "output pointer was not written");
+        assert_ne!(out_len, UNWRITTEN_LEN, "output length was not written");
+        // SAFETY: These are the initialized outputs of the provider ABI call.
+        unsafe { take_bytes(out, out_len) }
+    }
 
     #[test]
     fn a_write_not_recorded_crosses_with_its_exit_status() {
@@ -496,7 +508,6 @@ mod tests {
         assert_eq!(body["exit_code"], 75);
         assert_eq!(body["message"], "record lock busy");
     }
-    use crate::test_support::take_bytes;
 
     /// The Hook Helper's lines go through the runtime's own log: the file is
     /// private even when the umask and an earlier build left it readable.
@@ -543,7 +554,7 @@ mod tests {
 
     fn request(provider: &str, payload: &[u8]) -> (i32, Option<Value>) {
         let mut out: *mut u8 = ptr::dangling_mut();
-        let mut out_len: usize = 99;
+        let mut out_len = UNWRITTEN_LEN;
         // SAFETY: Every pointer is a live local of this test.
         let status = unsafe {
             weir_provider_approval_request_v1(
@@ -560,7 +571,7 @@ mod tests {
 
     fn output(provider: &str, decision: &[u8]) -> (i32, Option<Vec<u8>>) {
         let mut out: *mut u8 = ptr::dangling_mut();
-        let mut out_len: usize = 99;
+        let mut out_len = UNWRITTEN_LEN;
         // SAFETY: Every pointer is a live local of this test.
         let status = unsafe {
             weir_provider_approval_output_v1(
@@ -572,13 +583,12 @@ mod tests {
                 &raw mut out_len,
             )
         };
-        // SAFETY: The pair is what this call wrote.
-        (status, unsafe { take_bytes(out, out_len) })
+        (status, take_output(out, out_len))
     }
 
     fn output_v2(provider: &str, request: &[u8], decision: &[u8]) -> (i32, Option<Vec<u8>>) {
         let mut out: *mut u8 = ptr::dangling_mut();
-        let mut out_len: usize = 99;
+        let mut out_len = UNWRITTEN_LEN;
         // SAFETY: Every pointer is a live local of this test.
         let status = unsafe {
             weir_provider_approval_output_v2(
@@ -592,14 +602,11 @@ mod tests {
                 &raw mut out_len,
             )
         };
-        // SAFETY: The pair is what this call wrote.
-        (status, unsafe { take_bytes(out, out_len) })
+        (status, take_output(out, out_len))
     }
 
     fn take(out: *mut u8, out_len: usize) -> Option<Value> {
-        // SAFETY: The pair is what one call wrote.
-        unsafe { take_bytes(out, out_len) }
-            .map(|bytes| serde_json::from_slice(&bytes).expect("JSON body"))
+        take_output(out, out_len).map(|bytes| serde_json::from_slice(&bytes).expect("JSON body"))
     }
 
     const CODEX_PERMISSION: &[u8] = br#"{"hook_event_name":"PermissionRequest","session_id":"s","turn_id":"t","tool_name":"Bash","tool_input":{"command":"ls"}}"#;
@@ -616,7 +623,32 @@ mod tests {
 
         let (status, body) = request("claude", CODEX_PERMISSION);
         assert_eq!(status, PROVIDER_OK);
-        assert_eq!(body.expect("body").get("operation_id"), None);
+        let body = body.expect("body");
+        assert_eq!(body["provider"], "claude");
+        assert_eq!(body.get("operation_id"), None);
+
+        let (status, body) = request(
+            "opencode",
+            br#"{"hook_event_name":"permission.asked","data":{"id":"p","sessionID":"s","action":"shell","resources":["ls"]}}"#,
+        );
+        assert_eq!(status, PROVIDER_OK);
+        assert_eq!(
+            body,
+            Some(json!({
+                "provider": "opencode",
+                "session_id": "s",
+                "operation_id": "p",
+                "tool_name": "Bash",
+                "summary": "ls",
+                "input": {"command": "ls"},
+                "timeout_ms": 570_000,
+            }))
+        );
+
+        assert_eq!(
+            request("antigravity", CODEX_PERMISSION),
+            (PROVIDER_NOT_APPROVAL, None)
+        );
     }
 
     #[test]
@@ -630,15 +662,17 @@ mod tests {
     fn rejects_null_pointers_unknown_providers_and_bad_input() {
         let (status, body) = request("gemini", CODEX_PERMISSION);
         assert_eq!((status, body), (PROVIDER_UNKNOWN_PROVIDER, None));
-        let (status, _) = request("", CODEX_PERMISSION);
-        assert_eq!(status, PROVIDER_UNKNOWN_PROVIDER);
-        let (status, _) = request("claude", b"[1,2]");
-        assert_eq!(status, PROVIDER_INVALID_INPUT);
-        let (status, _) = request("claude", b"");
-        assert_eq!(status, PROVIDER_INVALID_INPUT);
+        assert_eq!(
+            request("", CODEX_PERMISSION),
+            (PROVIDER_UNKNOWN_PROVIDER, None)
+        );
+        assert_eq!(request("claude", b"[1,2]"), (PROVIDER_INVALID_INPUT, None));
+        assert_eq!(request("claude", b""), (PROVIDER_INVALID_INPUT, None));
         let oversized = vec![b'{'; MAX_HOOK_INPUT_BYTES + 1];
-        let (status, _) = request("claude", &oversized);
-        assert_eq!(status, PROVIDER_INPUT_TOO_LARGE);
+        assert_eq!(
+            request("claude", &oversized),
+            (PROVIDER_INPUT_TOO_LARGE, None)
+        );
 
         let mut out: *mut u8 = ptr::null_mut();
         let mut out_len: usize = 0;
@@ -709,15 +743,28 @@ mod tests {
         let answer = br#"{"decision":"answer","answers":{"q":"a"}}"#;
         let (status, bytes) = output_v2("claude", request, answer);
         assert_eq!(status, PROVIDER_OK);
-        let bytes = String::from_utf8(bytes.expect("bytes")).expect("utf8");
-        assert!(bytes.contains(r#""updatedInput""#));
+        let body: Value = serde_json::from_slice(&bytes.expect("bytes")).expect("JSON body");
+        assert_eq!(
+            body["hookSpecificOutput"]["decision"],
+            json!({
+                "behavior": "allow",
+                "updatedInput": {
+                    "questions": [{"question":"q","options":[{"label":"a"}]}],
+                    "answers": {"q":"a"},
+                },
+            })
+        );
+        assert_eq!(
+            output_v2("claude", b"[", answer),
+            (PROVIDER_INVALID_INPUT, None)
+        );
         let (status, bytes) = output("claude", answer);
         assert_eq!((status, bytes), (PROVIDER_OK, None));
     }
 
     fn hook(provider: &str, kind: u32, payload: &[u8], env: &[u8]) -> (i32, Option<Value>) {
         let mut out: *mut u8 = ptr::dangling_mut();
-        let mut out_len: usize = 99;
+        let mut out_len = UNWRITTEN_LEN;
         // SAFETY: Every pointer is a live local of this test.
         let status = unsafe {
             weir_hook_run_v1(
@@ -800,10 +847,14 @@ mod tests {
         );
         assert_eq!(status, PROVIDER_OK);
         assert_eq!(body.expect("body")["outcome"], "applied");
-        let (status, _) = hook("claude", 7, payload, env.as_bytes());
-        assert_eq!(status, PROVIDER_INVALID_INPUT);
-        let (status, _) = hook("claude", WEIR_HOOK_KIND_LIFECYCLE, payload, b"[]");
-        assert_eq!(status, PROVIDER_INVALID_INPUT);
+        assert_eq!(
+            hook("claude", 7, payload, env.as_bytes()),
+            (PROVIDER_INVALID_INPUT, None)
+        );
+        assert_eq!(
+            hook("claude", WEIR_HOOK_KIND_LIFECYCLE, payload, b"[]"),
+            (PROVIDER_INVALID_INPUT, None)
+        );
         let (status, body) = hook("nope", WEIR_HOOK_KIND_LIFECYCLE, payload, env.as_bytes());
         assert_eq!(status, PROVIDER_OK);
         assert_eq!(body.expect("body")["outcome"], "unknown_provider");
@@ -853,10 +904,58 @@ mod tests {
                 .join(weir_agent_model::run_record_file_name(run)),
         )
         .expect("the tool's call is recorded");
+        let decoded = weir_agent_model::RunRecord::decode(&record).expect("run record");
+        assert_eq!(decoded.run_id.as_deref(), Some(run));
+        assert_eq!(decoded.tool.as_deref(), Some("Bash"));
+        assert_eq!(decoded.last_hook_event.as_deref(), Some("tool_started"));
+    }
+
+    #[test]
+    fn a_session_end_removes_its_legacy_hint() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let pane = "6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F10";
+        let run = "6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F11";
+        let state_dir = scratch.path().join("states");
+        let sessions = scratch.path().join("sessions");
+        let env = json!({
+            "WEIR_PANE_ID": pane,
+            "WEIR_AGENT_RUN_ID": run,
+            "WEIR_AGENT_STATES_DIR": state_dir,
+            "WEIR_SESSIONS_DIR": sessions,
+            "WEIR_TURN_SNAPSHOT": "0",
+        })
+        .to_string();
+        std::fs::create_dir_all(&sessions).expect("sessions directory");
+        let hint = sessions.join(weir_agent_model::session_hint_file_name(pane));
+        std::fs::write(
+            &hint,
+            json!({
+                "schemaVersion": 1,
+                "paneId": pane,
+                "sessionId": "s",
+                "updatedAt": "2026-09-14T00:00:10Z",
+            })
+            .to_string(),
+        )
+        .expect("legacy hint");
+
+        let (status, body) = hook(
+            "claude",
+            WEIR_HOOK_KIND_LIFECYCLE,
+            br#"{"hook_event_name":"SessionEnd","reason":"clear","session_id":"s"}"#,
+            env.as_bytes(),
+        );
+
+        assert_eq!(status, PROVIDER_OK);
+        assert_eq!(body.expect("outcome")["outcome"], "applied");
+        let record = std::fs::read(state_dir.join(weir_agent_model::run_record_file_name(run)))
+            .expect("run record");
+        let record = weir_agent_model::RunRecord::decode(&record).expect("run record");
+        assert_eq!(record.last_hook_event.as_deref(), Some("session_ended"));
+        assert_eq!(record.session_id.as_deref(), Some("s"));
         assert!(
-            String::from_utf8_lossy(&record).contains(r#""lastHookEvent":"tool_started""#),
-            "{}",
-            String::from_utf8_lossy(&record)
+            !hint.exists(),
+            "a run's own end record must not retain its hint"
         );
     }
 

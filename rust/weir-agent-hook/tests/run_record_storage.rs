@@ -11,7 +11,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use support::{
-    RUN, Repo, SESSION_START, STOP, call, only_turn, prompt, read_turns, turn_env, turn_ref,
+    PANE, RUN, Repo, SESSION_START, STOP, call, only_turn, prompt, read_turns, turn_env, turn_ref,
 };
 use weir_agent_hook::{GitSnapshots, HookRuntime, TURNS_DIRECTORY, read_record, run_hook};
 use weir_agent_model::{SnapshotStatus, run_record_file_name};
@@ -27,17 +27,25 @@ fn a_record_a_newer_build_wrote_is_left_as_it_is() {
     let states = scratch.path().join("states");
     fs::create_dir_all(&states).expect("states");
     let record = states.join(run_record_file_name(RUN));
-    let newer = br#"{"schemaVersion":4,"paneId":"p","runId":"r","revision":9,"state":"running"}"#;
-    fs::write(&record, newer).expect("record");
+    let mut value = serde_json::json!({
+        "schemaVersion": 3, "paneId": PANE, "runId": RUN, "revision": 9,
+        "state": "running", "updatedAt": "2026-10-10T00:00:00Z",
+    });
+    let known = serde_json::to_vec(&value).expect("record");
+    assert!(weir_agent_model::RunRecord::decode(&known).is_ok());
+    value["schemaVersion"] = 4.into();
+    let newer = serde_json::to_vec(&value).expect("newer record");
+    fs::write(&record, &newer).expect("record");
 
     send(&states, &prompt(scratch.path()));
     send(&states, STOP);
 
     assert_eq!(fs::read(&record).expect("record"), newer);
-    assert!(
-        read_turns(&states).unwrap_or_default().is_empty(),
-        "no turn is begun over a run this build cannot read"
-    );
+    match read_turns(&states) {
+        Ok(turns) => assert!(turns.is_empty(), "a newer run cannot begin a turn"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!("turns: {error}"),
+    }
 }
 
 /// Restores a directory's mode however the test ends.
@@ -94,6 +102,11 @@ fn a_turn_ended_while_its_run_record_fails_to_write_keeps_its_end_pinned() {
     let states = repo.root.join("states");
     call(&states, SESSION_START);
     send(&states, &prompt(&repo.path));
+    let record = states.join(run_record_file_name(RUN));
+    let before = fs::read(&record).expect("started run");
+    let started = only_turn(&states);
+    assert_eq!(started.phase, weir_agent_model::TurnPhase::Started);
+    assert!(turn_ref(&repo, &started.turn_id, "end").is_none());
     fs::write(repo.path.join("README.md"), "fixture\nchanged\n").expect("edit");
     let _mode = Mode(&states, 0o700);
     fs::set_permissions(&states, fs::Permissions::from_mode(0o500)).expect("chmod");
@@ -106,9 +119,14 @@ fn a_turn_ended_while_its_run_record_fails_to_write_keeps_its_end_pinned() {
     // The run record still names the turn, so it stays, with the end the
     // stop wrote; the tree that end holds is pinned like any other.
     let turn = only_turn(&states);
-    assert!(
-        matches!(turn.end, SnapshotStatus::Captured { .. }),
-        "the stop recorded the turn's end"
+    let SnapshotStatus::Captured { ref tree, .. } = turn.end else {
+        panic!("the stop did not capture an end: {:?}", turn.end);
+    };
+    assert_eq!(turn.turn_id, started.turn_id);
+    assert_eq!(turn.phase, weir_agent_model::TurnPhase::Finished);
+    assert_eq!(
+        turn_ref(&repo, &turn.turn_id, "end").as_deref(),
+        Some(tree.as_str())
     );
-    assert!(turn_ref(&repo, &turn.turn_id, "end").is_some());
+    assert_eq!(fs::read(&record).expect("unchanged run"), before);
 }

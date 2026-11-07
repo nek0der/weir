@@ -46,27 +46,36 @@ struct WorktreeSetupTests {
         }
     }
 
-    @Test func aStepThatCannotStart_saysWhy() async throws {
-        let failure = try await WorktreeSetup.run([.shorthand("true")], in: WorktreeFixture.freshPath(), path: Self.path)
-        #expect(failure?.offset == 0)
-        guard case let .exited(logTail) = failure?.reason else {
-            Issue.record("not reported: \(String(describing: failure))")
-            return
+    @Test func aMissingWorktreeRoot_reportsItsPath() async throws {
+        try await withTempDir { scratch in
+            let missing = scratch.appendingPathComponent("missing-root")
+            let failure = try await WorktreeSetup.run([.shorthand("true")], in: missing, path: Self.path)
+            #expect(failure?.offset == 0)
+            guard case let .exited(logTail) = failure?.reason else {
+                Issue.record("Expected a worktree resolution failure")
+                return
+            }
+            #expect(logTail.hasPrefix("\(missing.path): "))
         }
-        #expect(!logTail.isEmpty)
     }
 
-    @Test func aStepWhoseFolderLeadsOutOfTheWorktree_stopsTheSetupUnrun() async throws {
-        try await withTempDir { folder in
-            let outside = BootstrapItem.detailed(BootstrapDetail(cmd: "touch ran.txt", timeout: nil, cwd: "../"))
+    @Test(arguments: ["../", "inside/.."])
+    func aStepWhoseFolderTraversesAParent_stopsTheSetupUnrun(cwd: String) async throws {
+        try await withTempDir { scratch in
+            let (worktree, _) = try Self.worktreeAndOutside(in: scratch)
+            // The inside/.. control resolves back to the root, so resolved
+            // containment alone would accept it.
             let failure = try await WorktreeSetup.run(
-                [.shorthand("true"), outside, .shorthand("touch after.txt")],
-                in: folder,
+                [.shorthand("touch before.txt"), Self.touch(in: cwd), .shorthand("touch after.txt")],
+                in: worktree,
                 path: Self.path
             )
             #expect(failure?.offset == 1)
-            #expect(failure?.reason == .directoryOutsideWorktree("../"))
-            #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("after.txt").path))
+            #expect(failure?.reason == .directoryOutsideWorktree(cwd))
+            #expect(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("before.txt").path))
+            #expect(!FileManager.default.fileExists(atPath: worktree.appendingPathComponent("ran.txt").path))
+            #expect(!FileManager.default.fileExists(atPath: scratch.appendingPathComponent("ran.txt").path))
+            #expect(!FileManager.default.fileExists(atPath: worktree.appendingPathComponent("after.txt").path))
         }
     }
 
@@ -90,35 +99,25 @@ struct WorktreeSetupTests {
         .detailed(BootstrapDetail(cmd: "touch ran.txt", timeout: nil, cwd: cwd))
     }
 
-    @Test func aStepFolderThatLinksOutOfTheWorktree_stopsTheSetupUnrun() async throws {
+    @Test(arguments: [false, true])
+    func aStepFolderThatResolvesOutside_stopsTheSetupUnrun(hasAncestorLink: Bool) async throws {
         try await withTempDir { scratch in
             let (worktree, outside) = try Self.worktreeAndOutside(in: scratch)
-            try FileManager.default.createSymbolicLink(
-                at: worktree.appendingPathComponent("frontend"),
-                withDestinationURL: outside
-            )
+            let cwd = hasAncestorLink ? "packages/web" : "frontend"
+            let link = hasAncestorLink ? "packages" : "frontend"
+            let destination = hasAncestorLink ? outside.appendingPathComponent("web") : outside
+            try FileManager.default.createSymbolicLink(at: worktree.appendingPathComponent(link), withDestinationURL: outside)
+
             let failure = try await WorktreeSetup.run(
-                [Self.touch(in: "frontend"), .shorthand("touch after.txt")],
+                [Self.touch(in: cwd), .shorthand("touch after.txt")],
                 in: worktree,
                 path: Self.path
             )
-            #expect(failure?.offset == 0)
-            #expect(failure?.reason == .directoryOutsideWorktree("frontend"))
-            #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("ran.txt").path))
-            #expect(!FileManager.default.fileExists(atPath: worktree.appendingPathComponent("after.txt").path))
-        }
-    }
 
-    @Test func aStepFolderUnderAParentThatLinksOutOfTheWorktree_stopsTheSetupUnrun() async throws {
-        try await withTempDir { scratch in
-            let (worktree, outside) = try Self.worktreeAndOutside(in: scratch)
-            try FileManager.default.createSymbolicLink(
-                at: worktree.appendingPathComponent("packages"),
-                withDestinationURL: outside
-            )
-            let failure = try await WorktreeSetup.run([Self.touch(in: "packages/web")], in: worktree, path: Self.path)
-            #expect(failure?.reason == .directoryOutsideWorktree("packages/web"))
-            #expect(!FileManager.default.fileExists(atPath: outside.appendingPathComponent("web/ran.txt").path))
+            #expect(failure?.offset == 0)
+            #expect(failure?.reason == .directoryOutsideWorktree(cwd))
+            #expect(!FileManager.default.fileExists(atPath: destination.appendingPathComponent("ran.txt").path))
+            #expect(!FileManager.default.fileExists(atPath: worktree.appendingPathComponent("after.txt").path))
         }
     }
 
@@ -138,39 +137,44 @@ struct WorktreeSetupTests {
         }
     }
 
-    @Test func aStepFolderThatLinksInsideTheWorktree_runs() async throws {
+    @Test(arguments: ["inside", "alias"])
+    func aStepFolderInsideTheWorktree_runsInTheResolvedFolder(cwd: String) async throws {
         try await withTempDir { scratch in
             let (worktree, _) = try Self.worktreeAndOutside(in: scratch)
             try FileManager.default.createSymbolicLink(
                 atPath: worktree.appendingPathComponent("alias").path,
                 withDestinationPath: "inside"
             )
-            #expect(try await WorktreeSetup.run([Self.touch(in: "alias")], in: worktree, path: Self.path) == nil)
+
+            #expect(try await WorktreeSetup.run([Self.touch(in: cwd)], in: worktree, path: Self.path) == nil)
             #expect(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("inside/ran.txt").path))
+            #expect(!FileManager.default.fileExists(atPath: worktree.appendingPathComponent("ran.txt").path))
         }
     }
 
-    @Test func aStepFolderThatIsMissing_stopsTheSetupUnrun_andSaysWhy() async throws {
+    @Test(arguments: ["missing", "dangling"])
+    func aStepFolderThatIsMissing_stopsTheSetupUnrun_andSaysWhy(cwd: String) async throws {
         try await withTempDir { scratch in
             let (worktree, _) = try Self.worktreeAndOutside(in: scratch)
             try FileManager.default.createSymbolicLink(
                 atPath: worktree.appendingPathComponent("dangling").path,
                 withDestinationPath: "nowhere"
             )
-            for cwd in ["missing", "dangling"] {
-                let failure = try await WorktreeSetup.run(
-                    [Self.touch(in: cwd), .shorthand("touch after.txt")],
-                    in: worktree,
-                    path: Self.path
-                )
-                #expect(failure?.offset == 0)
-                guard case let .exited(logTail) = failure?.reason else {
-                    Issue.record("not reported: \(String(describing: failure))")
-                    continue
-                }
-                #expect(!logTail.isEmpty)
-                #expect(!FileManager.default.fileExists(atPath: worktree.appendingPathComponent("after.txt").path))
+
+            let failure = try await WorktreeSetup.run(
+                [Self.touch(in: cwd), .shorthand("touch after.txt")],
+                in: worktree,
+                path: Self.path
+            )
+
+            #expect(failure?.offset == 0)
+            guard case let .exited(logTail) = failure?.reason else {
+                Issue.record("Expected a step directory resolution failure")
+                return
             }
+            #expect(logTail.hasPrefix("\(worktree.appendingPathComponent(cwd).path): "))
+            #expect(!FileManager.default.fileExists(atPath: worktree.appendingPathComponent("ran.txt").path))
+            #expect(!FileManager.default.fileExists(atPath: worktree.appendingPathComponent("after.txt").path))
         }
     }
 
@@ -194,60 +198,45 @@ struct WorktreeSetupTests {
         }
     }
 
-    @Test func aStepFolderThatIsASubfolder_runs() async throws {
-        try await withTempDir { scratch in
-            let (worktree, _) = try Self.worktreeAndOutside(in: scratch)
-            #expect(try await WorktreeSetup.run([Self.touch(in: "inside")], in: worktree, path: Self.path) == nil)
-            #expect(FileManager.default.fileExists(atPath: worktree.appendingPathComponent("inside/ran.txt").path))
-        }
-    }
-
-    @Test func cancellingTheSetup_stopsTheStepThatRuns_andIsNoFailedStep() async throws {
+    @Test(arguments: [false, true])
+    func cancellingTheSetup_stopsTheLiveStepAndChildren_beforeReturning(ignoresTerm: Bool) async throws {
         try await withTempDir { folder in
-            let started = folder.appendingPathComponent("started")
+            let pidFile = folder.appendingPathComponent("started.pid")
+            let command = ignoresTerm
+                ? "trap '' TERM; /bin/sleep 30 & printf '%s\\n' \"$!\" > started.pid; wait"
+                : "printf '%s\\n' \"$$\" > started.pid; exec /bin/sleep 30"
             let task = Task {
                 try await WorktreeSetup.run(
-                    [.shorthand("touch started; exec sleep 30"), .shorthand("touch after.txt")],
+                    [.shorthand(command), .shorthand("touch after.txt")],
                     in: folder,
                     path: Self.path
                 )
             }
-            // Canceled while the step runs, not before it starts.
+            defer { task.cancel() }
             await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) {
-                FileManager.default.fileExists(atPath: started.path)
+                (try? String(contentsOf: pidFile, encoding: .utf8))?.isEmpty == false
             }
-            #expect(FileManager.default.fileExists(atPath: started.path))
-            let clock = SuspendingClock.now
-            task.cancel()
-            await #expect(throws: CancellationError.self) { try await task.value }
-            // `sleep` ends on the cancel's SIGTERM, a fraction of a second.
-            // The bound is well short of the 30 seconds it sleeps and leaves
-            // room for a busy CI runner.
-            #expect(SuspendingClock.now - clock < .seconds(15), "the cancel, not the step's own end")
-            #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("after.txt").path))
-        }
-    }
+            let text = try String(contentsOf: pidFile, encoding: .utf8)
+            let pid = try #require(pid_t(text.trimmingCharacters(in: .whitespacesAndNewlines)))
+            try #require(pid > 0)
+            try #require(ProcessLiveness.isLive(pid))
+            let group = getpgid(pid)
+            try #require(group > 0)
+            try #require(group != getpgrp())
+            defer {
+                if WorktreeSetup.isRunning(group: group) {
+                    kill(-group, SIGKILL)
+                }
+            }
+            let started = SuspendingClock.now
 
-    @Test func aStepThatIgnoresSIGTERM_andItsChildren_areKilledAfterTheGrace() async throws {
-        try await withTempDir { folder in
-            let child = folder.appendingPathComponent("child.pid")
-            let task = Task {
-                try await WorktreeSetup.run(
-                    [.shorthand("trap '' TERM; sleep 30 & echo $! > child.pid; wait")],
-                    in: folder,
-                    path: Self.path
-                )
-            }
-            await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) {
-                (try? String(contentsOf: child, encoding: .utf8))?.isEmpty == false
-            }
-            let pid = try #require(Int32(String(contentsOf: child, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
             task.cancel()
             await #expect(throws: CancellationError.self) { try await task.value }
-            // SIGKILL reaches the whole group, the child that ignored
-            // SIGTERM included.
-            await pollUntil(timeout: .seconds(6), interval: .milliseconds(50)) { !ProcessLiveness.isLive(pid) }
+
             #expect(!ProcessLiveness.isLive(pid))
+            #expect(!WorktreeSetup.isRunning(group: group))
+            #expect(SuspendingClock.now - started < .seconds(15), "the cancel must precede the step's natural exit")
+            #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("after.txt").path))
         }
     }
 
@@ -258,12 +247,15 @@ struct WorktreeSetupTests {
     /// wait's SIGKILL ends the group.
     @Test func theWaitForAStoppedStep_killsItsGroup_withoutTheStopsTimer() async throws {
         let group = try spawnProcessGroup(["/bin/sleep", "30"])
+        var reaped = false
         defer {
-            if WorktreeSetup.isRunning(group: group) {
+            if !reaped {
                 kill(-group, SIGKILL)
+                var status: Int32 = 0
+                waitpid(group, &status, 0)
             }
         }
-        reapWhenItEnds(group)
+        try #require(WorktreeSetup.isRunning(group: group))
 
         let clock = SuspendingClock()
         let started = clock.now
@@ -272,6 +264,10 @@ struct WorktreeSetupTests {
         #expect(!WorktreeSetup.isRunning(group: group))
         // The step still had its time to end on SIGTERM.
         #expect(clock.now - started >= .seconds(3))
+        var status: Int32 = 0
+        reaped = waitpid(group, &status, WNOHANG) == group
+        try #require(reaped)
+        #expect(status & 0x7F == SIGKILL)
     }
 
     /// Before Weir exits, the quit sends SIGKILL to a step that ignores
@@ -300,10 +296,17 @@ struct WorktreeSetupTests {
                 FileManager.default.fileExists(atPath: ready.path)
             }
             try #require(FileManager.default.fileExists(atPath: ready.path))
+            try #require(process.isRunning)
+            try #require(WorktreeSetup.isRunning(group: group))
 
             steps.stopBeforeExit()
 
-            await pollUntil(timeout: .seconds(15), interval: .milliseconds(20)) { !WorktreeSetup.isRunning(group: group) }
+            // The synchronous signal can precede Foundation's observation
+            // of exit. Inspect the reason once Foundation reaps the child.
+            await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) { !process.isRunning }
+            try #require(!process.isRunning)
+            #expect(process.terminationReason == .uncaughtSignal)
+            #expect(process.terminationStatus == SIGKILL)
             #expect(!WorktreeSetup.isRunning(group: group))
         }
     }
@@ -317,11 +320,15 @@ struct WorktreeSetupTests {
     @Test func aStepThatReachesItsStartAfterTheQuit_isNotStarted_andCancelsTheSetup() async throws {
         try await withTempDir { folder in
             let steps = WorktreeSetup.RunningSteps()
-            steps.stopBeforeExit()
-
+            let reached = folder.appendingPathComponent("reached")
             await #expect(throws: CancellationError.self) {
-                try await WorktreeSetup.run([.shorthand("touch ran.txt")], in: folder, path: Self.path, steps: steps)
+                try await WorktreeSetup.run([.shorthand("touch ran.txt")], in: folder, path: Self.path, steps: steps) { offset in
+                    #expect(offset == 0)
+                    #expect(FileManager.default.createFile(atPath: reached.path, contents: nil))
+                    steps.stopBeforeExit()
+                }
             }
+            #expect(FileManager.default.fileExists(atPath: reached.path))
             #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("ran.txt").path))
         }
     }
@@ -334,6 +341,12 @@ struct WorktreeSetupTests {
         process.executableURL = URL(fileURLWithPath: "/bin/sleep")
         process.arguments = ["60"]
 
+        defer {
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+                process.waitUntilExit()
+            }
+        }
         #expect(try !steps.start(process))
         #expect(!process.isRunning)
         #expect(process.processIdentifier == 0)

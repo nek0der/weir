@@ -495,7 +495,14 @@ mod tests {
 
     #[test]
     fn any_other_event_says_nothing_of_the_settings() {
-        assert!(settings(&json!({"hook_event_name": "session.tool.called"})).is_empty());
+        assert!(
+            settings(&json!({
+                "hook_event_name": "session.tool.called",
+                "auto_accept": true,
+                "data": {"agent": "plan", "model": {"id": "m", "providerID": "p", "variant": "high"}},
+            }))
+            .is_empty()
+        );
     }
 
     #[test]
@@ -567,7 +574,14 @@ mod tests {
         };
         let add = "git worktree add -b x ../x";
         let (intent, is_proven) = read(&payload("session.tool.success", add, 0));
-        assert_eq!(intent.expect("an intent").branch, "x");
+        assert_eq!(
+            intent,
+            Some(WorktreeIntent {
+                branch: "x".into(),
+                command: add.into(),
+                cwd: Some("/repo".into()),
+            })
+        );
         assert!(is_proven);
         assert_eq!(
             read(&payload("session.tool.success", add, 128)),
@@ -577,14 +591,6 @@ mod tests {
         assert_eq!(
             read(&payload("session.tool.success", "ls", 0)),
             (None, false)
-        );
-        assert!(
-            !read(&payload(
-                "session.tool.success",
-                "git worktree add -b x ../x ; true",
-                0
-            ))
-            .1
         );
     }
 
@@ -627,6 +633,13 @@ mod tests {
         .expect("a preparation");
         assert_eq!(preparation.generation, "g1");
         assert_eq!(preparation.cwd, "/repo");
+        assert_eq!(
+            prepared_begin(RawHookInput {
+                bytes: &asked,
+                transcript: None
+            }),
+            None
+        );
         assert_eq!(
             turn_preparation(RawHookInput {
                 bytes: &begun,

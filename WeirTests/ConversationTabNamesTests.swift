@@ -37,9 +37,11 @@ struct ConversationTabNamesTests {
 
         session.renameTab(tab.id, to: "Payments", runtimes: runtimes)
         #expect(session.conversationTabNames == [Self.conversation: "Payments"])
+        #expect(session.tab(tab.id)?.titleOverride == "Payments")
 
         session.renameTab(tab.id, to: "", runtimes: runtimes)
         #expect(session.conversationTabNames.isEmpty)
+        #expect(session.tab(tab.id)?.titleOverride == nil)
     }
 
     /// The name outlives the tab's run: once no agent runs in the tab, a
@@ -63,6 +65,7 @@ struct ConversationTabNamesTests {
 
         session.renameTab(tab.id, to: "Reused", runtimes: runtimes)
 
+        #expect(session.tab(tab.id)?.titleOverride == "Reused")
         #expect(session.conversationTabNames.isEmpty)
     }
 
@@ -101,7 +104,8 @@ struct ConversationTabNamesTests {
         #expect(restored.conversationTabNames == [Self.conversation: "Payments"])
 
         var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        object["conversationTabNames"] = nil
+        let removed = object.removeValue(forKey: "conversationTabNames")
+        _ = try #require(removed)
         let older = WorkspaceSession()
         try older.restore(from: JSONDecoder().decode(SessionSnapshot.self, from: JSONSerialization.data(withJSONObject: object)))
         #expect(older.conversationTabNames.isEmpty)

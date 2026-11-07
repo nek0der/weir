@@ -221,32 +221,36 @@ mod tests {
     }
 
     #[test]
-    fn a_one_hour_write_names_the_one_hour_bucket() {
-        let bytes = transcript(&[
-            r#"{"type":"user","message":{"content":"hi"}}"#.to_owned(),
-            line(
-                "req_1",
+    fn a_cache_write_names_its_bucket() {
+        for (timestamp, counters, ttl, rewrite) in [
+            (
                 "2026-10-07T12:00:05.120Z",
-                &usage(500_000, 2_000, 2_000, 0),
+                usage(500_000, 2_000, 2_000, 0),
+                3600,
+                502_123,
             ),
-        ]);
-        let window = transcript_cache_window(&bytes).expect("window");
-        assert_eq!(window.observed_at, "2026-10-07T12:00:05Z");
-        assert_eq!(window.ttl_seconds, 3600);
-        assert_eq!(window.rewrite_tokens, Some(3 + 500_000 + 2_000 + 120));
-        assert_eq!(window.precision, CachePrecision::Estimated);
-    }
-
-    #[test]
-    fn a_five_minute_write_names_the_five_minute_bucket() {
-        let bytes = transcript(&[line(
-            "req_1",
-            "2026-10-07T12:00:05Z",
-            &usage(0, 9_000, 0, 9_000),
-        )]);
-        let window = transcript_cache_window(&bytes).expect("window");
-        assert_eq!(window.ttl_seconds, 300);
-        assert_eq!(window.rewrite_tokens, Some(3 + 9_000 + 120));
+            (
+                "2026-10-07T12:00:05Z",
+                usage(0, 9_000, 0, 9_000),
+                300,
+                9_123,
+            ),
+        ] {
+            let bytes = transcript(&[
+                r#"{"type":"user","message":{"content":"hi"}}"#.to_owned(),
+                line("req_1", timestamp, &counters),
+            ]);
+            assert_eq!(
+                transcript_cache_window(&bytes),
+                Some(CacheWindow {
+                    observed_at: "2026-10-07T12:00:05Z".into(),
+                    ttl_seconds: ttl,
+                    rewrite_tokens: Some(rewrite),
+                    precision: CachePrecision::Estimated,
+                }),
+                "{counters}"
+            );
+        }
     }
 
     #[test]
@@ -448,11 +452,11 @@ mod tests {
         let cut = full[40..].to_owned();
         let bytes = transcript(&[
             cut,
+            full,
             "not json at all \"usage\"".to_owned(),
             r#"{"type":"assistant","message":{"usage":"none"}}"#.to_owned(),
             line("req_x", "yesterday", &usage(0, 9, 9, 0)),
             line("req_y", "2026-10-07T12:00:00+09:00", &usage(0, 9, 9, 0)),
-            full,
             r#"{"type":"assistant","message":{"usage":{"#.to_owned(),
         ]);
         let window = transcript_cache_window(&bytes).expect("window");

@@ -16,190 +16,230 @@ struct TabActionsMovePaneTests {
     /// Two loose tabs, the source in front and split in two through the
     /// action the UI uses, so the default case moves a pane out of a tab
     /// that keeps another; `sourcePanes: 1` leaves the source a lone pane.
-    /// The pane moved is the one focused after the splits, the one a drag
-    /// would pick up first.
+    /// The pane moved is the one focused after the splits. When staging an
+    /// agent, the original pane carries the staged launch instead.
     private static func sessionWithSourceAndTarget(
-        sourcePanes: Int = 2
+        sourcePanes: Int = 2,
+        running agent: AgentKind? = nil
     ) throws -> (session: WorkspaceSession, source: Tab, target: Tab, movedPane: UUID) {
-        let (session, target, _, source, _) = WorkspaceSessionFixture.withTwoLooseTabs()
-        session.setActiveTab(source.id)
+        let session = WorkspaceSession()
+        let target = session.openTab(container: .loose)
+        let firstPane = try #require(TabActions.newTab(session, in: .loose, running: agent))
+        let source = try #require(session.tab(containing: firstPane))
         for _ in 1..<sourcePanes {
             PaneActions.split(session, direction: .horizontal)
         }
         let live = try #require(session.tab(source.id))
-        let movedPane = try #require(live.splitTree.focusedLeafID ?? live.splitTree.allLeafIDs().last)
-        return (session, live, target, movedPane)
+        let focused = try #require(live.splitTree.focusedLeafID)
+        return (session, live, target, agent == nil ? focused : firstPane)
     }
 
     // swiftlint:enable large_tuple
 
-    @Test("source == target is a no-op")
+    enum Destination: Sendable {
+        case existingTab
+        case newTab
+    }
+
+    private static func move(_ pane: UUID, in session: WorkspaceSession, to destination: Destination, target: Tab) -> UUID? {
+        switch destination {
+        case .existingTab:
+            TabActions.mergePaneIntoTab(session, paneID: pane, into: target.id)
+            return target.id
+        case .newTab:
+            return TabActions.movePaneToNewTab(session, paneID: pane, in: session.primaryWindowID, intent: .person)
+        }
+    }
+
+    @Test("dropping a pane on its own tab preserves both tabs and the selection")
     func sourceEqualsTarget_isNoOp() throws {
-        let (session, source, _, paneID) = try Self.sessionWithSourceAndTarget()
-        let sourceLeafCountBefore = source.splitTree.allLeafIDs().count
+        let (session, source, _, pane) = try Self.sessionWithSourceAndTarget()
+        session.update(source.id) {
+            $0.zoomedLeafID = pane
+            $0.paneStates[pane] = PaneState(unreadCount: 3, name: "Kept pane")
+        }
+        let search = PaneSearchState()
+        session.paneSearchStates[pane] = search
+        let before = session.tabs
+        let focused = session.focusedPaneID(in: session.primaryWindowID)
 
-        TabActions.mergePaneIntoTab(session, paneID: paneID, into: source.id)
+        TabActions.mergePaneIntoTab(session, paneID: pane, into: source.id)
 
-        let sourceAfter = session.tab(source.id)
-        #expect(sourceAfter?.splitTree.allLeafIDs().count == sourceLeafCountBefore)
-        #expect(sourceAfter?.splitTree.contains(leafID: paneID) == true)
+        #expect(session.tabs == before)
+        #expect(session.primarySelection.activeTabID == source.id)
+        #expect(session.primarySelection.activeContainerID == .loose)
+        #expect(session.focusedPaneID(in: session.primaryWindowID) == focused)
+        #expect(session.paneSearchStates[pane] === search)
+        #expect(session.closedTabStack.isEmpty)
     }
 
-    @Test("multi-leaf source: pane lands in target, source keeps its sibling")
-    func multiLeafSource_keepsSourceAlive() throws {
-        let (session, source, target, paneID) = try Self.sessionWithSourceAndTarget(sourcePanes: 2)
+    @Test(arguments: [1, 2])
+    func mergePane_placesItOnTheRight_andRepairsItsSource(sourcePanes: Int) throws {
+        let (session, source, target, pane) = try Self.sessionWithSourceAndTarget(sourcePanes: sourcePanes)
+        let unrelated = session.openTab(container: .loose, in: session.primaryWindowID, intent: .person, selects: false)
+        let first = try #require(target.splitTree.allLeafIDs().first)
+        session.setActiveTab(target.id)
+        PaneActions.split(session, direction: .vertical)
+        let pivot = try #require(session.tab(target.id)?.splitTree.focusedLeafID)
+        try #require(session.tab(target.id)?.splitTree.allLeafIDs() == [first, pivot])
+        try #require(first != pivot)
+        session.setActiveTab(source.id)
+        let siblings = source.splitTree.allLeafIDs().filter { $0 != pane }
+        try #require(siblings.count == sourcePanes - 1)
+        let search = PaneSearchState()
+        session.paneSearchStates[pane] = search
+        session.setWorkingDirectory(paneID: pane, path: "/tmp/weir-live-merged-pane")
+        let previous = ClosedTab(
+            tab: Tab(title: "Earlier closed tab", splitTree: SplitTree(leafID: UUID()), container: .loose),
+            closedAt: Date(timeIntervalSince1970: 10)
+        )
+        session.closedTabStack = [previous]
 
-        TabActions.mergePaneIntoTab(session, paneID: paneID, into: target.id)
+        TabActions.mergePaneIntoTab(session, paneID: pane, into: target.id)
 
-        let sourceAfter = try #require(session.tab(source.id))
-        let targetAfter = try #require(session.tab(target.id))
-        #expect(!sourceAfter.splitTree.contains(leafID: paneID))
-        #expect(targetAfter.splitTree.contains(leafID: paneID))
-        // Target had 1 leaf, now 2 (the original + the merged-in pane).
-        #expect(targetAfter.splitTree.allLeafIDs().count == 2)
-        // Source retains exactly one leaf (the sibling).
-        #expect(sourceAfter.splitTree.allLeafIDs().count == 1)
-    }
-
-    @Test("lone-pane source: empty source tab is closed")
-    func singleLeafSource_closesSourceTab() throws {
-        let (session, source, target, paneID) = try Self.sessionWithSourceAndTarget(sourcePanes: 1)
-
-        TabActions.mergePaneIntoTab(session, paneID: paneID, into: target.id)
-
-        #expect(session.tab(source.id) == nil)
-        let targetAfter = try #require(session.tab(target.id))
-        #expect(targetAfter.splitTree.contains(leafID: paneID))
-        #expect(targetAfter.splitTree.allLeafIDs().count == 2)
-    }
-
-    @Test("moved pane becomes the focused leaf in the target tab")
-    func movedPane_becomesFocused() throws {
-        let (session, _, target, paneID) = try Self.sessionWithSourceAndTarget()
-
-        TabActions.mergePaneIntoTab(session, paneID: paneID, into: target.id)
-
-        let targetAfter = try #require(session.tab(target.id))
-        #expect(targetAfter.splitTree.focusedLeafID == paneID)
+        let merged = try #require(session.tab(target.id))
+        #expect(merged.splitTree.allLeafIDs() == [first, pivot, pane])
+        guard case let .split(root)? = merged.splitTree.root,
+              case let .split(added) = root.second
+        else {
+            Issue.record("expected a split of the target’s last pane")
+            return
+        }
+        #expect(root.direction == .vertical)
+        #expect(root.first.leafID == first)
+        #expect(added.direction == .horizontal)
+        #expect(added.first.leafID == pivot)
+        #expect(added.second.leafID == pane)
+        #expect(merged.splitTree.focusedLeafID == pane)
         #expect(session.primarySelection.activeTabID == target.id)
+        #expect(session.tab(containing: pane)?.id == target.id)
+        #expect(session.tab(unrelated.id) == unrelated)
+        #expect(session.paneSearchStates[pane] === search)
+        #expect(session.workingDirectory(paneID: pane) == "/tmp/weir-live-merged-pane")
+        #expect(session.closedTabStack == [previous])
+        if siblings.isEmpty {
+            #expect(session.tab(source.id) == nil)
+            #expect(session.tabs.map(\.id) == [target.id, unrelated.id])
+        } else {
+            #expect(session.tab(source.id)?.splitTree.allLeafIDs() == siblings)
+            #expect(session.tabs.map(\.id) == [target.id, source.id, unrelated.id])
+        }
     }
 
-    @Test("every per-pane state of the tab migrates with the leaf")
-    func perPaneState_migratesWithLeaf() throws {
-        let (session, source, target, paneID) = try Self.sessionWithSourceAndTarget()
-        // A distinct value in every per-pane state dictionary on the source
-        // side, each checked on the target: a value written under another
-        // provider's or field's key type-checks, so only a check per field
-        // finds it.
-        let paneState = PaneState(unreadCount: 7, name: "tests")
-        let scrollback = "/tmp/scrollback-\(paneID).vt"
-        let initial = "echo hello"
-        let claudeSession = AgentSessionInfo(sessionId: "claude-\(paneID)", cwd: "/tmp/claude")
-        let codexSession = AgentSessionInfo(sessionId: "codex-\(paneID)", cwd: "/tmp/codex")
+    @Test(arguments: [Destination.existingTab, .newTab])
+    func perPaneState_migratesWithLeaf(_ destination: Destination) throws {
+        let (session, source, target, pane) = try Self.sessionWithSourceAndTarget(running: destination == .newTab ? .codex : nil)
+        let sibling = try #require(source.splitTree.allLeafIDs().first { $0 != pane })
+        let paneState = PaneState(unreadCount: 7, name: "Tests")
+        let siblingState = PaneState(unreadCount: 2, name: "Sibling")
+        let scrollback = "/tmp/scrollback-\(pane).vt"
+        let command = destination == .newTab ? "codex" : "codex resume moved-session"
+        let prompt = "/tmp/weir-prompts/first"
+        let found = AgentInstallation(kind: .codex, executable: "/opt/tools/bin/codex")
+        let foreground = PaneAgentInFront(kind: .codex, isStaged: true)
+        if destination == .newTab {
+            try #require(source.agentsInFront[pane] == foreground)
+            try #require(session.stagedLaunch(paneID: pane)?.command == command)
+        }
+        let claudeSession = AgentSessionInfo(sessionId: "claude-\(pane)", cwd: "/tmp/claude")
+        let codexSession = AgentSessionInfo(sessionId: "codex-\(pane)", cwd: "/tmp/codex")
         let now = Date(timeIntervalSince1970: 1_700_000_000)
         let claudeBadge = AgentBadge(
-            state: .running,
-            detail: "claude-detail",
-            runStartedAt: now,
-            updatedAt: now,
-            lastPrompt: "claude prompt"
+            state: .finished, detail: "claude-detail", runStartedAt: now, updatedAt: now, lastPrompt: "claude prompt"
         )
         let codexBadge = AgentBadge(
-            state: .running,
-            detail: "codex-detail",
-            runStartedAt: now,
-            updatedAt: now,
-            lastPrompt: "codex prompt"
+            state: .running, detail: "codex-detail", runStartedAt: now, updatedAt: now, lastPrompt: "codex prompt"
         )
-        let tmuxBinding = TmuxBinding(
-            socketPath: "/private/tmp/tmux-501/default",
-            sessionID: "$4",
-            sessionName: "moved"
-        )
-        let updated = session.update(source.id) { t in
-            t.paneStates[paneID] = paneState
-            t.scrollbackPaths[paneID] = scrollback
-            t.initialCommands[paneID] = initial
-            t.initialPromptFiles[paneID] = "/tmp/weir-prompts/merge"
-            t.initialAgentExecutables[paneID] = AgentInstallation(kind: .codex, executable: "/opt/tools/bin/codex")
-            t.agentSessions[.claude, default: [:]][paneID] = claudeSession
-            t.agentSessions[.codex, default: [:]][paneID] = codexSession
-            t.agentBadges[.claude, default: [:]][paneID] = claudeBadge
-            t.agentBadges[.codex, default: [:]][paneID] = codexBadge
-            t.tmuxBindings[paneID] = tmuxBinding
+        let tmux = TmuxBinding(socketPath: "/tmp/weir-moved-tmux.sock", sessionID: "$4", sessionName: "moved")
+        session.update(source.id) {
+            $0.paneStates[pane] = paneState
+            $0.paneStates[sibling] = siblingState
+            $0.scrollbackPaths[pane] = scrollback
+            $0.initialCommands[pane] = command
+            $0.initialPromptFiles[pane] = prompt
+            $0.agentSessions[.claude, default: [:]][pane] = claudeSession
+            $0.agentSessions[.codex, default: [:]][pane] = codexSession
+            $0.agentBadges[.claude, default: [:]][pane] = claudeBadge
+            $0.agentBadges[.codex, default: [:]][pane] = codexBadge
+            $0.agentsInFront[pane] = foreground
+            $0.tmuxBindings[pane] = tmux
         }
-        #expect(updated, "Setting per-pane state should mutate the tab")
+        session.stageAgentExecutable(found, paneID: pane)
+        session.setWorkingDirectory(paneID: pane, path: "/tmp/weir-moved-live")
+        session.setWorkingDirectory(paneID: sibling, path: "/tmp/weir-sibling-live")
+        let search = PaneSearchState()
+        search.needle = "moved needle"
+        session.paneSearchStates[pane] = search
 
-        TabActions.mergePaneIntoTab(session, paneID: paneID, into: target.id)
+        let destinationID = try #require(Self.move(pane, in: session, to: destination, target: target))
+        let moved = try #require(session.tab(containing: pane))
+        let remaining = try #require(session.tab(source.id))
 
-        let sourceAfter = session.tab(source.id)
-        let targetAfter = try #require(session.tab(target.id))
-        // Migrated values present on target — each field checked
-        // explicitly so a cross-field bug at the action site shows up
-        // as a precise diff rather than a vague "something is wrong".
-        #expect(targetAfter.paneStates[paneID] == paneState)
-        #expect(session.paneState(paneID).name == "tests")
-        #expect(targetAfter.scrollbackPaths[paneID] == scrollback)
-        #expect(targetAfter.initialCommands[paneID] == initial)
-        #expect(targetAfter.initialPromptFiles[paneID] == "/tmp/weir-prompts/merge")
-        #expect(targetAfter.initialAgentExecutables[paneID] == AgentInstallation(kind: .codex, executable: "/opt/tools/bin/codex"))
-        #expect(targetAfter.agentSessions[.claude, default: [:]][paneID] == claudeSession)
-        #expect(targetAfter.agentSessions[.codex, default: [:]][paneID] == codexSession)
-        #expect(targetAfter.agentBadges[.claude, default: [:]][paneID] == claudeBadge)
-        #expect(targetAfter.agentBadges[.codex, default: [:]][paneID] == codexBadge)
-        #expect(targetAfter.tmuxBindings[paneID] == tmuxBinding)
-        // And the source tab, which keeps the sibling, holds none of it any
-        // more.
-        #expect(sourceAfter?.paneStates[paneID] == nil)
-        #expect(sourceAfter?.scrollbackPaths[paneID] == nil)
-        #expect(sourceAfter?.initialCommands[paneID] == nil)
-        #expect(sourceAfter?.initialPromptFiles[paneID] == nil)
-        #expect(sourceAfter?.initialAgentExecutables[paneID] == nil)
-        #expect(sourceAfter?.agentSessions[.claude, default: [:]][paneID] == nil)
-        #expect(sourceAfter?.agentSessions[.codex, default: [:]][paneID] == nil)
-        #expect(sourceAfter?.agentBadges[.claude, default: [:]][paneID] == nil)
-        #expect(sourceAfter?.agentBadges[.codex, default: [:]][paneID] == nil)
-        #expect(sourceAfter?.tmuxBindings[paneID] == nil)
+        #expect(moved.id == destinationID)
+        #expect(remaining.splitTree.allLeafIDs() == [sibling])
+        #expect(moved.paneTransferState(of: pane) == Tab.PaneTransferState(
+            paneState: paneState,
+            agentSessions: [.claude: claudeSession, .codex: codexSession],
+            agentBadges: [.claude: claudeBadge, .codex: codexBadge],
+            agentInFront: foreground,
+            scrollbackPath: scrollback,
+            initialCommand: command,
+            initialPromptFile: prompt,
+            initialAgentExecutable: found,
+            tmuxBinding: tmux
+        ))
+        #expect(remaining.paneTransferState(of: pane) == Tab.PaneTransferState())
+        #expect(remaining.paneTransferState(of: sibling) == Tab.PaneTransferState(paneState: siblingState))
+        #expect(session.paneState(pane) == paneState)
+        #expect(session.stagedLaunch(paneID: pane) == WorkspaceSession.StagedLaunch(
+            command: command, promptFile: prompt, agentExecutable: found
+        ))
+        #expect(session.workingDirectory(paneID: pane) == "/tmp/weir-moved-live")
+        #expect(session.workingDirectory(paneID: sibling) == "/tmp/weir-sibling-live")
+        #expect(session.paneSearchStates[pane] === search)
+        #expect(session.paneSearchStates[pane]?.needle == "moved needle")
+
+        // Without a run's badge, the foreground agent still supplies the pane's provider.
+        session.update(moved.id) {
+            $0.agentSessions = [:]
+            $0.agentBadges = [:]
+        }
+        #expect(session.tab(moved.id)?.agentKind(inPane: pane) == .codex)
+        #expect(session.tab(moved.id)?.agentKinds == [.codex])
     }
 
-    @Test("zoom on the moved leaf is cleared from the source tab")
-    func zoomedMovedLeaf_clearsSourceZoom() throws {
-        let (session, source, target, paneID) = try Self.sessionWithSourceAndTarget()
-        _ = session.update(source.id) { t in t.zoomedLeafID = paneID }
-        #expect(session.tab(source.id)?.zoomedLeafID == paneID)
+    @Test(arguments: [Destination.existingTab, .newTab], [false, true])
+    func movingAZoomedPane_clearsOnlyItsOwnZoom(_ destination: Destination, zoomsMovedPane: Bool) throws {
+        let (session, source, target, pane) = try Self.sessionWithSourceAndTarget()
+        let sibling = try #require(source.splitTree.allLeafIDs().first { $0 != pane })
+        let zoom = zoomsMovedPane ? pane : sibling
+        session.update(source.id) { $0.zoomedLeafID = zoom }
+        try #require(session.tab(source.id)?.zoomedLeafID == zoom)
 
-        TabActions.mergePaneIntoTab(session, paneID: paneID, into: target.id)
+        let moved = try #require(Self.move(pane, in: session, to: destination, target: target))
+        let remaining = try #require(session.tab(source.id))
 
-        // Source kept the sibling but the zoom anchor is gone, so a
-        // future tab switch back doesn't try to zoom a leaf that's no
-        // longer in this tree.
-        #expect(session.tab(source.id)?.zoomedLeafID == nil)
+        #expect(session.tab(containing: pane)?.id == moved)
+        #expect(remaining.splitTree.allLeafIDs() == [sibling])
+        #expect(remaining.zoomedLeafID == (zoomsMovedPane ? nil : sibling))
+        #expect(session.tab(moved)?.zoomedLeafID == nil)
     }
 
-    @Test("moving a pane the person is not in leaves the source tab's focus where it was")
-    func unfocusedMovedLeaf_keepsSourceFocus() throws {
+    @Test(arguments: [Destination.existingTab, .newTab])
+    func unfocusedMovedLeaf_keepsSourceFocus(_ destination: Destination) throws {
         let (session, source, target, _) = try Self.sessionWithSourceAndTarget(sourcePanes: 3)
         let leaves = source.splitTree.allLeafIDs()
-        let typingIn = try #require(leaves.first)
-        let moved = try #require(leaves.last)
+        try #require(leaves.count == 3)
+        let typingIn = leaves[1]
+        let pane = leaves[2]
         session.update(source.id) { $0.splitTree.focusedLeafID = typingIn }
 
-        TabActions.mergePaneIntoTab(session, paneID: moved, into: target.id)
+        let moved = try #require(Self.move(pane, in: session, to: destination, target: target))
 
+        #expect(session.tab(source.id)?.splitTree.allLeafIDs() == [leaves[0], typingIn])
         #expect(session.tab(source.id)?.splitTree.focusedLeafID == typingIn)
-    }
-
-    @Test("moving a pane the person is not in to a tab of its own leaves the source tab's focus where it was")
-    func unfocusedPaneToNewTab_keepsSourceFocus() throws {
-        let (session, source, _, _) = try Self.sessionWithSourceAndTarget(sourcePanes: 3)
-        let leaves = source.splitTree.allLeafIDs()
-        let typingIn = try #require(leaves.first)
-        let moved = try #require(leaves.last)
-        session.update(source.id) { $0.splitTree.focusedLeafID = typingIn }
-
-        TabActions.movePaneToNewTab(session, paneID: moved)
-
-        #expect(session.tab(source.id)?.splitTree.focusedLeafID == typingIn)
+        #expect(session.tab(containing: pane)?.id == moved)
+        #expect(session.tab(moved)?.splitTree.focusedLeafID == pane)
     }
 
     // MARK: - Conversation names
@@ -214,55 +254,53 @@ struct TabActionsMovePaneTests {
         )
     }
 
-    @Test("the moved pane's conversation name goes with it, and the earlier name stays in the target")
-    func movedPane_takesItsConversationName() throws {
-        let (session, source, target, paneID) = try Self.sessionWithSourceAndTarget()
-        let moved = Self.conversation("Moved task", paneID: paneID, startedAt: 10)
-        _ = session.update(source.id) { $0.conversationName = moved }
-
-        TabActions.mergePaneIntoTab(session, paneID: paneID, into: target.id)
-
-        #expect(session.tab(source.id)?.conversationName == nil)
-        #expect(session.tab(target.id)?.conversationName == moved)
-
-        // Then into a tab whose own conversation started first: that one
-        // keeps naming it.
-        let other = session.openTab(container: .loose)
-        let otherPane = try #require(other.splitTree.allLeafIDs().first)
-        let earlier = Self.conversation("Earlier task", paneID: otherPane, startedAt: 5)
-        _ = session.update(other.id) { $0.conversationName = earlier }
-        TabActions.mergePaneIntoTab(session, paneID: paneID, into: other.id)
-        // The tab the pane left (`target`) holds no name, `other` keeps its
-        // own, and the later name the pane brought is dropped, not kept
-        // anywhere.
-        #expect(session.tab(target.id)?.conversationName == nil)
-        #expect(session.tab(other.id)?.conversationName == earlier)
-        #expect(!session.tabs.contains { $0.conversationName == moved })
+    enum ConversationPlacement: Sendable {
+        case emptyTarget
+        case earlierTarget
+        case earlierIncoming
+        case namedSibling
     }
 
-    @Test("a pane whose tab is named by another pane leaves the name where it is")
-    func movedPane_leavesAnotherPanesName() throws {
-        let (session, source, target, paneID) = try Self.sessionWithSourceAndTarget()
-        let sibling = try #require(source.splitTree.allLeafIDs().first { $0 != paneID })
-        let name = Self.conversation("Sibling task", paneID: sibling, startedAt: 10)
-        _ = session.update(source.id) { $0.conversationName = name }
+    @Test(arguments: [ConversationPlacement.emptyTarget, .earlierTarget, .earlierIncoming, .namedSibling])
+    func mergePane_keepsTheEarlierNameThatBelongsToTheDestination(_ placement: ConversationPlacement) throws {
+        let (session, source, target, pane) = try Self.sessionWithSourceAndTarget()
+        let sibling = try #require(source.splitTree.allLeafIDs().first { $0 != pane })
+        let pivot = try #require(target.splitTree.allLeafIDs().first)
+        let incoming = Self.conversation("Source task", paneID: placement == .namedSibling ? sibling : pane, startedAt: 10)
+        let existing = Self.conversation("Target task", paneID: pivot, startedAt: placement == .earlierTarget ? 5 : 15)
+        session.update(source.id) { $0.conversationName = incoming }
+        if placement == .earlierTarget || placement == .earlierIncoming {
+            session.update(target.id) { $0.conversationName = existing }
+        }
 
-        TabActions.mergePaneIntoTab(session, paneID: paneID, into: target.id)
+        TabActions.mergePaneIntoTab(session, paneID: pane, into: target.id)
 
-        #expect(session.tab(source.id)?.conversationName == name)
-        #expect(session.tab(target.id)?.conversationName == nil)
+        #expect(session.tab(source.id)?.splitTree.allLeafIDs() == [sibling])
+        #expect(session.tab(target.id)?.splitTree.allLeafIDs() == [pivot, pane])
+        #expect(session.tab(source.id)?.conversationName == (placement == .namedSibling ? incoming : nil))
+        let expected: ConversationName? = switch placement {
+        case .emptyTarget, .earlierIncoming: incoming
+        case .earlierTarget: existing
+        case .namedSibling: nil
+        }
+        #expect(session.tab(target.id)?.conversationName == expected)
     }
 
     @Test("a pane moved to a new tab takes its conversation name there")
     func movedToNewTab_takesItsConversationName() throws {
         let (session, source, _, paneID) = try Self.sessionWithSourceAndTarget()
+        let sibling = try #require(source.splitTree.allLeafIDs().first { $0 != paneID })
         let moved = Self.conversation("Moved task", paneID: paneID, startedAt: 10)
         _ = session.update(source.id) { $0.conversationName = moved }
 
-        TabActions.movePaneToNewTab(session, paneID: paneID, in: session.primaryWindowID, intent: .person)
+        let opened = try #require(TabActions.movePaneToNewTab(
+            session, paneID: paneID, in: session.primaryWindowID, intent: .person
+        ))
 
         #expect(session.tab(source.id)?.conversationName == nil)
-        #expect(session.tab(containing: paneID)?.conversationName == moved)
+        #expect(session.tab(source.id)?.splitTree.allLeafIDs() == [sibling])
+        #expect(session.tab(opened)?.splitTree.allLeafIDs() == [paneID])
+        #expect(session.tab(opened)?.conversationName == moved)
     }
 
     /// The source tab of `sessionWithSourceAndTarget`, split in two.
@@ -273,49 +311,33 @@ struct TabActionsMovePaneTests {
 
     // MARK: - A tab of its own
 
-    @Test func movePaneToNewTab_namedPane_namesNewTab() throws {
+    @Test(arguments: [false, true])
+    func movePaneToNewTab_pinsOnlyAManualPaneName(hasManualName: Bool) throws {
         let (session, source) = try Self.sourceAndPane()
-        let paneID = try #require(source.splitTree.allLeafIDs().last)
-        session.renamePane(paneID, to: "server")
+        let pane = try #require(source.splitTree.allLeafIDs().last)
+        let sibling = try #require(source.splitTree.allLeafIDs().first { $0 != pane })
+        let sourceTitle = "Source title"
+        let paneName = hasManualName ? "Server" : nil
+        session.update(source.id) { $0.title = sourceTitle }
+        if let paneName {
+            session.renamePane(pane, to: paneName)
+        }
 
-        TabActions.movePaneToNewTab(session, paneID: paneID)
+        let id = try #require(TabActions.movePaneToNewTab(session, paneID: pane, in: session.primaryWindowID, intent: .person))
+        let opened = try #require(session.tab(id))
 
-        let moved = try #require(session.tab(containing: paneID))
-        #expect(moved.id != source.id)
-        #expect(moved.displayTitle == "server")
-        #expect(moved.titleOverride == "server")
-        #expect(moved.paneStates[paneID]?.name == "server")
-        #expect(session.tab(source.id)?.paneStates[paneID] == nil)
-    }
+        #expect(opened.id != source.id)
+        #expect(opened.splitTree.allLeafIDs() == [pane])
+        #expect(opened.title == (paneName ?? sourceTitle))
+        #expect(opened.displayTitle == (paneName ?? sourceTitle))
+        #expect(opened.titleOverride == paneName)
+        #expect(opened.paneStates[pane]?.name == paneName)
+        #expect(session.tab(source.id)?.splitTree.allLeafIDs() == [sibling])
+        #expect(session.tab(source.id)?.paneStates[pane] == nil)
+        #expect(session.tab(source.id)?.title == sourceTitle)
 
-    /// A pane moved before its terminal is made keeps its staged launch,
-    /// the executable the new workspace sheet found with it.
-    @Test func movePaneToNewTab_carriesTheStagedExecutable() throws {
-        let (session, source) = try Self.sourceAndPane()
-        let paneID = try #require(source.splitTree.allLeafIDs().last)
-        let found = AgentInstallation(kind: .codex, executable: "/opt/tools/bin/codex")
-        session.update(source.id) { $0.initialCommands[paneID] = "codex" }
-        session.stageAgentExecutable(found, paneID: paneID)
-
-        TabActions.movePaneToNewTab(session, paneID: paneID)
-
-        let moved = try #require(session.tab(containing: paneID))
-        #expect(moved.id != source.id)
-        #expect(moved.initialAgentExecutables[paneID] == found)
-        #expect(session.stagedLaunch(paneID: paneID)?.agentExecutable == found)
-        #expect(session.tab(source.id)?.initialAgentExecutables[paneID] == nil)
-    }
-
-    @Test func movePaneToNewTab_unnamedPane_keepsSourceTitle() throws {
-        let (session, source) = try Self.sourceAndPane()
-        session.update(source.id) { $0.title = "source title" }
-        let paneID = try #require(source.splitTree.allLeafIDs().last)
-
-        TabActions.movePaneToNewTab(session, paneID: paneID)
-
-        let moved = try #require(session.tab(containing: paneID))
-        #expect(moved.title == "source title")
-        #expect(moved.titleOverride == nil)
+        session.update(id) { $0.title = "New shell title" }
+        #expect(session.tab(id)?.displayTitle == (paneName ?? "New shell title"))
     }
 
     @Test func movePaneToNewTab_keepsItsOwnReportedDirectory() throws {
@@ -342,49 +364,50 @@ struct TabActionsMovePaneTests {
         #expect(next.workingDirectory == "/tmp/weir-moved")
     }
 
-    /// A pane in a tab no window shows, moved in the window named (the one
-    /// its views pass), gets a tab of its own there.
+    /// A pane not shown by any window goes to the explicitly requested window.
     @Test func movePaneToNewTab_ofAPaneNoWindowShows_movesItInTheWindowNamed() throws {
         let (session, source) = try Self.sourceAndPane()
-        let paneID = try #require(source.splitTree.allLeafIDs().last)
-        session.openTab(container: .loose)
-        #expect(session.window(showingPane: paneID) == nil)
+        let pane = try #require(source.splitTree.allLeafIDs().last)
+        let sibling = try #require(source.splitTree.allLeafIDs().first { $0 != pane })
+        let primary = session.openTab(container: .loose)
+        let other = WorkspaceSessionFixture.addWindow(to: session)
+        let otherTab = session.openTab(container: .loose, in: other, intent: .person, selects: true)
+        try #require(session.activeTab(in: other)?.id == otherTab.id)
+        try #require(session.primarySelection.activeTabID == primary.id)
+        try #require(session.window(showingPane: pane) == nil)
 
-        TabActions.movePaneToNewTab(session, paneID: paneID, in: session.primaryWindowID, intent: .person)
+        let opened = try #require(TabActions.movePaneToNewTab(session, paneID: pane, in: other, intent: .person))
 
-        let moved = try #require(session.tab(containing: paneID))
-        #expect(moved.id != source.id)
-        #expect(session.primarySelection.activeTabID == moved.id)
+        #expect(session.tab(opened)?.splitTree.allLeafIDs() == [pane])
+        #expect(session.tab(source.id)?.splitTree.allLeafIDs() == [sibling])
+        #expect(session.activeTab(in: other)?.id == opened)
+        #expect(session.window(showingPane: pane) == other)
+        #expect(session.primarySelection.activeTabID == primary.id)
+        #expect(session.primarySelection.activeContainerID == .loose)
     }
 
-    @Test func theAgentInFront_travelsWithItsPane() throws {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "beta")
-        let container = ContainerID.project(project.id)
-        let pane = try #require(TabActions.newTab(session, in: container, running: .codex))
-        PaneActions.split(session, direction: .horizontal)
-        let source = try #require(session.tab(containing: pane))
-
-        TabActions.movePaneToNewTab(session, paneID: pane)
-
-        let moved = try #require(session.tab(containing: pane))
-        #expect(moved.id != source.id)
-        #expect(moved.agentKinds == [.codex])
-        #expect(session.tab(source.id)?.agentsInFront[pane] == nil)
-    }
-
-    @Test func paneTransferState_roundTripsAndClears_keepingWhatThePaneLacked() {
+    @Test func paneTransferState_keepsAbsentScrollback_andClearsAbsentForeground() {
         let pane = UUID()
-        var source = Tab(title: "source", splitTree: SplitTree(leafID: pane), container: .loose)
+        let sibling = UUID()
+        let targetPane = UUID()
+        let sourceTree = SplitTree(leafID: sibling).insert(at: sibling, direction: .horizontal, newID: pane).tree
+        var source = Tab(title: "source", splitTree: sourceTree, container: .loose)
         source.paneStates[pane] = PaneState(unreadCount: 2, name: "moved")
         source.agentSessions[.claude, default: [:]][pane] = AgentSessionInfo(sessionId: "c1", cwd: "/tmp/c")
         source.initialCommands[pane] = "make test"
+        let siblingState = PaneState(unreadCount: 4, name: "kept sibling")
+        source.paneStates[sibling] = siblingState
         // The target already holds a scrollback path for the pane id, which
         // the moved pane has none of: applying keeps it, as the merge did.
-        var target = Tab(title: "target", splitTree: SplitTree(leafID: UUID()), container: .loose)
+        let targetTree = SplitTree(leafID: targetPane).insert(at: targetPane, direction: .horizontal, newID: pane).tree
+        var target = Tab(title: "target", splitTree: targetTree, container: .loose)
         target.scrollbackPaths[pane] = "/tmp/kept.vt"
+        target.agentsInFront[pane] = PaneAgentInFront(kind: .codex, isStaged: false)
+        target.initialCommands[targetPane] = "target command"
 
         let state = source.paneTransferState(of: pane)
         target.apply(state, to: pane)
+        source.splitTree = source.splitTree.remove(pane).tree
         source.removePaneTransferState(of: pane)
 
         #expect(target.paneTransferState(of: pane) == Tab.PaneTransferState(
@@ -394,5 +417,7 @@ struct TabActionsMovePaneTests {
             initialCommand: "make test"
         ))
         #expect(source.paneTransferState(of: pane) == Tab.PaneTransferState())
+        #expect(source.paneTransferState(of: sibling) == Tab.PaneTransferState(paneState: siblingState))
+        #expect(target.paneTransferState(of: targetPane) == Tab.PaneTransferState(initialCommand: "target command"))
     }
 }

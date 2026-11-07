@@ -25,6 +25,4 @@ Weir/Core/Files/EditorLineLaunch.swift:"com.microsoft.VSCode
 Weir/Core/Files/EditorLineLaunch.swift:scheme: "vscode
 WeirTests/FileOpenerTests.swift:"com.microsoft.VSCode
 WeirTests/FileApplicationCandidatesTests.swift:"com.microsoft.VSCode
-WeirTests/FileOpenerTests.swift:"vscode://file/
-WeirTests/FileOpenerTests.swift:"vscode-insiders://file/
 site/pnpm-lock.yaml:@shikijs/vscode-textmate

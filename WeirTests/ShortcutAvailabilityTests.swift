@@ -64,51 +64,57 @@ struct ShortcutAvailabilityTests {
         ProjectWindowState(selection: session.primarySelection)
     }
 
-    /// One window of the table: its session and what it shows.
+    @MainActor
     private struct WindowCase {
         let name: String
         let session: WorkspaceSession
-        let facts: SupervisionPaletteFacts
+        let window: ProjectWindowState
 
-        init(_ name: String, _ session: WorkspaceSession, _ facts: SupervisionPaletteFacts) {
+        init(_ name: String, _ session: WorkspaceSession, _ window: ProjectWindowState) {
             self.name = name
             self.session = session
-            self.facts = facts
+            self.window = window
+        }
+
+        var facts: SupervisionPaletteFacts {
+            SupervisionPaletteFacts(window: window, session: session)
         }
     }
 
-    /// The windows the table walks: each sets a different fact the actions
-    /// read, so every case of the answer is met on some row.
+    /// Real window states shared by the catalog and live/snapshot comparisons.
     private static func windows() throws -> [WindowCase] {
-        var rows: [WindowCase] = []
-
         let empty = WorkspaceSession()
-        rows.append(WindowCase("no tab", empty, SupervisionPaletteFacts(window: window(empty), session: empty)))
-
-        let (split, project) = WorkspaceSessionFixture.withProject(name: "weir")
+        let (split, project) = WorkspaceSessionFixture.withProject(name: "split")
         split.openTab(container: .project(project.id))
         PaneActions.split(split, direction: .horizontal, in: split.primaryWindowID)
-        rows.append(WindowCase("a split tab", split, SupervisionPaletteFacts(window: window(split), session: split)))
 
-        let (reviewed, _) = WorkspaceSessionFixture.withProject(name: "weir")
+        let (reviewed, _) = WorkspaceSessionFixture.withProject(name: "review")
         let reviewWindow = window(reviewed)
         reviewWindow.review = review()
-        rows.append(WindowCase("a review and no tab", reviewed, SupervisionPaletteFacts(window: reviewWindow, session: reviewed)))
 
         let (gone, goneProject) = WorkspaceSessionFixture.withProject(name: "gone")
         gone.openTab(container: .project(goneProject.id))
         let goneIndex = try #require(gone.projects.firstIndex { $0.id == goneProject.id })
         gone.projects[goneIndex].trouble = .folderMissing
-        rows.append(WindowCase("a folder gone", gone, SupervisionPaletteFacts(window: window(gone), session: gone)))
 
-        let fixture = ProjectWindowsFixture()
-        var facts = SupervisionPaletteFacts(window: fixture.primary, session: fixture.session)
-        facts.isChoosingProject = true
-        facts.areRailsHidden = true
-        facts.hasDecisionBarMenu = true
-        facts.isCreatingWorktreeAtOnce = true
-        rows.append(WindowCase("choosing, rails hidden, a worktree in flight", fixture.session, facts))
-        return rows
+        let (working, repository) = WorkspaceSessionFixture.withRepository(name: "worktrees")
+        working.openTab(container: .project(repository.id))
+        let focused = try #require(working.focusedPaneID(in: working.primaryWindowID))
+        let busy = window(working)
+        busy.areRailsHidden = true
+        busy.isCreatingWorktreeAtOnce = true
+        busy.decisionBarMenus.set(.init(owner: UUID(), isShown: { true }, open: {}), inPane: focused)
+
+        let choosing = WorkspaceSession()
+        choosing.primarySelection.isChoosingProject = true
+        return [
+            WindowCase("no tab", empty, window(empty)),
+            WindowCase("a split tab", split, window(split)),
+            WindowCase("a review and no tab", reviewed, reviewWindow),
+            WindowCase("a folder gone", gone, window(gone)),
+            WindowCase("rails hidden, a bar menu and a worktree in flight", working, busy),
+            WindowCase("choosing a project", choosing, window(choosing))
+        ]
     }
 
     // MARK: - One answer
@@ -121,9 +127,18 @@ struct ShortcutAvailabilityTests {
     @Test func thePalettesRows_andTheMenuSurface_giveTheSameAnswer() throws {
         for row in try Self.windows() {
             let availability = Self.availability(row.session, facts: row.facts)
-            let items = try Self.paletteRows(row.session, facts: row.facts)
-            for action in WeirShortcutAction.allCases {
-                let item = try #require(items.first { $0.action == .shortcutAction(action) }, "\(action)")
+            let items = try Self.paletteRows(row.session, facts: row.facts).filter {
+                if case .shortcutAction = $0.action {
+                    return true
+                }
+                return false
+            }
+            let actions = WeirShortcutAction.allCases
+            #expect(items.count == actions.count, "\(row.name)")
+            #expect(Set(items.map(\.id)) == Set(actions.map { "shortcut.\($0.rawValue)" }), "\(row.name)")
+            for action in actions {
+                let item = try #require(items.first { $0.id == "shortcut.\(action.rawValue)" }, "\(action)")
+                #expect(item.action == .shortcutAction(action), "\(row.name): \(item.id)")
                 let palette = availability.isEnabled(action, on: .palette)
                 #expect(item.isEnabled == palette, "\(row.name): \(action)")
                 if !Self.surfaceSplit.contains(action) {
@@ -153,13 +168,14 @@ struct ShortcutAvailabilityTests {
     /// The facts the menu reads from the window one by one are the ones the
     /// palette reads from it all at once, for every action and surface.
     @Test func theWindowsFactsReadOneByOne_matchThoseReadAtOnce() throws {
-        for row in try Self.windows().prefix(4) {
-            let window = Self.window(row.session)
-            if row.name == "a review and no tab" {
-                window.review = Self.review()
-            }
-            let live = ShortcutAvailability(window: window, session: row.session, registry: nil, attention: AttentionState())
-            let read = Self.availability(row.session, facts: SupervisionPaletteFacts(window: window, session: row.session))
+        let windows = try Self.windows()
+        #expect(windows.contains { $0.facts.isChoosingProject })
+        #expect(windows.contains { $0.facts.hasDecisionBarMenu })
+        #expect(windows.contains { $0.facts.areRailsHidden })
+        #expect(windows.contains { $0.facts.isCreatingWorktreeAtOnce })
+        for row in windows {
+            let live = ShortcutAvailability(window: row.window, session: row.session, registry: nil, attention: AttentionState())
+            let read = Self.availability(row.session, facts: row.facts)
             for action in WeirShortcutAction.allCases {
                 for surface in ShortcutSurface.allCases {
                     #expect(live.isEnabled(action, on: surface) == read.isEnabled(action, on: surface), "\(row.name): \(action)")
@@ -243,10 +259,28 @@ struct ShortcutAvailabilityTests {
     /// A worktree whose folder is gone is no place for a tab either.
     @Test func aMissingWorktreeFolder_turnsNewTabOff() throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
-        let worktree = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, isMissing: true)
-        session.setActiveContainer(.worktree(projectID: project.id, worktreeID: worktree.id), in: session.primaryWindowID)
-        let facts = SupervisionPaletteFacts(projectID: project.id, sessionRowCount: 2, hasReviewTab: false)
-        #expect(!Self.availability(session, facts: facts).isEnabled(.newTab, on: .menu))
+        let worktree = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session)
+        let container = ContainerID.worktree(projectID: project.id, worktreeID: worktree.id)
+        session.setActiveContainer(container, in: session.primaryWindowID)
+        let window = Self.window(session)
+        let index = try #require(session.projects.firstIndex { $0.id == project.id })
+        let worktreeIndex = try #require(session.projects[index].worktrees.firstIndex { $0.id == worktree.id })
+
+        for missing in [false, true] {
+            session.projects[index].worktrees[worktreeIndex].missingSince = missing ? Date(timeIntervalSince1970: 0) : nil
+            #expect(session.selection(window.id)?.activeContainerID == container)
+            #expect(ShortcutAvailability.canOpenTab(in: container, session: session) == !missing)
+            try Self.expect([.newTab], are: !missing, in: window, session: session, "missing: \(missing)")
+            let agentRows = try Self.paletteRows(session, facts: SupervisionPaletteFacts(window: window, session: session))
+                .filter {
+                    if case .newAgentTab = $0.action {
+                        return true
+                    }
+                    return false
+                }
+            #expect(!agentRows.isEmpty)
+            #expect(agentRows.allSatisfy { $0.isEnabled == !missing })
+        }
     }
 
     /// New Worktree… and Create Worktree Now are off for a project whose
@@ -270,49 +304,43 @@ struct ShortcutAvailabilityTests {
 
     /// While ⌥⌘N is making a worktree, Create Worktree Now is off, and New
     /// Worktree…, whose sheet asks first, stays on.
-    @Test func aWorktreeInFlight_turnsCreateWorktreeNowOffOnly() {
+    @Test func aWorktreeInFlight_turnsCreateWorktreeNowOffOnly() throws {
         let (session, project) = WorkspaceSessionFixture.withRepository(name: "weir")
         session.setActiveContainer(.project(project.id), in: session.primaryWindowID)
         let window = Self.window(session)
-        window.isCreatingWorktreeAtOnce = true
-        let availability = ShortcutAvailability(window: window, session: session, registry: nil, attention: AttentionState())
-        #expect(availability.facts.isCreatingWorktreeAtOnce())
-        #expect(!availability.isEnabled(.newWorktreeNow, on: .palette))
-        #expect(availability.isEnabled(.newWorktree, on: .palette))
-        window.isCreatingWorktreeAtOnce = false
-        let after = ShortcutAvailability(window: window, session: session, registry: nil, attention: AttentionState())
-        #expect(after.isEnabled(.newWorktreeNow, on: .palette))
+        let live = ShortcutAvailability(window: window, session: session, registry: nil, attention: AttentionState())
+        for creating in [false, true, false] {
+            window.isCreatingWorktreeAtOnce = creating
+            for surface in ShortcutSurface.allCases {
+                #expect(live.isEnabled(.newWorktreeNow, on: surface) == !creating)
+                #expect(live.isEnabled(.newWorktree, on: surface))
+            }
+            try Self.expect([.newWorktreeNow], are: !creating, in: window, session: session, "creating: \(creating)")
+            try Self.expect([.newWorktree], are: true, in: window, session: session, "creating: \(creating)")
+        }
     }
 
-    /// With only the review tab in front, Close and Close Tab are on, in the
-    /// palette as in the menu, and ⌘W closes the review.
-    @Test func aReviewTabAlone_keepsCloseOn() {
-        let (session, _) = WorkspaceSessionFixture.withProject(name: "weir")
+    @Test func closeCommands_areLiveForATabOrAReviewInFront() throws {
+        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
         let window = Self.window(session)
+        let commands: [WeirShortcutAction] = [.closeSurface, .closeTab]
         #expect(session.activeTab(in: window.id) == nil)
-        let closed = ShortcutAvailability(window: window, session: session, registry: nil, attention: AttentionState())
-        #expect(!closed.isEnabled(.closeSurface, on: .palette))
-        #expect(!closed.isEnabled(.closeTab, on: .palette))
+        try Self.expect(commands, are: false, in: window, session: session, "neither tab nor review")
 
         window.review = Self.review()
-        let open = ShortcutAvailability(window: window, session: session, registry: nil, attention: AttentionState())
-        for action: WeirShortcutAction in [.closeSurface, .closeTab] {
-            #expect(open.isEnabled(action, on: .palette), "\(action)")
-            #expect(open.isEnabled(action, on: .menu), "\(action)")
-        }
-        let key = CloseKeyCommand.decide(isQuickTerminalKey: false, target: window, canClose: open.isEnabled(.closeSurface, on: .menu))
+        try Self.expect(commands, are: true, in: window, session: session, "review alone in front")
+        let live = ShortcutAvailability(window: window, session: session, registry: nil, attention: AttentionState())
+        let key = CloseKeyCommand.decide(isQuickTerminalKey: false, target: window, canClose: live.isEnabled(.closeSurface, on: .menu))
         #expect(key == .closeReview)
-        // Behind a terminal tab there is none to close here.
-        window.review?.isShown = false
-        let behind = ShortcutAvailability(window: window, session: session, registry: nil, attention: AttentionState())
-        #expect(!behind.isEnabled(.closeSurface, on: .palette))
-    }
 
-    /// The rule ⌘W and ⌥⌘W share: a terminal tab, or the review in front.
-    @Test func closeCommands_areLiveForATabOrAReviewInFront() {
-        #expect(ShortcutAvailability.closeCommandsAreLive(hasActiveTab: false, isReviewShown: true))
-        #expect(ShortcutAvailability.closeCommandsAreLive(hasActiveTab: true, isReviewShown: false))
-        #expect(!ShortcutAvailability.closeCommandsAreLive(hasActiveTab: false, isReviewShown: false))
+        window.review?.isShown = false
+        try Self.expect(commands, are: false, in: window, session: session, "hidden review without a tab")
+
+        let tab = session.openTab(container: .project(project.id))
+        #expect(session.activeTab(in: window.id)?.id == tab.id)
+        try Self.expect(commands, are: true, in: window, session: session, "terminal tab with a hidden review")
+        window.review?.isShown = true
+        try Self.expect(commands, are: true, in: window, session: session, "terminal tab and review in front")
     }
 
     /// A window choosing a project shows no session, so Show Changes is off
@@ -330,17 +358,19 @@ struct ShortcutAvailabilityTests {
 
     /// The window's first and last projects have no place to move off
     /// their end, in the window's own order.
-    @Test func theProjectAtEitherEnd_cannotMoveOffIt() {
+    @Test func theProjectAtEitherEnd_cannotMoveOffIt() throws {
         let fixture = ProjectWindowsFixture()
-        func facts(_ projectID: UUID) -> SupervisionPaletteFacts {
-            SupervisionPaletteFacts(projectID: projectID, sessionRowCount: 1, hasReviewTab: false)
-        }
-        let first = Self.availability(fixture.session, facts: facts(fixture.a.id))
-        let last = Self.availability(fixture.session, facts: facts(fixture.c.id))
-        #expect(!first.isEnabled(.moveProjectUp, on: .palette))
-        #expect(first.isEnabled(.moveProjectDown, on: .palette))
-        #expect(last.isEnabled(.moveProjectUp, on: .palette))
-        #expect(!last.isEnabled(.moveProjectDown, on: .palette))
+        let other = try fixture.window(showing: fixture.c)
+        #expect(fixture.session.projects.map(\.id) == [fixture.a.id, fixture.b.id, fixture.c.id])
+        #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
+        #expect(other.selection.shownProjectID == fixture.c.id)
+        fixture.primary.selection.sidebarArrangement.projectOrder = [fixture.b.id, fixture.c.id, fixture.a.id]
+        other.selection.sidebarArrangement.projectOrder = [fixture.c.id, fixture.a.id, fixture.b.id]
+
+        try Self.expect([.moveProjectUp], are: true, in: fixture.primary, session: fixture.session, "a is last")
+        try Self.expect([.moveProjectDown], are: false, in: fixture.primary, session: fixture.session, "a is last")
+        try Self.expect([.moveProjectUp], are: false, in: other, session: fixture.session, "c is first")
+        try Self.expect([.moveProjectDown], are: true, in: other, session: fixture.session, "c is first")
     }
 
     // MARK: - The rules each surface shares

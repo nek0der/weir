@@ -19,20 +19,23 @@ struct TurnHistoryTests {
         #expect(runs == 1)
     }
 
-    @Test func whenLoaded_waitsForTheFirstPass_andRunsOnce() async {
+    @Test func whenLoaded_waitsForTheFirstPass_andRunsOnce() async throws {
         let history = TurnHistory()
-        var runs = 0
-        history.whenLoaded { runs += 1 }
-        #expect(runs == 0)
+        let conversation = TurnSummaryFixture.conversation
+        let firstTurn = try TurnSummaryFixture.turn("first")
+        var reports: [[TurnID]] = []
+        history.whenLoaded { reports.append(history.turns(of: conversation).map(\.turnID)) }
+        #expect(reports.isEmpty)
+
+        history.replace(with: [ConversationTurns(key: conversation, turns: [firstTurn])])
+        await pollUntil(timeout: .seconds(5), interval: .milliseconds(5)) { !reports.isEmpty }
+        try #require(reports == [[firstTurn.turnID]])
 
         history.replace(with: [])
-        await pollUntil(timeout: .seconds(5), interval: .milliseconds(5)) { runs > 0 }
-        history.replace(with: [ConversationTurns(key: TurnSummaryFixture.conversation, turns: [])])
-        // A second run would be a main-actor task the pass started; one
-        // queued after it runs after it.
+        #expect(history.turns(of: conversation).isEmpty)
+        // Give any newly scheduled observation callback a chance to run.
         await Task { @MainActor in }.value
-
-        #expect(runs == 1)
+        #expect(reports == [[firstTurn.turnID]])
     }
 
     @Test func theHistory_isLoadedOnceAPassReportsIt() {

@@ -43,17 +43,16 @@ struct SupervisionFootBarTests {
         #expect(!Self.showsFootBar(Bottom(isChoosingProject: true)))
         // A window showing the projects to open draws no session at all.
         #expect(!Self.showsFootBar(Bottom(isChoosingProject: true, isReviewShown: true, hasLaunchBar: true)))
+
+        let pane = UUID()
+        let choosingProject = Bottom(isChoosingProject: true, tree: SplitTree(leafID: pane))
+        #expect(!Self.showsFootBar(choosingProject, barsIn: [pane]))
     }
 
-    /// A shell pane has no decision bar.
-    @Test func aShellPaneOnly_showsNoFootBar() {
-        #expect(!Self.showsFootBar(Bottom(tree: SplitTree(leafID: UUID()))))
-    }
-
-    /// An agent's pane draws its decision bar at the session's foot.
-    @Test func anAgentPane_showsItsDecisionBar() {
-        let agent = UUID()
-        #expect(Self.showsFootBar(Bottom(tree: SplitTree(leafID: agent)), barsIn: [agent]))
+    @Test("A single pane reserves a foot bar when it has a decision bar", arguments: [false, true])
+    func aSinglePane_reservesSpaceForItsDecisionBar(hasBar: Bool) {
+        let pane = UUID()
+        #expect(Self.showsFootBar(Bottom(tree: SplitTree(leafID: pane)), barsIn: hasBar ? [pane] : []) == hasBar)
     }
 
     /// Side by side, a bar under the leading pane alone still counts: how

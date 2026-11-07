@@ -16,6 +16,7 @@ struct SurfaceCompositionTests {
     @Test("An Enter is consumed only inside the commit's window, once", arguments: [
         (UInt16(36), TimeInterval(101.999), true),
         (76, 101.999, true),
+        (36, 100, true),
         (36, 102, true),
         (36, 102.000001, false),
         (36, 99.999, false)
@@ -26,6 +27,9 @@ struct SurfaceCompositionTests {
             keyCode: keyCode, timestamp: timestamp, interval: &interval
         ) == isConsumed)
         #expect(interval == nil)
+        #expect(!SurfaceView.consumeAsynchronousCompositionEnter(
+            keyCode: keyCode, timestamp: 101, interval: &interval
+        ))
     }
 
     @Test("Editing keys retain their normal handling", arguments: [UInt16(53), UInt16(51), UInt16(0)])

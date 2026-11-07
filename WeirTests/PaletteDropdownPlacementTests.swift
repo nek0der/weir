@@ -6,13 +6,23 @@ import Testing
 @testable import Weir
 
 struct PaletteDropdownPlacementTests {
-    @Test func theDropdown_centersOnTheField_withinTheWindow() {
-        // Centered under the field.
-        #expect(PaletteDropdownPlacement.originX(fieldMidX: 600, width: 560, containerWidth: 1200) == 320)
-        // Held off either side.
-        #expect(PaletteDropdownPlacement.originX(fieldMidX: 200, width: 560, containerWidth: 1200) == 6)
-        #expect(PaletteDropdownPlacement.originX(fieldMidX: 1100, width: 560, containerWidth: 1200) == 634)
-        // Narrower than the dropdown: it starts at the left margin.
-        #expect(PaletteDropdownPlacement.originX(fieldMidX: 250, width: 560, containerWidth: 500) == 6)
+    struct Placement: Sendable {
+        let fieldMidX: CGFloat
+        var containerWidth: CGFloat = 1200
+        let expectedX: CGFloat
+    }
+
+    @Test(arguments: [
+        Placement(fieldMidX: 600, expectedX: 320),
+        Placement(fieldMidX: 200, expectedX: 6),
+        Placement(fieldMidX: 1100, expectedX: 634),
+        Placement(fieldMidX: 286, expectedX: 6),
+        Placement(fieldMidX: 914, expectedX: 634),
+        Placement(fieldMidX: 250, containerWidth: 500, expectedX: 6)
+    ])
+    func theDropdown_centersOnTheField_withinTheWindow(_ placement: Placement) {
+        #expect(PaletteDropdownPlacement.originX(
+            fieldMidX: placement.fieldMidX, width: 560, containerWidth: placement.containerWidth
+        ) == placement.expectedX)
     }
 }

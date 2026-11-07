@@ -25,6 +25,8 @@ what must hold, and assert the reason as well as the status where a refusal is
 expected, so a request refused for a different cause does not pass. A section
 starts from a scratch pane at a shell prompt and leaves one behind; anything a
 section changes (a setting, a layer, a split) it puts back before it returns.
+The channel cannot close Settings, so sections that open it leave it open
+until the run quits.
 """
 
 import argparse
@@ -33,6 +35,7 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -327,11 +330,10 @@ SETTINGS_SECTIONS = ["general", "appearance", "font", "terminal", "tabsAndPanes"
 def palette_rows(run, checks):
     checks.section("palette rows")
     rows = {row["id"]: row for row in run.call({"op": "commands"})["commands"]}
-    # Listed and on, but not run: each would start a coding agent in a pane.
-    # Only the agents this Mac has are offered, once they were looked for.
+    # Running a row would start an agent. The installed set can be empty.
     agent_rows = [name for name in rows if name.startswith("newTab.")]
-    checks.check("a row adds a tab running an agent the strip's + offers, and only those",
-                 agent_rows and set(agent_rows) <= set(AGENT_ROWS) and all(rows[name]["isEnabled"] for name in agent_rows), agent_rows)
+    checks.check("the agent tab rows are an enabled subset of the known agent rows",
+                 set(agent_rows) <= set(AGENT_ROWS) and all(rows[name]["isEnabled"] for name in agent_rows), agent_rows)
     checks.check("a row opens Settings on each section",
                  all(f"settings.section.{name}" in rows for name in SETTINGS_SECTIONS), sorted(i for i in rows if i.startswith("settings.")))
     checks.check("moving a pane to a new tab is off with one pane", rows["pane.moveToNewTab"]["isEnabled"] is False, rows["pane.moveToNewTab"])
@@ -458,7 +460,7 @@ def paste(run, checks):
     first, second = run.marker("pasted-1"), run.marker("pasted-2")
     reply = run.type("paste", ref, f"touch {shlex.quote(first)}\ntouch {shlex.quote(second)}")
     checks.check("a multi-line paste reaches the shell as one paste", reply["status"] == "done", reply)
-    checks.check("...without running it", not run.until(lambda: os.path.exists(first), 1))
+    checks.check("...without running it", not run.until(lambda: os.path.exists(first) or os.path.exists(second), 1))
     checks.refused("...and it is the channel's: typing into it is refused", run.type("typeLine", ref, "echo more"), "submit it first")
     reply = run.type("submit", ref)
     checks.check("submit runs both lines", reply["status"] == "done"
@@ -485,14 +487,16 @@ def person_drafts(run, checks):
     run.post_keys("\n")
     checks.check("the person's Return clears the draft", run.until(lambda: not run.pane(ref)["hasUnsubmittedInput"], 3))
     marker = run.marker("lapsed")
-    run.type("typeLine", ref, f"touch {shlex.quote(marker)}", submit=False)
+    run.type("typeLine", ref, f"touch {shlex.quote(marker)}; : ", submit=False)
     run.post_keys("x")
     time.sleep(0.5)
     checks.refused("after the person adds a key, the channel's text is no longer its to submit", run.type("submit", ref), "person")
     checks.check("...and nothing ran", not run.until(lambda: os.path.exists(marker), 1))
-    # The person sends the line, which leaves the shell at a prompt again.
+    # The person's extra key is an argument to `:`, so the marker stays the
+    # same when their Return eventually sends the line.
     run.post_keys("\n")
-    run.until(lambda: not run.pane(ref)["hasUnsubmittedInput"], 3)
+    checks.check("the person's Return runs the line and clears the draft",
+                 run.until(lambda: os.path.exists(marker) and not run.pane(ref)["hasUnsubmittedInput"], 3))
 
 
 def posted_keys(run, checks):
@@ -511,7 +515,7 @@ def posted_keys(run, checks):
     ref = run.panes()[0]["ref"]
     run.call({"op": "focus", "pane": ref})
     marker = run.marker("posted-return")
-    run.type("typeLine", ref, f"touch {marker}", submit=False)
+    run.type("typeLine", ref, f"touch {shlex.quote(marker)}", submit=False)
     client.post_key(run.info["pid"], client.KEY_CODES["return"])
     time.sleep(1)
     checks.check("the app drops a posted Return bound for a pane, past the client's check", not os.path.exists(marker))
@@ -559,10 +563,10 @@ def captures(run, checks):
     time.sleep(1)
     reply = run.capture(after)
     checks.check("a capture of the window is written", reply["status"] == "done" and os.path.getsize(after) > 10000, reply)
-    # The terminal draws behind other windows only because the channel keeps
-    # its panes drawing; a pane that stopped would capture the same pixels.
+    # Different capture bytes establish a fresh output observation, not which
+    # view changed or whether the terminal's pixels were redrawn.
     with open(before, "rb") as a, open(after, "rb") as b:
-        checks.check("the window's pixels changed after typing behind other windows", a.read() != b.read())
+        checks.check("the capture data changed after typing behind other windows", a.read() != b.read())
     checks.refused("a window that does not exist is refused", run.call({"op": "capture", "window": "00000000-0000-0000-0000-000000000000"}), "window")
     closed = run.call({"op": "capture", "settings": True})
     checks.check("a capture of Settings while it is closed is not observable", closed["status"] == "notObservable", closed)
@@ -591,8 +595,8 @@ def waiting(run, checks):
 def disconnects(run, checks):
     checks.section("disconnects")
     ref = run.panes()[0]["ref"]
-    # Three waits leave with their clients; were they not canceled, they would
-    # still hold their connections and the fourth connect would be refused.
+    # Disconnecting releases connection slots even while requests are waiting.
+    # Reusing a slot does not establish that its former task was canceled.
     for _ in range(3):
         c = run.connect()
         c.sock.sendall((json.dumps({"id": "w", "op": "wait", "until": "turnEnded", "pane": ref, "timeout": 25}) + "\n").encode())
@@ -730,8 +734,9 @@ def _agent_turn(run, checks, ref, command, op, text):
     waiter = run.connect()
     try:
         waiter.sock.sendall((json.dumps({"id": "w", "op": "wait", "until": "turnEnded", "pane": ref, "timeout": 30}) + "\n").encode())
-        # The wait reads the pane every 100 ms; this lets its first look come
-        # before the prompt, so it starts from the agent at rest.
+        # The channel has no acknowledgment that the wait sampled its initial
+        # state. This delay allows a sample under normal scheduling, and the
+        # turn can be missed if registration takes longer.
         time.sleep(0.3)
         sent = run.type(op, ref, text, expect=command)
         if op == "paste" and sent["status"] == "done":
@@ -772,24 +777,74 @@ def quitting(run, checks, keep):
     checks.check("...and removes its run folder", run.until(lambda: not os.path.exists(folder), 5), folder)
 
 
-def _make_sure_it_quit(launched):
-    """Ends a run the checks left behind, whatever stopped them.
+def _make_sure_it_quit(launched, home):
+    """Waits for the check's run to exit before its home can be removed."""
+    home_path = os.path.realpath(home)
+    if launched:
+        pid = launched["pid"]
+        if client.is_running(pid):
+            try:
+                client.quit_run(client.find_run(launched["folder"]), force=True)
+            except (ChannelError, OSError):
+                pass
+        pids = {pid}
+    else:
+        # Launch can time out before it returns a PID. Only inspect real app
+        # copies immediately inside this invocation's fresh home.
+        try:
+            with os.scandir(home_path) as entries:
+                pids = {pid for entry in entries if entry.name.endswith(".app") and entry.is_dir(follow_symlinks=False)
+                        for pid in client.copy_processes(entry.path)}
+        except (OSError, subprocess.SubprocessError) as error:
+            raise ChannelError(f"could not confirm the run exited; its home was kept at {home}: {error}") from error
 
-    `quitting` ends a run that got that far; a check script that stopped on an
-    error before then would otherwise leave an app running in the background,
-    which the next run would have to tell apart from its own.
-    """
-    if not launched:
-        return
-    if not client.is_running(launched["pid"]):
-        return
-    try:
-        client.quit_run(client.find_run(launched["folder"]), force=True)
-    except (ChannelError, OSError):
-        os.kill(launched["pid"], 15)
+    for pid in sorted(pids):
+        if client.is_running(pid):
+            copy = client.running_copy(pid)
+            if copy is None or os.path.dirname(os.path.realpath(copy)) != home_path:
+                if not client.is_running(pid):
+                    continue
+                raise ChannelError(f"could not identify process {pid} as this run; its home was kept at {home}")
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except OSError as error:
+                raise ChannelError(f"could not end process {pid}; its home was kept at {home}: {error}") from error
+
+    deadline = time.monotonic() + 5
+    while any(client.is_running(pid) for pid in pids):
+        if time.monotonic() >= deadline:
+            raise ChannelError(f"the run did not exit after SIGTERM; its home was kept at {home}")
+        time.sleep(0.2)
 
 
 # MARK: - main
+
+
+def selected_sections(args, parser):
+    sections = [connection, state]
+    if args.keys:
+        # Early, on the run's first pane as it started: after the commands
+        # section has split and closed panes, a pane given the keyboard
+        # has been seen to lose it again (not solved yet,
+        # docs/verification-channel.md).
+        sections += [person_drafts, posted_keys, captures]
+    sections += [layers, commands, palette_rows, settings, typing, channel_drafts, paste, waiting, disconnects, command_line, tmux]
+    if args.agents:
+        sections += [agents]
+    # Last: it leaves the paste confirmation up, which only quitting clears.
+    sections += [held_paste]
+    if args.only is not None:
+        wanted = set(args.only.split(","))
+        available = {section.__name__ for section in sections}
+        unknown = wanted - available
+        if unknown:
+            parser.error(f"--only: unavailable sections {', '.join(sorted(unknown))!r}; "
+                         f"available sections: {', '.join(sorted(available))}. "
+                         "Enable --keys or --agents for their sections.")
+        sections = [section for section in sections if section.__name__ in wanted]
+    return sections
 
 
 def main():
@@ -801,11 +856,12 @@ def main():
     parser.add_argument("--keep", action="store_true", help="leave the run open at the end")
     parser.add_argument("--only", help="run only these sections, by function name, comma separated (for working on one)")
     args = parser.parse_args()
-    chosen = args.agents.split(",") if args.agents else []
+    chosen = args.agents.split(",") if args.agents is not None else []
     unknown = [name for name in chosen if name not in AGENTS]
     if unknown:
-        parser.error(f"--agents: no agent named {', '.join(unknown)}; the names are {', '.join(AGENTS)}")
+        parser.error(f"--agents: no agent named {', '.join(repr(name) for name in unknown)}; the names are {', '.join(AGENTS)}")
 
+    sections = selected_sections(args, parser)
     checks = Checks()
     launched = None
     # A fresh data folder each time, so no earlier run's session, settings, or
@@ -823,21 +879,6 @@ def main():
         run.until(lambda: run.panes() and run.panes()[0].get("foregroundProcess"), 15)
         run.shell = run.panes()[0].get("foregroundProcess")
         run.agents = chosen
-        sections = [connection, state]
-        if args.keys:
-            # Early, on the run's first pane as it started: after the commands
-            # section has split and closed panes, a pane given the keyboard
-            # has been seen to lose it again (not solved yet,
-            # docs/verification-channel.md).
-            sections += [person_drafts, posted_keys, captures]
-        sections += [layers, commands, palette_rows, settings, typing, channel_drafts, paste, waiting, disconnects, command_line, tmux]
-        if args.agents:
-            sections += [agents]
-        # Last: it leaves the paste confirmation up, which only quitting clears.
-        sections += [held_paste]
-        if args.only:
-            wanted = set(args.only.split(","))
-            sections = [section for section in sections if section.__name__ in wanted]
         for section in sections:
             try:
                 section(run, checks)
@@ -848,7 +889,7 @@ def main():
         checks.check("the run launched and answered", False, str(error))
     finally:
         if not args.keep:
-            _make_sure_it_quit(launched)
+            _make_sure_it_quit(launched, home)
             client.forget_home(home)
             shutil.rmtree(home, ignore_errors=True)
     return 0 if checks.summary() else 1

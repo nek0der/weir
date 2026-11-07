@@ -7,24 +7,38 @@ import Testing
 
 @Suite("Shared process runner")
 struct ProcessDrainTests {
+    private struct StartedProcess {
+        let process: Process
+        let stdout: Pipe
+        let stderr: Pipe
+    }
+
+    private func start(
+        _ script: String,
+        workingDirectory: URL? = nil
+    ) throws -> StartedProcess {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", script]
+        process.currentDirectoryURL = workingDirectory
+        let stdout = Pipe.forChildProcess()
+        let stderr = Pipe.forChildProcess()
+        process.standardOutput = stdout
+        process.standardError = stderr
+        process.standardInput = FileHandle.nullDevice
+        try process.run()
+        return StartedProcess(process: process, stdout: stdout, stderr: stderr)
+    }
+
     /// Starts `script` under `/bin/sh` with both pipes, and runs it on the
     /// shared runner.
     private func run(
         _ script: String,
         stdoutLimitBytes: Int? = nil,
-        timeout: Duration = .seconds(5),
-        timing: ProcessDrainTiming = .standard
+        timeout: Duration = .seconds(5)
     ) throws -> DrainedOutput {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", script]
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        process.standardInput = FileHandle.nullDevice
-        try process.run()
-        return drainAndWait(process, stdout: stdout, stderr: stderr, timeout: timeout, stdoutLimitBytes: stdoutLimitBytes, timing: timing)
+        let child = try start(script)
+        return drainAndWait(child.process, stdout: child.stdout, stderr: child.stderr, timeout: timeout, stdoutLimitBytes: stdoutLimitBytes)
     }
 
     @Test func aChildWritingPastTheCap_isEnded_andKeepsNoMoreThanTheCap() throws {
@@ -41,11 +55,19 @@ struct ProcessDrainTests {
     }
 
     @Test func aChildThatExitedOverTheCap_isStillReportedOverIt() throws {
-        let output = try run("printf abcdef", stdoutLimitBytes: 3)
+        let child = try start("printf abcdef")
+        // Six bytes fit in the pipe before it is read, so waiting first does not block the writer.
+        child.process.waitUntilExit()
+        try #require(!child.process.isRunning && child.process.terminationStatus == 0)
+
+        let output = drainAndWait(child.process, stdout: child.stdout, stderr: child.stderr, stdoutLimitBytes: 3)
+
         #expect(output.ending == .outputLimit)
+        #expect(output.stdout.count <= 3)
+        #expect(output.isStdoutComplete)
     }
 
-    @Test func outputUnderTheCap_isWhole() throws {
+    @Test func outputAtTheCap_isWhole() throws {
         let output = try run("printf abc; printf oops >&2", stdoutLimitBytes: 3)
         #expect(output.ending == .exited)
         #expect(output.isStdoutComplete)
@@ -53,22 +75,38 @@ struct ProcessDrainTests {
         #expect(String(data: output.stderr, encoding: .utf8) == "oops")
     }
 
-    /// The grandchild holds stdout until the test lets it go, after the
-    /// run returned, so the output is unfinished unless the run outlasts
-    /// the grandchild. It gives up on its own after 600 polls 0.05 s apart,
-    /// about half a minute, and the test's one-minute time limit stands
-    /// watch over a run that would not return.
+    /// The grandchild holds stdout past its parent's exit. Removing the hold
+    /// file releases it permanently, even when the temporary directory is
+    /// removed before its next poll. Its own watchdog bounds a broken drain;
+    /// a test time limit cannot interrupt the synchronous runner.
     @Test(.timeLimit(.minutes(1)))
-    func aGrandchildHoldingStdout_leavesTheOutputUnfinished_afterTheDrainGrace() throws {
-        try withTempDir { directory in
-            let release = directory.appendingPathComponent("release")
-            defer { FileManager.default.createFile(atPath: release.path, contents: nil) }
+    func aGrandchildHoldingStdout_leavesTheOutputUnfinished_afterTheDrainGrace() async throws {
+        try await withTempDir { directory in
+            let hold = directory.appendingPathComponent("hold")
+            let finished = directory.appendingPathComponent("finished")
+            try Data().write(to: hold)
+            defer { try? FileManager.default.removeItem(at: hold) }
             let timing = ProcessDrainTiming(terminationGrace: .milliseconds(200), drainGrace: .milliseconds(200), pollMilliseconds: 10)
-            let script = "(i=0; while [ ! -e '\(release.path)' ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done) & exit 0"
-            let output = try run(script, timing: timing)
+            let script = "(i=0; while [ -e hold ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done; : > finished) & exit 0"
+            let child = try start(script, workingDirectory: directory)
+            child.process.waitUntilExit()
+            try #require(child.process.terminationStatus == 0)
+
+            let clock = ContinuousClock()
+            let started = clock.now
+            let output = drainAndWait(child.process, stdout: child.stdout, stderr: child.stderr, timing: timing)
+
+            #expect(clock.now - started >= timing.drainGrace)
+            #expect(!FileManager.default.fileExists(atPath: finished.path))
             #expect(output.ending == .exited)
             #expect(!output.isStdoutComplete)
             #expect(!output.hasStdoutReadFailed)
+
+            try FileManager.default.removeItem(at: hold)
+            await pollUntil(timeout: .seconds(5), interval: .milliseconds(10)) {
+                FileManager.default.fileExists(atPath: finished.path)
+            }
+            #expect(FileManager.default.fileExists(atPath: finished.path), "the grandchild left its hold loop")
         }
     }
 
@@ -76,8 +114,11 @@ struct ProcessDrainTests {
     /// holds neither, and the child the pipe is for still writes to it.
     @Test func aPipeForAChild_staysOutOfOtherProcesses_andStillCarriesItsChildsOutput() throws {
         let pipe = Pipe.forChildProcess()
-        #expect(fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD) & FD_CLOEXEC != 0)
-        #expect(fcntl(pipe.fileHandleForWriting.fileDescriptor, F_GETFD) & FD_CLOEXEC != 0)
+        let readFlags = fcntl(pipe.fileHandleForReading.fileDescriptor, F_GETFD)
+        let writeFlags = fcntl(pipe.fileHandleForWriting.fileDescriptor, F_GETFD)
+        try #require(readFlags >= 0 && writeFlags >= 0)
+        #expect(readFlags & FD_CLOEXEC != 0)
+        #expect(writeFlags & FD_CLOEXEC != 0)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -104,7 +145,14 @@ struct ProcessDrainTests {
             waitpid(group, &status, 0)
         }
         try pipe.fileHandleForWriting.close()
-        var descriptor = pollfd(fd: pipe.fileHandleForReading.fileDescriptor, events: Int16(POLLIN), revents: 0)
-        #expect(poll(&descriptor, 1, 5000) == 1, "the pipe stayed open while the process ran")
+        let readFD = pipe.fileHandleForReading.fileDescriptor
+        try #require(fcntl(readFD, F_GETFD) >= 0)
+        var descriptor = pollfd(fd: readFD, events: Int16(POLLIN), revents: 0)
+        try #require(poll(&descriptor, 1, 5000) == 1)
+        try #require(descriptor.revents & Int16(POLLHUP) != 0)
+        try #require(descriptor.revents & Int16(POLLERR | POLLNVAL) == 0)
+        var byte: UInt8 = 0
+        #expect(read(readFD, &byte, 1) == 0)
+        #expect(ProcessLiveness.isLive(group))
     }
 }

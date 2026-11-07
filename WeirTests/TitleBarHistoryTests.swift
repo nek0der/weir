@@ -75,6 +75,7 @@ struct TitleBarHistoryTests {
     @Test func buttons_readOnlyTheirOwnWindow() throws {
         let fixture = try Fixture()
         let primary = TitleBarHistoryModel(session: fixture.session, window: fixture.session.primaryWindowID)
+        #expect(fixture.model.canGoBack)
         #expect(!primary.canGoBack)
         #expect(!primary.canGoForward)
     }
@@ -100,6 +101,7 @@ struct TitleBarHistoryTests {
 
         SupervisionWindowActions.goForward(in: fixture.window, session: fixture.session)
         #expect(fixture.session.selection(fixture.window.id)?.activeTabID == fixture.tabA.id)
+        #expect(fixture.session.primarySelection.activeTabID == primaryTab)
     }
 
     /// A step closes the window's open dropdown and its palette, which
@@ -113,6 +115,7 @@ struct TitleBarHistoryTests {
 
         #expect(fixture.window.titleBarMenu == nil)
         #expect(fixture.session.commandPaletteState == nil)
+        #expect(fixture.session.selection(fixture.window.id)?.activeTabID == fixture.tabB.id)
     }
 
     /// The palette's Go Back and Go Forward step as the menu does, closing

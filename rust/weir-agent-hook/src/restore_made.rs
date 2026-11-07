@@ -300,6 +300,7 @@ mod tests {
     fn each_pair_gets_the_paths_it_adds_and_no_submodule() {
         let first = ("a".repeat(40), "b".repeat(40));
         let second = ("c".repeat(40), "d".repeat(40));
+        let empty = ("f".repeat(40), "1".repeat(40));
         let zero = "0".repeat(40);
         let id = "e".repeat(40);
         let mut raw = Vec::new();
@@ -307,11 +308,20 @@ mod tests {
         raw.extend(format!(":000000 100644 {zero} {id} A\0new\nline\0").as_bytes());
         raw.extend(format!(":000000 160000 {zero} {id} A\0module\0").as_bytes());
         raw.extend(format!("{} {}\n", second.0, second.1).as_bytes());
+        raw.extend(format!(":000000 100644 {zero} {id} A\0").as_bytes());
+        raw.extend(b"non-utf8-\xff\0");
+        raw.extend(format!("{} {}\n", empty.0, empty.1).as_bytes());
 
         let added = parse_added(&raw).unwrap();
 
-        assert_eq!(added[&first], [b"new\nline".to_vec()]);
-        assert!(added[&second].is_empty());
+        assert_eq!(
+            added,
+            HashMap::from([
+                (first, vec![b"new\nline".to_vec()]),
+                (second, vec![b"non-utf8-\xff".to_vec()]),
+                (empty, Vec::new()),
+            ])
+        );
     }
 
     #[test]

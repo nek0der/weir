@@ -28,7 +28,9 @@ struct ModalMotionTests {
             edge: nil,
             scale: ModalMotion.overlayPanelScale
         ))
+        #expect(ModalMotion.overlayPanelScale > 0)
         #expect(ModalMotion.overlayPanelScale < 1)
+        #expect(ModalMotion.overlayPanel.animation(reduceMotion: false) == WeirMotion.overlay)
         #expect(ModalMotion.overlayPanel.transition(reduceMotion: true) == Self.fade)
         // The fade is still animated: a sheet that blinks in reads as a glitch.
         #expect(ModalMotion.overlayPanel.animation(reduceMotion: true) == WeirMotion.overlay)
@@ -80,6 +82,7 @@ struct ModalMotionTests {
         ("10", 10),
         ("1", 1),
         ("0.5", 1),
+        ("1.5", 1.5),
         ("-3", 1),
         ("inf", 1),
         ("nan", 1),

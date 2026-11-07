@@ -31,7 +31,7 @@ struct Expected {
 /// The part of a case that is hand-written: everything in the input that does
 /// not come from the state directories.
 #[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CaseInput {
     now: String,
     monotonic_ms: u64,
@@ -55,6 +55,16 @@ struct CaseInput {
 
 fn corpus() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/projection")
+}
+
+#[test]
+fn corpus_input_rejects_unmodeled_acknowledgments() {
+    let error = serde_json::from_str::<CaseInput>(
+        r#"{"now":"2026-09-14T12:00:00Z","monotonicMs":0,"acknowledged":[]}"#,
+    )
+    .err()
+    .expect("unsupported fixture input must not be silently discarded");
+    assert!(error.to_string().contains("unknown field `acknowledged`"));
 }
 
 fn provider(name: &str) -> ProviderId {
@@ -187,15 +197,21 @@ fn every_case_matches_its_golden() {
     let regenerate = std::env::var_os("WEIR_REGENERATE_EXPECTED").is_some();
     let mut cases: Vec<PathBuf> = fs::read_dir(corpus())
         .expect("corpus")
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.join("input.json").is_file())
+        .map(|entry| entry.expect("corpus directory entry").path())
+        .filter(|path| path.is_dir())
         .collect();
     cases.sort();
     assert!(!cases.is_empty(), "the corpus is empty");
 
     let mut failures = Vec::new();
     for case in &cases {
+        if !case.join("input.json").is_file() || !case.join("scenario.json").is_file() {
+            failures.push(format!(
+                "{}: missing input.json or scenario.json",
+                case.display()
+            ));
+            continue;
+        }
         let (input, now) = build_input(case);
         let (_, projection, commands) = project(&ProjectionState::default(), &input, &now);
         let actual = Expected {
@@ -312,9 +328,15 @@ fn warm_pass(
     files: Vec<RecordFile>,
     rounds: u32,
 ) -> (std::time::Duration, usize) {
+    let turn_count = files.len();
     input.turn_files.clone_from(&files);
     let cold = serde_json::to_vec(&*input).expect("input");
     let mut state = bridged_pass(&ProjectionState::default(), &cold, now);
+    assert_eq!(
+        state.turns.len(),
+        turn_count,
+        "the cold pass loaded the fixture"
+    );
     input.turn_files = files
         .into_iter()
         .map(|file| RecordFile {
@@ -327,7 +349,13 @@ fn warm_pass(
     for _ in 0..rounds {
         state = bridged_pass(&state, &warm, now);
     }
-    (started.elapsed() / rounds, warm.len())
+    let each = started.elapsed() / rounds;
+    assert_eq!(
+        state.turns.len(),
+        turn_count,
+        "warm passes retained the turns sent by name"
+    );
+    (each, warm.len())
 }
 
 #[test]

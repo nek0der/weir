@@ -78,9 +78,12 @@ struct LiveLocaleAppKitTests {
 
     @Test func reviewNoticeRow_followsTheLocale() {
         let notice = ReviewNoticeRowView()
-        notice.configure("This file can’t be reviewed as text.", locale: ja)
-        let english = LocalizedStringResource("This file can’t be reviewed as text.").resolved(in: en)
-        #expect(labels(in: notice) == [LocalizedStringResource("This file can’t be reviewed as text.").resolved(in: ja)])
+        let message = LocalizedStringResource("This file can’t be reviewed as text.")
+        let english = "This file can’t be reviewed as text."
+        notice.configure(message, locale: en)
+        #expect(labels(in: notice) == [english])
+        notice.configure(message, locale: ja)
+        #expect(labels(in: notice) == [message.resolved(in: ja)])
         #expect(labels(in: notice) != [english])
     }
 
@@ -106,6 +109,10 @@ struct LiveLocaleAppKitTests {
         composer.configure(line, start: nil, text: "", isEditing: false, metrics: metrics, locale: en)
         #expect(labels(in: composer).contains("Leave a comment"))
         #expect(buttonTitles(in: composer) == ["Cancel", "Add"])
+
+        composer.configure(line, start: nil, text: "", isEditing: false, metrics: metrics, locale: ja)
+        #expect(labels(in: composer).contains("コメントを入力"))
+        #expect(buttonTitles(in: composer) == ["キャンセル", LocalizedStringResource("Add").resolved(in: ja)])
 
         composer.configure(line, start: nil, text: "", isEditing: true, metrics: metrics, locale: ja)
         #expect(labels(in: composer).contains("コメントを入力"))
@@ -157,8 +164,9 @@ struct LiveLocaleAppKitTests {
         #expect(textField.accessibilityLabel() == "検索")
 
         host.rootView = Localized(locale: en, content: field)
-        await settle(host) { textField.placeholderString == "Search" }
+        await settle(host) { textField.placeholderString == "Search" && textField.accessibilityLabel() == "Search" }
         #expect(textField.placeholderString == "Search")
+        #expect(textField.accessibilityLabel() == "Search")
     }
 
     @Test(.timeLimit(.minutes(1)))

@@ -9,13 +9,14 @@ import Testing
 struct LinkBaseDirectoriesTests {
     @Test func paneDirectoryComesBeforeTheProjectRoot() throws {
         let (session, project) = WorkspaceSessionFixture.withProject()
-        let tab = session.openTab(container: .project(project.id), workingDirectory: project.rootURL)
+        let launch = URL(fileURLWithPath: "/tmp/weir-launch")
+        let tab = session.openTab(container: .project(project.id), workingDirectory: launch)
         let paneID = try #require(tab.splitTree.allLeafIDs().first)
         session.setWorkingDirectory(paneID: paneID, path: "/tmp/weir-elsewhere")
 
         #expect(
             session.linkBaseDirectories(paneID: paneID)
-                == [URL(fileURLWithPath: "/tmp/weir-elsewhere"), project.rootURL]
+                == [URL(fileURLWithPath: "/tmp/weir-elsewhere"), launch, project.rootURL]
         )
     }
 

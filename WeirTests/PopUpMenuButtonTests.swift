@@ -80,13 +80,16 @@ struct PopUpMenuButtonTests {
 
     @Test("choosing an item runs its action once")
     func performItem_runsAction() {
-        var runs = 0
-        let menu = PopUpMenu.make(
-            [.item(PopUpMenuItem(title: "Mark All as Read") { runs += 1 })],
-            locale: Locale(identifier: "en")
-        )
+        var runs: [String] = []
+        let menu = PopUpMenu.make([
+            .item(PopUpMenuItem(title: "Mark All as Read") { runs.append("read") }),
+            .item(PopUpMenuItem(title: "Close Pane") { runs.append("close") })
+        ], locale: Locale(identifier: "en"))
+        #expect(runs.isEmpty)
+        menu.performActionForItem(at: 1)
+        #expect(runs == ["close"])
         menu.performActionForItem(at: 0)
-        #expect(runs == 1)
+        #expect(runs == ["close", "read"])
     }
 
     @Test("the trigger is a menu button named by its title, which is also the tooltip")
@@ -169,6 +172,10 @@ struct PopUpMenuButtonTests {
         #expect(opener.shownTrigger == nil, "neither a hidden trigger nor one in no window is on screen")
         opener.register(shown)
         #expect(opener.shownTrigger === shown)
+
+        shown.isHidden = true
+        hidden.isHidden = false
+        #expect(opener.shownTrigger === hidden)
     }
 
     @Test("a verbatim item keeps its words, its checkmark, and its tooltip")

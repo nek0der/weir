@@ -98,7 +98,7 @@ fn a_run_whose_process_died_at_work_shows_once_as_stopped_before_it_is_retired()
     // record is the only one that can say the run stopped. It shows the
     // run in error then, with why, so the interface keeps the stop.
     for state in ["running", "needsInput", "compacting"] {
-        let (_, projection, commands) = dead_run(state, "");
+        let (state_after, projection, commands) = dead_run(state, "");
         let badge = &projection.runtimes[0].badge;
         assert_eq!(badge.state, RunState::Error, "{state}");
         assert_eq!(
@@ -113,6 +113,8 @@ fn a_run_whose_process_died_at_work_shows_once_as_stopped_before_it_is_retired()
             json["runtimes"][0]["badge"]["stopReason"],
             serde_json::json!("processExited")
         );
+        let (_, gone, _) = project(&state_after, &ProjectionInput::default(), &now());
+        assert!(gone.runtimes.is_empty(), "the host has retired {state}");
     }
 }
 
@@ -195,10 +197,11 @@ fn a_run_that_ended_or_that_weir_stopped_is_retired_without_a_stop() {
         ("unknown", ""),
         ("running", r#","killedByWeirAt":"2026-09-14T12:03:30Z""#),
     ] {
-        let (_, projection, _) = dead_run(state, extra);
+        let (_, projection, commands) = dead_run(state, extra);
         let badge = &projection.runtimes[0].badge;
         assert_ne!(badge.state, RunState::Error, "{state}{extra}");
         assert_eq!(badge.stop_reason, None, "{state}{extra}");
+        assert!(retires(&commands), "{state}{extra}");
     }
     let (_, projection, commands) = dead_run("running", r#","tmuxSocketPath":"/tmp/s""#);
     assert_eq!(projection.runtimes[0].badge.stop_reason, None);
@@ -224,21 +227,25 @@ fn a_lower_revision_never_replaces_a_higher_one() {
         &state_with(first.clone()),
         vec![file(Some(record(
             Some(2),
-            "2026-09-14T12:01:00Z",
+            "2026-09-14T12:05:00Z",
             "running",
         )))],
     );
-    assert_eq!(second[RUN].record.state, RunState::Finished);
+    assert_eq!(
+        second, first,
+        "a newer timestamp cannot override the revision"
+    );
 
     let third = accept(
         &state_with(first),
         vec![file(Some(record(
             Some(5),
-            "2026-09-14T12:04:00Z",
+            "2026-09-14T12:01:00Z",
             "unknown",
         )))],
     );
     assert_eq!(third[RUN].record.state, RunState::Unknown);
+    assert_eq!(third[RUN].record.revision, Some(5));
 }
 
 #[test]
@@ -254,6 +261,11 @@ fn records_without_revisions_fall_back_to_the_timestamp() {
         vec![file(Some(record(None, "2026-09-14T12:01:00Z", "running")))],
     );
     assert_eq!(older[RUN].record.state, RunState::Finished);
+    let later = accept(
+        &state_with(first.clone()),
+        vec![file(Some(record(None, "2026-09-14T12:05:00Z", "running")))],
+    );
+    assert_eq!(later[RUN].record.state, RunState::Running);
 
     // A numbered record is the one a version 3 writer produced, so it wins
     // over an unnumbered one whatever the timestamps say.
@@ -277,7 +289,7 @@ fn a_file_that_cannot_be_read_keeps_the_record_already_accepted() {
         )))],
     );
     let unreadable = accept(&state_with(first.clone()), vec![file(None)]);
-    assert_eq!(unreadable[RUN].record.state, RunState::Running);
+    assert_eq!(unreadable, first);
 
     // A file that is gone is a different matter: the run was retired.
     let removed = accept(&state_with(first), Vec::new());

@@ -151,12 +151,11 @@ struct CommandPaletteTests {
         var facts = SupervisionPaletteFacts(projectID: fixture.a.id, sessionRowCount: 3, hasReviewTab: false)
         facts.rowOrder = order
 
-        let items = try Self.items(fixture.session, supervision: facts)
-        // The navigation rows only, not Close Project… ("project.close").
-        let ids = items.filter { $0.category == .navigate }.map(\.id)
-            .filter { $0.hasPrefix("project.") || $0.hasPrefix("worktree.") }
+        let state = CommandPaletteState(locale: Locale(identifier: "en"), windowID: fixture.primary.id)
+        state.allItems = try Self.items(fixture.session, supervision: facts)
+        state.applyFilter(query: "#", frecencyStore: nil)
 
-        #expect(ids == [
+        #expect(state.results.map(\.id) == [
             "project.\(fixture.b.id.uuidString)",
             "project.\(fixture.c.id.uuidString)",
             "project.\(fixture.a.id.uuidString)",
@@ -234,14 +233,19 @@ struct CommandPaletteTests {
     /// takes them, and an agent row opens its tab the same way, so both
     /// rows are on there.
     @Test func aWindowChoosingAProject_offersTheAgentRows_whichOpenTheirTabThere() throws {
-        let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+        let session = WorkspaceSession()
+        TabActions.newTab(session, in: .loose, running: .codex)
+        let oldTab = try #require(session.activeTab(in: session.primaryWindowID))
+        let oldPane = try #require(oldTab.splitTree.allLeafIDs().first)
+        let oldHint = try #require(oldTab.agentsInFront[oldPane])
+        #expect(oldHint.kind == .codex)
         let choosing = session.addWindow(showing: nil, layoutFrom: session.primaryWindowID)
         let window = ProjectWindowState(selection: choosing)
         let facts = SupervisionPaletteFacts(window: window, session: session)
         #expect(facts.isChoosingProject)
         let items = try Self.items(session, supervision: facts, window: choosing.windowID)
         #expect(Self.isEnabled(.newTab, in: items) == true)
-        let agent = try #require(AgentCatalog.entries.first?.kind)
+        let agent = AgentKind.claude
         let row = try #require(items.first { $0.action == .newAgentTab(agent) })
         #expect(row.isEnabled)
 
@@ -249,9 +253,12 @@ struct CommandPaletteTests {
 
         #expect(!choosing.isChoosingProject)
         let opened = try #require(session.drawnTab(in: choosing.windowID))
+        #expect(opened.id != oldTab.id)
+        #expect(session.tabs.map(\.id) == [oldTab.id, opened.id])
         #expect(opened.container == .loose)
         let paneID = try #require(opened.splitTree.allLeafIDs().first)
-        #expect(session.tab(opened.id)?.agentsInFront[paneID]?.kind == agent)
+        #expect(opened.agentsInFront[paneID]?.kind == agent)
+        #expect(session.tab(oldTab.id)?.agentsInFront[oldPane] == oldHint)
     }
 
     @Test("the agent rows offer the agents found on this Mac, as the strip's + does")
@@ -297,13 +304,19 @@ struct CommandPaletteTests {
         #expect(bars(single) == "Hide Icon Bars")
 
         PaneActions.split(session, direction: .horizontal, in: session.primaryWindowID)
-        facts.areRailsHidden = true
         let split = try Self.items(session, supervision: facts)
         #expect(move(split) == true)
-        #expect(bars(split) == "Show Icon Bars")
+        #expect(bars(split) == "Hide Icon Bars")
+
+        facts.areRailsHidden = true
+        let railsHidden = try Self.items(session, supervision: facts)
+        #expect(move(railsHidden) == true)
+        #expect(bars(railsHidden) == "Show Icon Bars")
 
         facts.arePanesHidden = true
-        #expect(try move(Self.items(session, supervision: facts)) == false)
+        let panesHidden = try Self.items(session, supervision: facts)
+        #expect(move(panesHidden) == false)
+        #expect(bars(panesHidden) == "Show Icon Bars")
     }
 
     @Test("Plan Usage needs the rail, and Show Worktree Menu needs its button")
@@ -314,19 +327,27 @@ struct CommandPaletteTests {
         #expect(Self.isEnabled(.planUsage, in: plain) == true)
         #expect(Self.isEnabled(.showWorktreeMenu, in: plain) == false)
         facts.areRailsHidden = true
+        let railsHidden = try Self.items(session, supervision: facts)
+        #expect(Self.isEnabled(.planUsage, in: railsHidden) == false)
+        #expect(Self.isEnabled(.showWorktreeMenu, in: railsHidden) == false)
+
         facts.hasWorktreeMenu = true
-        let changed = try Self.items(session, supervision: facts)
-        #expect(Self.isEnabled(.planUsage, in: changed) == false)
-        #expect(Self.isEnabled(.showWorktreeMenu, in: changed) == true)
+        let worktreeMenu = try Self.items(session, supervision: facts)
+        #expect(Self.isEnabled(.planUsage, in: worktreeMenu) == false)
+        #expect(Self.isEnabled(.showWorktreeMenu, in: worktreeMenu) == true)
     }
 
     @Test("Show Decision Bar Menu is on only while the focused pane's bar shows its ⋯")
     func catalog_showDecisionBarMenu_needsTheBarsMenu() throws {
         let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
         var facts = SupervisionPaletteFacts.empty
-        #expect(try Self.isEnabled(.showDecisionBarMenu, in: Self.items(session, supervision: facts)) == false)
-        facts.hasDecisionBarMenu = true
-        #expect(try Self.isEnabled(.showDecisionBarMenu, in: Self.items(session, supervision: facts)) == true)
+        for hasMenu in [false, true] {
+            facts.hasDecisionBarMenu = hasMenu
+            let rows = try Self.items(session, supervision: facts).filter { $0.id == "shortcut.showDecisionBarMenu" }
+            #expect(rows.map(\.action) == [.shortcutAction(.showDecisionBarMenu)])
+            #expect(rows.map(\.category) == [.actions])
+            #expect(rows.map(\.isEnabled) == [hasMenu])
+        }
     }
 
     /// The toast's Undo is the pointer's alone on screen, so the palette
@@ -377,33 +398,32 @@ struct CommandPaletteTests {
         #expect(try items(projectID: project.id).contains { $0.id == "project.close" })
     }
 
-    @Test("the supervision window's rows decide whether their keys are offered")
-    func catalog_theWindowsRows_decideWhetherTheirKeysAreOffered() throws {
-        let session = WorkspaceSession()
-        session.openTab(container: .loose)
-        let alone = try Self.items(session, supervision: SupervisionPaletteFacts(projectID: nil, sessionRowCount: 1, hasReviewTab: false))
-        let withReview = try Self.items(
-            session,
-            supervision: SupervisionPaletteFacts(projectID: nil, sessionRowCount: 2, hasReviewTab: true)
-        )
+    @Test("tab and session navigation follow their own row counts", arguments: [false, true], [1, 2])
+    func catalog_theWindowsRows_decideWhetherTheirKeysAreOffered(hasReview: Bool, sessionRowCount: Int) throws {
+        let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+        let facts = SupervisionPaletteFacts(projectID: nil, sessionRowCount: sessionRowCount, hasReviewTab: hasReview)
+        let rows = try Self.items(session, supervision: facts)
 
-        // One tab: nothing to step to, unless the review tab is there.
-        #expect(Self.isEnabled(.nextTab, in: alone) == false)
-        #expect(Self.isEnabled(.nextTab, in: withReview) == true)
-        // One session row: ⌘] has nowhere to go.
-        #expect(Self.isEnabled(.nextSession, in: alone) == false)
-        #expect(Self.isEnabled(.nextSession, in: withReview) == true)
+        #expect(Self.isEnabled(.nextTab, in: rows) == hasReview)
+        #expect(Self.isEnabled(.previousTab, in: rows) == hasReview)
+        #expect(Self.isEnabled(.nextSession, in: rows) == (sessionRowCount == 2))
+        #expect(Self.isEnabled(.previousSession, in: rows) == (sessionRowCount == 2))
     }
 
     @Test("a window's actions read that window's tab")
     func catalog_theWindowsActions_readTheWindowsTab() throws {
-        let (session, _, _, tabB, _) = WorkspaceSessionFixture.withTwoLooseTabs()
-        let other = WorkspaceSessionFixture.addWindow(to: session)
-        session.setActiveTab(tabB.id, in: other)
-        PaneActions.split(session, direction: .horizontal, in: other)
+        let fixture = ProjectWindowsFixture()
+        let other = try fixture.window(showing: fixture.b)
+        PaneActions.split(fixture.session, direction: .horizontal, in: other.id)
+        let primaryTab = try #require(fixture.session.drawnTab(in: fixture.primary.id))
+        let otherTab = try #require(fixture.session.drawnTab(in: other.id))
+        #expect(primaryTab.id == fixture.aTab.id)
+        #expect(primaryTab.splitTree.allLeafIDs().count == 1)
+        #expect(otherTab.id == fixture.bTab.id)
+        #expect(otherTab.splitTree.allLeafIDs().count == 2)
 
-        #expect(try Self.isEnabled(.equalizeSplits, in: Self.items(session, window: other)) == true)
-        #expect(try Self.isEnabled(.equalizeSplits, in: Self.items(session)) == false)
+        #expect(try Self.isEnabled(.equalizeSplits, in: Self.items(fixture.session, window: other.id)) == true)
+        #expect(try Self.isEnabled(.equalizeSplits, in: Self.items(fixture.session)) == false)
     }
 
     @Test("the restore entry names its turn, and is off without one")
@@ -433,7 +453,8 @@ struct CommandPaletteTests {
         // The actions also hold the window's own rows, such as the restore
         // entry, which are no shortcut.
         let shortcutItems = items.filter { $0.id.hasPrefix("shortcut.") }
-        #expect(shortcutItems.count == WeirShortcutAction.allCases.count)
+        #expect(shortcutItems.map(\.id) == WeirShortcutAction.allCases.map { "shortcut.\($0.rawValue)" })
+        #expect(shortcutItems.map(\.action) == WeirShortcutAction.allCases.map(CommandPaletteAction.shortcutAction))
         #expect(shortcutItems.allSatisfy { $0.category == .actions })
     }
 
@@ -461,19 +482,25 @@ struct CommandPaletteTests {
             }
             return false
         }
+        #expect(tabItems.map(\.id) == ["tab.\(tab.id.uuidString)"])
+        #expect(tabItems.map(\.category) == [.navigate])
         #expect(tabItems.map(\.title) == ["build"])
+        #expect(tabItems.map(\.action) == [.jumpToTab(tab.id)])
     }
 
     @Test("catalog includes projects")
     func catalog_includesProjects() throws {
         let (session, project) = WorkspaceSessionFixture.withProject()
         let projectItems = try Self.items(session).filter {
-            if case let .activateProject(id) = $0.action {
-                return id == project.id
+            if case .activateProject = $0.action {
+                return true
             }
             return false
         }
-        #expect(projectItems.count == 1)
+        #expect(projectItems.map(\.id) == ["project.\(project.id.uuidString)"])
+        #expect(projectItems.map(\.category) == [.navigate])
+        #expect(projectItems.map(\.title) == [project.name])
+        #expect(projectItems.map(\.action) == [.activateProject(project.id)])
     }
 
     /// A worktree is found by the name its row has, its conversation's here
@@ -536,41 +563,36 @@ struct CommandPaletteTests {
     /// The catalog lists the actions before the tabs, and the dropdown
     /// heads Navigate first, so a list kept in rank order ran New Tab while
     /// the first tab was highlighted.
-    @Test("the rows run in the order they are shown", arguments: ["", "b", "t", "#", ">"])
-    func theRows_runInTheOrderTheyAreShown(query: String) throws {
+    @Test("selection follows the rows in display order", arguments: ["", "b", "t", "#", ">"])
+    func selection_followsDisplayedRowsAndClampsAtEnds(query: String) throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "bench")
-        session.openTab(container: .project(project.id), title: "build")
-        let state = CommandPaletteState(locale: Locale(identifier: "en"), windowID: session.primaryWindowID)
-        state.allItems = try Self.items(session)
-        state.applyFilter(query: query, frecencyStore: nil)
-        #expect(!state.results.isEmpty)
-
-        let drawn = state.sections.flatMap { section in
-            section.items.enumerated().map { (index: section.startIndex + $0.offset, id: $0.element.id) }
-        }
-        #expect(drawn.map(\.index) == Array(state.results.indices))
-        #expect(drawn.map(\.id) == state.results.map(\.id))
-        #expect(state.sections.map(\.category) == state.sections.map(\.category).sorted())
-        #expect(Set(state.sections.map(\.category)).count == state.sections.count)
-
-        while state.selectedIndex < state.results.count - 1 {
-            state.moveSelection(up: false)
-            let shown = try #require(drawn.first { $0.index == state.selectedIndex })
-            #expect(shown.id == state.results[state.selectedIndex].id)
-        }
-    }
-
-    /// With no query, the first row is the window's tab under Navigate,
-    /// as the dropdown draws it, not the first action the catalog lists.
-    @Test func anEmptyQuery_startsOnTheFirstRowShown() throws {
-        let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
-        session.update(tab.id) { $0.titleOverride = "build" }
+        let tab = session.openTab(container: .project(project.id), title: "build")
         let state = CommandPaletteState(locale: Locale(identifier: "en"), windowID: session.primaryWindowID)
         state.allItems = try Self.items(session)
         #expect(state.allItems.first?.category == .actions)
-        state.applyFilter(query: "", frecencyStore: nil)
-        #expect(state.results[state.selectedIndex].item.title == "build")
-        #expect(state.sections.first?.items.first?.item.title == "build")
+        state.applyFilter(query: query, frecencyStore: nil)
+        try #require(!state.results.isEmpty)
+
+        let drawn = state.sections.flatMap { section in
+            section.items.enumerated().map { (index: section.startIndex + $0.offset, row: $0.element.item) }
+        }
+        #expect(drawn.map(\.index) == Array(state.results.indices))
+        #expect(drawn.map(\.row) == state.results.map(\.item))
+        #expect(state.sections.map(\.category) == state.sections.map(\.category).sorted())
+        #expect(Set(state.sections.map(\.category)).count == state.sections.count)
+        if query.isEmpty {
+            #expect(drawn.first?.row.title == "build")
+            #expect(drawn.first?.row.action == .jumpToTab(tab.id))
+        }
+
+        state.moveSelection(up: true)
+        #expect(state.selectedIndex == 0)
+        for (index, row) in drawn {
+            try #require(state.selectedIndex == index)
+            #expect(state.results[state.selectedIndex].item.action == row.action)
+            state.moveSelection(up: false)
+        }
+        #expect(state.selectedIndex == drawn.count - 1)
     }
 
     /// A match far apart scores below zero, and its row still shows the
@@ -595,23 +617,32 @@ struct CommandPaletteTests {
 
     // MARK: - State lifecycle
 
-    @Test("opening the palette builds its items from the session, and closing it lets go of them")
+    @Test("opening the palette records its window and builds a selectable result")
     func state_openBuildsItems_andCloseLetsGo() throws {
-        let session = WorkspaceSession()
+        let fixture = ProjectWindowsFixture()
+        let window = try fixture.window(showing: fixture.b)
+        fixture.session.update(fixture.bTab.id) { $0.titleOverride = "Quasar Build" }
         try withTempDir { dir in
+            let frecency = FrecencyStore(directory: dir)
             CommandPaletteActions.openCommandPalette(
-                session,
-                in: session.primaryWindowID,
+                fixture.session,
+                in: window.id,
                 settings: SettingsStore(directory: dir),
-                frecencyStore: FrecencyStore(directory: dir),
+                frecencyStore: frecency,
                 attention: AttentionState(),
+                initialQuery: "quasar",
                 supervision: .empty
             )
-            let state = try #require(session.commandPaletteState)
-            #expect(!state.allItems.isEmpty)
+            let state = try #require(fixture.session.commandPaletteState)
+            #expect(state.windowID == window.id)
+            #expect(state.initialQuery == "quasar")
+            state.applyFilter(query: "quasar", frecencyStore: frecency)
+            #expect(state.results.map(\.id) == ["tab.\(fixture.bTab.id.uuidString)"])
+            #expect(state.results.map(\.item.action) == [.jumpToTab(fixture.bTab.id)])
+            #expect(state.selectedIndex == 0)
 
-            CommandPaletteActions.closeCommandPalette(session)
-            #expect(session.commandPaletteState == nil)
+            CommandPaletteActions.closeCommandPalette(fixture.session)
+            #expect(fixture.session.commandPaletteState == nil)
         }
     }
 }

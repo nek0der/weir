@@ -15,18 +15,18 @@ final class StackReviewRepository: ReviewRepositoryReading, @unchecked Sendable 
     private var fingerprints: [String: String] = [:]
     private var inFlight = 0
     private var mostAtOnce = 0
-    private var reads = 0
+    private var readIDs: [String] = []
     private var indexReads = 0
+    private var lastIndexPaths: Set<String>?
+    private var requestedFingerprints: [String] = []
     /// The work tree and the index, by path: what the read states see.
     private var head = "head"
     private var indexEntries: [String: String] = [:]
     private var stats: [String: Int] = [:]
     private var contents: [String: Int] = [:]
     private var failsStateReads = false
-    private var fingerprintReads = 0
     private var sources: [String: [String]] = [:]
-    /// How long each diff takes to read.
-    let delay: Duration
+    private let readGate: Gate<Void>?
     /// Run while a diff is being read, as an edit landing mid-read.
     private var duringRead: (@Sendable (ReviewFile) -> Void)?
 
@@ -34,10 +34,10 @@ final class StackReviewRepository: ReviewRepositoryReading, @unchecked Sendable 
         lock.withLock { duringRead = action }
     }
 
-    init(files: [ReviewFile], diffs: [ReviewDiff], delay: Duration = .zero) {
+    init(files: [ReviewFile], diffs: [ReviewDiff], readGate: Gate<Void>? = nil) {
         self.files = files
         self.diffs = Dictionary(uniqueKeysWithValues: diffs.map { ($0.file.id, $0) })
-        self.delay = delay
+        self.readGate = readGate
     }
 
     /// The most diffs that were being read at once.
@@ -46,7 +46,11 @@ final class StackReviewRepository: ReviewRepositoryReading, @unchecked Sendable 
     }
 
     var diffReads: Int {
-        lock.withLock { reads }
+        lock.withLock { readIDs.count }
+    }
+
+    var diffReadIDs: [String] {
+        lock.withLock { readIDs }
     }
 
     /// How many times the index was read (for read states and the check).
@@ -55,7 +59,15 @@ final class StackReviewRepository: ReviewRepositoryReading, @unchecked Sendable 
     }
 
     var fingerprintCalls: Int {
-        lock.withLock { fingerprintReads }
+        lock.withLock { requestedFingerprints.count }
+    }
+
+    var lastIndexReadPaths: Set<String>? {
+        lock.withLock { lastIndexPaths }
+    }
+
+    var fingerprintReadIDs: [String] {
+        lock.withLock { requestedFingerprints }
     }
 
     /// A file's new side, whole, for unfolding.
@@ -113,12 +125,12 @@ final class StackReviewRepository: ReviewRepositoryReading, @unchecked Sendable 
 
     func diff(_ file: ReviewFile, root _: URL, scope _: ReviewScope) async throws -> ReviewDiff {
         lock.withLock {
-            reads += 1
+            readIDs.append(file.id)
             inFlight += 1
             mostAtOnce = max(mostAtOnce, inFlight)
         }
-        if delay > .zero {
-            try? await Task.sleep(for: delay)
+        if let readGate {
+            await readGate.wait()
         }
         lock.withLock { duringRead }?(file)
         return try lock.withLock {
@@ -131,6 +143,7 @@ final class StackReviewRepository: ReviewRepositoryReading, @unchecked Sendable 
     func indexState(root _: URL, scope _: ReviewScope, paths: Set<String>) async throws -> ReviewIndexState {
         try lock.withLock {
             indexReads += 1
+            lastIndexPaths = paths
             guard !failsStateReads else { throw ReviewError.gitFailed }
             return ReviewIndexState(head: head, base: nil, entries: indexEntries.filter { paths.contains($0.key) })
         }
@@ -150,7 +163,7 @@ final class StackReviewRepository: ReviewRepositoryReading, @unchecked Sendable 
 
     func fingerprint(_ file: ReviewFile, root _: URL, scope _: ReviewScope) async throws -> String {
         try lock.withLock {
-            fingerprintReads += 1
+            requestedFingerprints.append(file.id)
             if let fingerprint = fingerprints[file.id] {
                 return fingerprint
             }

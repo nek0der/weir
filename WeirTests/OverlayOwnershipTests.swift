@@ -26,6 +26,7 @@ struct OverlayOwnershipTests {
         #expect(first.isPresenting(request.key, in: store))
         #expect(!second.isPresenting(request.key, in: store))
         #expect(first.isFocused)
+        #expect(first.rowAnchor(for: request) == CGRect(x: 0, y: 40, width: 200, height: 20))
         #expect(!second.isFocused, "⌘⏎ in the other window is not held back")
         #expect(second.rowAnchor(for: request) == nil, "a row in one window is no anchor in another")
 
@@ -34,6 +35,8 @@ struct OverlayOwnershipTests {
         first.dismiss()
         #expect(first.presentedApproval(in: store) == nil)
         #expect(second.presentedApproval(in: store)?.id == request.id)
+        #expect(!first.isFocused)
+        #expect(second.rowAnchor(for: request) == nil)
     }
 
     @Test func aCardOpenedFromTheTitleBarList_standsBesideIt_andTheSidebarGoingTakesTheRowsAway() {
@@ -136,6 +139,11 @@ struct OverlayOwnershipTests {
         toasts.show(item)
         #expect(toasts.current(in: second)?.id == item.id)
         #expect(toasts.current(in: first) == nil)
+        let unrelated = ToastItem(message: .verbatim("Other"), undo: nil)
+        toasts.show(unrelated, in: first)
+        toasts.dismiss(item.id)
+        #expect(toasts.current(in: second) == nil)
+        #expect(toasts.current(in: first)?.id == unrelated.id)
     }
 
     @Test func eachWindow_hasItsOwnFloatingPanels() {

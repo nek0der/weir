@@ -140,24 +140,26 @@ struct SupervisionWindowWidthsTests {
         )
     }
 
-    @Test func titleBar_wideWindow_givesTheFieldItsMaximum() {
-        let bar = Self.titleBar(width: 1280, leading: 142, trailing: 168)
+    @Test(arguments: [CGFloat(0), Self.historyWidth])
+    func titleBar_wideWindow_givesTheFieldItsMaximum(history: CGFloat) {
+        let bar = Self.titleBar(width: 1280, leading: 142, history: history, trailing: 168)
         #expect(bar == .init(field: 340, leading: 142, trailing: 168))
     }
 
-    /// The field gives way first, to what keeps the busier side whole
-    /// with the field still on the bar's center: 365 − 92 − 6 − 142 on
-    /// each side of the center.
-    @Test func titleBar_narrowWindow_theFieldGivesWayFirst() {
-        let bar = Self.titleBar(width: 730, leading: 142, trailing: 168)
-        #expect(bar == .init(field: 250, leading: 142, trailing: 168))
+    /// The field narrows before the place controls or trailing buttons.
+    /// Back and forward take their width plus a gap from the centered field.
+    @Test(arguments: [(CGFloat(0), CGFloat(250)), (Self.historyWidth, CGFloat(178))])
+    func titleBar_narrowWindow_theFieldGivesWayFirst(history: CGFloat, field: CGFloat) {
+        let bar = Self.titleBar(width: 730, leading: 142, history: history, trailing: 168)
+        #expect(bar == .init(field: field, leading: 142, trailing: 168))
     }
 
-    /// At its floor the field stays; the group moves right of the center to
-    /// give the names up to 270, and they are cut to that.
-    @Test func titleBar_longPlace_cutsTheNamesPastTheFieldsFloor() {
-        let bar = Self.titleBar(width: 730, leading: 400, trailing: 168)
-        #expect(bar == .init(field: 150, leading: 270, trailing: 168, groupOffset: 78))
+    /// The field keeps its floor. Unused trailing space lets the group shift
+    /// right to give a long place name more room.
+    @Test(arguments: [(CGFloat(0), CGFloat(270), CGFloat(78)), (Self.historyWidth, CGFloat(224), CGFloat(68))])
+    func titleBar_longPlace_cutsTheNamesPastTheFieldsFloor(history: CGFloat, leading: CGFloat, offset: CGFloat) {
+        let bar = Self.titleBar(width: 730, leading: 400, history: history, trailing: 168)
+        #expect(bar == .init(field: 150, leading: leading, trailing: 168, groupOffset: offset))
     }
 
     /// A long project name no longer squeezes the field where the window
@@ -171,8 +173,7 @@ struct SupervisionWindowWidthsTests {
     /// The field still takes all the room a short name leaves it.
     @Test func titleBar_shortPlace_leavesTheFieldAboveItsPreferredWidth() {
         let bar = Self.titleBar(width: 1280, leading: 300, history: 66, trailing: 70)
-        #expect(bar.field > 260)
-        #expect(bar.leading == 300)
+        #expect(bar == .init(field: 340, leading: 300, trailing: 70))
     }
 
     /// At the window's minimum the names take what the trailing side leaves
@@ -186,13 +187,7 @@ struct SupervisionWindowWidthsTests {
     /// The group moves only as far as the trailing side has room to spare.
     @Test func titleBar_longPlace_neverMovesTheGroupOverTheTrailingSide() {
         let bar = Self.titleBar(width: 683, leading: 900, history: 66, trailing: 200)
-        #expect(bar.groupOffset == 12.5)
-        #expect(bar.trailing == 200)
-    }
-
-    /// A window with room keeps the group on the center, however long the name.
-    @Test func titleBar_wideWindow_keepsTheGroupOnTheCenter() {
-        #expect(Self.titleBar(width: 1280, leading: 900, history: 66, trailing: 70).groupOffset == 0)
+        #expect(bar == .init(field: 150, leading: 145, trailing: 200, groupOffset: 12.5))
     }
 
     /// At the window's real minimum, the two trailing buttons (32 + 6 + 32)
@@ -200,9 +195,7 @@ struct SupervisionWindowWidthsTests {
     @Test func titleBar_atTheWindowsMinimum_keepsTheTrailingButtonsWhole() {
         let width = WeirLayout.Supervision.windowMinWidth
         let bar = Self.titleBar(width: width, leading: 142, history: Self.historyWidth, trailing: 70)
-        #expect(bar.trailing == 70)
-        #expect(bar.field >= 150)
-        #expect(bar.leading > 0)
+        #expect(bar == .init(field: 150, leading: 142, trailing: 70, groupOffset: 9.5))
     }
 
     /// Short of room on the trailing side, the trailing group is offered less
@@ -219,30 +212,6 @@ struct SupervisionWindowWidthsTests {
     @Test func titleBar_withoutTrafficLights_movesTheGroupLess() {
         let bar = Self.titleBar(width: 730, leading: 400, trailing: 168, leadingInset: 18)
         #expect(bar == .init(field: 260, leading: 260, trailing: 168, groupOffset: 49))
-    }
-
-    /// Back and forward stand with the field, so in a narrow window the
-    /// field gives way to them and the sides keep their ideals: the
-    /// group (66 + 6 + 178) is centered, and 365 − 125 − 6 − 92 leaves the
-    /// place controls their 142.
-    @Test func titleBar_withHistory_narrowWindow_theFieldGivesWayToTheButtons() {
-        let bar = Self.titleBar(width: 730, leading: 142, history: Self.historyWidth, trailing: 168)
-        #expect(bar == .init(field: 178, leading: 142, trailing: 168))
-    }
-
-    /// With room, the buttons take nothing from the field: it keeps its
-    /// maximum beside them.
-    @Test func titleBar_withHistory_wideWindow_givesTheFieldItsMaximum() {
-        let bar = Self.titleBar(width: 1280, leading: 142, history: Self.historyWidth, trailing: 168)
-        #expect(bar == .init(field: 340, leading: 142, trailing: 168))
-    }
-
-    /// At the field's floor the buttons keep their width, and the group moves
-    /// as far as the trailing side has room: the 156 left on the center (half
-    /// the bar less half the group, 66 + 6 + 150), and its 68 to spare.
-    @Test func titleBar_withHistory_longPlace_cutsTheNamesPastTheFieldsFloor() {
-        let bar = Self.titleBar(width: 730, leading: 400, history: Self.historyWidth, trailing: 168)
-        #expect(bar == .init(field: 150, leading: 224, trailing: 168, groupOffset: 68))
     }
 
     @Test func titleBar_tooNarrowForAnything_offersNoNegativeWidths() {
@@ -359,7 +328,11 @@ struct SupervisionTitleBarLayoutTests {
         let frames = Self.layOut(width: 730, leading: 400, trailing: 168)
         #expect(frames.field.width == 150)
         #expect((frames.history.minX + frames.field.maxX) / 2 == 437)
-        #expect(frames.leading.maxX <= frames.history.minX - 6)
-        #expect(frames.trailing.minX >= frames.field.maxX + 6)
+        #expect(frames.leading.minX == 92)
+        #expect(frames.leading.width == 232)
+        #expect(frames.leading.maxX == frames.history.minX - 6)
+        #expect(frames.trailing.minX == 550)
+        #expect(frames.trailing.width == 168)
+        #expect(frames.trailing.minX == frames.field.maxX + 6)
     }
 }

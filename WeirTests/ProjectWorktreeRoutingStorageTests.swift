@@ -88,10 +88,11 @@ struct ProjectWorktreeRoutingStorageTests {
     @Test func aMapOfAnotherShape_costsOnlyTheMap() throws {
         let project = try JSONDecoder().decode(Project.self, from: Self.json([
             "routeCodexWorktrees": false,
-            "worktreeRouting": ["claude": "off"]
+            "worktreeRouting": ["claude": "off", "antigravity": false]
         ]))
         #expect(project.routesWorktrees(for: .claude))
         #expect(!project.routesWorktrees(for: .codex))
+        #expect(project.routesWorktrees(for: .antigravity))
     }
 
     /// A null map reads as no opt-out, beside whatever the legacy keys say.
@@ -212,6 +213,11 @@ struct ProjectWorktreeRoutingStorageTests {
     /// that gains a toggle is named without a change here.
     @Test func theRoutingFile_followsThePlacementCapability() throws {
         var project = Project(name: "Test", rootURL: URL(fileURLWithPath: "/tmp/test"))
+        let included = try #require(WorktreeRouting(projects: [project], hasPlacement: { $0 == .opencode }).projects.first)
+        #expect(included.routing == ["opencode": true])
+        let excluded = try #require(WorktreeRouting(projects: [project], hasPlacement: { _ in false }).projects.first)
+        #expect(excluded.routing.isEmpty)
+
         project.setRoutesWorktrees(false, for: .opencode)
         let routing = try #require(WorktreeRouting(projects: [project], hasPlacement: { $0 == .opencode }).projects.first).routing
         #expect(routing == ["opencode": false])

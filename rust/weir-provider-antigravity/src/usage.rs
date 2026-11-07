@@ -103,7 +103,11 @@ mod tests {
             "individual quota reached",
             "model gemini-3.8 is out of quota until tomorrow",
         ] {
-            assert!(usage_limit(error, at()).is_some(), "{error}");
+            assert_eq!(
+                usage_limit(error, at()),
+                Some(UsageLimit::default()),
+                "{error}"
+            );
         }
     }
 

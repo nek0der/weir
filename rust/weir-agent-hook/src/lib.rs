@@ -1798,25 +1798,28 @@ mod await_response_tests {
     fn a_response_that_comes_ends_the_wait_early() {
         let clock = FakeClock::default();
         assert_eq!(wait(&clock, |look| look < 3), (false, 3));
+        assert_eq!(clock.elapsed(), AWAIT_RESPONSE_STEP * 3);
     }
 
     #[test]
     fn a_transcript_that_cannot_be_read_ends_the_wait() {
         let directory = tempfile::tempdir().expect("directory");
+        let clock = FakeClock::default();
         let is_awaiting = read_while_awaiting(
             true,
             |&is_awaiting| is_awaiting,
             &directory.path().join("missing.jsonl"),
             |_| panic!("nothing to read"),
-            &FakeClock::default(),
+            &clock,
         );
         assert!(is_awaiting);
+        assert_eq!(clock.elapsed(), AWAIT_RESPONSE_STEP);
     }
 }
 
 #[cfg(test)]
 mod subagent_tests {
-    use super::{MAX_TRANSCRIPT_BYTES, subagent_usage, with_subagents};
+    use super::{subagent_usage, with_subagents};
     use weir_agent_model::TurnUsage;
     use weir_agent_model::{HookContext, RawHookInput};
     use weir_provider_claude::ClaudeAdapter;
@@ -1857,37 +1860,37 @@ mod subagent_tests {
     /// is not read, and the usage says it is short.
     #[test]
     fn subagents_past_the_budget_leave_the_usage_partial() {
-        let directory =
-            std::env::temp_dir().join(format!("weir-subagent-budget-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).expect("directory");
-        let path = directory.join("agent-a.jsonl");
-        std::fs::write(
-            &path,
-            "{\"type\":\"assistant\",\"requestId\":\"r\",\"message\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}\n",
-        )
-        .expect("subagent");
+        let directory = tempfile::tempdir().expect("directory");
+        let first = directory.path().join("agent-a.jsonl");
+        let second = directory.path().join("agent-b.jsonl");
+        let transcript = "{\"type\":\"assistant\",\"requestId\":\"r\",\"message\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}\n";
+        std::fs::write(&first, transcript).expect("first transcript");
+        std::fs::write(&second, transcript).expect("second transcript");
 
-        let mut budget = MAX_TRANSCRIPT_BYTES;
-        let read = subagent_usage(&ClaudeAdapter, &path, None, &mut budget);
+        let mut budget = transcript.len() + 10;
         assert_eq!(
-            (read.input_tokens, read.output_tokens, read.is_partial),
-            (1, 2, false)
+            subagent_usage(&ClaudeAdapter, &first, None, &mut budget),
+            TurnUsage {
+                input_tokens: 1,
+                output_tokens: 2,
+                ..TurnUsage::default()
+            }
         );
-        assert!(
-            budget < MAX_TRANSCRIPT_BYTES,
-            "the read is spent from the budget"
-        );
+        assert_eq!(budget, 10);
 
-        let mut spent = 0;
-        let unread = subagent_usage(&ClaudeAdapter, &path, None, &mut spent);
-        assert_eq!((unread.input_tokens, unread.is_partial), (0, true));
-
-        let mut short = 10;
-        assert!(
-            subagent_usage(&ClaudeAdapter, &path, None, &mut short).is_partial,
-            "read short of its whole"
+        let partial = TurnUsage {
+            is_partial: true,
+            ..TurnUsage::default()
+        };
+        assert_eq!(
+            subagent_usage(&ClaudeAdapter, &second, None, &mut budget),
+            partial
         );
-        let _ = std::fs::remove_dir_all(&directory);
+        assert_eq!(budget, 0);
+        assert_eq!(
+            subagent_usage(&ClaudeAdapter, &first, None, &mut budget),
+            partial
+        );
     }
 
     /// A subagent whose transcript cannot be found, here for want of the
@@ -1930,12 +1933,11 @@ mod start_tests {
     /// its own start, while an event of its own still applies.
     #[test]
     fn a_start_another_hook_of_the_turn_beat_to_the_lock_is_dropped() {
-        let directory =
-            std::env::temp_dir().join(format!("weir-turn-start-{}", uuid::Uuid::new_v4()));
+        let directory = tempfile::tempdir().expect("directory");
         let log = HookLog::disabled();
         let descriptor = CodexAdapter.descriptor();
         let turns = Turns {
-            directory: directory.clone(),
+            directory: directory.path().to_path_buf(),
             descriptor,
             run_id: "R",
             pane_id: "P",
@@ -1993,7 +1995,6 @@ mod start_tests {
             None,
             "the hook's own event applies"
         );
-        let _ = std::fs::remove_dir_all(&directory);
     }
 }
 
@@ -2064,11 +2065,13 @@ mod registry_tests {
     }
 
     #[test]
-    fn recipes_follow_the_registry_order() {
-        let recipe_ids: Vec<&str> = installed_recipes()
-            .iter()
-            .map(|(id, _)| id.as_str())
-            .collect();
+    fn recipes_match_the_provider_in_registry_order() {
+        let recipes = installed_recipes();
+        let recipe_ids: Vec<&str> = recipes.iter().map(|(id, _)| id.as_str()).collect();
         assert_eq!(recipe_ids, registry_ids());
+        for (id, recipe) in recipes {
+            let adapter = adapter_for(id.as_str()).expect("listed provider");
+            assert_eq!(recipe, adapter.install_recipe(), "{}", id.as_str());
+        }
     }
 }

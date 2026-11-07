@@ -441,7 +441,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn event_id_uses_invocation_id_for_every_codex_event() {
+    fn event_id_distinguishes_invocations_with_the_same_turn_id() {
         use weir_agent_model::{HookContext, ProviderAdapter};
         // `turn_id` is per turn, not per hook call, so it is never the id.
         let payload = r#"{"hook_event_name":"PermissionRequest","turn_id":"turn-1"}"#;
@@ -463,6 +463,10 @@ mod tests {
         assert_eq!(
             id(Some(uuid::Uuid::from_u128(9))).as_deref(),
             Some("codex:invocation:00000000-0000-0000-0000-000000000009")
+        );
+        assert_eq!(
+            id(Some(uuid::Uuid::from_u128(10))).as_deref(),
+            Some("codex:invocation:00000000-0000-0000-0000-00000000000A")
         );
         assert_eq!(id(None), None);
     }
@@ -520,7 +524,7 @@ mod tests {
             "{}\n{}\n{}\n",
             context("medium"),
             context("xhigh"),
-            r#"{"type":"event_msg","payload":{"message":"\"turn_context\""}}"#
+            r#"{"type":"event_msg","payload":{"message":"turn_context"}}"#
         );
         assert_eq!(effort(&later).as_deref(), Some("xhigh"));
         assert_eq!(effort(r#"{"type":"event_msg","payload":{}}"#), None);
@@ -568,7 +572,11 @@ mod tests {
             r#"{"hook_event_name":"PreToolUse","cwd":"/r","agent_id":"019a","agent_type":"explorer","model":"gpt-6-luna","permission_mode":"default"}"#,
             r#"{"hook_event_name":"PreToolUse","cwd":"/Users/example/.codex/memories","model":"gpt-6-luna","permission_mode":"default"}"#,
         ] {
-            assert!(settings_under(home, payload).is_empty(), "{payload}");
+            assert_eq!(
+                settings_under(home, payload),
+                SessionSettings::default(),
+                "{payload}"
+            );
         }
     }
 
@@ -651,9 +659,12 @@ mod tests {
             under(
                 "/Users/example/work",
                 &tool_in("/Users/example/.codex/memories")
-            )
-            .len(),
-            1
+            ),
+            vec![AgentEvent::ToolStarted {
+                tool: "Bash".into(),
+                detail: Some("Bash: pwd".into()),
+                caller: Caller::Agent,
+            }]
         );
         assert_eq!(
             under(
@@ -696,8 +707,7 @@ mod tests {
                 );
             }
         }
-        // A sibling of the home, reached through the same link prefix, is
-        // still the person's.
+        // A memories directory outside the linked home belongs to the person.
         let other = scratch.join("real").join("other").join("memories");
         std::fs::create_dir_all(&other).expect("other directory");
         for payload in memory_agent_payloads(&other.display().to_string()) {
@@ -716,7 +726,7 @@ mod tests {
     /// would, and a home that reaches the hook relative is compared with
     /// nothing.
     #[test]
-    fn a_relative_home_made_absolute_by_the_shim_finds_the_memory_agent() {
+    fn a_relative_home_must_be_made_absolute_to_find_the_memory_agent() {
         // What the shim exports for `CODEX_HOME=.codex-work` started in
         // `/Users/example/project` when the directory does not exist.
         let home = Some("/Users/example/project/./.codex-work");
@@ -742,6 +752,7 @@ mod tests {
     #[test]
     fn a_subagent_neither_begins_nor_ends_the_parents_turn() {
         let marker = r#""agent_id":"019a0000-0000-7000-8000-000000000001","agent_type":"explorer""#;
+        let subagent = Caller::Subagent("019a0000-0000-7000-8000-000000000001".into());
         for own in [
             format!(r#"{{"hook_event_name":"SessionStart","session_id":"c",{marker}}}"#),
             format!(r#"{{"hook_event_name":"SessionEnd","session_id":"c",{marker}}}"#),
@@ -760,7 +771,7 @@ mod tests {
             vec![AgentEvent::ToolStarted {
                 tool: "Bash".into(),
                 detail: Some("Bash: ls".into()),
-                caller: Caller::Subagent("019a0000-0000-7000-8000-000000000001".into()),
+                caller: subagent.clone(),
             }]
         );
         assert_eq!(
@@ -769,38 +780,42 @@ mod tests {
             )),
             vec![AgentEvent::ToolFinished {
                 tool: Some("Bash".into()),
-                caller: Caller::Subagent("019a0000-0000-7000-8000-000000000001".into()),
+                caller: subagent.clone(),
             }]
         );
-        assert!(matches!(
+        assert_eq!(
             events(&format!(
                 r#"{{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{{"command":"ls"}},{marker}}}"#
-            ))
-            .as_slice(),
-            [AgentEvent::ApprovalRequested { .. }]
-        ));
+            )),
+            vec![AgentEvent::ApprovalRequested {
+                detail: None,
+                caller: subagent,
+            }]
+        );
         // The parent's own prompt, with no marker or an empty one, is a turn.
         for parent in [
             r#"{"hook_event_name":"UserPromptSubmit","prompt":"fix it"}"#,
             r#"{"hook_event_name":"UserPromptSubmit","prompt":"fix it","agent_id":""}"#,
         ] {
-            assert!(
-                matches!(
-                    events(parent).as_slice(),
-                    [AgentEvent::PromptSubmitted { .. }]
-                ),
+            assert_eq!(
+                events(parent),
+                vec![AgentEvent::PromptSubmitted {
+                    prompt: "fix it".into(),
+                    kind: None,
+                    titles: None,
+                    cwd: None,
+                }],
                 "{parent}"
             );
         }
     }
 
     #[test]
-    fn the_watchers_report_of_a_usage_limit_is_read_from_the_rollout() {
+    fn a_rollout_usage_limit_takes_precedence_over_the_watchers_report() {
         let rollout = br#"{"type":"event_msg","payload":{"type":"task_started"}}
 {"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":100.0,"window_minutes":300,"resets_at":1791352800}}}}
 {"type":"event_msg","payload":{"type":"task_complete","error":{"message":"Try again at 10:29 AM.","codex_error_info":"usage_limit_exceeded"}}}"#;
-        let payload =
-            br#"{"hook_event_name":"WeirTurnFailed","transcript_path":"/tmp/rollout.jsonl"}"#;
+        let payload = br#"{"hook_event_name":"WeirTurnFailed","weir_error_kind":"usage_limit_exceeded","weir_message_resets_at":1791356400}"#;
         let input = RawHookInput {
             bytes: payload,
             transcript: Some(rollout),
@@ -817,11 +832,10 @@ mod tests {
                 kind: None,
             }]
         );
-        assert_eq!(
-            transcript_path(input).unwrap().as_deref(),
-            Some("/tmp/rollout.jsonl")
-        );
-        // Without the rollout the limit still stands, timed by the message.
+    }
+
+    #[test]
+    fn a_usage_limit_without_the_rollout_uses_the_watchers_report() {
         assert_eq!(
             events(
                 r#"{"hook_event_name":"WeirTurnFailed","weir_error_kind":"usage_limit_exceeded","weir_message_resets_at":1791352800}"#
@@ -844,7 +858,7 @@ mod tests {
         let rollout = br#"{"type":"event_msg","payload":{"type":"task_started"}}
 {"type":"event_msg","payload":{"type":"task_complete","last_agent_message":null,"error":{"message":"The 'no-such-model' model is not supported when using Codex with a ChatGPT account.","codex_error_info":"model_not_found"}}}"#;
         let payload =
-            br#"{"hook_event_name":"WeirTurnFailed","transcript_path":"/tmp/rollout.jsonl"}"#;
+            br#"{"hook_event_name":"WeirTurnFailed","weir_error_kind":"server_overloaded"}"#;
         assert_eq!(
             normalize(
                 RawHookInput {
@@ -942,8 +956,7 @@ mod tests {
         // The person began another turn before the watcher read the line.
         let rollout = br#"{"type":"event_msg","payload":{"type":"task_complete","error":{"codex_error_info":"usage_limit_exceeded"}}}
 {"type":"event_msg","payload":{"type":"task_started"}}"#;
-        let payload =
-            br#"{"hook_event_name":"WeirTurnFailed","transcript_path":"/tmp/rollout.jsonl"}"#;
+        let payload = br#"{"hook_event_name":"WeirTurnFailed","transcript_path":"/tmp/rollout.jsonl","weir_error_kind":"usage_limit_exceeded"}"#;
         let events = normalize(
             RawHookInput {
                 bytes: payload,
@@ -952,7 +965,13 @@ mod tests {
             &HookContext::fixture(),
         )
         .unwrap();
-        assert!(matches!(events.as_slice(), [AgentEvent::Extension { .. }]));
+        assert_eq!(
+            events,
+            vec![AgentEvent::Extension {
+                name: "WeirTurnFailed".into(),
+                payload: serde_json::from_slice(payload).expect("report object"),
+            }]
+        );
     }
 
     #[test]
@@ -984,7 +1003,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_stop_among_codex_events_reads_the_rollout() {
+    fn only_turn_ends_and_watcher_reports_request_a_rollout_read() {
         let path = |event: &str| {
             let payload = format!(
                 r#"{{"hook_event_name":"{event}","transcript_path":"/tmp/rollout.jsonl"}}"#
@@ -995,45 +1014,52 @@ mod tests {
             })
             .unwrap()
         };
-        assert_eq!(path("Stop"), Some("/tmp/rollout.jsonl".into()));
+        for event in ["Stop", "Interrupt", "WeirTurnFailed"] {
+            assert_eq!(
+                path(event).as_deref(),
+                Some("/tmp/rollout.jsonl"),
+                "{event}"
+            );
+        }
         for event in [
             "UserPromptSubmit",
             "PreToolUse",
             "PostToolUse",
+            "PermissionRequest",
             "SessionStart",
+            "SessionEnd",
+            "PreCompact",
+            "PostCompact",
         ] {
             assert_eq!(path(event), None, "{event}");
         }
     }
 
     #[test]
-    fn a_stop_after_a_stop_hook_says_so() {
-        assert_eq!(
-            events(r#"{"hook_event_name":"Stop","stop_hook_active":true}"#),
-            vec![AgentEvent::TurnFinished {
-                continues_after_stop_hook: true,
-                titles: None,
-                cache: None,
-                reply: None,
-                background_work: None,
-            }]
-        );
-    }
-
-    #[test]
-    fn stop_finishes_the_turn() {
-        // Codex runs `Stop` only after a turn that succeeded; a failed one is
-        // the rollout watcher's (`WeirTurnFailed`).
-        assert_eq!(
-            events(r#"{"hook_event_name":"Stop","stop_hook_active":false}"#),
-            vec![AgentEvent::TurnFinished {
-                continues_after_stop_hook: false,
-                titles: None,
-                cache: None,
-                reply: None,
-                background_work: None,
-            }]
-        );
+    fn stop_finishes_the_turn_and_reports_whether_a_stop_hook_was_active() {
+        for (payload, continues_after_stop_hook) in [
+            (
+                r#"{"hook_event_name":"Stop","stop_hook_active":true}"#,
+                true,
+            ),
+            (
+                r#"{"hook_event_name":"Stop","stop_hook_active":false}"#,
+                false,
+            ),
+            (r#"{"hook_event_name":"Stop"}"#, false),
+        ] {
+            assert_eq!(
+                events(payload),
+                vec![AgentEvent::TurnFinished {
+                    continues_after_stop_hook,
+                    titles: None,
+                    cache: None,
+                    reply: None,
+                    background_work: None,
+                }],
+                "{payload}"
+            );
+        }
     }
 
     #[test]
@@ -1078,79 +1104,67 @@ mod tests {
 
     #[test]
     fn tool_detail_prefers_the_command_then_the_path_then_the_name() {
-        assert_eq!(
-            events(
-                r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"echo out > out-long.txt"}}"#
+        for (tool, input, detail) in [
+            (
+                "Bash",
+                r#"{"command":"echo out > out-long.txt","file_path":"/a.txt"}"#,
+                "Bash: echo out > out-long.txt",
             ),
-            vec![AgentEvent::ToolStarted {
-                tool: "Bash".into(),
-                detail: Some("Bash: echo out > out-long.txt".into()),
-                caller: Caller::Agent,
-            }]
-        );
-        assert_eq!(
-            events(
-                r#"{"hook_event_name":"PreToolUse","tool_name":"apply_patch","tool_input":{"file_path":"/a.txt"}}"#
+            (
+                "apply_patch",
+                r#"{"file_path":"/a.txt"}"#,
+                "apply_patch: /a.txt",
             ),
-            vec![AgentEvent::ToolStarted {
-                tool: "apply_patch".into(),
-                detail: Some("apply_patch: /a.txt".into()),
-                caller: Caller::Agent,
-            }]
-        );
-        assert_eq!(
-            events(
-                r#"{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{"command":""}}"#
+            ("Read", r#"{"command":""}"#, "Read"),
+            // An empty `command` also takes precedence over `file_path`.
+            (
+                "apply_patch",
+                r#"{"command":"","file_path":"/a.txt"}"#,
+                "apply_patch",
             ),
-            vec![AgentEvent::ToolStarted {
-                tool: "Read".into(),
-                detail: Some("Read".into()),
-                caller: Caller::Agent,
-            }]
-        );
-        // A `command` that is there but empty says what the tool runs is
-        // nothing, so the detail is the bare tool: `file_path` is read only
-        // when the input has no `command` at all.
-        // `scripts/derive-expected-events.py` mirrors this, so a re-recorded
-        // case with both keys derives the golden the adapter gives.
-        assert_eq!(
-            events(
-                r#"{"hook_event_name":"PreToolUse","tool_name":"apply_patch","tool_input":{"command":"","file_path":"/a.txt"}}"#
+            (
+                "Bash",
+                r#"{"command":["bash","-lc","ls -la"]}"#,
+                "Bash: bash -lc ls -la",
             ),
-            vec![AgentEvent::ToolStarted {
-                tool: "apply_patch".into(),
-                detail: Some("apply_patch".into()),
-                caller: Caller::Agent,
-            }]
-        );
-        assert_eq!(
-            events(
-                r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":["bash","-lc","ls -la"]}}"#
-            ),
-            vec![AgentEvent::ToolStarted {
-                tool: "Bash".into(),
-                detail: Some("Bash: bash -lc ls -la".into()),
-                caller: Caller::Agent,
-            }]
-        );
-        assert_eq!(
-            events(r#"{"hook_event_name":"PostToolUse","tool_name":"Bash"}"#),
-            vec![AgentEvent::ToolFinished {
-                tool: Some("Bash".into()),
-                caller: Caller::Agent,
-            }]
-        );
+        ] {
+            let payload = format!(
+                r#"{{"hook_event_name":"PreToolUse","tool_name":"{tool}","tool_input":{input}}}"#
+            );
+            assert_eq!(
+                events(&payload),
+                vec![AgentEvent::ToolStarted {
+                    tool: tool.into(),
+                    detail: Some(detail.into()),
+                    caller: Caller::Agent,
+                }],
+                "{payload}"
+            );
+        }
     }
 
     #[test]
     fn unsubscribed_events_pass_through_as_extensions() {
-        for payload in [
-            r#"{"hook_event_name":"CwdChanged","new_cwd":"/x"}"#,
-            r#"{"hook_event_name":"Notification","notification_type":"permission_prompt"}"#,
-            r#"{"hook_event_name":"StopFailure","error":"x"}"#,
+        for (name, payload) in [
+            (
+                "CwdChanged",
+                r#"{"hook_event_name":"CwdChanged","new_cwd":"/x"}"#,
+            ),
+            (
+                "Notification",
+                r#"{"hook_event_name":"Notification","notification_type":"permission_prompt"}"#,
+            ),
+            (
+                "StopFailure",
+                r#"{"hook_event_name":"StopFailure","error":"x"}"#,
+            ),
         ] {
-            assert!(
-                matches!(events(payload).as_slice(), [AgentEvent::Extension { .. }]),
+            assert_eq!(
+                events(payload),
+                vec![AgentEvent::Extension {
+                    name: name.into(),
+                    payload: serde_json::from_str(payload).expect("hook object"),
+                }],
                 "{payload}"
             );
         }

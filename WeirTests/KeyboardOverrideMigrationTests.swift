@@ -238,25 +238,38 @@ struct KeyboardOverrideMigrationTests {
         #expect(Self.normalized(read).0 == once.0)
     }
 
-    /// A schema 1 file (the release before) had no New Workspace…; its New
-    /// Worktree… binding stays, and with none, New Worktree… is ⌘N.
-    @Test func aSchema1File_keepsItsNewWorktreeBinding_orGetsCommandN() throws {
-        let bound = try WeirSettings.testFileData(version: 1, overrides: ["newWorktree": Self.commandF])
-        guard case let .migrated(_, data) = try VersionedDocumentMigrator.settings.migrate(bound) else {
-            Issue.record("a schema 1 file is migrated")
-            return
+    /// The old keyboard object stored only overrides. The unrelated
+    /// settings sections are required by both decoders.
+    private static func legacySettings(overrides: String, includesVersion: Bool = true) -> Data {
+        let version = includesVersion ? #""schemaVersion": 1,"# : ""
+        return Data("""
+        {
+          \(version)
+          "appearance": {},
+          "font": {},
+          "terminal": {"scrollbackLines": 27000},
+          "advanced": {},
+          "keyboard": {"overrides": \(overrides)}
         }
-        let migrated = try PersistenceCoders.makeDecoder().decode(WeirSettings.self, from: data)
-        #expect(migrated.keyboard.shortcut(for: .newWorktree) == Self.commandF)
-        #expect(migrated.keyboard.retired.isEmpty)
+        """.utf8)
+    }
 
-        let plain = try WeirSettings.testFileData(version: 1, overrides: [:])
-        guard case let .migrated(_, plainData) = try VersionedDocumentMigrator.settings.migrate(plain) else {
-            Issue.record("a schema 1 file is migrated")
+    @Test(arguments: [
+        (#"{"newWorktree":{"key":"f","modifiers":1}}"#, TestShortcuts.commandF),
+        ("{}", TestShortcuts.commandN)
+    ])
+    func aSchema1File_keepsItsNewWorktreeBinding_orGetsCommandN(overrides: String, expected: StoredShortcut) throws {
+        let legacy = Self.legacySettings(overrides: overrides)
+        guard case let .migrated(from, data) = try VersionedDocumentMigrator.settings.migrate(legacy) else {
+            Issue.record("Expected a schema 1 migration")
             return
         }
-        let fresh = try PersistenceCoders.makeDecoder().decode(WeirSettings.self, from: plainData)
-        #expect(fresh.keyboard.shortcut(for: .newWorktree) == Self.commandN)
+        #expect(from == 1)
+        let migrated = try PersistenceCoders.makeDecoder().decode(WeirSettings.self, from: data)
+        #expect(migrated.schemaVersion == 2)
+        #expect(migrated.terminal.scrollbackLines == 27000)
+        #expect(migrated.keyboard.shortcut(for: .newWorktree) == expected)
+        #expect(migrated.keyboard.retired.isEmpty)
     }
 
     @Test func commandReturn_isReservedAndExistingOverrideRetired() throws {
@@ -307,38 +320,35 @@ struct KeyboardOverrideMigrationTests {
         #expect(twice.1 == once.1)
     }
 
-    @Test func unboundAndRetiredKeys_reachNoKeybind() {
+    @Test func configEmitsAnActiveOverrideAndOmitsUnboundAndRetiredKeys() {
         var settings = WeirSettings()
-        settings.keyboard.unbound = [WeirShortcutAction.newWorktree.rawValue]
-        settings.keyboard.retired = [WeirShortcutAction.find.rawValue: Self.commandReturn]
+        settings.keyboard.unbound = ["newWorktree"]
+        settings.keyboard.retired = ["find": Self.commandReturn]
+        settings.keyboard.overrides["increaseFontSize"] = StoredShortcut(key: "f12", modifiers: [.control])
         let config = GhosttyConfigBridge.makeConfigString(settings: settings, resourcesDir: nil)
-        #expect(!config.contains("keybind = \(Self.commandN.ghosttyTrigger)="))
-        #expect(!config.contains("keybind = \(Self.commandReturn.ghosttyTrigger)="))
+        let lines = config.split(separator: "\n")
+        #expect(lines.filter { $0.hasPrefix("keybind = ctrl+f12=") } == ["keybind = ctrl+f12=increase_font_size:1"])
+        #expect(!lines.contains { $0.hasPrefix("keybind = super+n=") })
+        #expect(!lines.contains { $0.hasPrefix("keybind = super+enter=") })
     }
 
-    @Test func migration_runsOnceThenVersionIsTwo() throws {
-        let v1 = try WeirSettings.testFileData(version: 1, overrides: ["find": Self.commandReturn])
+    @Test(arguments: [true, false])
+    func migrationTreatsExplicitAndUnversionedV1AsSchema2Once(includesVersion: Bool) throws {
+        let v1 = Self.legacySettings(overrides: #"{"find":{"key":"return","modifiers":1}}"#, includesVersion: includesVersion)
         guard case let .migrated(from, data) = try VersionedDocumentMigrator.settings.migrate(v1) else {
-            Issue.record("a schema 1 file is migrated")
+            Issue.record("Expected a schema 1 migration")
             return
         }
         #expect(from == 1)
         let migrated = try PersistenceCoders.makeDecoder().decode(WeirSettings.self, from: data)
         #expect(migrated.schemaVersion == 2)
-        #expect(migrated.keyboard.retired["find"] == Self.commandReturn)
+        #expect(migrated.terminal.scrollbackLines == 27000)
+        #expect(migrated.keyboard.retired == ["find": Self.commandReturn])
+        #expect(migrated.keyboard.shortcut(for: .find) == Self.commandF)
         #expect(try VersionedDocumentMigrator.settings.migrate(data) == .current)
-
-        // A file from before the version key existed is schema 1.
-        var withoutVersion = try #require(JSONSerialization.jsonObject(with: v1) as? [String: Any])
-        withoutVersion.removeValue(forKey: "schemaVersion")
-        let unversioned = try JSONSerialization.data(withJSONObject: withoutVersion)
-        guard case .migrated(from: 1, _) = try VersionedDocumentMigrator.settings.migrate(unversioned) else {
-            Issue.record("an unversioned file is schema 1")
-            return
-        }
     }
 
-    @Test func v2Settings_decodeWithV1Types() throws {
+    @Test func theSchema1KeyboardModel_preservesSchema2FieldsInItsSidecar() throws {
         var keyboard = KeyboardSettings()
         keyboard.overrides["newTab"] = Self.commandN
         keyboard.unbound = ["newWorktree"]
@@ -347,8 +357,11 @@ struct KeyboardOverrideMigrationTests {
 
         let old = try JSONDecoder().decode(KeyboardSettingsV1.self, from: data)
         #expect(old.overrides == ["newTab": Self.commandN])
-        // The older build saves what it does not know, so a rollback and
-        // a return keep the person's notice.
+        #expect(old.unknownFields["unbound"] == .array([.string("newWorktree")]))
+        #expect(old.unknownFields["retired"] == .object([
+            "find": .object(["key": .string("return"), "modifiers": .int(1)])
+        ]))
+
         let roundTripped = try JSONDecoder().decode(KeyboardSettings.self, from: JSONEncoder().encode(old))
         #expect(roundTripped == keyboard)
     }

@@ -33,12 +33,39 @@ struct OpenCodeShimTests {
         )
     }
 
-    /// What the shim kept for the plugin, one `NAME=value` a line.
+    private func paneEnvironmentFile(in root: URL) throws -> URL {
+        let entries = try ScratchFile.read("env", in: root).split(separator: "\n")
+        let prefix = "WEIR_OPENCODE_PANE_ENV="
+        let matches = entries.filter { $0.hasPrefix(prefix) }
+        try #require(matches.count == 1)
+        let path = try String(#require(matches.first).dropFirst(prefix.count))
+        try #require(path.hasPrefix("/"))
+        let file = URL(fileURLWithPath: path)
+        #expect(file.deletingLastPathComponent().resolvingSymlinksInPath() == root.appendingPathComponent("states/pane-env")
+            .resolvingSymlinksInPath())
+        let mode = try #require(FileManager.default.attributesOfItem(atPath: path)[.posixPermissions] as? NSNumber)
+        #expect(mode.intValue == 0o600)
+        return file
+    }
+
+    private func paneEnvironmentValues(in root: URL) throws -> [String: String] {
+        let file = try paneEnvironmentFile(in: root)
+        let data = try Data(contentsOf: file)
+        try #require(data.last == 0)
+        let text = try #require(String(data: data, encoding: .utf8))
+        var values: [String: String] = [:]
+        for entry in text.split(separator: "\0") {
+            let equals = try #require(entry.firstIndex(of: "="))
+            let name = String(entry[..<equals])
+            try #require(values[name] == nil)
+            values[name] = String(entry[entry.index(after: equals)...])
+        }
+        return values
+    }
+
+    /// A line-oriented view for assertions whose values contain no newlines.
     private func paneEnvironment(in root: URL) throws -> String {
-        let directory = root.appendingPathComponent("states/pane-env")
-        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-        let data = try Data(contentsOf: #require(files.first))
-        return try #require(String(bytes: data, encoding: .utf8)).replacingOccurrences(of: "\0", with: "\n")
+        try paneEnvironmentValues(in: root).map { "\($0.key)=\($0.value)" }.sorted().joined(separator: "\n") + "\n"
     }
 
     private func exists(_ name: String, in root: URL) -> Bool {
@@ -49,38 +76,52 @@ struct OpenCodeShimTests {
         home.appendingPathComponent(".config/opencode/plugins/weir")
     }
 
-    @Test func shim_placesThePlugin_inOpenCodesFolder_andNamesTheHook() throws {
+    private func expectShippedPlugin(at destination: URL) throws {
+        let source = try AgentCatalogFixture.shim(for: .opencode)
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("opencode-plugin")
+        let names = [".weir-managed", "tui.js"]
+        #expect(try FileManager.default.contentsOfDirectory(atPath: destination.path).sorted() == names)
+        for name in names {
+            #expect(try Data(contentsOf: destination.appendingPathComponent(name)) == Data(contentsOf: source.appendingPathComponent(name)))
+        }
+        let mark = try String(contentsOf: destination.appendingPathComponent(".weir-managed"), encoding: .utf8)
+        #expect(Int(mark.trimmingCharacters(in: .whitespacesAndNewlines)) != nil)
+    }
+
+    enum PluginFolder: CaseIterable {
+        case home
+        case xdg
+        case explicit
+    }
+
+    @Test(arguments: PluginFolder.allCases)
+    func shim_placesThePlugin_inTheSelectedFolder(_ folder: PluginFolder) throws {
         try withTempDir { root in
             let home = root.appendingPathComponent("home")
-            let process = try runShim(root: root, home: home)
-            #expect(process.terminationStatus == 0)
-            #expect(FileManager.default.fileExists(atPath: placed(in: home).appendingPathComponent("tui.js").path))
-            #expect(FileManager.default.fileExists(atPath: placed(in: home).appendingPathComponent(".weir-managed").path))
+            let xdg = root.appendingPathComponent("xdg")
+            let custom = root.appendingPathComponent("custom")
+            let candidates = [
+                placed(in: home),
+                xdg.appendingPathComponent("opencode/plugins/weir"),
+                custom.appendingPathComponent("plugins/weir")
+            ]
+            let environment: [String: String]
+            let selected: Int
+            switch folder {
+            case .home: (environment, selected) = ([:], 0)
+            case .xdg: (environment, selected) = (["XDG_CONFIG_HOME": xdg.path], 1)
+            case .explicit: (environment, selected) = (["XDG_CONFIG_HOME": xdg.path, "OPENCODE_CONFIG_DIR": custom.path], 2)
+            }
+            let process = try runShim(root: root, home: home, environment: environment)
+            try #require(process.terminationStatus == 0)
+            try expectShippedPlugin(at: candidates[selected])
+            for index in candidates.indices where index != selected {
+                #expect(!FileManager.default.fileExists(atPath: candidates[index].path))
+            }
             let kept = try paneEnvironment(in: root)
-            #expect(kept.contains("WEIR_OPENCODE_HOOK_DIR="))
-            #expect(kept.contains("WEIR_OPENCODE_PID="))
-        }
-    }
-
-    @Test func shim_placesThePlugin_underTheFolderXDGNames() throws {
-        try withTempDir { root in
-            let home = root.appendingPathComponent("home")
-            let config = root.appendingPathComponent("elsewhere")
-            _ = try runShim(root: root, home: home, environment: ["XDG_CONFIG_HOME": config.path])
-            #expect(FileManager.default.fileExists(atPath: config.appendingPathComponent("opencode/plugins/weir/tui.js").path))
-            #expect(!FileManager.default.fileExists(atPath: placed(in: home).path))
-        }
-    }
-
-    /// OpenCode 2.2.5 reads its plugins from `OPENCODE_CONFIG_DIR` instead of
-    /// the XDG folder when it is set, so the plugin goes there.
-    @Test func shim_placesThePlugin_inTheFolderOpenCodeConfigDirNames() throws {
-        try withTempDir { root in
-            let home = root.appendingPathComponent("home")
-            let config = root.appendingPathComponent("custom")
-            _ = try runShim(root: root, home: home, environment: ["OPENCODE_CONFIG_DIR": config.path])
-            #expect(FileManager.default.fileExists(atPath: config.appendingPathComponent("plugins/weir/tui.js").path))
-            #expect(!FileManager.default.fileExists(atPath: placed(in: home).path))
+            let hook = try AgentCatalogFixture.shim(for: .opencode).deletingLastPathComponent().path
+            #expect(kept.split(separator: "\n").contains("WEIR_OPENCODE_HOOK_DIR=\(hook)"))
+            #expect(kept.split(separator: "\n").contains("WEIR_OPENCODE_PID=\(process.processIdentifier)"))
         }
     }
 
@@ -90,23 +131,28 @@ struct OpenCodeShimTests {
             let theirs = placed(in: home)
             try FileManager.default.createDirectory(at: theirs, withIntermediateDirectories: true)
             try Data("theirs".utf8).write(to: theirs.appendingPathComponent("tui.js"))
+            try Data("private settings".utf8).write(to: theirs.appendingPathComponent("settings.json"))
             let process = try runShim(root: root, home: home)
             #expect(process.terminationStatus == 0)
-            #expect(try String(contentsOf: theirs.appendingPathComponent("tui.js"), encoding: .utf8) == "theirs")
+            #expect(try Data(contentsOf: theirs.appendingPathComponent("tui.js")) == Data("theirs".utf8))
+            #expect(try Data(contentsOf: theirs.appendingPathComponent("settings.json")) == Data("private settings".utf8))
+            #expect(try FileManager.default.contentsOfDirectory(atPath: theirs.path).sorted() == ["settings.json", "tui.js"])
         }
     }
 
-    @Test func shim_replacesAnOlderVersionOfOurs_andLeavesNothingElse() throws {
+    @Test(arguments: [false, true])
+    func shim_replacesAnOlderVersionOfOurs_andLeavesNothingElse(wasInterrupted: Bool) throws {
         try withTempDir { root in
             let home = root.appendingPathComponent("home")
             let ours = placed(in: home)
             try FileManager.default.createDirectory(at: ours, withIntermediateDirectories: true)
-            try Data("0\n".utf8).write(to: ours.appendingPathComponent(".weir-managed"))
-            try Data("old".utf8).write(to: ours.appendingPathComponent("tui.js"))
-            _ = try runShim(root: root, home: home)
-            #expect(try String(contentsOf: ours.appendingPathComponent("tui.js"), encoding: .utf8) != "old")
-            let left = try FileManager.default.contentsOfDirectory(atPath: ours.path).sorted()
-            #expect(left == [".weir-managed", "tui.js"])
+            try Data((wasInterrupted ? "placing\n" : "0\n").utf8).write(to: ours.appendingPathComponent(".weir-managed"))
+            if !wasInterrupted {
+                try Data("old".utf8).write(to: ours.appendingPathComponent("tui.js"))
+            }
+            let process = try runShim(root: root, home: home)
+            try #require(process.terminationStatus == 0)
+            try expectShippedPlugin(at: ours)
         }
     }
 
@@ -119,19 +165,11 @@ struct OpenCodeShimTests {
             try FileManager.default.createDirectory(at: ours, withIntermediateDirectories: true)
             try Data("9999\n".utf8).write(to: ours.appendingPathComponent(".weir-managed"))
             try Data("newer".utf8).write(to: ours.appendingPathComponent("tui.js"))
-            _ = try runShim(root: root, home: home)
-            #expect(try String(contentsOf: ours.appendingPathComponent("tui.js"), encoding: .utf8) == "newer")
-        }
-    }
-
-    @Test func shim_finishesAPlacementCutShort() throws {
-        try withTempDir { root in
-            let home = root.appendingPathComponent("home")
-            let ours = placed(in: home)
-            try FileManager.default.createDirectory(at: ours, withIntermediateDirectories: true)
-            try Data("placing\n".utf8).write(to: ours.appendingPathComponent(".weir-managed"))
-            _ = try runShim(root: root, home: home)
-            #expect(FileManager.default.fileExists(atPath: ours.appendingPathComponent("tui.js").path))
+            let process = try runShim(root: root, home: home)
+            #expect(process.terminationStatus == 0)
+            #expect(try Data(contentsOf: ours.appendingPathComponent("tui.js")) == Data("newer".utf8))
+            #expect(try Data(contentsOf: ours.appendingPathComponent(".weir-managed")) == Data("9999\n".utf8))
+            #expect(try FileManager.default.contentsOfDirectory(atPath: ours.path).sorted() == [".weir-managed", "tui.js"])
         }
     }
 
@@ -170,7 +208,7 @@ struct OpenCodeShimTests {
                 environment: [
                     "WEIR_PANE_ID": "PANE",
                     "WEIR_AGENT_RUN_ID": "RUN",
-                    "WEIR_MANY_LINES": "a\nb",
+                    "WEIR_MANY_LINES": "a\nb=with=equals",
                     "ZDOTDIR": "/bundle/Contents/Resources/claude-shim/zdotdir",
                     "PATH": "\(elsewhere.path):/usr/bin:/bin"
                 ]
@@ -181,10 +219,14 @@ struct OpenCodeShimTests {
             #expect(!interface.contains("ZDOTDIR"))
             #expect(!interface.contains(elsewhere.path))
             #expect(interface.contains("PATH=/usr/bin:/bin"))
-            let kept = try paneEnvironment(in: root)
-            #expect(kept.contains("WEIR_PANE_ID=PANE\n"))
-            #expect(kept.contains("WEIR_MANY_LINES=a\nb\n"))
-            #expect(kept.contains("WEIR_OPENCODE_AGENT_STATES_DIR="))
+            let kept = try paneEnvironmentValues(in: root)
+            #expect(kept["WEIR_PANE_ID"] == "PANE")
+            #expect(kept["WEIR_AGENT_PARENT_RUN_ID"] == "RUN")
+            let runID = try #require(kept["WEIR_AGENT_RUN_ID"])
+            #expect(UUID(uuidString: runID) != nil)
+            #expect(runID != "RUN")
+            #expect(kept["WEIR_MANY_LINES"] == "a\nb=with=equals")
+            #expect(kept["WEIR_OPENCODE_AGENT_STATES_DIR"] == root.appendingPathComponent("states").path)
         }
     }
 
@@ -208,21 +250,32 @@ struct OpenCodeShimTests {
     @Test func shim_namesEachLaunchsFileApart_notByItsPID() throws {
         try withTempDir { root in
             let home = root.appendingPathComponent("home")
-            _ = try runShim(root: root, home: home)
-            _ = try runShim(root: root, home: home)
-            let directory = root.appendingPathComponent("states/pane-env")
-            let files = try FileManager.default.contentsOfDirectory(atPath: directory.path)
-            #expect(files.count == 2)
-            #expect(files.allSatisfy { Int($0.replacingOccurrences(of: ".env", with: "")) == nil })
+            let first = try runShim(root: root, home: home)
+            try #require(first.terminationStatus == 0)
+            let firstFile = try paneEnvironmentFile(in: root)
+            let firstData = try Data(contentsOf: firstFile)
+            let second = try runShim(root: root, home: home)
+            try #require(second.terminationStatus == 0)
+            let secondFile = try paneEnvironmentFile(in: root)
+            #expect(firstFile != secondFile)
+            #expect(try Data(contentsOf: firstFile) == firstData)
+            #expect(try !Data(contentsOf: secondFile).isEmpty)
+            #expect(Int(firstFile.lastPathComponent) == nil)
+            #expect(Int(secondFile.lastPathComponent) == nil)
+            let files = try FileManager.default.contentsOfDirectory(atPath: root.appendingPathComponent("states/pane-env").path)
+            #expect(Set(files) == Set([firstFile.lastPathComponent, secondFile.lastPathComponent]))
         }
     }
 
-    @Test(arguments: [["--prompt="], ["--prompt", ""]])
-    func shim_anEmptyPromptIsNoPrompt(args: [String]) throws {
+    @Test(arguments: [["--prompt="], ["--prompt", ""], ["--prompt", "fix=it"], ["--prompt=fix=it"]])
+    func shim_namesWhetherTheLaunchCarriesAPrompt(args: [String]) throws {
         try withTempDir { root in
             let home = root.appendingPathComponent("home")
-            _ = try runShim(root: root, home: home, args: args)
-            #expect(try paneEnvironment(in: root).contains("WEIR_OPENCODE_LAUNCH_PROMPT=0"))
+            let process = try runShim(root: root, home: home, args: args)
+            try #require(process.terminationStatus == 0)
+            #expect(ShimHarness.recordedArgv(ShimHarness.argvRecord(in: root), keepsEmptyArguments: true) == args)
+            let expected = args == ["--prompt="] || args == ["--prompt", ""] ? "0" : "1"
+            #expect(try paneEnvironmentValues(in: root)["WEIR_OPENCODE_LAUNCH_PROMPT"] == expected)
         }
     }
 
@@ -253,17 +306,8 @@ struct OpenCodeShimTests {
         }
     }
 
-    @Test(arguments: [["--prompt", "fix it"], ["--prompt=fix it"]])
-    func shim_saysALaunchCarriesAPrompt(args: [String]) throws {
-        try withTempDir { root in
-            let home = root.appendingPathComponent("home")
-            _ = try runShim(root: root, home: home, args: args)
-            #expect(try paneEnvironment(in: root).contains("WEIR_OPENCODE_LAUNCH_PROMPT=1"))
-        }
-    }
-
     /// A Hook Helper that keeps what a hook call is given and notes whether
-    /// `opencode` already ran, then exits with `status`, or never ends when `hangs`.
+    /// `opencode` already ran, then exits with `status`, or exceeds the watchdog when `hangs`.
     private func stubHelper(in root: URL, status: Int32 = 0, hangs: Bool = false) throws -> URL {
         let helper = root.appendingPathComponent("helper")
         try AgentCatalogFixture.makeExecutable(
@@ -274,7 +318,7 @@ struct OpenCodeShimTests {
             cat > "\(root.path)/hook-body"
             printf '%s\\n' "$*" "${WEIR_HOOK_TIME_LIMIT_MS:-}" "${WEIR_AGENT_RUN_ID:-}" > "\(root.path)/hook-call"
             [ -e "\(root.path)/args" ] && touch "\(root.path)/ran-after-opencode"
-            \(hangs ? "exec sleep 600" : "exit \(status)")
+            \(hangs ? "echo $$ > \"\(root.path)/helper-pid\"; exec sleep 20" : "exit \(status)")
             """
         )
         return helper
@@ -321,7 +365,9 @@ struct OpenCodeShimTests {
         ["--auto", "true", "--prompt=fix it", "FOLDER"],
         ["--session", "ses_1", "FOLDER", "--prompt", "fix it"],
         ["--log-level", "info", "--prompt", "fix it", "FOLDER"],
-        ["--prompt", "fix it", "--", "FOLDER"]
+        ["--prompt", "fix it", "--", "FOLDER"],
+        ["--auto", "false", "--prompt", "fix it"],
+        ["-s", "ses_1", "--prompt", "fix it"]
     ])
     func shim_savesALaunchPromptsStart_inTheFolderTheLaunchNames(args: [String]) throws {
         try withTempDir { root in
@@ -329,26 +375,18 @@ struct OpenCodeShimTests {
             let project = root.appendingPathComponent("project \"quoted\"")
             try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
             let helper = try stubHelper(in: root)
-            _ = try runShim(
+            let actualArgs = args.map { $0 == "FOLDER" ? project.lastPathComponent : $0 }
+            let process = try runShim(
                 root: root,
                 home: home,
-                args: args.map { $0 == "FOLDER" ? project.lastPathComponent : $0 },
+                args: actualArgs,
                 environment: ["WEIR_HOOK_HELPER": helper.path]
             )
+            try #require(process.terminationStatus == 0)
+            #expect(ShimHarness.recordedArgv(ShimHarness.argvRecord(in: root)) == actualArgs)
+            let expected = args.contains("FOLDER") ? project : root
             let cwd = try #require(try hookBody(in: root)["cwd"] as? String)
-            #expect(URL(fileURLWithPath: cwd).resolvingSymlinksInPath() == project.resolvingSymlinksInPath())
-        }
-    }
-
-    /// A value is no folder: the start is saved where the interface starts, here.
-    @Test(arguments: [["--auto", "false", "--prompt", "fix it"], ["-s", "ses_1", "--prompt", "fix it"]])
-    func shim_savesALaunchPromptsStart_inTheCurrentFolder_whenNoneIsNamed(args: [String]) throws {
-        try withTempDir { root in
-            let home = root.appendingPathComponent("home")
-            let helper = try stubHelper(in: root)
-            _ = try runShim(root: root, home: home, args: args, environment: ["WEIR_HOOK_HELPER": helper.path])
-            let cwd = try #require(try hookBody(in: root)["cwd"] as? String)
-            #expect(URL(fileURLWithPath: cwd).resolvingSymlinksInPath() == root.resolvingSymlinksInPath())
+            #expect(URL(fileURLWithPath: cwd).resolvingSymlinksInPath() == expected.resolvingSymlinksInPath())
         }
     }
 
@@ -357,8 +395,16 @@ struct OpenCodeShimTests {
         try withTempDir { root in
             let home = root.appendingPathComponent("home")
             let helper = try stubHelper(in: root)
-            _ = try runShim(root: root, home: home, args: args, environment: ["WEIR_HOOK_HELPER": helper.path])
+            let process = try runShim(root: root, home: home, args: args, environment: ["WEIR_HOOK_HELPER": helper.path])
+            try #require(process.terminationStatus == 0)
+            #expect(ShimHarness.recordedArgv(ShimHarness.argvRecord(in: root), keepsEmptyArguments: true) == args)
             #expect(!exists("hook-body", in: root))
+            #expect(!exists("hook-call", in: root))
+            if !args.contains("--server") {
+                #expect(try paneEnvironmentValues(in: root)["WEIR_OPENCODE_LAUNCH_PREPARATION"] == nil)
+            } else {
+                #expect(!exists("states/pane-env", in: root))
+            }
         }
     }
 
@@ -386,26 +432,43 @@ struct OpenCodeShimTests {
         try withTempDir { root in
             let home = root.appendingPathComponent("home")
             let helper = try stubHelper(in: root, hangs: true)
+            defer {
+                if let raw = try? ScratchFile.read("helper-pid", in: root),
+                   let pid = Int32(raw.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0
+                {
+                    _ = kill(pid, SIGKILL)
+                }
+            }
             let started = ContinuousClock.now
             let process = try runShim(
                 root: root,
                 home: home,
                 args: ["--prompt", "fix it"],
                 environment: ["WEIR_HOOK_HELPER": helper.path],
-                limit: 30
+                limit: 18
             )
-            #expect(ContinuousClock.now - started < .seconds(30))
+            #expect(ContinuousClock.now - started < .seconds(15))
             #expect(process.terminationStatus == 0)
+            let raw = try ScratchFile.read("helper-pid", in: root)
+            let pid = try #require(Int32(raw.trimmingCharacters(in: .whitespacesAndNewlines)))
+            try #require(pid > 0)
+            #expect(kill(pid, 0) == -1 && errno == ESRCH)
+            #expect(try hookBody(in: root)["hook_event_name"] as? String == "weir.prepare")
+            #expect(!exists("ran-after-opencode", in: root))
+            #expect(ShimHarness.recordedArgv(ShimHarness.argvRecord(in: root)) == ["--prompt", "fix it"])
             #expect(exists("args", in: root))
             #expect(try !paneEnvironment(in: root).contains("WEIR_OPENCODE_LAUNCH_PREPARATION"))
         }
     }
 
-    @Test func aPluginWithoutAManagedMark_isNotShipped() throws {
+    @Test func sourcePlugin_hasOnlyTheInterfaceAndANumericManagedMark() throws {
         let plugin = try AgentCatalogFixture.shimFolder("opencode-plugin")
         let files = try FileManager.default.contentsOfDirectory(atPath: plugin.path).sorted()
         // A `server` or `index` file would load in the shared service too, where
         // no pane's environment reaches it.
         #expect(files == [".weir-managed", "tui.js"])
+        let mark = try String(contentsOf: plugin.appendingPathComponent(".weir-managed"), encoding: .utf8)
+        #expect(Int(mark.trimmingCharacters(in: .whitespacesAndNewlines)) != nil)
+        #expect(try !Data(contentsOf: plugin.appendingPathComponent("tui.js")).isEmpty)
     }
 }

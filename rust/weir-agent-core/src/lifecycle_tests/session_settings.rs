@@ -135,9 +135,17 @@ fn an_ended_session_still_takes_a_setting_without_coming_back() {
     )
     .run
     .expect("the switch writes the model");
-    assert_eq!(switched.state, ended.state);
-    assert_eq!(switched.state_episode_token, ended.state_episode_token);
+    assert_eq!(ended.state, RunState::Unknown);
     assert_eq!(switched.model.as_deref(), Some("Haiku 5.5"));
+    assert_eq!(switched.revision, Some(ended.revision.unwrap_or(0) + 1));
+    assert_eq!(
+        RunRecord {
+            model: ended.model.clone(),
+            revision: ended.revision,
+            ..switched
+        },
+        ended
+    );
 }
 
 #[test]
@@ -269,6 +277,7 @@ fn a_new_model_drops_the_effort_said_of_the_old_one() {
     )
     .run
     .expect("record");
+    assert_eq!(switched.model.as_deref(), Some("Haiku 5.5"));
     assert_eq!(switched.effort, None);
 
     let both = apply(
@@ -280,6 +289,7 @@ fn a_new_model_drops_the_effort_said_of_the_old_one() {
     )
     .run
     .expect("record");
+    assert_eq!(both.model.as_deref(), Some("Haiku 5.5"));
     assert_eq!(both.effort.as_deref(), Some("low"));
 }
 

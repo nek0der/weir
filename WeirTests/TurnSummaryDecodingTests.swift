@@ -24,17 +24,25 @@ struct TurnSummaryDecodingTests {
         #expect(turn.prompt == TurnPrompt(kind: .text, head: "add tests"))
     }
 
-    @Test(arguments: [TurnPromptKind.text, .backgroundTask, .subagentMessage, .injected])
-    func eachKind_decodes(_ kind: TurnPromptKind) throws {
-        #expect(try Self.turn(head: "x", kind: kind).promptKind == kind)
+    @Test(arguments: [
+        (#""text""#, TurnPromptKind.text),
+        (#""backgroundTask""#, .backgroundTask),
+        (#""subagentMessage""#, .subagentMessage),
+        (#""injected""#, .injected),
+        (#""goal""#, .goal)
+    ])
+    func eachKind_decodes(wireValue: String, kind: TurnPromptKind) throws {
+        let turn = try Self.turn(head: "x", kindJSON: wireValue)
+        #expect(turn.prompt == TurnPrompt(kind: kind, head: "x"))
     }
 
     @Test func aKindThisBuildDoesNotKnow_readsAsText_withoutCostingTheTurn() throws {
         let unknown = try Self.turn(head: "x", kindJSON: #""fromTheFuture""#)
-        #expect(unknown.promptKind == .text)
+        #expect(unknown.prompt == TurnPrompt(kind: .text, head: "x"))
         #expect(unknown.displayNumber == 7)
         let malformed = try Self.turn(head: "x", kindJSON: #"{"kind":"backgroundTask"}"#)
-        #expect(malformed.promptKind == .text)
+        #expect(malformed.prompt == TurnPrompt(kind: .text, head: "x"))
+        #expect(malformed.displayNumber == 7)
     }
 
     @Test func theTreeATurnEndedAt_isReadOnlyWhenItWasTaken() throws {
@@ -110,6 +118,8 @@ struct TurnSummaryDecodingTests {
         #expect(try Fixture.turn("a", extras: extras).reply == "Added two tests.")
         #expect(try Fixture.turn("b", phase: "failed", extras: extras).reply == nil)
         #expect(try Fixture.turn("c", phase: "started", extras: extras).reply == nil)
+        #expect(try Fixture.turn("c", phase: "interrupted", extras: extras).reply == nil)
+        #expect(try Fixture.turn("c", phase: "future", extras: extras).reply == nil)
         extras.replyHead = ""
         #expect(try Fixture.turn("d", extras: extras).reply == nil)
         #expect(try Fixture.turn("e").reply == nil, "a record from before the reply was kept")

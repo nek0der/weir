@@ -128,6 +128,7 @@ struct RowRenameTests {
 
         #expect(attached?.id == worktreeID)
         #expect(attached?.displayName == nil)
+        #expect(session.worktree(projectID: project.id, worktreeID: worktreeID)?.displayName == nil)
     }
 
     /// The migration rule: a name an earlier build kept on a tab is never
@@ -148,8 +149,12 @@ struct RowRenameTests {
     /// The scratch row is named by its own word and takes no name.
     @Test func renameRow_scratch_changesNothing() {
         let (session, _) = WorkspaceSessionFixture.withProject()
+        #expect(session.rowName(of: .loose) == nil)
+        let tab = session.openTab(container: .loose)
+        session.update(tab.id) { $0.rename("Scratch tab") }
         session.renameRow(.loose, to: "Anything", runtimes: [])
         #expect(session.rowName(of: .loose) == nil)
+        #expect(session.tab(tab.id)?.titleOverride == "Scratch tab")
     }
 
     /// Both names are written with the session and read back.
@@ -167,8 +172,9 @@ struct RowRenameTests {
             }
             let restored = WorkspaceSession()
             _ = restored.restore(from: snapshot)
-            #expect(restored.rowName(of: row)?.text == "Release prep")
-            #expect(restored.rowName(of: .project(project.id))?.text == "Main checkout")
+            #expect(restored.rowName(of: row) == RowName(text: "Release prep", source: .manual))
+            #expect(restored.rowName(of: .project(project.id)) == RowName(text: "Main checkout", source: .manual))
+            #expect(restored.project(project.id)?.name == project.name)
         }
     }
 

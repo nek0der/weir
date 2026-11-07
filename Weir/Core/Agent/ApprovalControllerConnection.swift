@@ -234,15 +234,15 @@ enum ApprovalControllerConnection {
     static func sendBeforeQuit(
         _ decisions: [(approval: ApprovalPresentation, resolution: ApprovalResolution)],
         budget: Duration,
+        now: () -> ContinuousClock.Instant = { ContinuousClock.now },
         open: () throws -> (epoch: UUID, exchange: (Data, Int) throws -> Data)
     ) {
         guard !decisions.isEmpty,
               let (currentEpoch, exchange) = try? open()
         else { return }
-        let clock = ContinuousClock()
-        let deadline = clock.now + budget
+        let deadline = now() + budget
         func secondsLeft() -> Int? {
-            let left = clock.now.duration(to: deadline)
+            let left = now().duration(to: deadline)
             guard left > .zero else { return nil }
             // The XPC client counts whole seconds; never less than one.
             return max(1, Int(left.components.seconds) + (left.components.attoseconds > 0 ? 1 : 0))

@@ -3,6 +3,7 @@
 // schedule and withdraw, and the menu that offers it.
 
 import Foundation
+import Observation
 import Testing
 @testable import Weir
 @testable import WeirDomain
@@ -23,9 +24,62 @@ struct UsageLimitResetRequestTests {
         })
     }
 
+    private enum NoticeEvent: Equatable {
+        case scheduled(AgentKind, Date)
+        case canceled(AgentKind)
+    }
+
+    @MainActor
     private final class Recorder {
-        var scheduled: [(AgentKind, Date)] = []
-        var canceled: [AgentKind] = []
+        var events: [NoticeEvent] = []
+        var scheduled: [(AgentKind, Date)] {
+            events.compactMap {
+                if case let .scheduled(provider, date) = $0 {
+                    (provider, date)
+                } else {
+                    nil
+                }
+            }
+        }
+
+        var canceled: [AgentKind] {
+            events.compactMap {
+                if case let .canceled(provider) = $0 {
+                    provider
+                } else {
+                    nil
+                }
+            }
+        }
+
+        func schedule(_ provider: AgentKind, _ date: Date) {
+            events.append(.scheduled(provider, date))
+        }
+
+        func cancel(_ provider: AgentKind) {
+            events.append(.canceled(provider))
+        }
+
+        func clearCancellations() {
+            events.removeAll {
+                if case .canceled = $0 {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    @Observable
+    final class Sources {
+        var limits: UsageLimits
+        var isEnabled: Bool
+
+        init(limits: UsageLimits, isEnabled: Bool) {
+            self.limits = limits
+            self.isEnabled = isEnabled
+        }
     }
 
     private static func sync(
@@ -38,8 +92,8 @@ struct UsageLimitResetRequestTests {
             limits: { UsageLimits(items: items.value) },
             isEnabled: { isEnabled },
             now: { now.value },
-            schedule: { recorder.scheduled.append(($0, $1)) },
-            cancel: { recorder.canceled.append($0) }
+            schedule: recorder.schedule,
+            cancel: recorder.cancel
         )
     }
 
@@ -77,7 +131,10 @@ struct UsageLimitResetRequestTests {
         ])
         #expect(limits.pendingResetNotifications(isEnabled: false, requested: [], now: Self.now).isEmpty)
         #expect(limits.pendingResetNotifications(isEnabled: false, requested: [.claude], now: Self.now) == [.claude: Self.reset])
-        #expect(limits.pendingResetNotifications(isEnabled: true, now: Self.now).count == 2)
+        let codex = Self.reset.addingTimeInterval(60)
+        #expect(limits.pendingResetNotifications(isEnabled: true, now: Self.now) == [.claude: Self.reset, .codex: codex])
+        #expect(limits.pendingResetNotifications(isEnabled: false, requested: [.codex], now: Self.now) == [.codex: codex])
+        #expect(limits.pendingResetNotifications(isEnabled: true, now: Self.reset) == [.codex: codex])
 
         let unknown = Self.limits([.claude: Self.reset, .codex: nil])
         #expect(unknown.pendingResetNotifications(isEnabled: true, now: Self.now) == [.claude: Self.reset])
@@ -90,45 +147,96 @@ struct UsageLimitResetRequestTests {
         let recorder = Recorder()
         let limited = Self.stop(UsageLimit(resetAt: Self.reset))
         let sync = Self.sync(Recorded([limited]), recorder: recorder)
-        #expect(recorder.scheduled.isEmpty)
+        recorder.events = []
+        #expect(sync.pending.isEmpty)
         #expect(sync.notice(for: limited, now: Self.now) == .offered)
 
         #expect(sync.requestIfOffered(limited, now: Self.now))
-        #expect(recorder.scheduled.map(\.1) == [Self.reset])
+        #expect(sync.pending == [.claude: Self.reset])
+        #expect(sync.requested == [.claude: Self.reset])
         #expect(sync.notice(for: limited, now: Self.now) == .requested)
-        #expect(!sync.requestIfOffered(limited, now: Self.now), "asked once")
+        #expect(!sync.requestIfOffered(limited, now: Self.now))
+        #expect(recorder.events == [.scheduled(.claude, Self.reset)])
     }
 
     @Test func request_isRefusedForAStopThatOffersNoNotice() {
         let recorder = Recorder()
-        let exited = Self.stop(nil)
-        let sync = Self.sync(Recorded([exited]), recorder: recorder)
-        #expect(!sync.requestIfOffered(exited, now: Self.now))
+        let exited = Self.stop(nil, runtime: "exited")
+        let live = Self.stop(UsageLimit(resetAt: Self.reset), runtime: "live")
+        let expired = Self.stop(UsageLimit(resetAt: Self.now), provider: .codex, runtime: "expired")
+        let unknown = Self.stop(UsageLimit(resetAt: nil), provider: .antigravity, runtime: "unknown")
+        let sync = Self.sync(Recorded([exited, live, expired, unknown]), recorder: recorder)
+        recorder.events = []
+        #expect(sync.notice(for: live, now: Self.now) == .offered)
+
+        for item in [exited, expired, unknown] {
+            #expect(sync.notice(for: item, now: Self.now) == nil)
+            #expect(!sync.requestIfOffered(item, now: Self.now))
+        }
         #expect(sync.requested.isEmpty)
+        #expect(sync.pending.isEmpty)
+        #expect(recorder.events.isEmpty)
     }
 
-    @Test func request_withTheSettingOnIsAlreadyRequested() {
+    @Test(arguments: [false, true])
+    func request_withTheSettingOnIsAlreadyRequested(hasManualRequest: Bool) {
         let recorder = Recorder()
         let limited = Self.stop(UsageLimit(resetAt: Self.reset))
-        let sync = Self.sync(Recorded([limited]), isEnabled: true, recorder: recorder)
-        #expect(sync.isNoticeRequested(for: .claude, now: Self.now))
+        let isEnabled = Recorded(!hasManualRequest)
+        let sync = UsageLimitResetSync(
+            limits: { UsageLimits(items: [limited]) },
+            isEnabled: { isEnabled.value },
+            now: { Self.now },
+            schedule: recorder.schedule,
+            cancel: recorder.cancel
+        )
+        recorder.clearCancellations()
+        if hasManualRequest {
+            #expect(sync.requestIfOffered(limited, now: Self.now))
+            isEnabled.value = true
+            sync.refresh()
+        }
         #expect(sync.notice(for: limited, now: Self.now) == .requested)
-        #expect(recorder.scheduled.map(\.1) == [Self.reset])
+
+        #expect(!sync.requestIfOffered(limited, now: Self.now))
+        let manual = hasManualRequest ? [AgentKind.claude: Self.reset] : [:]
+        #expect(sync.requested == manual)
+        #expect(sync.pending == [.claude: Self.reset])
+        #expect(recorder.events == [.scheduled(.claude, Self.reset)])
+
+        isEnabled.value = false
+        sync.refresh()
+        #expect(sync.requested == manual)
+        #expect(sync.pending == manual)
+        if hasManualRequest {
+            #expect(sync.notice(for: limited, now: Self.now) == .requested)
+            #expect(recorder.events == [.scheduled(.claude, Self.reset)])
+        } else {
+            #expect(sync.notice(for: limited, now: Self.now) == .offered)
+            #expect(recorder.events == [.scheduled(.claude, Self.reset), .canceled(.claude)])
+        }
     }
 
     @Test func request_leavesTheOtherProviderAlone() {
         let recorder = Recorder()
         let claude = Self.stop(UsageLimit(resetAt: Self.reset), provider: .claude, runtime: "a")
-        let codex = Self.stop(UsageLimit(resetAt: Self.reset), provider: .codex, runtime: "b")
+        let later = Self.reset.addingTimeInterval(60)
+        let codex = Self.stop(UsageLimit(resetAt: later), provider: .codex, runtime: "b")
         let items = Recorded([claude, codex])
         let sync = Self.sync(items, recorder: recorder)
-        sync.requestIfOffered(claude, now: Self.now)
-        #expect(recorder.scheduled.map(\.0) == [.claude])
+        recorder.events = []
+        #expect(sync.requestIfOffered(claude, now: Self.now))
+        #expect(recorder.events == [.scheduled(.claude, Self.reset)])
         #expect(sync.notice(for: codex, now: Self.now) == .offered)
+        #expect(sync.requestIfOffered(codex, now: Self.now))
+        #expect(sync.pending == [.claude: Self.reset, .codex: later])
 
-        items.value = [claude]
+        items.value = [codex]
         sync.refresh()
-        #expect(sync.requested.keys.sorted { $0.rawValue < $1.rawValue } == [.claude], "Codex's stop going leaves Claude's request")
+        #expect(sync.requested == [.codex: later])
+        #expect(sync.pending == [.codex: later])
+        #expect(sync.notice(for: codex, now: Self.now) == .requested)
+        #expect(recorder.events == [.scheduled(.claude, Self.reset), .scheduled(.codex, later), .canceled(.claude)])
     }
 
     /// A stop replaced before its reset keeps the request, at the new time.
@@ -148,21 +256,32 @@ struct UsageLimitResetRequestTests {
 
     /// Once the release it was for has come, a request is spent: a limit
     /// met later offers its own notice.
-    @Test func request_endsAtTheReleaseItWasFor() {
+    @Test(arguments: [false, true])
+    func request_endsAtTheReleaseItWasFor(hasLaterLimit: Bool) {
         let recorder = Recorder()
         let clock = Recorded(Self.now)
         let first = Self.stop(UsageLimit(resetAt: Self.reset), runtime: "a")
         let items = Recorded([first])
         let sync = Self.sync(items, now: clock, recorder: recorder)
-        sync.requestIfOffered(first, now: Self.now)
+        recorder.events = []
+        #expect(sync.requestIfOffered(first, now: Self.now))
+        #expect(sync.pending == [.claude: Self.reset])
 
-        clock.value = Self.reset.addingTimeInterval(3600)
-        let later = Self.reset.addingTimeInterval(7200)
-        let second = Self.stop(UsageLimit(resetAt: later), runtime: "b")
-        items.value = [first, second]
+        clock.value = Self.reset.addingTimeInterval(1)
+        let second = Self.stop(UsageLimit(resetAt: Self.reset.addingTimeInterval(7200)), runtime: "b")
+        if hasLaterLimit {
+            items.value = [first, second]
+        }
         sync.refresh()
+
         #expect(sync.requested.isEmpty)
-        #expect(sync.notice(for: second, now: clock.value) == .offered)
+        #expect(sync.pending.isEmpty)
+        #expect(recorder.events == [.scheduled(.claude, Self.reset)])
+        if hasLaterLimit {
+            #expect(sync.notice(for: second, now: clock.value) == .offered)
+        } else {
+            #expect(sync.notice(for: first, now: clock.value) == nil)
+        }
     }
 
     /// A notice the person asked for, or one the setting schedules, is
@@ -177,7 +296,7 @@ struct UsageLimitResetRequestTests {
             sync.requestIfOffered(limited, now: Self.now)
         }
         #expect(recorder.scheduled.map(\.1) == [Self.reset])
-        recorder.canceled = []
+        recorder.clearCancellations()
 
         items.value = []
         sync.refresh()
@@ -193,40 +312,40 @@ struct UsageLimitResetRequestTests {
             limits: { Self.limits([.claude: reset]) },
             isEnabled: { true },
             now: { Self.now },
-            schedule: { recorder.scheduled.append(($0, $1)) },
-            cancel: { recorder.canceled.append($0) }
+            schedule: recorder.schedule,
+            cancel: recorder.cancel
         )
-        #expect(Set(recorder.canceled) == Set(AgentKind.allCases))
-        #expect(recorder.scheduled.map(\.0) == [.claude])
+        let cancellations = AgentKind.allCases.map(NoticeEvent.canceled)
+        #expect(recorder.events == cancellations + [.scheduled(.claude, reset)])
     }
 
-    @Test func sync_schedulesOncePerResetAndWithdrawsWhatGoes() {
+    @Test func sync_schedulesOncePerResetAndWithdrawsWhatGoes() async throws {
         let recorder = Recorder()
         let first = Self.now.addingTimeInterval(60)
         let second = Self.now.addingTimeInterval(120)
-        let current = Recorded(Self.limits([.claude: first]))
-        let isEnabled = Recorded(true)
+        let sources = Sources(limits: Self.limits([.claude: first]), isEnabled: true)
         let sync = UsageLimitResetSync(
-            limits: { current.value },
-            isEnabled: { isEnabled.value },
+            limits: { sources.limits },
+            isEnabled: { sources.isEnabled },
             now: { Self.now },
-            schedule: { recorder.scheduled.append(($0, $1)) },
-            cancel: { recorder.canceled.append($0) }
+            schedule: recorder.schedule,
+            cancel: recorder.cancel
         )
-        #expect(recorder.scheduled.map(\.1) == [first])
+        recorder.clearCancellations()
+        #expect(recorder.events == [.scheduled(.claude, first)])
 
         sync.refresh()
-        #expect(recorder.scheduled.count == 1, "the same reset is not scheduled twice")
+        #expect(recorder.events == [.scheduled(.claude, first)])
 
-        current.value = Self.limits([.claude: second])
-        sync.refresh()
-        #expect(recorder.scheduled.map(\.1) == [first, second])
+        sources.limits = Self.limits([.claude: second])
+        await pollUntil(timeout: .seconds(2), interval: .milliseconds(10)) { sync.pending == [.claude: second] }
+        try #require(sync.pending == [.claude: second])
+        #expect(recorder.events == [.scheduled(.claude, first), .scheduled(.claude, second)])
 
-        recorder.canceled = []
-        isEnabled.value = false
-        sync.refresh()
-        #expect(recorder.canceled == [.claude])
+        sources.isEnabled = false
+        await pollUntil(timeout: .seconds(2), interval: .milliseconds(10)) { sync.pending.isEmpty }
         #expect(sync.pending.isEmpty)
+        #expect(recorder.events == [.scheduled(.claude, first), .scheduled(.claude, second), .canceled(.claude)])
     }
 
     // MARK: - Reading again
@@ -254,38 +373,23 @@ struct UsageLimitResetRequestTests {
         #expect(sync.nextCheck == nil)
     }
 
-    /// The timer itself, on the real clock: a reset a moment ahead is
-    /// passed a second later, and the views are told.
-    @Test(.tags(.slow)) func check_marksTheResetPassed() async {
-        let start = Date()
-        let items = Recorded([Self.stop(UsageLimit(resetAt: start.addingTimeInterval(0.05)))])
-        let sync = UsageLimitResetSync(
-            limits: { UsageLimits(items: items.value) },
-            isEnabled: { false },
-            schedule: { _, _ in },
-            cancel: { _ in }
-        )
-        await pollUntil(timeout: .seconds(5), interval: .milliseconds(50)) {
-            sync.resetPassedAt >= start.addingTimeInterval(1)
-        }
-        #expect(sync.resetPassedAt >= start.addingTimeInterval(1.05))
-        #expect(sync.nextCheck == nil)
-    }
-
-    /// A notification whose time has come is the system's to deliver, late
-    /// after sleep perhaps; reading the limits then does not withdraw it.
-    @Test func reset_doesNotWithdrawTheNotificationItWasFor() {
-        let recorder = Recorder()
+    /// The real wait is armed for a relative duration. The injected clock
+    /// advances independently, without notifying the sources.
+    @Test(.tags(.slow)) func check_marksTheResetPassed() async throws {
         let clock = Recorded(Self.now)
-        let limited = Self.stop(UsageLimit(resetAt: Self.reset))
-        let sync = Self.sync(Recorded([limited]), now: clock, recorder: recorder)
-        sync.requestIfOffered(limited, now: Self.now)
-        recorder.canceled = []
+        let reset = Self.now.addingTimeInterval(0.05)
+        let deadline = reset.addingTimeInterval(1)
+        let limited = Self.stop(UsageLimit(resetAt: reset))
+        let sync = Self.sync(Recorded([limited]), now: clock, recorder: Recorder())
+        try #require(sync.nextCheck == deadline)
+        #expect(sync.resetPassedAt == Self.now)
+        clock.value = deadline
 
-        clock.value = Self.reset.addingTimeInterval(1)
-        sync.refresh()
-        #expect(recorder.canceled.isEmpty)
-        #expect(sync.requested.isEmpty)
+        await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) {
+            sync.resetPassedAt == deadline && sync.nextCheck == nil
+        }
+        #expect(sync.resetPassedAt == deadline)
+        #expect(sync.nextCheck == nil)
     }
 
     @Test func request_isNotHeldPastItsTime_beforeTheNextRefresh() {
@@ -299,34 +403,39 @@ struct UsageLimitResetRequestTests {
 
     // MARK: - The menu
 
-    private static func menuItem(
-        _ state: NeedsAttentionListModel.RowState,
-        notice: UsageLimitResetNotice?,
-        request: MenuBarModel.Request? = nil
-    ) -> MenuBarModel.Item? {
-        let row = NeedsAttentionListModel.Row(
-            id: stop(nil).id, state: state, title: "s", place: nil, fact: "f", placeLead: "", action: nil, arrivedAt: now
-        )
-        return MenuBarModel(
-            rows: [row],
-            request: { _ in request },
-            canResume: { _ in true },
-            resetNotice: { _ in notice }
-        ).items.first
-    }
-
-    @Test func menu_followsTheBar() {
-        #expect(Self.menuItem(.stopped, notice: .offered)?.actions == [.notifyAtReset])
-        #expect(Self.menuItem(.stopped, notice: .requested)?.actions == [])
-        #expect(Self.menuItem(.stopped, notice: .requested)?.note == .resetNoticeRequested)
-        #expect(Self.menuItem(.stopped, notice: nil)?.actions == [.resume])
-        #expect(Self.menuItem(.stopped, notice: nil)?.note == nil)
-    }
-
-    @Test func menu_offersTheNoticeOnStopsOnly() {
-        #expect(Self.menuItem(.unread, notice: .requested)?.note == nil)
-        #expect(Self.menuItem(.unread, notice: .offered)?.actions == [])
+    @Test func menu_followsTheBar() throws {
+        let stopID = Self.stop(nil).id
+        let unreadID = AttentionItemID.unread(TurnID("T1"))
+        let approvalID = AttentionItemID.approval(ApprovalFact.test().key)
         let request = MenuBarModel.Request(command: "ls", isQuestion: false, offer: .timedOut)
-        #expect(Self.menuItem(.approval, notice: .requested, request: request)?.note == .timedOut)
+        let cases: [MenuCase] = [
+            MenuCase(id: stopID, state: .stopped, notice: .offered, actions: [.notifyAtReset]),
+            MenuCase(id: stopID, state: .stopped, notice: .requested, actions: [], note: .resetNoticeRequested),
+            MenuCase(id: stopID, state: .stopped, actions: [.resume]),
+            MenuCase(id: unreadID, state: .unread, notice: .offered, actions: []),
+            MenuCase(id: unreadID, state: .unread, notice: .requested, actions: []),
+            MenuCase(id: approvalID, state: .approval, notice: .requested, request: request, actions: [], note: .timedOut)
+        ]
+        for test in cases {
+            let row = NeedsAttentionListModel.Row(
+                id: test.id, state: test.state, title: "s", place: nil, fact: "f", placeLead: "", action: nil, arrivedAt: Self.now
+            )
+            let model = MenuBarModel(
+                rows: [row], request: { _ in test.request }, canResume: { _ in true }, resetNotice: { _ in test.notice }
+            )
+            let item = try #require(model.items.first)
+            #expect(item.row == row)
+            #expect(item.actions == test.actions)
+            #expect(item.note == test.note)
+        }
+    }
+
+    private struct MenuCase {
+        let id: AttentionItemID
+        let state: NeedsAttentionListModel.RowState
+        var notice: UsageLimitResetNotice?
+        var request: MenuBarModel.Request?
+        let actions: [MenuBarModel.Action]
+        var note: MenuBarModel.Note?
     }
 }

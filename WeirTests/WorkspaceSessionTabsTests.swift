@@ -41,96 +41,121 @@ struct WorkspaceSessionTabsTests {
 
     // MARK: - openTab / tab(containing:)
 
-    @Test("openTab(.loose) adds the tab and activates it")
-    func openTab_loose_addsAndActivates() {
-        let s = WorkspaceSession()
-        let tab = s.openTab(container: .loose)
-        #expect(s.tabs.count == 1)
-        #expect(s.primarySelection.activeTabID == tab.id)
-        guard case .loose = tab.container else {
-            Issue.record("expected .loose")
-            return
-        }
-    }
+    @Test(arguments: [false, true])
+    func openTab_addsOneFocusedPaneInTheRequestedRow(isProjectRoot: Bool) throws {
+        let (session, project) = WorkspaceSessionFixture.withProject()
+        let scratchFolder = WorkspaceSessionFixture.projectRootURL("scratch")
+        session.quickTabDefaultsProvider = { (mode: .fixed, path: scratchFolder) }
+        let container: ContainerID = isProjectRoot ? .project(project.id) : .loose
+        let other: ContainerID = isProjectRoot ? .loose : .project(project.id)
+        let existing = session.openTab(container: other)
 
-    @Test("openTab(.project) anchors the tab to that project and leaves the worktree empty")
-    func openTab_project_anchorsProjectAndOmitsWorktree() {
-        let (s, p) = WorkspaceSessionFixture.withProject()
-        let tab = s.openTab(container: .project(p.id))
-        #expect(tab.projectID == p.id)
-        #expect(tab.worktreeID == nil)
-    }
+        let opened = session.openTab(container: container)
 
-    @Test("tab(containing:) finds the tab that owns a given pane")
-    func tabContaining_knownPane_returnsOwningTab() throws {
-        let s = WorkspaceSession()
-        let tab = s.openTab(container: .loose)
-        let paneID = try #require(tab.splitTree.allLeafIDs().first)
-        #expect(s.tab(containing: paneID)?.id == tab.id)
+        let pane = try #require(opened.splitTree.allLeafIDs().first)
+        #expect(opened.splitTree.allLeafIDs() == [pane])
+        #expect(opened.splitTree.focusedLeafID == pane)
+        #expect(opened.container == container)
+        #expect(opened.projectID == (isProjectRoot ? project.id : nil))
+        #expect(opened.worktreeID == nil)
+        #expect(opened.workingDirectory == (isProjectRoot ? project.rootURL.path : scratchFolder.path))
+        #expect(session.primarySelection.activeContainerID == container)
+        #expect(session.primarySelection.activeTabID == opened.id)
+        #expect(session.focusedPaneID(in: session.primaryWindowID) == pane)
+        #expect(session.tabs == [existing, opened])
     }
 
     @Test("tab(containing:) follows a pane merged into another tab when the totals stay the same")
     func tabContaining_afterMergeKeepingCounts_returnsNewTab() throws {
-        let s = WorkspaceSession()
-        let source = s.openTab(container: .loose)
-        let target = s.openTab(container: .loose)
-        s.setActiveTab(source.id)
-        PaneActions.split(s, direction: .horizontal)
-        let moved = try #require(s.tab(source.id)?.splitTree.allLeafIDs().last)
-        // Prime the index before the move, the way any earlier lookup would.
-        #expect(s.tab(containing: moved)?.id == source.id)
+        let session = WorkspaceSession()
+        let source = session.openTab(container: .loose)
+        let target = session.openTab(container: .loose)
+        let stationary = try #require(source.splitTree.allLeafIDs().first)
+        let pivot = try #require(target.splitTree.allLeafIDs().first)
+        let unknown = UUID()
+        session.setActiveTab(source.id)
+        PaneActions.split(session, direction: .horizontal)
+        let moved = try #require(session.tab(source.id)?.splitTree.allLeafIDs().last)
+        try #require(session.tab(source.id)?.splitTree.allLeafIDs() == [stationary, moved])
+        try #require(stationary != moved)
 
-        // Two tabs holding 2 + 1 leaves before and 1 + 2 after.
-        TabActions.mergePaneIntoTab(s, paneID: moved, into: target.id)
+        // Prime the index while both tabs already have their pre-move counts.
+        #expect(session.tab(containing: unknown) == nil)
+        #expect(session.tab(containing: moved)?.id == source.id)
+        #expect(session.tab(containing: stationary)?.id == source.id)
+        #expect(session.tab(containing: pivot)?.id == target.id)
 
-        #expect(s.tab(containing: moved)?.id == target.id)
-    }
+        TabActions.mergePaneIntoTab(session, paneID: moved, into: target.id)
 
-    @Test("tab(containing:) returns nil for an unknown pane id")
-    func tabContaining_unknownPane_returnsNil() {
-        let s = WorkspaceSession()
-        _ = s.openTab(container: .loose)
-        #expect(s.tab(containing: UUID()) == nil)
+        #expect(session.tabs.map(\.id) == [source.id, target.id])
+        #expect(session.tab(source.id)?.splitTree.allLeafIDs() == [stationary])
+        #expect(session.tab(target.id)?.splitTree.allLeafIDs() == [pivot, moved])
+        #expect(session.tab(containing: moved)?.id == target.id)
+        #expect(session.tab(containing: stationary)?.id == source.id)
+        #expect(session.tab(containing: pivot)?.id == target.id)
+        #expect(session.tab(containing: unknown) == nil)
+
+        session.closeTab(target.id)
+        #expect(session.tab(containing: moved) == nil)
+        #expect(session.tab(containing: pivot) == nil)
+        #expect(session.tab(containing: stationary)?.id == source.id)
     }
 
     // MARK: - closeTab
 
-    @Test("closeTab removes the tab from the list")
-    func closeTab_removesFromList() {
-        let s = WorkspaceSession()
-        let a = s.openTab(container: .loose)
-        let b = s.openTab(container: .loose)
-        let paneID = a.splitTree.allLeafIDs()[0]
-        s.setWorkingDirectory(paneID: paneID, path: "/tmp/transient")
-        s.closeTab(a.id)
-        #expect(s.tabs.count == 1)
-        #expect(s.tabs.first?.id == b.id)
-        #expect(s.workingDirectory(paneID: paneID) == nil)
+    @Test func closeTab_removesOnlyTheClosedTabsState() throws {
+        let fixture = makeSession(sourceTabCount: 3)
+        let session = fixture.session
+        let closing = fixture.tabs[0]
+        let survivor = fixture.tabs[2]
+        let closedPane = try #require(closing.splitTree.allLeafIDs().first)
+        let survivingPane = try #require(survivor.splitTree.allLeafIDs().first)
+        let survivingSearch = PaneSearchState()
+        survivingSearch.needle = "kept"
+        session.setWorkingDirectory(paneID: closedPane, path: "/tmp/weir-closed-tab")
+        session.setWorkingDirectory(paneID: survivingPane, path: "/tmp/weir-surviving-tab")
+        session.paneSearchStates[closedPane] = PaneSearchState()
+        session.paneSearchStates[survivingPane] = survivingSearch
+
+        session.closeTab(closing.id)
+
+        let row = ContainerID.project(fixture.sourceID)
+        #expect(session.tabs == Array(fixture.tabs.dropFirst()))
+        #expect(session.primarySelection.activeContainerID == row)
+        #expect(session.primarySelection.activeTabID == survivor.id)
+        #expect(session.lastActiveTabID(for: row) == survivor.id)
+        #expect(session.workingDirectory(paneID: closedPane) == nil)
+        #expect(session.paneSearchStates[closedPane] == nil)
+        #expect(session.workingDirectory(paneID: survivingPane) == "/tmp/weir-surviving-tab")
+        #expect(session.paneSearchStates[survivingPane] === survivingSearch)
+        #expect(survivingSearch.needle == "kept")
     }
 
-    @Test("closeTab focuses the next tab (one down/right)")
-    func closeTab_active_focusesNext() {
-        let s = WorkspaceSession()
-        s.openTab(container: .loose)
-        let b = s.openTab(container: .loose)
-        let c = s.openTab(container: .loose)
-        s.setActiveTab(b.id)
-        s.closeTab(b.id)
-        // Closing the middle tab hands focus to the next one (c),
-        // not the container's last tab.
-        #expect(s.primarySelection.activeTabID == c.id)
-    }
+    @Test(arguments: [false, true])
+    func closeTab_activeChoosesItsRightNeighbor_orThePredecessorAtTheEnd(closesTail: Bool) {
+        let fixture = makeSession(sourceTabCount: 4)
+        let session = fixture.session
+        let foreignProject = Self.addProject(to: session, name: "Foreign")
+        let foreign = session.openTab(container: .project(foreignProject.id))
+        let closed = fixture.tabs[closesTail ? 3 : 1]
+        let expected = fixture.tabs[2]
+        // A neighboring tab in another row must not be chosen.
+        if closesTail {
+            session.reorderTab(foreign.id, before: closed.id)
+        } else {
+            session.reorderTab(foreign.id, after: closed.id)
+        }
+        session.setActiveTab(closed.id)
+        let remaining = session.tabs.filter { $0.id != closed.id }
+        let row = ContainerID.project(fixture.sourceID)
 
-    @Test("closeTab on the last tab falls back to the previous one")
-    func closeTab_active_lastFallsBackToPrevious() {
-        let s = WorkspaceSession()
-        s.openTab(container: .loose)
-        let b = s.openTab(container: .loose)
-        let c = s.openTab(container: .loose)
-        s.setActiveTab(c.id)
-        s.closeTab(c.id)
-        // No next tab exists, so focus moves to the previous (b).
-        #expect(s.primarySelection.activeTabID == b.id)
+        session.closeTab(closed.id)
+
+        #expect(session.tabs == remaining)
+        #expect(session.primarySelection.activeContainerID == row)
+        #expect(session.primarySelection.activeTabID == expected.id)
+        #expect(session.lastActiveTabID(for: row) == expected.id)
+        #expect(session.projectViews[foreignProject.id]?.activeTabID == foreign.id)
     }
 
     // MARK: - moveTab
@@ -152,56 +177,66 @@ struct WorkspaceSessionTabsTests {
         #expect(fx.session.tab(nonActive.id)?.container == .project(target.id))
     }
 
-    @Test("active tab drag promotes the right-hand sibling in the source container")
-    func moveTab_activeDrag_promotesRightNeighbor() {
-        let fx = makeSession(sourceTabCount: 3)
-        let target = Self.addProject(to: fx.session, name: "Target")
-        fx.session.setActiveTab(fx.tabs[0].id)
-
-        fx.session.moveTab(fx.tabs[0].id, to: .project(target.id))
-
-        // The selection stays on the source container; activeTabID falls
-        // onto the tab that slid into the vacated slot, fx.tabs[1].
-        #expect(fx.session.primarySelection.activeContainerID == .project(fx.sourceID))
-        #expect(fx.session.primarySelection.activeTabID == fx.tabs[1].id)
+    enum SourcePosition: Sendable {
+        case middle
+        case tail
+        case only
     }
 
-    @Test("active tab drag from the end of the container falls back to the predecessor")
-    func moveTab_activeDragFromEnd_promotesPredecessor() {
-        let fx = makeSession(sourceTabCount: 2)
-        let target = Self.addProject(to: fx.session, name: "Target")
-        // openTab leaves the most recently created tab active, so
-        // the second one is already the active end-of-list candidate.
+    @Test(arguments: [SourcePosition.middle, .tail, .only])
+    func moveTab_activeRepairsTheSource_andPlacesTheTabAtTheDestination(_ position: SourcePosition) {
+        let fixture = makeSession(sourceTabCount: position == .only ? 1 : 4)
+        let session = fixture.session
+        let source = ContainerID.project(fixture.sourceID)
+        let target = Self.addProject(to: session, name: "Target")
+        let destination = ContainerID.project(target.id)
+        let foreign = Self.addProject(to: session, name: "Foreign")
+        let foreignTab = session.openTab(container: .project(foreign.id))
+        let moved = fixture.tabs[position == .middle ? 1 : fixture.tabs.count - 1]
+        session.reorderTab(foreignTab.id, after: moved.id)
+        let destinationBefore: [Tab]
+        if position == .only {
+            destinationBefore = []
+            session.projectViews[target.id] = ProjectView(projectID: target.id, activeContainerID: destination)
+        } else {
+            destinationBefore = [session.openTab(container: destination)]
+        }
+        session.setActiveTab(moved.id)
+        let remaining = session.tabs.filter { $0.id != moved.id }
+        let neighbor = position == .only ? nil : fixture.tabs[2].id
 
-        fx.session.moveTab(fx.tabs[1].id, to: .project(target.id))
+        session.moveTab(moved.id, to: destination)
 
-        #expect(fx.session.primarySelection.activeContainerID == .project(fx.sourceID))
-        #expect(fx.session.primarySelection.activeTabID == fx.tabs[0].id)
+        var movedTab = moved
+        movedTab.container = destination
+        movedTab.workingDirectory = target.rootURL.path
+        #expect(session.tabs == remaining + [movedTab])
+        #expect(session.tabs(in: destination) == destinationBefore + [movedTab])
+        #expect(session.primarySelection.activeContainerID == source)
+        #expect(session.primarySelection.activeTabID == neighbor)
+        #expect(session.lastActiveTabID(for: source) == neighbor)
+        #expect(session.projectViews[target.id]?.activeTabID == (destinationBefore.first?.id ?? moved.id))
     }
 
-    @Test("dragging the only tab out of a container clears activeTabID without moving container column")
-    func moveTab_lastActiveTab_leavesContainerEmpty() {
-        let fx = makeSession(sourceTabCount: 1)
-        let target = Self.addProject(to: fx.session, name: "Target")
-
-        fx.session.moveTab(fx.tabs[0].id, to: .project(target.id))
-
-        // The selection stays on the source container so the user keeps the
-        // same sidebar row and sees its empty state there.
-        #expect(fx.session.primarySelection.activeContainerID == .project(fx.sourceID))
-        #expect(fx.session.primarySelection.activeTabID == nil)
-    }
-
-    @Test("moving a tab to its own container is a no-op")
+    @Test("moving a middle tab to its own container preserves its state and order")
     func moveTab_sameContainer_isNoOp() {
-        let fx = makeSession(sourceTabCount: 2)
-        fx.session.setActiveTab(fx.tabs[0].id)
-        let snapshotBefore = fx.session.tabs.map(\.id)
+        let fixture = makeSession(sourceTabCount: 3)
+        let session = fixture.session
+        let middle = fixture.tabs[1]
+        let row = ContainerID.project(fixture.sourceID)
+        session.setActiveTab(middle.id)
+        session.update(middle.id) {
+            $0.titleOverride = "Pinned tab"
+            $0.paletteIndex = 3
+        }
+        let before = session.tabs
 
-        fx.session.moveTab(fx.tabs[1].id, to: .project(fx.sourceID))
+        session.moveTab(middle.id, to: row)
 
-        #expect(fx.session.tabs.map(\.id) == snapshotBefore)
-        #expect(fx.session.primarySelection.activeTabID == fx.tabs[0].id)
+        #expect(session.tabs == before)
+        #expect(session.primarySelection.activeContainerID == row)
+        #expect(session.primarySelection.activeTabID == middle.id)
+        #expect(session.lastActiveTabID(for: row) == middle.id)
     }
 
     // MARK: - reorderTab
@@ -211,24 +246,25 @@ struct WorkspaceSessionTabsTests {
     // `reorderTab(src, before/after: src)`: a tab placed against itself
     // stays where it is, and a drag to the top lands at the top.
 
-    @Test("reordering a tab before itself leaves the order unchanged")
-    func reorderTab_beforeSelf_isNoOp() {
-        let fx = makeSession(sourceTabCount: 3)
-        let before = fx.session.tabs.map(\.id)
+    @Test(arguments: [false, true])
+    func reorderTab_againstItself_preservesOrderAndSelection(placesAfter: Bool) {
+        let fixture = makeSession(sourceTabCount: 3)
+        let session = fixture.session
+        let middle = fixture.tabs[1]
+        let row = ContainerID.project(fixture.sourceID)
+        session.setActiveTab(middle.id)
+        let before = session.tabs
 
-        fx.session.reorderTab(fx.tabs[2].id, before: fx.tabs[2].id)
+        if placesAfter {
+            session.reorderTab(middle.id, after: middle.id)
+        } else {
+            session.reorderTab(middle.id, before: middle.id)
+        }
 
-        #expect(fx.session.tabs.map(\.id) == before)
-    }
-
-    @Test("reordering a tab after itself leaves the order unchanged")
-    func reorderTab_afterSelf_isNoOp() {
-        let fx = makeSession(sourceTabCount: 3)
-        let before = fx.session.tabs.map(\.id)
-
-        fx.session.reorderTab(fx.tabs[2].id, after: fx.tabs[2].id)
-
-        #expect(fx.session.tabs.map(\.id) == before)
+        #expect(session.tabs == before)
+        #expect(session.primarySelection.activeTabID == middle.id)
+        #expect(session.primarySelection.activeContainerID == row)
+        #expect(session.lastActiveTabID(for: row) == middle.id)
     }
 
     @Test("dragging the bottom tab to the top lands it at the front, not the end")
@@ -240,39 +276,37 @@ struct WorkspaceSessionTabsTests {
         #expect(fx.session.tabs.map(\.id) == [fx.tabs[2].id, fx.tabs[0].id, fx.tabs[1].id])
     }
 
-    @Test("a scratch tab moved into a project keeps its prefix and color, not its group's folder")
-    func moveTab_intoAProject_dropsTheGroupFolderDefault() {
+    @Test(arguments: [false, true])
+    func moveTab_intoAProjectRow_replacesOnlyTheFolderDefault(isWorktree: Bool) throws {
         let (session, project) = WorkspaceSessionFixture.withProject()
+        let worktree = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, admission: .created)
+        let destination: ContainerID = isWorktree ? .worktree(projectID: project.id, worktreeID: worktree.id) : .project(project.id)
+        let destinationFolder = isWorktree ? worktree.workingDirectory.path : project.rootURL.path
+        let scratchFolder = WorkspaceSessionFixture.projectRootURL("scratch")
+        session.quickTabDefaultsProvider = { (mode: .fixed, path: scratchFolder) }
         let tab = session.openTab(container: .loose)
-        session.update(tab.id) { t in
-            t.namePrefix = "prod"
-            t.paletteIndex = 2
-            t.cwdMode = .fixed
-            t.cwdPath = URL(fileURLWithPath: "/tmp/servers")
+        let pane = try #require(tab.splitTree.allLeafIDs().first)
+        try #require(tab.workingDirectory == scratchFolder.path)
+        session.update(tab.id) {
+            $0.namePrefix = "prod"
+            $0.paletteIndex = 2
+            $0.cwdMode = .fixed
+            $0.cwdPath = scratchFolder
+            $0.pwd = "/tmp/weir-live-pane"
         }
+        session.setWorkingDirectory(paneID: pane, path: "/tmp/weir-live-pane")
 
-        session.moveTab(tab.id, to: .project(project.id))
+        session.moveTab(tab.id, to: destination)
 
-        let moved = session.tab(tab.id)
-        #expect(moved?.namePrefix == "prod")
-        #expect(moved?.paletteIndex == 2)
-        #expect(moved?.cwdMode == nil)
-        #expect(moved?.cwdPath == nil)
-    }
-
-    @Test("a scratch tab moved into a worktree drops the group folder too")
-    func moveTab_intoAWorktree_dropsTheGroupFolderDefault() {
-        let (session, project) = WorkspaceSessionFixture.withProject()
-        let worktree = ContainerID.worktree(projectID: project.id, worktreeID: UUID())
-        let intoWorktree = session.openTab(container: .loose)
-        session.update(intoWorktree.id) { t in
-            t.cwdMode = .fixed
-            t.cwdPath = URL(fileURLWithPath: "/tmp/servers")
-        }
-
-        session.moveTab(intoWorktree.id, to: worktree)
-
-        #expect(session.tab(intoWorktree.id)?.cwdMode == nil)
-        #expect(session.tab(intoWorktree.id)?.cwdPath == nil)
+        let moved = try #require(session.tab(tab.id))
+        #expect(moved.container == destination)
+        #expect(moved.splitTree == tab.splitTree)
+        #expect(moved.namePrefix == "prod")
+        #expect(moved.paletteIndex == 2)
+        #expect(moved.cwdMode == nil)
+        #expect(moved.cwdPath == nil)
+        #expect(moved.workingDirectory == destinationFolder)
+        #expect(moved.pwd == "/tmp/weir-live-pane")
+        #expect(session.workingDirectory(paneID: pane) == "/tmp/weir-live-pane")
     }
 }

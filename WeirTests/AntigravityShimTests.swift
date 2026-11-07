@@ -83,8 +83,12 @@ struct AntigravityShimTests {
             #expect(FileManager.default.fileExists(atPath: placed.appendingPathComponent("hooks.json").path))
             #expect(FileManager.default.fileExists(atPath: placed.appendingPathComponent("scripts/weir-dispatch").path))
             let environment = try String(contentsOf: root.appendingPathComponent("env"), encoding: .utf8)
-            #expect(environment.contains("WEIR_ANTIGRAVITY_HOOK_DIR="))
-            #expect(environment.contains("WEIR_ANTIGRAVITY_PID="))
+            let hook = try #require(environment.split(separator: "\n").first { $0.hasPrefix("WEIR_ANTIGRAVITY_HOOK_DIR=") })
+            let directory = String(hook.dropFirst("WEIR_ANTIGRAVITY_HOOK_DIR=".count))
+            let expectedDirectory = try AgentCatalogFixture.shimFolder("antigravity-shim")
+            #expect(URL(fileURLWithPath: directory).resolvingSymlinksInPath().path == expectedDirectory.resolvingSymlinksInPath().path)
+            let pid = try #require(environment.split(separator: "\n").first { $0.hasPrefix("WEIR_ANTIGRAVITY_PID=") })
+            #expect(Int32(pid.dropFirst("WEIR_ANTIGRAVITY_PID=".count)) == process.processIdentifier)
         }
     }
 
@@ -169,9 +173,23 @@ struct AntigravityShimTests {
     /// fails leaves `agy` to start.
     @Test func shim_withABrokenHook_stillStartsAgy() throws {
         try withTempDir { root in
-            let process = try runShim(root: root, home: root.appendingPathComponent("home"), args: ["--conversation", "a"])
+            let called = root.appendingPathComponent("failed-hook")
+            let helper = root.appendingPathComponent("helper")
+            try AgentCatalogFixture.makeExecutable(
+                helper,
+                script: "#!/bin/sh\ncat > \"\(called.path)\"\nexit 3\n"
+            )
+            let process = try runShim(
+                root: root,
+                home: root.appendingPathComponent("home"),
+                args: ["--conversation", "a"],
+                environment: ["WEIR_HOOK_HELPER": helper.path]
+            )
+            let report = try JSONObjectFixture.object(Data(contentsOf: called))
+            #expect(report["hook_event_name"] as? String == "WeirLaunch")
+            #expect(report["conversationId"] as? String == "a")
             #expect(process.terminationStatus == 0)
-            #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("args").path))
+            #expect(ShimHarness.recordedArgv(root.appendingPathComponent("args")) == ["--conversation", "a"])
         }
     }
 

@@ -43,10 +43,17 @@ mod tests {
 
     #[test]
     fn rejects_malformed_values() {
-        assert!(endpoint("relative,1,0", "%1").is_none());
-        assert!(endpoint("/s,x,0", "%1").is_none());
-        assert!(endpoint("/s,1,0", "3").is_none());
-        assert!(endpoint("/s,1,0", "%").is_none());
-        assert!(endpoint("/s,1", "%1").is_none());
+        for (tmux, pane) in [
+            ("relative,1,0", "%1"),
+            ("/s,x,0", "%1"),
+            ("/s,4294967296,0", "%1"),
+            ("/s,1,0", "3"),
+            ("/s,1,0", "%"),
+            ("/s,1,0", "%1x"),
+            ("/s,1,0", "%１２"),
+            ("/s,1", "%1"),
+        ] {
+            assert!(endpoint(tmux, pane).is_none(), "{tmux:?}, {pane:?}");
+        }
     }
 }

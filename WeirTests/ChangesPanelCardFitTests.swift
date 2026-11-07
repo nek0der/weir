@@ -175,8 +175,8 @@ extension SupervisionFootBarTests {
             .sizeThatFits(in: CGSize(width: 4000, height: 4000))
     }
 
-    /// The tight size of the label's contents, without the column's fixed
-    /// width, so a change in what it draws shows.
+    /// The hosted label contents' intrinsic size, which can change even when
+    /// the outer column keeps its fixed width.
     private static func contentSize(_ label: TurnCardLabel) -> CGSize {
         NSHostingController(rootView: label.content.fixedSize().environment(\.locale, Locale(identifier: "en")))
             .sizeThatFits(in: CGSize(width: 4000, height: 4000))
@@ -239,6 +239,7 @@ extension SupervisionFootBarTests {
             return NSHostingController(rootView: lead.fixedSize()).sizeThatFits(in: CGSize(width: 4000, height: 4000)).width
         }
         let colored = width(identity: 3, reservesBarSlot: true)
+        #expect(colored > 20.5)
         #expect(abs(width(identity: nil, reservesBarSlot: true) - colored) < 0.5)
         #expect(abs(width(identity: nil, reservesBarSlot: false) - 20) < 0.5)
         #expect(abs(width(identity: 3, reservesBarSlot: false) - colored) < 0.5)
@@ -256,8 +257,11 @@ extension SupervisionFootBarTests {
         // The narrowest line and the widest changes decide, across cards.
         let wide = TurnFactColumns(changes: 200, line: 400)
         let narrow = TurnFactColumns(changes: 10, line: 250)
-        #expect(wide.widest(narrow).line == 250)
-        #expect(!wide.widest(narrow).showsDuration)
+        let combined = wide.widest(narrow)
+        #expect(combined.line == 250)
+        #expect(combined.changes == 200)
+        #expect(!combined.showsDuration)
+        #expect(narrow.widest(wide) == combined)
         // A card of words alone takes the checks' column too, so words that
         // fit there keep the duration.
         let words = TurnFactColumns(checks: 28, tokens: 44, duration: 30, words: 100, line: 200)

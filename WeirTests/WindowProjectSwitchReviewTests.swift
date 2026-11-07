@@ -26,6 +26,7 @@ extension WindowProjectSwitchTests {
         fixture.registry.forgetProjectsGone(in: fixture.session)
 
         #expect(fixture.primary.review?.opening == tab.opening)
+        #expect(fixture.primary.review?.agentPaneID == pane)
         #expect(fixture.primary.reviewHasUnsavedComment)
         #expect(fixture.primary.reviewSession?.composer.text == "Why this?")
         // The review open still reads its worktree: its records stay.
@@ -52,7 +53,9 @@ extension WindowProjectSwitchTests {
 
         #expect(window.selection.shownProjectID == project.id)
         #expect(window.review?.opening == tab.opening)
+        #expect(window.review?.agentPaneID == pane)
         #expect(window.reviewHasUnsavedComment)
+        #expect(window.reviewSession?.composer.text == "Why this?")
         #expect(registry.parkedReviews.isEmpty)
     }
 }

@@ -19,15 +19,13 @@ struct BranchNameSuggesterTests {
         BranchNameSuggester.suggest(today: today, calendar: calendar) { taken.contains($0) }
     }
 
-    /// The sheet takes no instruction to name a branch from: the name is
-    /// the date's.
-    @Test func theName_isATaskBranchOfTheDate() {
-        #expect(Self.suggest() == "task/1011-1")
-    }
-
-    @Test func aNameTaken_getsTheNextNumber() {
-        #expect(Self.suggest(taken: ["task/1011-1", "task/1011-2"]) == "task/1011-3")
-        #expect(Self.suggest(taken: ["task/1011-2"]) == "task/1011-1")
+    @Test(arguments: [
+        (Set<String>(), "task/1011-1"),
+        (Set(["task/1011-1", "task/1011-2"]), "task/1011-3"),
+        (Set(["task/1011-2"]), "task/1011-1")
+    ])
+    func theName_usesTheFirstAvailableNumber(taken: Set<String>, expected: String) {
+        #expect(Self.suggest(taken: taken) == expected)
     }
 
     @Test(arguments: ["feat/x", "task/1011-1", "fix_it", "release/1.2"])
@@ -63,12 +61,12 @@ struct BranchNameSuggesterTests {
         #expect(!BranchNameSuggester.isValid(name))
     }
 
-    @Test func aBranchsFolder_hasNoSlash() {
-        #expect(BranchNameSuggester.folderLeaf(of: "feat/a/b") == "feat-a-b")
-    }
-
-    @Test func branchesWithOneLastPart_getTheirOwnFolders() {
-        #expect(BranchNameSuggester.folderLeaf(of: "feature/alpha") == "feature-alpha")
-        #expect(BranchNameSuggester.folderLeaf(of: "fix/alpha") == "fix-alpha")
+    @Test(arguments: [
+        ("feat/a/b", "feat-a-b"),
+        ("feature/alpha", "feature-alpha"),
+        ("fix/alpha", "fix-alpha")
+    ])
+    func aBranchsFolder_preservesEveryComponent(branch: String, expected: String) {
+        #expect(BranchNameSuggester.folderLeaf(of: branch) == expected)
     }
 }

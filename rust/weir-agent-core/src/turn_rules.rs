@@ -532,49 +532,50 @@ mod tests {
 
     #[test]
     fn every_ending_is_a_step_and_only_for_a_provider_that_records_turns() {
+        let stop = |continues_after_stop_hook| AgentEvent::TurnFinished {
+            continues_after_stop_hook,
+            titles: None,
+            cache: None,
+            reply: None,
+            background_work: None,
+        };
         let records = descriptor(&[Capability::TurnSnapshot]);
-        assert_eq!(
-            turn_step(&AgentEvent::Interrupted, &records, None, NOW),
-            Some(end(TurnPhase::Interrupted))
-        );
-        assert_eq!(
-            turn_step(
-                &AgentEvent::Failed {
+        for (label, event, phase, continues_ended_turn) in [
+            (
+                "interrupted",
+                AgentEvent::Interrupted,
+                TurnPhase::Interrupted,
+                false,
+            ),
+            (
+                "failed",
+                AgentEvent::Failed {
                     error: "x".into(),
                     usage_limit: None,
                     kind: None,
                 },
-                &records,
-                None,
-                NOW
+                TurnPhase::Failed,
+                false,
             ),
-            Some(end(TurnPhase::Failed))
-        );
-        assert_eq!(
-            turn_step(
-                &AgentEvent::TurnFinished {
-                    continues_after_stop_hook: true,
-                    titles: None,
-                    cache: None,
-                    reply: None,
-                    background_work: None,
-                },
-                &records,
+            ("stop", stop(false), TurnPhase::Finished, false),
+            ("continued stop", stop(true), TurnPhase::Finished, true),
+        ] {
+            assert_eq!(
+                turn_step(&event, &records, None, NOW),
+                Some(TurnStep::End {
+                    phase,
+                    continues_ended_turn
+                }),
+                "{label}"
+            );
+            assert_eq!(
+                turn_step(&event, &descriptor(&[]), None, NOW),
                 None,
-                NOW
-            ),
-            Some(TurnStep::End {
-                phase: TurnPhase::Finished,
-                continues_ended_turn: true
-            }),
-            "a stop after a stop hook says it continues the turn"
-        );
+                "{label}"
+            );
+        }
         assert_eq!(
             turn_step(&AgentEvent::CompactionFinished, &records, None, NOW),
-            None
-        );
-        assert_eq!(
-            turn_step(&AgentEvent::Interrupted, &descriptor(&[]), None, NOW),
             None
         );
     }
@@ -597,27 +598,31 @@ mod tests {
             )
         };
         let idle = |prev: &RunRecord| idle_with(prev, false);
+        let interrupted = Some(TurnStep::End {
+            phase: TurnPhase::Interrupted,
+            continues_ended_turn: false,
+        });
         // Work after the turn's `Stop` takes that turn's end again, keeping
         // how it ended.
         let after_stop = record(
             r#"{"schemaVersion":3,"paneId":"P","state":"running","updatedAt":"t","outsideTurnRest":"finished"}"#,
         );
-        assert_eq!(idle(&after_stop), Some(TurnStep::Retake));
+        assert_eq!(idle(&after_stop), Some(TurnStep::Retake), "work after Stop");
         // Work from the prompt after a session start has no turn.
         let from_idle = record(
             r#"{"schemaVersion":3,"paneId":"P","state":"running","updatedAt":"t","outsideTurnRest":"idle"}"#,
         );
-        assert_eq!(idle(&from_idle), None);
+        assert_eq!(idle(&from_idle), None, "outside work after session start");
         // A turn open for a minute stopped without a `Stop`; one just begun
         // has not sat idle yet.
         let open = record(
             r#"{"schemaVersion":3,"paneId":"P","state":"compacting","updatedAt":"t","runStartedAt":"2026-09-14T00:00:00Z"}"#,
         );
-        assert_eq!(idle(&open), Some(end(TurnPhase::Interrupted)));
+        assert_eq!(idle(&open), interrupted, "old open turn");
         let young = record(
             r#"{"schemaVersion":3,"paneId":"P","state":"running","updatedAt":"t","runStartedAt":"2026-09-14T00:00:30Z"}"#,
         );
-        assert_eq!(idle(&young), None);
+        assert_eq!(idle(&young), None, "recently begun turn");
         // A run at rest has nothing for it to end.
         let finished =
             record(r#"{"schemaVersion":3,"paneId":"P","state":"finished","updatedAt":"t"}"#);
@@ -628,8 +633,8 @@ mod tests {
         let waiting = record(
             r#"{"schemaVersion":3,"paneId":"P","state":"needsInput","updatedAt":"t","waitKind":"question","runStartedAt":"2026-09-14T00:00:00Z"}"#,
         );
-        assert_eq!(idle_with(&waiting, true), Some(end(TurnPhase::Interrupted)));
-        assert_eq!(idle_with(&waiting, false), None);
+        assert_eq!(idle_with(&waiting, true), interrupted, "declined call");
+        assert_eq!(idle_with(&waiting, false), None, "unanswered call");
         assert_eq!(
             turn_step(
                 &AgentEvent::AwaitingPrompt {
@@ -644,37 +649,55 @@ mod tests {
     }
 
     #[test]
-    fn the_second_event_of_one_call_has_an_id_of_its_own() {
+    fn events_after_the_first_have_stable_indexed_ids() {
         let call = EventId::invocation(&ProviderId::new("claude").expect("id"), Uuid::from_u128(1));
-        let first = event_id_for(Some(&call), 0).expect("id");
-        let second = event_id_for(Some(&call), 1).expect("id");
-        assert_eq!(first, call);
-        assert_ne!(second, first);
-        assert_eq!(
-            event_id_for(Some(&call), 1),
-            Some(second),
-            "and the same on a retry"
-        );
+        for (index, expected) in [
+            (0, "claude:invocation:00000000-0000-0000-0000-000000000001"),
+            (
+                1,
+                "claude:invocation:00000000-0000-0000-0000-000000000001#1",
+            ),
+            (
+                2,
+                "claude:invocation:00000000-0000-0000-0000-000000000001#2",
+            ),
+        ] {
+            let id = event_id_for(Some(&call), index).expect("id");
+            assert_eq!(id.as_str(), expected, "index {index}");
+            assert_eq!(
+                event_id_for(Some(&call), index),
+                Some(id),
+                "retry at {index}"
+            );
+        }
         assert_eq!(event_id_for(None, 0), None);
     }
 
     #[test]
     fn a_run_without_a_session_is_its_own_conversation() {
-        let provider = descriptor(&[]);
-        let fallback = conversation_of(&provider.id, None, "R1");
-        assert!(fallback.is_fallback);
-        assert_eq!(fallback.conversation_id, "R1");
+        let provider = ProviderId::new("codex").expect("id");
+        let fallback = ConversationKey {
+            provider: ProviderId::new("codex").expect("id"),
+            conversation_id: "R1".into(),
+            is_fallback: true,
+        };
+        assert_eq!(conversation_of(&provider, None, "R1"), fallback);
         let mut record = RunRecord::decode(
             br#"{"schemaVersion":3,"paneId":"P","runId":"R1","state":"running","updatedAt":"2026-10-12T00:00:00Z","sessionId":"s1"}"#,
-        )
-        .expect("record");
+        ).expect("record");
         assert_eq!(record.state, RunState::Running);
         assert_eq!(
-            conversation_of(&provider.id, Some(&record), "R1").conversation_id,
-            "s1"
+            conversation_of(&provider, Some(&record), "R1"),
+            ConversationKey {
+                provider: ProviderId::new("codex").expect("id"),
+                conversation_id: "s1".into(),
+                is_fallback: false,
+            }
         );
         record.session_id = Some(String::new());
-        assert!(conversation_of(&provider.id, Some(&record), "R1").is_fallback);
+        assert_eq!(conversation_of(&provider, Some(&record), "R1"), fallback);
+        record.session_id = None;
+        assert_eq!(conversation_of(&provider, Some(&record), "R1"), fallback);
     }
 
     #[test]
@@ -699,8 +722,8 @@ mod tests {
                 diff: Some(DiffStat {
                     files: 1,
                     added: 2,
-                    removed: 0,
-                    has_shell_changes: false,
+                    removed: 1,
+                    has_shell_changes: true,
                     added_bytes: Some(10),
                 }),
                 usage: None,
@@ -712,8 +735,24 @@ mod tests {
         );
         assert_eq!(ended.phase, TurnPhase::Interrupted);
         assert_eq!(ended.duration_seconds, Some(90));
-        assert!(
-            matches!(ended.changes, ChangeSummary::Changed { files: 1, .. }),
+        assert_eq!(ended.finished_at.as_deref(), Some("2026-10-12T00:01:30Z"));
+        assert_eq!(
+            ended.end,
+            SnapshotStatus::Captured {
+                tree: "b".into(),
+                root: "/repo".into()
+            }
+        );
+        assert_eq!(ended.added_bytes, Some(10));
+        assert_eq!(
+            ended.changes,
+            ChangeSummary::Changed {
+                files: 1,
+                added: 2,
+                removed: 1,
+                has_shell_changes: true,
+                large_files_skipped: 0,
+            },
             "an interrupted turn still says what it changed"
         );
     }
@@ -756,43 +795,43 @@ mod tests {
 
     #[test]
     fn the_prompt_head_is_one_line_of_at_most_eighty_characters() {
-        let long = "あ".repeat(PROMPT_HEAD_CHARS + 5);
+        let expected = "あ".repeat(80);
+        let long = format!("{expected}discarded suffix");
         let (kind, head) = prompt_head(&long);
         let head = head.expect("head");
         assert_eq!(kind, Some(PromptKind::Text));
-        assert_eq!(
-            head.chars().count(),
-            PROMPT_HEAD_CHARS,
-            "counted in characters, not bytes"
-        );
+        assert_eq!(head, expected, "counted in characters, not bytes");
         assert_eq!(prompt_head(" \n\t "), (None, None));
     }
 
     #[test]
-    fn the_head_after_a_long_reminder_is_the_persons_words() {
+    fn a_prompt_head_keeps_the_words_for_its_source() {
         let reminder = format!(
             "<system-reminder>\n{}\n</system-reminder>\n",
             "The user opened a file in the IDE. ".repeat(10)
         );
-        let (kind, head) = prompt_head(&(reminder.clone() + "add  the\ntests"));
-        assert_eq!(kind, Some(PromptKind::Text));
-        assert_eq!(head.as_deref(), Some("add the tests"));
+        for (input, kind, expected) in [
+            (
+                reminder.clone() + "add  the\ntests",
+                PromptKind::Text,
+                "add the tests",
+            ),
+            (
+                "<task-notification>\n<task-id>b1</task-id>".to_owned(),
+                PromptKind::BackgroundTask,
+                "<task-notification> <task-id>b1</task-id>",
+            ),
+        ] {
+            let (observed, head) = prompt_head(&input);
+            assert_eq!(observed, Some(kind), "{kind:?}");
+            assert_eq!(head.as_deref(), Some(expected), "{kind:?}");
+        }
         // A reminder with nothing after it is the harness's, kept as it came.
         let (kind, head) = prompt_head(&reminder);
         assert_eq!(kind, Some(PromptKind::Injected));
         assert!(
             head.expect("head")
                 .starts_with("<system-reminder> The user")
-        );
-    }
-
-    #[test]
-    fn a_prompt_the_harness_wrote_keeps_its_head_as_it_came() {
-        let (kind, head) = prompt_head("<task-notification>\n<task-id>b1</task-id>");
-        assert_eq!(kind, Some(PromptKind::BackgroundTask));
-        assert_eq!(
-            head.as_deref(),
-            Some("<task-notification> <task-id>b1</task-id>")
         );
     }
 
@@ -843,11 +882,9 @@ mod tests {
 
     #[test]
     fn the_reply_head_keeps_at_most_four_hundred_characters() {
-        let long = "あ".repeat(REPLY_HEAD_CHARS + 10);
-        assert_eq!(
-            reply_head(&long).map(|head| head.chars().count()),
-            Some(REPLY_HEAD_CHARS)
-        );
+        let expected = "あ".repeat(400);
+        let long = format!("{expected}discarded suffix");
+        assert_eq!(reply_head(&long), Some(expected));
     }
 
     /// A turn whose begin left nothing to diff against still finishes, and
@@ -862,12 +899,13 @@ mod tests {
             skipped: Vec::new(),
             git_context: None,
         };
-        for (begin, end, reason) in [
-            (SnapshotStatus::Pending, captured("b"), "beginMissing"),
+        for (begin, end, reason, duration) in [
+            (SnapshotStatus::Pending, captured("b"), "beginMissing", None),
             (
                 SnapshotStatus::NotGit,
                 taken(SnapshotStatus::NotGit),
                 "notGit",
+                Some(10),
             ),
         ] {
             let begun = start(taken(begin), &event);
@@ -886,6 +924,7 @@ mod tests {
                 },
             );
             assert_eq!(ended.phase, TurnPhase::Finished, "{reason}");
+            assert_eq!(ended.duration_seconds, duration, "{reason}");
             assert_eq!(
                 ended.changes,
                 ChangeSummary::Unavailable {
@@ -895,9 +934,6 @@ mod tests {
         }
     }
 
-    /// A continued stop reads the turn again: a whole reading replaces what
-    /// the turn held; a partial one keeps the larger of each count and says
-    /// it is short; a partial list of checks does not replace a longer one.
     /// A stop says what the turn ended on, even when it says nothing: the
     /// stop that ends a turn after a stop hook replaces the earlier stop's
     /// reply. An end that is no stop keeps the reply it found.
@@ -923,10 +959,15 @@ mod tests {
         assert_eq!(stopped.reply_head.as_deref(), Some("All set."));
         let retaken = end_record(&stopped, end(None));
         assert_eq!(retaken.reply_head.as_deref(), Some("All set."));
-        let continued = end_record(&stopped, end(Some("```\nonly code\n```")));
-        assert_eq!(continued.reply_head, None);
+        let continued = end_record(&stopped, end(Some("Tests pass.")));
+        assert_eq!(continued.reply_head.as_deref(), Some("Tests pass."));
+        let wordless = end_record(&continued, end(Some("```\nonly code\n```")));
+        assert_eq!(wordless.reply_head, None);
     }
 
+    /// A continued stop reads the turn again: a whole reading replaces what
+    /// the turn held; a partial one keeps the larger counts, and a partial
+    /// list of checks does not replace a longer one.
     #[test]
     fn a_later_end_keeps_the_fuller_reading() {
         let event =
@@ -969,7 +1010,15 @@ mod tests {
             end(Some(usage(3, 20, true)), Some(vec![check(0)]), true),
         );
         assert_eq!(partial.usage, Some(usage(5, 20, true)));
-        assert_eq!(partial.check_count, 2);
+        assert_eq!((partial.check_count, partial.failure_count), (2, 1));
+        let exits = |turn: &TurnRecord| {
+            turn.checks
+                .iter()
+                .map(|mark| mark.exit_code)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(exits(&partial), [Some(1), Some(0)]);
+        assert_eq!(partial.last_check, Some(check(0)));
         assert!(
             partial.are_checks_partial,
             "more ran than the record counts"
@@ -984,22 +1033,32 @@ mod tests {
             (3, 1),
             "a failure the partial list lost is still counted"
         );
+        assert_eq!(exits(&longer), [Some(0), Some(0), Some(0)]);
+        assert!(longer.are_checks_partial);
+
+        let unread = end_record(&partial, end(None, None, false));
+        assert_eq!(unread.usage, partial.usage);
+        assert_eq!(unread.checks, partial.checks);
+        assert_eq!(unread.last_check, partial.last_check);
+        assert_eq!((unread.check_count, unread.failure_count), (2, 1));
+        assert!(unread.are_checks_partial);
 
         let whole = end_record(
             &partial,
-            end(
-                Some(usage(9, 30, false)),
-                Some(vec![check(1), check(0), check(0)]),
-                false,
-            ),
+            end(Some(usage(2, 3, false)), Some(vec![check(0)]), false),
         );
-        assert_eq!(whole.usage, Some(usage(9, 30, false)));
-        assert_eq!((whole.check_count, whole.failure_count), (3, 1));
+        assert_eq!(whole.usage, Some(usage(2, 3, false)));
+        assert_eq!((whole.check_count, whole.failure_count), (1, 0));
+        assert_eq!(exits(&whole), [Some(0)]);
+        assert_eq!(whole.last_check, Some(check(0)));
         assert!(!whole.are_checks_partial);
 
         let unread = end_record(&whole, end(None, None, false));
         assert_eq!(unread.usage, whole.usage);
         assert_eq!(unread.checks, whole.checks);
+        assert_eq!(unread.last_check, whole.last_check);
+        assert_eq!((unread.check_count, unread.failure_count), (1, 0));
+        assert!(!unread.are_checks_partial);
     }
 
     fn titled_start(title: Option<&'static str>, event: &EventId) -> TurnRecord {
@@ -1051,16 +1110,15 @@ mod tests {
     }
 
     #[test]
-    fn end_record_takes_the_latest_title() {
+    fn end_record_replaces_the_title_only_when_one_is_known() {
         let previous = titled_start(Some("old"), &title_event());
-        let ended = end_record(&previous, titled_end(Some("new")));
-        assert_eq!(ended.conversation_title, Some("new".to_owned()));
-    }
-
-    #[test]
-    fn end_record_keeps_the_title_when_none_is_known() {
-        let previous = titled_start(Some("old"), &title_event());
-        let ended = end_record(&previous, titled_end(None));
-        assert_eq!(ended.conversation_title, Some("old".to_owned()));
+        for (title, expected) in [(Some("new"), "new"), (None, "old")] {
+            let ended = end_record(&previous, titled_end(title));
+            assert_eq!(
+                ended.conversation_title.as_deref(),
+                Some(expected),
+                "{title:?}"
+            );
+        }
     }
 }

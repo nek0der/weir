@@ -22,6 +22,7 @@ struct SettingsFileWatcherTests {
             watcher.start()
             defer { watcher.stop() }
             #expect(watcher.currentDirFD == -1)
+            #expect(watcher.currentFileFD == -1)
             #expect(!FileManager.default.fileExists(atPath: folder.path))
         }
     }
@@ -32,6 +33,7 @@ struct SettingsFileWatcherTests {
             let store = SettingsStore(directory: dir)
             let watcher = SettingsFileWatcher(store: store)
             watcher.start()
+            defer { watcher.stop() }
             let fd = watcher.currentDirFD
             try #require(fd >= 0)
             var watchedDirectory = stat()
@@ -39,6 +41,7 @@ struct SettingsFileWatcherTests {
 
             watcher.stop()
             await expectClosed(fd, thatNamed: watchedDirectory)
+            #expect(watcher.currentDirFD == -1)
         }
     }
 
@@ -49,6 +52,7 @@ struct SettingsFileWatcherTests {
             try write(minPaneSize: 120, to: store, options: .atomic)
             let watcher = SettingsFileWatcher(store: store)
             watcher.start()
+            defer { watcher.stop() }
             let fd = watcher.currentFileFD
             try #require(fd >= 0)
             var watchedFile = stat()
@@ -153,6 +157,7 @@ struct SettingsFileWatcherTests {
 
             try write(minPaneSize: 140, to: store, options: [])
             await expectReload(of: store, toMinPaneSize: 140)
+            #expect(holdsNamedFile(watcher, store))
 
             try write(minPaneSize: 160, to: store, options: [])
             await expectReload(of: store, toMinPaneSize: 160)

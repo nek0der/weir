@@ -107,7 +107,7 @@ struct GhosttyActionRoutingTests {
         // A project's tab: scratch tabs draw in one window only.
         let (session, project) = WorkspaceSessionFixture.withProject()
         let first = session.openTab(container: .project(project.id))
-        session.openTab(container: .project(project.id))
+        let next = session.openTab(container: .project(project.id))
         session.setActiveTab(first.id)
         let other = WorkspaceSessionFixture.addWindow(to: session)
         session.setActiveTab(first.id, in: other)
@@ -120,6 +120,6 @@ struct GhosttyActionRoutingTests {
             in: session
         )
 
-        #expect(route?.window == session.primaryWindowID)
+        #expect(route == GotoTabRoute.Route(tabID: next.id, window: session.primaryWindowID))
     }
 }

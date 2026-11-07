@@ -6,13 +6,11 @@ import SwiftUI
 import Testing
 @testable import Weir
 
-/// ⌘-click and ⌘Return open a project in a new window. A click is
-/// read from the event AppKit is handling only when that event is the
-/// click, so a press from the keyboard or VoiceOver, or an event kept from
-/// earlier, never opens one; and ⌘Return holds with Caps Lock on.
+/// ⌘-click and ⌘Return open a project in a new window. The click rule
+/// reads the event's type and flags; the shortcut compares its chord.
 @MainActor
 struct CommandModifierTests {
-    @Test func aCommandClick_isAClickWithCommandAlone_neverAKeptOrKeyEvent() {
+    @Test func aCommandClick_requiresAPrimaryMouseEventAndTheCommandChord() {
         let click = { (type: NSEvent.EventType, flags: NSEvent.ModifierFlags) in
             NewWindowModifier.isCommandClick(type: type, modifierFlags: flags)
         }
@@ -43,7 +41,7 @@ struct CommandModifierTests {
         #expect(NSEvent.ModifierFlags([.command, .capsLock, .numericPad, .function]).chord == .command)
     }
 
-    @Test func aCommandReturn_holdsWithCapsLockOn() {
+    @Test func aSwiftUICommandChord_ignoresCapsLockAndNumericPad() {
         #expect(EventModifiers([.command, .capsLock]).chord == .command)
         #expect(EventModifiers([.command, .numericPad]).chord == .command)
         #expect(EventModifiers([.command, .shift]).chord != .command)

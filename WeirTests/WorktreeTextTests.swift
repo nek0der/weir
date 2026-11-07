@@ -33,7 +33,9 @@ struct WorktreeTextTests {
         let title = WorktreeText.sheetTitle(project: "weir")
         #expect(title.resolved(in: Self.english) == "New Worktree in weir")
         #expect(title.resolved(in: Self.japanese) == "weir に新規ワークツリー")
-        #expect(SidebarHeaderText.newWorktree(in: "weir").resolved(in: Self.japanese) == "weir に新規ワークツリー…")
+        let header = SidebarHeaderText.newWorktree(in: "weir")
+        #expect(header.resolved(in: Self.english) == "New Worktree in weir…")
+        #expect(header.resolved(in: Self.japanese) == "weir に新規ワークツリー…")
     }
 
     /// The menu items and the empty lists name the row the same way. These
@@ -55,6 +57,8 @@ struct WorktreeTextTests {
         let key = try #require(KeyboardSettings().shortcut(for: .newTab)?.displayString)
         #expect(WorktreeText.emptyPaneDetail(newTabShortcut: key).resolved(in: Self.english)
             == "Choose a worktree in the sidebar, or open a new tab with \(key).")
+        #expect(WorktreeText.emptyPaneDetail(newTabShortcut: "⌃F5").resolved(in: Self.english)
+            == "Choose a worktree in the sidebar, or open a new tab with ⌃F5.")
         #expect(WorktreeText.emptyPaneDetail(newTabShortcut: "⌃F5").resolved(in: Self.japanese)
             == "サイドバーでワークツリーを選択するか、⌃F5 で新しいタブを開いてください。")
         #expect(WorktreeText.emptyPaneDetail(newTabShortcut: nil).resolved(in: Self.english)

@@ -42,6 +42,7 @@ struct PathFormattingTests {
     @Test("a path and a folder's name show their newline")
     func abbreviateHomeAndName_showANewlineInTheFolder() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
+        #expect(PathFormatting.abbreviateHome(home) == "~")
         #expect(PathFormatting.abbreviateHome(home + "/dev/feat\nline") == "~/dev/feat\u{240A}line")
         #expect(PathFormatting.abbreviateHome("/tmp/feat\nline") == "/tmp/feat\u{240A}line")
         #expect(PathFormatting.name(of: URL(fileURLWithPath: "/tmp/feat\nline")) == "feat\u{240A}line")

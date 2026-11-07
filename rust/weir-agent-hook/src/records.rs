@@ -680,7 +680,21 @@ mod tests {
         assert_eq!(previous.permissions().mode() & 0o777, 0o600);
         let current = fs::read_to_string(&path).expect("log");
         assert!(current.ends_with("after the limit\n"), "{current}");
-        assert!(current.len() < 100);
+        assert_eq!(current.lines().count(), 1);
+
+        fs::write(&path, vec![b'y'; full]).expect("fill again");
+        log.line("after the second rotation");
+        assert_eq!(
+            fs::read(scratch.0.join("hook.log.1")).expect("previous"),
+            vec![b'y'; full]
+        );
+        assert!(!scratch.0.join("hook.log.2").exists());
+        let current = fs::read_to_string(&path).expect("log");
+        assert!(
+            current.ends_with("after the second rotation\n"),
+            "{current}"
+        );
+        assert_eq!(current.lines().count(), 1);
     }
 
     /// A log an earlier build left readable and already past the limit is
@@ -693,11 +707,11 @@ mod tests {
         let scratch = Scratch::new("log-full");
         let path = scratch.0.join("hook.log");
         let full = usize::try_from(HOOK_LOG_LIMIT_BYTES).expect("limit");
-        fs::write(&path, vec![b'x'; full]).expect("earlier log");
+        fs::write(&path, vec![b'x'; full + 1]).expect("earlier log");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("chmod");
         HookLog::at(path.clone()).line("after the limit");
         let previous = fs::metadata(scratch.0.join("hook.log.1")).expect("previous");
-        assert_eq!(previous.len(), HOOK_LOG_LIMIT_BYTES);
+        assert_eq!(previous.len(), HOOK_LOG_LIMIT_BYTES + 1);
         assert_eq!(previous.permissions().mode() & 0o777, 0o600);
         let current = fs::metadata(&path).expect("log");
         assert_eq!(current.permissions().mode() & 0o777, 0o600);
@@ -752,7 +766,10 @@ mod tests {
         let path = scratch.0.join("transcript.jsonl");
         fs::write(&path, b"0123456789").expect("write transcript");
         assert_eq!(read_bounded_tail(&path, 4), Some(b"6789".to_vec()));
+        assert_eq!(read_bounded_tail(&path, 20), Some(b"0123456789".to_vec()));
+        assert_eq!(read_bounded_tail(&path, 0), Some(Vec::new()));
         assert_eq!(read_bounded_tail(&scratch.0, 4), None);
+        assert_eq!(read_bounded_tail(&scratch.0.join("missing"), 4), None);
     }
 
     #[cfg(unix)]

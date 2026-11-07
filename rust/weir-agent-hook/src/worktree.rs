@@ -854,14 +854,23 @@ mod tests {
         assert_eq!(shell_quoted(Path::new("/a/it's")), "'/a/it'\\''s'");
     }
 
+    #[cfg(unix)]
     #[test]
-    fn an_empty_branch_has_no_worktree_folder() {
-        let rules = ProjectRules {
-            root: PathBuf::from("/projects/repo"),
-            placement: Placement::InsideHidden,
-            bootstrap: Vec::new(),
-        };
-        assert_eq!(rules.worktree_path(""), None);
+    fn a_quoted_folder_reads_back_as_one_word_in_sh() {
+        for path in ["/a/my repo", "/a/it's", "/a/$HOME", "/a/one\ntwo", "/a/*"] {
+            let output = Command::new("/bin/sh")
+                .args([
+                    "-c",
+                    &format!(
+                        "set -- {}; printf '%s\\0' \"$@\"",
+                        shell_quoted(Path::new(path))
+                    ),
+                ])
+                .output()
+                .expect("shell arguments");
+            assert!(output.status.success(), "{path:?}");
+            assert_eq!(output.stdout, format!("{path}\0").as_bytes(), "{path:?}");
+        }
     }
 
     #[test]
@@ -1016,11 +1025,11 @@ mod tests {
         let marker = worktree.join("continued");
         let steps = [
             BootstrapStep {
-                command: "exit 1".into(),
+                command: "printf 'first\\n' > steps; exit 1".into(),
                 cwd: None,
             },
             BootstrapStep {
-                command: "touch continued".into(),
+                command: "printf 'second\\n' >> steps; touch continued".into(),
                 cwd: None,
             },
         ];
@@ -1028,5 +1037,9 @@ mod tests {
         run_bootstrap(&steps, &worktree);
 
         assert!(marker.exists(), "a failed step does not stop later steps");
+        assert_eq!(
+            std::fs::read_to_string(worktree.join("steps")).expect("step order"),
+            "first\nsecond\n"
+        );
     }
 }

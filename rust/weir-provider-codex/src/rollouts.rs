@@ -89,7 +89,10 @@ mod tests {
             ),
             (
                 "/home/sessions/2026/10/27",
-                vec!["rollout-2026-10-27T23-59-58-b.jsonl"],
+                vec![
+                    "rollout-2026-10-27T23-59-57-a.jsonl",
+                    "rollout-2026-10-27T23-59-58-b.jsonl",
+                ],
             ),
             (
                 "/home/sessions/2026/09/30",
@@ -135,8 +138,10 @@ mod tests {
         );
         assert!(!listed.borrow().contains(&sessions.join("2026/10/27")));
         // A rollout that lies in no sessions folder finds none.
+        listed.borrow_mut().clear();
         let archived = Path::new("/home/archived_sessions/2026/10/28/rollout-x.jsonl");
         assert!(subagent_rollouts(archived, &threads, &list).is_empty());
         assert!(subagent_rollouts(Path::new("rollout.jsonl"), &threads, &list).is_empty());
+        assert!(listed.borrow().is_empty());
     }
 }

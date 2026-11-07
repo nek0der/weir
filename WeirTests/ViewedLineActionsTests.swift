@@ -287,12 +287,15 @@ struct ViewedLineActionsTests {
 
     @Test func undoOnTheToast_movesTheLineBack_andClearsTheBar() throws {
         let (scene, turn) = try Self.recordedScene()
-        scene.actions.markViewed(scene.itemID, inPane: Self.pane)
+        try #require(scene.actions.markViewed(scene.itemID, inPane: Self.pane))
+        try #require(scene.lines.isViewed(turn))
+        try #require(scene.toasts.current(in: scene.window.id)?.undo != nil)
 
         scene.toasts.undo(in: scene.window.id)
 
         #expect(!scene.lines.isViewed(turn))
         #expect(scene.window.decisionBarDone[Self.pane] == nil)
+        #expect(scene.toasts.current(in: scene.window.id) == nil)
     }
 
     @Test func markingViewed_stopsAtTheLastTurnShown() throws {
@@ -300,7 +303,7 @@ struct ViewedLineActionsTests {
         let unseen = try Fixture.turn("T2", changes: Fixture.changedFiles, number: 2)
         let scene = Scene(conversation: Fixture.conversation, history: [Fixture.conversation: [shown, unseen]])
 
-        scene.actions.markViewed(scene.itemID, through: 1, inPane: Self.pane)
+        try #require(scene.actions.markViewed(scene.itemID, through: 1, inPane: Self.pane))
 
         #expect(scene.lines.isViewed(shown))
         #expect(!scene.lines.isViewed(unseen), "it joined after the bar was read")
@@ -331,12 +334,11 @@ struct ViewedLineActionsTests {
 
         let moves = scene.actions.markRestored([turns[1], turns[2]])
 
-        #expect(moves.count == 1)
-        #expect(scene.lines.isViewed(turns[2]))
+        #expect(moves.map(\.conversation) == [Fixture.conversation])
+        #expect(turns.map(scene.lines.isViewed) == [true, true, true])
         #expect(scene.toasts.current(in: scene.window.id) == nil, "the restore's own toast says what happened")
         scene.actions.takeBackRestored(moves)
-        #expect(!scene.lines.isViewed(turns[1]))
-        #expect(scene.lines.isViewed(turns[0]))
+        #expect(turns.map(scene.lines.isViewed) == [true, false, false])
     }
 
     /// The line cannot pass an unviewed turn whose changes are still there.
@@ -345,7 +347,8 @@ struct ViewedLineActionsTests {
         let scene = Scene(conversation: Fixture.conversation, history: [Fixture.conversation: turns])
 
         #expect(scene.actions.markRestored([turns[2]]).isEmpty)
-        #expect(!scene.lines.isViewed(turns[0]))
+        #expect(turns.map(scene.lines.isViewed) == [false, false, false])
+        #expect(scene.lines.line(of: Fixture.conversation) == nil)
     }
 
     /// A turn that only answered has nothing to read: the line passes it.
@@ -358,12 +361,15 @@ struct ViewedLineActionsTests {
         #expect(scene.lines.isViewed(changed))
     }
 
-    @Test func aRunNoTurnRecordStandsFor_isReadByItsEpisode() {
+    @Test func aRunNoTurnRecordStandsFor_isReadByItsEpisode() throws {
         let scene = Scene(conversation: nil, history: [:])
+        let runtime = try #require(scene.attention.allRuntimes.first)
+        #expect(!scene.attention.isViewed(runtime))
 
         #expect(scene.actions.markViewed(scene.itemID, inPane: Self.pane))
 
-        #expect(scene.attention.allRuntimes.allSatisfy(scene.attention.isViewed))
+        #expect(scene.attention.isViewed(runtime))
+        #expect(scene.attention.viewedRuntimeTokens[runtime.id] == runtime.attentionEventToken)
         #expect(scene.window.decisionBarDone[Self.pane] == nil, "nothing to undo")
         #expect(scene.toasts.current(in: scene.window.id) == nil)
         #expect(!scene.actions.markViewed(scene.itemID, inPane: Self.pane))

@@ -13,11 +13,6 @@ import Testing
 struct DecisionBarDeclineTests {
     private static let english = Locale(identifier: "en")
     private static let japanese = Locale(identifier: "ja")
-    private static let pane = UUID()
-
-    private static func items(_ kinds: [AttentionItemKind]) -> [AttentionItem] {
-        AttentionItem.testList(kinds, pane: pane, provider: .claude, filesRequestsByKey: true)
-    }
 
     private static func model(_ input: DecisionBarContent.Input, locale: Locale = english) -> DecisionBarModel {
         DecisionBarModel(content: DecisionBarContent.make(input), locale: locale)
@@ -35,19 +30,25 @@ struct DecisionBarDeclineTests {
         #expect(Self.model(.init(done: .init(result: .declinedInTerminal, next: nil))).undo == nil)
     }
 
-    @Test func aWaitThatLeftDeclined_setsTheDeclinedLine_andOneAnswered_theAnsweredLine() {
-        let prompt = Self.items([.prompt(PromptWait(detail: nil))])
-        let handed = Self.items([.approval(ApprovalFact.test(state: .handedToTerminal(since: SuspendingClock().now)))])
-        let held = Self.items([.approval(ApprovalFact.test())])
-        for shown in [prompt.first, handed.first] {
-            let declined = DecisionBarModel.doneUpdate(lastShown: shown, items: [], hasMovedOnSinceShown: false, isDeclined: true)
-            #expect(declined == .set(.declinedInTerminal))
-            let answered = DecisionBarModel.doneUpdate(lastShown: shown, items: [], hasMovedOnSinceShown: false, isDeclined: false)
-            #expect(answered == .set(.answeredInTerminal))
-        }
-        // A request on the card, or a pane moved on, says nothing either way.
-        #expect(DecisionBarModel.doneUpdate(lastShown: held.first, items: [], hasMovedOnSinceShown: false, isDeclined: true) == .keep)
-        #expect(DecisionBarModel.doneUpdate(lastShown: prompt.first, items: [], hasMovedOnSinceShown: true, isDeclined: true) == .keep)
+    @Test(arguments: [false, true])
+    func removingTheWait_propagatesTheRunsOutcomeToTheWindow(isDeclined: Bool) throws {
+        let (session, _, pane) = WorkspaceSessionFixture.withLooseTab()
+        let registry = WindowRegistry(primary: session.primarySelection)
+        let window = registry.primary
+        registry.noteRuns([PaneRunLedger.Run.test("a", in: [pane], turn: "t1", state: .needsInput)])
+        let epoch = try #require(registry.epoch(inPane: pane))
+        let item = AttentionItem.testPrompt(.unclassified(detail: nil), pane: pane)
+        window.decisionBarSelection[pane] = item.id
+        #expect(window.decisionBarDone.isEmpty)
+
+        window.itemsChanged(
+            .init(paneID: pane, items: [], lastShown: .init(item: item, epoch: epoch), epoch: epoch, isDeclined: isDeclined),
+            isSelectedPane: true,
+            isCurrent: { _ in true }
+        )
+
+        #expect(window.decisionBarSelection.isEmpty)
+        #expect(window.decisionBarDone == [pane: isDeclined ? .declinedInTerminal : .answeredInTerminal])
     }
 
     /// Declined is read from the run, never from timing: the badge the

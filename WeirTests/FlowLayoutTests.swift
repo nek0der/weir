@@ -11,8 +11,9 @@ struct FlowLayoutTests {
         return FlowLayout.arrange(sizes, width: width, spacing: 6, lineSpacing: 4)
     }
 
-    @Test func whatFits_staysOnOneLine() {
-        let result = Self.arrange([100, 60, 50], width: 300)
+    @Test(arguments: [CGFloat(222), 300])
+    func whatFits_staysOnOneLine(width: CGFloat) {
+        let result = Self.arrange([100, 60, 50], width: width)
         #expect(result.frames.map(\.minX) == [0, 106, 172])
         #expect(result.frames.allSatisfy { $0.minY == 0 })
         #expect(result.size == CGSize(width: 222, height: 18))
@@ -28,8 +29,11 @@ struct FlowLayoutTests {
 
     @Test func aViewWiderThanALine_isGivenTheLine_notMore() {
         let result = Self.arrange([400, 60], width: 117)
-        #expect(result.frames[0].width == 117)
-        #expect(result.frames.allSatisfy { $0.maxX <= 117 })
+        #expect(result.frames == [
+            CGRect(x: 0, y: 0, width: 117, height: 18),
+            CGRect(x: 0, y: 22, width: 60, height: 18)
+        ])
+        #expect(result.size == CGSize(width: 117, height: 40))
     }
 
     @Test func aLinesViews_centerOnIt() {

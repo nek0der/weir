@@ -2,6 +2,45 @@
 //! written, and what the restore leaves when another writer meets it.
 
 use super::*;
+use std::cell::{Cell, RefCell};
+use std::os::unix::fs::MetadataExt;
+
+pub(super) fn assert_busy_paths_unchanged(repo: &Repo) {
+    assert_eq!(repo.read("a.txt").as_deref(), Some("a\nchanged\n"));
+    assert_eq!(repo.read("new/made.txt").as_deref(), Some("made\n"));
+    assert_eq!(
+        fs::symlink_metadata(repo.path.join("keep.txt"))
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
+}
+
+pub(super) fn assert_no_journals_or_refs(repo: &Repo) {
+    assert_directory_empty_or_absent(&repo.worktree().journal_directory());
+    assert_eq!(
+        repo.git(&[
+            "for-each-ref",
+            "refs/weir/undo",
+            "refs/weir/undo-target",
+            "refs/weir/undo-expected",
+            "refs/weir/undo-current"
+        ]),
+        ""
+    );
+}
+
+fn assert_directory_empty_or_absent(path: &Path) {
+    match fs::read_dir(path) {
+        Ok(mut files) => assert!(files.next().is_none(), "{} is not empty", path.display()),
+        Err(error) => assert_eq!(error.kind(), std::io::ErrorKind::NotFound),
+    }
+}
+
+fn assert_no_restore_artifacts(repo: &Repo) {
+    assert_no_journals_or_refs(repo);
+    assert_directory_empty_or_absent(&repo.worktree().refs_directory());
+}
 
 #[test]
 fn verify_recaptures_worktree_and_checks_planned_paths() {
@@ -47,53 +86,48 @@ fn restore_leaves_the_real_index_intact() {
 fn restore_journals_before_writing() {
     let repo = Repo::new("journal");
     let turn = busy_turn(&repo);
-    // A hook that starts waiting once the journal is written stops the
-    // restore before its first path: the journal is all there is.
+    let worktree = repo.worktree();
+    let planned = RefCell::new(None);
     let seams = Seams {
-        before_lock: &nothing,
-        after_journal: &|| place_waiting_marker(&repo),
-        after_write: &nothing,
-        in_write: &nothing_at,
-        in_rollback: &nothing_at,
+        after_journal: &|| {
+            assert_busy_paths_unchanged(&repo);
+            let (journals, failure) = worktree.readable_journals();
+            assert!(failure.is_none());
+            let [journal] = journals.as_slice() else {
+                panic!("{journals:?}")
+            };
+            assert_eq!(journal.stage, RestoreStage::Planned);
+            assert_eq!(journal.turn_id, turn);
+            assert_eq!(journal.recorded_untracked, ["new/made.txt"]);
+            assert_eq!(
+                journal
+                    .planned_paths
+                    .iter()
+                    .map(|path| (path.path.as_str(), path.kind))
+                    .collect::<Vec<_>>(),
+                [
+                    ("new/made.txt", PathChangeKind::Delete),
+                    ("a.txt", PathChangeKind::Modify),
+                    ("keep.txt", PathChangeKind::Add),
+                ],
+            );
+            super::pinning::assert_three_pins(&repo, journal);
+            planned.replace(Some(journal.clone()));
+            place_waiting_marker(&repo);
+        },
+        ..NO_SEAMS
     };
 
-    let journal = finished(outcome(restore_turn_inner(
-        &repo.request(&turn),
-        NOW,
-        &seams,
-    )));
+    let journal = restore_turn_inner(&repo.request(&turn), NOW, &seams).unwrap();
 
-    assert_eq!(
-        journal.stage,
-        RestoreStage::Aborted {
-            reason: StageReason::AgentStarted
-        }
-    );
-    assert_eq!(repo.read("a.txt").as_deref(), Some("a\nchanged\n"));
-    let on_disk = repo.worktree().journal(&journal.op_id).unwrap().unwrap();
-    assert_eq!(on_disk.expected_after_tree, journal.expected_after_tree);
-    assert_eq!(
-        on_disk
-            .planned_paths
-            .iter()
-            .map(|change| (change.path.as_str(), change.kind))
-            .collect::<Vec<_>>(),
-        [
-            ("new/made.txt", PathChangeKind::Delete),
-            ("a.txt", PathChangeKind::Modify),
-            ("keep.txt", PathChangeKind::Add),
-        ]
-    );
-    // Nothing is left to undo, so nothing pins the tree.
-    assert!(
-        repo.git_status(&[
-            "rev-parse",
-            "-q",
-            "--verify",
-            &restore_undo_ref(&journal.op_id)
-        ])
-        .is_none()
-    );
+    let mut expected = planned.into_inner().expect("the plan was observed");
+    expected.stage = RestoreStage::Aborted {
+        reason: StageReason::AgentStarted,
+    };
+    assert_eq!(journal, expected);
+    assert_eq!(worktree.journal(&journal.op_id).unwrap().unwrap(), expected);
+    assert_busy_paths_unchanged(&repo);
+    assert_eq!(held(&repo, &journal.op_id), (Vec::new(), false));
 }
 
 #[test]
@@ -103,39 +137,65 @@ fn a_hook_waiting_before_the_plan_is_written_stops_it() {
     place_waiting_marker(&repo);
 
     assert_eq!(refused(repo.restore(&turn)), Refusal::AgentStarted);
-    assert_eq!(repo.read("a.txt").as_deref(), Some("a\nchanged\n"));
+    assert_busy_paths_unchanged(&repo);
+    assert_no_restore_artifacts(&repo);
 }
 
 #[test]
 fn restore_rereads_records_after_lock() {
     let repo = Repo::new("agent");
     let turn = busy_turn(&repo);
-    // The prompt makes the run's record say it is running in this worktree.
-    repo.hook(
-        format!(
-            r#"{{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"again","cwd":"{}"}}"#,
-            repo.path.display()
-        )
-        .as_bytes(),
-    );
+    let seams = Seams {
+        before_lock: &|| {
+            repo.hook(format!(
+                r#"{{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"again","cwd":"{}"}}"#,
+                repo.path.display()
+            ).as_bytes());
+        },
+        ..NO_SEAMS
+    };
 
     assert_eq!(
-        refused(repo.restore(&turn)),
+        restore_turn_inner(&repo.request(&turn), NOW, &seams).unwrap_err(),
         Refusal::AgentActive {
             provider: "claude".to_owned()
         }
     );
-    assert_eq!(repo.read("a.txt").as_deref(), Some("a\nchanged\n"));
+    assert_busy_paths_unchanged(&repo);
+    assert_no_restore_artifacts(&repo);
 }
 
 #[test]
-fn restore_refuses_in_merge() {
-    let repo = Repo::new("merge");
-    let turn = busy_turn(&repo);
-    let head = repo.git(&["rev-parse", "HEAD"]);
-    fs::write(repo.path.join(".git/MERGE_HEAD"), format!("{head}\n")).unwrap();
+fn restore_refuses_with_a_merge_marker_or_an_unmerged_index() {
+    for has_merge_head in [true, false] {
+        let repo = Repo::new(if has_merge_head { "merge" } else { "conflict" });
+        let turn = busy_turn(&repo);
+        let merge_head = repo.path.join(".git/MERGE_HEAD");
+        if has_merge_head {
+            let head = repo.git(&["rev-parse", "HEAD"]);
+            fs::write(&merge_head, format!("{head}\n")).unwrap();
+            assert_eq!(repo.git(&["ls-files", "--unmerged"]), "");
+        } else {
+            // An unmerged entry with no merge head, as `stash pop` leaves one.
+            let blob = repo.git(&["hash-object", "-w", "a.txt"]);
+            let unmerged = format!("100644 {blob} 1\tc.txt\n100644 {blob} 2\tc.txt");
+            repo.git_with_input(
+                &["update-index", "--index-info"],
+                format!("{unmerged}\n").as_bytes(),
+            );
+            assert_eq!(repo.git(&["ls-files", "--unmerged"]), unmerged);
+            assert!(!merge_head.exists());
+        }
+        let index = repo.path.join(".git/index");
+        let bytes = fs::read(&index).unwrap();
+        let marker = has_merge_head.then(|| fs::read(&merge_head).unwrap());
 
-    assert_eq!(refused(repo.restore(&turn)), Refusal::MergeInProgress);
+        assert_eq!(refused(repo.restore(&turn)), Refusal::MergeInProgress);
+        assert_eq!(fs::read(index).unwrap(), bytes);
+        assert_eq!(fs::read(merge_head).ok(), marker);
+        assert_busy_paths_unchanged(&repo);
+        assert_no_restore_artifacts(&repo);
+    }
 }
 
 #[test]
@@ -160,23 +220,34 @@ fn restore_refuses_after_a_commit_or_a_checkout() {
 }
 
 #[test]
-fn restore_deletes_only_recorded_untracked() {
-    let repo = Repo::new("untracked");
-    let turn = busy_turn(&repo);
-    // Made after the turn's last snapshot: no turn recorded it.
-    repo.write("mine.txt", "by hand\n");
+fn restore_deletes_only_untracked_files_recorded_since_the_selected_turn() {
+    for had_earlier_turn in [false, true] {
+        let repo = Repo::new(if had_earlier_turn {
+            "earlier"
+        } else {
+            "untracked"
+        });
+        if had_earlier_turn {
+            let _ = repo.turn(|repo| repo.write("mine.txt", "earlier turn\n"));
+            fs::remove_file(repo.path.join("mine.txt")).unwrap();
+        }
+        let turn = busy_turn(&repo);
+        repo.write("mine.txt", "by hand\n");
 
-    let journal = finished(repo.restore(&turn));
+        let journal = finished(repo.restore(&turn));
 
-    assert_eq!(journal.stage, RestoreStage::Applied);
-    assert_eq!(repo.read("mine.txt").as_deref(), Some("by hand\n"));
-    assert_eq!(repo.read("new/made.txt"), None);
-    assert!(
-        !journal
-            .planned_paths
-            .iter()
-            .any(|change| change.path == "mine.txt")
-    );
+        assert_eq!(journal.stage, RestoreStage::Applied);
+        assert_eq!(journal.recorded_untracked, ["new/made.txt"]);
+        assert_eq!(repo.read("a.txt").as_deref(), Some("a\n"));
+        assert_eq!(repo.read("mine.txt").as_deref(), Some("by hand\n"));
+        assert!(!repo.path.join("new/made.txt").exists());
+        assert!(
+            !journal
+                .planned_paths
+                .iter()
+                .any(|change| change.path == "mine.txt")
+        );
+    }
 }
 
 #[test]
@@ -213,7 +284,17 @@ fn external_edit_of_planned_path_is_detected() {
     let repo = Repo::new("edited");
     let turn = busy_turn(&repo);
 
-    let journal = restore_meeting(&repo, &turn, |repo| repo.write("a.txt", "editor\n"));
+    let journal = restore_meeting(&repo, &turn, |repo| {
+        assert_eq!(repo.read("a.txt").as_deref(), Some("a\n"));
+        assert_eq!(repo.read("keep.txt").as_deref(), Some("keep\n"));
+        assert_eq!(
+            fs::symlink_metadata(repo.path.join("new/made.txt"))
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::NotFound
+        );
+        repo.write("a.txt", "editor\n");
+    });
 
     assert_eq!(
         journal.stage,
@@ -221,18 +302,14 @@ fn external_edit_of_planned_path_is_detected() {
             reason: StageReason::ExternalChangeDetected
         }
     );
-}
-
-#[test]
-fn rollback_keeps_externally_edited_planned_paths() {
-    let repo = Repo::new("rollback");
-    let turn = busy_turn(&repo);
-
-    let _ = restore_meeting(&repo, &turn, |repo| repo.write("a.txt", "editor\n"));
-
     // The editor's write stays; what the restore wrote elsewhere goes back.
     assert_eq!(repo.read("a.txt").as_deref(), Some("editor\n"));
-    assert_eq!(repo.read("keep.txt"), None);
+    assert_eq!(
+        fs::symlink_metadata(repo.path.join("keep.txt"))
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::NotFound
+    );
     assert_eq!(repo.read("new/made.txt").as_deref(), Some("made\n"));
 }
 
@@ -250,33 +327,17 @@ fn a_change_outside_the_planned_paths_is_left_alone() {
     assert_eq!(repo.read("a.txt").as_deref(), Some("a\n"));
 }
 
-#[test]
-fn restore_refuses_while_a_conflict_is_resolved() {
-    let repo = Repo::new("conflict");
-    let turn = busy_turn(&repo);
-    // An unmerged entry with no merge head, as `stash pop` leaves one.
-    let blob = repo.git(&["hash-object", "-w", "a.txt"]);
-    repo.git_with_input(
-        &["update-index", "--index-info"],
-        format!("100644 {blob} 1\tc.txt\n100644 {blob} 2\tc.txt\n").as_bytes(),
-    );
-
-    assert_eq!(refused(repo.restore(&turn)), Refusal::MergeInProgress);
-}
-
 /// Files the capture could not see are not written over.
 #[test]
 fn restore_refuses_to_write_over_ignored_or_large_files() {
     let repo = Repo::new("ignored");
     repo.write("secret.env", "v1\n");
     repo.write("big.bin", "small\n");
+    let oversized = "x".repeat(usize::try_from(crate::LARGE_FILE_BYTES).unwrap() + 1);
     let turn = repo.turn(|repo| {
         repo.write(".gitignore", "secret.env\n");
         repo.write("secret.env", "v2\n");
-        repo.write(
-            "big.bin",
-            &"x".repeat(usize::try_from(crate::LARGE_FILE_BYTES).unwrap() + 1),
-        );
+        repo.write("big.bin", &oversized);
     });
 
     assert_eq!(
@@ -286,6 +347,12 @@ fn restore_refuses_to_write_over_ignored_or_large_files() {
         }
     );
     assert_eq!(repo.read("secret.env").as_deref(), Some("v2\n"));
+    assert_eq!(repo.read(".gitignore").as_deref(), Some("secret.env\n"));
+    assert_eq!(
+        fs::read(repo.path.join("big.bin")).unwrap(),
+        oversized.as_bytes()
+    );
+    assert_no_restore_artifacts(&repo);
 }
 
 /// A file made by hand where a restored directory goes is in the way: the
@@ -326,40 +393,45 @@ fn a_gitignore_the_restore_removes_does_not_stop_it() {
     assert_eq!(repo.read("x.log").as_deref(), Some("log\n"));
 }
 
-/// A name an earlier turn made, made again by hand after the restored
-/// turn, is not the turns' to delete.
 #[test]
-fn an_untracked_file_an_earlier_turn_made_is_not_deleted() {
-    let repo = Repo::new("earlier");
-    let _ = repo.turn(|repo| repo.write("notes.txt", "turn\n"));
-    fs::remove_file(repo.path.join("notes.txt")).unwrap();
-    let turn = repo.turn(|repo| repo.write("a.txt", "a\nchanged\n"));
-    repo.write("notes.txt", "by hand\n");
+fn the_same_running_record_blocks_restore_only_until_its_process_exits() {
+    struct ReapChild(std::process::Child);
+    impl Drop for ReapChild {
+        fn drop(&mut self) {
+            if !matches!(self.0.try_wait(), Ok(Some(_))) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+    }
 
-    let journal = finished(repo.restore(&turn));
-
-    assert_eq!(journal.stage, RestoreStage::Applied);
-    assert_eq!(repo.read("notes.txt").as_deref(), Some("by hand\n"));
-}
-
-#[test]
-fn an_agent_whose_process_is_gone_does_not_keep_the_restore_back() {
     let repo = Repo::new("gone");
     let turn = busy_turn(&repo);
-    let mut child = std::process::Command::new("/bin/sleep")
-        .arg("30")
-        .spawn()
-        .unwrap();
-    let pid = child.id();
-    child.kill().unwrap();
-    child.wait().unwrap();
+    let mut child = ReapChild(Command::new("/bin/sleep").arg("30").spawn().unwrap());
+    let pid = child.0.id();
     let record = format!(
         r#"{{"schemaVersion":3,"paneId":"P2","runId":"R2","revision":1,"state":"running","updatedAt":"{NOW}","pid":"{pid}","worktreeRoot":"{}"}}"#,
         repo.path.display()
     );
-    fs::write(repo.states.join("R2.state.json"), record).unwrap();
+    let record_path = repo
+        .states
+        .join(weir_agent_model::run_record_file_name("R2"));
+    fs::write(&record_path, &record).unwrap();
+
+    assert_eq!(
+        refused(repo.restore(&turn)),
+        Refusal::AgentActive {
+            provider: "claude".to_owned()
+        },
+    );
+    assert_busy_paths_unchanged(&repo);
+    assert_no_restore_artifacts(&repo);
+    child.0.kill().unwrap();
+    child.0.wait().unwrap();
+    assert_eq!(fs::read_to_string(&record_path).unwrap(), record);
 
     assert_eq!(finished(repo.restore(&turn)).stage, RestoreStage::Applied);
+    assert_eq!(repo.read("a.txt").as_deref(), Some("a\n"));
 }
 
 #[test]
@@ -418,13 +490,23 @@ fn rollback_leaves_a_file_where_a_directory_goes() {
     let turn = busy_turn(&repo);
 
     let journal = restore_meeting(&repo, &turn, |repo| {
+        assert_eq!(repo.read("a.txt").as_deref(), Some("a\n"));
+        assert_eq!(repo.read("keep.txt").as_deref(), Some("keep\n"));
+        assert!(!repo.path.join("new").exists());
         repo.write("a.txt", "editor\n");
         repo.write("new", "editor\n");
     });
 
-    let RestoreStage::PartiallyApplied { kept, failed, .. } = &journal.stage else {
+    let RestoreStage::PartiallyApplied {
+        reason,
+        kept,
+        failed,
+        ..
+    } = &journal.stage
+    else {
         panic!("{:?}", journal.stage);
     };
+    assert_eq!(*reason, StageReason::ExternalChangeDetected);
     assert_eq!(kept, &["a.txt"]);
     assert_eq!(
         failed,
@@ -435,6 +517,7 @@ fn rollback_leaves_a_file_where_a_directory_goes() {
         }]
     );
     assert_eq!(repo.read("new").as_deref(), Some("editor\n"));
+    assert_eq!(repo.read("a.txt").as_deref(), Some("editor\n"));
     assert_eq!(repo.read("keep.txt"), None, "what could go back did");
 }
 
@@ -543,18 +626,29 @@ fn a_stop_with_a_path_holding_neither_side_is_partly_applied() {
         &seams,
     )));
 
-    let RestoreStage::PartiallyApplied { kept, .. } = &journal.stage else {
+    let RestoreStage::PartiallyApplied {
+        reason,
+        current_tree,
+        kept,
+        failed,
+    } = &journal.stage
+    else {
         panic!("{:?}", journal.stage);
     };
+    assert_eq!(*reason, StageReason::AgentStarted);
     assert_eq!(kept, &["a.txt"]);
-    assert!(
-        repo.git_status(&[
-            "rev-parse",
-            "-q",
-            "--verify",
-            &restore_undo_ref(&journal.op_id)
-        ])
-        .is_some()
+    assert!(failed.is_empty());
+    assert_eq!(repo.read("a.txt").as_deref(), Some("half written\n"));
+    assert_eq!(repo.read("new/made.txt").as_deref(), Some("made\n"));
+    assert!(!repo.path.join("keep.txt").exists());
+    assert_eq!(
+        repo.git(&["show", &format!("{current_tree}:a.txt")]),
+        "half written"
+    );
+    super::pinning::assert_pins(&repo, &journal, Some(current_tree));
+    assert_eq!(
+        repo.worktree().journal(&journal.op_id).unwrap().unwrap(),
+        journal
     );
 }
 
@@ -615,39 +709,43 @@ fn an_edit_before_the_turn_to_an_assumed_unchanged_file_stays() {
 #[test]
 fn a_filter_that_never_answers_ends_the_restore_at_the_limit() {
     let repo = Repo::new("hung-filter");
-    let turn = busy_turn(&repo);
+    let turn = repo.turn(|repo| repo.write("a.txt", "changed\n"));
     repo.git(&["config", "filter.hang.clean", "cat"]);
-    repo.git(&["config", "filter.hang.smudge", "sleep 30"]);
+    // The marker is only written by the smudge process, before it blocks.
+    repo.git(&[
+        "config",
+        "filter.hang.smudge",
+        "printf started > smudge-started; exec /bin/sleep 30",
+    ]);
     repo.write(".gitattributes", "a.txt filter=hang\n");
     crate::git::limit_commands_for_test(Duration::from_millis(500));
 
     let started = std::time::Instant::now();
     let journal = finished(repo.restore(&turn));
 
+    assert_eq!(repo.read("smudge-started").as_deref(), Some("started"));
     assert!(started.elapsed() < Duration::from_secs(10));
-    assert!(journal.stage.is_interrupted(), "{:?}", journal.stage);
+    assert_eq!(journal.stage, RestoreStage::Planned);
+    assert_eq!(repo.read("a.txt").as_deref(), Some("changed\n"));
     let worktree = repo.worktree();
-    assert_eq!(
-        worktree
-            .journal(&journal.op_id)
-            .unwrap()
-            .map(|kept| kept.stage),
-        Some(journal.stage.clone())
-    );
-    let (refs, has_refs_file) = held(&repo, &journal.op_id);
-    assert!(!refs.is_empty() && has_refs_file, "the trees stay pinned");
+    assert_eq!(worktree.journal(&journal.op_id).unwrap().unwrap(), journal);
+    super::pinning::assert_three_pins(&repo, &journal);
 
-    // With the filter answering again, the next operation settles it.
     repo.git(&["config", "filter.hang.smudge", "cat"]);
-    let _ = recover(&repo.path, NOW).unwrap();
-    assert!(
-        !worktree
-            .journal(&journal.op_id)
-            .unwrap()
-            .unwrap()
-            .stage
-            .is_interrupted()
+    let recovered = recover(&repo.path, NOW).unwrap();
+    assert_eq!(
+        recovered.settled.as_slice(),
+        std::slice::from_ref(&journal.op_id)
     );
+    let settled = worktree.journal(&journal.op_id).unwrap().unwrap();
+    assert_eq!(
+        settled.stage,
+        RestoreStage::Aborted {
+            reason: StageReason::Interrupted
+        }
+    );
+    assert_eq!(repo.read("a.txt").as_deref(), Some("changed\n"));
+    assert_eq!(held(&repo, &journal.op_id), (Vec::new(), false));
 }
 
 #[test]
@@ -703,6 +801,16 @@ fn a_rename_only_in_case_is_refused_where_case_is_one_name() {
         repo.git(&["mv", "Name.txt", "name.txt"]);
     });
     let is_one_name = fs::symlink_metadata(repo.path.join("Name.txt")).is_ok();
+    let index = repo.path.join(".git/index");
+    let before_index = fs::read(&index).unwrap();
+    let spellings = || {
+        fs::read_dir(&repo.path)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name.eq_ignore_ascii_case("name.txt"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(spellings(), ["name.txt"]);
 
     let outcome = repo.restore(&turn);
 
@@ -713,15 +821,15 @@ fn a_rename_only_in_case_is_refused_where_case_is_one_name() {
                 paths: vec!["Name.txt".to_owned()]
             }
         );
-        assert!(
-            fs::read_dir(&repo.path)
-                .unwrap()
-                .flatten()
-                .any(|entry| entry.file_name() == "name.txt")
-        );
+        assert_eq!(spellings(), ["name.txt"]);
+        assert_eq!(repo.read("name.txt").as_deref(), Some("name\n"));
+        assert_no_restore_artifacts(&repo);
     } else {
         assert_eq!(finished(outcome).stage, RestoreStage::Applied);
+        assert_eq!(spellings(), ["Name.txt"]);
+        assert_eq!(repo.read("Name.txt").as_deref(), Some("name\n"));
     }
+    assert_eq!(fs::read(index).unwrap(), before_index);
 }
 
 /// The turns are read, and their trees diffed, before the lock; under it
@@ -790,30 +898,43 @@ fn the_journal_is_not_rewritten_while_the_paths_are_written() {
         }
     });
     repo.write("a.txt", "a\nlater\n");
-    let stages = std::cell::RefCell::new(Vec::new());
+    let worktree = repo.worktree();
+    let planned = RefCell::new(None);
+    let observed_batches = Cell::new(0);
     let seams = Seams {
-        before_lock: &nothing,
-        after_journal: &nothing,
-        after_write: &nothing,
-        in_write: &|_| {
-            let worktree = repo.worktree();
-            for journal in worktree.readable_journals().0 {
-                stages.borrow_mut().push(journal.stage);
+        after_journal: &|| {
+            let (journals, failure) = worktree.readable_journals();
+            assert!(failure.is_none());
+            let [journal] = journals.as_slice() else {
+                panic!("{journals:?}")
+            };
+            assert_eq!(journal.stage, RestoreStage::Planned);
+            let path = worktree.journal_path(&journal.op_id);
+            let opened = fs::File::open(&path).unwrap();
+            let bytes = fs::read(&path).unwrap();
+            planned.replace(Some((path, opened, bytes)));
+        },
+        in_write: &|moment| {
+            let state = planned.borrow();
+            let (path, opened, bytes) = state.as_ref().expect("planned journal is already on disk");
+            // Keep the original inode open so its number cannot be reused.
+            assert_eq!(
+                fs::metadata(path).unwrap().ino(),
+                opened.metadata().unwrap().ino()
+            );
+            assert_eq!(fs::read(path).unwrap(), *bytes);
+            if moment == Moment::AfterRead {
+                observed_batches.set(observed_batches.get() + 1);
             }
         },
-        in_rollback: &nothing_at,
+        ..NO_SEAMS
     };
 
-    let journal = finished(outcome(restore_turn_inner(
-        &repo.request(&turn),
-        NOW,
-        &seams,
-    )));
+    let journal = restore_turn_inner(&repo.request(&turn), NOW, &seams).unwrap();
 
     assert_eq!(journal.stage, RestoreStage::Applied);
-    let stages = stages.into_inner();
-    assert!(!stages.is_empty());
-    assert!(stages.iter().all(|stage| *stage == RestoreStage::Planned));
+    assert!(observed_batches.get() >= 2);
+    assert_eq!(worktree.journal(&journal.op_id).unwrap().unwrap(), journal);
 }
 
 /// A turn whose begin was read before the lock and whose end was written

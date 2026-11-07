@@ -10,6 +10,8 @@ struct AccentRuleTests {
     private typealias Tokens = SupervisionTokens
 
     @Test func theContrastRatio_matchesWCAG() {
+        #expect(ContrastRatio.text == 4.5)
+        #expect(ContrastRatio.icon == 3)
         #expect(ContrastRatio.between(SRGB(0xFFFFFF), SRGB(0x000000)) == 21)
         #expect(ContrastRatio.between(SRGB(0x777777), SRGB(0x777777)) == 1)
         // The figure we give for muted text on the window.
@@ -40,6 +42,15 @@ struct AccentRuleTests {
             let isDark = resolved.isDark
             let name = resolved.appearance.rawValue
             let grounds = AccentIconRule.grounds(isDark: isDark)
+            let surfaces = [
+                Tokens.page, Tokens.well, Tokens.window, Tokens.sidebar, Tokens.column, Tokens.selection,
+                Tokens.railSelection, Tokens.hover, Tokens.popover, Tokens.terminal, Tokens.popoverMaterial
+            ]
+            let material = Tokens.popoverMaterial.value(isDark: isDark)
+            #expect(grounds == surfaces.map { $0.value(isDark: isDark) } + [
+                Tokens.popoverSelection.value(over: material, isDark: isDark),
+                Tokens.popoverHover.value(over: material, isDark: isDark)
+            ])
             let icon = AccentIconRule.color(resolved.color, on: grounds)
             for ground in grounds + [Tokens.selection.value(isDark: isDark), Tokens.window.value(isDark: isDark)] {
                 let ratio = ContrastRatio.between(icon, ground)
@@ -48,7 +59,9 @@ struct AccentRuleTests {
             // What the window draws is the same rule.
             let appearance = try #require(NSAppearance(named: resolved.appearance))
             let drawn = try #require(SRGB(NSColor(Tokens.accentIcon(accent)), in: appearance))
-            #expect(abs(drawn.luminance - icon.luminance) < 0.002, "\(accent) in \(name)")
+            #expect(abs(drawn.red - icon.red) < 0.002, "\(accent) in \(name)")
+            #expect(abs(drawn.green - icon.green) < 0.002, "\(accent) in \(name)")
+            #expect(abs(drawn.blue - icon.blue) < 0.002, "\(accent) in \(name)")
         }
     }
 

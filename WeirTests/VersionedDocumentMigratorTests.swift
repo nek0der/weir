@@ -28,15 +28,21 @@ struct VersionedDocumentMigratorTests {
     /// a newer build, one older than every step, and one a gap in the chain
     /// leaves behind.
     @Test(arguments: [
-        (current: 3, stepsFrom: [Int](), found: 3, expected: VersionedDocumentMigrator.Outcome.current),
-        (current: 3, stepsFrom: [3], found: 4, expected: .newer(found: 4)),
+        (current: 3, stepsFrom: [3], found: 3, expected: VersionedDocumentMigrator.Outcome.current),
+        (current: 3, stepsFrom: [4], found: 4, expected: .newer(found: 4)),
         (current: 3, stepsFrom: [], found: 2, expected: .unsupported(found: 2)),
-        (current: 4, stepsFrom: [3], found: 2, expected: .unsupported(found: 2))
+        (current: 4, stepsFrom: [2], found: 2, expected: .unsupported(found: 2))
     ])
     func aDocumentNoStepApplies_isLeftAlone(
         current: Int, stepsFrom: [Int], found: Int, expected: VersionedDocumentMigrator.Outcome
     ) throws {
-        let outcome = try Self.migrator(current: current, steps: stepsFrom.map(Self.bump(from:)))
+        let steps = stepsFrom.map { version in
+            DocumentMigrationStep(fromVersion: version) { data in
+                Issue.record("A current, newer, or incomplete-chain document must not run a migration step")
+                return data
+            }
+        }
+        let outcome = try Self.migrator(current: current, steps: steps)
             .migrate(Self.json(["version": found]))
         #expect(outcome == expected)
     }
@@ -62,9 +68,10 @@ struct VersionedDocumentMigratorTests {
         }
     }
 
-    @Test func stepThatMissesItsVersion_throws() throws {
-        let lazy = DocumentMigrationStep(fromVersion: 2) { $0 }
-        #expect(throws: VersionedDocumentMigrator.MigrationError.stepProducedWrongVersion(from: 2, found: 2)) {
+    @Test(arguments: [(#"{"version":2}"#, Int?.some(2)), (#"{"version":4}"#, 4), (#"{}"#, nil)])
+    func stepThatMissesItsVersion_throws(output: String, found: Int?) throws {
+        let lazy = DocumentMigrationStep(fromVersion: 2) { _ in Data(output.utf8) }
+        #expect(throws: VersionedDocumentMigrator.MigrationError.stepProducedWrongVersion(from: 2, found: found)) {
             try Self.migrator(current: 3, steps: [lazy]).migrate(Self.json(["version": 2]))
         }
     }
@@ -78,15 +85,14 @@ struct VersionedDocumentMigratorTests {
         }
     }
 
-    @Test func absentVersionWithoutDefault_isUnreadable() throws {
-        let outcome = try Self.migrator(current: 2, steps: []).migrate(Self.json(["other": true]))
-        #expect(outcome == .unreadableVersion)
-    }
-
-    @Test(arguments: [#"[1, 2]"#, #"not json"#, #"{"version": "5"}"#, #"{"version": 5.5}"#, #"{"version": true}"#])
+    @Test(arguments: [#"{}"#, #"[1, 2]"#, #"not json"#, #"{"version": "5"}"#, #"{"version": 5.5}"#, #"{"version": true}"#])
     func unreadableDocuments_areReportedNotThrown(text: String) throws {
         let outcome = try Self.migrator(current: 5, steps: []).migrate(Data(text.utf8))
         #expect(outcome == .unreadableVersion)
+        if text != "{}" {
+            let withFallback = try Self.migrator(current: 5, steps: [], absent: 5).migrate(Data(text.utf8))
+            #expect(withFallback == .unreadableVersion)
+        }
     }
 
     @Test func sessionMigrator_matchesTheSnapshotVersion() {

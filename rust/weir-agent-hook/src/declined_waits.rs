@@ -155,6 +155,7 @@ mod tests {
         waits.end_pass();
 
         // Claude appends the result, the interrupt, and what follows.
+        assert!(DECLINED.starts_with(OPEN));
         let mut file = std::fs::OpenOptions::new()
             .append(true)
             .open(&path)

@@ -143,7 +143,10 @@ struct AgentRuntimeProjectionTests {
                 sessions: directory.appendingPathComponent("sessions")
             )
             projection.bootstrap(into: session, attention: attention, tmuxPresence: presence)
-            #expect(attention.queueItems(in: session).count == 2)
+            let expected = [first, second].map { AgentRuntimePresentation.id(kind: .codex, runID: $0.storageID) }
+            let items = attention.queueItems(in: session)
+            #expect(items.count == 2)
+            #expect(Set(items.compactMap(\.subject.runtimeID)) == Set(expected))
             #expect(session.tab(tab.id)?.agentBadges[.codex]?[paneID]?.updatedAt == AgentDateParsing.parseISO8601(second.updatedAt))
             // Reading one run's finish leaves the other's waiting.
             let firstID = AgentRuntimePresentation.id(kind: .codex, runID: first.storageID)
@@ -244,6 +247,7 @@ struct AgentRuntimeProjectionTests {
 
             let runs = Dictionary(uniqueKeysWithValues: attention.allRuntimes.map { ($0.runID, $0) })
             #expect(runs[fresh.storageID]?.paneIDs == [displayPaneID])
+            #expect(runs[fresh.storageID]?.activeAttachmentPaneIDs == [displayPaneID])
             #expect(runs[stale.storageID]?.paneIDs.isEmpty == true)
             #expect(session.tab(tab.id)?.agentBadges[.codex]?[displayPaneID]?.state == .running)
         }

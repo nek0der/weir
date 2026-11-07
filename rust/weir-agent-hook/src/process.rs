@@ -127,9 +127,17 @@ mod tests {
             parse_parent_and_comm("  4242 /opt/homebrew/bin/claude\n"),
             Some((4242, "/opt/homebrew/bin/claude".into()))
         );
-        assert_eq!(parse_parent_and_comm(""), None);
+        assert_eq!(
+            parse_parent_and_comm("7\tclaude"),
+            Some((7, "claude".to_owned()))
+        );
+        for invalid in ["", "4242", "bad claude", "-1 claude"] {
+            assert_eq!(parse_parent_and_comm(invalid), None, "{invalid:?}");
+        }
+        assert!(comm_matches("claude", "claude"));
         assert!(comm_matches("/opt/homebrew/bin/claude", "claude"));
         assert!(!comm_matches("claude.sh", "claude"));
+        assert!(!comm_matches("/opt/homebrew/bin/notclaude", "claude"));
     }
 
     #[test]
@@ -153,6 +161,27 @@ mod tests {
             find_ancestor_in(80, &["claude".to_owned()], table),
             Some(80)
         );
+
+        for (agent_pid, expected) in [(91, Some(91)), (90, None)] {
+            let calls = std::cell::Cell::new(0);
+            let found = find_ancestor_in(100, &["claude".to_owned()], |pid| {
+                calls.set(calls.get() + 1);
+                let name = if pid == agent_pid { "claude" } else { "sh" };
+                Some((pid - 1, name.to_owned()))
+            });
+            assert_eq!(found, expected);
+            assert_eq!(calls.get(), 10);
+        }
+
+        let calls = std::cell::Cell::new(0);
+        assert_eq!(
+            find_ancestor_in(100, &["claude".to_owned()], |pid| {
+                calls.set(calls.get() + 1);
+                Some((pid, "sh".to_owned()))
+            }),
+            None
+        );
+        assert_eq!(calls.get(), 10);
     }
 
     /// The host matches a record's tmux server on the kernel's start second

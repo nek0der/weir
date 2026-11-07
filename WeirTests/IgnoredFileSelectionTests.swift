@@ -38,6 +38,10 @@ struct IgnoredFileSelectionTests {
         #expect(IgnoredFileSelection.select(patterns: ["config/*.key"], ignored: ignored).isEmpty)
         // A path inside a folder already picked goes with it.
         #expect(IgnoredFileSelection.select(patterns: ["config", "config/master.key"], ignored: ignored) == ["config"])
+        #expect(IgnoredFileSelection.select(
+            patterns: ["config/master.key", "config2/key", "config", "config"],
+            ignored: ["config2/", "config/", "config/"]
+        ) == ["config", "config2/key"])
     }
 
     /// A trailing slash names a folder only, as in a `.gitignore`.
@@ -62,6 +66,7 @@ struct IgnoredFileSelectionTests {
         #expect(IgnoredFileSelection.problem(of: "sub/.git/config") == .namesGitFolder)
         #expect(IgnoredFileSelection.problem(of: ".github/x") == nil)
         #expect(IgnoredFileSelection.problem(of: "./.env") == nil)
+        #expect(IgnoredFileSelection.problem(of: "a..b/.git-backup") == nil)
         // A leading slash is the project's folder, never the disk's root.
         #expect(IgnoredFileSelection.problem(of: "/etc/passwd") == nil)
         #expect(IgnoredFileSelection.select(patterns: ["/etc/passwd"], ignored: [".env"]).isEmpty)
@@ -72,6 +77,9 @@ struct IgnoredFileSelectionTests {
     @Test func noPatterns_orEmptyOnes_pickNothing() {
         #expect(IgnoredFileSelection.select(patterns: [], ignored: [".env"]).isEmpty)
         #expect(IgnoredFileSelection.select(patterns: ["", "  ", "/"], ignored: [".env"]).isEmpty)
-        #expect(IgnoredFileSelection.Pattern("  ./config/  ") == IgnoredFileSelection.Pattern("config/"))
+        let normalized = IgnoredFileSelection.Pattern("  ./config/  ")
+        #expect(normalized.body == "config")
+        #expect(!normalized.isAnchored)
+        #expect(normalized.isFolderOnly)
     }
 }

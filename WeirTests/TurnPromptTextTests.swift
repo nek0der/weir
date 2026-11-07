@@ -33,7 +33,9 @@ struct TurnPromptTextTests {
         #expect(TurnPromptText.instruction(prompt, locale: Self.english) == english)
         #expect(TurnPromptText.instruction(prompt, locale: Self.japanese) == japanese)
         // Without a head too: the kind alone says what the turn was.
-        #expect(TurnPromptText.instruction(TurnPrompt(kind: kind, head: nil), locale: Self.english) == english)
+        let withoutHead = TurnPrompt(kind: kind, head: nil)
+        #expect(TurnPromptText.instruction(withoutHead, locale: Self.english) == english)
+        #expect(TurnPromptText.instruction(withoutHead, locale: Self.japanese) == japanese)
     }
 
     /// A turn Codex began for the person's goal quotes the goal, which is
@@ -52,6 +54,7 @@ struct TurnPromptTextTests {
         let prompt = TurnPrompt(kind: .goal, head: "Ship the release notes")
         #expect(TurnPromptText.shortInstruction(prompt, characters: 8, locale: Self.english) == "/goal Ship the…")
         #expect(TurnPromptText.shortInstruction(prompt, characters: 40, locale: Self.english) == "/goal Ship the release notes")
+        #expect(TurnPromptText.shortInstruction(prompt, characters: 8, locale: Self.japanese) == "/goal Ship the…")
         #expect(
             TurnPromptText.shortInstruction(TurnPrompt(head: "Ship the release notes"), characters: 8, locale: Self.english)
                 == "Ship the…"

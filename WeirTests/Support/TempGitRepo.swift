@@ -31,9 +31,12 @@ struct TempGitRepo {
     }
 
     /// Initialize a temp directory and run `git init` + a seed commit
-    /// against it. Throws if the runner has no `git` on PATH or the
-    /// temp directory can't be created.
-    static func make() async throws -> TempGitRepo {
+    /// against it. A caller can supply the seed step to exercise setup failures.
+    static func make(
+        seedCommit: (URL) async throws -> Void = { url in
+            try await git(["commit", "-q", "--allow-empty", "-m", "init"], in: url)
+        }
+    ) async throws -> TempGitRepo {
         // The repository folder has the unique name, so a project made from
         // it gets a unique name; the folder around it has the same name only
         // to keep it unique.
@@ -41,13 +44,19 @@ struct TempGitRepo {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(name, isDirectory: true)
             .appendingPathComponent(name)
-        try FileManager.default.createDirectory(
-            at: url,
-            withIntermediateDirectories: true
-        )
-        try await initialize(url)
-        try await git(["commit", "-q", "--allow-empty", "-m", "init"], in: url)
-        return TempGitRepo(url: url)
+        let repo = TempGitRepo(url: url)
+        do {
+            try FileManager.default.createDirectory(
+                at: url,
+                withIntermediateDirectories: true
+            )
+            try await initialize(url)
+            try await seedCommit(url)
+            return repo
+        } catch {
+            repo.cleanup()
+            throw error
+        }
     }
 
     /// Runs `git init` in `directory`, which must exist, and configures the

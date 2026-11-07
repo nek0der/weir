@@ -12,72 +12,41 @@ struct DecisionBarModelTests {
     private static let japanese = Locale(identifier: "ja")
     private static let pane = UUID()
 
-    /// The items in the order they arrived, each under an id of its kind.
+    /// Items in arrival order, with approvals and questions filed under their request keys.
     private static func items(_ kinds: [AttentionItemKind], provider: AgentKind = .claude) -> [AttentionItem] {
         AttentionItem.testList(kinds, pane: pane, provider: provider, filesRequestsByKey: true)
+    }
+
+    private static func itemsInArrivalOrder(_ entries: [(AttentionItemID, AttentionItemKind)]) throws -> [AttentionItem] {
+        let subject = AttentionSubject.runtime(id: "agent", provider: .claude, paneID: pane, tabID: nil, projectID: nil)
+        var queue = AttentionQueue()
+        for (index, (id, kind)) in entries.enumerated() {
+            let inserted = queue.insert(id: id, kind: kind, subject: subject, arrivedAt: Date(timeIntervalSince1970: Double(index)))
+            try #require(inserted)
+        }
+        return queue.items
     }
 
     private static func model(_ input: DecisionBarContent.Input, locale: Locale = english) -> DecisionBarModel {
         DecisionBarModel(content: DecisionBarContent.make(input), locale: locale)
     }
 
-    /// A run not matched to its hook yet (one restored at launch) is said
-    /// as the sidebar row says it: unknown, never idle.
-    @Test func atRest_aRunNotMatchedYet_isUnknown_asItsRowSays() {
-        let agent = SessionRowFact.Agent(provider: .claude, state: .unknown, detail: nil)
-        #expect(Self.model(.init(agent: agent)).text == "Unknown")
-        #expect(Self.model(.init(agent: agent), locale: Self.japanese).text == "不明")
-        #expect(Self.model(.init(agent: agent)).tone == .muted)
-    }
-
-    @Test func atRest_theBarSaysWhatTheAgentIsDoing_withoutATag() {
-        let model = Self.model(.init(agent: .init(provider: .claude, state: .running, detail: "Bash: swift test")))
-        #expect(model.tag == nil)
-        #expect(model.tone == .muted)
-        #expect(model.text == "Bash: swift test")
-        #expect(model.countText == nil)
-
-        let idle = Self.model(.init(agent: .init(provider: .codex, state: .idle, detail: nil)), locale: Self.japanese)
-        #expect(idle.text == "待機中")
-    }
-
-    @Test func aRequestTheTerminalHas_isAnsweredThere_withoutATimeLeft() {
-        let deadline = ServiceDeadline(deadlineMs: 522_000, serviceNowMs: 0, receivedAt: SuspendingClock().now)
-        let handed = ApprovalFact.test(state: .handedToTerminal(since: SuspendingClock().now), deadline: deadline)
-        let model = Self.model(.init(items: Self.items([.approval(handed)]), approvalActions: [handed.key: .command]))
-        #expect(model.tag == "Approval")
-        #expect(model.tone == .waiting)
-        #expect(model.text == "Claude wants to run a command.")
-        #expect(model.instruction == "Answer in the terminal")
-        #expect(model.heldUntil == nil, "the CLI's own deadline is not known here")
-
-        // Past its time, it keeps saying so, in its short form too.
-        let timedOut = Self.model(.init(items: Self.items([.approval(ApprovalFact.test(state: .timedOut))])))
-        #expect(timedOut.instruction == "Timed out. Answer in the terminal.")
-        #expect(timedOut.shortInstruction == "Timed out — answer in terminal")
-        let timedOutJapanese = Self.model(.init(items: Self.items([.approval(ApprovalFact.test(state: .timedOut))])), locale: Self.japanese)
-        #expect(timedOutJapanese.shortInstruction == "時間切れ（ターミナルで回答）")
-    }
-
-    @Test func aRequestWeirHolds_isAnsweredOnTheCard_withItsTimeLeft() {
-        let deadline = ServiceDeadline(deadlineMs: 522_000, serviceNowMs: 0, receivedAt: SuspendingClock().now)
-        for state in [ApprovalRequestState.held, .sendFailed(.deny, error: "offline")] {
-            let model = Self.model(.init(items: Self.items([.approval(ApprovalFact.test(state: state, deadline: deadline))])))
-            // Claude Code shows its own prompt meanwhile, right above the bar.
-            #expect(model.instruction == "Answer in the terminal or on the card")
-            // No shorter form: the card is not the terminal.
-            #expect(model.shortInstruction == model.instruction)
-            #expect(model.heldUntil == deadline)
+    @Test(arguments: [
+        (AgentKind.claude, AgentState.unknown, nil as String?, "Unknown", "不明"),
+        (.codex, .idle, nil, "Idle", "待機中"),
+        (.claude, .running, "Bash: swift test", "Bash: swift test", "Bash: swift test")
+    ])
+    func summary_namesTheAgentsStateWithoutATag(
+        provider: AgentKind, state: AgentState, detail: String?, english: String, japanese: String
+    ) {
+        let agent = SessionRowFact.Agent(provider: provider, state: state, detail: detail)
+        for (locale, text) in [(Self.english, english), (Self.japanese, japanese)] {
+            let bar = Self.model(.init(agent: agent), locale: locale)
+            #expect(bar.tag == nil)
+            #expect(bar.countText == nil)
+            #expect(bar.tone == .muted)
+            #expect(bar.text == text)
         }
-
-        let edit = ApprovalFact.test(provider: .codex)
-        let editModel = Self.model(
-            .init(items: Self.items([.approval(edit)], provider: .codex), approvalActions: [edit.key: .fileChange]),
-            locale: Self.japanese
-        )
-        #expect(editModel.text == "Codex がファイルの変更を求めています。")
-        // Codex shows no prompt of its own until the request is handed over.
-        #expect(editModel.instruction == "カードで回答")
     }
 
     @Test(arguments: [
@@ -89,34 +58,31 @@ struct DecisionBarModelTests {
         let fact = ApprovalFact.test(provider: provider)
         let model = Self.model(.init(items: Self.items([.approval(fact)], provider: provider)))
         #expect(model.instruction == instruction)
+        #expect(model.shortInstruction == instruction)
     }
 
-    /// A held approval is named by its tool as an unheld one is: WebFetch,
-    /// Task, or an MCP tool is neither a file change nor a command, and a
-    /// request whose tool nothing names is not called a command.
     @Test(arguments: [
-        (PromptApproval.Action?.some(.other), "en", "Claude is asking for approval."),
-        (.other, "ja", "Claude が承認を求めています。"),
-        (.command, "en", "Claude wants to run a command."),
-        (nil, "en", "Claude is asking for approval.")
+        (AgentKind.claude, PromptApproval.Action?.some(.other), "en", "Claude is asking for approval."),
+        (.claude, .other, "ja", "Claude が承認を求めています。"),
+        (.claude, .command, "en", "Claude wants to run a command."),
+        (.claude, nil, "en", "Claude is asking for approval."),
+        (.codex, .fileChange, "ja", "Codex がファイルの変更を求めています。")
     ])
-    func aHeldApproval_isNamedByItsTool_asAnUnheldOneIs(action: PromptApproval.Action?, language: String, text: String) {
-        let approval = ApprovalFact.test()
-        let actions = action.map { [approval.key: $0] } ?? [:]
-        let input = DecisionBarContent.Input(items: Self.items([.approval(approval)]), approvalActions: actions)
-        let model = Self.model(input, locale: Locale(identifier: language))
-        #expect(model.text == text)
-    }
-
-    @Test func whileADecisionIsOnItsWay_theBarSaysWhereItGoes() {
-        let delegating = ApprovalFact.test(state: .sending(.delegate, since: SuspendingClock().now))
-        #expect(Self.model(.init(items: Self.items([.approval(delegating)]))).instruction == "Answer in the terminal")
-        #expect(Self.model(.init(items: Self.items([.approval(delegating)]))).heldUntil == nil)
-
-        let allowing = ApprovalFact.test(state: .sending(.allowOnce, since: SuspendingClock().now))
-        let sending = Self.model(.init(items: Self.items([.approval(allowing)])))
-        #expect(sending.instruction == "Sending…")
-        #expect(sending.heldUntil == nil)
+    func approvalWordingFollowsItsToolBeforeAndAfterHandoff(
+        provider: AgentKind, action: PromptApproval.Action?, language: String, text: String
+    ) {
+        let now = SuspendingClock().now
+        let locale = Locale(identifier: language)
+        for state in [ApprovalRequestState.held, .handedToTerminal(since: now)] {
+            let approval = ApprovalFact.test(provider: provider, state: state)
+            let actions = action.map { [approval.key: $0] } ?? [:]
+            let input = DecisionBarContent.Input(items: Self.items([.approval(approval)], provider: provider), approvalActions: actions)
+            let model = Self.model(input, locale: locale)
+            #expect(model.text == text)
+            if state == .held, provider == .codex {
+                #expect(model.instruction == "カードで回答")
+            }
+        }
     }
 
     /// A wait in a tool's words reads as an approval, a file change or a
@@ -171,14 +137,6 @@ struct DecisionBarModelTests {
         #expect(!asked.cutsTextInMiddle)
         let japanese = Self.model(.init(items: Self.items([.prompt(PromptWait(detail: "Edit: /a/b.swift"))])), locale: Self.japanese)
         #expect(japanese.instruction == "ターミナルで回答してください")
-    }
-
-    @Test func aQuestion_aWaitAtThePrompt_aStop_andAnUnreadTurn_sayTheirOwnWords() {
-        let handed = ApprovalFact.test(isQuestion: true, state: .handedToTerminal(since: SuspendingClock().now))
-        let question = Self.model(.init(items: Self.items([.question(handed)])))
-        #expect(question.tag == "Question")
-        #expect(question.text == "Claude is asking a question.")
-        #expect(question.instruction == "Answer in the terminal")
 
         let prompt = Self.model(.init(items: Self.items([.prompt(PromptWait(detail: nil))], provider: .codex)))
         // Neither an approval nor a question we know of: the state's own word.
@@ -197,7 +155,9 @@ struct DecisionBarModelTests {
         #expect(worded.text == "Allow network access?")
         #expect(worded.textHelp == "Allow network access?")
         #expect(worded.cutsTextInMiddle)
+    }
 
+    @Test func stop_statesItsReasonWithoutAnInstruction() {
         let stop = Self.model(.init(items: Self.items([.stop(.processExited)])))
         #expect(stop.tag == "Stopped")
         #expect(stop.tone == .stopped)
@@ -206,55 +166,11 @@ struct DecisionBarModelTests {
         // Only a prompt's own words are cut in the middle or put in the tooltip.
         #expect(!stop.cutsTextInMiddle)
         #expect(stop.textHelp == nil)
-        #expect(!question.cutsTextInMiddle)
-        #expect(question.textHelp == nil)
-        #expect(question.shortInstruction == "Answer in terminal")
         // The tag says "Stopped"; the words say why, once.
         #expect(stop.text == "The process exited unexpectedly.")
         #expect(stop.runs == [ReceiptRun(text: stop.text, role: .emphasized)])
         let unworded = Self.model(.init(items: Self.items([.stop(.error(nil))])), locale: Self.japanese)
         #expect(unworded.text == "エージェントが停止しました。", "never an empty line, nor 停止 twice")
-
-        let unread = Self.model(.init(items: Self.items([.unread(UnreadTurn(
-            turnID: TurnID("t"),
-            changes: .unknown
-        ))])))
-        #expect(unread.tag == "Unread")
-        #expect(unread.text == "The turn finished", "the tag already says unread")
-    }
-
-    @Test func aPaneWithTwoItems_countsThemInTheOrderTheyArrived() throws {
-        // The stop arrived first, the approval after it.
-        let handed = ApprovalFact.test(state: .handedToTerminal(since: SuspendingClock().now))
-        let items = Self.items([.stop(.processExited), .approval(handed)])
-        let stopID = try #require(items.first?.id)
-        let approvalID = try #require(items.last?.id)
-
-        let unchosen = Self.model(.init(items: items))
-        #expect(unchosen.tag == "Approval", "unchosen, the highest-ranked item")
-        #expect(unchosen.countText == "2 / 2")
-
-        let onStop = Self.model(.init(items: items, selected: stopID))
-        #expect(onStop.tag == "Stopped")
-        #expect(onStop.countText == "1 / 2")
-        #expect(onStop.countSpokenText == "Needs Attention in this pane: 1 of 2")
-        #expect(Self.model(.init(items: items, selected: stopID), locale: Self.japanese).countSpokenText
-            == "このペインの要対応、2 件中 1 件目")
-
-        #expect(onStop.content.position?.next == approvalID)
-        #expect(onStop.content.position?.previous == approvalID)
-        #expect(unchosen.content.position?.next == stopID, "it wraps")
-    }
-
-    @Test func threeItems_stepBothWays_inTheOrderTheyArrived() throws {
-        let handed = ApprovalRequestState.handedToTerminal(since: SuspendingClock().now)
-        let turn = UnreadTurn(turnID: TurnID("T1"), numbers: 1...1, changes: .changed(files: 1, added: 1, removed: 0))
-        let items = Self.items([.stop(.processExited), .approval(ApprovalFact.test(state: handed)), .unread(turn)])
-        let ids = items.map(\.id)
-        let middle = try #require(Self.model(.init(items: items, selected: ids[1])).content.position)
-        #expect(middle == DecisionBarContent.Position(index: 2, count: 3, previous: ids[0], next: ids[2]))
-        let first = try #require(Self.model(.init(items: items, selected: ids[0])).content.position)
-        #expect(first.previous == ids[2], "it wraps back to the last")
     }
 
     @Test func rightAfterAnAnswerInTheTerminal_theBarSaysSo_andWhereCommandJGoesNext() {
@@ -269,6 +185,8 @@ struct DecisionBarModelTests {
 
         let none = Self.model(.init(done: .init(result: .answeredInTerminal, next: nil)), locale: Self.japanese)
         #expect(none.text == "ターミナルで回答しました。要対応はありません。")
+        #expect(Self.model(.init(done: .init(result: .answeredInTerminal, next: nil))).text
+            == "Answered in the terminal. Nothing needs attention.")
         let nextInJapanese = DecisionBarModel(
             content: DecisionBarContent.make(.init(done: .init(result: .answeredInTerminal, next: nextID))),
             locale: Self.japanese
@@ -296,38 +214,31 @@ struct DecisionBarModelTests {
         }
     }
 
-    @Test func theDoneLine_comesOnlyWhenAPaneIsLeftWithNothing_afterAnAnswerAtTheTerminal() {
-        let handed = Self.items([.approval(ApprovalFact.test(state: .handedToTerminal(since: SuspendingClock().now)))])
-        let held = Self.items([.approval(ApprovalFact.test())])
-        let stop = Self.items([.stop(.processExited)])
-        let prompt = Self.items([.prompt(PromptWait(detail: nil))])
+    @Test func doneLineReflectsATerminalAnswerOrDecline_onlyWhenNothingElseWaits() throws {
+        let handed = try #require(Self.items([.approval(ApprovalFact.test(state: .handedToTerminal(since: SuspendingClock().now)))]).first)
+        let held = try #require(Self.items([.approval(ApprovalFact.test())]).first)
+        let stop = try #require(Self.items([.stop(.processExited)]).first)
+        let prompt = try #require(Self.items([.prompt(PromptWait(detail: nil))]).first)
+        let timedOut = try #require(Self.items([.approval(ApprovalFact.test(state: .timedOut))]).first)
 
-        #expect(DecisionBarModel.doneUpdate(lastShown: handed.first, items: [], hasMovedOnSinceShown: false) == .set(.answeredInTerminal))
-        // Weir's time ran out and the terminal took it: answered there too.
-        let timedOut = Self.items([.approval(ApprovalFact.test(state: .timedOut))])
-        #expect(DecisionBarModel.doneUpdate(lastShown: timedOut.first, items: [], hasMovedOnSinceShown: false) == .set(.answeredInTerminal))
-        #expect(DecisionBarModel.doneUpdate(lastShown: prompt.first, items: [], hasMovedOnSinceShown: false) == .set(.answeredInTerminal))
-        // Answered on the card, or a stop that cleared: the card or the pane says so.
-        #expect(DecisionBarModel.doneUpdate(lastShown: held.first, items: [], hasMovedOnSinceShown: false) == .keep)
-        #expect(DecisionBarModel.doneUpdate(lastShown: stop.first, items: [], hasMovedOnSinceShown: false) == .keep)
-        // Something still waits, or arrived: the bar shows it instead.
-        #expect(DecisionBarModel.doneUpdate(lastShown: handed.first, items: stop, hasMovedOnSinceShown: false) == .clear)
+        for shown in [handed, prompt] {
+            #expect(DecisionBarModel.doneUpdate(lastShown: shown, items: [], hasMovedOnSinceShown: false, isDeclined: true)
+                == .set(.declinedInTerminal))
+            #expect(DecisionBarModel.doneUpdate(lastShown: shown, items: [], hasMovedOnSinceShown: false)
+                == .set(.answeredInTerminal))
+            #expect(DecisionBarModel.doneUpdate(lastShown: shown, items: [], hasMovedOnSinceShown: true, isDeclined: true) == .keep)
+            #expect(DecisionBarModel.doneUpdate(lastShown: shown, items: [], hasMovedOnSinceShown: true) == .keep)
+        }
+        #expect(DecisionBarModel.doneUpdate(lastShown: timedOut, items: [], hasMovedOnSinceShown: false) == .set(.answeredInTerminal))
+        #expect(DecisionBarModel.doneUpdate(lastShown: held, items: [], hasMovedOnSinceShown: false, isDeclined: true) == .keep)
+        #expect(DecisionBarModel.doneUpdate(lastShown: held, items: [], hasMovedOnSinceShown: false) == .keep)
+        #expect(DecisionBarModel.doneUpdate(lastShown: stop, items: [], hasMovedOnSinceShown: false) == .keep)
+        #expect(DecisionBarModel.doneUpdate(lastShown: handed, items: [stop], hasMovedOnSinceShown: false) == .clear)
         #expect(DecisionBarModel.doneUpdate(lastShown: nil, items: [], hasMovedOnSinceShown: false) == .keep)
+        #expect(DecisionBarModel.doneUpdate(lastShown: handed, items: [prompt], hasMovedOnSinceShown: true) == .clear)
     }
 
-    @Test func noDoneLine_whenTheItemLeftAsThePaneMovedOn() {
-        let prompt = Self.items([.prompt(PromptWait(detail: nil))])
-        let handed = Self.items([.approval(ApprovalFact.test(state: .handedToTerminal(since: SuspendingClock().now)))])
-
-        // The person quit the agent at its prompt, or sent the next prompt:
-        // in the same pass the pane moved on and the item left.
-        #expect(DecisionBarModel.doneUpdate(lastShown: prompt.first, items: [], hasMovedOnSinceShown: true) == .keep)
-        #expect(DecisionBarModel.doneUpdate(lastShown: handed.first, items: [], hasMovedOnSinceShown: true) == .keep)
-        // An item arriving still takes the bar back.
-        #expect(DecisionBarModel.doneUpdate(lastShown: handed.first, items: prompt, hasMovedOnSinceShown: true) == .clear)
-    }
-
-    @Test func afterAnInsert_theBarSaysWhereTheCommentsWent_overThePanesItems() {
+    @Test func afterAnInsert_theBarSaysWhereTheCommentsWent_overThePanesItems() throws {
         let items = Self.items([.unread(UnreadTurn(turnID: TurnID("t"), changes: .unknown))])
         let done = DecisionBarContent.Done(result: .insertedReview(agent: .claude), next: nil)
 
@@ -339,7 +250,9 @@ struct DecisionBarModelTests {
         let japanese = Self.model(.init(items: items, done: done), locale: Self.japanese)
         #expect(japanese.text == "コメントを Claude の入力欄に挿入しました。Return を押すと送信されます。")
         // An item the person chose takes the bar back.
-        let chosen = Self.model(.init(items: items, selected: items.first?.id, done: done))
+        let unreadID = try #require(items.first?.id)
+        let chosen = Self.model(.init(items: items, selected: unreadID, done: done))
+        #expect(chosen.content.itemID == unreadID)
         #expect(chosen.tag == "Unread")
         // Never over anything but unread turns: an approval, a stop, or a
         // prompt that Return would answer keeps the bar.
@@ -350,50 +263,45 @@ struct DecisionBarModelTests {
         let needsInput = Self.model(.init(items: Self.items([.prompt(PromptWait(detail: "Allow edit?"))]), done: done))
         #expect(needsInput.tone != .done, "a permission the terminal asks itself is answered with Return")
         #expect(!DecisionBarContent.shows(.insertedReview(agent: .claude), over: Self.items([.prompt(PromptWait(detail: nil))])))
-        // Its items changing ends it.
-        #expect(DecisionBarModel.doneUpdate(lastShown: nil, items: items, hasMovedOnSinceShown: false) == .clear)
     }
 
-    @Test func anUnreadTurn_offersMarkAsViewed_asTheButtonCommandReturnPresses() throws {
-        let items = Self.items([.unread(UnreadTurn(turnID: TurnID("t"), changes: .unknown))])
-        let itemID = try #require(items.first?.id)
-
-        #expect(Self.model(.init(items: items)).primaryAction == .markReviewed(itemID, throughTurn: nil))
-        // A turn that may have changed files waits for the person; one known
-        // to have changed none, or whose changes could not be read, is read
-        // by opening its pane.
-        for changes: ChangeSummary in [.changed(files: 1, added: 1, removed: 0), .pending] {
-            let mayHaveChanged = Self.items([.unread(UnreadTurn(turnID: TurnID("t"), changes: changes))])
-            #expect(Self.model(.init(items: mayHaveChanged)).primaryAction == mayHaveChanged.first.map { .markReviewed(
-                $0.id,
-                throughTurn: nil
-            ) })
-        }
-        for changes: ChangeSummary in [.unchanged, .unavailable(reason: "notGit")] {
-            let changedNothing = Self.items([.unread(UnreadTurn(turnID: TurnID("t"), changes: changes))])
-            #expect(Self.model(.init(items: changedNothing)).primaryAction == nil)
-        }
-        // Nothing else has one here: this stop has no resume to offer (no
-        // `stopResumes`). A request Weir holds has Answer…, which opens its
-        // card (`aRequestWeirHolds_offersAnswer_andTheTerminalInItsMore`).
-        #expect(Self.model(.init(items: Self.items([.stop(.processExited)]))).primaryAction == nil)
-        #expect(Self.model(.init()).primaryAction == nil)
-    }
-
-    @Test func reviewChanges_isOfferedBesideMarkAsViewed_onTheSameTurns() {
+    @Test(arguments: [
+        (ChangeSummary.changed(files: 1, added: 1, removed: 0), true),
+        (.unknown, true),
+        (.pending, true),
+        (.unchanged, false),
+        (.unavailable(reason: "notGit"), false)
+    ])
+    func unreadTurnActions_requirePossibleFileChanges(changes: ChangeSummary, offersActions: Bool) throws {
+        let turnID = TurnID("t")
+        let itemID = AttentionItemID.unread(turnID)
         let conversation = TurnSummaryFixture.conversation
-        for changes: ChangeSummary in [.changed(files: 1, added: 1, removed: 0), .unknown, .pending] {
-            let unread = UnreadTurn(turnID: TurnID("t"), changes: changes, conversation: conversation)
-            let bar = Self.model(.init(items: Self.items([.unread(unread)])))
-            #expect(bar.offersReview)
-            #expect(bar.reviewConversation == conversation, "the bar's own conversation, not the pane's found again")
+        var queue = AttentionQueue()
+        queue.insert(
+            id: itemID,
+            kind: .unread(UnreadTurn(turnID: turnID, changes: changes, conversation: conversation)),
+            subject: .runtime(id: "recorded", provider: .claude, paneID: Self.pane, tabID: nil, projectID: nil),
+            arrivedAt: Date(timeIntervalSince1970: 1)
+        )
+        let item = try #require(queue.items.first)
+        let bar = Self.model(.init(items: [item], agent: .init(provider: .codex, state: .idle, detail: nil)))
+        #expect(bar.primaryAction == (offersActions ? .markReviewed(itemID, throughTurn: nil) : nil))
+        #expect(bar.offersReview == offersActions)
+        if offersActions {
+            #expect(bar.reviewConversation == conversation)
         }
-        for changes: ChangeSummary in [.unchanged, .unavailable(reason: "notGit")] {
-            let bar = Self.model(.init(items: Self.items([.unread(UnreadTurn(turnID: TurnID("t"), changes: changes))])))
-            #expect(!bar.offersReview)
-        }
-        #expect(!Self.model(.init(items: Self.items([.approval(ApprovalFact.test())]))).offersReview)
-        #expect(!Self.model(.init()).offersReview)
+    }
+
+    @Test func reviewIsUnavailableWithoutAnEligibleUnreadTurn() {
+        let approval = Self.model(.init(items: Self.items([.approval(ApprovalFact.test())])))
+        #expect(!approval.offersReview)
+        #expect(approval.reviewConversation == nil)
+        let stopped = Self.model(.init(items: Self.items([.stop(.processExited)])))
+        #expect(stopped.primaryAction == nil)
+        #expect(!stopped.offersReview)
+        let empty = Self.model(.init())
+        #expect(empty.primaryAction == nil)
+        #expect(!empty.offersReview)
     }
 
     @Test func recordedTurns_areTaggedWithTheirNumbers_andGiveTheirReceipt() {
@@ -419,6 +327,13 @@ struct DecisionBarModelTests {
         let notTaken = Self.model(.init(items: Self.items([.unread(untaken)])))
         #expect(notTaken.text == "Couldn’t get the changes")
         #expect(notTaken.primaryAction == nil)
+
+        let unread = Self.model(.init(items: Self.items([.unread(UnreadTurn(
+            turnID: TurnID("t"),
+            changes: .unknown
+        ))])))
+        #expect(unread.tag == "Unread")
+        #expect(unread.text == "The turn finished", "the tag already says unread")
     }
 
     @Test func aTurnThatOnlyAnswered_isNoItemOfTheBar_whichGivesItsReceiptAtRest() {
@@ -436,23 +351,27 @@ struct DecisionBarModelTests {
             .spokenText == "ターン 3、ファイルの変更なし")
         // While the agent works, what it does says more.
         let working = SessionRowFact.Agent(provider: .claude, state: .running, detail: "Bash: swift test")
-        #expect(Self.model(.init(agent: working, lastTurn: answered)).text == "Bash: swift test")
+        let running = Self.model(.init(items: Self.items([.unread(answered)]), agent: working, lastTurn: answered))
+        #expect(running.content.itemID == nil)
+        #expect(running.text == "Bash: swift test")
     }
 
     @Test func aTurnThatOnlyAnswered_isNeitherCountedNorStepped_beside_aChange() throws {
         let changed = UnreadTurn(turnID: TurnID("T5"), numbers: 5...5, changes: .changed(files: 1, added: 1, removed: 0))
         let answered = UnreadTurn(turnID: TurnID("T6"), numbers: 6...6, changes: .unchanged)
-        let items = Self.items([.unread(changed), .unread(answered)])
-        let changedID = try #require(items.first?.id)
+        let items = try Self.itemsInArrivalOrder([
+            (.unread(changed.turnID), .unread(changed)),
+            (.unread(answered.turnID), .unread(answered))
+        ])
 
         let bar = Self.model(.init(items: items))
 
-        #expect(bar.content.itemID == changedID)
+        #expect(bar.content.itemID == .unread(TurnID("T5")))
         #expect(bar.countText == nil, "one item for the bar")
         #expect(bar.content.position == nil)
     }
 
-    @Test func markAsViewed_namesTheLastTurnShown_soATurnJoiningLaterWaitsAgain() throws {
+    @Test func markAsViewed_targetsTheLastTurnInTheShownReceipt() throws {
         let shown = UnreadTurn(turnID: TurnID("T6"), numbers: 6...7, changes: .changed(files: 2, added: 2, removed: 0))
         let grown = UnreadTurn(turnID: TurnID("T6"), numbers: 6...8, changes: .changed(files: 3, added: 3, removed: 0))
         let before = Self.model(.init(items: Self.items([.unread(shown)])))
@@ -461,7 +380,6 @@ struct DecisionBarModelTests {
 
         #expect(before.primaryAction == .markReviewed(itemID, throughTurn: 7))
         #expect(after.primaryAction == .markReviewed(itemID, throughTurn: 8))
-        #expect(before.primaryAction != after.primaryAction, "the gate starts its wait over")
     }
 
     @Test func rightAfterMarkingViewed_theBarSaysSo_withUndo() {
@@ -470,6 +388,10 @@ struct DecisionBarModelTests {
         #expect(english.text == "Marked as viewed. Nothing needs attention.")
         #expect(english.undo == undo)
         #expect(english.primaryAction == nil)
+        #expect(english.fits(locale: Self.english) == [.full, .minimal, .wordsOnly])
+        #expect(english.shape(.full, locale: Self.english).moreSections.isEmpty)
+        #expect(english.shape(.minimal, locale: Self.english).showsButtons)
+        #expect(!english.shape(.wordsOnly, locale: Self.english).showsButtons)
 
         let japanese = Self.model(.init(done: .init(result: .markedViewed(undo), next: nil)), locale: Self.japanese)
         #expect(japanese.text == "確認済みにしました。要対応はありません。")
@@ -562,6 +484,10 @@ struct DecisionBarModelTests {
         // folder is not the project's name.
         let folder = project.rootURL.lastPathComponent
         #expect(text(windowProjectID: project.id) == "Answered in the terminal. Next: “build” (⌘J).")
+        let other = session.addOrActivateProject(
+            rootURL: WorkspaceSessionFixture.projectRootURL("other"), suggestedName: "other"
+        )
+        #expect(text(windowProjectID: other.id) == "Answered in the terminal. Next: “build · weir / \(folder)” (⌘J).")
         #expect(text(windowProjectID: nil) == "Answered in the terminal. Next: “build · weir / \(folder)” (⌘J).")
         // VoiceOver hears neither the key's symbols nor the separator.
         #expect(model(windowProjectID: nil)?.spokenText == "Answered in the terminal. Next: “build, weir / \(folder)”.")
@@ -591,15 +517,20 @@ struct DecisionBarModelTests {
     @Test func aLimitInTheAgentsOwnWords_endsWithOneFullStop() {
         // As recorded in fixtures/opencode/2026-11/free-limit.
         let words = "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models."
-        let item = AttentionItem.testUsageLimitStop(UsageLimit(scope: .upstream, label: words), arrivedAt: Self.beforeReset)
+        let item = AttentionItem.testUsageLimitStop(
+            UsageLimit(scope: .upstream, label: words), provider: .opencode, arrivedAt: Self.beforeReset
+        )
         let content = DecisionBarContent.make(.init(
             items: [item],
             agent: .init(provider: .opencode, state: .error, detail: nil),
             stopResumes: [item.id: .available]
         ))
         let bar = DecisionBarModel(content: content, resetNotice: nil, now: Self.beforeReset, locale: Self.english)
-        #expect(bar.text.hasPrefix(words + " "))
-        #expect(!bar.text.contains(".."))
+        #expect(bar.text == words + " The conversation is saved.")
+        #expect(bar.runs == [
+            ReceiptRun(text: words, role: .emphasized),
+            ReceiptRun(text: " The conversation is saved.", role: .plain)
+        ])
     }
 
     @Test func usageLimitStop_offersTheNoticeInPlaceOfResumingWhileTheLimitHolds() throws {
@@ -648,9 +579,13 @@ struct DecisionBarModelTests {
         #expect(one?.turnID == TurnID("T5"))
         #expect(one?.title == "Restore Code to Before This Turn…")
         // Several turns: "this turn" would not say which.
-        #expect(entry(numbers: 5...7, changes: changed, conversation: conversation)?.title == "Restore Code to Before T5…")
+        #expect(entry(numbers: 5...7, changes: changed, conversation: conversation) == .init(
+            turnID: TurnID("T5"), turnNumber: 5, title: "Restore Code to Before T5…"
+        ))
         #expect(entry(numbers: 5...5, changes: .unchanged, conversation: conversation) == nil, "nothing to take back")
-        #expect(entry(numbers: nil, changes: changed, conversation: nil) == nil, "no turn record stands for it")
+        #expect(entry(numbers: 5...5, changes: .unavailable(reason: "notGit"), conversation: conversation) == nil)
+        #expect(entry(numbers: nil, changes: changed, conversation: conversation) == nil)
+        #expect(entry(numbers: 5...5, changes: changed, conversation: nil) == nil)
     }
 
     // MARK: - The row in each fit
@@ -665,15 +600,12 @@ struct DecisionBarModelTests {
             changes: .changed(files: 1, added: 3, removed: 1),
             conversation: TurnSummaryFixture.conversation
         )
-        let items = Self.items([.unread(unread), .stop(.processExited)])
-        let shown = try #require(items.first {
-            if case .unread = $0.kind {
-                true
-            } else {
-                false
-            }
-        })
-        let bar = Self.model(.init(items: items, selected: shown.id))
+        let items = try Self.itemsInArrivalOrder([
+            (.unread(unread.turnID), .unread(unread)),
+            (.stop(EpisodeKey(origin: .runtime("agent"), episodeToken: "exit")), .stop(.processExited))
+        ])
+        let bar = Self.model(.init(items: items, selected: .unread(TurnID("T5"))))
+        #expect(bar.content.itemID == .unread(TurnID("T5")))
         let entry = try #require(bar.restoreEntry(locale: Self.english))
         #expect(bar.countText != nil)
         #expect(bar.fits(locale: Self.english) == DecisionBarModel.Fit.allCases)
@@ -703,34 +635,42 @@ struct DecisionBarModelTests {
         #expect(bar.primaryAction != nil)
     }
 
-    /// A stop keeps its ⋯ in every fit that shows buttons; at the least,
-    /// without its tag, it resumes in the short form.
-    @Test func aStop_keepsItsMoreMenu_andShortensItsResume() throws {
-        let items = Self.items([.stop(.processExited)])
-        let item = try #require(items.first)
-        let bar = Self.model(.init(items: items, stopResumes: [item.id: .available]))
-        #expect(bar.fits(locale: Self.english) == DecisionBarModel.Fit.allCases)
-        for fit in [DecisionBarModel.Fit.full, .folded, .minimal] {
-            let shape = bar.shape(fit, locale: Self.english)
-            #expect(!shape.showsReview)
-            #expect(shape.moreSections == [[.showPartialChanges(item.id), .startNewConversation(item.id)]])
-            #expect(shape.usesShortLabels == (fit == .minimal))
-        }
-    }
-
     /// A workspace whose worktree is gone offers to close its tabs, and
     /// nothing a stopped conversation offers: there is no folder to resume
     /// or start in.
     @Test func aMissingWorktree_offersToCloseItsTabs() throws {
-        let items = Self.items([.stop(.worktreeMissing)])
-        let item = try #require(items.first)
-        let bar = Self.model(.init(items: items))
+        let (session, project) = WorkspaceSessionFixture.withProject()
+        let worktree = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, isMissing: true, admission: .opened)
+        let missing = session.openTab(container: .worktree(projectID: project.id, worktreeID: worktree.id))
+        let elsewhere = session.openTab(container: .project(project.id))
+        let shell = session.openTab(container: .worktree(projectID: project.id, worktreeID: worktree.id))
+        let pane = try #require(missing.splitTree.allLeafIDs().first)
+        let otherPane = try #require(elsewhere.splitTree.allLeafIDs().first)
+        let shellPane = try #require(shell.splitTree.allLeafIDs().first)
+        for (tab, id) in [(missing, pane), (elsewhere, otherPane)] {
+            session.update(tab.id) { $0.agentBadges[.claude] = [id: AgentBadge(state: .idle, updatedAt: .distantPast)] }
+        }
+        let root = try #require(session.rootDirectory(of: missing.container))
+        let subject = AttentionSubject.sessionRow(projectID: project.id, worktreeRoot: root)
+        let itemID = AttentionItemID.stop(EpisodeKey(origin: .sessionRow(worktreeRoot: root), episodeToken: "missing"))
+        var queue = AttentionQueue()
+        queue.insert(id: itemID, kind: .stop(.worktreeMissing), subject: subject, arrivedAt: .distantPast)
+        let sources = DecisionBarModel.Sources(
+            session: session, window: ProjectWindowState(selection: session.primarySelection),
+            queue: queue, runtimes: [], approvals: ApprovalLedger(), next: nil
+        )
+
+        let bar = try #require(DecisionBarModel(paneID: pane, sources: sources, locale: Self.english))
         #expect(bar.tag == "Stopped")
         #expect(bar.text == "Worktree not found.")
-        #expect(bar.primaryAction == .closeAllTabs(item.id))
+        #expect(bar.primaryAction == .closeAllTabs(itemID))
         #expect(bar.stopItem == nil)
         #expect(bar.shape(.full, locale: Self.english).moreSections.isEmpty)
-        #expect(Self.model(.init(items: items), locale: Self.japanese).text == "ワークツリーが見つかりません。")
+        #expect(DecisionBarModel(paneID: pane, sources: sources, locale: Self.japanese)?.text == "ワークツリーが見つかりません。")
+        let other = try #require(DecisionBarModel(paneID: otherPane, sources: sources, locale: Self.english))
+        #expect(other.text == "Idle")
+        #expect(other.primaryAction == nil)
+        #expect(DecisionBarModel(paneID: shellPane, sources: sources, locale: Self.english) == nil)
     }
 
     /// A bar with no buttons has one fit, so it draws its row once.
@@ -746,51 +686,176 @@ struct DecisionBarModelTests {
         }
     }
 
-    /// The line after Mark as Viewed has only its Undo to keep: it stays
-    /// while it fits at all, then the line keeps its words alone.
-    @Test func theLineAfterMarkAsViewed_keepsItsUndo_untilNothingFits() {
-        let undo = ViewedLineUndo(conversation: TurnSummaryFixture.conversation, changeID: UUID())
-        let bar = Self.model(.init(done: .init(result: .markedViewed(undo), next: nil)))
-        #expect(bar.fits(locale: Self.english) == [.full, .minimal, .wordsOnly])
-        #expect(bar.shape(.full, locale: Self.english).moreSections.isEmpty)
+}
+
+// MARK: - Item navigation
+
+extension DecisionBarModelTests {
+    @Test func aPaneWithTwoItems_countsThemInTheOrderTheyArrived() throws {
+        // The stop arrived first, the approval after it.
+        let handed = ApprovalFact.test(state: .handedToTerminal(since: SuspendingClock().now))
+        let items = Self.items([.stop(.processExited), .approval(handed)])
+        let stopID = try #require(items.first?.id)
+        let approvalID = try #require(items.last?.id)
+
+        let reversed = Array(items.reversed())
+        let unchosen = Self.model(.init(items: reversed))
+        #expect(unchosen.tag == "Approval", "unchosen, the highest-ranked item")
+        #expect(unchosen.countText == "2 / 2")
+
+        let onStop = Self.model(.init(items: reversed, selected: stopID))
+        #expect(onStop.tag == "Stopped")
+        #expect(onStop.countText == "1 / 2")
+        #expect(onStop.countSpokenText == "Needs Attention in this pane: 1 of 2")
+        #expect(Self.model(.init(items: reversed, selected: stopID), locale: Self.japanese).countSpokenText
+            == "このペインの要対応、2 件中 1 件目")
+
+        #expect(onStop.content.position?.next == approvalID)
+        #expect(onStop.content.position?.previous == approvalID)
+        #expect(unchosen.content.position?.next == stopID, "it wraps")
+    }
+
+    @Test func threeItems_stepBothWays_inTheOrderTheyArrived() throws {
+        let approval = ApprovalFact.test(state: .handedToTerminal(since: SuspendingClock().now))
+        let turn = UnreadTurn(turnID: TurnID("T1"), numbers: 1...1, changes: .changed(files: 1, added: 1, removed: 0))
+        let stopID = AttentionItemID.stop(EpisodeKey(origin: .runtime("agent"), episodeToken: "exit"))
+        let approvalID = AttentionItemID.approval(approval.key)
+        let unreadID = AttentionItemID.unread(TurnID("T1"))
+        let items = try Self.itemsInArrivalOrder([
+            (stopID, .stop(.processExited)), (approvalID, .approval(approval)), (unreadID, .unread(turn))
+        ])
+        let shuffled = try [unreadID, stopID, approvalID].map { id in
+            try #require(items.first { $0.id == id })
+        }
+        let positions: [(AttentionItemID, DecisionBarContent.Position)] = [
+            (stopID, .init(index: 1, count: 3, previous: unreadID, next: approvalID)),
+            (approvalID, .init(index: 2, count: 3, previous: stopID, next: unreadID)),
+            (unreadID, .init(index: 3, count: 3, previous: approvalID, next: stopID))
+        ]
+        for (selected, position) in positions {
+            let content = Self.model(.init(items: shuffled, selected: selected)).content
+            #expect(content.itemID == selected)
+            #expect(content.position == position)
+        }
     }
 }
 
-/// Answer… and the ⋯ hand-off, apart so the suite stays within the type length limit.
-extension DecisionBarModelTests {
-    @Test func aRequestWeirHolds_offersAnswer_andTheTerminalInItsMore() {
-        for state in [ApprovalRequestState.held, .sendFailed(.deny, error: "offline")] {
-            let fact = ApprovalFact.test(state: state)
-            let model = Self.model(.init(items: Self.items([.approval(fact)])))
-            #expect(model.isAnsweredOnCard)
-            #expect(model.primaryAction == .openCard(.approval(fact.key)))
-            #expect(model.shape(.full, locale: Self.english).moreSections.flatMap(\.self).contains(.answerInTerminal(.approval(fact.key))))
-            #expect(model.shape(.full, locale: Self.english).showsKeyHint)
-        }
-        let question = Self.items([.question(ApprovalFact.test(isQuestion: true))])
-        let questionModel = Self.model(.init(items: question))
-        #expect(questionModel.primaryAction == question.first.map { .openCard($0.id) })
+// MARK: - Request location
 
-        // Weir never answers a Codex question: its TUI does.
-        let codexQuestion = ApprovalFact.test(isQuestion: true, provider: .codex)
-        let codexModel = Self.model(.init(items: Self.items([.question(codexQuestion)], provider: .codex)))
-        #expect(codexModel.primaryAction == nil)
-        #expect(codexModel.instruction == "Answer in the terminal")
+extension DecisionBarModelTests {
+    private struct ApprovalLocationCase {
+        let state: ApprovalRequestState
+        let place: DecisionBarContent.AnswerPlace
+        let instruction: String
+        let shortInstruction: String
+
+        init(_ state: ApprovalRequestState, _ place: DecisionBarContent.AnswerPlace, _ instruction: String, short: String? = nil) {
+            self.state = state
+            self.place = place
+            self.instruction = instruction
+            shortInstruction = short ?? instruction
+        }
     }
 
-    @Test func aRequestNoLongerHeld_offersNoAnswerButton() {
+    @Test func approvalLocation_decidesItsDeadlineAndActions() {
         let now = SuspendingClock().now
-        for state in [ApprovalRequestState.handedToTerminal(since: now), .timedOut, .sending(.allowOnce, since: now)] {
-            let model = Self.model(.init(items: Self.items([.approval(ApprovalFact.test(state: state))])))
-            #expect(!model.isAnsweredOnCard)
-            #expect(model.primaryAction == nil)
-            #expect(!model.shape(.full, locale: Self.english).moreSections.flatMap(\.self).contains { item in
-                if case .answerInTerminal = item {
-                    true
-                } else {
-                    false
-                }
-            })
+        let deadline = ServiceDeadline(deadlineMs: 522_000, serviceNowMs: 0, receivedAt: now)
+        let cases: [ApprovalLocationCase] = [
+            .init(.held, .card(heldUntil: deadline), "Answer in the terminal or on the card"),
+            .init(.sendFailed(.deny, error: "offline"), .card(heldUntil: deadline), "Answer in the terminal or on the card"),
+            .init(.handedToTerminal(since: now), .terminal, "Answer in the terminal", short: "Answer in terminal"),
+            .init(.timedOut, .terminalAfterTimeout, "Timed out. Answer in the terminal.", short: "Timed out — answer in terminal"),
+            .init(.sending(.delegate, since: now), .terminal, "Answer in the terminal", short: "Answer in terminal"),
+            .init(.sending(.allowOnce, since: now), .sending, "Sending…")
+        ]
+        for row in cases {
+            let fact = ApprovalFact.test(state: row.state, deadline: deadline)
+            let itemID = AttentionItemID.approval(fact.key)
+            let input = DecisionBarContent.Input(items: Self.items([.approval(fact)]), approvalActions: [fact.key: .command])
+            let bar = Self.model(input)
+            #expect(bar.content.body == .approval(provider: .claude, action: .command, answer: row.place))
+            #expect(bar.content.itemID == itemID)
+            #expect(bar.tag == "Approval")
+            #expect(bar.tone == .waiting)
+            #expect(bar.text == "Claude wants to run a command.")
+            #expect(bar.instruction == row.instruction)
+            #expect(bar.shortInstruction == row.shortInstruction)
+            let full = bar.shape(.full, locale: Self.english)
+            if case .card = row.place {
+                #expect(bar.isAnsweredOnCard)
+                #expect(bar.heldUntil == deadline)
+                #expect(bar.primaryAction == .openCard(itemID))
+                #expect(full.moreSections == [[.answerInTerminal(itemID)]])
+                #expect(full.showsKeyHint)
+            } else {
+                #expect(!bar.isAnsweredOnCard)
+                #expect(bar.heldUntil == nil)
+                #expect(bar.primaryAction == nil)
+                #expect(full.moreSections.isEmpty)
+                #expect(!full.showsKeyHint)
+            }
+        }
+        let timedOut = ApprovalFact.test(state: .timedOut, deadline: deadline)
+        let japanese = Self.model(.init(items: Self.items([.approval(timedOut)])), locale: Self.japanese)
+        #expect(japanese.shortInstruction == "時間切れ（ターミナルで回答）")
+    }
+
+    @Test func questionLocation_followsNativeSupportAndHandoff() {
+        let native = ApprovalFact.test(isQuestion: true)
+        let held = Self.model(.init(items: Self.items([.question(native)])))
+        #expect(held.primaryAction == .openCard(.question(native.key)))
+
+        let codex = ApprovalFact.test(isQuestion: true, provider: .codex)
+        let unsupported = Self.model(.init(items: Self.items([.question(codex)], provider: .codex)))
+        #expect(unsupported.primaryAction == nil)
+        #expect(unsupported.instruction == "Answer in the terminal")
+
+        let handed = ApprovalFact.test(isQuestion: true, state: .handedToTerminal(since: SuspendingClock().now))
+        let terminal = Self.model(.init(items: Self.items([.question(handed)])))
+        #expect(terminal.tag == "Question")
+        #expect(terminal.text == "Claude is asking a question.")
+        #expect(terminal.instruction == "Answer in the terminal")
+        #expect(terminal.shortInstruction == "Answer in terminal")
+        #expect(!terminal.cutsTextInMiddle)
+        #expect(terminal.textHelp == nil)
+        #expect(terminal.primaryAction == nil)
+    }
+}
+
+@MainActor
+extension DecisionBarModelTests {
+    @Test func aQuestionsBody_namesItsExactAnswerDestination() {
+        let now = SuspendingClock.now
+        let deadline = ServiceDeadline(deadlineMs: 522_000, serviceNowMs: 0, receivedAt: now)
+        let rows: [(ApprovalRequestState, DecisionBarContent.AnswerPlace)] = [
+            (.held, .card(heldUntil: deadline)),
+            (.sendFailed(.deny, error: "offline"), .card(heldUntil: deadline)),
+            (.sending(.allowOnce, since: now), .sending),
+            (.sending(.delegate, since: now), .terminal),
+            (.handedToTerminal(since: now), .terminal),
+            (.timedOut, .terminalAfterTimeout),
+            (.withdrawn, .terminal),
+            (.unknownResult, .terminal),
+            (.answered(.allowOnce), .terminal)
+        ]
+        for (state, native) in rows {
+            for provider in [AgentKind.claude, .codex] {
+                let fact = ApprovalFact.test(isQuestion: true, provider: provider, state: state, deadline: deadline)
+                var queue = AttentionQueue()
+                queue.insert(
+                    id: .question(fact.key),
+                    kind: .question(fact),
+                    subject: .unplaced(provider: provider),
+                    arrivedAt: Date(timeIntervalSince1970: 0)
+                )
+                let content = DecisionBarContent.make(.init(
+                    items: queue.items, agent: SessionRowFact.Agent(provider: provider, state: .needsInput, detail: nil)
+                ))
+                #expect(
+                    content.body == .question(provider: provider, answer: provider == .claude ? native : .terminal),
+                    "\(state), \(provider)"
+                )
+            }
         }
     }
 }

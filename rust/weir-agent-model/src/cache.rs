@@ -61,12 +61,17 @@ mod tests {
             rewrite_tokens: Some(573_000),
             precision: CachePrecision::Estimated,
         };
-        let json = serde_json::to_string(&window).expect("encode");
+        let json = serde_json::to_value(&window).expect("encode");
         assert_eq!(
             json,
-            r#"{"observedAt":"2026-10-07T12:00:00Z","ttlSeconds":3600,"rewriteTokens":573000,"precision":"estimated"}"#
+            serde_json::json!({
+                "observedAt": "2026-10-07T12:00:00Z",
+                "ttlSeconds": 3600,
+                "rewriteTokens": 573_000,
+                "precision": "estimated"
+            })
         );
-        let back: CacheWindow = serde_json::from_str(&json).expect("decode");
+        let back: CacheWindow = serde_json::from_value(json).expect("decode");
         assert_eq!(back, window);
     }
 
@@ -78,8 +83,16 @@ mod tests {
             rewrite_tokens: None,
             precision: CachePrecision::Reported,
         };
-        let json = serde_json::to_string(&window).expect("encode");
-        assert!(!json.contains("rewriteTokens"));
-        assert!(json.contains(r#""precision":"reported""#));
+        let json = serde_json::to_value(&window).expect("encode");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "observedAt": "2026-10-07T12:00:00Z",
+                "ttlSeconds": 300,
+                "precision": "reported"
+            })
+        );
+        let back: CacheWindow = serde_json::from_value(json).expect("decode without rewrite size");
+        assert_eq!(back, window);
     }
 }

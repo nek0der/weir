@@ -90,11 +90,19 @@ fn a_discards_undo_is_refused_once_git_converts_its_file() {
     fs::create_dir_all(attributes.parent().unwrap()).unwrap();
     fs::write(&attributes, "f.txt text eol=crlf\n").unwrap();
 
+    let journal = journal.expect("discard journal");
+    let path = repo.path.join("f.txt");
+    let before = fs::read(&path).expect("discarded bytes");
     assert_eq!(
-        refused(repo.undo(&journal.unwrap().op_id)),
+        refused(repo.undo(&journal.op_id)),
         Refusal::Converted {
             paths: vec!["f.txt".to_owned()]
         }
+    );
+    assert_eq!(fs::read(path).expect("still discarded"), before);
+    assert_eq!(
+        repo.worktree().journal(&journal.op_id).unwrap(),
+        Some(journal)
     );
 }
 
@@ -208,6 +216,15 @@ fn a_discard_is_refused_while_an_agent_of_the_worktree_runs() {
             refusal: Refusal::AgentActive { .. }
         }
     ));
+    assert_eq!(
+        repo.read("f.txt").as_deref(),
+        Some(
+            LINES
+                .replace("1\n2", "one\n2")
+                .replace("10\n", "ten\n")
+                .as_str()
+        )
+    );
 }
 
 /// A discard never undone goes after the journals' lifetime, refs and
@@ -284,7 +301,7 @@ fn a_link_where_the_file_was_is_not_discarded() {
     fs::remove_file(repo.path.join("f.txt")).unwrap();
     std::os::unix::fs::symlink("target.txt", repo.path.join("f.txt")).unwrap();
 
-    let (_, results) = discarded(discard(
+    let (journal, results) = discarded(discard(
         &repo,
         &turn,
         &from,
@@ -298,6 +315,11 @@ fn a_link_where_the_file_was_is_not_discarded() {
     assert_eq!(
         results,
         [HunkOutcome::Unsupported, HunkOutcome::Unsupported]
+    );
+    assert!(journal.is_none());
+    assert_eq!(
+        fs::read_link(repo.path.join("f.txt")).expect("still a link"),
+        Path::new("target.txt")
     );
     assert_eq!(repo.read("target.txt").as_deref(), Some(content.as_str()));
 }

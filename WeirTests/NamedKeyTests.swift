@@ -29,6 +29,8 @@ struct NamedKeyTests {
     @Test("a stored name resolves to its key, with enter as Return")
     func storedName_resolvesAliasAndRejectsCharacters() {
         #expect(NamedKey(storedName: "page_up") == .pageUp)
+        #expect(NamedKey.pageUp.rawValue == "page_up")
+        #expect(NamedKey(storedName: "return") == .return)
         #expect(NamedKey(storedName: "enter") == .return)
         #expect(NamedKey(storedName: "a") == nil)
     }
@@ -61,13 +63,15 @@ struct NamedKeyTests {
     func functionKeys_areNumberedOneToTwenty() {
         let numbers = NamedKey.allCases.filter(\.isFunctionKey).compactMap(\.functionKeyNumber)
         #expect(numbers.sorted() == Array(1...20))
-        #expect(NamedKey.escape.functionKeyNumber == nil)
+        let nonFunctionKeys = NamedKey.allCases.filter { !$0.rawValue.hasPrefix("f") }
+        #expect(nonFunctionKeys.allSatisfy { $0.functionKeyNumber == nil && !$0.isFunctionKey })
     }
 
     @Test("a stored function-key shortcut has a menu key")
-    func storedFunctionKey_hasSwiftUIKeyEquivalent() {
+    func storedFunctionKey_hasSwiftUIKeyEquivalent() throws {
         let shortcut = StoredShortcut(key: "f13", modifiers: [.control])
-        #expect(shortcut.swiftUIKeyEquivalent == NamedKey.f13.keyEquivalent)
+        let scalar = try #require(UnicodeScalar(UInt16(NSF13FunctionKey)))
+        #expect(shortcut.swiftUIKeyEquivalent?.character == Character(scalar))
         #expect(StoredShortcut(key: "not_a_key", modifiers: []).swiftUIKeyEquivalent == nil)
     }
 
@@ -78,7 +82,7 @@ struct NamedKeyTests {
     @Test("a menu item with a function key fires on that key", arguments: [
         (NamedKey.f5, NSEvent.ModifierFlags.control),
         (NamedKey.f13, NSEvent.ModifierFlags.control),
-        (NamedKey.f13, NSEvent.ModifierFlags()),
+        (NamedKey.f13, NSEvent.ModifierFlags())
     ])
     func functionKeyMenuItem_firesOnKey(key: NamedKey, modifiers: NSEvent.ModifierFlags) throws {
         let target = MenuTarget()

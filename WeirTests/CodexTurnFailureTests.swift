@@ -36,6 +36,7 @@ struct CodexTurnFailureTests {
             #expect(reader.readNewLines() == [Substring(Self.done)], "a line not ended yet waits")
             try Self.append("\n", to: url)
             #expect(reader.readNewLines() == [Substring(Self.limited)])
+            #expect(reader.readNewLines().isEmpty, "a reported failure is not replayed")
         }
     }
 
@@ -110,8 +111,8 @@ struct CodexTurnFailureTests {
             let count = RolloutReader.chunkBytes / filler.utf8.count + 8
             try Self.append(String(repeating: filler, count: count) + Self.limited + "\n", to: url)
             let kept = reader.readNewLines(keeping: RolloutReader.mayBeFailureLine)
-            #expect(kept.count == 1, "the filler is not kept")
-            #expect(kept.last == Substring(Self.limited))
+            #expect(kept == [Substring(Self.limited)], "the filler is not kept")
+            #expect(reader.readNewLines(keeping: RolloutReader.mayBeFailureLine).isEmpty)
         }
     }
 
@@ -130,9 +131,15 @@ struct CodexTurnFailureTests {
         }
     }
 
-    @Test func reader_aMissingFileReadsNothing() {
-        var reader = RolloutReader(path: "/nonexistent/weir/rollout.jsonl", offset: 0)
-        #expect(reader.readNewLines().isEmpty)
+    @Test func reader_aMissingFileReadsNothing() throws {
+        try withTempDir { directory in
+            let url = directory.appendingPathComponent("rollout.jsonl")
+            var reader = Self.reader(over: url)
+            #expect(reader.readNewLines().isEmpty)
+
+            try Data((Self.done + "\n").utf8).write(to: url)
+            #expect(reader.readNewLines() == [Substring(Self.done)])
+        }
     }
 
     private static let tokyo = TimeZone(identifier: "Asia/Tokyo") ?? .gmt

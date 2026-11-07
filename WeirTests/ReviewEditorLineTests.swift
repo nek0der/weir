@@ -7,8 +7,13 @@ import Testing
 struct ReviewEditorLineTests {
     typealias Slot = ReviewEditorLine.Slot
 
-    @Test func lineWithANewNumberOpensThere() {
-        #expect(ReviewEditorLine.line(at: 1, in: [.line(10), .line(11), .line(12)]) == 11)
+    @Test("A numbered row opens there and an out-of-range row has no line", arguments: [
+        (1, 11 as Int?),
+        (3, nil),
+        (-1, nil)
+    ])
+    func numberedRowOpensAtItsNewLine(index: Int, expectedLine: Int?) {
+        #expect(ReviewEditorLine.line(at: index, in: [.line(10), .line(11), .line(12)]) == expectedLine)
     }
 
     /// A removal is sent to where it was, which is where the next surviving
@@ -29,9 +34,5 @@ struct ReviewEditorLineTests {
     @Test func searchStopsAtABoundary() {
         #expect(ReviewEditorLine.line(at: 1, in: [.line(10), .line(nil), .boundary, .line(80)]) == 11)
         #expect(ReviewEditorLine.line(at: 1, in: [.boundary, .line(nil), .boundary]) == nil)
-    }
-
-    @Test func rowOutsideTheListHasNoLine() {
-        #expect(ReviewEditorLine.line(at: 3, in: [.line(1)]) == nil)
     }
 }

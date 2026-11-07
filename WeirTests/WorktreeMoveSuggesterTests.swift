@@ -187,11 +187,15 @@ struct WorktreeMoveSuggesterTests {
         let primaryTab = session.primarySelection.activeTabID
 
         suggester.handleEvent(paneID: pane, newCwd: "/repo-windows-feat/src", oldCwd: nil)
-        #expect(suggester.current?.paneID == pane)
+        let offered = try #require(suggester.current)
+        #expect(offered.paneID == pane)
+        #expect(offered.newCwd.path == "/repo-windows-feat/src")
 
         suggester.accept()
+        #expect(suggester.current == nil)
         let moved = try ContainerID.worktree(projectID: #require(tab.container.projectID), worktreeID: worktree.id)
         #expect(session.tab(tab.id)?.container == moved)
+        #expect(session.tab(tab.id)?.splitTree.allLeafIDs() == [pane])
         #expect(session.selection(other)?.activeContainerID == moved)
         #expect(session.selection(other)?.activeTabID == tab.id)
         #expect(session.primarySelection.activeTabID == primaryTab)
@@ -262,7 +266,8 @@ struct WorktreeMoveSuggesterTests {
         let suggester = WorktreeMoveSuggester()
         suggester.bind(session: session)
         suggester.handleEvent(paneID: pane, newCwd: "/repo-windows-feat", oldCwd: nil)
-        #expect(suggester.current != nil)
+        let offered = try #require(suggester.current)
+        #expect(offered.paneID == pane)
 
         session.setActiveContainer(.loose, in: other)
         suggester.shownTabsDidChange()
@@ -270,6 +275,9 @@ struct WorktreeMoveSuggesterTests {
 
         session.setActiveTab(tab.id, in: other)
         suggester.shownTabsDidChange()
-        #expect(suggester.current?.paneID == pane)
+        let restored = try #require(suggester.current)
+        #expect(restored.paneID == offered.paneID)
+        #expect(restored.kind == offered.kind)
+        #expect(restored.newCwd == offered.newCwd)
     }
 }

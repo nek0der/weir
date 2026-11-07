@@ -124,6 +124,8 @@ struct InitialPromptShimTests {
         try withTempDir { dir in
             let handoff = try launch(agent, in: dir, promptFile: nil)
             #expect(!handoff.agentArgv.contains("--"))
+            #expect(Int(handoff.agentPID) != nil)
+            #expect(!handoff.agentSawVariable)
         }
     }
 
@@ -147,10 +149,12 @@ struct InitialPromptShimTests {
             let file = try InitialPromptFile.stagedByEarlierBuild("do it", in: Self.prompts(in: dir))
             let kept = try launch(agent, in: dir, promptFile: file, args: args)
             #expect(!kept.agentArgv.contains("do it"))
+            #expect(kept.agentArgv.suffix(args.count) == args)
             #expect(FileManager.default.fileExists(atPath: file.path))
 
             let taken = try launch(agent, in: dir, promptFile: file)
             #expect(taken.agentArgv.suffix(2) == ["--", "do it"])
+            #expect(!FileManager.default.fileExists(atPath: file.path))
         }
     }
 
@@ -163,7 +167,8 @@ struct InitialPromptShimTests {
         try withTempDir { dir in
             let file = try InitialPromptFile.stagedByEarlierBuild("do it", in: Self.prompts(in: dir))
             let handoff = try launch(agent, in: dir, promptFile: file, args: args)
-            #expect(handoff.agentArgv.suffix(2) == ["--", "do it"])
+            let expected = args + ["--", "do it"]
+            #expect(handoff.agentArgv.suffix(expected.count) == expected)
         }
     }
 

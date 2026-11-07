@@ -1,5 +1,5 @@
 // KeyboardKeyIntroductionTests.swift
-// Weir — ⌥⌘N after an update from the release where it was the sheet: the sheet once more, saying what the keys do now, and never again.
+// Weir — scheduling, persisting, and requesting the shortcut introduction after a schema 1 update.
 
 import Foundation
 import Testing
@@ -22,62 +22,81 @@ struct KeyboardKeyIntroductionTests {
 
     /// The previous release's ⌥⌘N was the sheet, and is Create Worktree Now
     /// now: the person is told on their first ⌥⌘N.
-    @Test func aSchema1File_onTheDefaults_isToldOnce() {
+    @Test func migratingSchema1Defaults_schedulesTheIntroduction() {
         let keyboard = Self.moved(KeyboardSettings())
 
+        #expect(keyboard.shortcut(for: .newWorktree) == TestShortcuts.commandN)
         #expect(keyboard.shortcut(for: .newWorktreeNow) == Self.optionCommandN)
+        #expect(keyboard.keysToIntroduce == ["newWorktreeNow"])
         #expect(keyboard.isIntroductionDue(for: .newWorktreeNow))
         #expect(KeyboardSettings.schema1NewWorktreeDefault == Self.optionCommandN)
     }
 
     /// Their own keys for New Worktree… meant ⌥⌘N was never the sheet.
-    @Test func aSchema1File_withItsOwnKeysForNewWorktree_isNotTold() {
+    @Test func aCustomSheetKey_doesNotScheduleTheIntroduction() {
         var schema1 = KeyboardSettings()
         schema1.overrides["newWorktree"] = Self.commandF
 
-        #expect(!Self.moved(schema1).isIntroductionDue(for: .newWorktreeNow))
+        let keyboard = Self.moved(schema1)
+        #expect(keyboard.shortcut(for: .newWorktree) == Self.commandF)
+        #expect(keyboard.keysToIntroduce.isEmpty)
+        #expect(!keyboard.isIntroductionDue(for: .newWorktreeNow))
     }
 
     /// New Worktree… bound to ⌥⌘N in the file, the default written out,
     /// keeps those keys: the sheet stays on them, Create Worktree Now has
     /// none, and nothing changed under the person's hands.
-    @Test func aSchema1File_withOptionCommandNWrittenOutForNewWorktree_isNotTold() {
+    @Test func anExplicitOldSheetKey_doesNotScheduleTheIntroduction() {
         var schema1 = KeyboardSettings()
         schema1.overrides["newWorktree"] = Self.optionCommandN
         let keyboard = Self.moved(schema1)
 
         #expect(keyboard.shortcut(for: .newWorktree) == Self.optionCommandN)
         #expect(keyboard.shortcut(for: .newWorktreeNow) == nil)
+        #expect(keyboard.keysToIntroduce.isEmpty)
         #expect(!keyboard.isIntroductionDue(for: .newWorktreeNow))
     }
 
     /// Bound to other keys since, Create Worktree Now has nothing to say:
     /// the person chose them knowing what they do.
-    @Test func keysBoundSince_haveNothingToSay() {
+    @Test func rebindingInstantWorktree_makesThePendingIntroductionNotDue() {
         var keyboard = Self.moved(KeyboardSettings())
-        keyboard.setOverride(Self.commandF, for: .newWorktreeNow)
+        let rebound = StoredShortcut(key: "f12", modifiers: [.control])
+        #expect(keyboard.isIntroductionDue(for: .newWorktreeNow))
+        #expect(keyboard.validate(rebound, for: .newWorktreeNow) == .ok)
+        keyboard.setOverride(rebound, for: .newWorktreeNow)
+        let normalized = keyboard.normalizedForTest().keyboard
 
-        #expect(!keyboard.isIntroductionDue(for: .newWorktreeNow))
+        #expect(normalized.shortcut(for: .newWorktreeNow) == rebound)
+        #expect(normalized.keysToIntroduce == ["newWorktreeNow"])
+        #expect(!normalized.isIntroductionDue(for: .newWorktreeNow))
     }
 
     /// Their own binding on ⌥⌘N keeps it theirs: Create Worktree Now starts
     /// with no keys, and nothing changed under their hands.
-    @Test func aSchema1File_withAnotherActionOnOptionCommandN_isNotTold() {
+    @Test func anotherActionKeepingOptionCommandN_preventsTheIntroduction() {
         var schema1 = KeyboardSettings()
         schema1.overrides["newWorktree"] = Self.commandF
         schema1.overrides["newTab"] = Self.optionCommandN
         let keyboard = Self.moved(schema1)
 
+        #expect(keyboard.shortcut(for: .newTab) == Self.optionCommandN)
+        #expect(keyboard.shortcut(for: .newWorktree) == Self.commandF)
         #expect(keyboard.shortcut(for: .newWorktreeNow) == nil)
+        #expect(keyboard.keysToIntroduce.isEmpty)
         #expect(!keyboard.isIntroductionDue(for: .newWorktreeNow))
     }
 
-    /// The quick terminal's hotkey on ⌥⌘N holds it the same way.
-    @Test func aSchema1File_withTheHotKeyOnOptionCommandN_isNotTold() {
+    /// A hotkey on ⌥⌘N displaces the new built-in shortcut.
+    @Test func keepingTheQuickTerminalHotkey_preventsTheIntroduction() {
         let schema1 = KeyboardSettings()
-        var (keyboard, _) = schema1.normalizedForTest(hotKey: Self.optionCommandN)
+        let result = schema1.normalizedForTest(hotKey: Self.optionCommandN)
+        var keyboard = result.keyboard
         keyboard.noteChangedKeys(since: schema1)
 
+        #expect(result.hotKey == Self.optionCommandN)
+        #expect(keyboard.shortcut(for: .newWorktreeNow) == nil)
+        #expect(keyboard.keysToIntroduce.isEmpty)
         #expect(!keyboard.isIntroductionDue(for: .newWorktreeNow))
     }
 
@@ -91,13 +110,15 @@ struct KeyboardKeyIntroductionTests {
 
     // MARK: - Said, then kept
 
-    /// Once said, it is not due again, and loads and changes leave it so.
-    @Test func onceSaid_itIsNotDueAgain() {
+    @Test func normalization_keepsAConsumedIntroductionAbsent() {
         var keyboard = Self.moved(KeyboardSettings())
+        #expect(keyboard.isIntroductionDue(for: .newWorktreeNow))
         keyboard.markIntroduced(.newWorktreeNow)
         var hotKey: StoredShortcut?
         keyboard.normalize(quickTerminalHotKey: &hotKey)
 
+        #expect(keyboard.shortcut(for: .newWorktreeNow) == Self.optionCommandN)
+        #expect(keyboard.keysToIntroduce.isEmpty)
         #expect(!keyboard.isIntroductionDue(for: .newWorktreeNow))
     }
 
@@ -107,46 +128,86 @@ struct KeyboardKeyIntroductionTests {
         var settings = WeirSettings()
         settings.keyboard = Self.moved(KeyboardSettings())
         let data = try WeirSettings.makeFileEncoder().encode(settings)
+        let saved = try Self.settingsObject(data)
+        let pending = try #require(saved["keyboard"] as? [String: Any])
+        #expect(pending["keysToIntroduce"] as? [String] == ["newWorktreeNow"])
         let decoded = try PersistenceCoders.makeDecoder().decode(WeirSettings.self, from: data)
         #expect(decoded.keyboard.isIntroductionDue(for: .newWorktreeNow))
 
         settings.keyboard.markIntroduced(.newWorktreeNow)
-        let emptied = try String(bytes: WeirSettings.makeFileEncoder().encode(settings), encoding: .utf8) ?? ""
-        #expect(!emptied.contains("keysToIntroduce"))
+        let emptied = try Self.settingsObject(WeirSettings.makeFileEncoder().encode(settings))
+        let keyboard = try #require(emptied["keyboard"] as? [String: Any])
+        #expect(!keyboard.keys.contains("keysToIntroduce"))
+    }
+
+    private static func settingsObject(_ data: Data) throws -> [String: Any] {
+        try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
     // MARK: - Through the store
 
-    @Test func theStore_movingASchema1File_tellsOnce_andRecordsItSaid() throws {
+    @Test func theStore_schedulesAnIntroductionOnMigration_andPersistsItsConsumption() throws {
         try withTempDir { dir in
-            try WeirSettings.testFileData(version: 1, overrides: [:]).write(to: dir.appendingPathComponent("settings.json"))
+            let url = dir.appendingPathComponent("settings.json")
+            let schema1 = Data(#"""
+            {
+              "schemaVersion": 1,
+              "appearance": {},
+              "font": {},
+              "terminal": {"scrollbackLines": 27000},
+              "advanced": {},
+              "keyboard": {"overrides": {}}
+            }
+            """#.utf8)
+            try schema1.write(to: url)
             let store = SettingsStore(directory: dir)
+            #expect(store.settings.terminal.scrollbackLines == 27000)
+            #expect(store.settings.keyboard.keysToIntroduce == ["newWorktreeNow"])
             #expect(store.settings.keyboard.isIntroductionDue(for: .newWorktreeNow))
 
             store.settings.keyboard.markIntroduced(.newWorktreeNow)
-            store.saveNow()
+            try #require(store.saveNow())
 
-            #expect(!SettingsStore(directory: dir).settings.keyboard.isIntroductionDue(for: .newWorktreeNow))
+            let saved = try Self.settingsObject(Data(contentsOf: url))
+            #expect(saved["schemaVersion"] as? Int == 2)
+            let keyboard = try #require(saved["keyboard"] as? [String: Any])
+            #expect(!keyboard.keys.contains("keysToIntroduce"))
+
+            let reloaded = SettingsStore(directory: dir)
+            #expect(reloaded.settings.terminal.scrollbackLines == 27000)
+            #expect(reloaded.settings.keyboard.shortcut(for: .newWorktreeNow) == Self.optionCommandN)
+            #expect(!reloaded.settings.keyboard.isIntroductionDue(for: .newWorktreeNow))
         }
     }
 
-    /// A new person's ⌥⌘N, and the builds of this release, were never the
-    /// sheet: nothing to say.
-    @Test func noFile_orASchema2File_tellsNothing() throws {
+    @Test func newSettingsAndSchema2WithoutPendingKeys_doNotScheduleAnIntroduction() throws {
         try withTempDir { dir in
-            #expect(!SettingsStore(directory: dir).settings.keyboard.isIntroductionDue(for: .newWorktreeNow))
+            let store = SettingsStore(directory: dir)
+            #expect(store.settings.keyboard.keysToIntroduce.isEmpty)
+            #expect(!store.settings.keyboard.isIntroductionDue(for: .newWorktreeNow))
         }
         try withTempDir { dir in
-            try WeirSettings.testFileData(version: 2, overrides: [:]).write(to: dir.appendingPathComponent("settings.json"))
-            #expect(!SettingsStore(directory: dir).settings.keyboard.isIntroductionDue(for: .newWorktreeNow))
+            let file = Data(#"""
+            {
+              "schemaVersion": 2,
+              "appearance": {},
+              "font": {},
+              "terminal": {},
+              "advanced": {},
+              "keyboard": {"overrides": {}, "showsHeldKeyHints": false}
+            }
+            """#.utf8)
+            try file.write(to: dir.appendingPathComponent("settings.json"))
+            let store = SettingsStore(directory: dir)
+            #expect(!store.settings.keyboard.showsHeldKeyHints)
+            #expect(store.settings.keyboard.keysToIntroduce.isEmpty)
+            #expect(!store.settings.keyboard.isIntroductionDue(for: .newWorktreeNow))
         }
     }
 
     // MARK: - ⌥⌘N in the window
 
-    /// Due, ⌥⌘N opens the sheet saying what the keys do now, instead of
-    /// making a worktree.
-    @Test func optionCommandN_whileDue_opensTheSheetWithTheNote() {
+    @Test func dueIntroduction_requestsTheWorktreeSheetWithTheNote() {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
         session.setActiveContainer(.project(project.id))
         let window = ProjectWindowState(selection: session.primarySelection)
@@ -158,31 +219,49 @@ struct KeyboardKeyIntroductionTests {
         #expect(window.newWorktreeSheet.introducesInstantKey)
     }
 
-    /// Said, or never due, ⌥⌘N is left to make the worktree; and a window
-    /// that shows no project has nothing to open it for.
-    @Test func optionCommandN_notDue_orWithNoProject_leavesTheSheetClosed() {
+    @Test func introductionWithoutAPendingKeyOrProject_doesNotRequestTheSheet() {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
         session.setActiveContainer(.project(project.id))
         let window = ProjectWindowState(selection: session.primarySelection)
-        #expect(!SupervisionWindowActions.introduceInstantWorktree(in: window, keyboard: KeyboardSettings()))
-        #expect(window.newSession == nil)
+        var consumed = Self.moved(KeyboardSettings())
+        #expect(consumed.isIntroductionDue(for: .newWorktreeNow))
+        consumed.markIntroduced(.newWorktreeNow)
+        for keyboard in [KeyboardSettings(), consumed] {
+            #expect(!SupervisionWindowActions.introduceInstantWorktree(in: window, keyboard: keyboard))
+            #expect(window.newSession == nil)
+            #expect(!window.newWorktreeSheet.introducesInstantKey)
+        }
 
         let empty = ProjectWindowState(selection: WindowSelection())
         #expect(!SupervisionWindowActions.introduceInstantWorktree(in: empty, keyboard: Self.moved(KeyboardSettings())))
         #expect(empty.newSession == nil)
+        #expect(!empty.newWorktreeSheet.introducesInstantKey)
     }
 
     // MARK: - The note
 
     @Test func theNote_namesTheKeysAsBoundNow() {
         let en = Locale(identifier: "en")
+        let ja = Locale(identifier: "ja")
         let commandN = TestShortcuts.commandN
-        #expect(InstantWorktreeKeyText.note(now: Self.optionCommandN, sheet: commandN).resolved(in: en)
-            == "\(Self.optionCommandN.displayString) now creates a worktree without showing this sheet. "
-            + "This sheet now opens with \(commandN.displayString).")
-        #expect(InstantWorktreeKeyText.note(now: Self.optionCommandN, sheet: nil).resolved(in: en).hasSuffix("in the File menu."))
-        #expect(InstantWorktreeKeyText.note(now: nil, sheet: commandN).resolved(in: en).hasPrefix("Create Worktree Now"))
-        let ja = InstantWorktreeKeyText.note(now: Self.optionCommandN, sheet: commandN).resolved(in: Locale(identifier: "ja"))
-        #expect(ja == "\(Self.optionCommandN.displayString) は、このシートを表示せずにワークツリーを作成するようになりました。このシートは \(commandN.displayString) で開きます。")
+        let both = InstantWorktreeKeyText.note(now: Self.optionCommandN, sheet: commandN)
+        #expect(both.resolved(in: en)
+            == "⌥⌘N now creates a worktree without showing this sheet. This sheet now opens with ⌘N.")
+        #expect(both.resolved(in: ja)
+            == "⌥⌘N は、このシートを表示せずにワークツリーを作成するようになりました。このシートは ⌘N で開きます。")
+
+        let withoutSheet = InstantWorktreeKeyText.note(now: Self.optionCommandN, sheet: nil)
+        #expect(withoutSheet.resolved(in: en)
+            == "⌥⌘N now creates a worktree without showing this sheet. To open this sheet, choose New Worktree… in the File menu.")
+        #expect(withoutSheet.resolved(in: ja)
+            == "⌥⌘N は、このシートを表示せずにワークツリーを作成するようになりました。このシートは、ファイルメニューの「新規ワークツリー…」で開きます。")
+
+        for sheet in [commandN, nil] {
+            let withoutNow = InstantWorktreeKeyText.note(now: nil, sheet: sheet)
+            #expect(withoutNow.resolved(in: en)
+                == "Create Worktree Now creates a worktree without showing this sheet. This is the New Worktree… sheet.")
+            #expect(withoutNow.resolved(in: ja)
+                == "「今すぐワークツリーを作成」は、このシートを表示せずにワークツリーを作成します。このシートは「新規ワークツリー…」です。")
+        }
     }
 }

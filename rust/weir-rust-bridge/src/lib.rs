@@ -670,7 +670,14 @@ mod tests {
                     }
                 }),
             );
-            assert_eq!(resolved["body"]["state"]["status"], "resolved");
+            assert_eq!(
+                resolved["body"]["state"],
+                json!({
+                    "status": "resolved", "result": {"decision": "allow_once"},
+                })
+            );
+            assert_eq!(resolved["body"]["request"]["run_id"], json!(run_id));
+            assert_eq!(resolved["body"]["request"]["request_id"], json!(request_id));
             let waited = exchange(
                 requester,
                 json!({
@@ -681,7 +688,15 @@ mod tests {
                     "body": {"run_id": run_id, "request_id": request_id, "maximum_wait_ms": 0}
                 }),
             );
-            assert_eq!(waited["body"]["state"]["status"], "resolved");
+            assert_eq!(
+                waited["body"]["state"],
+                json!({
+                    "status": "resolved", "result": {"decision": "allow_once"},
+                })
+            );
+            assert_eq!(waited["body"]["request"], submitted["body"]["request"]);
+            assert_eq!(waited["body"]["request"]["run_id"], json!(run_id));
+            assert_eq!(waited["body"]["request"]["request_id"], json!(request_id));
 
             weir_approval_session_free_v1(requester);
             weir_approval_session_free_v1(controller);
@@ -690,19 +705,48 @@ mod tests {
     }
 
     #[test]
-    fn withdrawing_a_requester_cancels_its_pending_request() {
+    fn withdrawing_a_requester_cancels_only_its_pending_requests() {
         // SAFETY: Each handle is released exactly once before the test returns.
         unsafe {
             let service = weir_approval_service_create_v1(8);
             let run_id = Uuid::new_v4();
-            let request_id = Uuid::new_v4();
+            let other_run_id = Uuid::new_v4();
+            let first = Uuid::new_v4();
+            let second = Uuid::new_v4();
+            let other_pending = Uuid::new_v4();
             let requester = requester(service, run_id);
+            let other = self::requester(service, other_run_id);
             let controller = weir_approval_session_create_controller_v1(service);
             let epoch = hello(requester);
             assert_eq!(hello(controller), epoch);
-            let submitted = exchange(requester, approval_submit(epoch, run_id, request_id));
-            assert_eq!(submitted["body"]["state"]["status"], "pending");
+            assert_eq!(hello(other), epoch);
 
+            for (session, owner, id) in [
+                (requester, run_id, first),
+                (requester, run_id, second),
+                (other, other_run_id, other_pending),
+            ] {
+                let submitted = exchange(session, approval_submit(epoch, owner, id));
+                assert_eq!(submitted["body"]["state"]["status"], "pending");
+                assert_eq!(submitted["body"]["request"]["request_id"], json!(id));
+            }
+
+            assert_eq!(
+                weir_approval_service_withdraw_requester_v1(service, run_id.as_bytes().as_ptr(), 3),
+                APPROVAL_INVALID_UUID
+            );
+            let fetch = |owner: Uuid, id: Uuid| {
+                exchange(
+                    controller,
+                    json!({
+                        "version": 1, "message_id": Uuid::new_v4(), "service_epoch": epoch,
+                        "type": "approval.get", "body": {"run_id": owner, "request_id": id}
+                    }),
+                )
+            };
+            for id in [first, second] {
+                assert_eq!(fetch(run_id, id)["body"]["state"]["status"], "pending");
+            }
             assert_eq!(
                 weir_approval_service_withdraw_requester_v1(
                     service,
@@ -711,23 +755,20 @@ mod tests {
                 ),
                 APPROVAL_OK
             );
-            let fetched = exchange(
-                controller,
-                json!({
-                    "version": 1,
-                    "message_id": Uuid::new_v4(),
-                    "service_epoch": epoch,
-                    "type": "approval.get",
-                    "body": {"run_id": run_id, "request_id": request_id}
-                }),
-            );
-            assert_eq!(fetched["body"]["state"]["status"], "canceled");
-            assert_eq!(
-                weir_approval_service_withdraw_requester_v1(service, run_id.as_bytes().as_ptr(), 3),
-                APPROVAL_INVALID_UUID
-            );
+            for (owner, id, expected) in [
+                (run_id, first, "canceled"),
+                (run_id, second, "canceled"),
+                (other_run_id, other_pending, "pending"),
+            ] {
+                let fetched = fetch(owner, id);
+                assert_eq!(fetched["type"], "approval.result");
+                assert_eq!(fetched["body"]["request"]["run_id"], json!(owner));
+                assert_eq!(fetched["body"]["request"]["request_id"], json!(id));
+                assert_eq!(fetched["body"]["state"]["status"], expected);
+            }
 
             weir_approval_session_free_v1(requester);
+            weir_approval_session_free_v1(other);
             weir_approval_session_free_v1(controller);
             weir_approval_service_free_v1(service);
         }
@@ -825,49 +866,57 @@ mod tests {
 
     #[test]
     fn approval_abi_fails_closed_for_invalid_and_oversized_inputs() {
-        // SAFETY: Each handle is released exactly once before the test returns.
+        // SAFETY: Valid buffers and handles remain live across each call.
+        // The null arguments exercise guards that reject them before dereferencing.
         unsafe {
             let service = weir_approval_service_create_v1(8);
             assert!(weir_approval_session_create_requester_v1(service, ptr::null(), 16).is_null());
             let requester = requester(service, Uuid::new_v4());
-            let mut output = weir_approval_bytes_v1 {
-                data: ptr::dangling_mut(),
-                len: 9,
-            };
-            assert_eq!(
-                weir_approval_session_exchange_v1(requester, ptr::null(), 1, &raw mut output),
-                APPROVAL_NULL_POINTER
-            );
-            assert!(output.data.is_null() && output.len == 0);
             let invalid_utf8 = [0xff_u8];
-            assert_eq!(
-                weir_approval_session_exchange_v1(
+            let oversized = vec![b' '; weir_agent_protocol::MAXIMUM_REQUEST_BYTES + 1];
+            for (label, session, input, len, expected) in [
+                (
+                    "null input",
+                    requester,
+                    ptr::null(),
+                    1,
+                    APPROVAL_NULL_POINTER,
+                ),
+                (
+                    "invalid UTF-8",
                     requester,
                     invalid_utf8.as_ptr(),
                     invalid_utf8.len(),
-                    &raw mut output,
+                    APPROVAL_INVALID_UTF8,
                 ),
-                APPROVAL_INVALID_UTF8
-            );
-            let oversized = vec![b' '; weir_agent_protocol::MAXIMUM_REQUEST_BYTES + 1];
-            assert_eq!(
-                weir_approval_session_exchange_v1(
+                (
+                    "oversized input",
                     requester,
                     oversized.as_ptr(),
                     oversized.len(),
-                    &raw mut output,
+                    APPROVAL_INPUT_TOO_LARGE,
                 ),
-                APPROVAL_INPUT_TOO_LARGE
-            );
-            assert_eq!(
-                weir_approval_session_exchange_v1(
+                (
+                    "null session",
                     ptr::null_mut(),
                     b"{}".as_ptr(),
                     2,
-                    &raw mut output
+                    APPROVAL_NULL_POINTER,
                 ),
-                APPROVAL_NULL_POINTER
-            );
+            ] {
+                let mut sentinel = [0_u8; 9];
+                let mut output = weir_approval_bytes_v1 {
+                    data: sentinel.as_mut_ptr(),
+                    len: sentinel.len(),
+                };
+                let status =
+                    weir_approval_session_exchange_v1(session, input, len, &raw mut output);
+                assert_eq!(status, expected, "{label}");
+                assert!(
+                    output.data.is_null() && output.len == 0,
+                    "{label}: output was not cleared"
+                );
+            }
             weir_approval_session_free_v1(requester);
             weir_approval_service_free_v1(service);
         }
@@ -885,7 +934,7 @@ mod tests {
     fn abi_resolves_into_caller_owned_buffer() {
         let provider_session = "  Session title  ".as_bytes();
         let generated = "Generated".as_bytes();
-        let mut output = [0_u8; 64];
+        let mut output = [0xA5_u8; 64];
         let mut output_length = 0_usize;
 
         // SAFETY: Every pointer references its matching live byte region.
@@ -905,13 +954,14 @@ mod tests {
 
         assert_eq!(result, TITLE_RESOLVE_OK);
         assert_eq!(&output[..output_length], b"Session title");
+        assert!(output[output_length..].iter().all(|byte| *byte == 0xA5));
     }
 
     #[test]
     fn abi_reports_required_output_capacity() {
         let title = "Long title".as_bytes();
-        let mut output = [0_u8; 2];
-        let mut output_length = 0_usize;
+        let mut output = [0xA5_u8; 2];
+        let mut output_length = usize::MAX;
 
         // SAFETY: Every pointer references its matching live byte region.
         let result = unsafe {
@@ -930,6 +980,7 @@ mod tests {
 
         assert_eq!(result, TITLE_RESOLVE_BUFFER_TOO_SMALL);
         assert_eq!(output_length, title.len());
+        assert_eq!(output, [0xA5; 2], "no partial title was written");
     }
 
     /// Resolves the three candidates through the ABI, an empty slice
@@ -984,6 +1035,14 @@ mod tests {
         assert_eq!(
             resolve(b"", &oversized_title, b"Opening prompt"),
             (TITLE_RESOLVE_TOO_LONG, Vec::new())
+        );
+        assert_eq!(
+            resolve(b"", b"Generated", &[0xff]),
+            (TITLE_RESOLVE_OK, b"Generated".to_vec())
+        );
+        assert_eq!(
+            resolve(b"", b"", &[0xff]),
+            (TITLE_RESOLVE_INVALID_UTF8, Vec::new())
         );
     }
 }

@@ -9,15 +9,17 @@ struct NotificationHistoryRailTextTests {
     private let english = Locale(identifier: "en")
     private let japanese = Locale(identifier: "ja")
 
-    @Test func historyBell_withNothingUnread_carriesNoMarkAndSaysOnlyItsName() {
+    @Test func historyBell_withNothingUnread_hasNoBadgeOrCount() {
         #expect(NotificationHistoryRailText.badge(unread: 0) == nil)
         #expect(NotificationHistoryRailText.unreadCount(0, locale: english) == nil)
+        #expect(NotificationHistoryRailText.unreadCount(0, locale: japanese) == nil)
     }
 
     @Test func historyBell_withUnread_showsADot_andTheCountOnlyInWords() {
         #expect(NotificationHistoryRailText.badge(unread: 1) == .dot)
         #expect(NotificationHistoryRailText.badge(unread: 27) == .dot)
 
+        #expect(NotificationHistoryRailText.unreadCount(1, locale: english) == "1 unread")
         #expect(NotificationHistoryRailText.unreadCount(27, locale: english) == "27 unread")
         #expect(NotificationHistoryRailText.unreadCount(27, locale: japanese) == "未読 27")
     }

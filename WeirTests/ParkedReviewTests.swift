@@ -19,7 +19,7 @@ struct ParkedReviewTests {
 
     // MARK: - Kept by switching
 
-    @Test func aReviewWithoutAComment_goesWithItsProjectAsTheWindowSwitches_withItsDiscards() throws {
+    @Test func aParkedReview_comesBackWithItsProject_withItsDiscardedHunks() throws {
         let fixture = Fixture()
         let (tab, hunk) = try Fixture.reviewAndHunk()
         fixture.primary.review = tab
@@ -29,28 +29,18 @@ struct ParkedReviewTests {
 
         #expect(fixture.primary.review == nil)
         #expect(!fixture.primary.reviewPresentation.isPresented)
-        #expect(fixture.registry.parkedReviews[fixture.a.id]?.tab?.review.opening == tab.opening)
-        #expect(fixture.registry.parkedReviews[fixture.a.id]?.tab?.session?.holdsComment != true)
-        // The worktree's records are the worktree's: they stay where every
-        // window reads them.
+        let parked = try #require(fixture.registry.parkedReviews[fixture.a.id]?.tab)
+        #expect(parked.review.opening == tab.opening)
+        #expect(parked.session?.holdsComment != true)
         #expect(fixture.registry.reviewDiscards.hunkDiscards[hunk] == Fixture.discarded)
-    }
 
-    @Test func aParkedReview_comesBackWithItsProject_withItsDiscardedHunks() throws {
-        let fixture = Fixture()
-        let (tab, hunk) = try ProjectWindowsFixture.reviewAndHunk()
-        fixture.primary.review = tab
-        fixture.primary.hunkDiscards[hunk] = ProjectWindowsFixture.discarded
-
-        fixture.choose(fixture.bTab, in: fixture.primary)
-        #expect(fixture.primary.review == nil)
         fixture.choose(fixture.aTab, in: fixture.primary)
 
         #expect(fixture.primary.review?.opening == tab.opening)
         #expect(fixture.primary.review?.isShown == true)
         #expect(fixture.primary.reviewPresentation.isPresented)
         #expect(!fixture.primary.reviewHasUnsavedComment)
-        #expect(fixture.primary.hunkDiscards[hunk] == ProjectWindowsFixture.discarded)
+        #expect(fixture.primary.hunkDiscards[hunk] == Fixture.discarded)
         #expect(fixture.registry.parkedReviews.isEmpty)
     }
 
@@ -76,38 +66,58 @@ struct ParkedReviewTests {
         #expect(fixture.primary.hunkDiscards[hunk] == ProjectWindowsFixture.discarded)
     }
 
-    @Test func aReviewWithACommentBeingWritten_isKeptForTheProjectLeft_andAnotherOpensInTheNext() throws {
-        let fixture = Fixture()
-        let tab = try Fixture.windowWritingAComment(fixture.primary)
+    @Test func aReviewWithACommentBeingWritten_isKeptForTheProjectLeft_andAnotherOpensInTheNext() async throws {
+        let fixture = ActionStoresFixture()
+        let window = fixture.window
+        fixture.windows.connectProjectSwitching(of: fixture.session)
+        let nextProject = fixture.session.addOrActivateProject(rootURL: WorkspaceSessionFixture.projectRootURL("next"))
+        let nextTab = fixture.session.openTab(container: .project(nextProject.id), in: window.id, intent: .person, selects: false)
+        await ReviewTabActions.open(.uncommitted, agentPaneID: nil, window: window, stores: fixture.review)
+        let opening = try #require(window.review?.opening)
+        let firstSession = window.writeComment("First project's draft")
+        let composer = firstSession.composer
 
-        fixture.choose(fixture.bTab, in: fixture.primary)
+        fixture.session.setActiveTab(nextTab.id, in: window.id, intent: .person)
+        #expect(window.selection.shownProjectID == nextProject.id)
+        #expect(window.review == nil)
+        #expect(!window.reviewHasUnsavedComment)
+        #expect(window.reviewSession == nil)
 
-        // The window holds nothing of `a`: a review of `b` opens there.
-        #expect(fixture.primary.review == nil)
-        #expect(!fixture.primary.reviewHasUnsavedComment)
-        #expect(fixture.primary.reviewSession == nil)
-        let next = try Fixture.review()
-        #expect(!ReviewTabModel.refusesReplacing(
-            fixture.primary.review,
-            with: next,
-            hasUnsavedComment: fixture.primary.reviewHasUnsavedComment
-        ))
-        let parked = try #require(fixture.registry.parkedReviews[fixture.a.id])
-        #expect(parked.tab?.review.opening == tab.opening)
-        #expect(parked.tab?.session?.composer.text == "Why this?")
-        #expect(fixture.registry.parkedReviews[fixture.b.id] == nil)
+        await ReviewTabActions.open(.uncommitted, agentPaneID: nil, window: window, stores: fixture.review)
+
+        #expect(window.review?.root == nextProject.rootURL.path)
+        #expect(window.review?.opening != opening)
+        #expect(window.review?.isShown == true)
+        let nextSession = try #require(window.reviewSession)
+        #expect(nextSession !== firstSession)
+        #expect(nextSession.root.path == nextProject.rootURL.resolvingSymlinksInPath().path)
+        #expect(!nextSession.holdsComment)
+        let parked = try #require(fixture.windows.parkedReviews[fixture.project.id]?.tab)
+        #expect(parked.review.opening == opening)
+        #expect(parked.session === firstSession)
+        #expect(parked.session?.composer == composer)
+        #expect(fixture.windows.parkedReviews[nextProject.id] == nil)
     }
 
     @Test func aWindowClosedAfterSwitching_leavesTheReviewWithTheProjectItWasWrittenIn() throws {
         let fixture = Fixture()
-        _ = try fixture.window(showing: fixture.c)
-        let tab = try Fixture.windowWritingAComment(fixture.primary)
-        fixture.choose(fixture.bTab, in: fixture.primary)
+        let closing = fixture.primary
+        let survivor = try fixture.window(showing: fixture.c)
+        let tab = try Fixture.windowWritingAComment(closing)
+        let review = try #require(closing.reviewSession)
+        let composer = review.composer
+        fixture.choose(fixture.bTab, in: closing)
 
-        fixture.registry.close(fixture.primary.id, in: fixture.session)
+        fixture.registry.close(closing.id, in: fixture.session)
 
+        #expect(fixture.registry.window(closing.id) == nil)
+        #expect(fixture.session.selection(closing.id) == nil)
+        #expect(fixture.registry.primary === survivor)
         #expect(fixture.registry.parkedReviews[fixture.b.id] == nil)
-        #expect(fixture.registry.parkedReviews[fixture.a.id]?.tab?.review.opening == tab.opening)
+        let parked = try #require(fixture.registry.parkedReviews[fixture.a.id]?.tab)
+        #expect(parked.review.opening == tab.opening)
+        #expect(parked.session === review)
+        #expect(parked.session?.composer == composer)
     }
 
     @Test func aCommentKept_throughQuickSwitchesThereAndBack() throws {
@@ -127,17 +137,20 @@ struct ParkedReviewTests {
         #expect(fixture.registry.parkedReviews.isEmpty)
     }
 
-    @Test func aParkedReviewsStack_readsAgainAsItsTabComesBack() throws {
+    @Test func aParkedReviewsStack_releasesAndResumesWithTheSameReview() throws {
         let fixture = Fixture()
         fixture.primary.review = try ProjectWindowsFixture.review()
         let review = ProjectWindowState.reviewSession(root: "/repo")
         fixture.primary.reviewSession = review
+        #expect(!review.stackLoader.isReleased)
 
         fixture.choose(fixture.bTab, in: fixture.primary)
+        #expect(fixture.primary.reviewSession == nil)
+        #expect(fixture.registry.parkedReviews[fixture.a.id]?.tab?.session === review)
         #expect(review.stackLoader.isReleased)
         fixture.choose(fixture.aTab, in: fixture.primary)
 
-        // Before its list is read again, which may fail or be overtaken.
+        #expect(fixture.primary.reviewSession === review)
         #expect(!review.stackLoader.isReleased)
     }
 
@@ -156,6 +169,8 @@ struct ParkedReviewTests {
         view.hidesViewedFiles = true
         view.fileFilter = "src"
         view.collapsedSections = ["dir:src"]
+        let checkedFileID = "unstaged:a.swift"
+        view.openedViewedFiles.toggle(checkedFileID, isFolded: true, viewed: [checkedFileID: ReviewViewMark(added: 1, removed: 0)])
         view.search = ReviewSearch(query: "TODO", isPresented: true, index: 2)
         view.areEarlierCommentsExpanded = true
         window.reviewTabView = view
@@ -170,6 +185,7 @@ struct ParkedReviewTests {
         // Behind as it was left, and kept by the switch that brought it back:
         // `ParkedReviewArrivalTests`.
         #expect(window.review?.opening == tab.opening)
+        #expect(window.review?.isShown == false)
         #expect(window.reviewOutsideTurnsRead == read)
         #expect(window.reviewPresentation.diffLayout == .sideBySide)
         #expect(window.reviewPresentation.railWidth == 300)
@@ -179,46 +195,58 @@ struct ParkedReviewTests {
     @Test func theBandOfATabThatCameBack_waitsAgainBeforeAKeyPressCounts() throws {
         let fixture = Fixture()
         let window = fixture.primary
-        let tab = try ProjectWindowsFixture.review()
+        let tab = try Fixture.review()
         window.review = tab
-        let shown = Self.band(of: tab)
-        window.reviewBandGate.noteShown(shown, at: SuspendingClock().now - .seconds(5))
+        let shown = try Self.band(of: tab)
+        let clock = SuspendingClock()
+        let initial = clock.now
+        window.reviewBandGate.noteShown(shown, at: initial)
+        #expect(window.reviewBandGate.decide(at: initial + PrimaryActionGate.settleTime) == shown.action)
 
         fixture.choose(fixture.bTab, in: window)
         fixture.choose(fixture.aTab, in: window)
-        // Nothing is on screen until the band is drawn again, after the
-        // review has read its list.
-        #expect(window.reviewBandGate.decide(at: SuspendingClock().now + .seconds(10)) == nil)
-        let back = SuspendingClock().now
-        ReviewTabActions.noteBandShown(shown, of: tab.opening, window: window)
+        #expect(window.review?.opening == tab.opening)
+        #expect(window.reviewBandGate.decide(at: clock.now + PrimaryActionGate.settleTime) == nil)
 
-        #expect(window.reviewBandGate.decide(at: back) == nil)
-        #expect(window.reviewBandGate.decide(at: back + .seconds(1)) != nil)
+        let beforeDrawing = clock.now
+        ReviewTabActions.noteBandShown(shown, of: tab.opening, window: window)
+        let afterDrawing = clock.now
+
+        #expect(window.reviewBandGate.decide(at: beforeDrawing) == nil)
+        #expect(window.reviewBandGate.decide(at: afterDrawing + PrimaryActionGate.settleTime) == shown.action)
     }
 
     @Test func theBandOfTheTabLeft_doesNotSpeakForTheTabTaken() throws {
         let fixture = Fixture()
         let window = fixture.primary
-        let tab = try ProjectWindowsFixture.review()
+        let tab = try Fixture.review()
         window.review = tab
         fixture.choose(fixture.bTab, in: window)
-        let left = try ProjectWindowsFixture.review()
+        var left = try Fixture.review()
+        left.selection = try .turn(TurnSummaryFixture.range(number: 9), prompt: TurnPrompt(head: nil))
         window.review = left
 
         fixture.choose(fixture.aTab, in: window)
-        // `a`'s band is drawn, then `b`'s goes.
-        ReviewTabActions.noteBandShown(Self.band(of: tab), of: tab.opening, window: window)
+        let arrived = try Self.band(of: tab)
+        let departed = try Self.band(of: left)
+        ReviewTabActions.noteBandShown(arrived, of: tab.opening, window: window)
         ReviewTabActions.noteBandShown(nil, of: left.opening, window: window)
+        var afterDismissal = window.reviewBandGate
+        #expect(afterDismissal.decide(at: SuspendingClock.now + PrimaryActionGate.settleTime) == arrived.action)
 
-        #expect(window.reviewBandGate.decide(at: SuspendingClock().now + .seconds(1)) != nil)
+        ReviewTabActions.noteBandShown(departed, of: left.opening, window: window)
+        #expect(window.reviewBandGate.decide(at: SuspendingClock.now + PrimaryActionGate.settleTime) == arrived.action)
     }
 
-    /// The band of `tab` with "Mark as Viewed" through `T7`.
-    private static func band(of tab: ReviewTabState) -> ReviewBandGate.Shown {
-        ReviewBandGate.Shown(
+    private static func band(of tab: ReviewTabState) throws -> ReviewBandGate.Shown {
+        guard case let .turns(range) = tab.scope else {
+            Issue.record("Expected a turn range for the band.")
+            throw CancellationError()
+        }
+        return ReviewBandGate.Shown(
             opening: tab.opening,
             selection: tab.selection,
-            action: .throughTurn(ReviewTabTurn(id: TurnID("T7"), number: 7))
+            action: .throughTurn(ReviewTabTurn(id: range.endTurnID, number: range.lastNumber))
         )
     }
 
@@ -243,38 +271,38 @@ struct ParkedReviewTests {
         #expect(fixture.registry.parkedReviews[fixture.a.id] == nil)
     }
 
-    @Test func aReviewParkedBySwitching_isProtectedFromTheSweep() throws {
-        let fixture = Fixture()
-        let tab = try ProjectWindowsFixture.review()
-        fixture.primary.review = tab
-        guard case let .turns(range) = tab.scope else { throw CancellationError() }
-
-        fixture.choose(fixture.bTab, in: fixture.primary)
-
-        #expect(fixture.primary.review == nil)
-        #expect(fixture.registry.reviewTurnRanges(in: fixture.session) == [range])
-    }
-
-    /// Removing the project closes the review kept for it, whether or not
-    /// a comment was being written in it.
     @Test(arguments: [false, true])
-    func removingAProject_closesItsParkedReview(isWritingAComment: Bool) throws {
+    func removingAProject_releasesOnlyItsParkedReviewRange(isWritingAComment: Bool) throws {
         let fixture = Fixture()
-        if isWritingAComment {
-            _ = try ProjectWindowsFixture.windowWritingAComment(fixture.primary)
+        let removed = if isWritingAComment {
+            try Fixture.windowWritingAComment(fixture.primary)
         } else {
-            fixture.primary.review = try ProjectWindowsFixture.review()
+            try Fixture.review()
+        }
+        fixture.primary.review = removed
+        guard case let .turns(removedRange) = removed.scope else {
+            Issue.record("Expected the removed project's turn range.")
+            return
         }
         fixture.choose(fixture.bTab, in: fixture.primary)
-        #expect(fixture.registry.parkedReviews[fixture.a.id]?.tab != nil)
-        #expect(!fixture.registry.reviewTurnRanges(in: fixture.session).isEmpty)
+        #expect(fixture.primary.review == nil)
+        #expect(fixture.registry.parkedReviews[fixture.a.id]?.tab?.review.opening == removed.opening)
+        #expect(fixture.registry.reviewTurnRanges(in: fixture.session) == [removedRange])
+
+        var kept = try Fixture.review()
+        let keptRange = try TurnSummaryFixture.range(number: 8)
+        kept.selection = .turn(keptRange, prompt: TurnPrompt(head: nil))
+        fixture.primary.review = kept
+        fixture.choose(fixture.cTab, in: fixture.primary)
+        #expect(fixture.primary.review == nil)
+        #expect(Set(fixture.registry.reviewTurnRanges(in: fixture.session)) == [removedRange, keptRange])
 
         fixture.session.removeProject(fixture.a.id)
-        // As the app does when the projects change.
         fixture.registry.forgetProjectsGone(in: fixture.session)
 
-        #expect(fixture.registry.parkedReviews.isEmpty)
-        #expect(fixture.registry.reviewTurnRanges(in: fixture.session).isEmpty)
+        #expect(fixture.registry.parkedReviews[fixture.a.id] == nil)
+        #expect(fixture.registry.parkedReviews[fixture.b.id]?.tab?.review.opening == kept.opening)
+        #expect(fixture.registry.reviewTurnRanges(in: fixture.session) == [keptRange])
         #expect(fixture.primary.review == nil)
     }
 
@@ -326,14 +354,23 @@ struct ParkedReviewTests {
         let fixture = Fixture()
         let other = try fixture.window(showing: fixture.b)
         let kept = try Fixture.windowWritingAComment(other)
+        let keptSession = other.writeComment("Comment for B")
+        let keptComposer = keptSession.composer
         fixture.registry.close(other.id, in: fixture.session)
         let mine = try Fixture.windowWritingAComment(fixture.primary)
+        let mySession = fixture.primary.writeComment("Comment for A")
+        let myComposer = mySession.composer
 
         fixture.choose(fixture.bTab, in: fixture.primary)
 
         #expect(fixture.primary.review?.opening == kept.opening)
+        #expect(fixture.primary.reviewSession === keptSession)
+        #expect(fixture.primary.reviewSession?.composer == keptComposer)
         #expect(fixture.registry.parkedReviews[fixture.b.id] == nil)
-        #expect(fixture.registry.parkedReviews[fixture.a.id]?.tab?.review.opening == mine.opening)
+        let parked = try #require(fixture.registry.parkedReviews[fixture.a.id]?.tab)
+        #expect(parked.review.opening == mine.opening)
+        #expect(parked.session === mySession)
+        #expect(parked.session?.composer == myComposer)
     }
 
     @Test func twoCommentsThatMet_areBothKept_eachWhereItComesBack() throws {
@@ -416,73 +453,93 @@ struct ParkedReviewTests {
         return kept
     }
 
-    @Test func arrivingWithAScratchReviewWithoutAComment_takesTheProjectsTab() throws {
+    @Test(arguments: [false, true])
+    func arrivingWithAScratchReview_takesTheProjectsTabOnlyWithoutAHeldComment(hasComment: Bool) throws {
         let fixture = Fixture()
-        let kept = try Self.scratchReviewMeetsAKeptTab(fixture, hasComment: false)
+        let kept = try Self.scratchReviewMeetsAKeptTab(fixture, hasComment: hasComment)
+        let own = try #require(fixture.primary.review)
+        let ownSession = fixture.primary.reviewSession
+        let ownComposer = ownSession?.composer
+        let keptSession = try #require(fixture.registry.parkedReviews[fixture.b.id]?.tab?.session)
+        let keptComposer = keptSession.composer
+        #expect(fixture.primary.reviewHasUnsavedComment == hasComment)
 
         fixture.choose(fixture.bTab, in: fixture.primary)
 
-        #expect(fixture.primary.review?.opening == kept.opening)
-        #expect(fixture.primary.reviewHasUnsavedComment)
-        #expect(fixture.registry.parkedReviews[fixture.b.id] == nil)
-        // The scratch pane's discards are its worktree's, still there.
-        #expect(fixture.primary.hunkDiscards[Fixture.scratchHunk] == ProjectWindowsFixture.discarded)
-    }
-
-    @Test func arrivingWithAScratchReviewWithAComment_keepsIt_andLeavesTheProjectsTabKept() throws {
-        let fixture = Fixture()
-        let kept = try Self.scratchReviewMeetsAKeptTab(fixture, hasComment: true)
-        let own = fixture.primary.review
-
-        fixture.choose(fixture.bTab, in: fixture.primary)
-
-        #expect(fixture.primary.review == own)
-        #expect(fixture.registry.parkedReviews[fixture.b.id]?.tab?.review.opening == kept.opening)
+        if hasComment {
+            #expect(fixture.primary.review == own)
+            #expect(fixture.primary.reviewSession === ownSession)
+            #expect(fixture.primary.reviewSession?.composer == ownComposer)
+            let parked = try #require(fixture.registry.parkedReviews[fixture.b.id]?.tab)
+            #expect(parked.review.opening == kept.opening)
+            #expect(parked.session === keptSession)
+            #expect(parked.session?.composer == keptComposer)
+        } else {
+            #expect(fixture.primary.review?.opening == kept.opening)
+            #expect(fixture.primary.reviewSession === keptSession)
+            #expect(fixture.primary.reviewSession?.composer == keptComposer)
+            #expect(fixture.primary.reviewHasUnsavedComment)
+            #expect(fixture.registry.parkedReviews[fixture.b.id] == nil)
+        }
+        #expect(fixture.primary.hunkDiscards[Fixture.scratchHunk] == Fixture.discarded)
     }
 
     // MARK: - Opening in a project that keeps a tab
 
-    @Test func openingAReview_bringsTheProjectsTabFirst() throws {
+    @Test func openingAReview_takesTheProjectsTabOnlyAfterTheWindowLetsGoOfItsComment() throws {
         let fixture = Fixture()
         let kept = try Self.scratchReviewMeetsAKeptTab(fixture, hasComment: true)
         fixture.choose(fixture.bTab, in: fixture.primary)
-        // The scratch pane's comment is saved or thrown away.
-        fixture.primary.letGoOfComment()
+        let own = try #require(fixture.primary.review)
+        let ownSession = try #require(fixture.primary.reviewSession)
+        let ownComposer = ownSession.composer
+        let keptSession = try #require(fixture.registry.parkedReviews[fixture.b.id]?.tab?.session)
+        let keptComposer = keptSession.composer
 
+        fixture.registry.takeParkedReviewBeforeOpening(into: fixture.primary, in: fixture.session)
+
+        #expect(fixture.primary.review == own)
+        #expect(fixture.primary.reviewSession === ownSession)
+        #expect(fixture.primary.reviewSession?.composer == ownComposer)
+        let parked = try #require(fixture.registry.parkedReviews[fixture.b.id]?.tab)
+        #expect(parked.review.opening == kept.opening)
+        #expect(parked.session === keptSession)
+        #expect(parked.session?.composer == keptComposer)
+
+        fixture.primary.letGoOfComment()
         fixture.registry.takeParkedReviewBeforeOpening(into: fixture.primary, in: fixture.session)
 
         #expect(fixture.primary.review?.opening == kept.opening)
         #expect(fixture.primary.review?.isShown == false)
-        #expect(fixture.primary.hunkDiscards[Fixture.scratchHunk] == ProjectWindowsFixture.discarded)
+        #expect(fixture.primary.reviewSession === keptSession)
+        #expect(fixture.primary.reviewSession?.composer == keptComposer)
+        #expect(fixture.primary.hunkDiscards[Fixture.scratchHunk] == Fixture.discarded)
         #expect(fixture.registry.parkedReviews.isEmpty)
     }
 
-    @Test func openingAReview_whileTheWindowsOwnHoldsAComment_takesNothing() throws {
+    @Test func openingAReviewOnAScratchTab_takesOnlyTheScratchReview() throws {
         let fixture = Fixture()
         let kept = try Self.scratchReviewMeetsAKeptTab(fixture, hasComment: true)
+        let keptSession = try #require(fixture.registry.parkedReviews[fixture.b.id]?.tab?.session)
+        let scratchReview = try fixture.closeWritingAScratchComment(showing: fixture.c, onScratchRow: true)
+        let scratchSession = try #require(fixture.registry.parkedScratchReview?.tab?.session)
+        let scratchComposer = scratchSession.composer
         fixture.choose(fixture.bTab, in: fixture.primary)
-        let own = fixture.primary.review
-
-        fixture.registry.takeParkedReviewBeforeOpening(into: fixture.primary, in: fixture.session)
-
-        #expect(fixture.primary.review == own)
-        #expect(fixture.registry.parkedReviews[fixture.b.id]?.tab?.review.opening == kept.opening)
-    }
-
-    @Test func openingAReviewOnAScratchTab_leavesTheProjectsTabKept() throws {
-        let fixture = Fixture()
-        let kept = try Self.scratchReviewMeetsAKeptTab(fixture, hasComment: true)
-        fixture.choose(fixture.bTab, in: fixture.primary)
-        let own = fixture.primary.review
         fixture.primary.letGoOfComment()
         let scratch = try #require(fixture.session.tabs.first { $0.container == .loose })
         fixture.choose(scratch, in: fixture.primary)
         #expect(fixture.primary.selection.shownProjectID == fixture.b.id)
+        #expect(fixture.primary.selection.activeContainerID == .loose)
+        #expect(fixture.primary.selection.activeTabID == scratch.id)
 
         fixture.registry.takeParkedReviewBeforeOpening(into: fixture.primary, in: fixture.session)
 
-        #expect(fixture.primary.review == own)
+        #expect(fixture.primary.review?.opening == scratchReview.opening)
+        #expect(fixture.primary.reviewSession === scratchSession)
+        #expect(fixture.primary.reviewSession?.composer == scratchComposer)
+        #expect(fixture.registry.parkedScratchReview == nil)
         #expect(fixture.registry.parkedReviews[fixture.b.id]?.tab?.review.opening == kept.opening)
+        #expect(fixture.registry.parkedReviews[fixture.b.id]?.tab?.session === keptSession)
     }
 
     // MARK: - Closing

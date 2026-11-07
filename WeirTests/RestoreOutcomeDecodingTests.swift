@@ -11,6 +11,14 @@ import Testing
 
 @Suite(.disabled(if: !RepoFixture.hasLocalRepo, "the shared fixtures are in the source tree"))
 struct RestoreOutcomeDecodingTests {
+    private static let expectedStageReasons: [String: RestoreStageReason] = [
+        "agentStarted": .agentStarted,
+        "writeFailed": .writeFailed,
+        "externalChangeDetected": .externalChangeDetected,
+        "interrupted": .interrupted,
+        "keptAside": .keptAside
+    ]
+
     /// The codes a stage reason is written as (`stage-reasons.json`).
     struct StageCodes: Decodable {
         let written: [String]
@@ -20,14 +28,6 @@ struct RestoreOutcomeDecodingTests {
     private static func fixture(_ name: String) throws -> Data {
         let root = try #require(RepoFixture.weirRoot)
         return try Data(contentsOf: root.appendingPathComponent("rust/fixtures/restore/\(name)"))
-    }
-
-    static func stageCodes() throws -> StageCodes {
-        try JSONDecoder().decode(StageCodes.self, from: fixture("stage-reasons.json"))
-    }
-
-    private static func decode(_ json: String) throws -> RestoreOutcome {
-        try JSONDecoder().decode(RestoreOutcome.self, from: Data(json.utf8))
     }
 
     /// The restore journal Rust writes, at `stage`, as a finished outcome.
@@ -56,28 +56,15 @@ struct RestoreOutcomeDecodingTests {
         return journal
     }
 
-    @Test func refusals_areReadByKind_andAnUnknownOneIsUnknown() throws {
-        #expect(try Self.decode(#"{"outcome":"refused","refusal":{"kind":"agentActive","provider":"codex"}}"#)
-            == .refused(.agentActive(.codex)))
-        #expect(try Self.decode(#"{"outcome":"refused","refusal":{"kind":"changedSinceRestore","paths":["a.txt"]}}"#)
-            == .refused(.changedSinceRestore(paths: ["a.txt"])))
-        #expect(try Self.decode(#"{"outcome":"refused","refusal":{"kind":"mergeInProgress"}}"#) == .refused(.mergeInProgress))
-        #expect(try Self.decode(#"{"outcome":"refused","refusal":{"kind":"journalUnwritable","cause":"refs file: denied"}}"#)
-            == .refused(.journalUnwritable(cause: "refs file: denied")))
-        #expect(try Self.decode(#"{"outcome":"refused","refusal":{"kind":"somethingNew"}}"#) == .refused(.unknown))
-        #expect(try Self.decode(#"{"outcome":"refused","refusal":{"kind":"unsupportedVolume"}}"#) == .refused(.unsupportedVolume))
-        #expect(try Self.decode(#"{"outcome":"refused","refusal":{"kind":"converted","paths":["f.txt"]}}"#)
-            == .refused(.converted(["f.txt"])))
-        #expect(try Self.decode(#"{"outcome":"refused","refusal":{"kind":"renamedInPlace","paths":["Name.txt"]}}"#)
-            == .refused(.renamedInPlace(["Name.txt"])))
-    }
-
     @Test func aJournal_isReadWithItsStage() throws {
         let applied = try #require(try Self.journal(stage: #"{"kind":"applied"}"#))
         #expect(applied.stage == .applied)
         #expect(applied.turnID == TurnID("T"))
         #expect(applied.turnNumber == 7)
-        #expect(applied.plannedPaths.map(\.kind) == [.modify, .unknown])
+        #expect(applied.plannedPaths == [
+            RestorePathChange(path: "a.txt", kind: .modify),
+            RestorePathChange(path: "b", kind: .unknown)
+        ])
         #expect(applied.isUndoable)
 
         let partial = #"{"kind":"partiallyApplied","reason":"interrupted","currentTree":"c","kept":["a.txt"],"#
@@ -110,25 +97,20 @@ struct RestoreOutcomeDecodingTests {
         ))
     }
 
-    /// The cases below run once per code, so an empty list would pass them
-    /// all by running none.
-    @Test func theStageReasonsRustWrites_areListed() throws {
-        #expect(try !Self.stageCodes().written.isEmpty)
+    @Test func aStageReasonRustWrites_isReadAsItself() throws {
+        let codes = try JSONDecoder().decode(StageCodes.self, from: Self.fixture("stage-reasons.json"))
+        #expect(Set(codes.written) == Set(Self.expectedStageReasons.keys))
+        #expect(codes.written.count == Self.expectedStageReasons.count)
+        for code in codes.written {
+            let reason = try #require(Self.expectedStageReasons[code], "no expected reason for \(code)")
+            let journal = try #require(try Self.journal(stage: #"{"kind":"aborted","reason":"\#(code)"}"#))
+            #expect(journal.stage == .aborted(reason: reason), "wire code \(code)")
+        }
     }
 
-    /// Every code Rust writes for a reason is one this build reads as itself.
-    @Test(arguments: try RestoreOutcomeDecodingTests.stageCodes().written)
-    func aStageReasonRustWrites_isReadAsItself(_ code: String) throws {
-        let reason = try #require(RestoreStageReason(rawValue: code), "this build does not name \(code)")
-        let journal = try #require(try Self.journal(stage: #"{"kind":"aborted","reason":"\#(code)"}"#))
-        #expect(journal.stage == .aborted(reason: reason))
-    }
-
-    /// A code a newer bridge added is read as unknown rather than failing
-    /// the journal.
     @Test func aStageReasonANewerBridgeAdded_isUnknown() throws {
-        let code = try Self.stageCodes().later
-        let journal = try #require(try Self.journal(stage: #"{"kind":"aborted","reason":"\#(code)"}"#))
+        let codes = try JSONDecoder().decode(StageCodes.self, from: Self.fixture("stage-reasons.json"))
+        let journal = try #require(try Self.journal(stage: #"{"kind":"aborted","reason":"\#(codes.later)"}"#))
         #expect(journal.stage == .aborted(reason: .unknown))
     }
 
@@ -136,6 +118,7 @@ struct RestoreOutcomeDecodingTests {
     struct Undoable: Sendable, CustomTestStringConvertible {
         let stage: String
         var undoes: String?
+        let expectedStage: RestoreStage
         let isUndoable: Bool
 
         var testDescription: String {
@@ -143,22 +126,80 @@ struct RestoreOutcomeDecodingTests {
         }
     }
 
-    /// Only a restore whose work stays can be undone: not one undone, cut
-    /// short before it wrote, still writing, or squashed, and not an undo.
+    /// Only applied and partly applied restores can be undone. An undo cannot itself be undone here.
     @Test(arguments: [
-        Undoable(stage: #"{"kind":"applied"}"#, isUndoable: true),
-        Undoable(stage: #"{"kind":"undone","by":"OP2"}"#, isUndoable: false),
-        Undoable(stage: #"{"kind":"aborted","reason":"externalChangeDetected"}"#, isUndoable: false),
-        Undoable(stage: #"{"kind":"writing","done":[]}"#, isUndoable: false),
-        Undoable(stage: #"{"kind":"squashed"}"#, isUndoable: false),
-        Undoable(stage: #"{"kind":"applied"}"#, undoes: "OP0", isUndoable: false)
+        Undoable(stage: #"{"kind":"applied"}"#, expectedStage: .applied, isUndoable: true),
+        Undoable(
+            stage: #"{"kind":"partiallyApplied","reason":"writeFailed","kept":["a.txt"]}"#,
+            expectedStage: .partiallyApplied(reason: .writeFailed, kept: ["a.txt"], failed: []), isUndoable: true
+        ),
+        Undoable(stage: #"{"kind":"undone","by":"OP2"}"#, expectedStage: .undone(by: "OP2"), isUndoable: false),
+        Undoable(
+            stage: #"{"kind":"aborted","reason":"externalChangeDetected"}"#,
+            expectedStage: .aborted(reason: .externalChangeDetected), isUndoable: false
+        ),
+        Undoable(stage: #"{"kind":"writing","done":[]}"#, expectedStage: .writing, isUndoable: false),
+        Undoable(stage: #"{"kind":"squashed"}"#, expectedStage: .unknown, isUndoable: false),
+        Undoable(stage: #"{"kind":"applied"}"#, undoes: "OP0", expectedStage: .applied, isUndoable: false)
     ])
     func onlyARestoreWhoseWorkStays_isUndoable(_ journal: Undoable) throws {
         let read = try #require(try Self.journal(stage: journal.stage, undoes: journal.undoes))
+        #expect(read.stage == journal.expectedStage)
+        #expect(read.undoes == journal.undoes)
         #expect(read.isUndoable == journal.isUndoable)
     }
 
-    @Test func aDiscardsOutcome_isRead_andAJournalWithoutAnOperationIsARestore() throws {
+    @Test func aDiscardOutcome_keepsItsJournalAndHunks() throws {
+        let journal = try JSONObjectFixture.object(Self.fixture("journal-discard.json"))
+        let data = try JSONSerialization.data(withJSONObject: [
+            "outcome": "finished",
+            "journal": journal,
+            "hunks": [["path": "a.txt", "header": "@@ -1 +1 @@", "result": "discarded"]]
+        ])
+        let outcome = try JSONDecoder().decode(DiscardOutcome.self, from: data)
+        guard case let .finished(maybeJournal, hunks) = outcome else {
+            Issue.record("expected a finished discard")
+            return
+        }
+        let kept = try #require(maybeJournal)
+        #expect(kept.opID == "OP")
+        #expect(kept.operation == .discard)
+        #expect(kept.stage == .applied)
+        #expect(hunks == [DiscardHunkResult(path: "a.txt", header: "@@ -1 +1 @@", result: .discarded)])
+    }
+
+    @Test func aJournalWithoutAnOperationIsARestore() throws {
+        let restore = try JSONDecoder().decode(RestoreJournal.self, from: Self.fixture("journal-without-operation.json"))
+        #expect(restore.operation == .restore)
+        // When it ran is its own field, which recovery does not rewrite.
+        #expect(restore.at == "2026-10-13T00:00:00Z")
+        #expect(restore.ranAt == "2026-10-12T23:59:00Z")
+    }
+}
+
+struct RestoreOutcomeInlineDecodingTests {
+    private static func decodeRefusal(_ payload: String) throws -> RestoreOutcome {
+        let json = #"{"outcome":"refused","refusal":\#(payload)}"#
+        return try JSONDecoder().decode(RestoreOutcome.self, from: Data(json.utf8))
+    }
+
+    @Test(arguments: [
+        (#"{"kind":"agentActive","provider":"codex"}"#, RestoreRefusal.agentActive(.codex)),
+        (#"{"kind":"changedSinceRestore","paths":["a.txt"]}"#, .changedSinceRestore(paths: ["a.txt"])),
+        (#"{"kind":"mergeInProgress"}"#, .mergeInProgress),
+        (#"{"kind":"journalUnwritable","cause":"refs file: denied"}"#, .journalUnwritable(cause: "refs file: denied")),
+        (#"{"kind":"somethingNew"}"#, .unknown),
+        (#"{"kind":"unsupportedVolume"}"#, .unsupportedVolume),
+        (#"{"kind":"converted","paths":["f.txt"]}"#, .converted(["f.txt"])),
+        (#"{"kind":"renamedInPlace","paths":["Name.txt"]}"#, .renamedInPlace(["Name.txt"])),
+        (#"{"kind":"journalUnreadable","cause":"EACCES"}"#, .journalUnreadable(cause: "EACCES")),
+        (#"{"kind":"restoreNotFound"}"#, .restoreNotFound)
+    ])
+    func refusals_areReadByKind_andAnUnknownOneIsUnknown(payload: String, expected: RestoreRefusal) throws {
+        #expect(try Self.decodeRefusal(payload) == .refused(expected))
+    }
+
+    @Test func aDiscardOutcomeWithoutAJournal_keepsItsHunkResults() throws {
         let json = """
         {"outcome":"finished","journal":null,"hunks":[{"path":"f.txt","header":"@@ -1 +1 @@","result":"notFound"},
          {"path":"g.txt","header":"@@ -2 +2 @@","result":"somethingNew"}]}
@@ -168,20 +209,19 @@ struct RestoreOutcomeDecodingTests {
             DiscardHunkResult(path: "f.txt", header: "@@ -1 +1 @@", result: .notFound),
             DiscardHunkResult(path: "g.txt", header: "@@ -2 +2 @@", result: .unknown)
         ]))
-        let discard = try JSONDecoder().decode(RestoreJournal.self, from: Self.fixture("journal-discard.json"))
-        #expect(discard.operation == .discard)
-        let restore = try JSONDecoder().decode(RestoreJournal.self, from: Self.fixture("journal-without-operation.json"))
-        #expect(restore.operation == .restore)
-        // When it ran is its own field, which recovery does not rewrite.
-        #expect(restore.at == "2026-10-13T00:00:00Z")
-        #expect(restore.ranAt == "2026-10-12T23:59:00Z")
     }
 
-    /// A refusal to undo a restore whose journal could not be read passes
-    /// once it can be: it is not "no such restore", which never does.
-    @Test func anUnreadableJournal_isARefusalThatPasses() throws {
-        let outcome = try Self.decode(#"{"outcome":"refused","refusal":{"kind":"journalUnreadable","cause":"EACCES"}}"#)
-        #expect(outcome == .refused(.journalUnreadable(cause: "EACCES")))
-        #expect(!RestoreRefusal.journalUnreadable(cause: "EACCES").isLasting)
+    @Test func aRefusedDiscard_keepsTheReason() throws {
+        let json = #"{"outcome":"refused","refusal":{"kind":"mergeInProgress"}}"#
+        #expect(try JSONDecoder().decode(DiscardOutcome.self, from: Data(json.utf8)) == .refused(.mergeInProgress))
+    }
+
+    @Test(arguments: [
+        (#"{"kind":"journalUnreadable","cause":"EACCES"}"#, true),
+        (#"{"kind":"restoreNotFound"}"#, false)
+    ])
+    func aDecodedUndoRefusal_canBeRetriedOnlyWhenItMayChange(payload: String, mayChange: Bool) throws {
+        let result = try #require(try RestoreCoordinator.UndoResult(Self.decodeRefusal(payload)))
+        #expect(result.mayChange == mayChange)
     }
 }

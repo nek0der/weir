@@ -2,23 +2,101 @@
 
 use super::*;
 
-/// Both trees an undo reads are pinned while it may run, and let go once
-/// it has.
+pub(super) fn assert_pins(repo: &Repo, journal: &RestoreJournal, current: Option<&str>) {
+    let op = &journal.op_id;
+    let mut expected = vec![
+        format!("refs/weir/undo/{op} {}", journal.before_tree),
+        format!("refs/weir/undo-target/{op} {}", journal.target_tree),
+        format!(
+            "refs/weir/undo-expected/{op} {}",
+            journal.expected_after_tree
+        ),
+    ];
+    if let Some(tree) = current {
+        expected.push(format!("refs/weir/undo-current/{op} {tree}"));
+    }
+    expected.sort();
+    let refs = repo.git(&[
+        "for-each-ref",
+        "--format=%(refname) %(objectname)",
+        "refs/weir",
+    ]);
+    let actual = refs
+        .lines()
+        .filter(|line| line.split_once(' ').unwrap().0.rsplit('/').next() == Some(op.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(actual, expected);
+    assert!(repo.worktree().refs_file(op).is_file());
+}
+
+pub(super) fn assert_three_pins(repo: &Repo, journal: &RestoreJournal) {
+    assert_pins(repo, journal, None);
+}
+
+fn assert_main_note(repo: &Repo, op: &str, current: bool) {
+    let current = if current {
+        format!("ref refs/weir/undo-current/{op}\n")
+    } else {
+        String::new()
+    };
+    assert_eq!(
+        fs::read_to_string(repo.worktree().refs_file(op)).unwrap(),
+        format!(
+            "owner .\n{current}ref refs/weir/undo-expected/{op}\nref refs/weir/undo-target/{op}\nref refs/weir/undo/{op}\n"
+        )
+    );
+}
+
+fn assert_undo_releases_pins(repo: &Repo, restored: &RestoreJournal) {
+    let undo = finished(repo.undo(&restored.op_id));
+    let worktree = repo.worktree();
+    assert_eq!(undo.stage, RestoreStage::Applied);
+    assert_eq!(undo.undoes.as_deref(), Some(restored.op_id.as_str()));
+    assert_eq!(worktree.journal(&undo.op_id).unwrap().unwrap(), undo);
+    assert_eq!(
+        worktree.journal(&restored.op_id).unwrap().unwrap().stage,
+        RestoreStage::Undone {
+            by: undo.op_id.clone()
+        },
+    );
+    for op in [&restored.op_id, &undo.op_id] {
+        assert_eq!(held(repo, op), (Vec::new(), false), "{op}");
+    }
+}
+
+/// A completed restore pins its three trees until its undo runs.
 #[test]
 fn the_trees_are_pinned_until_the_restore_is_undone() {
     let repo = Repo::new("pinned");
     let turn = busy_turn(&repo);
+    repo.write("outside.txt", "unrelated\n");
     let restored = finished(repo.restore(&turn));
-    assert!(is_pinned(&repo, &restore_undo_ref(&restored.op_id)));
-    assert!(is_pinned(&repo, &restore_target_ref(&restored.op_id)));
-    assert!(is_pinned(&repo, &restore_expected_ref(&restored.op_id)));
-    assert!(repo.worktree().refs_file(&restored.op_id).exists());
+    assert_eq!(restored.stage, RestoreStage::Applied);
+    assert_eq!(
+        restored.target_tree,
+        repo.git(&["rev-parse", "HEAD^{tree}"])
+    );
+    assert_eq!(
+        repo.git(&["show", &format!("{}:a.txt", restored.before_tree)]),
+        "a\nchanged"
+    );
+    assert_eq!(
+        repo.git(&["show", &format!("{}:a.txt", restored.expected_after_tree)]),
+        "a"
+    );
+    assert_eq!(
+        repo.git(&[
+            "show",
+            &format!("{}:outside.txt", restored.expected_after_tree)
+        ]),
+        "unrelated"
+    );
+    assert_three_pins(&repo, &restored);
+    assert_main_note(&repo, &restored.op_id, false);
 
-    let undo = finished(repo.undo(&restored.op_id));
-
-    for op in [&restored.op_id, &undo.op_id] {
-        assert_eq!(held(&repo, op), (Vec::new(), false), "{op}");
-    }
+    assert_undo_releases_pins(&repo, &restored);
+    assert_eq!(repo.read("a.txt").as_deref(), Some("a\nchanged\n"));
+    assert_eq!(repo.read("outside.txt").as_deref(), Some("unrelated\n"));
 }
 
 /// Each tree a partly applied restore names is pinned while its record may
@@ -27,31 +105,43 @@ fn the_trees_are_pinned_until_the_restore_is_undone() {
 fn every_tree_a_journal_names_is_pinned_until_the_record_lets_go() {
     let repo = Repo::new("pinned-all");
     let turn = busy_turn(&repo);
+    repo.write("outside.txt", "unrelated\n");
     let journal = restore_meeting(&repo, &turn, |repo| {
         repo.write("a.txt", "editor\n");
         place_waiting_marker(repo);
     });
-    assert!(matches!(
-        journal.stage,
-        RestoreStage::PartiallyApplied { .. }
-    ));
-    for (name, tree) in journal.pinned_trees() {
-        assert_eq!(repo.git(&["rev-parse", &name]), tree, "{name}");
-    }
-    assert_eq!(held(&repo, &journal.op_id).0.len(), 4);
+    let RestoreStage::PartiallyApplied { current_tree, .. } = &journal.stage else {
+        panic!("{:?}", journal.stage);
+    };
+    assert_eq!(journal.target_tree, repo.git(&["rev-parse", "HEAD^{tree}"]));
+    assert_eq!(
+        repo.git(&["show", &format!("{}:a.txt", journal.before_tree)]),
+        "a\nchanged"
+    );
+    assert_eq!(
+        repo.git(&["show", &format!("{}:a.txt", journal.expected_after_tree)]),
+        "a"
+    );
+    assert_eq!(
+        repo.git(&[
+            "show",
+            &format!("{}:outside.txt", journal.expected_after_tree)
+        ]),
+        "unrelated"
+    );
+    assert_eq!(
+        repo.git(&["show", &format!("{current_tree}:a.txt")]),
+        "editor"
+    );
+    assert_pins(&repo, &journal, Some(current_tree));
+    assert_main_note(&repo, &journal.op_id, true);
     fs::remove_dir_all(repo.worktree().git_dir.join("weir/worktree.lock.waiting")).unwrap();
 
-    let undo = finished(repo.undo(&journal.op_id));
-
-    assert_eq!(undo.stage, RestoreStage::Applied);
-    for op in [&journal.op_id, &undo.op_id] {
-        assert_eq!(held(&repo, op), (Vec::new(), false), "{op}");
-    }
+    assert_undo_releases_pins(&repo, &journal);
+    assert_eq!(repo.read("a.txt").as_deref(), Some("editor\n"));
 }
 
-/// A restore past its lifetime goes, refs and all: the journal first, then
-/// its refs, so a crash between the two leaves refs for the sweep and never
-/// a journal with its trees let go.
+/// An expired journal and its pins go. A fresh one is left intact.
 #[test]
 fn the_refs_go_with_a_pruned_record() {
     let repo = Repo::new("pruned-refs");
@@ -62,18 +152,66 @@ fn the_refs_go_with_a_pruned_record() {
     let mut aborted = restored.clone();
     aborted.op_id = new_op_id();
     aborted.at = "2026-01-01T00:00:00Z".to_owned();
-    assert!(worktree.pin_trees(&aborted).is_ok());
+    worktree.pin_trees(&aborted).unwrap();
     aborted.stage = RestoreStage::Aborted {
         reason: StageReason::ExternalChangeDetected,
     };
-    assert!(worktree.write_journal(&aborted).is_ok());
-    assert_eq!(held(&repo, &aborted.op_id).0.len(), 3);
+    worktree.write_journal(&aborted).unwrap();
+    assert_three_pins(&repo, &aborted);
 
     let journals = recover(&repo.path, NOW).unwrap().journals;
 
-    assert!(journals.iter().all(|kept| kept.op_id != aborted.op_id));
+    assert_eq!(journals.as_slice(), std::slice::from_ref(&restored));
+    assert!(!worktree.journal_path(&aborted.op_id).exists());
     assert_eq!(held(&repo, &aborted.op_id), (Vec::new(), false));
-    assert_eq!(held(&repo, &restored.op_id).0.len(), 3);
+    assert_three_pins(&repo, &restored);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_prune_that_cannot_unlink_the_journal_keeps_its_pins() {
+    struct ImmutableFile(PathBuf);
+    impl Drop for ImmutableFile {
+        fn drop(&mut self) {
+            let _ = Command::new("/usr/bin/chflags")
+                .arg("nouchg")
+                .arg(&self.0)
+                .status();
+        }
+    }
+
+    let repo = Repo::new("prune-immutable");
+    let turn = busy_turn(&repo);
+    let restored = finished(repo.restore(&turn));
+    let worktree = repo.worktree();
+    let mut old = restored.clone();
+    old.op_id = new_op_id();
+    old.at = "2026-01-01T00:00:00Z".to_owned();
+    worktree.write_journal(&old).unwrap();
+    // An applied restore past its lifetime is prunable once HEAD moved.
+    repo.commit("moved HEAD");
+    let path = worktree.journal_path(&old.op_id);
+    let immutable = ImmutableFile(path.clone());
+    assert!(
+        Command::new("/usr/bin/chflags")
+            .arg("uchg")
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    let _ = recover(&repo.path, NOW).unwrap();
+
+    assert_eq!(worktree.journal(&old.op_id).unwrap().unwrap(), old);
+    assert_three_pins(&repo, &old);
+    assert_three_pins(&repo, &restored);
+    drop(immutable);
+
+    let _ = recover(&repo.path, NOW).unwrap();
+    assert!(!path.exists());
+    assert_eq!(held(&repo, &old.op_id), (Vec::new(), false));
+    assert_three_pins(&repo, &restored);
 }
 
 /// What a crash leaves between a ref and its journal is swept by the next
@@ -91,13 +229,18 @@ fn refs_a_crash_left_behind_are_swept() {
         copy.op_id = new_op_id();
         copy
     };
-    // Pinned, and the journal never written.
-    let unwritten = copy();
-    assert!(worktree.pin_trees(&unwritten).is_ok());
-    // Pinned and written, and the journal dropped.
-    let dropped = copy();
-    assert!(worktree.write_journal(&dropped).is_ok());
-    fs::remove_file(worktree.journal_path(&dropped.op_id)).unwrap();
+    // An operation can lose its journal before creating it or after deleting it.
+    let orphans = [false, true].map(|was_written| {
+        let orphan = copy();
+        if was_written {
+            worktree.write_journal(&orphan).unwrap();
+            fs::remove_file(worktree.journal_path(&orphan.op_id)).unwrap();
+        } else {
+            worktree.pin_trees(&orphan).unwrap();
+        }
+        assert!(!worktree.journal_path(&orphan.op_id).exists());
+        orphan
+    });
     // Finished, and its refs still there.
     let mut undone = copy();
     assert!(worktree.pin_trees(&undone).is_ok());
@@ -110,17 +253,27 @@ fn refs_a_crash_left_behind_are_swept() {
         &restore_undo_ref(&elsewhere.op_id),
         &elsewhere.before_tree,
     ]);
-    for op in [&unwritten.op_id, &dropped.op_id, &undone.op_id] {
-        assert_eq!(held(&repo, op).0.len(), 3, "{op}");
+    let affected = orphans.iter().chain([&undone]);
+    for journal in affected.clone() {
+        assert_three_pins(&repo, journal);
     }
 
     let _ = recover(&repo.path, NOW).unwrap();
 
-    for op in [&unwritten.op_id, &dropped.op_id, &undone.op_id] {
-        assert_eq!(held(&repo, op), (Vec::new(), false), "{op}");
+    for journal in affected {
+        assert_eq!(
+            held(&repo, &journal.op_id),
+            (Vec::new(), false),
+            "{}",
+            journal.op_id
+        );
     }
-    assert!(is_pinned(&repo, &restore_undo_ref(&elsewhere.op_id)));
-    assert_eq!(held(&repo, &restored.op_id).0.len(), 3);
+    assert_eq!(worktree.journal(&undone.op_id).unwrap().unwrap(), undone);
+    assert_eq!(
+        held(&repo, &elsewhere.op_id),
+        (vec![restore_undo_ref(&elsewhere.op_id)], false)
+    );
+    assert_three_pins(&repo, &restored);
 }
 
 /// A journal a development build wrote before the files in
@@ -138,11 +291,10 @@ fn a_journal_without_a_file_lets_its_refs_go_by_name() {
     fs::remove_file(worktree.refs_file(&restored.op_id)).unwrap();
     let mut old = restored.clone();
     old.op_id = new_op_id();
-    old.at = "2026-01-01T00:00:00Z".to_owned();
     old.stage = RestoreStage::Aborted {
         reason: StageReason::ExternalChangeDetected,
     };
-    assert!(worktree.store(&old).is_ok());
+    worktree.store(&old).unwrap();
     repo.git(&[
         "update-ref",
         &restore_undo_ref(&old.op_id),
@@ -153,18 +305,36 @@ fn a_journal_without_a_file_lets_its_refs_go_by_name() {
         &restore_target_ref(&old.op_id),
         &old.target_tree,
     ]);
-    for op in [&restored.op_id, &old.op_id] {
-        assert_eq!(held(&repo, op).0.len(), 2, "{op}");
+    let assert_legacy_pins = |journal: &RestoreJournal| {
+        let op = &journal.op_id;
+        assert_eq!(
+            held(&repo, op),
+            (vec![restore_undo_ref(op), restore_target_ref(op)], false)
+        );
+        assert_eq!(
+            repo.git(&["rev-parse", &restore_undo_ref(op)]),
+            journal.before_tree
+        );
+        assert_eq!(
+            repo.git(&["rev-parse", &restore_target_ref(op)]),
+            journal.target_tree
+        );
+    };
+    for journal in [&restored, &old] {
+        assert_legacy_pins(journal);
     }
 
-    let undo = finished(repo.undo(&restored.op_id));
     let journals = recover(&repo.path, NOW).unwrap().journals;
 
-    assert_eq!(undo.stage, RestoreStage::Applied);
-    assert!(journals.iter().all(|kept| kept.op_id != old.op_id));
-    for op in [&restored.op_id, &old.op_id, &undo.op_id] {
-        assert_eq!(held(&repo, op), (Vec::new(), false), "{op}");
+    for journal in [&restored, &old] {
+        assert!(journals.contains(journal));
+        assert_legacy_pins(journal);
     }
+    assert_undo_releases_pins(&repo, &restored);
+    assert_legacy_pins(&old);
+    let _ = recover(&repo.path, "2027-01-01T00:00:00Z").unwrap();
+    assert!(!worktree.journal_path(&old.op_id).exists());
+    assert_eq!(held(&repo, &old.op_id), (Vec::new(), false));
 }
 
 /// A file in `REFS_DIRECTORY` with refs and no journal is a crashed
@@ -214,10 +384,13 @@ fn a_damaged_journal_pins_nothing() {
             worktree.pin_trees(&damaged),
             Err(StoreError::Unpinnable)
         ));
-        assert!(worktree.write_journal(&damaged).is_err());
+        assert!(matches!(
+            worktree.write_journal(&damaged),
+            Err(StoreError::Unpinnable)
+        ));
 
         assert_eq!(held(&repo, &damaged.op_id), (Vec::new(), false));
-        assert!(worktree.journal(&damaged.op_id).unwrap().is_none());
+        assert!(!worktree.journal_path(&damaged.op_id).exists());
     }
     assert_eq!(repo.git(&["rev-parse", "refs/heads/main"]), main);
 }
@@ -233,28 +406,31 @@ fn a_restore_recovered_as_applied_drops_the_tree_it_no_longer_names() {
         repo.write("a.txt", "editor\n");
         place_waiting_marker(repo);
     });
-    assert!(matches!(
-        journal.stage,
-        RestoreStage::PartiallyApplied { .. }
-    ));
-    fs::remove_dir_all(repo.worktree().git_dir.join("weir/worktree.lock.waiting")).unwrap();
+    let RestoreStage::PartiallyApplied { current_tree, .. } = &journal.stage else {
+        panic!("{:?}", journal.stage);
+    };
+    assert!(is_pinned(&repo, &restore_current_ref(&journal.op_id)));
+    assert_pins(&repo, &journal, Some(current_tree));
+    let worktree = repo.worktree();
+    fs::remove_dir_all(worktree.git_dir.join("weir/worktree.lock.waiting")).unwrap();
     let mut cut_short = journal.clone();
     cut_short.stage = RestoreStage::Verifying;
-    assert!(repo.worktree().write_progress(&cut_short).is_ok());
+    worktree.write_progress(&cut_short).unwrap();
     repo.write("a.txt", "a\n");
 
-    let _ = recover(&repo.path, NOW).unwrap();
+    let recovery = recover(&repo.path, NOW).unwrap();
 
     assert_eq!(
-        repo.worktree()
-            .journal(&journal.op_id)
-            .unwrap()
-            .unwrap()
-            .stage,
-        RestoreStage::Applied
+        recovery.settled.as_slice(),
+        std::slice::from_ref(&journal.op_id)
+    );
+    cut_short.stage = RestoreStage::Applied;
+    assert_eq!(
+        worktree.journal(&journal.op_id).unwrap().unwrap(),
+        cut_short
     );
     assert!(!is_pinned(&repo, &restore_current_ref(&journal.op_id)));
-    assert_eq!(held(&repo, &journal.op_id).0.len(), 3);
+    assert_three_pins(&repo, &cut_short);
 }
 
 /// An undo is not undone in turn, so once it settles, whole or not, its
@@ -404,6 +580,12 @@ fn a_moved_repository_keeps_its_refs() {
         ),
     )
     .unwrap();
+    let mut orphan = restored.clone();
+    orphan.op_id = new_op_id();
+    worktree.pin_trees(&orphan).unwrap();
+    assert_three_pins(&repo, &orphan);
+    assert_main_note(&repo, &orphan.op_id, false);
+    assert!(!worktree.journal_path(&orphan.op_id).exists());
     let moved = Repo {
         scratch: repo.scratch.join("none"),
         path: repo.scratch.join("moved"),
@@ -413,11 +595,10 @@ fn a_moved_repository_keeps_its_refs() {
 
     let _ = recover(&moved.path, NOW).unwrap();
 
-    for op in [&restored.op_id, &earlier.op_id] {
-        let (names, is_noted) = held(&moved, op);
-        assert_eq!(names.len(), 3, "{op}");
-        assert!(is_noted, "{op}");
+    for journal in [&restored, &earlier] {
+        assert_three_pins(&moved, journal);
     }
+    assert_eq!(held(&moved, &orphan.op_id), (Vec::new(), false));
 }
 
 /// `git worktree move` and `git worktree lock` keep the worktree's git
@@ -447,15 +628,19 @@ fn a_moved_or_locked_worktree_keeps_its_refs() {
         linked.to_str().unwrap(),
         moved.to_str().unwrap(),
     ]);
-    repo.git(&["worktree", "lock", moved.to_str().unwrap()]);
+    for is_locked in [false, true] {
+        if is_locked {
+            repo.git(&["worktree", "lock", moved.to_str().unwrap()]);
+        }
+        let main = recover(&repo.path, NOW).unwrap();
+        assert_eq!(main.journals.as_slice(), std::slice::from_ref(&restored));
+        assert_three_pins(&repo, &theirs);
+        assert_three_pins(&repo, &restored);
 
-    let _ = recover(&repo.path, NOW).unwrap();
-    let _ = recover(&moved, NOW).unwrap();
-
-    for op in [&theirs.op_id, &restored.op_id] {
-        let (names, is_noted) = held(&repo, op);
-        assert_eq!(names.len(), 3, "{op}");
-        assert!(is_noted, "{op}");
+        let linked = recover(&moved, NOW).unwrap();
+        assert_eq!(linked.journals.as_slice(), std::slice::from_ref(&theirs));
+        assert_three_pins(&repo, &theirs);
+        assert_three_pins(&repo, &restored);
     }
 }
 
@@ -676,7 +861,8 @@ fn an_unwritable_refs_file_refuses_as_the_journal_with_its_cause() {
     // it.
     let weir = repo.path.join(".git/weir");
     fs::create_dir_all(&weir).unwrap();
-    fs::write(weir.join("restore-refs"), "").unwrap();
+    let obstruction = weir.join("restore-refs");
+    fs::write(&obstruction, b"not a directory").unwrap();
 
     let refusal = refused(repo.restore(&turn));
 
@@ -684,5 +870,7 @@ fn an_unwritable_refs_file_refuses_as_the_journal_with_its_cause() {
         panic!("{refusal:?}");
     };
     assert!(cause.starts_with("refs file:"), "{cause}");
-    assert_eq!(repo.read("a.txt").as_deref(), Some("a\nchanged\n"));
+    assert_eq!(fs::read(obstruction).unwrap(), b"not a directory");
+    super::applying::assert_busy_paths_unchanged(&repo);
+    super::applying::assert_no_journals_or_refs(&repo);
 }

@@ -10,11 +10,13 @@ struct RowNameTests {
     @Test func theNameAPersonGave_comesFirst() {
         let name = RowName.make(manual: "Release prep", conversation: "Add tests", branch: "feat/x", folder: "repo-feat-x")
         #expect(name == RowName(text: "Release prep", source: .manual))
+        #expect(name.label == "Release prep")
     }
 
     @Test func theBranch_comesBeforeTheConversation() {
         let name = RowName.make(manual: nil, conversation: "Add tests", branch: "feat/x", folder: "repo-feat-x")
         #expect(name == RowName(text: "feat/x", source: .branch))
+        #expect(name.label == nil)
     }
 
     /// A detached HEAD has no branch: its conversation names the row.
@@ -34,5 +36,7 @@ struct RowNameTests {
     @Test func anEmptyName_handsTheRowToTheNext() {
         let name = RowName.make(manual: "", conversation: "", branch: "", folder: "repo")
         #expect(name == RowName(text: "repo", source: .folder))
+        #expect(RowName.make(manual: "", conversation: "Add tests", branch: "", folder: "repo")
+            == RowName(text: "Add tests", source: .conversation))
     }
 }

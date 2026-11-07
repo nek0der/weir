@@ -40,7 +40,11 @@ struct SessionHeaderModelTests {
         #expect(SessionHeaderModel(row: row, pullRequestNumber: nil, gitFacts: clean, locale: english).gitChips.isEmpty)
         #expect(japanese.gitChips.map(\.text) == ["+1 コミット", "未コミット 2 ファイル"])
         // A chip keeps its identity as its count changes.
+        let changedFacts = GitFactsFixture.make(commits: 3, unpushed: 1, uncommitted: 1)
+        let changed = SessionHeaderModel(row: row, pullRequestNumber: 128, gitFacts: changedFacts, locale: english)
+        #expect(changed.gitChips.map(\.text) == ["PR #128", "+3 commits", "1 file uncommitted"])
         #expect(model.gitChips.map(\.id) == ["pullRequest", "commits", "uncommitted"])
+        #expect(changed.gitChips.map(\.id) == model.gitChips.map(\.id))
 
         // A squash merge leaves the commits off the default branch; once
         // the request is merged they are not work still to propose.

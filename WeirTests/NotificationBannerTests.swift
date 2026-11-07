@@ -13,8 +13,9 @@ struct NotificationBannerTests {
         #expect(isNothing(held.outcome))
 
         held.hold("first", identifier: "a")
+        held.hold("updated", identifier: "a")
         if case let .single(banner) = held.outcome {
-            #expect(banner == "first")
+            #expect(banner == "updated")
         } else {
             Issue.record("one banner is posted as it is")
         }
@@ -27,7 +28,7 @@ struct NotificationBannerTests {
         // A request answered or timed out meanwhile is never posted.
         held.drop(identifier: "b")
         if case let .single(banner) = held.outcome {
-            #expect(banner == "first")
+            #expect(banner == "updated")
         } else {
             Issue.record("the one left is posted as it is")
         }
@@ -53,7 +54,8 @@ struct NotificationBannerTests {
         #expect(text.title == "Needs Attention · 5")
         #expect(text.body == "1 Approval · 1 Response · 3 Unread")
         let japanese = try #require(AttentionSummaryText.make(counts, locale: Locale(identifier: "ja")))
-        #expect(japanese.body.contains("応答 1"))
+        #expect(japanese.title == "要対応 5")
+        #expect(japanese.body == "承認 1 · 応答 1 · 未読 3")
     }
 
     @Test func aRequestsBanner_saysWhereAndWhat() {

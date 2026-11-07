@@ -33,10 +33,11 @@ Look in `WeirTests/Support/` before adding a helper:
 - `Gate` holds an asynchronous operation until the test releases it. Its
   `requests` count and `waitUntilRequested` establish that the operation
   reached the gate.
-  `waitUntilRequested` does not end on cancellation. When a missing call is
-  a possible failure, use `pollUntil` on `requests`, then `#require` the
-  expected count before proceeding. Arrange cleanup to release any held
-  operation even if that requirement fails.
+  `waitUntilRequested` throws on timeout or cancellation. It waits for at
+  least the requested count; assert an exact count separately when duplicate
+  calls would violate the contract. The held operation's `wait()` does not
+  end on cancellation. Arrange cleanup to release it even if observing the
+  request fails.
 - `ManualTimer` supplies a controllable `HoverDelayTimer`. Use it where the
   production API accepts that timer; it is not a replacement for every clock.
 - `Polling` waits for conditions that cannot be awaited directly. Its
@@ -63,6 +64,9 @@ parameterized cases enough input context to identify a failure.
 Inject temporary storage as the contributor guide requires. Use
 `SecureFileWrite` for Weir data files so `TestWriteGuard` can reject writes to
 real user data. A rejected write means the intended write was not tested.
+Check inherited process state as well as paths. A temporary working directory
+does not stop `GIT_DIR`, `GIT_WORK_TREE`, or `GIT_INDEX_FILE` from selecting
+another repository or index; use the fixture's isolated Git runner.
 Own and clean up child processes, sockets, timers, and pending operations.
 
 Check enabled conditions before removing a case in favor of another. Tests

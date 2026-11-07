@@ -15,16 +15,6 @@ struct WindowRoutingTests {
 
     // MARK: - Actions in a window
 
-    @Test func openTab_inASecondWindow_showsItThereOnly() {
-        let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
-        let other = WorkspaceSessionFixture.addWindow(to: session)
-
-        let opened = session.openTab(container: .loose, in: other)
-
-        #expect(session.selection(other)?.activeTabID == opened.id)
-        #expect(session.primarySelection.activeTabID == tab.id)
-    }
-
     @Test func navigationHistory_isEachWindowsOwn() throws {
         let (session, tabA, _, tabB, _) = WorkspaceSessionFixture.withTwoLooseTabs()
         let other = WorkspaceSessionFixture.addWindow(to: session)
@@ -45,36 +35,29 @@ struct WindowRoutingTests {
     }
 
     @Test func aShortcutRunInASecondWindow_movesThatWindow() {
-        let (session, tabA, _, tabB, _) = WorkspaceSessionFixture.withTwoLooseTabs()
+        let session = WorkspaceSession()
+        let first = session.openTab(container: .loose)
+        let middle = session.openTab(container: .loose)
+        let last = session.openTab(container: .loose)
         let other = WorkspaceSessionFixture.addWindow(to: session)
-        session.setActiveTab(tabB.id, in: other)
+        session.setActiveTab(first.id)
+        session.setActiveTab(middle.id, in: other)
 
-        dispatch(.nextTab, session: session, window: other)
-
-        #expect(session.selection(other)?.activeTabID == tabA.id)
-        #expect(session.primarySelection.activeTabID == tabA.id)
-        dispatch(.nextTab, session: session, window: other)
-        #expect(session.selection(other)?.activeTabID == tabB.id)
-        #expect(session.primarySelection.activeTabID == tabA.id)
-    }
-
-    @Test func aWindowsOwnAction_isAskedOfThatWindowAlone() {
-        let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
-        let other = WorkspaceSessionFixture.addWindow(to: session)
-        let commands = RecordingWindowCommands()
-
-        for action in [WeirShortcutAction.closeWindow, .toggleChangesPanel, .toggleSidebar] {
-            dispatch(action, session: session, window: other, commands: commands)
+        let steps: [(WeirShortcutAction, UUID)] = [
+            (.nextTab, last.id), (.nextTab, first.id), (.previousTab, last.id), (.previousTab, middle.id)
+        ]
+        for (action, expected) in steps {
+            dispatch(action, session: session, window: other)
+            #expect(session.selection(other)?.activeTabID == expected)
+            #expect(session.primarySelection.activeTabID == first.id)
         }
-
-        #expect(commands.commands(in: other) == [.closeWindow, .toggleChangesPanel, .toggleSidebar])
-        #expect(commands.commands(in: session.primaryWindowID).isEmpty)
     }
 
     @Test func everyWindowShortcutOfTheDispatch_asksTheWindowForItsCommand() {
         let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+        let other = WorkspaceSessionFixture.addWindow(to: session)
         let table: [(WeirShortcutAction, WindowCommand)] = [
-            (.newWorktree, .newWorktree), (.openFolder, .openFolder), (.closeWindow, .closeWindow),
+            (.newWorktree, .newWorktree), (.newWorktreeNow, .newWorktreeNow), (.openFolder, .openFolder), (.closeWindow, .closeWindow),
             (.newWindow, .newWindow), (.toggleSidebar, .toggleSidebar),
             (.notificationHistory, .toggleNotificationHistory), (.review, .review),
             (.reviewLatestTurn, .reviewLatestTurn), (.toggleChangesPanel, .toggleChangesPanel), (.showScratch, .showScratch),
@@ -86,24 +69,33 @@ struct WindowRoutingTests {
         ]
         for (action, command) in table {
             let commands = RecordingWindowCommands()
-            dispatch(action, session: session, window: session.primaryWindowID, commands: commands)
-            #expect(commands.commands(in: session.primaryWindowID) == [command], "\(action)")
+            dispatch(action, session: session, window: other, commands: commands)
+            #expect(commands.commands(in: other) == [command], "\(action)")
+            #expect(commands.commands(in: session.primaryWindowID).isEmpty, "\(action)")
         }
     }
 
     /// From the palette the sidebar has no keyboard, so Move Project Up and
     /// Down move the project the window shows, in that window's order.
-    @Test func theProjectMoves_fromThePalette_moveTheShownProject() {
+    @Test func theProjectMoves_fromThePalette_moveTheShownProject() throws {
         let fixture = ProjectWindowsFixture()
-        let window = fixture.session.primaryWindowID
-        let order = { fixture.session.primarySelection.sidebarArrangement.ordered(fixture.session.projects.map(\.id)) }
-        #expect(order() == [fixture.a.id, fixture.b.id, fixture.c.id])
-
-        dispatch(.moveProjectDown, session: fixture.session, window: window)
-        #expect(order() == [fixture.b.id, fixture.a.id, fixture.c.id])
-        dispatch(.moveProjectUp, session: fixture.session, window: window)
-        dispatch(.moveProjectUp, session: fixture.session, window: window)
-        #expect(order() == [fixture.a.id, fixture.b.id, fixture.c.id], "the top stays the top")
+        let session = fixture.session
+        let other = try fixture.window(showing: fixture.b)
+        let original = [fixture.a.id, fixture.b.id, fixture.c.id]
+        let steps: [(WeirShortcutAction, [UUID])] = [
+            (.moveProjectDown, [fixture.a.id, fixture.c.id, fixture.b.id]),
+            (.moveProjectDown, [fixture.a.id, fixture.c.id, fixture.b.id]),
+            (.moveProjectUp, original),
+            (.moveProjectUp, [fixture.b.id, fixture.a.id, fixture.c.id]),
+            (.moveProjectUp, [fixture.b.id, fixture.a.id, fixture.c.id])
+        ]
+        try #require(other.selection.shownProjectID == fixture.b.id)
+        for (action, expected) in steps {
+            dispatch(action, session: session, window: other.id)
+            #expect(other.selection.sidebarArrangement.ordered(original) == expected)
+            #expect(session.primarySelection.sidebarArrangement.ordered(original) == original)
+            #expect(session.projects.map(\.id) == original)
+        }
     }
 
     /// ⌘J and ⇧⌘J from a window's palette, or the channel naming a
@@ -129,50 +121,85 @@ struct WindowRoutingTests {
     /// dispatch leaves the history alone, so a row never steps twice.
     @Test func theHistoryShortcuts_areLeftToTheWindow_byTheSharedDispatch() throws {
         let (session, tabA, _, tabB, _) = WorkspaceSessionFixture.withTwoLooseTabs()
-        let window = session.primaryWindowID
-        session.setActiveTab(tabB.id, in: window)
-        let before = try #require(session.currentNavTarget(in: window))
-        session.setActiveTab(tabA.id, in: window)
-        session.recordNavigation(from: before, in: window)
-        #expect(session.canNavigateBack(in: window))
+        let other = WorkspaceSessionFixture.addWindow(to: session)
+        session.setActiveTab(tabB.id, in: other)
+        let before = try #require(session.currentNavTarget(in: other))
+        session.setActiveTab(tabA.id, in: other)
+        session.recordNavigation(from: before, in: other)
+        try #require(session.canNavigateBack(in: other))
 
-        dispatch(.goBack, session: session, window: window)
+        dispatch(.goBack, session: session, window: other)
 
+        #expect(session.selection(other)?.activeTabID == tabA.id)
+        #expect(session.canNavigateBack(in: other))
+        session.navigateBack(in: other)
+        try #require(session.selection(other)?.activeTabID == tabB.id)
+        try #require(session.canNavigateForward(in: other))
+
+        dispatch(.goForward, session: session, window: other)
+
+        #expect(session.selection(other)?.activeTabID == tabB.id)
+        #expect(session.canNavigateForward(in: other))
         #expect(session.primarySelection.activeTabID == tabA.id)
     }
 
-    @Test func aNewTabInASecondWindow_startsInThatWindowsFolder() {
+    @Test(arguments: [false, true])
+    func aNewTabInASecondWindow_startsInThatWindowsFolder(hasLiveDirectory: Bool) throws {
         let session = WorkspaceSession()
         session.quickTabDefaultsProvider = { (mode: .inheritPrevious, path: nil) }
-        let shown = session.openTab(container: .loose, workingDirectory: URL(fileURLWithPath: "/tmp/weir-window-b"))
-        session.openTab(container: .loose, workingDirectory: URL(fileURLWithPath: "/tmp/weir-primary"))
+        let launch = "/tmp/weir-window-b"
+        let live = "/tmp/weir-window-b/live"
+        let shown = session.openTab(container: .loose, workingDirectory: URL(fileURLWithPath: launch))
+        let primary = session.openTab(container: .loose, workingDirectory: URL(fileURLWithPath: "/tmp/weir-primary"))
         let other = WorkspaceSessionFixture.addWindow(to: session)
         session.setActiveTab(shown.id, in: other)
+        if hasLiveDirectory {
+            session.update(shown.id) { $0.pwd = live }
+        }
 
-        let opened = session.openTab(container: .loose, in: other)
+        dispatch(.newTab, session: session, window: other)
 
-        #expect(opened.workingDirectory == "/tmp/weir-window-b")
+        let opened = try #require(session.activeTab(in: other))
+        #expect(opened.workingDirectory == (hasLiveDirectory ? live : launch))
+        #expect(opened.container == .loose)
+        #expect(session.tabs.map(\.id) == [shown.id, primary.id, opened.id])
+        #expect(session.primarySelection.activeTabID == primary.id)
     }
 
     // MARK: - Changes every window shares
 
-    @Test func closingATabOnlyASecondWindowShows_leavesThePrimaryWhereItWas() {
+    @Test(arguments: [false, true])
+    func closingATab_movesItsSelectingWindowsToTheSameNeighbor(includesPrimary: Bool) throws {
         let session = WorkspaceSession()
-        let first = session.openTab(container: .loose)
+        let untouched = session.openTab(container: .loose)
         let closing = session.openTab(container: .loose)
+        let neighbor = session.openTab(container: .loose)
         let other = WorkspaceSessionFixture.addWindow(to: session)
+        let third = WorkspaceSessionFixture.addWindow(to: session)
+        session.setActiveTab(includesPrimary ? closing.id : untouched.id)
         session.setActiveTab(closing.id, in: other)
-        session.setActiveTab(first.id)
+        session.setActiveTab(untouched.id, in: third)
+        let primary = session.primaryWindowID
+        let selecting: Set<WindowID> = includesPrimary ? [primary, other] : [other]
+        try #require(Set(session.windows(selecting: closing.id)) == selecting)
 
         session.closeTab(closing.id)
 
-        #expect(session.primarySelection.activeTabID == first.id)
-        #expect(session.selection(other)?.activeTabID == first.id)
+        #expect(session.tabs.map(\.id) == [untouched.id, neighbor.id])
+        #expect(session.selection(other)?.activeTabID == neighbor.id)
+        #expect(session.primarySelection.activeTabID == (includesPrimary ? neighbor.id : untouched.id))
+        #expect(session.selection(third)?.activeTabID == untouched.id)
+        for window in [primary, other, third] {
+            #expect(session.selection(window)?.activeContainerID == .loose)
+        }
     }
 
-    @Test func removingAWorktree_movesTheSecondWindowOnItToTheProject() throws {
+    @Test(arguments: [false, true])
+    func leavingAHiddenOrRemovedWorktree_selectsTheProjectTab(isHiding: Bool) throws {
         let (session, project, other) = Self.secondWindowShowingAProject()
-        let primaryTab = session.primarySelection.activeTabID
+        let primaryTab = try #require(session.primarySelection.activeTabID)
+        let primaryContainer = session.primarySelection.activeContainerID
+        let fallback = session.openTab(container: .project(project.id), in: other)
         let worktree = try #require(session.attachGitWorktree(
             projectID: project.id,
             label: "feature",
@@ -181,25 +208,28 @@ struct WindowRoutingTests {
         ))
         let container = ContainerID.worktree(projectID: project.id, worktreeID: worktree.id)
         let tab = session.openTab(container: container, in: other)
+        try #require(session.selection(other)?.activeTabID == tab.id)
+        try #require(session.selection(other)?.activeContainerID == container)
+        let panes = tab.splitTree.allLeafIDs()
+        try #require(panes.count == 1)
 
-        session.removeWorktree(projectID: project.id, worktreeID: worktree.id)
+        if isHiding {
+            session.hideWorktree(projectID: project.id, worktreeID: worktree.id)
+            #expect(session.worktree(projectID: project.id, worktreeID: worktree.id)?.isHidden == true)
+            #expect(session.tab(tab.id)?.container == .project(project.id))
+            #expect(session.tab(tab.id)?.splitTree == tab.splitTree)
+            #expect(session.tabs.map(\.id) == [primaryTab, fallback.id, tab.id])
+        } else {
+            let freed = session.removeWorktree(projectID: project.id, worktreeID: worktree.id)
+            #expect(freed == panes)
+            #expect(session.worktree(projectID: project.id, worktreeID: worktree.id) == nil)
+            #expect(session.tabs.map(\.id) == [primaryTab, fallback.id])
+        }
 
         #expect(session.selection(other)?.activeContainerID == .project(project.id))
-        #expect(session.selection(other)?.activeTabID != tab.id)
+        #expect(session.selection(other)?.activeTabID == fallback.id)
         #expect(session.primarySelection.activeTabID == primaryTab)
-    }
-
-    @Test func closingATab_movesEveryWindowThatShowedIt() {
-        let session = WorkspaceSession()
-        let first = session.openTab(container: .loose)
-        let closing = session.openTab(container: .loose)
-        let other = WorkspaceSessionFixture.addWindow(to: session)
-        session.setActiveTab(closing.id, in: other)
-
-        session.closeTab(closing.id)
-
-        #expect(session.primarySelection.activeTabID == first.id)
-        #expect(session.selection(other)?.activeTabID == first.id)
+        #expect(session.primarySelection.activeContainerID == primaryContainer)
     }
 
     @Test func movingATab_leavesTheSecondWindowThatShowedItOnTheSource() {
@@ -211,32 +241,32 @@ struct WindowRoutingTests {
         session.moveTab(tab.id, to: .loose)
 
         #expect(session.selection(other)?.activeTabID == sibling.id)
+        #expect(session.selection(other)?.activeContainerID == .project(project.id))
+        #expect(session.tab(tab.id)?.container == .loose)
+        #expect(session.tab(tab.id)?.splitTree == tab.splitTree)
         #expect(session.primarySelection.activeTabID == primaryTab)
     }
 
-    @Test func hidingAWorktree_movesTheSecondWindowOnItToTheProject() throws {
+    @Test func anUnknownWindow_movesNoWindow() throws {
         let (session, project, other) = Self.secondWindowShowingAProject()
-        let worktree = try #require(session.attachGitWorktree(
-            projectID: project.id,
-            label: "feature",
-            workingDirectory: project.rootURL.appendingPathComponent("feature"),
-            branchName: "feature"
-        ))
-        let container = ContainerID.worktree(projectID: project.id, worktreeID: worktree.id)
-        session.setActiveContainer(container, in: other)
+        let first = session.openTab(container: .project(project.id), in: other)
+        let unselected = session.openTab(container: .project(project.id), in: other, intent: .person, selects: false)
+        let primary = try #require(session.primarySelection.activeTabID)
+        let primaryContainer = session.primarySelection.activeContainerID
+        let unknown = WindowID()
+        let windows = session.windowIDs
+        try #require(!windows.contains(unknown))
+        try #require(session.selection(other)?.activeTabID == first.id)
+        try #require(session.lastActiveTabID(for: .project(project.id)) == first.id)
 
-        session.hideWorktree(projectID: project.id, worktreeID: worktree.id)
+        session.setActiveTab(unselected.id, in: unknown)
 
+        #expect(session.windowIDs == windows)
+        #expect(session.primarySelection.activeTabID == primary)
+        #expect(session.primarySelection.activeContainerID == primaryContainer)
         #expect(session.selection(other)?.activeContainerID == .project(project.id))
-        #expect(session.primarySelection.shownProjectID != project.id)
-    }
-
-    @Test func anUnknownWindow_movesNoWindow() {
-        let (session, tabA, _, tabB, _) = WorkspaceSessionFixture.withTwoLooseTabs()
-
-        session.setActiveTab(tabB.id, in: WindowID())
-
-        #expect(session.primarySelection.activeTabID == tabA.id)
+        #expect(session.selection(other)?.activeTabID == first.id)
+        #expect(session.lastActiveTabID(for: .project(project.id)) == first.id)
     }
 
     // MARK: - Helpers
@@ -293,14 +323,20 @@ struct WindowRoutingTests {
         #expect(session.window(showingPane: UUID()) == nil)
     }
 
-    @Test func theSessionsInFront_areEveryWindows() {
-        let (session, project) = WorkspaceSessionFixture.withProject()
-        let second = session.addOrActivateProject(rootURL: project.rootURL.appendingPathExtension("second"))
-        let other = WorkspaceSessionFixture.addWindow(to: session)
-        session.setActiveContainer(.project(project.id))
-        session.setActiveContainer(.project(second.id), in: other)
+    @Test func theSessionsInFront_includeOnlyVisibleWindowsShowingASession() throws {
+        let fixture = ProjectWindowsFixture()
+        let session = fixture.session
+        let other = try fixture.window(showing: fixture.b)
+        #expect(session.shownContainerIDs == [.project(fixture.a.id), .project(fixture.b.id)])
 
-        #expect(session.shownContainerIDs == [.project(project.id), .project(second.id)])
+        session.setWindow(other.id, isHidden: true)
+        let chooser = session.addWindow(showing: nil, layoutFrom: session.primaryWindowID)
+        try #require(session.hiddenWindowIDs == [other.id])
+        try #require(chooser.isChoosingProject)
+        #expect(session.shownContainerIDs == [.project(fixture.a.id)])
+
+        session.setWindow(other.id, isHidden: false)
+        #expect(session.shownContainerIDs == [.project(fixture.a.id), .project(fixture.b.id)])
     }
 }
 
@@ -308,14 +344,15 @@ struct WindowRoutingTests {
 @MainActor
 extension WindowRoutingTests {
     @Test func renaming_asksOnlyTheWindowItWasAskedIn() {
-        let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
+        let (session, primary, _, tab, _) = WorkspaceSessionFixture.withTwoLooseTabs()
         let other = WorkspaceSessionFixture.addWindow(to: session)
         session.setActiveTab(tab.id, in: other)
         let commands = RecordingWindowCommands()
 
-        TabActions.renameActiveTab(session, in: other, commands: commands)
+        dispatch(.renameTab, session: session, window: other, commands: commands)
 
         #expect(commands.commands(in: other) == [.renameTab(tab.id)])
+        #expect(session.primarySelection.activeTabID == primary.id)
         #expect(commands.commands(in: session.primaryWindowID).isEmpty)
     }
 }

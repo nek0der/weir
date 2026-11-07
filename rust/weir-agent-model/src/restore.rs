@@ -528,13 +528,36 @@ mod tests {
         assert_eq!(decoded.stage, RestoreStage::Unknown);
         assert!(!decoded.is_writable());
         assert_eq!(decoded.extra.get("laterField"), Some(&serde_json::json!(1)));
+
+        value["schemaVersion"] = serde_json::json!(RestoreJournal::SCHEMA_VERSION + 1);
+        value["stage"] = serde_json::json!({"kind": "applied"});
+        let decoded = RestoreJournal::decode(&serde_json::to_vec(&value).unwrap()).unwrap();
+        assert_eq!(decoded.stage, RestoreStage::Applied);
+        assert!(!decoded.is_writable());
     }
 
     #[test]
     fn only_the_unfinished_stages_are_interrupted() {
         assert!(RestoreStage::Planned.is_interrupted());
+        assert!(
+            RestoreStage::Writing {
+                done: vec!["a.txt".into()]
+            }
+            .is_interrupted()
+        );
         assert!(RestoreStage::Verifying.is_interrupted());
         assert!(!RestoreStage::Applied.is_interrupted());
+        assert!(!RestoreStage::Undone { by: "UNDO".into() }.is_interrupted());
+        assert!(
+            !RestoreStage::PartiallyApplied {
+                reason: StageReason::AgentStarted,
+                current_tree: "c".into(),
+                kept: vec![],
+                failed: vec![],
+            }
+            .is_interrupted()
+        );
+        assert!(!RestoreStage::Unknown.is_interrupted());
         assert!(
             !RestoreStage::Aborted {
                 reason: StageReason::Interrupted
@@ -546,29 +569,27 @@ mod tests {
     #[test]
     fn every_tree_a_journal_names_is_pinned_by_a_ref_of_its_own() {
         let planned = journal(RestoreStage::Planned);
-        assert_eq!(
-            planned.pinned_trees(),
-            [
-                ("refs/weir/undo/OP".to_owned(), "b"),
-                ("refs/weir/undo-target/OP".to_owned(), "t"),
-                ("refs/weir/undo-expected/OP".to_owned(), "e"),
-            ]
-        );
+        let base_refs = [
+            ("refs/weir/undo/OP".to_owned(), "b"),
+            ("refs/weir/undo-target/OP".to_owned(), "t"),
+            ("refs/weir/undo-expected/OP".to_owned(), "e"),
+        ];
+        assert_eq!(planned.pinned_trees(), base_refs);
         let partial = journal(RestoreStage::PartiallyApplied {
             reason: StageReason::AgentStarted,
             current_tree: "c".into(),
             kept: vec![],
             failed: vec![],
         });
-        let pinned = partial.pinned_trees();
-        assert_eq!(
-            pinned.last(),
-            Some(&("refs/weir/undo-current/OP".to_owned(), "c"))
-        );
-        // Dropping an operation's refs reaches each of them.
-        for (name, _) in &pinned {
-            assert!(restore_refs("OP").contains(name), "{name}");
-        }
+        let [before, target, expected] = base_refs;
+        let partial_refs = [
+            before,
+            target,
+            expected,
+            ("refs/weir/undo-current/OP".to_owned(), "c"),
+        ];
+        assert_eq!(partial.pinned_trees(), partial_refs);
+        assert_eq!(restore_refs("OP"), partial_refs.map(|(name, _)| name));
     }
 
     /// A journal from before discards was a restore, and a restore's

@@ -35,5 +35,9 @@ struct MonospacedSystemFontTests {
         #expect(MonospacedSystemFont.font(ofSize: 13.25, weight: .bold) === kept)
         #expect(MonospacedSystemFont.font(ofSize: 13.25, weight: .regular) !== kept)
         #expect(kept?.isFixedPitch == true)
+        #expect(kept?.pointSize == 13.25)
+        let anotherSize = MonospacedSystemFont.font(ofSize: 14.25, weight: .bold)
+        #expect(anotherSize !== kept)
+        #expect(anotherSize.pointSize == 14.25)
     }
 }

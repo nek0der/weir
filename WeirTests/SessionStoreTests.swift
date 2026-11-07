@@ -1,6 +1,7 @@
 // SessionStoreTests.swift
 // Weir — `SessionStore` loading state.json (moving an older one forward, or aside) and saving it.
 
+import CryptoKit
 import Foundation
 import Testing
 @testable import Weir
@@ -30,27 +31,67 @@ struct SessionStoreTests {
         return data
     }
 
-    private static func files(in dir: URL) throws -> [String] {
-        try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
+    private static func sessionFiles(in dir: URL) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            .filter { $0.hasPrefix("state.json") }
+            .sorted()
     }
 
-    @Test func migratedFile_isWrittenAtOnceWithOneBackup() throws {
-        try withTempDir { dir in
-            let original = try Self.previousVersionFile(in: dir)
-            let store = SessionStore(directory: dir, migrator: Self.oneStep(Self.upgrade))
+    private static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
 
-            guard case .loaded = store.load() else {
+    private static func expectWrittenMigration(in dir: URL, original: Data, written: Data) throws -> MigrationBackupRecord {
+        let document = dir.appendingPathComponent("state.json")
+        let backup = "state.json.pre-v\(SessionSnapshot.currentVersion)"
+        let ledger = try #require(MigrationBackup.readLedger(for: document))
+        #expect(ledger.stage == .written)
+        #expect(ledger.fromVersion == SessionSnapshot.currentVersion - 1)
+        #expect(ledger.toVersion == SessionSnapshot.currentVersion)
+        #expect(ledger.backupFileName == backup)
+        #expect(ledger.sourceSHA256 == digest(original))
+        #expect(ledger.migratedSHA256 == digest(written))
+        #expect(try Data(contentsOf: dir.appendingPathComponent(backup)) == original)
+        #expect(try sessionFiles(in: dir) == ["state.json", "state.json.migration.json", backup])
+        return ledger
+    }
+
+    @Test func migratedFile_isWrittenAtOnceWithOneBackup_andReloadLeavesItAlone() throws {
+        try withTempDir { dir in
+            let document = dir.appendingPathComponent("state.json")
+            let original = try Self.previousVersionFile(in: dir)
+            let migrator = Self.oneStep(Self.upgrade)
+
+            guard case .loaded = SessionStore(directory: dir, migrator: migrator).load() else {
                 Issue.record("expected the migrated session to load")
                 return
             }
-            let written = try Data(contentsOf: dir.appendingPathComponent("state.json"))
+            let written = try Data(contentsOf: document)
             let decoded = try PersistenceCoders.makeDecoder().decode(SessionSnapshot.self, from: written)
             #expect(decoded.version == SessionSnapshot.currentVersion)
-            let backup = "state.json.pre-v\(SessionSnapshot.currentVersion)"
-            #expect(try Data(contentsOf: dir.appendingPathComponent(backup)) == original)
-            let ledger = MigrationBackup.readLedger(for: dir.appendingPathComponent("state.json"))
-            #expect(ledger?.stage == .written)
-            #expect(ledger?.backupFileName == backup)
+            let ledger = try Self.expectWrittenMigration(in: dir, original: original, written: written)
+            let ledgerURL = MigrationBackup.ledgerURL(for: document)
+            let ledgerBytes = try Data(contentsOf: ledgerURL)
+            let manager = FileManager.default
+            let preserved = [document, ledgerURL, dir.appendingPathComponent(ledger.backupFileName)]
+            let oldDate = Date(timeIntervalSince1970: 1_600_000_000)
+            for file in preserved {
+                try manager.setAttributes([.modificationDate: oldDate], ofItemAtPath: file.path)
+                try #require(manager.attributesOfItem(atPath: file.path)[.modificationDate] as? Date == oldDate)
+            }
+
+            let second = SessionStore(directory: dir, migrator: migrator)
+            guard case let .loaded(reopened) = second.load() else {
+                Issue.record("expected the current file to load")
+                return
+            }
+            #expect(reopened.version == SessionSnapshot.currentVersion)
+            #expect(try Data(contentsOf: document) == written)
+            #expect(try Data(contentsOf: ledgerURL) == ledgerBytes)
+            #expect(try Self.expectWrittenMigration(in: dir, original: original, written: written) == ledger)
+            for file in preserved {
+                #expect(try manager.attributesOfItem(atPath: file.path)[.modificationDate] as? Date == oldDate)
+            }
         }
     }
 
@@ -97,71 +138,70 @@ struct SessionStoreTests {
                 Issue.record("expected the session to load")
                 return
             }
-            #expect(try Self.files(in: dir).filter { $0.contains(".pre-v") }.count == 1)
-            #expect(MigrationBackup.readLedger(for: document)?.stage == .written)
+            let written = try Data(contentsOf: document)
+            #expect(written == migrated)
+            _ = try Self.expectWrittenMigration(in: dir, original: original, written: written)
         }
     }
 
-    @Test func backupFailure_leavesTheFileUnchanged() throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func backupFailure_leavesTheFileUnchanged() throws {
         try withTempDir { dir in
             let original = try Self.previousVersionFile(in: dir)
             let manager = FileManager.default
-            // A read-only directory refuses the copy (and the quarantine
-            // rename, so the file stays where it was).
+            // The same read-only directory prevents both backup and quarantine.
             try manager.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
             defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
-            let outcome = SessionStore(directory: dir, migrator: Self.oneStep(Self.upgrade)).load()
+            let store = SessionStore(directory: dir, migrator: Self.oneStep(Self.upgrade))
+            let outcome = store.load()
 
             guard case let .decodeFailed(error) = outcome else {
-                Issue.record("expected a failure, got \(outcome)")
+                Issue.record("expected a backup failure, got \(outcome)")
                 return
             }
             #expect(error as? MigrationBackup.BackupError == .copyFailed)
-            #expect(try Data(contentsOf: dir.appendingPathComponent("state.json")) == original)
-            let files = try Self.files(in: dir)
-            #expect(!files.contains { $0.contains(".pre-v") || $0.contains(".migration.json") })
+            #expect(try Data(contentsOf: store.fileURL) == original)
+            #expect(try Self.sessionFiles(in: dir) == ["state.json"])
+            #expect(store.isSavingSuspended)
+
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            let changed = SessionSnapshot(projects: [], tabs: [], recentProjectPaths: [dir])
+            try #require(PersistenceCoders.makeEncoder().encode(changed) != original)
+            store.saveSynchronously(changed)
+            #expect(try Data(contentsOf: store.fileURL) == original)
+            #expect(try Self.sessionFiles(in: dir) == ["state.json"])
         }
+    }
+
+    private static func quarantine(in dir: URL, reason: String) throws -> URL {
+        let files = try sessionFiles(in: dir)
+        try #require(files.count == 1)
+        let name = try #require(files.first)
+        try #require(name.hasPrefix("state.json.bak-\(reason)-"))
+        return dir.appendingPathComponent(name)
     }
 
     @Test func stepThatDoesNotDecode_leavesNoCopy() throws {
         try withTempDir { dir in
-            _ = try Self.previousVersionFile(in: dir)
+            let original = try Self.previousVersionFile(in: dir)
             let migrator = Self.oneStep { _ in Data("{\"version\":\(SessionSnapshot.currentVersion)}".utf8) }
             let outcome = SessionStore(directory: dir, migrator: migrator).load()
 
             guard case .decodeFailed = outcome else {
-                Issue.record("expected a failure, got \(outcome)")
+                Issue.record("expected a decode failure, got \(outcome)")
                 return
             }
-            let files = try Self.files(in: dir)
-            #expect(!files.contains { $0.contains(".pre-v") || $0.contains(".migration.json") })
-            #expect(files.contains { $0.hasPrefix("state.json.bak-decode-failed-") })
-        }
-    }
-
-    @Test func loadingTheMigratedFileAgain_isANoOp() throws {
-        try withTempDir { dir in
-            _ = try Self.previousVersionFile(in: dir)
-            let migrator = Self.oneStep(Self.upgrade)
-            _ = SessionStore(directory: dir, migrator: migrator).load()
-            let before = try Self.files(in: dir)
-            let second = SessionStore(directory: dir, migrator: migrator)
-            guard case .loaded = second.load() else {
-                Issue.record("expected the current file to load")
-                return
-            }
-            #expect(try Self.files(in: dir) == before)
-            #expect(MigrationBackup.readLedger(for: dir.appendingPathComponent("state.json"))?.stage == .written)
+            #expect(try Data(contentsOf: Self.quarantine(in: dir, reason: "decode-failed")) == original)
         }
     }
 
     @Test func aMigrationWhoseWriteFailed_isRecordedOnceALaterSaveWrites() throws {
         try withTempDir { dir in
             let file = dir.appendingPathComponent("state.json")
-            _ = try Self.previousVersionFile(in: dir)
+            let original = try Self.previousVersionFile(in: dir)
             let manager = FileManager.default
-            // The copy and the ledger can be written; the file itself cannot
-            // be replaced.
+            // The backup and ledger can be written, but the original cannot
+            // be replaced until the retry below.
             try manager.setAttributes([.immutable: true], ofItemAtPath: file.path)
             defer { try? manager.setAttributes([.immutable: false], ofItemAtPath: file.path) }
             let store = SessionStore(directory: dir, migrator: Self.oneStep(Self.upgrade))
@@ -170,40 +210,74 @@ struct SessionStoreTests {
                 Issue.record("expected the migrated session to load from memory")
                 return
             }
-            #expect(MigrationBackup.readLedger(for: file)?.stage == .backedUp, "nothing reached disk yet")
-            #expect(store.hasFailedToSave, "the migration's write is a save that failed")
+            let pending = try #require(MigrationBackup.readLedger(for: file))
+            try #require(pending.stage == .backedUp)
+            try #require(store.hasFailedToSave)
+            try #require(Data(contentsOf: file) == original)
+            let backup = dir.appendingPathComponent(pending.backupFileName)
+            try #require(Data(contentsOf: backup) == original)
 
             try manager.setAttributes([.immutable: false], ofItemAtPath: file.path)
-            store.saveSynchronously(SessionSnapshot(projects: [], tabs: []))
-            #expect(MigrationBackup.readLedger(for: file)?.stage == .written)
-            #expect(!store.hasFailedToSave)
+            let changed = SessionSnapshot(projects: [], tabs: [], recentProjectPaths: [dir.appendingPathComponent("saved-after-migration")])
+            store.saveSynchronously(changed)
 
+            let written = try Data(contentsOf: file)
+            let ledger = try #require(MigrationBackup.readLedger(for: file))
+            #expect(ledger.stage == .written)
+            #expect(ledger.migratedSHA256 == SHA256.hash(data: written).map { String(format: "%02x", $0) }.joined())
+            #expect(ledger.backupFileName == pending.backupFileName)
+            #expect(try Data(contentsOf: backup) == original)
+            #expect(!store.hasFailedToSave)
             let relaunched = SessionStore(directory: dir, migrator: Self.oneStep(Self.upgrade))
-            _ = relaunched.load()
-            #expect(MigrationBackup.readLedger(for: file)?.stage == .written, "and after a relaunch")
+            guard case let .loaded(restored) = relaunched.load() else {
+                Issue.record("expected the saved session to reload")
+                return
+            }
+            #expect(restored.recentProjectPaths == changed.recentProjectPaths)
+            #expect(try Data(contentsOf: file) == written)
+            #expect(MigrationBackup.readLedger(for: file) == ledger)
         }
     }
 
     @Test func aDebouncedSave_finishesTheMigrationToo() async throws {
         try await withTempDir { dir in
             let file = dir.appendingPathComponent("state.json")
-            _ = try Self.previousVersionFile(in: dir)
+            let original = try Self.previousVersionFile(in: dir)
             let manager = FileManager.default
             try manager.setAttributes([.immutable: true], ofItemAtPath: file.path)
             defer { try? manager.setAttributes([.immutable: false], ofItemAtPath: file.path) }
             let store = SessionStore(directory: dir, migrator: Self.oneStep(Self.upgrade))
-            _ = store.load()
+            guard case .loaded = store.load() else {
+                Issue.record("expected the migrated session to load from memory")
+                return
+            }
+            let pending = try #require(MigrationBackup.readLedger(for: file))
+            try #require(pending.stage == .backedUp)
+            try #require(store.hasFailedToSave)
+            try #require(Data(contentsOf: file) == original)
+            let backup = dir.appendingPathComponent(pending.backupFileName)
+            try #require(Data(contentsOf: backup) == original)
 
             try manager.setAttributes([.immutable: false], ofItemAtPath: file.path)
-            store.scheduleSave(SessionSnapshot(projects: [], tabs: []))
-            await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) { MigrationBackup.readLedger(for: file)?.stage == .written }
+            let changed = SessionSnapshot(projects: [], tabs: [], recentProjectPaths: [dir.appendingPathComponent("saved-after-debounce")])
+            store.scheduleSave(changed)
+            await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) {
+                MigrationBackup.readLedger(for: file)?.stage == .written && !store.hasFailedToSave
+            }
 
-            #expect(MigrationBackup.readLedger(for: file)?.stage == .written, "finished on the queue")
+            let written = try Data(contentsOf: file)
+            let restored = try PersistenceCoders.makeDecoder().decode(SessionSnapshot.self, from: written)
+            let ledger = try #require(MigrationBackup.readLedger(for: file))
+            #expect(restored.recentProjectPaths == changed.recentProjectPaths)
+            #expect(ledger.stage == .written, "finished on the queue")
+            #expect(ledger.migratedSHA256 == SHA256.hash(data: written).map { String(format: "%02x", $0) }.joined())
+            #expect(ledger.backupFileName == pending.backupFileName)
+            #expect(try Data(contentsOf: backup) == original)
+            #expect(!store.hasFailedToSave)
         }
     }
 
-    @Test func aStoreThatMayNotWrite_savesNothing() throws {
-        // Demo mode: the app shows its fixture and the person's file stays.
+    @Test func aStoreThatMayNotWrite_skipsItsSynchronousSave() throws {
         try withTempDir { dir in
             let file = dir.appendingPathComponent("state.json")
             let original = Data("{}".utf8)
@@ -226,10 +300,11 @@ struct SessionStoreTests {
             let store = SessionStore(directory: dir)
 
             guard case .decodeFailed = store.load() else {
-                Issue.record("expected the unreadable file to fail")
+                Issue.record("expected the malformed file to fail decoding")
                 return
             }
             #expect(store.isSavingSuspended)
+            #expect(try Self.sessionFiles(in: dir) == ["state.json"])
             // Writable again, so only the suspension can keep the save off it.
             try manager.setAttributes([.immutable: false], ofItemAtPath: file.path)
             store.saveSynchronously(SessionSnapshot(projects: [], tabs: []))
@@ -240,23 +315,55 @@ struct SessionStoreTests {
 
     @Test func aFileSetAside_leavesSavingOn() throws {
         try withTempDir { dir in
-            try Data("not json".utf8).write(to: dir.appendingPathComponent("state.json"))
+            let file = dir.appendingPathComponent("state.json")
+            let original = Data("not json".utf8)
+            try original.write(to: file)
             let store = SessionStore(directory: dir)
-            _ = store.load()
+            guard case .decodeFailed = store.load() else {
+                Issue.record("expected the malformed session to fail decoding")
+                return
+            }
+            let backups = try Self.sessionFiles(in: dir).filter { $0.hasPrefix("state.json.bak-decode-failed-") }
+            try #require(backups.count == 1)
+            let backup = dir.appendingPathComponent(backups[0])
+            try #require(Data(contentsOf: backup) == original)
+            try #require(!FileManager.default.fileExists(atPath: file.path))
             #expect(!store.isSavingSuspended)
+
+            let changed = SessionSnapshot(
+                projects: [],
+                tabs: [],
+                recentProjectPaths: [dir.appendingPathComponent("saved-after-quarantine")]
+            )
+            store.saveSynchronously(changed)
+
+            let relaunched = SessionStore(directory: dir)
+            guard case let .loaded(restored) = relaunched.load() else {
+                Issue.record("expected the new session to reload after the malformed file was set aside")
+                return
+            }
+            #expect(restored.recentProjectPaths == changed.recentProjectPaths)
+            #expect(!store.hasFailedToSave)
+            #expect(try Data(contentsOf: backup) == original)
+            #expect(try Self.sessionFiles(in: dir).filter { $0.hasPrefix("state.json.bak-decode-failed-") } == backups)
         }
     }
 
+}
+
+extension SessionStoreTests {
     /// A state.json that is there but cannot be read is not a first launch:
     /// it is set aside as it is, so the save that follows once it could be
     /// written lands on a fresh name instead of replacing it.
-    @Test func aFileThatCannotBeRead_isSetAside_notTakenForAFirstLaunch() throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aFileThatCannotBeRead_isSetAside_notTakenForAFirstLaunch() throws {
         try withTempDir { dir in
             let file = dir.appendingPathComponent("state.json")
             let original = try PersistenceCoders.makeEncoder().encode(SessionSnapshot(projects: [], tabs: []))
             try original.write(to: file)
             let manager = FileManager.default
             try manager.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
+            try #require(throws: (any Error).self) { try Data(contentsOf: file) }
             let store = SessionStore(directory: dir)
 
             guard case .decodeFailed = store.load() else {
@@ -264,25 +371,32 @@ struct SessionStoreTests {
                 return
             }
             #expect(!store.isSavingSuspended)
-            let aside = try #require(try Self.files(in: dir).first { $0.hasPrefix("state.json.bak-read-failed-") })
-            let asideURL = dir.appendingPathComponent(aside)
-            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: asideURL.path)
-            store.saveSynchronously(SessionSnapshot(projects: [], tabs: []))
+            let aside = try Self.quarantine(in: dir, reason: "read-failed")
+            try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: aside.path)
+            let changed = SessionSnapshot(projects: [], tabs: [], recentProjectPaths: [dir])
+            store.saveSynchronously(changed)
 
-            #expect(try Data(contentsOf: asideURL) == original)
-            #expect(manager.fileExists(atPath: file.path))
+            guard case let .loaded(reopened) = SessionStore(directory: dir).load() else {
+                Issue.record("expected the replacement to load")
+                return
+            }
+            #expect(reopened.recentProjectPaths == changed.recentProjectPaths)
+            #expect(try Data(contentsOf: aside) == original)
+            #expect(try Self.sessionFiles(in: dir) == ["state.json", aside.lastPathComponent])
         }
     }
 
     /// One that can be neither read nor moved stops saving, so a save once
     /// it is readable and writable again cannot replace it.
-    @Test func aFileThatCannotBeReadOrSetAside_stopsSaving() throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aFileThatCannotBeReadOrSetAside_stopsSaving() throws {
         try withTempDir { dir in
             let file = dir.appendingPathComponent("state.json")
             let original = try PersistenceCoders.makeEncoder().encode(SessionSnapshot(projects: [], tabs: []))
             try original.write(to: file)
             let manager = FileManager.default
             try manager.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
+            try #require(throws: (any Error).self) { try Data(contentsOf: file) }
             try manager.setAttributes([.immutable: true], ofItemAtPath: file.path)
             defer { try? manager.setAttributes([.immutable: false], ofItemAtPath: file.path) }
             let store = SessionStore(directory: dir)
@@ -292,9 +406,12 @@ struct SessionStoreTests {
                 return
             }
             #expect(store.isSavingSuspended)
+            #expect(try Self.sessionFiles(in: dir) == ["state.json"])
             try manager.setAttributes([.immutable: false], ofItemAtPath: file.path)
             try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
-            store.saveSynchronously(SessionSnapshot(projects: [], tabs: []))
+            let changed = SessionSnapshot(projects: [Project(name: "new", rootURL: dir)], tabs: [])
+            try #require(PersistenceCoders.makeEncoder().encode(changed) != original)
+            store.saveSynchronously(changed)
 
             #expect(try Data(contentsOf: file) == original)
         }
@@ -354,7 +471,8 @@ struct SessionStoreTests {
     /// A folder that cannot be searched hides the file in it, even from the
     /// check that it was moved aside: saving stops, so a save once the
     /// folder opens up again cannot replace the file.
-    @Test func aFileInAFolderThatCannotBeSearched_stopsSaving() throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aFileInAFolderThatCannotBeSearched_stopsSaving() throws {
         try withTempDir { root in
             let dir = root.appendingPathComponent("support")
             let manager = FileManager.default
@@ -364,6 +482,7 @@ struct SessionStoreTests {
             try original.write(to: file)
             try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dir.path)
             defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+            try #require(throws: (any Error).self) { try Data(contentsOf: file) }
             let store = SessionStore(directory: dir)
 
             guard case .decodeFailed = store.load() else {
@@ -372,9 +491,12 @@ struct SessionStoreTests {
             }
             #expect(store.isSavingSuspended)
             try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
-            store.saveSynchronously(SessionSnapshot(projects: [], tabs: []))
+            let changed = SessionSnapshot(projects: [Project(name: "new", rootURL: dir)], tabs: [])
+            try #require(PersistenceCoders.makeEncoder().encode(changed) != original)
+            store.saveSynchronously(changed)
 
             #expect(try Data(contentsOf: file) == original)
+            #expect(try Self.sessionFiles(in: dir) == ["state.json"])
         }
     }
 
@@ -399,57 +521,42 @@ struct SessionStoreTests {
                 Issue.record("expected a failure, got \(outcome)")
                 return
             }
-            #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("state.json").path))
-            let aside = try #require(try Self.files(in: dir).first { $0.hasPrefix("state.json.bak-migration-failed-") })
-            #expect(try Data(contentsOf: dir.appendingPathComponent(aside)) == original)
-            let files = try Self.files(in: dir)
-            #expect(!files.contains { $0.contains(".pre-v") })
+            #expect(try Data(contentsOf: Self.quarantine(in: dir, reason: "migration-failed")) == original)
         }
     }
 
-    @Test func olderVersionWithoutAStep_isSetAsideAsBefore() throws {
+    @Test(arguments: [4, SessionSnapshot.currentVersion + 1])
+    func unsupportedVersion_isSetAsideUnchanged(version: Int) throws {
         try withTempDir { dir in
-            // Version 4 and older have no step.
-            try Data("{\"version\":4}".utf8).write(to: dir.appendingPathComponent("state.json"))
-            let outcome = SessionStore(directory: dir).load()
+            let original = Data("{\"version\":\(version)}".utf8)
+            let store = SessionStore(directory: dir)
+            try original.write(to: store.fileURL)
+            let outcome = store.load()
 
             guard case let .versionMismatch(found, expected) = outcome else {
                 Issue.record("expected a version mismatch, got \(outcome)")
                 return
             }
-            #expect(found == 4)
+            #expect(found == version)
             #expect(expected == SessionSnapshot.currentVersion)
-            let files = try Self.files(in: dir)
-            #expect(files.contains { $0.hasPrefix("state.json.bak-version-mismatch-") })
-        }
-    }
-
-    @Test func newerVersion_isSetAsideNotMigrated() throws {
-        try withTempDir { dir in
-            try Data("{\"version\":\(SessionSnapshot.currentVersion + 1)}".utf8)
-                .write(to: dir.appendingPathComponent("state.json"))
-            let outcome = SessionStore(directory: dir, migrator: Self.oneStep(Self.upgrade)).load()
-
-            guard case let .versionMismatch(found, _) = outcome else {
-                Issue.record("expected a version mismatch, got \(outcome)")
-                return
-            }
-            #expect(found == SessionSnapshot.currentVersion + 1)
-            let files = try Self.files(in: dir)
-            #expect(!files.contains { $0.contains(".pre-v") })
+            #expect(try Data(contentsOf: Self.quarantine(in: dir, reason: "version-mismatch")) == original)
         }
     }
 
     @Test func currentFile_loadsWithoutABackup() throws {
         try withTempDir { dir in
             let store = SessionStore(directory: dir)
-            store.saveSynchronously(SessionSnapshot(projects: [], tabs: []))
-            guard case .loaded = store.load() else {
+            let snapshot = SessionSnapshot(projects: [], tabs: [], recentProjectPaths: [dir])
+            store.saveSynchronously(snapshot)
+            let bytes = try Data(contentsOf: store.fileURL)
+
+            guard case let .loaded(reopened) = SessionStore(directory: dir).load() else {
                 Issue.record("expected the saved session to load")
                 return
             }
-            let files = try Self.files(in: dir)
-            #expect(!files.contains { $0.contains(".pre-v") || $0.contains(".migration.json") })
+            #expect(reopened.recentProjectPaths == snapshot.recentProjectPaths)
+            #expect(try Data(contentsOf: store.fileURL) == bytes)
+            #expect(try Self.sessionFiles(in: dir) == ["state.json"])
         }
     }
 
@@ -460,13 +567,19 @@ struct SessionStoreTests {
             let session = WorkspaceSession()
             let tab = session.openTab(container: .loose)
             let pane = try #require(tab.splitTree.allLeafIDs().first)
-            _ = session.update(tab.id) { $0.agentBadges[.claude] = [pane: AgentBadge(state: .running, updatedAt: Date())] }
+            let neighbor = session.openTab(container: .loose)
+            let neighborPane = try #require(neighbor.splitTree.allLeafIDs().first)
+            let now = Date(timeIntervalSince1970: 1_800_000_000)
+            _ = session.update(tab.id) { $0.agentBadges[.claude] = [pane: AgentBadge(state: .running, updatedAt: now)] }
+            _ = session.update(neighbor.id) {
+                $0.agentBadges[.claude] = [neighborPane: AgentBadge(state: .finished, updatedAt: now)]
+            }
             let encoded = try PersistenceCoders.makeEncoder().encode(session.makeSnapshot())
             let text = try #require(String(data: encoded, encoding: .utf8))
-            #expect(text.contains(#""state":"running""#) || text.contains(#""state" : "running""#))
             let future = text
                 .replacingOccurrences(of: #""state":"running""#, with: #""state":"waiting""#)
                 .replacingOccurrences(of: #""state" : "running""#, with: #""state" : "waiting""#)
+            try #require(future != text)
             try Data(future.utf8).write(to: dir.appendingPathComponent("state.json"))
 
             let store = SessionStore(directory: dir)
@@ -475,16 +588,18 @@ struct SessionStoreTests {
                 return
             }
 
-            #expect(snapshot.tabs.map(\.id) == [tab.id])
-            #expect(snapshot.tabs.first?.agentBadges[.claude]?[pane]?.state == .unknown)
-            #expect(try !Self.files(in: dir).contains { $0.hasPrefix("state.json.bak-") })
+            #expect(Set(snapshot.tabs.map(\.id)) == [tab.id, neighbor.id])
+            #expect(snapshot.tabs.first { $0.id == tab.id }?.agentBadges[.claude]?[pane]?.state == .unknown)
+            #expect(snapshot.tabs.first { $0.id == neighbor.id }?.agentBadges[.claude]?[neighborPane]?.state == .finished)
+            #expect(try Self.sessionFiles(in: dir) == ["state.json"])
         }
     }
 
     /// A save that does not reach disk is reported, for the notice that
     /// tells the person, and the next save that lands takes it back. Only
     /// whether the file was written decides it.
-    @Test func aSaveThatFails_isReported_untilASaveLands() throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aSaveThatFails_isReported_untilASaveLands() throws {
         try withTempDir { dir in
             let manager = FileManager.default
             let store = SessionStore(directory: dir)
@@ -494,17 +609,22 @@ struct SessionStoreTests {
             store.saveSynchronously(SessionSnapshot(projects: [], tabs: []))
             #expect(store.hasFailedToSave)
             #expect(!store.isSavingSuspended)
+            #expect(try Self.sessionFiles(in: dir).isEmpty)
 
             try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
-            store.saveSynchronously(SessionSnapshot(projects: [], tabs: []))
+            let changed = SessionSnapshot(projects: [], tabs: [], recentProjectPaths: [dir])
+            store.saveSynchronously(changed)
             #expect(!store.hasFailedToSave)
-            #expect(manager.fileExists(atPath: dir.appendingPathComponent("state.json").path))
+            let written = try Data(contentsOf: store.fileURL)
+            let reopened = try PersistenceCoders.makeDecoder().decode(SessionSnapshot.self, from: written)
+            #expect(reopened.recentProjectPaths == changed.recentProjectPaths)
         }
     }
 
     /// The debounced save reports a failure too, once its write is back on
     /// the main actor.
-    @Test func aDebouncedSaveThatFails_isReported() async throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aDebouncedSaveThatFails_isReported() async throws {
         try await withTempDir { dir in
             let manager = FileManager.default
             let store = SessionStore(directory: dir)
@@ -512,11 +632,10 @@ struct SessionStoreTests {
             defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
 
             store.scheduleSave(SessionSnapshot(projects: [], tabs: []))
-            let deadline = ContinuousClock.now + .seconds(10)
-            while !store.hasFailedToSave, ContinuousClock.now < deadline {
-                try await Task.sleep(for: .milliseconds(50))
-            }
+            await pollUntil(timeout: .seconds(5)) { store.hasFailedToSave }
             #expect(store.hasFailedToSave)
+            #expect(!store.isSavingSuspended)
+            #expect(try Self.sessionFiles(in: dir).isEmpty)
         }
     }
 }

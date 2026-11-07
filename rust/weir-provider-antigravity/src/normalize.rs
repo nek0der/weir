@@ -445,13 +445,6 @@ mod tests {
         assert_eq!(model_name("gpt-oss-120b"), "gpt-oss-120b");
     }
 
-    #[test]
-    fn compact_is_the_command_alone() {
-        assert!(is_compact_command("/compact"));
-        assert!(!is_compact_command("/compact keep the tests"));
-        assert!(!is_compact_command("/compactness"));
-    }
-
     fn normalized(payload: &Value) -> Vec<AgentEvent> {
         let bytes = payload.to_string().into_bytes();
         normalize(RawHookInput {
@@ -525,6 +518,8 @@ mod tests {
     fn a_marker_names_the_step_its_turn_begins_at() {
         assert_eq!(marker_step("abc#12"), Some(12));
         assert_eq!(marker_step("abc"), None);
+        assert_eq!(marker_step("abc#"), None);
+        assert_eq!(marker_step("abc#-1"), None);
     }
 
     /// A request numbered 0 at step `steps`, with the transcript as it stands.
@@ -561,11 +556,21 @@ mod tests {
             r#"{"step_index":5,"type":"GENERIC","content":"Command exited with code 0."}"#.to_owned(),
         ]
         .join("\n");
+        assert_eq!(marker.as_deref(), Some("c#1"));
         let reading = transcript::turn_reading(transcript.as_bytes(), marker.as_deref());
-        assert_eq!(reading.usage.expect("usage").input_tokens, 10);
+        assert_eq!(
+            reading.usage,
+            Some(weir_agent_model::TurnUsage {
+                input_tokens: 10,
+                output_tokens: 1,
+                ..weir_agent_model::TurnUsage::default()
+            })
+        );
+        assert!(!reading.are_commands_partial);
         let commands = reading.commands.expect("commands");
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command, "first");
+        assert_eq!(commands[0].exit_code, Some(0));
     }
 
     #[test]
@@ -573,21 +578,37 @@ mod tests {
         let limit_of = |error: &str| {
             let events = normalized(&json!({"hook_event_name": "Stop", "error": error}));
             match events.as_slice() {
-                [AgentEvent::Failed { usage_limit, .. }] => usage_limit.clone(),
+                [
+                    AgentEvent::Failed {
+                        error: read,
+                        usage_limit,
+                        kind: None,
+                    },
+                ] => {
+                    assert_eq!(read, error);
+                    usage_limit.clone()
+                }
                 other => panic!("{other:?}"),
             }
         };
-        assert!(limit_of("You have exhausted your quota on this model.").is_some());
+        assert_eq!(
+            limit_of("You have exhausted your quota on this model."),
+            Some(weir_agent_model::UsageLimit::default())
+        );
         assert_eq!(limit_of("RESOURCE_EXHAUSTED (code 429)"), None);
     }
 
     #[test]
     fn a_compact_command_alone_names_no_turn() {
         let transcript = r#"{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT"}"#;
-        assert_eq!(marker_of(&opening_request(1, "/compact"), transcript), None);
-        assert_eq!(
-            marker_of(&opening_request(1, "/compact keep it short"), transcript).as_deref(),
-            Some("c#1")
-        );
+        for input in ["/compact", "  /compact  "] {
+            assert_eq!(marker_of(&opening_request(1, input), transcript), None);
+        }
+        for input in ["/compact keep it short", "/compactness"] {
+            assert_eq!(
+                marker_of(&opening_request(1, input), transcript).as_deref(),
+                Some("c#1")
+            );
+        }
     }
 }

@@ -13,16 +13,15 @@ struct HotKeyMappingTests {
 
     // MARK: - Hotkey mapping
 
-    @Test func keyCode_namedKey_usesCaptureTable() {
-        #expect(HotKeyMapping.keyCode(for: "escape", translate: { _ in nil }) == 53)
-        #expect(HotKeyMapping.keyCode(for: "f1", translate: { _ in nil }) == 122)
-        #expect(HotKeyMapping.keyCode(for: "up", translate: { _ in nil }) == 126)
-    }
-
-    @Test func keyCode_return_mapsToMainKeyNotKeypadEnter() {
-        // `return` is both 36 and the keypad's 76; the lower code wins.
-        #expect(HotKeyMapping.keyCode(for: "return", translate: { _ in nil }) == 36)
-        #expect(HotKeyMapping.keyCode(for: "enter", translate: { _ in nil }) == 36)
+    @Test("Named keys are layout independent and Return uses the main keyboard", arguments: [
+        ("escape", UInt16(53)),
+        ("f1", 122),
+        ("up", 126),
+        ("return", 36),
+        ("enter", 36)
+    ])
+    func keyCode_namedKey_usesCaptureTable(key: String, expectedCode: UInt16) {
+        #expect(HotKeyMapping.keyCode(for: key, translate: { _ in nil }) == expectedCode)
     }
 
     @Test func keyCode_letterResolvedThroughLayoutScan() {
@@ -49,8 +48,8 @@ struct HotKeyMappingTests {
     @Test func keyCode_layoutScanSkipsNamedKeys() {
         // Named keys never stand for a layout character, even if a
         // translator returns one for them.
-        let layout: [UInt16: String] = [36: "x", 7: "x"]
-        #expect(HotKeyMapping.keyCode(for: "x", translate: QuickTerminalKeyLayout.translate(layout)) == 7)
+        let layout: [UInt16: String] = [36: "x", 40: "x"]
+        #expect(HotKeyMapping.keyCode(for: "x", translate: QuickTerminalKeyLayout.translate(layout)) == 40)
     }
 
     @Test func keyCode_currentLayout_resolvesLettersWhenAvailable() throws {
@@ -111,17 +110,22 @@ struct HotKeyMappingTests {
             for: .init(key: "3", modifiers: [.command, .shift]),
             translate: QuickTerminalKeyLayout.translate([20: "3"])
         )
-        #expect(parsed == Set([spotlight, screenshot].compactMap(\.self)))
-        #expect(parsed.count == 2)
+        let expectedSpotlight = HotKeyCombination(keyCode: 49, carbonModifiers: UInt32(cmdKey))
+        let expectedScreenshot = HotKeyCombination(keyCode: 20, carbonModifiers: UInt32(cmdKey | shiftKey))
+        #expect(spotlight == expectedSpotlight)
+        #expect(screenshot == expectedScreenshot)
+        #expect(parsed == [expectedSpotlight, expectedScreenshot])
     }
 
     @Test func systemHotKeys_disabledAndUnassignedEntries_areSkipped() {
-        let parsed = SystemHotKeys.combinations(from: [
+        let invalid = [
             Self.symbolicEntry(code: 49, modifiers: 0x100, isEnabled: false),
             Self.symbolicEntry(code: 0xFFFF, modifiers: 0x100),
             ["unexpected": 1]
-        ])
-        #expect(parsed.isEmpty)
+        ]
+        #expect(SystemHotKeys.combinations(from: invalid).isEmpty)
+        let parsed = SystemHotKeys.combinations(from: invalid + [Self.symbolicEntry(code: 20, modifiers: 0x300)])
+        #expect(parsed == [HotKeyCombination(keyCode: 20, carbonModifiers: UInt32(cmdKey | shiftKey))])
     }
 
     /// Arrows and F-keys always carry the fn bit, so ⌃↑ (Mission Control,

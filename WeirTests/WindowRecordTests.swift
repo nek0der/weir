@@ -131,6 +131,7 @@ struct WindowRecordTests {
         gone.projectID = UUID()
         var twice = records[1]
         twice.isFront = true
+        twice.sidebarWidth = 356
         records += [gone, twice]
         snapshot.windows = records
 
@@ -142,28 +143,26 @@ struct WindowRecordTests {
         // record of its project is the second one, not made.
         #expect(restored.frontWindowID == restored.primaryWindowID)
         #expect(restored.primarySelection.projectID == fixture.second.id)
+        #expect(restored.primarySelection.sidebarWidth == 356)
         let shown = restored.windowIDs.compactMap { restored.selection($0)?.shownProjectID }
         #expect(Set(shown) == [fixture.first.id, fixture.second.id])
     }
 
-    @Test func aWindowWhoseTabIsGone_goesBackToItsProject() throws {
+    @Test(arguments: [false, true])
+    func aWindowWithAnUnavailableTab_goesBackToItsProject(isInAnotherProject: Bool) throws {
         let fixture = Fixture()
         var snapshot = fixture.session.makeSnapshot()
-        snapshot.windows[1].activeTabID = UUID()
-        // Nor may it take a tab another project's window shows.
-        var elsewhere = snapshot.windows[1]
-        elsewhere.activeTabID = fixture.session.primarySelection.activeTabID
+        snapshot.windows[1].activeTabID = isInAnotherProject ? fixture.session.primarySelection.activeTabID : UUID()
 
         let restored = WorkspaceSession()
         restored.restore(from: snapshot)
-        let other = try #require(restored.windowIDs.last)
-        #expect(restored.selection(other)?.activeTabID == fixture.secondTab.id)
 
-        snapshot.windows[1] = elsewhere
-        restored.restore(from: snapshot)
-        let again = try #require(restored.windowIDs.last)
-        #expect(restored.selection(again)?.activeTabID == fixture.secondTab.id)
-        #expect(restored.selection(again)?.activeContainerID.projectID == fixture.second.id)
+        #expect(restored.windowIDs.count == 2)
+        let other = try #require(restored.windowIDs.last.flatMap { restored.selection($0) })
+        #expect(other.projectID == fixture.second.id)
+        #expect(other.activeContainerID == .project(fixture.second.id))
+        #expect(other.activeTabID == fixture.secondTab.id)
+        #expect(restored.primarySelection.activeTabID == fixture.session.primarySelection.activeTabID)
     }
 
     /// A session saved without `windows` (v6), or with an empty list (only
@@ -178,6 +177,8 @@ struct WindowRecordTests {
         #expect(WorkspaceSession().primarySelection.sidebarWidth == 304)
         #expect(WindowRecord().sidebarWidth == 304)
         let tabs = Set(fixture.session.tabs.map(\.id))
+        fixture.session.setWindow(fixture.other, isHidden: true)
+        #expect(fixture.session.hiddenWindowIDs == [fixture.other])
 
         try fixture.relaunched(into: fixture.session) { object in
             if isListEmpty {
@@ -194,26 +195,28 @@ struct WindowRecordTests {
     }
 
     /// A record without a sidebar width, as a hand edit or an earlier
-    /// writer may leave, reads it as the default; the values a record does
-    /// carry are kept (`everyWindow_comesBackLaidOutAsItWas`).
-    @Test func aRecordWithoutItsLayout_readsTheSupervisionDefaults() throws {
+    /// writer may leave, reads it as the default and keeps the other widths.
+    @Test func aRecordWithoutASidebarWidth_readsTheDefaultWidth() throws {
         let fixture = Fixture()
         #expect(try fixture.otherRecord { _ in }.sidebarWidth == 333)
 
         let read = try fixture.otherRecord { $0.removeValue(forKey: "sidebarWidth") }
 
         #expect(read.sidebarWidth == 304)
+        #expect(read.changesPanelWidth == 444)
+        #expect(read.activeTabID == fixture.secondTab.id)
     }
 
     @Test func aRecordALaterBuildWrote_readsWithWhatItKnows() throws {
         let fixture = Fixture()
 
-        let read = try fixture.otherRecord {
-            $0["changesPanelAgent"] = ["shape": "unknown"]
-            $0["isFloating"] = true
-        }
+        let read = try fixture.otherRecord { $0["futureWindowLayout"] = ["isFloating": true] }
+        let saved = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(read)) as? [String: Any])
 
         #expect(read.projectID == fixture.second.id)
+        #expect(read.sidebarWidth == 333)
+        #expect(saved["sidebarWidth"] as? Int == 333)
+        #expect(saved["futureWindowLayout"] == nil)
     }
 
     /// The agent an earlier build's switcher showed, saved before the panel
@@ -241,19 +244,20 @@ struct WindowRecordTests {
     /// it, under its old name or a new one.
     @Test func theFilter_isNotWritten() throws {
         let fixture = Fixture()
+        try #require(fixture.session.selection(fixture.other)?.changesPanelFilter != nil)
         let data = try JSONEncoder().encode(fixture.session.makeSnapshot())
-        let text = try #require(String(data: data, encoding: .utf8))
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let windows = try #require(object["windows"] as? [[String: Any]])
 
-        #expect(!text.contains("changesPanelAgent"))
-        #expect(!text.contains("changesPanelFilter"))
+        #expect(windows.count == 2)
+        #expect(windows.last?["sidebarWidth"] as? Int == 333)
+        #expect(windows.allSatisfy { $0["changesPanelAgent"] == nil && $0["changesPanelFilter"] == nil })
     }
 
     // MARK: - The tab column, gone
 
-    /// A window an earlier build saved with its tabs in the column, which is
-    /// gone: its record still reads, and the window comes back with the rest
-    /// of its layout, on the pane strip, the only way its tabs are drawn now.
-    @Test func aRecordThatSetItsTabsInAColumn_readsAndTheWindowOpensOnTheStrip() throws {
+    /// Removed tab-column keys leave the saved window layout intact.
+    @Test func aRecordWithTabColumnKeys_restoresItsOtherLayout() throws {
         let fixture = Fixture()
 
         let restored = try fixture.relaunched { object in
@@ -328,13 +332,25 @@ struct WindowRecordTests {
         #expect(registry.noticeWindow.id == front)
     }
 
-    @Test func restore_withEveryWindowHidden_showsTheOneLastUsed_elseThePrimary() throws {
+    @Test(arguments: [false, true])
+    func restore_withEveryWindowHidden_showsTheOneLastUsed_elseThePrimary(hasFront: Bool) throws {
         let fixture = Fixture()
-        fixture.session.setWindow(fixture.session.primaryWindowID, isHidden: true)
+        let primary = fixture.session.primaryWindowID
+        fixture.session.setWindow(primary, isHidden: true)
         fixture.session.setWindow(fixture.other, isHidden: true)
-        fixture.session.frontWindowID = fixture.other
-        // Only the one the Dock would bring back is saved as a window.
-        #expect(fixture.session.makeSnapshot().windows.map(\.projectID) == [fixture.second.id])
+        fixture.session.frontWindowID = hasFront ? fixture.other : nil
+        let shownProject = hasFront ? fixture.second.id : fixture.first.id
+        let rememberedProject = hasFront ? fixture.first.id : fixture.second.id
+        let shownTab = hasFront ? fixture.secondTab.id : fixture.session.primarySelection.activeTabID
+
+        let records = fixture.session.makeSnapshot().windows
+        #expect(records.count == 1)
+        let saved = try #require(records.first)
+        #expect(saved.isHidden)
+        #expect(saved.isFront)
+        #expect(saved.projectID == shownProject)
+        #expect(saved.activeTabID == shownTab)
+
         let restored = try fixture.relaunched()
         let registry = WindowRegistry(primary: restored.primarySelection)
         let presenter = RecordingWindowPresenter()
@@ -345,37 +361,32 @@ struct WindowRecordTests {
         registry.showRestoredWindows(of: restored)
 
         #expect(restored.windowIDs == [restored.primaryWindowID])
-        #expect(restored.primarySelection.projectID == fixture.second.id)
+        #expect(restored.primarySelection.projectID == shownProject)
+        #expect(restored.primarySelection.activeTabID == shownTab)
         #expect(presenter.shown == [restored.primaryWindowID])
         #expect(presenter.raisedAfterFullScreen.isEmpty)
         #expect(restored.hiddenWindowIDs.isEmpty)
-        #expect(restored.projectViews[fixture.first.id] != nil)
-
-        fixture.session.frontWindowID = nil
-        let unfronted = try fixture.relaunched()
-        let second = WindowRegistry(primary: unfronted.primarySelection)
-        let secondPresenter = RecordingWindowPresenter()
-        second.presenter = secondPresenter
-        second.adoptWindows(of: unfronted)
-        second.showRestoredWindows(of: unfronted)
-        #expect(unfronted.primarySelection.projectID == fixture.first.id)
-        #expect(secondPresenter.shown == [unfronted.primaryWindowID])
+        #expect(restored.projectViews[rememberedProject] != nil)
     }
 
     @Test func theRestoredWindows_areListedBeforeAnythingAsksForAProjectsWindow() throws {
         let fixture = Fixture()
         let restored = try fixture.relaunched()
         let registry = WindowRegistry(primary: restored.primarySelection)
-        registry.presenter = RecordingWindowPresenter()
+        let presenter = RecordingWindowPresenter()
+        registry.presenter = presenter
         registry.connectProjectSwitching(of: restored)
 
         registry.adoptWindows(of: restored)
 
         // The restored window that shows the project comes forward; the
         // primary does not switch to it as well.
+        let later = try #require(restored.windowIDs.last)
+        #expect(presenter.shown.isEmpty)
         let window = registry.show(project: fixture.second.id, in: restored, from: nil, intent: .person)
         #expect(restored.windowIDs.count == 2)
-        #expect(window?.id == restored.windowIDs.last)
+        #expect(window?.id == later)
+        #expect(presenter.shown == [later])
         #expect(restored.primarySelection.shownProjectID == fixture.first.id)
     }
 
@@ -384,11 +395,15 @@ struct WindowRecordTests {
         let registry = WindowRegistry(primary: fixture.session.primarySelection)
         let presenter = RecordingWindowPresenter()
         registry.presenter = presenter
+        registry.onVisibilityChange = { fixture.session.setWindow($0, isHidden: $1) }
         registry.adoptWindows(of: fixture.session)
         registry.showRestoredWindows(of: fixture.session)
+        #expect(Set(presenter.shown) == Set(fixture.session.windowIDs))
         // On another Space, minimized, or covered: off screen, not hidden.
         registry.windowScreenPresenceChanged(fixture.other, isOnScreen: false)
         presenter.onScreen.remove(fixture.other)
+        #expect(registry.window(fixture.other)?.isHidden == false)
+        #expect(fixture.session.hiddenWindowIDs.isEmpty)
 
         let snapshot = fixture.session.makeSnapshot()
 
@@ -403,22 +418,6 @@ struct WindowRecordTests {
         #expect(restored.hiddenWindowIDs.isEmpty)
         #expect(Set(restoredPresenter.shown) == Set(restored.windowIDs))
         #expect(restoredPresenter.shown.count == 2)
-    }
-
-    @Test func terminate_savesTheLastWindowHidden() throws {
-        let fixture = Fixture()
-        fixture.session.setWindow(fixture.session.primaryWindowID, isHidden: true)
-        fixture.session.setWindow(fixture.other, isHidden: true)
-        fixture.session.frontWindowID = fixture.other
-
-        let records = fixture.session.makeSnapshot().windows
-
-        let hidden = try #require(records.first)
-        #expect(records.count == 1)
-        #expect(hidden.isHidden)
-        #expect(hidden.isFront)
-        #expect(hidden.projectID == fixture.second.id)
-        #expect(hidden.activeTabID == fixture.secondTab.id)
     }
 
     // MARK: - An earlier build's hidden windows
@@ -478,22 +477,21 @@ struct WindowRecordTests {
         #expect(view.activeContainerID == .project(fixture.first.id))
     }
 
-    @Test func withEveryWindowHidden_onlyTheOneLastUsedIsMade() {
+    @Test(arguments: [nil, 1] as [Int?])
+    func withEveryWindowHidden_onlyTheOneLastUsedIsMade(front: Int?) {
         let fixture = Fixture()
+        let snapshot = Self.earlierSnapshot(fixture, hidden: [true, true], front: front)
+        let shown = snapshot.windows[front ?? 0]
+        let remembered = snapshot.windows[front == nil ? 1 : 0]
 
         let restored = WorkspaceSession()
-        restored.restore(from: Self.earlierSnapshot(fixture, hidden: [true, true], front: 1))
+        restored.restore(from: snapshot)
 
         #expect(restored.windowIDs == [restored.primaryWindowID])
-        #expect(restored.primarySelection.projectID == fixture.second.id)
         #expect(restored.hiddenWindowIDs == [restored.primaryWindowID])
-        #expect(restored.projectViews[fixture.first.id] != nil)
-
-        // With none in front, the first.
-        restored.restore(from: Self.earlierSnapshot(fixture, hidden: [true, true], front: nil))
-        #expect(restored.windowIDs == [restored.primaryWindowID])
-        #expect(restored.primarySelection.projectID == fixture.first.id)
-        #expect(restored.projectViews[fixture.second.id] != nil)
+        #expect(restored.primarySelection.projectID == shown.projectID)
+        #expect(restored.primarySelection.activeTabID == shown.activeTabID)
+        #expect(Array(restored.projectViews.values) == remembered.projectView.map { [$0] })
     }
 
     @Test func anOldScratchPrimary_besideHiddenProjectWindows_keepsTheirViews() {
@@ -573,20 +571,20 @@ struct WindowRecordTests {
     @Test func aRestoredScratchTab_isDrawnInOneWindow() throws {
         let fixture = Fixture()
         let scratch = fixture.session.openTab(container: .loose)
-        fixture.session.setActiveTab(scratch.id, in: fixture.other)
-        fixture.session.setActiveTab(scratch.id)
+        fixture.session.setActiveTab(scratch.id, in: fixture.other, intent: .person)
+        #expect(fixture.session.windows(showing: scratch.id) == [fixture.other])
 
         let restored = try fixture.relaunched()
 
         #expect(restored.windows(selecting: scratch.id).count == 2)
-        #expect(restored.windows(showing: scratch.id).count == 1)
+        #expect(restored.windows(showing: scratch.id) == [restored.primaryWindowID])
     }
 
     @Test func aLaterWindowsChange_isSeenByTheAutosave() {
         let fixture = Fixture()
         let notified = Recorded(false)
         withObservationTracking {
-            _ = fixture.session.windowRecords()
+            fixture.session.readSavedState()
         } onChange: {
             notified.value = true
         }
@@ -594,51 +592,34 @@ struct WindowRecordTests {
         fixture.session.selection(fixture.other)?.changesPanelWidth = 500
 
         #expect(notified.value)
+        #expect(fixture.session.makeSnapshot().windows.last?.changesPanelWidth == 500)
     }
 
     // MARK: - Records that do not read
 
-    @Test func aLaterWindowThatDoesNotRead_leavesThePrimaryAndTheOthers() throws {
-        let project = Project(name: "repo", rootURL: URL(fileURLWithPath: "/tmp/repo"))
-        let other = Project(name: "other", rootURL: URL(fileURLWithPath: "/tmp/other"))
-        let snapshot = SessionSnapshot(projects: [project, other], tabs: [], windows: [
-            WindowRecord(projectID: project.id, activeContainerID: .project(project.id), sidebarWidth: 290),
-            WindowRecord(projectID: other.id, activeContainerID: .project(other.id))
-        ])
+    @Test(arguments: [false, true])
+    func anUnreadableWindowRecord_preservesTheOtherRecords(isPrimary: Bool) throws {
+        let fixture = Fixture()
+        fixture.session.primarySelection.sidebarWidth = 290
+        let snapshot = fixture.session.makeSnapshot()
         var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
         var windows = try #require(object["windows"] as? [[String: Any]])
-        windows.insert(["sidebarWidth": "wide", "activeContainerID": ["loose": [String: Any]()]], at: 1)
+        if isPrimary {
+            windows[0]["projectID"] = 42
+        } else {
+            windows.insert(["sidebarWidth": "wide", "activeContainerID": ["loose": [String: Any]()]], at: 1)
+        }
         object["windows"] = windows
 
         let decoded = try JSONDecoder().decode(SessionSnapshot.self, from: JSONSerialization.data(withJSONObject: object))
 
-        #expect(decoded.windows.count == 2)
-        #expect(decoded.windows.first?.sidebarWidth == 290)
-        #expect(decoded.windows.last?.projectID == other.id)
-    }
-
-    @Test func aPrimaryThatDoesNotRead_startsFromItsDefaults_andKeepsTheOthers() throws {
-        let other = Project(name: "other", rootURL: URL(fileURLWithPath: "/tmp/other"))
-        let snapshot = SessionSnapshot(projects: [other], tabs: [], windows: [
-            WindowRecord(),
-            WindowRecord(projectID: other.id, activeContainerID: .project(other.id))
-        ])
-        var object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
-        var windows = try #require(object["windows"] as? [[String: Any]])
-        windows[0]["projectID"] = 42
-        object["windows"] = windows
-
-        let decoded = try JSONDecoder().decode(SessionSnapshot.self, from: JSONSerialization.data(withJSONObject: object))
-
-        #expect(decoded.windows.count == 2)
-        #expect(decoded.windows.first == .unread)
-        #expect(decoded.windows.last?.projectID == other.id)
+        #expect(decoded.windows == [isPrimary ? .unread : snapshot.windows[0], snapshot.windows[1]])
     }
 
     /// A primary's record that does not read is put back as a session with
     /// no record is, on its first tab, not as one saved on the scratch row,
     /// which its defaults would read as.
-    @Test func aPrimaryThatDoesNotRead_restoresAsOneWithNoRecord() throws {
+    @Test func aPrimaryThatDoesNotRead_restoresTheSelectionOfAMissingRecord() throws {
         let project = Project(name: "repo", rootURL: WorkspaceSessionFixture.projectRootURL("repo"))
         let (tab, _) = Tab.newWithSinglePane(title: "repo", workingDirectory: nil, container: .project(project.id))
         let snapshot = SessionSnapshot(projects: [project], tabs: [tab], windows: [
@@ -657,12 +638,16 @@ struct WindowRecordTests {
         let missing = WorkspaceSession()
         let missingIssue = missing.restore(from: withoutRecord)
 
-        #expect(unread.primarySelection.activeTabID == tab.id)
-        #expect(unread.primarySelection.activeContainerID == .project(project.id))
         #expect(unreadIssue == missingIssue)
-        #expect(missing.primarySelection.activeTabID == tab.id)
-        // Saved again, the window is written as it is now.
-        #expect(unread.makeSnapshot().windows.first?.isUnread == false)
+        for session in [unread, missing] {
+            #expect(session.primarySelection.activeTabID == tab.id)
+            #expect(session.primarySelection.activeContainerID == .project(project.id))
+            #expect(session.primarySelection.shownProjectID == project.id)
+            let saved = try #require(session.makeSnapshot().windows.first)
+            #expect(!saved.isUnread)
+            #expect(saved.activeTabID == tab.id)
+            #expect(saved.activeContainerID == .project(project.id))
+        }
     }
 
     /// A primary whose record does not read stands in on no tab of a
@@ -726,19 +711,25 @@ struct WindowRecordTests {
         #expect(second.sidebarArrangement == other)
     }
 
-    /// A record from before arrangements has no `sidebar`: the window lists
-    /// the projects in their order, every header met by the default rule.
-    @Test func aRecordWithoutASidebar_readsTheDefaultArrangement() throws {
+    @Test(arguments: [false, true])
+    func aRecordWithoutAReadableSidebar_usesTheDefaultArrangement(isMalformed: Bool) throws {
         let fixture = Fixture()
-        fixture.session.primarySelection.sidebarArrangement = SidebarArrangement(projectOrder: [fixture.second.id])
+        let arrangement = SidebarArrangement(projectOrder: [fixture.second.id])
+        fixture.session.selection(fixture.other)?.sidebarArrangement = arrangement
 
+        try #require(fixture.session.makeSnapshot().windows.last?.sidebar == arrangement)
         let restored = try fixture.relaunched { snapshot in
             var windows = try #require(snapshot["windows"] as? [[String: Any]])
-            windows[0].removeValue(forKey: "sidebar")
+            windows[1]["sidebar"] = isMalformed ? ["projectOrder": "not a list"] : nil
             snapshot["windows"] = windows
         }
 
-        #expect(restored.primarySelection.sidebarArrangement == SidebarArrangement())
+        #expect(restored.windowIDs.count == 2)
+        let other = try #require(restored.windowIDs.last.flatMap { restored.selection($0) })
+        #expect(other.sidebarArrangement == SidebarArrangement())
+        #expect(other.projectID == fixture.second.id)
+        #expect(other.activeTabID == fixture.secondTab.id)
+        #expect(other.sidebarWidth == 333)
     }
 
     /// A default arrangement writes no key, so a file no one arranged is the
@@ -776,15 +767,6 @@ struct WindowRecordTests {
         ))
     }
 
-    /// A sidebar that does not read at all is the default one; the window's
-    /// record still reads.
-    @Test func aSidebarThatDoesNotRead_leavesTheRestOfTheRecord() throws {
-        let fixture = Fixture()
-        let read = try fixture.otherRecord { $0["sidebar"] = ["projectOrder": "not a list"] }
-        #expect(read.sidebar == nil)
-        #expect(read.projectID == fixture.second.id)
-    }
-
     /// Folding a header alone schedules a save.
     @Test func foldingAHeader_isSeenByTheAutosave() {
         let fixture = Fixture()
@@ -818,28 +800,29 @@ extension WindowRecordTests {
         #expect(restored.primarySelection.changesPanelGrouping == .timeline)
     }
 
-    /// A record written before the grouping was saved opens on the timeline.
-    @Test func windowRecord_missingGrouping_decodesAsTimeline() throws {
+    private enum UnreadableGrouping: CaseIterable {
+        case missing
+        case unknown
+        case mistyped
+
+        var jsonValue: Any? {
+            switch self {
+            case .missing: nil
+            case .unknown: "byWorktree"
+            case .mistyped: 3
+            }
+        }
+    }
+
+    @Test(arguments: UnreadableGrouping.allCases)
+    private func windowRecord_unreadableGrouping_decodesAsTimeline(grouping: UnreadableGrouping) throws {
         let fixture = Fixture()
         fixture.session.selection(fixture.other)?.changesPanelGrouping = .byConversation
 
-        let read = try fixture.otherRecord { $0.removeValue(forKey: "changesPanelGrouping") }
+        let read = try fixture.otherRecord { $0["changesPanelGrouping"] = grouping.jsonValue }
 
         #expect(read.changesPanelGrouping == .timeline)
         #expect(read.projectID == fixture.second.id)
-    }
-
-    /// A grouping a later build knows and this one does not opens on the
-    /// timeline, and costs nothing else in the record.
-    @Test func windowRecord_unknownGrouping_decodesAsTimeline() throws {
-        let fixture = Fixture()
-
-        let read = try fixture.otherRecord { $0["changesPanelGrouping"] = "byWorktree" }
-        let mistyped = try fixture.otherRecord { $0["changesPanelGrouping"] = 3 }
-
-        #expect(read.changesPanelGrouping == .timeline)
-        #expect(read.projectID == fixture.second.id)
-        #expect(mistyped.changesPanelGrouping == .timeline)
-        #expect(mistyped.changesPanelWidth == 444)
+        #expect(read.changesPanelWidth == 444)
     }
 }

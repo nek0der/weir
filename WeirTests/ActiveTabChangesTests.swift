@@ -18,6 +18,7 @@ struct ActiveTabChangesTests {
         let first = changes.changes(current: [primary: tabB], undrawn: [])
 
         #expect(first == [.init(window: primary, isInitial: false, previous: tabA)])
+        #expect(changes.changes(current: [primary: tabB], undrawn: []).isEmpty)
     }
 
     @Test func aMoveInOneWindow_isThatWindowsAlone() {
@@ -79,5 +80,6 @@ struct ActiveTabChangesTests {
         let shown = changes.changes(current: [primary: tabA, other: tabB], undrawn: [])
 
         #expect(shown == [.init(window: other, isInitial: false, previous: tabA)])
+        #expect(changes.changes(current: [primary: tabA, other: tabB], undrawn: []).isEmpty)
     }
 }

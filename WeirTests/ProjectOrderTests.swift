@@ -34,6 +34,8 @@ struct ProjectOrderTests {
         #expect(ProjectOrder.moved(Self.b, by: 1, in: order) == [Self.a, Self.c, Self.b])
         #expect(ProjectOrder.moved(Self.a, by: -1, in: order) == order)
         #expect(ProjectOrder.moved(Self.c, by: 1, in: order) == order)
+        #expect(ProjectOrder.moved(Self.b, by: -10, in: order) == [Self.b, Self.a, Self.c])
+        #expect(ProjectOrder.moved(Self.b, by: 10, in: order) == [Self.a, Self.c, Self.b])
         #expect(ProjectOrder.moved(Self.d, by: 1, in: order) == order, "a project the order does not hold")
     }
 
@@ -43,6 +45,7 @@ struct ProjectOrderTests {
         #expect(ProjectOrder.canMove(Self.a, by: 1, in: order))
         #expect(!ProjectOrder.canMove(Self.c, by: 1, in: order))
         #expect(!ProjectOrder.canMove(Self.a, by: 1, in: [Self.a]), "a lone project moves nowhere")
+        #expect(!ProjectOrder.canMove(Self.d, by: 1, in: order), "an unknown project moves nowhere")
     }
 
     @Test func movingToTheTop_putsTheProjectFirst() {

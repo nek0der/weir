@@ -29,9 +29,10 @@ struct PullRequestCheckoutDecodeTests {
          "headRefOid":"abc","isCrossRepository":true,"headRepositoryOwner":{"login":"alice"}}
         """
         let head = try #require(ForgePullRequests.decode(stdout: json, forge: .gitHub))
-        #expect(head.forkOwner == "alice")
+        #expect(head == PullRequestHead(
+            number: 3, title: "Typo", state: .closed, headBranch: "main", headCommit: "abc", forkOwner: "alice"
+        ))
         #expect(head.isFromFork)
-        #expect(head.state == .closed)
     }
 
     @Test func glab_aRequestFromAFork_isOneWhoseSourceProjectIsAnother() throws {
@@ -40,18 +41,17 @@ struct PullRequestCheckoutDecodeTests {
          "source_project_id":2,"target_project_id":1,"author":{"username":"bob"},"web_url":"https://gitlab.com/x/-/merge_requests/9"}
         """
         let head = try #require(ForgePullRequests.decode(stdout: json, forge: .gitLab))
-        #expect(head.number == 9)
-        #expect(head.headBranch == "docs")
-        #expect(head.headCommit == "def")
-        #expect(head.forkOwner == "bob")
-        #expect(head.state == .merged)
+        #expect(head == PullRequestHead(
+            number: 9, title: "Docs", state: .merged, headBranch: "docs", headCommit: "def", forkOwner: "bob"
+        ))
     }
 
     @Test func glab_aRequestOfTheProjectItself_hasNoFork() throws {
         let json = #"{"iid":4,"title":"t","state":"opened","source_branch":"b","source_project_id":1,"target_project_id":1}"#
         let head = try #require(ForgePullRequests.decode(stdout: json, forge: .gitLab))
-        #expect(head.forkOwner == nil)
-        #expect(head.state == .open)
+        #expect(head == PullRequestHead(
+            number: 4, title: "t", state: .open, headBranch: "b", headCommit: nil, forkOwner: nil
+        ))
     }
 
     @Test func aList_readsEachRequest_andALineBeforeItIsLeftOut() {
@@ -61,20 +61,77 @@ struct PullRequestCheckoutDecodeTests {
          {"number":2,"title":"b","state":"OPEN","headRefName":"b","isCrossRepository":true,"headRepositoryOwner":{"login":"c"}}]
         """
         let heads = ForgePullRequests.decodeList(stdout: stdout, forge: .gitHub)
-        #expect(heads.map(\.number) == [1, 2])
-        #expect(heads[1].forkOwner == "c")
+        #expect(heads == [
+            PullRequestHead(number: 1, title: "a", state: .open, headBranch: "a", headCommit: nil, forkOwner: nil),
+            PullRequestHead(number: 2, title: "b", state: .open, headBranch: "b", headCommit: nil, forkOwner: "c")
+        ])
+        let gitLab = """
+        [{"iid":6,"title":"First MR","state":"opened","source_branch":"first","sha":"a6","source_project_id":1,"target_project_id":1},
+         {"iid":3,"title":"Fork MR","state":"merged","source_branch":"fork","source_project_id":2,
+          "target_project_id":1,"author":{"username":"lee"}}]
+        """
+        #expect(ForgePullRequests.decodeList(stdout: gitLab, forge: .gitLab) == [
+            PullRequestHead(number: 6, title: "First MR", state: .open, headBranch: "first", headCommit: "a6", forkOwner: nil),
+            PullRequestHead(number: 3, title: "Fork MR", state: .merged, headBranch: "fork", headCommit: nil, forkOwner: "lee")
+        ])
         #expect(ForgePullRequests.decodeList(stdout: "not json", forge: .gitHub).isEmpty)
     }
 
-    @Test func aFailureThatSaysNoSuchRequest_isNotFound_andAnyOtherSaysItsWords() {
-        let gone = ToolResult(exitCode: 1, stdout: "", stderr: "GraphQL: Could not resolve to a PullRequest with the number of 99.")
-        #expect(ForgePullRequests.lookup(gone, number: 99, forge: .gitHub) == .notFound(99))
-        let glabGone = ToolResult(exitCode: 1, stdout: "", stderr: "ERROR: 404 Not Found")
-        #expect(ForgePullRequests.lookup(glabGone, number: 5, forge: .gitLab) == .notFound(5))
-        let offline = ToolResult(exitCode: 1, stdout: "", stderr: "error connecting to api.github.com\n")
-        #expect(ForgePullRequests.lookup(offline, number: 5, forge: .gitHub) == .failed("error connecting to api.github.com"))
-        #expect(ForgePullRequests.lookup(nil, number: 5, forge: .gitHub) == .failed(""))
-        let unreadable = ToolResult(exitCode: 0, stdout: "{}", stderr: "")
-        #expect(ForgePullRequests.lookup(unreadable, number: 5, forge: .gitHub) == .failed(""))
+    struct LookupCase: Sendable, CustomTestStringConvertible {
+        let testDescription: String
+        var forge: ForgeKind = .gitHub
+        var number = 5
+        var result: ToolResult?
+        let expected: PullRequestLookup
+    }
+
+    static let lookups = [
+        LookupCase(
+            testDescription: "GitHub reports a missing pull request", number: 99,
+            result: ToolResult(exitCode: 1, stdout: "", stderr: "GraphQL: Could not resolve to a PullRequest with the number of 99."),
+            expected: .notFound(99)
+        ),
+        LookupCase(
+            testDescription: "GitLab reports a missing merge request", forge: .gitLab,
+            result: ToolResult(exitCode: 1, stdout: "", stderr: "ERROR: 404 Not Found"),
+            expected: .notFound(5)
+        ),
+        LookupCase(
+            testDescription: "GitHub network error",
+            result: ToolResult(exitCode: 1, stdout: "", stderr: "error connecting to api.github.com\n"),
+            expected: .failed("error connecting to api.github.com")
+        ),
+        LookupCase(testDescription: "tool did not finish", expected: .failed("")),
+        LookupCase(
+            testDescription: "unreadable GitHub success",
+            result: ToolResult(exitCode: 0, stdout: "{}", stderr: ""),
+            expected: .failed("")
+        ),
+        LookupCase(
+            testDescription: "unreadable GitLab success", forge: .gitLab,
+            result: ToolResult(exitCode: 0, stdout: #"{"iid":"bad"}"#, stderr: ""),
+            expected: .failed("")
+        ),
+        LookupCase(
+            testDescription: "valid GitLab success", forge: .gitLab,
+            result: ToolResult(
+                exitCode: 0,
+                stdout: #"{"iid":5,"title":"MR Five","state":"opened","source_branch":"topic","sha":"abc"}"#,
+                stderr: ""
+            ),
+            expected: .found(PullRequestHead(
+                number: 5,
+                title: "MR Five",
+                state: .open,
+                headBranch: "topic",
+                headCommit: "abc",
+                forkOwner: nil
+            ))
+        )
+    ]
+
+    @Test(arguments: lookups)
+    func aLookupKeepsItsHeadOrClassifiesItsFailure(_ scenario: LookupCase) {
+        #expect(ForgePullRequests.lookup(scenario.result, number: scenario.number, forge: scenario.forge) == scenario.expected)
     }
 }

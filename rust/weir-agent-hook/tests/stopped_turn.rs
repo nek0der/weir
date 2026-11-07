@@ -158,6 +158,7 @@ fn a_declined_wait_ends_the_run_and_its_turn_as_an_interrupt_does() {
     let written = fs::read(waiting.record_path()).expect("record");
     assert_eq!(end(&request), StoppedTurnEnd::MovedOn);
     assert_eq!(fs::read(waiting.record_path()).expect("record"), written);
+    assert_eq!(only_turn(&waiting.states), turn);
 }
 
 #[test]
@@ -193,10 +194,11 @@ fn a_record_that_moved_on_is_not_written() {
 fn a_wait_whose_transcript_still_shows_it_open_is_not_written() {
     let waiting = Waiting::new("open");
     let unchanged = fs::read(waiting.record_path()).expect("record");
+    let before = only_turn(&waiting.states);
+    assert_eq!(before.phase, TurnPhase::Started);
     assert_eq!(end(&waiting.request()), StoppedTurnEnd::NotDeclined);
     assert_eq!(fs::read(waiting.record_path()).expect("record"), unchanged);
-    let turn = only_turn(&waiting.states);
-    assert_eq!(turn.phase, TurnPhase::Started);
+    assert_eq!(only_turn(&waiting.states), before);
 
     // Nor is a request that names a file other than a transcript written.
     waiting.decline();
@@ -206,6 +208,7 @@ fn a_wait_whose_transcript_still_shows_it_open_is_not_written() {
     };
     assert_eq!(end(&elsewhere), StoppedTurnEnd::NotDeclined);
     assert_eq!(fs::read(waiting.record_path()).expect("record"), unchanged);
+    assert_eq!(only_turn(&waiting.states), before);
 }
 
 #[test]
@@ -223,6 +226,7 @@ fn a_request_that_names_no_record_is_refused() {
     };
     assert_eq!(end(&unknown), StoppedTurnEnd::Failed);
     assert_eq!(waiting.record().state, RunState::NeedsInput);
+    assert_eq!(only_turn(&waiting.states).phase, TurnPhase::Started);
 }
 
 #[test]
@@ -373,14 +377,17 @@ fn a_stopped_turn_waits_for_lines_that_reach_the_transcript_after_the_report() {
     };
     assert_eq!(end(&request), StoppedTurnEnd::Ended);
     late.join().expect("writer");
-    let usage = only_turn(&states).usage.expect("usage");
+    let turn = only_turn(&states);
+    assert_eq!(Some(&turn.turn_id), request.turn_id.as_ref());
+    assert_eq!(turn.phase, TurnPhase::Interrupted);
     assert_eq!(
-        (
-            usage.input_tokens,
-            usage.cache_write_tokens,
-            usage.output_tokens
-        ),
-        (4, 319, 6)
+        turn.usage,
+        Some(TurnUsage {
+            input_tokens: 4,
+            cache_write_tokens: 319,
+            cache_read_tokens: 45_055,
+            output_tokens: 6,
+            is_partial: false,
+        })
     );
-    assert!(!usage.is_partial);
 }

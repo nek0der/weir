@@ -725,11 +725,11 @@ begin tree of its first turn with the end tree of its last
 (`ReviewScope.turns`), so later prompts and edits do not change what it
 shows. The worktree's unviewed turns are one such range across
 conversations. It runs from the begin tree of the oldest unviewed turn to the
-end tree of the turn that ended last, and a turn still running leaves it
-incomplete. The range is built from the same timeline the changes panel lists
-(`TurnHistory`, never the records on disk). A scope request is refused while
-the composer contains unsaved text: the reader must save or cancel it before
-the loaded diff can change.
+end tree of the turn that ended last. Only turns that have ended are eligible.
+A missing snapshot at either boundary makes the range incomplete. The range
+uses the same `TurnHistory` timeline as the changes panel. While the composer
+contains unsaved text, the reader must save or cancel it before the loaded
+diff can change.
 
 Agent lifecycle stores are runtime-scoped: one UUID per shim invocation, plus
 tmux socket, server-generation, and pane metadata when a multiplexer sits

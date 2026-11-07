@@ -44,7 +44,8 @@ enum ProjectionFixture {
             descriptors: AgentProviderRegistry.descriptors.filter { $0.key == provider },
             resumeIntents: resumeIntents
                 ?? AgentResumeIntentStore(
-                    directory: state.appendingPathComponent("resume-intents", isDirectory: true)
+                    directory: state.appendingPathComponent("resume-intents", isDirectory: true),
+                    writesFiles: writesFiles
                 ),
             writesFiles: writesFiles,
             forgottenHintsURL: forgottenHintsURL,

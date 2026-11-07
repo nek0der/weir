@@ -1,8 +1,5 @@
 // WorkspaceSessionContainersTests.swift
-// Weir — covers the Project CRUD, palette, and removal that live in
-// `WorkspaceSession+Containers.swift`. These are all pure data mutations,
-// so the suite is in-memory only; the worktree leg is tested in
-// `WorkspaceSessionWorktreeTests`.
+// Weir — project and tab membership, container selection, and removal in the workspace model.
 
 import Foundation
 import Testing
@@ -13,23 +10,23 @@ import Testing
 struct WorkspaceSessionContainersTests {
     private typealias Fixture = WorkspaceSessionFixture
 
-    // MARK: - addOrActivateProject
+    @Test(arguments: [nil, "Explicit"] as [String?])
+    func addOrActivateProject_appendsWithItsExplicitOrFolderName(name: String?) throws {
+        let (session, first) = Fixture.withProject(name: "Existing")
+        let tab = session.openTab(container: .project(first.id))
+        let window = session.primaryWindowID
+        let before = try #require(session.currentNavTarget(in: window))
+        let folder = Fixture.projectRootURL("containers").appendingPathComponent("new")
+        let project = session.addOrActivateProject(rootURL: folder, suggestedName: name)
 
-    @Test("addOrActivateProject appends a new Project and assigns a palette slot")
-    func addOrActivateProject_newPath_appendsProject() {
-        let session = WorkspaceSession()
-        let project = session.addOrActivateProject(rootURL: Fixture.projectRootURL("containers"), suggestedName: "Alpha")
-        #expect(session.projects.count == 1)
-        #expect(session.projects.first?.id == project.id)
-        #expect(project.name == "Alpha")
-        #expect(project.paletteIndex == 0)
-    }
-
-    @Test("addOrActivateProject defaults the name to the last path component when none is supplied")
-    func addOrActivateProject_noName_usesLastPathComponent() {
-        let session = WorkspaceSession()
-        let project = session.addOrActivateProject(rootURL: Fixture.projectRootURL("containers").appendingPathComponent("myrepo"))
-        #expect(project.name == "myrepo")
+        #expect(session.projects.map(\.id) == [first.id, project.id])
+        #expect(session.project(first.id)?.name == "Existing")
+        #expect(project.rootURL == folder.standardizedFileURL)
+        #expect(project.name == (name ?? "new"))
+        #expect(project.paletteIndex == 1)
+        #expect(session.project(first.id)?.paletteIndex == 0)
+        #expect(session.tabs.map(\.id) == [tab.id])
+        #expect(session.currentNavTarget(in: window) == before)
     }
 
     @Test("addOrActivateProject shows a newline in the folder's name, and keeps it in the name it saves")
@@ -40,93 +37,99 @@ struct WorkspaceSessionContainersTests {
         #expect(try JSONObjectFixture.object(encoding: project)["name"] as? String == "feat\nline")
     }
 
-    @Test("addOrActivateProject is idempotent on the same standardized path")
-    func addOrActivateProject_existingPath_noDuplicate() {
+    @Test func addOrActivateProject_reusesTheStandardizedPath_andSelectsItsTab() throws {
         let session = WorkspaceSession()
-        let url = Fixture.projectRootURL("containers")
-        let first = session.addOrActivateProject(rootURL: url, suggestedName: "A")
-        let again = session.addOrActivateProject(rootURL: url, suggestedName: "Renamed")
-        #expect(session.projects.count == 1)
-        #expect(again.id == first.id)
-        // The activate path must not rename — naming is a separate
-        // explicit user action via `renameProject`.
-        #expect(session.projects.first?.name == "A")
+        let parent = Fixture.projectRootURL("containers")
+        let folder = parent.appendingPathComponent("a")
+        let first = session.addOrActivateProject(rootURL: folder, suggestedName: "A")
+        let second = session.addOrActivateProject(rootURL: parent.appendingPathComponent("b"), suggestedName: "B")
+        let tab = session.openTab(container: .project(first.id))
+        let other = session.openTab(container: .project(second.id))
+        let window = session.primaryWindowID
+        try #require(session.currentNavTarget(in: window) == .init(container: .project(second.id), tabID: other.id))
+        try #require(session.recentProjectPaths == [second.rootURL, first.rootURL])
+        let alias = parent.appendingPathComponent("unused/../a")
+        try #require(alias.path != folder.path && alias.standardizedFileURL == first.rootURL)
+
+        let reopened = session.addOrActivateProject(rootURL: alias, suggestedName: "Ignored")
+
+        #expect(reopened.id == first.id)
+        #expect(reopened.name == "A")
+        #expect(reopened.rootURL == first.rootURL)
+        #expect(reopened.paletteIndex == first.paletteIndex)
+        #expect(session.projects.map(\.id) == [first.id, second.id])
+        #expect(session.tabs.map(\.id) == [tab.id, other.id])
+        #expect(session.currentNavTarget(in: window) == .init(container: .project(first.id), tabID: tab.id))
+        #expect(session.recentProjectPaths == [first.rootURL, second.rootURL])
     }
 
-    @Test("addOrActivateProject on an existing project activates it instead of just returning")
-    func addOrActivateProject_existingPath_activatesContainer() {
-        let session = WorkspaceSession()
-        let url = Fixture.projectRootURL("containers")
-        let first = session.addOrActivateProject(rootURL: url)
-        // The newly-added path does not auto-activate, so we manually
-        // park the session elsewhere before re-adding.
-        session.setActiveContainer(.loose)
-        _ = session.addOrActivateProject(rootURL: url)
-        #expect(session.primarySelection.activeContainerID == .project(first.id))
+    private func worktree(in session: WorkspaceSession, project: Project) throws -> ContainerID {
+        let worktree = try #require(session.attachGitWorktree(
+            projectID: project.id,
+            label: "branch",
+            workingDirectory: Fixture.projectRootURL("branch"),
+            branchName: "branch"
+        ))
+        return .worktree(projectID: project.id, worktreeID: worktree.id)
     }
 
-    @Test("addOrActivateProject promotes the URL to the head of recentProjectPaths")
-    func addOrActivateProject_promotesRecentPath() {
-        let session = WorkspaceSession()
-        let a = Fixture.projectRootURL("containers").appendingPathComponent("a")
-        let b = Fixture.projectRootURL("containers").appendingPathComponent("b")
-        _ = session.addOrActivateProject(rootURL: a)
-        _ = session.addOrActivateProject(rootURL: b)
-        _ = session.addOrActivateProject(rootURL: a)
-        #expect(session.recentProjectPaths.first?.standardizedFileURL == a.standardizedFileURL)
+    @Test func directAndLooseTabs_keepOnlyTheirContainerInSessionOrder() throws {
+        let (session, project) = Fixture.withProject()
+        let other = session.addOrActivateProject(rootURL: Fixture.projectRootURL("other"))
+        let branch = try worktree(in: session, project: project)
+        let first = session.openTab(container: .project(project.id))
+        let scratch = session.openTab(container: .loose)
+        let otherTab = session.openTab(container: .project(other.id))
+        let branchTab = session.openTab(container: branch)
+        let second = session.openTab(container: .project(project.id))
+        let nextScratch = session.openTab(container: .loose)
+
+        #expect(session.directTabs(in: project.id).map(\.id) == [first.id, second.id])
+        #expect(session.directTabs(in: other.id).map(\.id) == [otherTab.id])
+        #expect(session.looseTabs.map(\.id) == [scratch.id, nextScratch.id])
+        #expect(session.tabs(in: branch).map(\.id) == [branchTab.id])
     }
 
-    // MARK: - Tabs by container
-
-    @Test("directTabs(in:) returns only tabs anchored directly to that project")
-    func directTabsInProject_returnsOnlyProjectTabs() {
-        let (s, p) = WorkspaceSessionFixture.withProject()
-        let direct = s.openTab(container: .project(p.id))
-        #expect(s.directTabs(in: p.id).map(\.id) == [direct.id])
+    enum RowContents: CaseIterable, Sendable {
+        case empty, staleRememberedTab, liveRememberedTab
     }
 
-    @Test("looseTabs returns only tabs in the loose container")
-    func looseTabs_returnsOnlyLooseTabs() {
-        let (s, p) = WorkspaceSessionFixture.withProject()
-        let a = s.openTab(container: .loose)
-        _ = s.openTab(container: .project(p.id))
-        #expect(s.looseTabs.map(\.id) == [a.id])
+    @Test(arguments: RowContents.allCases)
+    func setActiveContainer_selectsItsRememberedTab_orFallsBack(contents: RowContents) throws {
+        let (session, project) = Fixture.withProject()
+        let row = ContainerID.project(project.id)
+        let window = session.primaryWindowID
+        let expected: UUID?
+        switch contents {
+        case .empty:
+            expected = nil
+        case .staleRememberedTab, .liveRememberedTab:
+            let first = session.openTab(container: row)
+            let second = session.openTab(container: row)
+            session.rememberLastActive(tabID: contents == .liveRememberedTab ? second.id : UUID(), container: row)
+            expected = contents == .liveRememberedTab ? second.id : first.id
+        }
+        let unrelated = session.openTab(container: .loose)
+        try #require(session.currentNavTarget(in: window) == .init(container: .loose, tabID: unrelated.id))
+
+        session.setActiveContainer(row)
+
+        #expect(session.currentNavTarget(in: window) == .init(container: row, tabID: expected))
+        #expect(session.looseTabs.map(\.id) == [unrelated.id])
     }
 
-    @Test("setActiveContainer to an empty container leaves activeTabID nil")
-    func setActiveContainer_emptyContainer_leavesActiveTabNil() {
-        let (s, p) = WorkspaceSessionFixture.withProject()
-        s.setActiveContainer(.project(p.id))
-        #expect(s.primarySelection.activeContainerID == .project(p.id))
-        #expect(s.primarySelection.activeTabID == nil)
+    @Test(arguments: [false, true])
+    func renameProject_changesOnlyTheMatchingName(hasTarget: Bool) {
+        let (session, first) = Fixture.withProject(name: "Keep")
+        let second = session.addOrActivateProject(rootURL: Fixture.projectRootURL("target"), suggestedName: "Old")
+        session.renameProject(hasTarget ? second.id : UUID(), to: "New")
+
+        var expected = second
+        if hasTarget {
+            expected.name = "New"
+        }
+        #expect(session.projects == [first, expected])
     }
-
-    @Test("setActiveContainer to a populated container activates its first tab")
-    func setActiveContainer_populatedContainer_activatesFirstTab() {
-        let (s, p) = WorkspaceSessionFixture.withProject()
-        let tab = s.openTab(container: .project(p.id))
-        s.primarySelection.activeTabID = nil
-        s.setActiveContainer(.project(p.id))
-        #expect(s.primarySelection.activeTabID == tab.id)
-    }
-
-    // MARK: - rename
-
-    @Test("renameProject updates the matching project's name")
-    func renameProject_knownID_updatesName() {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "Old")
-        session.renameProject(project.id, to: "New")
-        #expect(session.projects.first?.name == "New")
-    }
-
-    @Test("renameProject is a no-op when the id is unknown")
-    func renameProject_unknownID_isNoOp() {
-        let (session, _) = WorkspaceSessionFixture.withProject(name: "Keep")
-        session.renameProject(UUID(), to: "Ignored")
-        #expect(session.projects.first?.name == "Keep")
-    }
-
-    // MARK: - palette
 
     @Test("setProjectPaletteIndex writes the value through")
     func setProjectPaletteIndex_writesValue() {
@@ -137,45 +140,46 @@ struct WorkspaceSessionContainersTests {
         #expect(session.projects.first?.paletteIndex == nil)
     }
 
-    // MARK: - removeProject
-
-    @Test("removeProject drops the project + its tabs, leaves other containers' tabs alone, returns the freed pane IDs")
-    func removeProject_dropsProjectAndReturnsLeafIDs() throws {
-        let (session, project) = WorkspaceSessionFixture.withProject()
+    @Test func removeProject_dropsItsRootAndWorktreePanes_andKeepsTheSelectedProject() throws {
+        let (session, project) = Fixture.withProject()
+        let keep = session.addOrActivateProject(rootURL: Fixture.projectRootURL("keep"))
         let tab = session.openTab(container: .project(project.id))
-        let survivingLoose = session.openTab(container: .loose)
+        PaneActions.split(session, direction: .horizontal)
+        let rootPanes = try #require(session.tab(tab.id)).splitTree.allLeafIDs()
+        try #require(rootPanes.count == 2)
+        let branch = try worktree(in: session, project: project)
+        let branchTab = session.openTab(container: branch)
+        let scratch = session.openTab(container: .loose)
+        let keptTab = session.openTab(container: .project(keep.id))
+        let window = session.primaryWindowID
+        let keptSelection = WorkspaceSession.NavTarget(container: .project(keep.id), tabID: keptTab.id)
+        try #require(session.currentNavTarget(in: window) == keptSelection)
+        try #require(session.projectViews[project.id] != nil)
 
-        let leaf = try #require(tab.splitTree.allLeafIDs().first)
         let freed = session.removeProject(project.id)
 
-        #expect(session.projects.isEmpty)
-        #expect(session.tabs.map(\.id) == [survivingLoose.id])
-        #expect(freed == [leaf])
+        #expect(session.projects.map(\.id) == [keep.id])
+        #expect(session.tabs.map(\.id) == [scratch.id, keptTab.id])
+        #expect(Set(freed) == Set(rootPanes + branchTab.splitTree.allLeafIDs()))
+        #expect(freed.count == 3)
+        #expect(session.projectViews[project.id] == nil)
+        #expect(session.currentNavTarget(in: window) == keptSelection)
     }
 
-    @Test("removeProject resets activeContainerID to .loose when the project was active")
-    func removeProject_active_resetsActiveContainerToLoose() {
-        let (session, project) = WorkspaceSessionFixture.withProject()
-        session.setActiveContainer(.project(project.id))
-        _ = session.removeProject(project.id)
-        #expect(session.primarySelection.activeContainerID == .loose)
-    }
+    @Test func removeProject_unknownID_returnsEmpty() throws {
+        let (session, project) = Fixture.withProject()
+        _ = session.openTab(container: .project(project.id))
+        _ = session.openTab(container: .loose)
+        let window = session.primaryWindowID
+        let before = try #require(session.currentNavTarget(in: window))
+        let projects = session.projects
+        let tabs = session.tabs
+        let views = session.projectViews
 
-    @Test("removeProject leaves the active container alone when a different project was active")
-    func removeProject_nonActive_keepsActiveContainer() {
-        let session = WorkspaceSession()
-        let keep = session.addOrActivateProject(rootURL: Fixture.projectRootURL("containers").appendingPathComponent("keep"))
-        let drop = session.addOrActivateProject(rootURL: Fixture.projectRootURL("containers").appendingPathComponent("drop"))
-        session.setActiveContainer(.project(keep.id))
-        _ = session.removeProject(drop.id)
-        #expect(session.primarySelection.activeContainerID == .project(keep.id))
-    }
-
-    @Test("removeProject on an unknown id returns an empty list and leaves state untouched")
-    func removeProject_unknownID_returnsEmpty() {
-        let (session, project) = WorkspaceSessionFixture.withProject()
-        let freed = session.removeProject(UUID())
-        #expect(freed.isEmpty)
-        #expect(session.projects.first?.id == project.id)
+        #expect(session.removeProject(UUID()).isEmpty)
+        #expect(session.projects == projects)
+        #expect(session.tabs == tabs)
+        #expect(session.projectViews == views)
+        #expect(session.currentNavTarget(in: window) == before)
     }
 }

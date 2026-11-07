@@ -15,7 +15,7 @@ struct ReviewScopeMenuTests {
     private static let en = Locale(identifier: "en")
     private static let ja = Locale(identifier: "ja")
     private static let claude = Fixture.conversation("claude")
-    private static let codex = Fixture.conversation("codex")
+    private static let codex = Fixture.conversation("codex", provider: .codex)
     private static let quiet = Fixture.conversation("quiet")
 
     /// A turn of `conversation` with both snapshots, started at minute
@@ -29,18 +29,24 @@ struct ReviewScopeMenuTests {
         end: Int? = nil,
         hasBegin: Bool = true,
         hasEnd: Bool = true,
-        changes: String = Fixture.changedFiles
+        changes: String = Fixture.changedFiles,
+        root: String = Self.root
     ) throws -> TurnSummary {
-        try Fixture.timed(
-            number,
-            conversation: conversation.conversationID,
-            start: 36000 + start * 60,
-            end: 36000 + (end ?? start + 1) * 60,
-            changes: changes,
-            hasBegin: hasBegin,
-            hasEnd: hasEnd,
-            endKind: conversation == codex ? "c" : "a"
-        )
+        let started = 36000 + start * 60
+        let ended = 36000 + (end ?? start + 1) * 60
+        let beginTree = Fixture.tree("b", number * 1_000_000 + started)
+        let endTree = Fixture.tree(conversation == codex ? "c" : "a", number * 1_000_000 + ended)
+        let beginField = hasBegin ? #","begin":{"kind":"captured","tree":"\#(beginTree)","root":"\#(root)"}"# : ""
+        let endField = hasEnd ? #","end":{"kind":"captured","tree":"\#(endTree)","root":"\#(root)"}"# : ""
+        let json = """
+        {"turnId":"T\(number)-\(conversation.conversationID)",
+         "conversation":{"provider":"\(conversation.provider.rawValue)",
+         "conversationId":"\(conversation.conversationID)","isFallback":false},
+         "runId":"R","paneId":"P","displayNumber":\(number),
+         "startedAt":"\(Fixture.stamp(started))","finishedAt":"\(Fixture.stamp(ended))",
+         "phase":"finished","changes":\(changes),"hasPrompt":true\(beginField)\(endField)}
+        """
+        return try JSONDecoder().decode(TurnSummary.self, from: Data(json.utf8))
     }
 
     private static func named(
@@ -106,20 +112,6 @@ struct ReviewScopeMenuTests {
 
     // MARK: - The scope catalog
 
-    /// A range of one conversation reads through the other conversations'
-    /// turns that ran inside it; the file tags read those too.
-    @Test func aRange_readsThroughEveryConversationsTurnsBetweenItsEnds() throws {
-        let worktree = try Worktree()
-        let claudeOnly = try #require(ReviewTurnRange(turns: [worktree.claude3, worktree.claude4]))
-        let across = try #require(ReviewTurnRange(turns: [worktree.codex1, worktree.claude3, worktree.claude4]))
-
-        #expect(ReviewScopeCatalog.turnsThrough(claudeOnly, timeline: worktree.timeline).map(\.turnID)
-            == [worktree.claude3.turnID, worktree.claude4.turnID])
-        #expect(ReviewScopeCatalog.turnsThrough(across, timeline: worktree.timeline).map(\.turnID)
-            == [worktree.codex1.turnID, worktree.claude3.turnID, worktree.claude4.turnID])
-        #expect(ReviewScopeCatalog.turnsThrough(across, timeline: [worktree.claude4]).isEmpty, "an end off the timeline reads nothing")
-    }
-
     /// The worktree's range is one comparison from the oldest unviewed
     /// begin to the newest unviewed end; one whose record is incomplete
     /// (`ReviewScopeCatalogTests`) says so in the menu and the band.
@@ -134,9 +126,13 @@ struct ReviewScopeMenuTests {
         #expect(range.beginTree == worktree.codex1.beginTree?.tree)
         #expect(range.endTree == worktree.claude4.endTree?.tree)
 
-        let incomplete = ReviewUnviewedTurns.incomplete(1...4)
-        #expect(ReviewTabText.option(.worktreeUnviewedTurns(incomplete), locale: Self.ja) == "ワークツリーの未確認のターン（記録が不完全）")
-        #expect(ReviewTabModel.bandStatus(.worktreeUnviewedTurns(incomplete), fileIDs: [], viewed: []) == .incompleteRecord)
+        let missing = try Self.turn(4, start: 10, hasEnd: false)
+        var context = worktree.context
+        context.worktreeTurns = [worktree.codex1, worktree.claude3, missing, worktree.quiet1]
+        let broken = try ReviewTabModel.open(.worktreeUnviewedTurns, context, root: Self.root, agentPaneID: Self.pane, current: nil).get()
+        #expect(broken.selection == .worktreeUnviewedTurns(.incomplete(1...4)))
+        #expect(ReviewTabText.option(broken.selection, locale: Self.ja) == "ワークツリーの未確認のターン（記録が不完全）")
+        #expect(ReviewTabModel.bandStatus(broken.selection, fileIDs: [], viewed: []) == .incompleteRecord)
     }
 
     // MARK: - The menu
@@ -159,6 +155,7 @@ struct ReviewScopeMenuTests {
         let own = try #require(menu.sections.first)
         #expect(own.choices.map(\.conversation) == Array(repeating: Self.claude, count: own.choices.count))
         #expect(own.choices.first?.isChecked == true, "the tab's choice, under its own conversation")
+        #expect(own.choices.first?.option == tab.selection)
         #expect(menu.choices.count { $0.isChecked } == 1, "one checkmark, in one section")
         #expect(menu.tail.map(\.option) == [.uncommitted(includesChangesOutsideTurns: false), .branch(base: "main")])
         #expect(menu.labelConversation?.conversation == Self.claude, "the label names the conversation read")
@@ -166,7 +163,9 @@ struct ReviewScopeMenuTests {
         // The same unviewed turns of Codex, under Codex's heading.
         let codexSection = try #require(menu.sections.last)
         #expect(codexSection.choices.allSatisfy { !$0.isChecked })
-        #expect(ReviewTabText.option(codexSection.choices[0].option, locale: Self.en) == "Unviewed Turns (T1)")
+        let codexChoice = try #require(codexSection.lead)
+        #expect(codexChoice.conversation == Self.codex)
+        #expect(ReviewTabText.option(codexChoice.option, locale: Self.en) == "Unviewed Turns (T1)")
     }
 
     @Test func theMenu_onTheWorktreesRange_checksItAlone_andTheLabelNamesNoConversation() throws {
@@ -228,8 +227,21 @@ struct ReviewScopeMenuTests {
                 Issue.record("a conversation's row opens on its unviewed turns")
                 continue
             }
-            #expect(section.turns.count == 5, "its single turns, after them")
+            let conversation = try #require(section.conversation?.conversation)
+            let expected = try #require(turns[conversation]).sorted { $0.displayNumber > $1.displayNumber }
+            let ids = section.turns.compactMap { choice -> TurnID? in
+                guard case let .turn(range, _) = choice.option else { return nil }
+                return range.firstTurnID
+            }
+            #expect(ids == expected.map(\.turnID))
         }
+        let worktree = try #require(menu.worktree)
+        #expect(worktree.conversation == nil)
+        guard case .worktreeUnviewedTurns = worktree.option else {
+            Issue.record("expected the worktree’s unviewed turns")
+            return
+        }
+        #expect(menu.tail.map(\.option) == [.uncommitted(includesChangesOutsideTurns: false), .branch(base: "main")])
         #expect(menu.choices.count == 1 + 15 * 6 + 2, "every choice still reachable")
     }
 
@@ -255,18 +267,19 @@ struct ReviewScopeMenuTests {
         #expect(menu.sections.count == 1 && menu.sections[0].conversation == nil)
         #expect(menu.folded.isEmpty)
         #expect(menu.labelConversation == nil)
-        #expect(menu.choices.map(\.option) == ReviewScopeCatalog.options(
-            turns: turns,
-            isViewed: { _ in false },
-            branchBase: "main",
-            hasChangesOutsideTurns: false
-        ))
+        let newer = try #require(ReviewTurnRange(turns: [turns[1]]))
+        let older = try #require(ReviewTurnRange(turns: [turns[0]]))
+        #expect(menu.choices.map(\.option) == [
+            tab.selection, .turn(newer, prompt: turns[1].prompt), .turn(older, prompt: turns[0].prompt),
+            .uncommitted(includesChangesOutsideTurns: false), .branch(base: "main")
+        ])
+        #expect(menu.choices.map(\.isChecked) == [true, false, false, false, false])
     }
 
     /// A choice under another conversation's heading reads that
     /// conversation's turns, and its comments go to that conversation's
     /// pane, or to none while it has no pane.
-    @Test func aChoiceUnderAnotherHeading_takesTheTabToThatConversation_andItsPane() throws {
+    @Test func aChoiceUnderAnotherHeading_takesTheTabToThatConversation_andItsPane() async throws {
         let worktree = try Worktree()
         let tab = try worktree.open(.unviewedTurns)
         var codexContext = worktree.context
@@ -276,6 +289,9 @@ struct ReviewScopeMenuTests {
         let option = ReviewScopeOption.unviewedTurns(ReviewScopeCatalog.unviewedTurns(turns: [worktree.codex1]) { _ in false })
 
         let moved = ReviewTabModel.select(option, conversation: Self.codex, agentPaneID: codexPane, in: tab, codexContext)
+        #expect(worktree.codex1.conversation == Self.codex)
+        let codexRange = try #require(ReviewTurnRange(turns: [worktree.codex1]))
+        #expect(moved.scope == .turns(codexRange))
         #expect(moved.conversation == Self.codex)
         #expect(moved.destinationPaneID == codexPane)
         #expect(moved.agentPaneID == codexPane)
@@ -295,6 +311,28 @@ struct ReviewScopeMenuTests {
             worktree.context
         )
         #expect(same.destinationPaneID == withDestination.destinationPaneID, "the same conversation keeps the destination picked")
+
+        let stores = ActionStoresFixture()
+        let primaryPane = try #require(stores.session.focusedPaneID(in: stores.window.id))
+        let target = stores.session.openTab(container: .project(stores.project.id))
+        let targetPane = try #require(target.splitTree.allLeafIDs().first)
+        let claude = try Self.turn(3, start: 0, root: stores.root)
+        let codex = try Self.turn(1, of: Self.codex, start: 5, root: stores.root)
+        stores.turnHistory.replace(with: [
+            ConversationTurns(key: Self.claude, turns: [claude]), ConversationTurns(key: Self.codex, turns: [codex])
+        ])
+        stores.attention.replaceRuntimes([.test(kind: .claude, paneIDs: [primaryPane], conversation: Self.claude)], kind: .claude)
+        stores.attention.replaceRuntimes([.test(kind: .codex, paneIDs: [targetPane], conversation: Self.codex)], kind: .codex)
+        await ReviewTabActions.open(
+            .unviewedTurns, agentPaneID: primaryPane, conversation: Self.claude, window: stores.window, stores: stores.review
+        )
+        let original = try #require(stores.window.review)
+        let targetRange = try #require(ReviewTurnRange(turns: [codex]))
+        ReviewTabActions.select(.unviewedTurns(.range(targetRange)), conversation: Self.codex, window: stores.window, stores: stores.review)
+        #expect(stores.window.review?.opening == original.opening)
+        #expect(stores.window.review?.scope == .turns(targetRange))
+        #expect(stores.window.review?.destinationPaneID == targetPane)
+        #expect(stores.window.review?.agentPaneID == targetPane)
     }
 
     // MARK: - File tags
@@ -311,11 +349,11 @@ struct ReviewScopeMenuTests {
         let tags = ReviewFileTags.tags(turns: turns, paths: { paths[$0] }, conversations: worktree.context.conversations)
 
         #expect(tags["a.swift"] == [
-            ReviewFileTag(provider: .claude, ordinal: nil, turns: [1]),
+            ReviewFileTag(provider: .codex, ordinal: nil, turns: [1]),
             ReviewFileTag(provider: .claude, ordinal: 1, turns: [3, 4])
         ])
-        #expect(tags["b.swift"]?.map(\.turns) == [[1]])
-        #expect(tags["c.swift"]?.map(\.ordinal) == [1])
+        #expect(tags["b.swift"] == [ReviewFileTag(provider: .codex, ordinal: nil, turns: [1])])
+        #expect(tags["c.swift"] == [ReviewFileTag(provider: .claude, ordinal: 1, turns: [4])])
 
         let unread = ReviewFileTags.tags(
             turns: turns,
@@ -337,16 +375,19 @@ struct ReviewScopeMenuTests {
         var conversations = worktree.context.conversations
         conversations[0].identity = 1
         conversations[0].title = "Fix tests"
+        conversations[1].identity = 2
+        conversations[1].title = "Review logs"
 
-        let tags = ReviewFileTags.tags(turns: [worktree.claude3], paths: { _ in ["a.swift"] }, conversations: conversations)
-        let unreadable = ReviewFileTags.unreadable(turns: [worktree.claude3], isUnreadable: { _ in true }, conversations: conversations)
+        let turns = [worktree.codex1, worktree.claude3]
+        let tags = ReviewFileTags.tags(turns: turns, paths: { _ in ["a.swift"] }, conversations: conversations)
+        let unreadable = ReviewFileTags.unreadable(turns: turns, isUnreadable: { _ in true }, conversations: conversations)
 
-        #expect(tags["a.swift"]?.map(\.identity) == [1])
-        #expect(unreadable.map(\.identity) == [1])
+        #expect(tags["a.swift"]?.map(\.identity) == [2, 1])
+        #expect(unreadable.map(\.identity) == [2, 1])
         // The title goes with the tag, so its tooltip and VoiceOver name the
         // conversation as the menus do.
-        #expect(tags["a.swift"]?.map(\.title) == ["Fix tests"])
-        #expect(unreadable.map(\.title) == ["Fix tests"])
+        #expect(tags["a.swift"]?.map(\.title) == ["Review logs", "Fix tests"])
+        #expect(unreadable.map(\.title) == ["Review logs", "Fix tests"])
     }
 
     /// A file five conversations touched shows two tags and "3 more", so its
@@ -364,7 +405,7 @@ struct ReviewScopeMenuTests {
         #expect(ReviewTabText.moreFileTags(3, locale: Self.ja) == "ほか 3 件")
         #expect(ReviewTabText.moreFileTags(3, locale: Self.en) == "3 more")
         let help = try #require(ReviewTabText.fileTagsHelp(tags, unreadable: [], locale: Self.en))
-        #expect(help.split(separator: "\n").count == 5, "every tag, the ones left out too")
+        #expect(help.components(separatedBy: "\n") == (1...5).map { "Changed during Claude #\($0)’s T\($0)" })
 
         let worktree = try Worktree()
         let turns = [worktree.codex1, worktree.claude3, worktree.claude4]
@@ -412,6 +453,10 @@ struct ReviewScopeMenuTests {
         #expect(header?.isFolded == true, "a checked file folds whatever its tags")
     }
 
+}
+
+extension ReviewScopeMenuTests {
+
     // MARK: - Mark as Viewed
 
     @Test func markAsViewed_onTheWorktreesRange_movesEveryConversationsLine_asOneMark_withOneUndo() throws {
@@ -425,6 +470,10 @@ struct ReviewScopeMenuTests {
         #expect(try ReviewTabText.markViewedHelp(#require(action), locale: Self.ja) == "すべての会話の確認済みの線をこの範囲の最後まで移動します（⌘⏎）")
 
         let lines = ViewedLineStore(directory: URL(fileURLWithPath: "/nonexistent"), writesFiles: false)
+        lines.markViewed(through: worktree.claude3, source: .decisionBar)
+        lines.markViewed(through: worktree.quiet1, source: .decisionBar)
+        let before = lines.line(of: Self.claude)
+        let untouched = lines.line(of: Self.quiet)
         let toasts = ToastCenter()
         let window = ProjectWindowState(id: WindowID())
         let actions = ViewedLineActions(
@@ -441,8 +490,13 @@ struct ReviewScopeMenuTests {
         #expect(lines.isViewed(worktree.claude4) && lines.isViewed(worktree.codex1))
         let toast = try #require(toasts.current(in: window.id))
         #expect(toast.message.resolved(in: Self.ja) == "Claude #1 の T4 まで確認済みにしました。ほかの会話 1 件も同じ時点まで確認済みにしました。")
-        toast.undo?()
-        #expect(!lines.isViewed(worktree.claude4) && !lines.isViewed(worktree.codex1), "one Undo, both lines back")
+        #expect(lines.line(of: Self.quiet) == untouched)
+        let undo = try #require(toast.undo)
+        undo()
+        #expect(lines.line(of: Self.claude) == before)
+        #expect(lines.line(of: Self.codex)?.position == nil)
+        #expect(!lines.isViewed(worktree.codex1))
+        #expect(lines.line(of: Self.quiet) == untouched)
 
         // Once every turn of the range is viewed, there is nothing to mark.
         var viewed = worktree.context
@@ -483,10 +537,12 @@ struct ReviewScopeMenuTests {
             },
             line: { _ in nil }
         )
-        #expect(
-            ChangesPanelModel.totalsComparison(input) == ChangesPanelModel.comparison(range),
-            "the panel's totals and the review read one interval"
-        )
+        let begin = try #require(claude5.beginTree?.tree)
+        let end = try #require(claude5.endTree?.tree)
+        #expect(range.endTurnID == claude5.turnID)
+        #expect(range.beginTree == begin)
+        #expect(range.endTree == end)
+        #expect(ChangesPanelModel.totalsComparison(input) == .init(begin: begin, end: end))
     }
 
     /// A turn nested inside a long one, a viewed one between, and the
@@ -552,7 +608,19 @@ struct ReviewScopeMenuTests {
             paths: { $0 == codex1.turnID ? ["a.swift"] : ["b.swift"] },
             conversations: [Self.named(Self.claude, ordinal: nil, unviewed: 1), Self.named(Self.codex, ordinal: nil, unviewed: 1)]
         )
-        #expect(tags["a.swift"]?.map(\.turns) == [[1]], "Codex's T1 is tagged")
+        #expect(tags["a.swift"] == [ReviewFileTag(provider: .codex, ordinal: nil, turns: [1])])
+        #expect(tags["b.swift"] == [ReviewFileTag(provider: .claude, ordinal: nil, turns: [5])])
+
+        let worktree = try Worktree()
+        let claudeOnly = try #require(ReviewTurnRange(turns: [worktree.claude3, worktree.claude4]))
+        let across = try #require(ReviewTurnRange(turns: [worktree.codex1, worktree.claude3, worktree.claude4]))
+
+        #expect(ReviewScopeCatalog.turnsThrough(claudeOnly, timeline: worktree.timeline).map(\.turnID)
+            == [worktree.claude3.turnID, worktree.claude4.turnID])
+        #expect(ReviewScopeCatalog.turnsThrough(across, timeline: worktree.timeline).map(\.turnID)
+            == [worktree.codex1.turnID, worktree.claude3.turnID, worktree.claude4.turnID])
+        #expect(ReviewScopeCatalog.turnsThrough(across, timeline: [worktree.claude4]).isEmpty, "an end off the timeline reads nothing")
+        #expect(ReviewScopeCatalog.turnsThrough(across, timeline: Array(worktree.timeline.dropLast(2))).isEmpty)
     }
 
     // MARK: - Add to Scope on the worktree's range
@@ -574,7 +642,10 @@ struct ReviewScopeMenuTests {
             return
         }
         #expect(range.turnIDs == [claude3.turnID, claude4.turnID])
+        #expect(range.beginTree == claude3.beginTree?.tree)
         #expect(range.endTree == claude4.endTree?.tree)
+        #expect(carried.tab.opening == tab.opening)
+        #expect(ReviewTabModel.followingTurns(carried.tab, context).isEmpty)
         #expect(carried.tab.scope != tab.scope, "a new comparison, which the review carries its comments into")
     }
 
@@ -604,10 +675,12 @@ struct ReviewScopeMenuTests {
             range.removeValue(forKey: "conversations")
             return range
         }
+        try #require(ranges.count == 2)
         object["ranges"] = [ranges[1]]
+        object["lastFileID"] = [own.scopeID: "last.swift"]
         let old = try JSONDecoder().decode(ReviewDraft.self, from: JSONSerialization.data(withJSONObject: object))
         #expect(old.ranges == [own])
-        #expect(old.lastFileID == [across.scopeID: "a.swift"])
+        #expect(old.lastFileID == [own.scopeID: "last.swift"])
     }
 
     @Test func theTopEdgesNotes_sayTheViewedTurnsRead_andWhatATurnsDiffIs_onlyForTurns() throws {
@@ -704,7 +777,7 @@ struct ReviewScopeMenuTests {
     /// Codex's turn alone. "Mark as Viewed" still goes through the
     /// worktree's history, which has Codex's turn, not through the tab's
     /// conversation's, which does not, where it would move nothing.
-    @Test func markAsViewed_onTheWorktreesRange_ofAnotherConversationAlone_goesThroughTheWorktreesHistory() throws {
+    @Test func markAsViewed_onTheWorktreesRange_ofAnotherConversationAlone_goesThroughTheWorktreesHistory() async throws {
         let worktree = try Worktree()
         var context = worktree.context
         let codexOnly: Set<TurnID> = [worktree.codex1.turnID]
@@ -717,5 +790,33 @@ struct ReviewScopeMenuTests {
         #expect(action == .throughTurns([codex1]))
         #expect(try ReviewTabText.markViewedHelp(#require(action), locale: Self.en)
             == "Moves the viewed line to the end of this scope (⌘⏎)")
+
+        let stores = ActionStoresFixture()
+        let claude = try Self.turn(3, start: 0, root: stores.root)
+        let codex = try Self.turn(1, of: Self.codex, start: 5, root: stores.root)
+        stores.turnHistory.replace(with: [
+            ConversationTurns(key: Self.claude, turns: [claude]), ConversationTurns(key: Self.codex, turns: [codex])
+        ])
+        stores.viewedLines.markViewed(through: claude, source: .decisionBar)
+        let claudeLine = stores.viewedLines.line(of: Self.claude)
+        await ReviewTabActions.open(
+            .worktreeUnviewedTurns, agentPaneID: nil, conversation: Self.claude, window: stores.window, stores: stores.review
+        )
+        let opened = try #require(stores.window.review)
+        let scope = try #require(opened.scope)
+        let repository = StackReviewRepository(files: [], diffs: [])
+        let loaded = ReviewSession(root: stores.project.rootURL, git: repository, drafts: RecordingReviewDraftStore())
+        _ = await loaded.reload(scope: scope, selectedFileID: nil)
+        stores.window.reviewSession = loaded
+        try #require(ReviewTabActions.isShowingItsScope(opened, window: stores.window))
+        let visibility = PaneVisibilityReporter(windowID: stores.window.id, registry: stores.windows)
+        #expect(ReviewTabActions.markViewed(window: stores.window, stores: stores.review, paneVisibility: visibility))
+        #expect(stores.window.review == nil)
+        #expect(stores.viewedLines.isViewed(codex))
+        #expect(stores.viewedLines.line(of: Self.claude) == claudeLine)
+        let undo = try #require(stores.toasts.current(in: stores.window.id)?.undo)
+        undo()
+        #expect(!stores.viewedLines.isViewed(codex))
+        #expect(stores.viewedLines.line(of: Self.claude) == claudeLine)
     }
 }

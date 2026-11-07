@@ -96,9 +96,11 @@ struct SessionRestoreResumeE2ETests {
                 Hint(kind: kind, sessionId: sessionId, cwd: "/Users/dev/weir")
             ])
 
-            let resolved = try #require(Self.resumeCommand(kind, for: tab, paneID: paneID))
-            #expect(resolved.contains(resume))
-            #expect(resolved.contains("cd '/Users/dev/weir'"))
+            let expected = "cd '/Users/dev/weir' && \(resume)"
+            #expect(tab.agentSessions[kind]?[paneID] == AgentSessionInfo(sessionId: sessionId, cwd: "/Users/dev/weir"))
+            #expect(tab.agentResumeCandidates[paneID] == [kind])
+            #expect(Self.resumeCommand(kind, for: tab, paneID: paneID) == expected)
+            #expect(PaneHostRepresentable.resolveInitialCommand(tab: tab, paneID: paneID) == expected)
         }
     }
 
@@ -119,21 +121,26 @@ struct SessionRestoreResumeE2ETests {
         }
     }
 
-    @Test("Codex restore yields no command when Claude already owns the pane")
+    @Test("both restore hints survive, and only Claude can resume the pane")
     func codexResume_defersToClaude_afterRestore() throws {
         // Both providers left a hint for the same pane. The projection names
         // Claude as the one to resume, so the surface mount picks Claude and
         // Codex stays dormant rather than the two racing for the pty.
         try withTempDir { root in
             let (tab, paneID) = try relaunch(in: root, hints: [
-                Hint(kind: .claude, sessionId: "claude-1", cwd: nil),
-                Hint(kind: .codex, sessionId: "codex-1", cwd: nil)
+                Hint(kind: .codex, sessionId: "codex-1", cwd: "/repo/codex"),
+                Hint(kind: .claude, sessionId: "claude-1", cwd: "/repo/claude")
             ])
 
-            let codexCommand = AgentResumeCommandBuilder.initialCommand(.codex, for: tab, paneID: paneID)
-            let claudeCommand = AgentResumeCommandBuilder.initialCommand(.claude, for: tab, paneID: paneID)
-            #expect(codexCommand == nil)
-            #expect(claudeCommand?.contains("claude --resume claude-1") == true)
+            #expect(tab.agentSessions[.claude]?[paneID] == AgentSessionInfo(sessionId: "claude-1", cwd: "/repo/claude"))
+            #expect(tab.agentSessions[.codex]?[paneID] == AgentSessionInfo(sessionId: "codex-1", cwd: "/repo/codex"))
+            #expect(tab.agentResumeCandidates[paneID] == [.claude])
+            #expect(Self.resumeCommand(.codex, for: tab, paneID: paneID) == nil)
+            let expected = AgentResume(
+                provider: .claude, sessionID: "claude-1", cwd: "/repo/claude", command: "cd '/repo/claude' && claude --resume claude-1"
+            )
+            #expect(PaneHostRepresentable.resolveRestoredResume(tab: tab, paneID: paneID) == expected)
+            #expect(PaneHostRepresentable.resolveInitialCommand(tab: tab, paneID: paneID) == expected.command)
         }
     }
 
@@ -144,10 +151,13 @@ struct SessionRestoreResumeE2ETests {
         try withTempDir { root in
             let (tab, paneID) = try relaunch(in: root, hints: [])
 
-            let claudeCommand = AgentResumeCommandBuilder.initialCommand(.claude, for: tab, paneID: paneID)
-            let codexCommand = AgentResumeCommandBuilder.initialCommand(.codex, for: tab, paneID: paneID)
-            #expect(claudeCommand == nil)
-            #expect(codexCommand == nil)
+            #expect(tab.agentResumeCandidates.isEmpty)
+            for kind in AgentKind.allCases {
+                #expect(tab.agentSessions[kind]?[paneID] == nil)
+                #expect(Self.resumeCommand(kind, for: tab, paneID: paneID) == nil)
+            }
+            #expect(PaneHostRepresentable.resolveRestoredResume(tab: tab, paneID: paneID) == nil)
+            #expect(PaneHostRepresentable.resolveInitialCommand(tab: tab, paneID: paneID) == nil)
         }
     }
 

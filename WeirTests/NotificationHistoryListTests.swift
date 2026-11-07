@@ -30,9 +30,19 @@ struct NotificationHistoryListTests {
         containerLabel: String? = nil,
         tab: String? = nil,
         isRead: Bool = true,
-        agent: AgentKind? = .claude
+        agent: AgentKind? = .claude,
+        runtimeID: String? = nil,
+        exitCode: Int? = nil
     ) -> NotificationEntry {
-        NotificationEntry.test(
+        let event: NotificationEvent? = agent.flatMap { agent in
+            switch kind {
+            case .agentFinished: .finished(agent: agent, turn: nil, head: nil)
+            case .agentNeedsInput: .waiting(.unclassified(detail: nil), agent: agent)
+            case .agentError: .stopped(agent: agent, reason: nil)
+            case .desktop, .commandFinished, .bell: nil
+            }
+        }
+        return NotificationEntry.test(
             kind: kind,
             timestamp: Self.now.addingTimeInterval(-minutesAgo * 60),
             paneID: pane,
@@ -41,8 +51,10 @@ struct NotificationHistoryListTests {
             containerID: containerID,
             title: "t",
             body: "b",
+            exitCode: exitCode,
             isRead: isRead,
-            event: kind.isFromACommand ? nil : agent.map { .stopped(agent: $0, reason: nil) }
+            runtimeID: runtimeID,
+            event: event
         )
     }
 
@@ -93,41 +105,42 @@ struct NotificationHistoryListTests {
         ])
     }
 
-    @Test func aSourceOnTwoDays_hasAHeadingOnEach() {
+    @Test func aSourceOnSeveralDays_hasAHeadingForEachDayBucket() throws {
         let pane = UUID()
-        let model = list([
-            entry(minutesAgo: 10, pane: pane),
-            entry(minutesAgo: 60 * 24, pane: pane),
-            entry(minutesAgo: 60 * 24 * 5, pane: pane)
-        ])
+        let today = entry(minutesAgo: 10, pane: pane)
+        let yesterday = entry(minutesAgo: 60 * 24, pane: pane)
+        let earlier = entry(minutesAgo: 60 * 24 * 5, pane: pane)
+        let oldest = entry(minutesAgo: 60 * 24 * 7, pane: pane)
+        let model = list([oldest, yesterday, earlier, today])
+        try #require(model.sources.count == 3)
         #expect(model.sources.map(\.id.day) == [.today, .yesterday, .earlier])
-        let days: [NotificationHistoryDay] = model.items.compactMap { item in
-            if case let .day(day, _) = item {
-                day
-            } else {
-                nil
+        #expect(model.sources.map(\.id.key.place) == [.pane(pane), .pane(pane), .pane(pane)])
+        #expect(model.sources.map { $0.entries.map(\.id) } == [[today.id], [yesterday.id], [earlier.id, oldest.id]])
+        #expect(model.items.map(\.id) == [
+            .day(.today), .heading(model.sources[0].id), .row(today.id),
+            .day(.yesterday), .heading(model.sources[1].id), .row(yesterday.id),
+            .day(.earlier), .heading(model.sources[2].id), .row(earlier.id), .row(oldest.id)
+        ])
+        let firstHeadings = model.items.compactMap { item -> Bool? in
+            if case let .heading(_, isFirstOfDay) = item {
+                return isFirstOfDay
             }
+            return nil
         }
-        #expect(days == [.today, .yesterday, .earlier])
-        let headings = model.items.compactMap {
-            if case let .heading(_, isFirstOfDay) = $0 {
-                isFirstOfDay
-            } else {
-                nil
-            }
-        }
-        #expect(headings == [true, true, true])
+        #expect(firstHeadings == [true, true, true])
     }
 
     @Test func aRowFromTheFuture_isPlacedAsIfItCameNow() {
-        let pane = UUID()
-        let future = entry(minutesAgo: -60 * 24 * 3, pane: UUID())
-        let recent = entry(minutesAgo: 1, pane: pane)
-        let model = list([recent, future])
-        // Today, as the newest row: not on a day after today.
-        #expect(model.sources.map(\.id.day) == [.today, .today])
-        #expect(model.sources.first?.newest?.id == future.id)
-        #expect(model.sources.last?.newest?.id == recent.id)
+        let earlierFuture = entry(minutesAgo: -60, pane: UUID())
+        let laterFuture = entry(minutesAgo: -60 * 24 * 3, pane: UUID())
+        let now = entry(minutesAgo: 0, pane: UUID())
+        let recent = entry(minutesAgo: 1, pane: UUID())
+
+        for pair in [[earlierFuture, laterFuture], [laterFuture, earlierFuture]] {
+            let model = list([recent, now] + pair)
+            #expect(model.sources.map(\.id.day) == [.today, .today, .today, .today])
+            #expect(model.sources.compactMap { $0.newest?.id } == [now.id] + pair.map(\.id) + [recent.id])
+        }
     }
 
     // MARK: - Source
@@ -138,10 +151,9 @@ struct NotificationHistoryListTests {
         let command = entry(.commandFinished, minutesAgo: 2, pane: pane)
         let alert = entry(.desktop, minutesAgo: 3, pane: pane)
         let model = list([agent, command, alert])
-        #expect(model.sources.map(\.id.key) == [NotificationSourceKey(agent), NotificationSourceKey(command)])
-        #expect(NotificationSourceKey(agent).speaker == .agent)
-        #expect(NotificationSourceKey(command).speaker == .shell)
-        #expect(model.sources[1].entries.map(\.id) == [command.id, alert.id])
+        #expect(model.sources.map(\.id.key.place) == [.pane(pane), .pane(pane)])
+        #expect(model.sources.map(\.id.key.speaker) == [.agent, .shell])
+        #expect(model.sources.map { $0.entries.map(\.id) } == [[agent.id], [command.id, alert.id]])
         #expect(model.sources.map(\.heading.badge) == [.agent(.claude), .shell])
     }
 
@@ -163,6 +175,7 @@ struct NotificationHistoryListTests {
         let model = list(rows, canOpen: { _ in false })
         let source = try #require(model.sources.first)
         #expect(source.heading.note == .paneClosed)
+        #expect(source.shown.map(\.entry.id) == rows.map(\.id))
         let isClosed = source.heading.isClosed
         let areRowsClosed = source.shown.allSatisfy(\.isClosed)
         #expect(isClosed)
@@ -170,6 +183,7 @@ struct NotificationHistoryListTests {
         let opensNoPane = source.shown.allSatisfy { !$0.opensPane }
         #expect(opensNoPane)
         let open = try #require(list(rows).sources.first)
+        #expect(open.shown.map(\.entry.id) == rows.map(\.id))
         let opensPanes = open.shown.allSatisfy(\.opensPane)
         #expect(opensPanes)
         #expect(source.heading.words(locale: ja).note == "閉じたペイン")
@@ -193,7 +207,7 @@ struct NotificationHistoryListTests {
     @Test func aHeadingsBadge_comesFromAnyRowThatNamesTheAgent() throws {
         let pane = UUID()
         let older = entry(minutesAgo: 2, pane: pane, agent: .codex)
-        let newest = entry(minutesAgo: 1, pane: pane, agent: nil)
+        let newest = entry(minutesAgo: 1, pane: pane, agent: nil, runtimeID: "claude:legacy")
         let closed = try #require(list([newest, older], canOpen: { _ in false }).sources.first)
         #expect(closed.heading.badge == .agent(.codex))
         #expect(closed.heading.isClosed)
@@ -238,6 +252,10 @@ struct NotificationHistoryListTests {
         #expect(list(all).sources.map { $0.heading.words(locale: en).tab } == ["claude 1", "claude 2", nil, "zsh"])
         let apart: (NotificationEntry) -> Place? = { Place(name: $0.id == first.id ? "alpha" : "beta", projectID: nil) }
         #expect(list(all, place: apart).sources.map { $0.heading.words(locale: en).tab } == [nil, nil, nil, "zsh"])
+        let yesterday = entry(minutesAgo: 24 * 60, pane: UUID(), tab: "claude yesterday")
+        let differentDays = list([first, yesterday])
+        #expect(differentDays.sources.map(\.id.day) == [.today, .yesterday])
+        #expect(differentDays.sources.map { $0.heading.words(locale: en).tab } == [nil, nil])
     }
 
     @Test func aHeadingWithNoPlace_isNamedByItsTab_withNoSeparatorBeforeIt() throws {
@@ -316,19 +334,18 @@ struct NotificationHistoryListTests {
         #expect(command.words(locale: ja).tabTruncation == .name)
     }
 
-    @Test func aHeading_isSpokenAsItsPlace_agent_tab_andNote() throws {
-        let pane = UUID()
-        let source = try #require(list([entry(minutesAgo: 1, pane: pane)], canOpen: { _ in false }).sources.first)
-        #expect(source.heading.spokenLabel(locale: en) == "alpha, Claude, Closed Pane")
-        let placed = try #require(list(
-            [entry(minutesAgo: 1, pane: pane)],
+    @Test func aHeading_isSpokenAsItsPlace_agent_tab_andNote() {
+        let first = entry(minutesAgo: 1, pane: UUID(), tab: "Review")
+        let second = entry(minutesAgo: 2, pane: UUID(), tab: "Tests")
+        let model = list(
+            [first, second],
             canOpen: { _ in false },
             place: { _ in Place(name: "alpha / feat/login", projectID: nil) }
-        ).sources.first)
-        #expect(
-            placed.heading.spokenLabel(locale: en).hasPrefix("alpha, feat/login, "),
-            "the place’s spaced slash is read as a list; the branch keeps its own"
         )
+        #expect(model.sources.map { $0.heading.spokenLabel(locale: en) } == [
+            "alpha, feat/login, Claude, Review, Closed Pane",
+            "alpha, feat/login, Claude, Tests, Closed Pane"
+        ])
     }
 
     // MARK: - Folding
@@ -348,23 +365,31 @@ struct NotificationHistoryListTests {
     @Test func choosingTheFold_opensItsSource_andShowLessFoldsItAgain() throws {
         let pane = UUID()
         let other = UUID()
-        let rows = (0..<19).map { entry(minutesAgo: Double($0), pane: pane) } + (20..<25).map { entry(minutesAgo: Double($0), pane: other) }
+        let firstRows = (0..<19).map { entry(minutesAgo: Double($0), pane: pane) }
+        let otherRows = (20..<25).map { entry(minutesAgo: Double($0), pane: other) }
+        let rows = firstRows + otherRows
         let folded = list(rows)
-        let source = try #require(folded.sources.first)
+        try #require(folded.sources.count == 2)
+        let source = folded.sources[0]
+        let neighbor = folded.sources[1]
         #expect(source.foldableCount == 16)
-        // Opened: every row of that source, and its fold says Show Less.
-        let expanded = List.toggled(source.id, in: [])
+        #expect(source.shown.map(\.entry.id) == firstRows.prefix(3).map(\.id))
+
+        let expanded = List.toggled(source.id, in: [neighbor.id])
+        #expect(expanded == [source.id, neighbor.id])
         let open = list(rows, expanded: expanded)
-        let opened = try #require(open.sources.first)
-        #expect(opened.shown.count == 19)
+        let opened = try #require(open.sources.first { $0.id == source.id })
+        #expect(opened.shown.map(\.entry.id) == firstRows.map(\.id))
         #expect(open.items.contains(.fold(opened, count: 16, isExpanded: true)))
-        // The other source stays folded.
-        #expect(open.sources[1].isExpanded == false)
-        #expect(open.sources[1].shown.count == 3)
-        // Show Less: folded again.
-        let closed = list(rows, expanded: List.toggled(source.id, in: expanded))
-        #expect(closed.sources.first?.shown.count == 3)
-        #expect(try closed.items.contains(.fold(#require(closed.sources.first), count: 16, isExpanded: false)))
+        #expect(open.sources.first { $0.id == neighbor.id }?.shown.map(\.entry.id) == otherRows.map(\.id))
+
+        let refolded = List.toggled(source.id, in: expanded)
+        #expect(refolded == [neighbor.id])
+        let closed = list(rows, expanded: refolded)
+        let closedSource = try #require(closed.sources.first { $0.id == source.id })
+        #expect(closedSource.shown.map(\.entry.id) == firstRows.prefix(3).map(\.id))
+        #expect(closed.items.contains(.fold(closedSource, count: 16, isExpanded: false)))
+        #expect(closed.sources.first { $0.id == neighbor.id }?.shown.map(\.entry.id) == otherRows.map(\.id))
     }
 
     @Test func unreadRows_neverFold_andReadRowsFillUpToThree() throws {
@@ -379,9 +404,9 @@ struct NotificationHistoryListTests {
         #expect(source.shown.map(\.entry.id) == [read1.id, unread1.id, unread2.id])
         #expect(source.foldableCount == 2)
         // Four unread: all of them, and no read row.
-        let many = (0..<4).map { entry(minutesAgo: Double($0), pane: pane, isRead: false) } + [read1]
-        let crowded = try #require(list(many).sources.first)
-        #expect(crowded.shown.count == 4)
+        let unread = (0..<4).map { entry(minutesAgo: Double($0), pane: pane, isRead: false) }
+        let crowded = try #require(list([read1] + unread.reversed()).sources.first)
+        #expect(crowded.shown.map(\.entry.id) == unread.map(\.id))
         #expect(crowded.foldableCount == 1)
     }
 
@@ -395,7 +420,7 @@ struct NotificationHistoryListTests {
         #expect(source.foldableCount == 2)
     }
 
-    @Test func theKeyboard_stopsOnRowsAndFolds_notHeadings() throws {
+    @Test func selectableIDs_includeRowsAndFoldsWithoutHeadings() throws {
         let pane = UUID()
         let rows = (0..<5).map { entry(minutesAgo: Double($0), pane: pane) }
         let model = list(rows)
@@ -407,33 +432,53 @@ struct NotificationHistoryListTests {
         let pane = UUID()
         let folded = try #require(list((0..<5).map { entry(minutesAgo: Double($0), pane: pane) }).sources.first)
         #expect(folded.shown.map(\.isFirstOfSource) == [true, false, false])
+        #expect(folded.foldableCount == 2)
         // The fold closes the group, so no row does.
         #expect(folded.shown.map(\.isLastOfSource) == [false, false, false])
-        let whole = try #require(list((0..<2).map { entry(minutesAgo: Double($0), pane: UUID()) }).sources.first)
-        #expect(whole.shown.map(\.isFirstOfSource) == [true])
-        #expect(whole.shown.map(\.isLastOfSource) == [true])
+        let rows = (0..<2).map { entry(minutesAgo: Double($0), pane: pane) }
+        let model = list(rows)
+        try #require(model.sources.count == 1)
+        let whole = try #require(model.sources.first)
+        try #require(whole.shown.map(\.entry.id) == rows.map(\.id))
+        #expect(whole.shown.map(\.isFirstOfSource) == [true, false])
+        #expect(whole.shown.map(\.isLastOfSource) == [false, true])
     }
 
     @Test func aTabLeadsItsHeading_onlyWhenItIsNoLongerThanThePlace() {
         typealias Words = NotificationHistoryList.Heading.Words
         #expect(Words(title: "weir / feat-x", tab: "zsh", note: nil).isTabLeading)
+        #expect(Words(title: "weir", tab: "bash", note: nil).isTabLeading)
         #expect(!Words(title: "weir", tab: "Use the Write tool to create a file", note: nil).isTabLeading)
         #expect(!Words(title: "weir", tab: nil, note: nil).isTabLeading)
     }
 
-    @Test func aFold_isSpokenWithItsSource_andAShellsTab() throws {
-        let shell = try #require(list([entry(.commandFinished, minutesAgo: 1, pane: UUID(), tab: "zsh")]).sources.first)
-        #expect(shell.heading.foldName(locale: en) == "alpha, zsh")
-        let agent = try #require(list([entry(minutesAgo: 1, pane: UUID(), tab: "claude")]).sources.first)
-        #expect(agent.heading.foldName(locale: en) == "alpha")
+    @Test func aFold_isSpokenWithItsSource_andAShellsTab() {
+        let shellPane = UUID()
+        let agentPane = UUID()
+        let shells = (0..<4).map { entry(.commandFinished, minutesAgo: Double($0), pane: shellPane, tab: "zsh") }
+        let agents = (4..<8).map { entry(minutesAgo: Double($0), pane: agentPane, tab: "claude") }
+        let folds = list(shells + agents).items.compactMap { item -> List.Source? in
+            if case let .fold(source, _, _) = item {
+                return source
+            }
+            return nil
+        }
+        #expect(folds.map(\.id.key.speaker) == [.shell, .agent])
+        #expect(folds.map { $0.heading.foldName(locale: en) } == ["alpha, zsh", "alpha"])
     }
 
     @Test func aCommandsRow_knowsTheTabItsHeadingNames() throws {
         let pane = UUID()
-        let newest = entry(.commandFinished, minutesAgo: 1, pane: pane, tab: "zsh")
-        let older = entry(.commandFinished, minutesAgo: 2, pane: pane, tab: "server")
+        let newest = entry(.commandFinished, minutesAgo: 1, pane: pane, tab: "zsh", exitCode: 0)
+        let older = entry(.commandFinished, minutesAgo: 2, pane: pane, tab: "server", exitCode: 2)
         let source = try #require(list([newest, older]).sources.first)
         #expect(source.shown.map(\.headingTab) == ["zsh", "zsh"])
+        let lines = source.shown.map {
+            NotificationHistoryRowText.lines(of: $0.entry, sourceTabTitle: $0.headingTab, locale: en)
+        }
+        #expect(lines.map(\.headline) == ["Command finished", "Command failed"])
+        #expect(lines.map(\.subject) == ["Command finished", "server"])
+        #expect(lines.map(\.facts) == [[], [ReceiptRun(text: "exit 2", role: .failed)]])
         let agent = try #require(list([entry(minutesAgo: 1, pane: UUID(), tab: "claude")]).sources.first)
         #expect(agent.shown.first?.headingTab == nil)
     }

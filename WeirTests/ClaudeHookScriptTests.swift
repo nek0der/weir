@@ -85,6 +85,7 @@ struct ClaudeHookScriptTests {
             let url = try dir.appendingPathComponent("cwd/" + AgentRecordFixtures.cwdEventFileName(paneID))
             let event = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
             #expect(event?["paneId"] as? String == paneID)
+            #expect(event?["oldCwd"] as? String == "/tmp")
             #expect(event?["newCwd"] as? String == "/private/tmp")
             wasRead = true
         }

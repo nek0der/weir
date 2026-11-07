@@ -32,68 +32,97 @@ struct SessionLaunchStoreTests {
         #expect(SessionLaunchRequest(open: .nothing, executable: "/x/codex").executable == nil)
     }
 
+    private static func startingPane(in fixture: Fixture, store: SessionLaunchStore, command: String) throws -> UUID {
+        let id = fixture.worktree.id
+        let launch = try #require(store.launches[id])
+        try #require(launch.phase == .starting(isLaunched: false))
+        let pane = try #require(launch.paneID)
+        let tab = try #require(fixture.tabs.first)
+        #expect(fixture.tabs.count == 1)
+        #expect(tab.splitTree.allLeafIDs() == [pane])
+        #expect(tab.initialCommands == [pane: command])
+        #expect(tab.initialPromptFiles.isEmpty)
+        return pane
+    }
+
     @Test func afterTheSetup_theAgentsTabOpens_withNoInstruction_andWaitsForItsStart() async throws {
         try await withTempDir { dir in
-            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand("true"), .shorthand("true")])
-            fixture.begin(SessionLaunchRequest(open: .agent(.codex)))
-            #expect(fixture.store.launch(in: .worktree(projectID: fixture.project.id, worktreeID: fixture.worktree.id)) != nil)
-            await pollUntil(timeout: .seconds(10)) { fixture.hasStarted }
-            let tab = try #require(fixture.tabs.first)
-            let paneID = try #require(tab.splitTree.allLeafIDs().first)
-            #expect(tab.initialCommands[paneID] == "codex")
-            #expect(tab.initialPromptFiles.isEmpty)
+            let first = "printf first > setup-log"
+            let fixture = try await Fixture.make(in: dir, bootstrap: [
+                .shorthand(first), .shorthand("printf second >> setup-log")
+            ])
+            let path = Gate<Void>()
+            defer { path.open() }
+            let store = SessionLaunchStore(path: {
+                await path.wait()
+                return Fixture.path
+            }, git: fixture.git)
+            let id = fixture.worktree.id
+            store.begin(projectID: fixture.project.id, worktreeID: id, request: .init(open: .agent(.codex)), in: fixture.session)
+            try await path.waitUntilRequested()
+            #expect(store.launches[id]?.phase == .settingUp(stepIndex: 0, stepCount: 2, command: first))
+            #expect(fixture.tabs.isEmpty)
+
+            path.open()
+            await pollUntil(timeout: .seconds(10)) { store.launches[id]?.phase == .starting(isLaunched: false) }
+            let log = fixture.worktree.workingDirectory.appendingPathComponent("setup-log")
+            #expect(try String(contentsOf: log, encoding: .utf8) == "firstsecond")
+            _ = try Self.startingPane(in: fixture, store: store, command: "codex")
         }
     }
 
     @Test func aFailedStep_keepsTheStage_andTheRetryRunsFromIt_inTheSameWorktree() async throws {
         try await withTempDir { dir in
-            let marker = dir.appendingPathComponent("marker")
-            let fixture = try await Fixture.make(in: dir, bootstrap: [
-                .shorthand("echo first"),
-                .shorthand("test -f '\(marker.path)' || { echo 'missing marker' >&2; exit 3; }")
-            ])
+            let second = "test -f marker || { echo 'missing marker' >&2; exit 3; }; printf second >> setup-log"
+            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand("printf first >> setup-log"), .shorthand(second)])
             let id = fixture.worktree.id
+            let worktree = fixture.worktree.workingDirectory
+            let log = worktree.appendingPathComponent("setup-log")
             fixture.begin()
             await pollUntil(timeout: .seconds(10)) { fixture.store.launches[id]?.failure != nil }
             let failure = try #require(fixture.store.launches[id]?.failure)
             #expect(failure.stage == .setup(stepIndex: 1))
             #expect(failure.logTail == "missing marker")
             #expect(fixture.tabs.isEmpty)
+            #expect(try String(contentsOf: log, encoding: .utf8) == "first")
 
-            FileManager.default.createFile(atPath: marker.path, contents: nil)
+            try Data().write(to: worktree.appendingPathComponent("marker"))
             fixture.store.retry(worktreeID: id, in: fixture.session)
-            #expect(fixture.store.launches[id]?.phase == .settingUp(
-                stepIndex: 1,
-                stepCount: 2,
-                command: "test -f '\(marker.path)' || { echo 'missing marker' >&2; exit 3; }"
-            ))
-            await pollUntil(timeout: .seconds(10)) { fixture.hasStarted }
-            #expect(fixture.tabs.count == 1)
-            #expect(fixture.session.project(fixture.project.id)?.worktrees.count == 1)
+            #expect(fixture.store.launches[id]?.phase == .settingUp(stepIndex: 1, stepCount: 2, command: second))
+            await pollUntil(timeout: .seconds(10)) { fixture.store.launches[id]?.phase == .starting(isLaunched: false) }
+            _ = try Self.startingPane(in: fixture, store: fixture.store, command: "claude")
+            #expect(try String(contentsOf: log, encoding: .utf8) == "firstsecond")
+            #expect(fixture.session.project(fixture.project.id)?.worktrees.map(\.id) == [id])
+            #expect(fixture.session.worktree(projectID: fixture.project.id, worktreeID: id)?.workingDirectory == worktree)
         }
     }
 
-    @Test func aProjectWithoutSetup_startsTheAgentAtOnce() async throws {
+    @Test func aProjectWithoutSetup_opensTheAgentsTabWithoutWaitingForSetup() async throws {
         try await withTempDir { dir in
             let fixture = try await Fixture.make(in: dir, bootstrap: [])
             fixture.begin()
-            #expect(fixture.hasStarted)
-            let tab = try #require(fixture.tabs.first)
-            #expect(tab.initialCommands.values.first == "claude")
-            #expect(tab.initialPromptFiles.isEmpty)
+            _ = try Self.startingPane(in: fixture, store: fixture.store, command: "claude")
         }
     }
 
-    /// Asked not to run it, the setup does not run, and the agent opens at once.
+    /// Skipping configured setup never requests a setup PATH.
     @Test func aSetupNotAskedFor_doesNotRun() async throws {
         try await withTempDir { dir in
-            let ran = dir.appendingPathComponent("ran")
-            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand("touch '\(ran.path)'")])
-            fixture.begin(SessionLaunchRequest(open: .agent(.claude), runsSetup: false))
-            #expect(fixture.hasStarted)
-            #expect(fixture.tabs.count == 1)
-            try await Task.sleep(for: .milliseconds(100))
-            #expect(!FileManager.default.fileExists(atPath: ran.path))
+            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand("touch ran")])
+            let requestedPath = Recorded(false)
+            let store = SessionLaunchStore(path: {
+                requestedPath.value = true
+                return Fixture.path
+            }, git: fixture.git)
+            store.begin(
+                projectID: fixture.project.id,
+                worktreeID: fixture.worktree.id,
+                request: .init(open: .agent(.claude), runsSetup: false),
+                in: fixture.session
+            )
+            _ = try Self.startingPane(in: fixture, store: store, command: "claude")
+            #expect(!requestedPath.value)
+            #expect(!FileManager.default.fileExists(atPath: fixture.worktree.workingDirectory.appendingPathComponent("ran").path))
         }
     }
 
@@ -106,46 +135,39 @@ struct SessionLaunchStoreTests {
             #expect(fixture.store.launches.isEmpty)
             #expect(!fixture.store.isFollowing)
             let tab = try #require(fixture.tabs.first)
+            #expect(fixture.tabs.count == 1)
             #expect(tab.agentsInFront.isEmpty)
             #expect(tab.initialCommands.isEmpty)
         }
         try await withTempDir { dir in
-            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand("true")])
+            let command = "printf ran > setup-log"
+            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand(command)])
+            let id = fixture.worktree.id
             fixture.begin(SessionLaunchRequest(open: .nothing))
+            try #require(fixture.store.launches[id]?.phase == .settingUp(stepIndex: 0, stepCount: 1, command: command))
             await pollUntil(timeout: .seconds(10)) { fixture.store.launches.isEmpty }
             #expect(fixture.store.launches.isEmpty)
             #expect(fixture.tabs.isEmpty)
-        }
-    }
-
-    /// Whether the app follows the panes is the launches alone: there are
-    /// no staged instructions to follow any more.
-    @Test func following_isTheLaunchesAlone() async throws {
-        try await withTempDir { dir in
-            let fixture = try await Fixture.make(in: dir, bootstrap: [])
-            #expect(!fixture.store.isFollowing)
-            fixture.begin()
-            #expect(fixture.store.isFollowing)
-            let paneID = try #require(fixture.store.launches[fixture.worktree.id]?.paneID)
-            fixture.store.follow(session: fixture.session, agentPanes: [paneID])
-            #expect(!fixture.store.isFollowing)
+            let log = fixture.worktree.workingDirectory.appendingPathComponent("setup-log")
+            #expect(try String(contentsOf: log, encoding: .utf8) == "ran")
         }
     }
 
     /// Starts Claude with no setup and returns its pane.
     private static func startAgent(_ fixture: Fixture) throws -> UUID {
         fixture.begin(SessionLaunchRequest(open: .agent(.claude)))
-        let launch = try #require(fixture.store.launches[fixture.worktree.id])
-        #expect(launch.phase == .starting(isLaunched: false))
-        return try #require(launch.paneID)
+        return try startingPane(in: fixture, store: fixture.store, command: "claude")
     }
 
     @Test func anAgentThatReportsItsStart_endsTheLaunch() async throws {
         try await withTempDir { dir in
             let fixture = try await Fixture.make(in: dir, bootstrap: [])
+            #expect(!fixture.store.isFollowing)
             let paneID = try Self.startAgent(fixture)
+            #expect(fixture.store.isFollowing)
             fixture.store.follow(session: fixture.session, agentPanes: [paneID])
             #expect(fixture.store.launches.isEmpty)
+            #expect(!fixture.store.isFollowing)
         }
     }
 
@@ -160,7 +182,8 @@ struct SessionLaunchStoreTests {
             // Nothing to wait for: a stop that never comes. Three times the
             // timeout leaves a stop room to show, were one coming.
             try await Task.sleep(for: .milliseconds(150))
-            #expect(fixture.store.launches[id]?.failure == nil)
+            #expect(fixture.store.launches[id]?.phase == .starting(isLaunched: false))
+            #expect(fixture.store.launches[id]?.paneID == paneID)
 
             // The terminal is made: the staged command is taken.
             fixture.session.clearStagedLaunch(paneID: paneID)
@@ -184,11 +207,17 @@ struct SessionLaunchStoreTests {
             fixture.store.follow(session: fixture.session, agentPanes: [])
             await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) { fixture.store.launches[id]?.failure != nil }
 
+            try #require(fixture.store.launches[id]?.failure?.stage == .startingCLI)
+            let originalTab = try #require(fixture.session.tab(containing: paneID))
             fixture.store.retry(worktreeID: id, in: fixture.session)
             let launch = try #require(fixture.store.launches[id])
+            let newPane = try #require(launch.paneID)
+            let newTab = try #require(fixture.session.tab(containing: newPane))
             #expect(launch.phase == .starting(isLaunched: false))
-            #expect(launch.paneID != paneID)
-            #expect(fixture.tabs.count == 2)
+            #expect(newPane != paneID)
+            #expect(fixture.session.tab(containing: paneID)?.id == originalTab.id)
+            #expect(Set(fixture.tabs.map(\.id)) == [originalTab.id, newTab.id])
+            #expect(newTab.initialCommands == [newPane: "claude"])
         }
     }
 
@@ -232,12 +261,14 @@ struct SessionLaunchStoreTests {
             let paneID = try Self.startAgent(fixture)
             // Dismissing applies only to a wait in the terminal, or notes.
             fixture.store.dismiss(worktreeID: id)
-            #expect(fixture.store.launches[id] != nil)
+            #expect(fixture.store.launches[id]?.phase == .starting(isLaunched: false))
             fixture.session.clearStagedLaunch(paneID: paneID)
             fixture.store.follow(session: fixture.session, agentPanes: [])
             await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) {
                 fixture.store.launches[id]?.phase == .waitingInTerminal
             }
+            try #require(fixture.store.launches[id]?.phase == .waitingInTerminal)
+            #expect(fixture.store.launches[id]?.paneID == paneID)
             fixture.store.dismiss(worktreeID: id)
             #expect(fixture.store.launches.isEmpty)
         }
@@ -268,13 +299,15 @@ extension SessionLaunchStoreTests {
         try await withTempDir { dir in
             let fixture = try await Fixture.make(in: dir, bootstrap: [])
             let id = fixture.worktree.id
-            fixture.begin(SessionLaunchRequest(open: .agent(.claude)), notes: [.fetch(.failed(start: "main", isLastFetched: false))])
-            let paneID = try #require(fixture.store.launches[id]?.paneID)
-            fixture.store.follow(session: fixture.session, agentPanes: [paneID])
-            #expect(fixture.store.launches[id]?.phase == .done)
-            // Following it again changes nothing.
-            fixture.store.follow(session: fixture.session, agentPanes: [paneID])
-            #expect(fixture.store.launches[id]?.phase == .done)
+            let notes: [SessionLaunch.Note] = [.fetch(.failed(start: "main", isLastFetched: false))]
+            fixture.begin(SessionLaunchRequest(open: .agent(.claude)), notes: notes)
+            let paneID = try Self.startingPane(in: fixture, store: fixture.store, command: "claude")
+            #expect(fixture.store.launches[id]?.notes == notes)
+            for _ in 1...2 {
+                fixture.store.follow(session: fixture.session, agentPanes: [paneID])
+                #expect(fixture.store.launches[id]?.phase == .done)
+                #expect(fixture.store.launches[id]?.notes == notes)
+            }
         }
     }
 
@@ -289,6 +322,8 @@ extension SessionLaunchStoreTests {
         #expect(SessionLaunchBar.noteText(.copyFailed([".env"])).resolved(in: japanese) == ".env をコピーできませんでした。")
         // A list joins as the language does: no English comma in Japanese.
         #expect(SessionLaunchBar.noteText(.copyFailed([".env", "a.key"])).resolved(in: japanese) == ".env、a.key をコピーできませんでした。")
+        #expect(SessionLaunchBar.noteText(.ignoredFilesNotListed).resolved(in: english)
+            == "Couldn’t list the files Git ignores, so none were copied.")
         #expect(SessionLaunchBar.noteText(.ignoredFilesNotListed).resolved(in: japanese)
             == "Git が無視するファイルを一覧できなかったため、何もコピーしませんでした。")
     }
@@ -300,9 +335,7 @@ extension SessionLaunchStoreTests {
         let note = SessionLaunch.Note.copySkippedOverLimit([".env"], limit: 1)
         let english = SessionLaunchBar.noteText(note).resolved(in: Locale(identifier: "en"))
         let japanese = SessionLaunchBar.noteText(note).resolved(in: Locale(identifier: "ja"))
-        let englishSize = Int64(1).formatted(.byteCount(style: .file).locale(Locale(identifier: "en")))
-        #expect(english == "Didn’t copy .env: the files would come to more than \(englishSize).")
-        #expect(english.contains("1 byte"))
+        #expect(english == "Didn’t copy .env: the files would come to more than 1 byte.")
         #expect(japanese == "合計が 1バイト を超えるため、.env はコピーしませんでした。")
     }
 }
@@ -347,7 +380,11 @@ extension SessionLaunchStoreTests {
             #expect(try String(contentsOf: worktree.appendingPathComponent(".env"), encoding: .utf8) == "KEY=1")
             #expect(!FileManager.default.fileExists(atPath: worktree.appendingPathComponent("build").path))
             #expect(try String(contentsOf: seen, encoding: .utf8) == "KEY=1")
-            #expect(fixture.git.operations.contains("ls-files"))
+            #expect(fixture.git.operations.filter { $0 == "ls-files" } == ["ls-files"])
+            #expect(fixture.store.launches.isEmpty)
+            let shell = try #require(fixture.tabs.first)
+            #expect(fixture.tabs.count == 1)
+            #expect(shell.initialCommands.isEmpty)
         }
     }
 
@@ -357,6 +394,9 @@ extension SessionLaunchStoreTests {
             fixture.begin(SessionLaunchRequest(open: .shell, copiesIgnoredFiles: false))
             #expect(fixture.store.launches.isEmpty)
             #expect(!fixture.git.operations.contains("ls-files"))
+            let shell = try #require(fixture.tabs.first)
+            #expect(fixture.tabs.count == 1)
+            #expect(shell.initialCommands.isEmpty)
             #expect(!FileManager.default.fileExists(atPath: fixture.worktree.workingDirectory.appendingPathComponent(".env").path))
         }
     }
@@ -365,11 +405,22 @@ extension SessionLaunchStoreTests {
     /// the copy passing for one that found nothing, and the setup goes on.
     @Test func aListingThatFails_isSaid_andTheSetupGoesOn() async throws {
         try await withTempDir { dir in
-            let fixture = try await Self.withIgnoredFiles(in: dir, files: [".env": "KEY=1"], patterns: [".env"], ignored: [".env"])
+            let fixture = try await Self.withIgnoredFiles(
+                in: dir,
+                files: [".env": "KEY=1"],
+                patterns: [".env"],
+                ignored: [".env"],
+                bootstrap: [.shorthand("printf ran > setup-log")]
+            )
             fixture.git.nextListIgnoredError = .nonZeroExit(.failure("fatal: index file corrupt"))
             fixture.begin(SessionLaunchRequest(open: .nothing, copiesIgnoredFiles: true))
-            await pollUntil(timeout: .seconds(10)) { fixture.store.launches.values.first?.phase == .done }
-            #expect(fixture.store.launches[fixture.worktree.id]?.notes == [.ignoredFilesNotListed])
+            let id = fixture.worktree.id
+            await pollUntil(timeout: .seconds(10)) { fixture.store.launches[id]?.phase == .done }
+            try #require(fixture.store.launches[id]?.phase == .done)
+            #expect(fixture.store.launches[id]?.notes == [.ignoredFilesNotListed])
+            #expect(fixture.tabs.isEmpty)
+            let log = fixture.worktree.workingDirectory.appendingPathComponent("setup-log")
+            #expect(try String(contentsOf: log, encoding: .utf8) == "ran")
             #expect(!FileManager.default.fileExists(atPath: fixture.worktree.workingDirectory.appendingPathComponent(".env").path))
         }
     }
@@ -384,36 +435,122 @@ extension SessionLaunchStoreTests {
                 copyByteLimit: 16
             )
             fixture.begin(SessionLaunchRequest(open: .nothing, copiesIgnoredFiles: true))
-            await pollUntil(timeout: .seconds(10)) { fixture.store.launches.values.first?.phase == .done }
-            #expect(fixture.store.launches[fixture.worktree.id]?.notes == [.copySkippedOverLimit([".env"], limit: 16)])
+            let id = fixture.worktree.id
+            await pollUntil(timeout: .seconds(10)) { fixture.store.launches[id]?.phase == .done }
+            try #require(fixture.store.launches[id]?.phase == .done)
+            #expect(fixture.store.launches[id]?.notes == [.copySkippedOverLimit([".env"], limit: 16)])
             #expect(!FileManager.default.fileExists(atPath: fixture.worktree.workingDirectory.appendingPathComponent(".env").path))
         }
     }
 
-    /// A worktree deleted while its files are copied leaves no launch
-    /// behind saying it copies.
-    @Test func aWorktreeGoneDuringTheCopy_endsItsLaunch() async throws {
+    /// Holds the Git listing while the store owns the copy task. The actual
+    /// copier still runs after the listing returns.
+    private struct HeldListing: GitRunning {
+        let reply = Gate<[String]>()
+        let canceled = Recorded(false)
+        let requestedRoots = Recorded<[URL]>([])
+        let trace = Recorded<[String]>([])
+
+        func listIgnored(repoRoot: URL) async throws -> [String] {
+            requestedRoots.update { $0.append(repoRoot) }
+            return await withTaskCancellationHandler {
+                let paths = await reply.wait()
+                trace.update { $0.append("listing returned") }
+                return paths
+            } onCancel: {
+                canceled.value = true
+            }
+        }
+
+        func createWorktree(repoRoot: URL, path: URL, baseBranch: String) async throws -> GitResult {
+            throw CocoaError(.featureUnsupported)
+        }
+
+        func removeWorktree(repoRoot: URL, path: URL, force: Bool) async throws -> GitResult {
+            throw CocoaError(.featureUnsupported)
+        }
+
+        func createBranch(repoRoot: URL, name: String, startPoint: String) async throws -> GitResult {
+            throw CocoaError(.featureUnsupported)
+        }
+
+        func pruneWorktrees(repoRoot: URL) async throws -> GitResult {
+            throw CocoaError(.featureUnsupported)
+        }
+
+        func listWorktrees(repoRoot: URL) async throws -> [GitWorktreeInfo] {
+            throw CocoaError(.featureUnsupported)
+        }
+
+        func fetch(repoRoot: URL, remote: String, branch: String) async throws -> GitResult {
+            throw CocoaError(.featureUnsupported)
+        }
+
+        func fetchRef(repoRoot: URL, remote: String, ref: String) async throws -> FetchedRef {
+            throw CocoaError(.featureUnsupported)
+        }
+
+        func commitsBehind(repoRoot: URL, local: String, upstream: String) async -> Int? {
+            nil
+        }
+    }
+
+    private static func startCopy(in fixture: Fixture, listing: HeldListing) -> SessionLaunchStore {
+        let store = SessionLaunchStore(path: { Fixture.path }, git: listing)
+        store.begin(
+            projectID: fixture.project.id,
+            worktreeID: fixture.worktree.id,
+            request: .init(open: .shell, copiesIgnoredFiles: true),
+            in: fixture.session
+        )
+        return store
+    }
+
+    @Test func aWorktreeGoneBeforeFilesAreCopied_endsItsLaunch() async throws {
         try await withTempDir { dir in
-            let fixture = try await Self.withIgnoredFiles(in: dir, files: [".env": "x"], patterns: [".env"], ignored: [".env"])
-            fixture.begin(SessionLaunchRequest(open: .shell, copiesIgnoredFiles: true))
+            let fixture = try await Self.withIgnoredFiles(in: dir, files: [".env": "x"], patterns: [".env"], ignored: [])
+            let listing = HeldListing()
+            defer { listing.reply.open(with: [".env"]) }
+            let store = Self.startCopy(in: fixture, listing: listing)
+            let id = fixture.worktree.id
+            try await listing.reply.waitUntilRequested()
+            #expect(listing.requestedRoots.value == [fixture.project.rootURL])
+            try #require(store.launches[id]?.phase == .copyingFiles)
             try FileManager.default.removeItem(at: fixture.worktree.workingDirectory)
-            await pollUntil(timeout: .seconds(10)) { fixture.store.launches.isEmpty }
-            #expect(fixture.store.launches.isEmpty)
+
+            listing.reply.open(with: [".env"])
+            await pollUntil(timeout: .seconds(10)) { store.launches.isEmpty }
+            #expect(store.launches.isEmpty)
+            #expect(listing.trace.value == ["listing returned"])
             #expect(fixture.tabs.isEmpty)
             #expect(!FileManager.default.fileExists(atPath: fixture.worktree.workingDirectory.path))
         }
     }
 
-    /// Deleting the worktree while its files are copied stops the copy
-    /// first, as it stops a setup.
-    @Test func cancelingTheSetup_alsoStopsACopy() async throws {
+    @Test func cancelingTheSetup_waitsForItsCopyTask() async throws {
         try await withTempDir { dir in
-            let fixture = try await Self.withIgnoredFiles(in: dir, files: [".env": "x"], patterns: [".env"], ignored: [".env"])
-            fixture.begin(SessionLaunchRequest(open: .shell, copiesIgnoredFiles: true))
-            #expect(fixture.store.launches[fixture.worktree.id]?.phase == .copyingFiles)
-            await fixture.store.cancelSetup(worktreeID: fixture.worktree.id)
-            #expect(fixture.store.launches.isEmpty)
+            let fixture = try await Self.withIgnoredFiles(in: dir, files: [".env": "x"], patterns: [".env"], ignored: [])
+            let listing = HeldListing()
+            defer { listing.reply.open(with: [".env"]) }
+            let store = Self.startCopy(in: fixture, listing: listing)
+            let id = fixture.worktree.id
+            try await listing.reply.waitUntilRequested()
+            try #require(store.launches[id]?.phase == .copyingFiles)
+            let cancel = Task {
+                await store.cancelSetup(worktreeID: id)
+                listing.trace.update { $0.append("cancel returned") }
+            }
+            await pollUntil { listing.canceled.value }
+            #expect(listing.canceled.value)
+            #expect(listing.trace.value.isEmpty)
+            #expect(store.launches.isEmpty)
+
+            listing.reply.open(with: [".env"])
+            await cancel.value
+            #expect(listing.trace.value == ["listing returned", "cancel returned"])
             #expect(fixture.tabs.isEmpty)
+            let destination = fixture.worktree.workingDirectory.appendingPathComponent(".env")
+            #expect(!FileManager.default.fileExists(atPath: destination.path))
         }
     }
 }
@@ -470,9 +607,14 @@ extension SessionLaunchStoreTests {
             session: session,
             project: project
         ))
-        #expect(session.stagedLaunch(paneID: searching)?.environment.isEmpty == true)
+        let launch = try #require(session.stagedLaunch(paneID: searching))
+        #expect(launch.command == "codex")
+        #expect(launch.environment.isEmpty)
         let shell = try #require(Self.open(SessionLaunchRequest(open: .shell), store: store, session: session, project: project))
         #expect(session.stagedLaunch(paneID: shell) == nil)
+        let before = session.tabs(in: .project(project.id)).map(\.id)
         #expect(Self.open(SessionLaunchRequest(open: .nothing), store: store, session: session, project: project) == nil)
+        #expect(before.count == 2)
+        #expect(session.tabs(in: .project(project.id)).map(\.id) == before)
     }
 }

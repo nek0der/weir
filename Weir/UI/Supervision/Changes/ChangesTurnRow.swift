@@ -338,7 +338,6 @@ struct TurnCardLabel: View {
     let isUnviewed: Bool
     /// The row's conversation, `nil` in a worktree of one.
     let conversation: ConversationChoice?
-    @Environment(\.locale) private var locale
     @Environment(\.turnNumberDigits) private var turnNumberDigits
 
     private typealias Layout = WeirLayout.Supervision
@@ -353,37 +352,44 @@ struct TurnCardLabel: View {
 
     /// The column's contents at their own width.
     var content: some View {
-        VStack(alignment: .leading, spacing: Layout.turnLabelSpacing) {
-            // Monospaced, so the numbers stand in one column down the list.
-            // The pill is drawn behind the number, past its frame, rather
-            // than padding it: the number stays where a viewed turn's
-            // stands, and the card stays as tall.
-            Text(verbatim: ReceiptText.turn(number))
-                .font(Font(Layout.turnNumberFont))
-                // The soft blue: each
-                // card carries one, and a solid fill out-shouted the card's title.
-                .foregroundStyle(isUnviewed ? SupervisionTokens.unreadText.color : SupervisionTokens.muted.color)
-                .background {
-                    if isUnviewed {
-                        RoundedRectangle(cornerRadius: Layout.turnUnviewedPillCornerRadius, style: .continuous)
-                            .fill(SupervisionTokens.unreadFill.color)
-                            .padding(.horizontal, -Layout.turnUnviewedPillPadding.width)
-                            .padding(.vertical, -Layout.turnUnviewedPillPadding.height)
-                            .accessibilityHidden(true)
+        Content(number: number, isUnviewed: isUnviewed, conversation: conversation)
+    }
+
+    private struct Content: View {
+        let number: Int
+        let isUnviewed: Bool
+        let conversation: ConversationChoice?
+        @Environment(\.locale) private var locale
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: Layout.turnLabelSpacing) {
+                // Monospaced digits keep turn numbers aligned. The unread pill
+                // extends beyond the text frame so it does not change the layout.
+                Text(verbatim: ReceiptText.turn(number))
+                    .font(Font(Layout.turnNumberFont))
+                    // Use a muted blue so the pill does not compete with the card title.
+                    .foregroundStyle(isUnviewed ? SupervisionTokens.unreadText.color : SupervisionTokens.muted.color)
+                    .background {
+                        if isUnviewed {
+                            RoundedRectangle(cornerRadius: Layout.turnUnviewedPillCornerRadius, style: .continuous)
+                                .fill(SupervisionTokens.unreadFill.color)
+                                .padding(.horizontal, -Layout.turnUnviewedPillPadding.width)
+                                .padding(.vertical, -Layout.turnUnviewedPillPadding.height)
+                                .accessibilityHidden(true)
+                        }
                     }
+                if let conversation {
+                    let badge = SessionRowFact.Badge.agent(conversation.conversation.provider)
+                    // Silent: the row's sentence names the conversation. We keep
+                    // the bar's slot on a row with no identity, so every badge in
+                    // the list stands at one left edge.
+                    ConversationIdentityLead(identity: conversation.identity, reservesBarSlot: true) {
+                        SessionAgentBadge(badge: badge, text: SessionRowFactText.badge(badge, locale: locale), size: .row)
+                    }
+                    // Align the badge with the unread pill without changing
+                    // the column width or prompt position.
+                    .offset(x: -Layout.turnUnviewedPillPadding.width)
                 }
-            if let conversation {
-                let badge = SessionRowFact.Badge.agent(conversation.conversation.provider)
-                // Silent: the row's sentence names the conversation. We keep
-                // the bar's slot on a row with no identity, so every badge in
-                // the list stands at one left edge.
-                ConversationIdentityLead(identity: conversation.identity, reservesBarSlot: true) {
-                    SessionAgentBadge(badge: badge, text: SessionRowFactText.badge(badge, locale: locale), size: .row)
-                }
-                // Out to where the unviewed pill starts, so the two marks
-                // share a left edge; moved, not padded, so the column and
-                // the prompt after it stay put.
-                .offset(x: -Layout.turnUnviewedPillPadding.width)
             }
         }
     }

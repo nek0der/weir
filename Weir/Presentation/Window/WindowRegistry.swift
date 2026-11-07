@@ -424,9 +424,7 @@ final class WindowRegistry {
         // Resolved once the switch is done, with whatever row or tab was
         // asked for with it selected; a view looking first resolves it the
         // same way (`isParkedReviewArrival`).
-        Task { @MainActor [weak window] in
-            window?.resolveParkedReviewArrival()
-        }
+        window.scheduleParkedReviewArrival()
     }
 
     /// Lists the windows of a restored session, one for each of its

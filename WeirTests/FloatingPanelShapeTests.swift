@@ -17,14 +17,20 @@ struct FloatingPanelShapeTests {
     }
 
     @Test func withAnArrow_standsOutOnTheEdgeItFaces() {
-        let top = FloatingPanelShape(cornerRadius: 16, arrow: .init(edge: .top, offset: 120), arrowHeight: 10)
-        let bounds = top.path(in: rect).boundingRect
+        let top = FloatingPanelShape(cornerRadius: 16, arrow: .init(edge: .top, offset: 70), arrowHeight: 10)
+        let topPath = top.path(in: rect)
+        let bounds = topPath.boundingRect
         #expect(bounds.minY == rect.minY - 10)
         #expect(bounds.maxY == rect.maxY)
+        #expect(topPath.contains(CGPoint(x: 70, y: rect.minY - 5)))
+        #expect(!topPath.contains(CGPoint(x: 120, y: rect.minY - 5)))
 
-        let bottom = FloatingPanelShape(cornerRadius: 16, arrow: .init(edge: .bottom, offset: 120), arrowHeight: 10)
-        let bottomBounds = bottom.path(in: rect).boundingRect
+        let bottom = FloatingPanelShape(cornerRadius: 16, arrow: .init(edge: .bottom, offset: 170), arrowHeight: 10)
+        let bottomPath = bottom.path(in: rect)
+        let bottomBounds = bottomPath.boundingRect
         #expect(bottomBounds.maxY == rect.maxY + 10)
         #expect(bottomBounds.minY == rect.minY)
+        #expect(bottomPath.contains(CGPoint(x: 170, y: rect.maxY + 5)))
+        #expect(!bottomPath.contains(CGPoint(x: 120, y: rect.maxY + 5)))
     }
 }

@@ -85,7 +85,12 @@ struct TestWriteGuardTests {
                 try SecureFileWrite.moveItem(at: source, to: missing)
             }
             // The refused move left the source where it was.
-            #expect(FileManager.default.fileExists(atPath: source.path))
+            #expect(try Data(contentsOf: source) == Data("[]".utf8))
+            let destination = dir.appendingPathComponent("moved.json")
+            #expect(throws: TestWriteGuard.Refusal.self) {
+                try SecureFileWrite.moveItem(at: missing, to: destination)
+            }
+            #expect(!FileManager.default.fileExists(atPath: destination.path))
         }
     }
 
@@ -110,14 +115,6 @@ struct TestWriteGuardTests {
         #expect(files.capture(UUID(), with: writer) == nil)
         #expect(writer.calls == 0)
         #expect(!FileManager.default.fileExists(atPath: files.directory.path))
-    }
-
-    @MainActor
-    @Test func ghosttyConfigWrite_realApplicationSupport_isRefused() throws {
-        let folder = try Self.uncreatableProbeFolder()
-        let path = GhosttyConfigBridge.writeConfigFile(settings: .default, resourcesDir: nil, directory: folder)
-        #expect(path == nil)
-        #expect(!FileManager.default.fileExists(atPath: folder.path))
     }
 
     @Test func applicationSupportDirectory_underTests_liesOutsideEveryProtectedFolder() {
@@ -192,7 +189,8 @@ struct TestWriteGuardTests {
         }
     }
 
-    @Test func refuses_followsALinkWhoseTargetDoesNotExistYet() throws {
+    @Test(arguments: [false, true])
+    func refuses_followsALinkWhoseTargetDoesNotExistYet(isRelative: Bool) throws {
         try withTempDir { dir in
             let root = dir.appendingPathComponent("Library", isDirectory: true)
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -200,8 +198,8 @@ struct TestWriteGuardTests {
             // An open that follows the link would create the file at its
             // target, so the link is refused too.
             try FileManager.default.createSymbolicLink(
-                at: dangling,
-                withDestinationURL: root.appendingPathComponent("state.json")
+                atPath: dangling.path,
+                withDestinationPath: isRelative ? "Library/state.json" : root.appendingPathComponent("state.json").path
             )
             #expect(TestWriteGuard.refuses(dangling, protectedRoots: [root]))
         }
@@ -239,6 +237,10 @@ struct TestWriteGuardTests {
                 linkedFolder.appendingPathComponent("state.json"),
                 protectedRoots: [root]
             ))
+            let alias = dir.appendingPathComponent("alias")
+            try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
+            // The full target is outside, but unlink would change the protected leaf.
+            #expect(TestWriteGuard.refuses(alias.appendingPathComponent("config.toml"), protectedRoots: [root]))
             // The folder outside, reached by its own name, stays allowed.
             #expect(!TestWriteGuard.refuses(outside.appendingPathComponent("state.json"), protectedRoots: [root]))
         }

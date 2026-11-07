@@ -39,6 +39,10 @@ struct SurfaceFrameFitTests {
         #expect(fit(CGRect(x: 0.6, y: 66, width: 799, height: 534)).insets.leading == 0)
         #expect(fit(CGRect(x: 0, y: 66, width: 799.5, height: 534)).insets.trailing == 1)
         #expect(fit(CGRect(x: 0, y: 66, width: 799.4, height: 534)).insets.trailing == 0)
+        #expect(fit(CGRect(x: 66, y: 0.5, width: 300, height: 599)).insets.top == 1)
+        #expect(fit(CGRect(x: 66, y: 0.6, width: 300, height: 599)).insets.top == 0)
+        #expect(fit(CGRect(x: 66, y: 66, width: 300, height: 533.5)).insets.bottom == 1)
+        #expect(fit(CGRect(x: 66, y: 66, width: 300, height: 533.4)).insets.bottom == 0)
     }
 
     @Test func oneReadingOfThePane_placesItOnTheSurface() {
@@ -104,6 +108,8 @@ struct SurfaceFrameFitTests {
     }
 
     @Test func aRingInsetPastTheSurfacesCorner_isSquare() {
-        #expect(fit(CGRect(origin: .zero, size: surface)).inset(by: 12).radii == RectangleCornerRadii())
+        let ring = fit(CGRect(origin: .zero, size: surface)).inset(by: 12)
+        #expect(ring.radii == RectangleCornerRadii())
+        #expect(ring.insets == edges(13, 13, 13, 13))
     }
 }

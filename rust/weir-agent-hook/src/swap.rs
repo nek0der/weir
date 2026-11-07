@@ -627,8 +627,12 @@ mod tests {
         assert!(names.contains(&".gitignore".into()), "lists what it opened");
         area.remove_tree(std::ffi::OsStr::new("gen-1")).unwrap();
 
-        assert!(dir.join("elsewhere/gen-1/keep.txt").exists());
+        assert_eq!(
+            fs::read_to_string(dir.join("elsewhere/gen-1/keep.txt")).unwrap(),
+            "keep"
+        );
         assert!(!dir.join("moved/gen-1").exists());
+        assert!(dir.join("moved/.gitignore").is_file());
         // A link is not a directory to open from here.
         let worktree = HeldDirectory::open(&dir, Path::new("")).unwrap();
         assert!(worktree.child(std::ffi::OsStr::new("area")).is_err());
@@ -659,6 +663,8 @@ mod tests {
         let first = list();
         assert_eq!(first, vec![".gitignore", "side"]);
         assert_eq!(list(), first);
+        area.remove_tree(std::ffi::OsStr::new("side")).unwrap();
+        assert_eq!(list(), [".gitignore"]);
     }
 
     #[test]
@@ -673,14 +679,14 @@ mod tests {
         assert_eq!(fs::read_to_string(dir.join(first)).unwrap(), "b");
         assert_eq!(fs::read_to_string(dir.join(second)).unwrap(), "a");
 
-        assert!(
-            rename_new(&dir, first, second).is_err(),
-            "something is there"
-        );
+        let refused = rename_new(&dir, first, second).expect_err("something is there");
+        assert_eq!(refused.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(dir.join(first)).unwrap(), "b");
         assert_eq!(fs::read_to_string(dir.join(second)).unwrap(), "a");
         make_parents(&dir, third).unwrap();
         rename_new(&dir, first, third).unwrap();
         assert_eq!(fs::read_to_string(dir.join(third)).unwrap(), "b");
+        assert!(!dir.join(first).exists());
         assert!(can_exchange(&dir), "the temporary directory's volume does");
     }
 
@@ -700,6 +706,8 @@ mod tests {
         assert!(rename_new(&dir, Path::new("a"), Path::new("linked/c")).is_err());
         assert!(make_parents(&dir, Path::new("linked/d/e")).is_err());
         assert_eq!(fs::read_to_string(outside.join("b")).unwrap(), "outside");
+        assert_eq!(fs::read_to_string(dir.join("a")).unwrap(), "a");
+        assert_eq!(fs::read_link(dir.join("linked")).unwrap(), outside);
         assert!(!outside.join("c").exists() && !outside.join("d").exists());
     }
 }

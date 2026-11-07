@@ -17,11 +17,14 @@ struct SessionTerminalRegionTests {
         let registry: WindowRegistry
         let tab: Weir.Tab
         let pane: UUID
+        let emptyContainer: ContainerID
         let window: NSWindow
         let host: NSView
 
-        init(directory: URL) throws {
+        init(directory: URL) {
             let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            let project = session.addOrActivateProject(rootURL: directory, suggestedName: "Empty project")
+            session.setActiveTab(tab.id)
             let registry = WindowRegistry(primary: session.primarySelection)
             registry.appActivityChanged(isActive: true)
             let view = SessionTerminalRegion { Color.clear }
@@ -36,6 +39,7 @@ struct SessionTerminalRegionTests {
             self.registry = registry
             self.tab = tab
             self.pane = pane
+            emptyContainer = .project(project.id)
             self.window = window
             self.host = host
         }
@@ -43,33 +47,31 @@ struct SessionTerminalRegionTests {
         var isPaneReported: Bool {
             registry.visibility.union.contains(pane) && registry.attention.isSeen(pane)
         }
-    }
 
-    @Test func movingToARowWithNoTabs_stopsThePaneCountingAsSeenOrDrawn() async throws {
-        try await withTempDir { directory in
-            let fixture = try Fixture(directory: directory)
-            defer { fixture.window.close() }
-            await settle(fixture.host) { fixture.isPaneReported }
-            #expect(fixture.isPaneReported)
-
-            fixture.session.primarySelection.activeTabID = nil
-
-            await settle(fixture.host) { !fixture.registry.attention.isSeen(fixture.pane) }
-            #expect(!fixture.registry.attention.isSeen(fixture.pane))
-            #expect(!fixture.registry.visibility.union.contains(fixture.pane))
+        var isPaneAbsent: Bool {
+            !registry.visibility.union.contains(pane) && !registry.attention.isSeen(pane)
         }
     }
 
-    @Test func comingBackFromARowWithNoTabs_countsThePaneAgain() async throws {
+    @Test func selectingAnEmptyRowAndReturning_updatesDrawingAndAttention() async throws {
         try await withTempDir { directory in
-            let fixture = try Fixture(directory: directory)
+            let fixture = Fixture(directory: directory)
             defer { fixture.window.close() }
             await settle(fixture.host) { fixture.isPaneReported }
-            fixture.session.primarySelection.activeTabID = nil
-            await settle(fixture.host) { !fixture.registry.attention.isSeen(fixture.pane) }
+            try #require(fixture.isPaneReported)
+            let selection = fixture.session.primarySelection
+            try #require(fixture.session.tabs(in: fixture.emptyContainer).isEmpty)
 
-            fixture.session.primarySelection.activeTabID = fixture.tab.id
+            fixture.session.setActiveContainer(fixture.emptyContainer, at: .window(selection), intent: .repair)
 
+            #expect(selection.activeContainerID == fixture.emptyContainer)
+            #expect(selection.activeTabID == nil)
+            await settle(fixture.host) { fixture.isPaneAbsent }
+            try #require(fixture.isPaneAbsent)
+
+            fixture.session.setActiveTab(fixture.tab.id)
+
+            #expect(selection.activeTabID == fixture.tab.id)
             await settle(fixture.host) { fixture.isPaneReported }
             #expect(fixture.isPaneReported)
         }

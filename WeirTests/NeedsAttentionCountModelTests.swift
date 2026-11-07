@@ -15,6 +15,7 @@ struct NeedsAttentionCountModelTests {
         (AttentionCounts(questions: 1), .blocking),
         (AttentionCounts(prompts: 1), .blocking),
         (AttentionCounts(stops: 1), .blocking),
+        (AttentionCounts(signIns: 1), .blocking),
         (AttentionCounts(approvals: 1, unread: 4), .blocking),
         (AttentionCounts(unread: 2), .unreadOnly),
         (AttentionCounts(), .empty)
@@ -32,6 +33,7 @@ struct NeedsAttentionCountModelTests {
 
     @Test func theHint_namesTheKeys_andTheKindsThatHaveItems() {
         let model = NeedsAttentionCountModel(AttentionCounts(approvals: 1, prompts: 1, stops: 1, unread: 2))
+        #expect(model.count == 5)
 
         #expect(model.hint(listShortcut: "⌥⌘J", nextShortcut: "⌘J", locale: Self.english)
             == "Needs Attention list (⌥⌘J; Next Action: ⌘J) · 1 Approval · 1 Response · 1 Stopped · 2 Unread")

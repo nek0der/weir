@@ -61,6 +61,7 @@ struct ReceiptFormattingTests {
 
         #expect(ReceiptText.check(check(0, failures: 1), locale: Self.english) == "✓ Tests (after 1 failure)")
         #expect(ReceiptText.check(check(0, failures: 2), locale: Self.english) == "✓ Tests (after 2 failures)")
+        #expect(ReceiptText.check(check(0, isFiltered: true, failures: 2), locale: Self.english) == "✓ Tests (filtered, after 2 failures)")
         #expect(ReceiptText.check(check(0, isFiltered: true, failures: 2), locale: Self.japanese) == "✓ テスト（絞り込み、失敗 2 回のあと）")
         #expect(ReceiptText.check(check(0, failures: 2), locale: Self.japanese) == "✓ テスト（失敗 2 回のあと）")
         #expect(ReceiptText.check(check(nil, failures: 2), locale: Self.english) == "Tests (after 2 failures)")
@@ -68,27 +69,12 @@ struct ReceiptFormattingTests {
         // A failure is one of the failures it counts.
         #expect(ReceiptText.check(check(1, failures: 0), locale: Self.english) == "✗ Tests")
         #expect(ReceiptText.check(check(1, failures: 1), locale: Self.english) == "✗ Tests (2 failures)")
+        #expect(ReceiptText.check(check(1, isFiltered: true, failures: 1), locale: Self.english) == "✗ Tests (filtered, 2 failures)")
+        #expect(ReceiptText.check(check(1, failures: 1), locale: Self.japanese) == "✗ テスト（失敗 2 回）")
+        #expect(ReceiptText.check(check(1, isFiltered: true, failures: 1), locale: Self.japanese) == "✗ テスト（絞り込み、失敗 2 回）")
         #expect(ReceiptText.check(check(1, isFiltered: true, failures: 3), locale: Self.english) == "✗ Tests (filtered, 4 failures)")
         #expect(ReceiptText.check(check(1, failures: 2), locale: Self.japanese) == "✗ テスト（失敗 3 回）")
         #expect(ReceiptText.check(check(0, failures: 0), locale: Self.japanese) == "✓ テスト", "nothing to say without one")
-    }
-
-    /// A check that ran after failures and one that is one of them read
-    /// apart in Japanese too, which once said 「失敗 2 回」 for both.
-    @Test func aCheckAfterFailures_andAFailedOne_readApartInBothLanguages() {
-        func label(_ exitCode: Int, isFiltered: Bool, failures: Int, _ locale: Locale) -> String {
-            let check = CheckSummary(command: "cargo test", isFiltered: isFiltered, exitCode: exitCode, earlierFailures: failures)
-            return ReceiptText.check(check, locale: locale)
-        }
-        for locale in [Self.english, Self.japanese] {
-            for isFiltered in [false, true] {
-                let afterTwo = label(0, isFiltered: isFiltered, failures: 2, locale).dropFirst(2)
-                let failedOfTwo = label(1, isFiltered: isFiltered, failures: 1, locale).dropFirst(2)
-                #expect(afterTwo != failedOfTwo, "\(locale.identifier), filtered: \(isFiltered)")
-            }
-        }
-        #expect(label(1, isFiltered: false, failures: 1, Self.japanese) == "✗ テスト（失敗 2 回）")
-        #expect(label(1, isFiltered: true, failures: 1, Self.japanese) == "✗ テスト（絞り込み、失敗 2 回）")
     }
 
     @Test func theBarsRuns_setTheCountsAndAFailedCheckApart_andReadAsTheReceipt() {
@@ -108,7 +94,9 @@ struct ReceiptFormattingTests {
         // At rest the number leads, nothing is set apart, and the runs read
         // as the receipt's one sentence.
         let atRest = ReceiptText.runs(turn, includesTurnNumber: true, emphasizesChanges: false, locale: Self.english)
-        #expect(atRest.map(\.text).joined() == ReceiptText.receipt(turn, locale: Self.english))
+        let sentence = atRest.map(\.text).joined()
+        #expect(sentence == "T7 · 2 files +94 −2 · ✗ Tests")
+        #expect(sentence == ReceiptText.receipt(turn, locale: Self.english))
         #expect(atRest.first == ReceiptRun(text: "T7", role: .plain))
         #expect(atRest.contains(ReceiptRun(text: "+94", role: .added(isEmphasized: false))))
     }

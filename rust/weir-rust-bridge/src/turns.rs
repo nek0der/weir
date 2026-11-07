@@ -242,9 +242,19 @@ mod tests {
     use serde_json::Value;
     use std::ptr;
 
+    const UNWRITTEN_LEN: usize = usize::MAX;
+
+    fn take_json(out: *mut u8, out_len: usize) -> Option<Value> {
+        assert_ne!(out, ptr::dangling_mut(), "output pointer was not written");
+        assert_ne!(out_len, UNWRITTEN_LEN, "output length was not written");
+        // SAFETY: These are initialized outputs from the ABI call.
+        unsafe { take_bytes(out, out_len) }
+            .map(|body| serde_json::from_slice(&body).expect("JSON body"))
+    }
+
     fn apply(directory: &str, turn_ids: &[u8]) -> (i32, Option<Value>) {
         let mut out: *mut u8 = ptr::dangling_mut();
-        let mut out_len: usize = 99;
+        let mut out_len = UNWRITTEN_LEN;
         // SAFETY: Every pointer is a live local of this test.
         let status = unsafe {
             weir_turn_gc_apply_v1(
@@ -256,12 +266,7 @@ mod tests {
                 &raw mut out_len,
             )
         };
-        // SAFETY: The pair is what this call wrote.
-        let body = unsafe { take_bytes(out, out_len) };
-        (
-            status,
-            body.and_then(|body| serde_json::from_slice(&body).ok()),
-        )
+        (status, take_json(out, out_len))
     }
 
     #[test]
@@ -301,9 +306,46 @@ mod tests {
         assert_eq!(status, TURN_NULL_POINTER);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_sweep_with_only_one_output_pointer_leaves_the_files_alone() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let orphan = scratch.path().join("gone.json.flock");
+        std::fs::write(&orphan, b"").expect("sidecar");
+        let directories = serde_json::to_vec(&[scratch.path()]).expect("json");
+        let mut out = ptr::dangling_mut();
+        let mut out_len = UNWRITTEN_LEN;
+        // SAFETY: Each non-null pointer addresses a live local or the input bytes.
+        unsafe {
+            assert_eq!(
+                weir_leftover_sweep_v1(
+                    directories.as_ptr(),
+                    directories.len(),
+                    ptr::null_mut(),
+                    &raw mut out_len
+                ),
+                TURN_NULL_POINTER
+            );
+            assert_eq!(
+                weir_leftover_sweep_v1(
+                    directories.as_ptr(),
+                    directories.len(),
+                    &raw mut out,
+                    ptr::null_mut()
+                ),
+                TURN_NULL_POINTER
+            );
+        }
+        assert_eq!(out, ptr::dangling_mut());
+        assert_eq!(out_len, UNWRITTEN_LEN);
+        assert!(orphan.is_file());
+        assert_eq!(sweep(&directories).0, TURN_OK);
+        assert!(!orphan.exists());
+    }
+
     fn sweep(directories: &[u8]) -> (i32, Option<Value>) {
         let mut out: *mut u8 = ptr::dangling_mut();
-        let mut out_len: usize = 99;
+        let mut out_len = UNWRITTEN_LEN;
         // SAFETY: Every pointer is a live local of this test.
         let status = unsafe {
             weir_leftover_sweep_v1(
@@ -313,19 +355,15 @@ mod tests {
                 &raw mut out_len,
             )
         };
-        // SAFETY: The pair is what this call wrote.
-        let body = unsafe { take_bytes(out, out_len) };
-        (
-            status,
-            body.and_then(|body| serde_json::from_slice(&body).ok()),
-        )
+        (status, take_json(out, out_len))
     }
 
     #[cfg(unix)]
     #[test]
     fn a_sweep_reports_what_it_removed() {
         let scratch = tempfile::tempdir().expect("scratch");
-        std::fs::write(scratch.path().join("gone.json.flock"), b"").expect("sidecar");
+        let orphan = scratch.path().join("gone.json.flock");
+        std::fs::write(&orphan, b"").expect("sidecar");
         let directories = serde_json::to_vec(&[scratch.path()]).expect("json");
         let (status, body) = sweep(&directories);
         assert_eq!(status, TURN_OK);
@@ -333,16 +371,17 @@ mod tests {
             body,
             Some(serde_json::json!({"sidecars": 1, "temporaries": 0, "counters": 0}))
         );
+        assert!(!orphan.exists());
     }
 
     #[test]
     fn a_sweep_of_a_relative_directory_is_refused() {
-        assert_eq!(sweep(br#"["state"]"#).0, TURN_INVALID_INPUT);
+        assert_eq!(sweep(br#"["state"]"#), (TURN_INVALID_INPUT, None));
     }
 
     fn end_turn(request: &[u8]) -> (i32, Option<Value>) {
         let mut out: *mut u8 = ptr::dangling_mut();
-        let mut out_len: usize = 99;
+        let mut out_len = UNWRITTEN_LEN;
         // SAFETY: Every pointer is a live local of this test.
         let status = unsafe {
             weir_stopped_turn_end_v1(
@@ -352,12 +391,7 @@ mod tests {
                 &raw mut out_len,
             )
         };
-        // SAFETY: The pair is what this call wrote.
-        let body = unsafe { take_bytes(out, out_len) };
-        (
-            status,
-            body.and_then(|body| serde_json::from_slice(&body).ok()),
-        )
+        (status, take_json(out, out_len))
     }
 
     #[test]
@@ -415,5 +449,12 @@ mod tests {
     fn input_that_is_not_a_list_of_ids_is_refused() {
         assert_eq!(apply("/tmp", br#"{"id":1}"#), (TURN_INVALID_INPUT, None));
         assert_eq!(apply("", b"[]"), (TURN_INVALID_INPUT, None));
+        let scratch = tempfile::tempdir().expect("scratch");
+        let path = scratch.path().to_str().expect("path");
+        assert_eq!(
+            apply(path, br#"["AAAAAAAA-1111-4111-8111-AAAAAAAAAAA1",1]"#),
+            (TURN_INVALID_INPUT, None)
+        );
+        assert_eq!(apply(path, b"[]"), (TURN_OK, Some(serde_json::json!([]))));
     }
 }

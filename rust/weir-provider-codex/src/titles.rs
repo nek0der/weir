@@ -91,8 +91,9 @@ mod tests {
                 "me\",\"updated_at\":\"cut by the tail\"}}\n",
                 "{{\"id\":\"{0}\",\"thread_name\":\"Choose a license\",\"updated_at\":\"t1\"}}\n",
                 "{{\"id\":\"other\",\"thread_name\":\"Another\",\"updated_at\":\"t2\"}}\n",
-                "{{\"id\":\"{0}\",\"thread_name\":\"Choose project license\",\"updated_at\":\"t3\"}}\n",
+                "{{\"id\":\"{0}\",\"thread_name\":\"  Choose project license  \",\"updated_at\":\"t3\"}}\n",
                 "{{\"id\":\"{0}\",\"thread_name\":\"  \",\"updated_at\":\"t4\"}}\n",
+                "{{\"id\":\"other\",\"thread_name\":\"{0} is mentioned here\"}}\n",
             ),
             SESSION
         );
@@ -114,6 +115,13 @@ mod tests {
             titles(r#"{"hook_event_name":"Stop"}"#, index),
             None,
             "a payload without a session id"
+        );
+        assert_eq!(
+            titles(
+                r#"{"hook_event_name":"Stop","session_id":""}"#,
+                r#"{"id":"","thread_name":"No session"}"#,
+            ),
+            None
         );
     }
 

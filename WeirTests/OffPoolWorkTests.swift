@@ -49,7 +49,7 @@ struct OffPoolWorkTests {
             for await result in group {
                 results.append(result)
             }
-            return results.allSatisfy(\.self)
+            return results.count == width && results.allSatisfy(\.self)
         }
         #expect(allStarted)
     }

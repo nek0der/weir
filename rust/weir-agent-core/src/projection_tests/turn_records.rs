@@ -42,7 +42,15 @@ fn content_none_keeps_carried_summary() {
         turn_files: vec![turn_file(T1, Some(turn_json(T1, 1, "started", PENDING)))],
         ..ProjectionInput::default()
     };
-    let (state, _, _) = project(&ProjectionState::default(), &first, &now());
+    let (state, initial, _) = project(&ProjectionState::default(), &first, &now());
+    assert_eq!(
+        turns_of(&initial)
+            .iter()
+            .map(|turn| turn.turn_id.as_str())
+            .collect::<Vec<_>>(),
+        [T1]
+    );
+    assert!(state.turns.contains_key(T1));
     // The host sends a file it already sent by name only.
     let again = ProjectionInput {
         turn_files: vec![turn_file(T1, None)],
@@ -60,8 +68,9 @@ fn content_none_keeps_carried_summary() {
         turn_files: vec![turn_file(T1, Some("{".to_owned()))],
         ..ProjectionInput::default()
     };
-    let (dropped, _, _) = project(&state, &damaged, &now());
+    let (dropped, projection, _) = project(&state, &damaged, &now());
     assert!(dropped.turns.is_empty());
+    assert_eq!(projection.conversations, Some(Vec::new()));
 }
 
 #[test]
@@ -74,6 +83,7 @@ fn removed_name_drops_summary() {
         ..ProjectionInput::default()
     };
     let (state, _, _) = project(&ProjectionState::default(), &first, &now());
+    assert!(state.turns.contains_key(T1));
     let (state, projection, _) = project(&state, &ProjectionInput::default(), &now());
     assert_eq!(projection.conversations, Some(Vec::new()));
     assert!(state.turns.is_empty(), "and nothing is carried for it");
@@ -323,8 +333,9 @@ fn a_turn_record_under_another_name_is_not_shown() {
         turn_files: vec![turn_file(T2, Some(turn_json(T1, 1, "started", PENDING)))],
         ..ProjectionInput::default()
     };
-    let (_, projection, _) = project(&ProjectionState::default(), &input, &now());
+    let (state, projection, _) = project(&ProjectionState::default(), &input, &now());
     assert_eq!(projection.conversations, Some(Vec::new()));
+    assert!(state.turns.is_empty());
 }
 
 #[test]

@@ -26,6 +26,7 @@ struct RailHighlightTests {
         #expect(of() == .sidebar)
         #expect(of(sidebar: false) == .none)
         #expect(of(update: true) == .update)
+        #expect(of(scratch: true, update: true) == .update)
         #expect(of(scratch: true) == .scratch)
         #expect(of(scratch: true, all: true) == .allProjects)
         #expect(of(scratch: true, history: true) == .history)

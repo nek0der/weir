@@ -73,15 +73,21 @@ struct NotificationNavigationTests {
     @Test func aBannersRequestKey_reachesTheTap() throws {
         let data = try JSONEncoder().encode(Self.key)
         let json = try #require(String(data: data, encoding: .utf8))
+        let container = ContainerID.project(UUID())
+        let containerJSON = try #require(String(data: JSONEncoder().encode(container), encoding: .utf8))
         let payload = NotificationTapPayload(userInfo: [
             "runtimeID": "claude:run",
             "paneID": Self.pane.uuidString,
+            "tabID": Self.tab.uuidString,
+            "containerJSON": containerJSON,
             "requestKeyJSON": json
         ])
         let target = NotificationTarget(payload)
         #expect(target.requestKey == Self.key)
         #expect(target.runtimeID == "claude:run")
         #expect(target.paneID == Self.pane)
+        #expect(target.tabID == Self.tab)
+        #expect(target.containerID == container)
     }
 
     @Test func aHistoryRow_pointsAtItsRequestRuntimeAndPane() {

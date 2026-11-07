@@ -11,7 +11,8 @@ struct CommandLineTextTests {
     @Test(arguments: [
         ("echo \u{201C}hi\u{201D}", "echo \"hi\""),
         ("git commit -m \u{2018}fix\u{2019}", "git commit -m 'fix'"),
-        ("echo \"hi\" && rm -f /tmp/x", "echo \"hi\" && rm -f /tmp/x")
+        ("printf '%s' \"hello\"", "printf '%s' \"hello\""),
+        ("echo \u{201C}a—b…\u{201D}", "echo \"a—b…\"")
     ])
     func sanitizeSmartPunctuation_straightensCurlyQuotes_andLeavesASCII(input: String, expected: String) {
         #expect(CommandLineText.sanitizeSmartPunctuation(input) == expected)

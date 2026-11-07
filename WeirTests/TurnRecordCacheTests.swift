@@ -26,24 +26,50 @@ struct TurnRecordCacheTests {
         )
     }
 
+    private struct ObservedFile: Decodable, Equatable, Sendable {
+        let provider: String
+        let name: String
+        let content: String?
+
+        init(_ file: AgentProjectionFile) {
+            provider = file.provider
+            name = file.name
+            content = file.content
+        }
+
+        init(name: String, content: String? = nil) {
+            provider = "claude"
+            self.name = name
+            self.content = content
+        }
+    }
+
     // MARK: - What a pass sends
 
     @Test func pastItsBudget_aPassSendsTheRestByName_andTheNextSendsIt() throws {
         try withTempDir { state in
-            try AgentRecordFixtures.writeTurn(id: Self.first, number: 1, session: "s1", runID: Self.run, in: state)
-            try AgentRecordFixtures.writeTurn(id: Self.second, number: 2, session: "s1", runID: Self.run, in: state)
+            let first = try AgentRecordFixtures.writeTurn(id: Self.first, number: 1, session: "s1", runID: Self.run, in: state)
+            let second = try AgentRecordFixtures.writeTurn(id: Self.second, number: 2, session: "s1", runID: Self.run, in: state)
+            let firstContent = try String(contentsOf: first, encoding: .utf8)
+            let secondContent = try String(contentsOf: second, encoding: .utf8)
             let cache = TurnRecordCache()
+            let source = try source(state)
 
-            // One record's worth: the second waits.
-            let firstRead = try cache.read([source(state)], contentBudgetBytes: 1)
+            let firstRead = cache.read([source], contentBudgetBytes: 1)
             #expect(!firstRead.isComplete)
-            #expect(firstRead.files.map { $0.content != nil } == [true, false])
+            #expect(firstRead.files.map(ObservedFile.init) == [
+                ObservedFile(name: Self.first, content: firstContent), ObservedFile(name: Self.second)
+            ])
             cache.commit(firstRead)
-            #expect(cache.unchanged()?.isComplete == false, "a pass that reads nothing knows it too")
+            let unchanged = try #require(cache.unchanged())
+            #expect(!unchanged.isComplete)
+            #expect(unchanged.files.map(ObservedFile.init) == [ObservedFile(name: Self.first), ObservedFile(name: Self.second)])
 
-            let secondRead = try cache.read([source(state)], contentBudgetBytes: 1)
+            let secondRead = cache.read([source], contentBudgetBytes: 1)
             #expect(secondRead.isComplete)
-            #expect(secondRead.files.map { $0.content != nil } == [false, true])
+            #expect(secondRead.files.map(ObservedFile.init) == [
+                ObservedFile(name: Self.first), ObservedFile(name: Self.second, content: secondContent)
+            ])
         }
     }
 
@@ -54,31 +80,35 @@ struct TurnRecordCacheTests {
             let large = try AgentRecordFixtures.writeTurn(
                 id: Self.first, number: 1, session: "s1", runID: Self.run, in: state
             )
-            try AgentRecordFixtures.writeTurn(id: Self.second, number: 2, session: "s1", runID: Self.run, in: state)
+            let small = try AgentRecordFixtures.writeTurn(id: Self.second, number: 2, session: "s1", runID: Self.run, in: state)
+            let smallContent = try String(contentsOf: small, encoding: .utf8)
             let content = try String(contentsOf: large, encoding: .utf8)
             try (content + String(repeating: " ", count: 4096)).write(to: large, atomically: true, encoding: .utf8)
             let cache = TurnRecordCache()
 
             let read = try cache.read([source(state)], maxRecordBytes: 2048)
-            #expect(read.files.map(\.name) == [Self.first, Self.second])
-            #expect(read.files.map { $0.content != nil } == [false, true])
+            #expect(read.files.map(ObservedFile.init) == [
+                ObservedFile(name: Self.first), ObservedFile(name: Self.second, content: smallContent)
+            ])
             #expect(read.oversized == [large.path])
             #expect(read.isComplete, "nothing is left for a pass that would only hold it back again")
             #expect(!read.hasUnreadRecord)
             cache.commit(read)
 
-            // Not read again, and still said, until the file changes.
             let again = try cache.read([source(state)], maxRecordBytes: 2048)
-            #expect(again.files.allSatisfy { $0.content == nil })
+            #expect(again.files.map(ObservedFile.init) == [ObservedFile(name: Self.first), ObservedFile(name: Self.second)])
             #expect(again.oversized == [large.path])
             #expect(cache.unchanged()?.oversized == [large.path])
             cache.commit(again)
 
-            try AgentRecordFixtures.writeTurn(
+            let replacement = try AgentRecordFixtures.writeTurn(
                 id: Self.first, number: 1, session: "s1", runID: Self.run, phase: "failed", in: state
             )
+            let replacementContent = try String(contentsOf: replacement, encoding: .utf8)
             let shrunk = try cache.read([source(state)], maxRecordBytes: 2048)
-            #expect(shrunk.files.first?.content?.contains("failed") == true)
+            #expect(shrunk.files.map(ObservedFile.init) == [
+                ObservedFile(name: Self.first, content: replacementContent), ObservedFile(name: Self.second)
+            ])
             #expect(shrunk.oversized.isEmpty)
         }
     }
@@ -90,11 +120,30 @@ struct TurnRecordCacheTests {
             let large = try AgentRecordFixtures.writeTurn(
                 id: Self.first, number: 1, session: "s1", runID: Self.run, in: state
             )
-            try Data(count: 17 * 1024 * 1024).write(to: large)
+            let small = try AgentRecordFixtures.writeTurn(id: Self.second, number: 2, session: "s1", runID: Self.run, in: state)
+            let oversized = String(repeating: "\u{1}", count: 3 * 1024 * 1024)
+            try oversized.write(to: large, atomically: true, encoding: .utf8)
+            #expect(oversized.utf8.count < TurnRecordCache.maxRecordBytes)
+
+            var input = AgentProjectionInput()
+            input.providers = AgentProviderRegistry.descriptors.filter { $0.key == "claude" }
+            input.turnFiles = [AgentProjectionFile(provider: "claude", name: Self.first, content: oversized)]
+            let encoder = JSONEncoder()
+            let tooLarge = try encoder.encode(input)
+            #expect(tooLarge.count > 16 * 1024 * 1024)
+
             let read = try TurnRecordCache().read([source(state)])
+            let smallContent = try String(contentsOf: small, encoding: .utf8)
             #expect(read.oversized == [large.path])
-            let encoded = try JSONEncoder().encode(read.files)
-            #expect(encoded.count < TurnRecordCache.maxRecordBytes)
+            #expect(read.files.map(ObservedFile.init) == [
+                ObservedFile(name: Self.first), ObservedFile(name: Self.second, content: smallContent)
+            ])
+            input.turnFiles = read.files
+            let bytes = try encoder.encode(input)
+            #expect(bytes.count < 16 * 1024 * 1024)
+            let answer = try WeirProjectionBridge.Engine().pass(input: bytes, now: encoder.encode(AgentProjectionInstant.now()))
+            let response = try JSONDecoder().decode(AgentProjectionResponse.self, from: answer.body)
+            #expect(response.projection.conversations?.elements.flatMap(\.turns).map(\.turnID) == [TurnID(Self.second)])
         }
     }
 
@@ -147,7 +196,8 @@ struct TurnRecordCacheTests {
             #expect(unchanged.files.map(\.name) == [Self.first, Self.second])
             #expect(unchanged.files.allSatisfy { $0.content == nil })
             cache.commit(unchanged)
-            #expect(try cache.read([source(state)]).files.allSatisfy { $0.content == nil }, "still sent")
+            let next = try cache.read([source(state)])
+            #expect(next.files.map(ObservedFile.init) == [ObservedFile(name: Self.first), ObservedFile(name: Self.second)])
         }
     }
 
@@ -177,19 +227,6 @@ struct TurnRecordCacheTests {
             try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
 
             #expect(try TurnRecordCache().read([source(state)]).files.map(\.name) == [Self.first])
-        }
-    }
-
-    @Test func aPassThatFailed_sendsTheContentAgain() throws {
-        try withTempDir { state in
-            try AgentRecordFixtures.writeTurn(id: Self.first, number: 1, session: "s1", runID: Self.run, in: state)
-            let cache = TurnRecordCache()
-
-            // Read but never committed: the projection never took it in.
-            _ = try cache.read([source(state)])
-            let again = try cache.read([source(state)])
-
-            #expect(again.files.first?.content != nil)
         }
     }
 
@@ -268,48 +305,68 @@ struct TurnRecordCacheTests {
             )
             let cache = TurnRecordCache()
             try cache.commit(cache.read([source(state)]))
-            let modified = try #require(
-                FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date
-            )
+            let original = try String(contentsOf: url, encoding: .utf8)
+            let replacement = original.replacingOccurrences(of: "\"s1\"", with: "\"s2\"")
+            try #require(replacement != original)
+            var before = stat()
+            try #require(lstat(url.path, &before) == 0)
             let staging = url.deletingLastPathComponent().appendingPathComponent(".replacement")
-            try FileManager.default.copyItem(at: url, to: staging)
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: staging)
-            try FileManager.default.setAttributes([.modificationDate: modified], ofItemAtPath: url.path)
+            try replacement.write(to: staging, atomically: true, encoding: .utf8)
+            let times = [before.st_atimespec, before.st_mtimespec]
+            try #require(utimensat(AT_FDCWD, staging.path, times, 0) == 0)
+            try #require(rename(staging.path, url.path) == 0)
+            var after = stat()
+            try #require(lstat(url.path, &after) == 0)
+            try #require(before.st_size == after.st_size)
+            try #require(before.st_mtimespec.tv_sec == after.st_mtimespec.tv_sec)
+            try #require(before.st_mtimespec.tv_nsec == after.st_mtimespec.tv_nsec)
+            try #require(before.st_ino != after.st_ino)
 
-            #expect(try cache.read([source(state)]).files.first?.content != nil)
+            let reread = try cache.read([source(state)])
+            #expect(reread.files.map(ObservedFile.init) == [ObservedFile(name: Self.first, content: replacement)])
         }
     }
 
-    @Test func aRecordThatCouldNotBeRead_isSentWhenItCanBe() throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aRecordThatCouldNotBeRead_isSentWhenItCanBe() throws {
         try withTempDir { state in
             let url = try AgentRecordFixtures.writeTurn(
                 id: Self.first, number: 1, session: "s1", runID: Self.run, in: state
             )
+            let cache = TurnRecordCache()
+            let source = try source(state)
+            cache.commit(cache.read([source]))
+            let replacement = try AgentRecordFixtures.writeTurn(
+                id: Self.first, number: 1, session: "s1", runID: Self.run, phase: "failed", in: state
+            )
+            let expected = try String(contentsOf: replacement, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
             defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path) }
-            let cache = TurnRecordCache()
+            try #require(FileManager.default.contents(atPath: url.path) == nil)
 
-            let unreadable = try cache.read([source(state)])
-            #expect(unreadable.files.map(\.name) == [Self.first], "named, so what was read stays")
-            #expect(unreadable.files.first?.content == nil)
+            let unreadable = cache.read([source])
+            #expect(unreadable.files.map(ObservedFile.init) == [ObservedFile(name: Self.first)])
+            #expect(unreadable.hasUnreadRecord)
             cache.commit(unreadable)
-            // Its file can change without its directory changing, so the
-            // list does not stand in for the next pass's.
             #expect(cache.unchanged() == nil)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
 
-            #expect(try cache.read([source(state)]).files.first?.content != nil)
+            let readable = cache.read([source])
+            #expect(!readable.hasUnreadRecord)
+            #expect(readable.files.map(ObservedFile.init) == [ObservedFile(name: Self.first, content: expected)])
         }
     }
 
     @Test func aFileInProgressOrOfAnotherKind_isNotARecord() throws {
         try withTempDir { state in
-            let directory = try AgentRecordFixtures.turns(in: state)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try Data("{}".utf8).write(to: directory.appendingPathComponent(".T.turn.json"))
-            try Data("{}".utf8).write(to: directory.appendingPathComponent("0123abcd.counter"))
+            let record = try AgentRecordFixtures.writeTurn(id: Self.first, number: 1, session: "s1", runID: Self.run, in: state)
+            let content = try String(contentsOf: record, encoding: .utf8)
+            let source = try source(state)
+            try Data(content.utf8).write(to: source.directory.appendingPathComponent("." + Self.second + source.suffix))
+            try Data(content.utf8).write(to: source.directory.appendingPathComponent("0123abcd.counter"))
 
-            #expect(try TurnRecordCache().read([source(state)]).files.isEmpty)
+            let read = TurnRecordCache().read([source])
+            #expect(read.files.map(ObservedFile.init) == [ObservedFile(name: Self.first, content: content)])
         }
     }
 
@@ -341,7 +398,68 @@ struct TurnRecordCacheTests {
         #expect(list.skipped == 1)
     }
 
+}
+
+extension TurnRecordCacheTests {
+
     // MARK: - Through a pass
+
+    enum FailurePoint: Equatable, Sendable {
+        case pass, commit
+    }
+
+    private struct ObservedRun: Decodable {
+        let revision: Int
+    }
+
+    private struct ObservedInput: Decodable, Sendable {
+        let records: [ObservedFile]
+        let turnFiles: [ObservedFile]
+
+        var revision: Int? {
+            guard let content = records.first?.content else { return nil }
+            return try? JSONDecoder().decode(ObservedRun.self, from: Data(content.utf8)).revision
+        }
+    }
+
+    private final class InspectingEngine: ProjectionPassing {
+        let inputs = Recorded<[ObservedInput]>([])
+        let commits = Recorded(0)
+        let failure = Recorded<FailurePoint?>(nil)
+        let release = DispatchSemaphore(value: 0)
+        private let engine = WeirProjectionBridge.Engine()
+        private let heldRevision: Int?
+
+        init(heldRevision: Int? = nil) {
+            self.heldRevision = heldRevision
+        }
+
+        func pass(input: Data, now: Data) throws -> WeirProjectionPass {
+            let observed = try JSONDecoder().decode(ObservedInput.self, from: input)
+            inputs.update { $0.append(observed) }
+            if let heldRevision, observed.revision == heldRevision,
+               release.wait(timeout: .now() + 10) != .success
+            {
+                throw WeirProjectionError.rust(-2)
+            }
+            if failure.value == .pass {
+                throw WeirProjectionError.rust(-1)
+            }
+            return try engine.pass(input: input, now: now)
+        }
+
+        func commit(_ proposal: UInt64) throws {
+            if failure.value == .commit {
+                throw WeirProjectionError.rust(-1)
+            }
+            try engine.commit(proposal)
+            commits.update { $0 += 1 }
+        }
+
+        func turnsTaken(change: Data, now: Data) throws -> Int {
+            try engine.turnsTaken(change: change, now: now)
+        }
+    }
 
     private func adapter(
         state: URL,
@@ -444,23 +562,34 @@ struct TurnRecordCacheTests {
         try await withTempDir { root in
             let state = root.appendingPathComponent("agent-states", isDirectory: true)
             let sessions = root.appendingPathComponent("sessions", isDirectory: true)
-            try writeRun(session: "s1", currentTurn: nil, in: state)
+            let turnFolder = try source(state).directory
+            let directories = AgentDirectories(state: state, sessions: sessions, cwdEvents: nil)
+            for folder in [state, sessions, turnFolder] + [directories.worktreeEvents].compactMap(\.self) {
+                try FileManager.default.createDirectory(
+                    at: folder,
+                    withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o700]
+                )
+            }
             let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
             let adapter = adapter(state: state, sessions: sessions)
             adapter.bootstrap(into: session, attention: AttentionState())
-            // Between the first listing and the descriptors opening.
+            #expect(adapter.turnHistory.turn(TurnID(Self.first)) == nil)
+            // No run record means there is no periodic PID sweep to fill in
+            // for the watcher's catch-up request.
             try AgentRecordFixtures.writeTurn(id: Self.first, number: 1, session: "s1", runID: Self.run, in: state)
 
             adapter.startWatching()
             defer { adapter.stopWatching() }
-            adapter.requestPass()
+            await pollUntil { adapter.turnHistory.turn(TurnID(Self.first)) != nil }
             await adapter.passesSettled()
 
             #expect(adapter.turnHistory.turn(TurnID(Self.first))?.displayNumber == 1)
         }
     }
 
-    @Test func aRecordThatCouldNotBeRead_isReadByTheNextPass_withoutItsDirectoryChanging() async throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aRecordThatCouldNotBeRead_isReadByTheNextPass_withoutItsDirectoryChanging() async throws {
         try await withTempDir { root in
             let state = root.appendingPathComponent("agent-states", isDirectory: true)
             let sessions = root.appendingPathComponent("sessions", isDirectory: true)
@@ -470,6 +599,7 @@ struct TurnRecordCacheTests {
             )
             try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
             defer { try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path) }
+            try #require(FileManager.default.contents(atPath: url.path) == nil)
             let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
             let adapter = adapter(state: state, sessions: sessions)
             adapter.bootstrap(into: session, attention: AttentionState())
@@ -500,18 +630,25 @@ struct TurnRecordCacheTests {
             try writeRun(session: "s1", currentTurn: nil, in: state)
             let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
             let attention = AttentionState()
-            let adapter = adapter(state: state, sessions: sessions)
+            let engine = InspectingEngine(heldRevision: 5)
+            defer { engine.release.signal() }
+            let adapter = adapter(state: state, sessions: sessions, engine: engine)
             adapter.bootstrap(into: session, attention: attention)
 
-            // The run records are read on the main actor before the pass
-            // leaves it, so this one has read the finished record already.
+            try writeRun(session: "s1", currentTurn: nil, revision: 5, in: state)
             adapter.requestPass()
-            try writeRun(session: "s1", currentTurn: nil, state: "running", revision: 5, in: state)
+            await pollUntil { engine.inputs.value.map(\.revision) == [4, 5] }
+            try #require(engine.inputs.value.map(\.revision) == [4, 5])
+            try writeRun(session: "s1", currentTurn: nil, state: "running", revision: 6, in: state)
             adapter.requestPass()
             adapter.requestPass()
+            #expect(engine.inputs.value.map(\.revision) == [4, 5])
+            engine.release.signal()
             await adapter.passesSettled()
 
-            #expect(attention.allRuntimes.first?.badge.state == .running, "the pass owed afterwards read it")
+            #expect(engine.inputs.value.map(\.revision) == [4, 5, 6])
+            #expect(engine.commits.value == 3)
+            #expect(attention.allRuntimes.first?.badge.state == .running)
             #expect(adapter.lastFailure == nil)
         }
     }
@@ -523,19 +660,32 @@ struct TurnRecordCacheTests {
             try writeRun(session: "s1", currentTurn: nil, in: state)
             let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
             let attention = AttentionState()
-            let adapter = adapter(state: state, sessions: sessions)
+            let engine = InspectingEngine(heldRevision: 5)
+            defer { engine.release.signal() }
+            let adapter = adapter(state: state, sessions: sessions, engine: engine)
+            try AgentRecordFixtures.writeTurn(id: Self.first, number: 1, session: "s1", runID: Self.run, in: state)
             adapter.bootstrap(into: session, attention: attention)
 
-            // Read the finished record; its answer comes back after the pass
-            // below has applied the running one.
+            try writeRun(session: "s1", currentTurn: nil, revision: 5, in: state)
             adapter.requestPass()
-            try writeRun(session: "s1", currentTurn: nil, state: "running", revision: 5, in: state)
+            await pollUntil { engine.inputs.value.map(\.revision) == [4, 5] }
+            try #require(engine.inputs.value.map(\.revision) == [4, 5])
+            #expect(engine.inputs.value.last?.turnFiles == [ObservedFile(name: Self.first)])
+            try AgentRecordFixtures.writeTurn(id: Self.second, number: 2, session: "s1", runID: Self.run, in: state)
+            try writeRun(session: "s1", currentTurn: Self.second, state: "running", revision: 6, in: state)
             adapter.refresh()
-            #expect(attention.allRuntimes.first?.badge.state == .running)
+            let key = ConversationKey(provider: .claude, conversationID: "s1", isFallback: false)
+            let newer = adapter.turnHistory.turns(of: key)
+            try #require(newer.map(\.turnID) == [TurnID(Self.first), TurnID(Self.second)])
+
+            engine.release.signal()
             await adapter.passesSettled()
 
+            #expect(engine.inputs.value.map(\.revision) == [4, 5, 6])
+            #expect(engine.commits.value == 2)
+            #expect(adapter.turnHistory.turns(of: key) == newer)
             #expect(attention.allRuntimes.first?.badge.state == .running)
-            #expect(adapter.lastFailure == nil, "dropped, not reported as a failure")
+            #expect(adapter.lastFailure == nil, "dropped without reporting a failure")
         }
     }
 
@@ -564,7 +714,8 @@ struct TurnRecordCacheTests {
         }
     }
 
-    @Test func aPassThatFailed_changesNothing_andTheNextOneCatchesUp() async throws {
+    @Test(arguments: [FailurePoint.pass, .commit])
+    func aPassThatFailed_changesNothing_andTheNextOneCatchesUp(failsAt: FailurePoint) async throws {
         try await withTempDir { root in
             let state = root.appendingPathComponent("agent-states", isDirectory: true)
             let sessions = root.appendingPathComponent("sessions", isDirectory: true)
@@ -572,28 +723,38 @@ struct TurnRecordCacheTests {
             try AgentRecordFixtures.writeTurn(id: Self.first, number: 1, session: "s1", runID: Self.run, in: state)
             let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
             let attention = AttentionState()
-            let engine = FailingEngine()
+            let engine = InspectingEngine()
             let adapter = adapter(state: state, sessions: sessions, engine: engine)
             adapter.bootstrap(into: session, attention: attention)
+            let key = ConversationKey(provider: .claude, conversationID: "s1", isFallback: false)
+            let baseline = adapter.turnHistory.turns(of: key)
+            try #require(baseline.map(\.turnID) == [TurnID(Self.first)])
 
-            engine.fails(true)
-            try AgentRecordFixtures.writeTurn(id: Self.second, number: 2, session: "s1", runID: Self.run, in: state)
+            engine.failure.value = failsAt
+            let added = try AgentRecordFixtures.writeTurn(id: Self.second, number: 2, session: "s1", runID: Self.run, in: state)
+            let addedContent = try String(contentsOf: added, encoding: .utf8)
+            let expected = [ObservedFile(name: Self.first), ObservedFile(name: Self.second, content: addedContent)]
             try writeRun(session: "s1", currentTurn: nil, state: "running", revision: 5, in: state)
             adapter.noteTurnsChanged()
             adapter.requestPass()
             await adapter.passesSettled()
+            #expect(engine.inputs.value.map(\.revision) == [4, 5])
+            #expect(engine.inputs.value.last?.turnFiles == expected)
+            #expect(engine.commits.value == 1)
             #expect(adapter.lastFailure != nil)
             #expect(attention.allRuntimes.first?.badge.state == .finished)
-            #expect(adapter.turnHistory.turn(TurnID(Self.second)) == nil)
+            #expect(adapter.turnHistory.turns(of: key) == baseline)
 
-            // Asked for by something other than the turn directory: what the
-            // failed pass read never arrived, so this one lists them again.
-            engine.fails(false)
+            // No new turn-directory event is needed to send the content again.
+            engine.failure.value = nil
             adapter.requestPass()
             await adapter.passesSettled()
+            #expect(engine.inputs.value.map(\.revision) == [4, 5, 5])
+            #expect(engine.inputs.value.last?.turnFiles == expected)
+            #expect(engine.commits.value == 2)
             #expect(adapter.lastFailure == nil)
             #expect(attention.allRuntimes.first?.badge.state == .running)
-            #expect(adapter.turnHistory.turn(TurnID(Self.second))?.displayNumber == 2)
+            #expect(adapter.turnHistory.turns(of: key).map(\.turnID) == [TurnID(Self.first), TurnID(Self.second)])
         }
     }
 

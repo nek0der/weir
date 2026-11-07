@@ -23,10 +23,9 @@ struct ReviewParsingTests {
         )
     }
 
-    @Test func malformedPatchesAreRefused() throws {
-        for invalid in ["@@ -1,2 +1,2 @@\n x\n", "@@@ -1 -1 +1 @@@\n", "@@ -999999999999999999999 +1 @@\n"] {
-            #expect(throws: ReviewError.self, "Malformed patch accepted") { try ReviewDiffParser.parse(invalid) }
-        }
+    @Test(arguments: ["@@ -1,2 +1,2 @@\n x\n", "@@@ -1 -1 +1 @@@\n", "@@ -999999999999999999999 +1 @@\n"])
+    func malformedPatchesAreRefused(_ patch: String) {
+        #expect(throws: ReviewError.invalidDiff) { try ReviewDiffParser.parse(patch) }
     }
 
     @Test func nonTextModesAreReadFromTheLinesThatCarryAMode() throws {
@@ -73,6 +72,7 @@ struct ReviewParsingTests {
         #expect(names[2].path == "b.txt" && names[2].oldPath == "caf\u{FFFD}" && names[2].isNameUndecodable)
         let stats = try ReviewGit.parseNumstat(Data("1\t0\t".utf8) + latin1 + Data("\u{0}2\t1\ta.txt\0".utf8))
         #expect(stats.map(\.0) == ["caf\u{FFFD}", "a.txt"])
+        #expect(stats.map(\.1) == [ReviewFileStat(added: 1, removed: 0), ReviewFileStat(added: 2, removed: 1)])
     }
 
     /// Not persisted, so a stored comment's file reads back the same as one
@@ -86,21 +86,27 @@ struct ReviewParsingTests {
 
     @Test func filePatchKeepsARenameApartFromAnotherFile() throws {
         let renamed = ReviewFile(path: "new name", oldPath: "old name", layer: .staged, status: .renamed)
-        let combined = "diff --git a/old name b/new name\nrename from old name\nrename to new name\n"
-            + "diff --git a/old name b/old name\n@@ -0,0 +1 @@\n+unrelated\n"
+        let rename = "diff --git a/old name b/new name\nrename from old name\nrename to new name"
+        let combined = rename + "\ndiff --git a/old name b/old name\n@@ -0,0 +1 @@\n+unrelated\n"
         let selected = try ReviewGit.filePatch(combined, file: renamed)
-        #expect(!selected.contains("unrelated") && selected.contains("rename to new name"), "Rename pathspec mixed another file")
+        #expect(selected == rename)
     }
 
     /// `--numstat -z` writes the path inline, except for renames, where the
     /// field is empty and the old and new paths follow as separate records.
     @Test func numstatParsesRenamesAndBinaryCounts() throws {
-        let data = Data("3\t1\ta.swift\0-\t-\tlogo.png\0002\t0\t\0old.swift\0new.swift\0".utf8)
+        let data = Data("3\t1\ta.swift\0-\t-\tlogo.png\0".utf8)
+            + Data("2\t4\t\0old.swift\0new.swift\0".utf8)
+            + Data("5\t6\ta\tname.swift\0".utf8)
         let parsed = try ReviewGit.parseNumstat(data)
-        try #require(parsed.count == 3, "Three numstat records")
-        #expect(parsed[0].0 == "a.swift" && parsed[0].1 == ReviewFileStat(added: 3, removed: 1), "Plain record")
-        #expect(parsed[1].1.isBinary, "Binary counts are not zero")
-        #expect(parsed[2].0 == "new.swift" && parsed[2].1.added == 2, "Rename takes the new path")
-        #expect(throws: ReviewError.self, "Malformed numstat accepted") { try ReviewGit.parseNumstat(Data("3\ta.swift\0".utf8)) }
+        #expect(parsed.map(\.0) == ["a.swift", "logo.png", "new.swift", "a\tname.swift"])
+        #expect(parsed.map(\.1) == [
+            ReviewFileStat(added: 3, removed: 1),
+            ReviewFileStat(added: -1, removed: -1),
+            ReviewFileStat(added: 2, removed: 4),
+            ReviewFileStat(added: 5, removed: 6)
+        ])
+        #expect(parsed.map(\.1.isBinary) == [false, true, false, false])
+        #expect(throws: ReviewError.invalidDiff) { try ReviewGit.parseNumstat(Data("3\ta.swift\0".utf8)) }
     }
 }

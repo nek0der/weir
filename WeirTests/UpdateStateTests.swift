@@ -17,6 +17,7 @@ struct UpdateStateTests {
     @Test func progress_isReadAsAPercentage_inTheWindowsLanguage() {
         #expect(UpdateState.progressText(0.42, locale: Locale(identifier: "en")) == "42%")
         #expect(UpdateState.progressText(0.42, locale: Locale(identifier: "ja")) == "42%")
+        #expect(UpdateState.progressText(0.42, locale: Locale(identifier: "fr")) == "42\u{00A0}%")
         #expect(UpdateState.extracting(progress: 0.5).progressValueText(locale: Locale(identifier: "en")) == "50%")
         #expect(UpdateState.idle.progressValueText(locale: Locale(identifier: "en")).isEmpty)
     }
@@ -27,8 +28,10 @@ struct UpdateStateTests {
 
         model.show(.extracting(progress: 0.5), for: session)
         #expect(model.sessionID == session)
+        #expect(model.state.progress == 0.5)
 
         model.show(.idle)
         #expect(model.sessionID == nil)
+        #expect(model.state.progress == nil)
     }
 }

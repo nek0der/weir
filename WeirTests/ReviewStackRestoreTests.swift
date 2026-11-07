@@ -144,7 +144,9 @@ struct ReviewStackRestoreTests {
     /// taken over by a report of where the reader is while it waits.
     @Test func aPlaceInAFileNotReadYet_isPutBackExactly_onceTheFileIsRead() async throws {
         let (anchor, entries) = try Self.leftPlace()
-        let unread = try Self.stack(open: Self.second, entries: [Self.second: entries[Self.second] ?? Self.diff(Self.second)])
+        let main = try Self.diff(Self.main, lines: 100)
+        let second = try #require(entries[Self.second])
+        let unread = try Self.stack(open: Self.second, entries: [Self.main: main, Self.second: second])
         var restored = 0
         var asked: [[String]] = []
         var opened: [String] = []
@@ -161,14 +163,17 @@ struct ReviewStackRestoreTests {
 
         harness.update(waiting(unread, "unread"))
         await Self.nextTurn()
+        #expect(restored == 0, "restoration must wait for its file")
         #expect(harness.top == 0, "the diff waits where it is, not on a place the reader never chose")
-        #expect(asked.last?.contains(Self.first.id) == true, "the place's file is read where it lies")
+        let section = try #require(unread.section(of: Self.first.id))
+        #expect(harness.table.rect(ofRow: section.headerRow).minY > harness.scroll.documentVisibleRect.maxY * 2)
+        #expect(asked.last == [Self.main.id, Self.first.id], "the parked place is requested beyond the prefetch window")
         // A report of where the reader is, while the place waits, opens nothing.
         NotificationCenter.default.post(name: NSScrollView.didEndLiveScrollNotification, object: harness.scroll)
         #expect(opened.isEmpty)
 
         // The file is read.
-        let read = try Self.stack(open: Self.second, entries: entries)
+        let read = try Self.stack(open: Self.second, entries: entries.merging([Self.main: main]) { _, replacement in replacement })
         harness.update(waiting(read, "read"))
         let row = try #require(Self.row(of: anchor, in: read, open: Self.second), "the line is there once its file is read")
         #expect(abs(harness.top - (harness.table.rect(ofRow: row).minY - anchor.offset)) < 0.5, "the line, as far from the top as it was")
@@ -249,7 +254,8 @@ struct ReviewStackRestoreTests {
         #expect(opened == [Self.first.id], "after it is put back")
 
         opened = []
-        let unread = try Self.stack(open: Self.third, entries: [Self.third: entries[Self.third] ?? Self.diff(Self.third)])
+        let main = try Self.diff(Self.main, lines: 100)
+        let unread = try Self.stack(open: Self.third, entries: [Self.main: main, Self.third: Self.diff(Self.third)])
         let givenUp = Harness(Self.table(unread, open: Self.third, restore: nil, key: "unread"))
         defer { givenUp.window.close() }
         givenUp.update(Self.table(unread, open: Self.third, restore: anchor, key: "waiting", onReadingFile: { opened.append($0) }))
@@ -257,7 +263,7 @@ struct ReviewStackRestoreTests {
         #expect(opened.isEmpty, "not while it waits")
         givenUp.coordinator.readerMoved()
         stopsReading(givenUp)
-        #expect(opened.count == 1, "after it is given up")
+        #expect(opened == [Self.main.id], "after it is given up")
     }
 
     @Test func aTabBackWithItsFindBar_isPutBackOnItsPlace_notOnItsMatch() throws {
@@ -279,6 +285,8 @@ struct ReviewStackRestoreTests {
         next.index = 4
         harness.update(Self.table(read, open: Self.second, restore: nil, key: "searched", search: next, searchTarget: match - 1))
         #expect(abs(harness.top - place) > 0.5)
+        let targetRow = try #require(read.rows.firstIndex { $0.contains(lineID: match - 1) })
+        #expect(harness.scroll.documentVisibleRect.intersects(harness.table.rect(ofRow: targetRow)))
     }
 
     @Test func theReaderScrollingFirst_givesThePlaceUp() async throws {
@@ -289,12 +297,15 @@ struct ReviewStackRestoreTests {
         defer { harness.window.close() }
         harness.update(Self.table(unread, open: Self.second, restore: anchor, key: "unread") { restored += 1 })
 
-        // A wheel step of the reader's, while the file is still being read.
-        harness.scroll.contentView.scroll(to: NSPoint(x: 0, y: 40))
+        let section = try #require(unread.section(of: Self.second.id))
+        harness.scroll.contentView.scroll(to: NSPoint(x: 0, y: harness.table.rect(ofRow: section.headerRow + 2).minY))
         harness.coordinator.noteScrollStep()
+        let readerPlace = try #require(harness.coordinator.anchor(in: harness.scroll, table: harness.table))
+        #expect(readerPlace.key != anchor.key)
         let read = try Self.stack(open: Self.second, entries: entries)
         harness.update(Self.table(read, open: Self.second, restore: anchor, key: "read"))
 
+        #expect(harness.coordinator.anchor(in: harness.scroll, table: harness.table) == readerPlace)
         let row = try #require(Self.row(of: anchor, in: read, open: Self.second), "the line is there once its file is read")
         #expect(
             abs(harness.top - (harness.table.rect(ofRow: row).minY - anchor.offset)) > 0.5,

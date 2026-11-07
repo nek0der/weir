@@ -38,14 +38,26 @@ struct SplitTreeTests {
     // MARK: - Insertion
 
     @Test(
-        "inserting a leaf in either direction yields both leaves",
+        "inserting a leaf preserves child order and focuses the new leaf",
         arguments: [SplitDirection.horizontal, SplitDirection.vertical]
     )
-    func insert_anyDirection_yieldsBothLeaves(direction: SplitDirection) {
+    func insert_anyDirection_splitsAndFocusesNewLeaf(direction: SplitDirection) {
         let a = UUID()
         let b = UUID()
         let result = SplitTree(leafID: a).insert(at: a, direction: direction, newID: b)
-        #expect(Set(result.tree.allLeafIDs()) == [a, b])
+        #expect(result.tree == SplitTree(
+            root: .split(PaneSplit(direction: direction, ratio: 0.5, first: .leaf(id: a), second: .leaf(id: b))),
+            focusedLeafID: b
+        ))
+        #expect(result.newLeafID == b)
+    }
+
+    @Test("inserting into an empty tree plants and focuses the first leaf")
+    func insert_intoEmptyTree_plantsTheFirstLeaf() {
+        let new = UUID()
+        let result = SplitTree().insert(at: UUID(), direction: .horizontal, newID: new)
+        #expect(result.tree == SplitTree(leafID: new))
+        #expect(result.newLeafID == new)
     }
 
     @Test("insert at an unknown leaf is a no-op")
@@ -67,61 +79,40 @@ struct SplitTreeTests {
         let b = UUID()
         let split = SplitTree(leafID: a).insert(at: a, direction: .horizontal, newID: b).tree
         let removed = split.remove(b)
-        #expect(removed.tree.allLeafIDs() == [a])
+        #expect(removed.tree == SplitTree(leafID: a))
         #expect(removed.focusTarget == a)
     }
 
-    /// A pane that closes behind the person's back (its shell exited, it
-    /// was dragged to another tab) leaves the focus on the pane they are in;
-    /// otherwise the next ⌘W closes a pane they never chose.
-    @Test("removing a leaf that is not focused keeps the focus where it was")
-    func remove_unfocusedLeaf_keepsFocus() {
+    @Test(
+        "removing a pane preserves valid focus or restores focus to the surviving sibling",
+        arguments: [RemovalFocus.explicit, .unset, .stale]
+    )
+    func remove_unfocusedLeaf_resolvesRemainingFocus(focus: RemovalFocus) {
         let a = UUID()
         let b = UUID()
         let c = UUID()
-        var tree = SplitTree(leafID: a)
-            .insert(at: a, direction: .horizontal, newID: b).tree
-            .insert(at: b, direction: .horizontal, newID: c).tree
-        tree.focusedLeafID = a
+        let tree = SplitTree(
+            root: .split(PaneSplit(
+                direction: .horizontal,
+                ratio: 0.3,
+                first: .leaf(id: a),
+                second: .split(PaneSplit(direction: .vertical, ratio: 0.6, first: .leaf(id: b), second: .leaf(id: c)))
+            )),
+            focusedLeafID: focus == .explicit ? a : focus == .unset ? nil : UUID()
+        )
 
         let removed = tree.remove(c)
 
-        #expect(removed.tree.allLeafIDs() == [a, b])
-        #expect(removed.tree.focusedLeafID == a)
-        #expect(removed.focusTarget == nil)
+        let expectedFocus = focus == .stale ? b : a
+        #expect(removed.tree == SplitTree(
+            root: .split(PaneSplit(direction: .horizontal, ratio: 0.3, first: .leaf(id: a), second: .leaf(id: b))),
+            focusedLeafID: expectedFocus
+        ))
+        #expect(removed.tree.effectiveFocusedLeafID == expectedFocus)
+        #expect(removed.focusTarget == (focus == .stale ? b : nil))
     }
 
-    @Test("removing a leaf when none is focused keeps the leaf focus fell back to")
-    func remove_withNoFocusedLeaf_keepsTheEffectiveFocus() {
-        let a = UUID()
-        let b = UUID()
-        let c = UUID()
-        var tree = SplitTree(leafID: a)
-            .insert(at: a, direction: .horizontal, newID: b).tree
-            .insert(at: b, direction: .horizontal, newID: c).tree
-        tree.focusedLeafID = nil
-
-        let removed = tree.remove(c)
-
-        #expect(removed.tree.effectiveFocusedLeafID == a)
-        #expect(removed.focusTarget == nil)
-    }
-
-    @Test("removing a leaf when the focus names a leaf the tree lacks focuses one it has")
-    func remove_withStaleFocus_focusesALeafStillThere() {
-        let a = UUID()
-        let b = UUID()
-        let c = UUID()
-        var tree = SplitTree(leafID: a)
-            .insert(at: a, direction: .horizontal, newID: b).tree
-            .insert(at: b, direction: .horizontal, newID: c).tree
-        tree.focusedLeafID = UUID()
-
-        let removed = tree.remove(c)
-
-        #expect(removed.tree.focusedLeafID == b)
-        #expect(removed.focusTarget == b)
-    }
+    enum RemovalFocus { case explicit, unset, stale }
 
     @Test("removing the focused leaf moves the focus to its sibling")
     func remove_focusedLeaf_movesToSibling() {
@@ -145,7 +136,8 @@ struct SplitTreeTests {
     func remove_lastLeaf_producesEmptyTree() {
         let only = UUID()
         let removed = SplitTree(leafID: only).remove(only)
-        #expect(removed.tree.allLeafIDs().isEmpty)
+        #expect(removed.tree == SplitTree())
+        #expect(removed.focusTarget == nil)
     }
 
     // MARK: - Resize ratio clamping
@@ -203,13 +195,16 @@ struct SplitTreeTests {
             bounds: CGSize(width: 400, height: 300),
             minSize: 80
         )
-        #expect(Set(resized.allLeafIDs()) == [a, b, c])
         let root = try #require(resized.root)
         guard case let .split(split) = root else {
             Issue.record("Expected a split root")
             return
         }
-        let secondVisibleExtent = 400 * (1 - split.ratio) - Double(PaneSplit.dividerThickness / 2)
+        #expect(split.direction == .horizontal)
+        #expect(split.first == .leaf(id: a))
+        #expect(split.second == .split(PaneSplit(direction: .horizontal, ratio: 0.5, first: .leaf(id: b), second: .leaf(id: c))))
+        #expect(resized.focusedLeafID == c)
+        let secondVisibleExtent = 400 * (1 - split.ratio) - 0.5
         #expect(abs(secondVisibleExtent - 161) < 0.001)
     }
 
@@ -239,15 +234,16 @@ struct SplitTreeTests {
         #expect(inner.ratio == 0.75)
     }
 
-    @Test("an undersized container uses a balanced fallback instead of an inverted clamp")
-    func resolvedRatio_insufficientExtent_balancesEquivalentSubtrees() {
-        let ratio = PaneSplit.resolvedRatio(
-            0.9,
-            extent: 100,
-            firstMinimum: 80,
-            secondMinimum: 80
-        )
-        #expect(ratio == 0.5)
+    @Test(
+        "an undersized container divides the visible extent in proportion to each minimum",
+        arguments: [(80.0, 80.0, 49.5), (80.0, 120.0, 39.6), (120.0, 80.0, 59.4)]
+    )
+    func resolvedRatio_insufficientExtent_scalesBothSubtreeMinimums(
+        firstMinimum: CGFloat, secondMinimum: CGFloat, firstVisible: CGFloat
+    ) {
+        let ratio = PaneSplit.resolvedRatio(0.9, extent: 100, firstMinimum: firstMinimum, secondMinimum: secondMinimum)
+        #expect(abs(100 * ratio - 0.5 - firstVisible) < 0.001)
+        #expect(abs(100 * (1 - ratio) - 0.5 - (99 - firstVisible)) < 0.001)
     }
 
     // MARK: - Equalize
@@ -299,40 +295,25 @@ struct SplitTreeTests {
         let a = UUID()
         let b = UUID()
         let c = UUID()
-        // Right-leaning `H(A, H(B, C))`. Drag both dividers off-center, then
-        // equalize only the inner branch. The outer ratio should stay at
-        // wherever the drag left it; the inner should reset to 0.5 (its
-        // two-leaf weight share).
-        let one = SplitTree(leafID: a).insert(at: a, direction: .horizontal, newID: b).tree
-        let two = one.insert(at: b, direction: .horizontal, newID: c).tree
-        let bounds = CGSize(width: 800, height: 600)
-        let dragged = two
-            .resize(splitAt: [], by: 160, bounds: bounds, minSize: 80)
-            .resize(splitAt: [.second], by: 100, bounds: bounds, minSize: 80)
-
-        let leveled = dragged.equalize(splitAt: [.second])
-
-        func ratios(_ node: PaneNode) -> [Double] {
-            switch node {
-            case .leaf: []
-            case let .split(data):
-                [data.ratio] + ratios(data.first) + ratios(data.second)
-            }
+        func tree(innerRatio: Double) -> SplitTree {
+            SplitTree(
+                root: .split(PaneSplit(
+                    direction: .horizontal,
+                    ratio: 0.7,
+                    first: .leaf(id: a),
+                    second: .split(PaneSplit(
+                        direction: .vertical, ratio: innerRatio, first: .leaf(id: b), second: .leaf(id: c)
+                    ))
+                )),
+                focusedLeafID: c
+            )
         }
-        let pre = dragged.root.map(ratios) ?? []
-        let post = leveled.root.map(ratios) ?? []
-        #expect(post.count == 2)
-        // Outer ratio is preserved (proves the equalize scope did NOT
-        // climb above the addressed subtree).
-        #expect(abs(post[0] - pre[0]) < 0.001)
-        // Inner ratio collapses to the weight share (1 + 1 → 0.5).
-        #expect(abs(post[1] - 0.5) < 0.001)
-        // Sanity: the inner ratio was actually dragged off-center.
-        #expect(abs(pre[1] - 0.5) > 0.01)
+
+        #expect(tree(innerRatio: 0.8).equalize(splitAt: [.second]) == tree(innerRatio: 0.5))
     }
 
     @Test("equalize on a right-leaning same-axis tree weights every leaf equally")
-    func equalize_rightLeaningSameAxis_distributesByLeafCount() {
+    func equalize_rightLeaningSameAxis_distributesByLeafCount() throws {
         let a = UUID()
         let b = UUID()
         let c = UUID()
@@ -353,35 +334,37 @@ struct SplitTreeTests {
             }
         }
         let ratios = leveled.root.map(collectRatios) ?? []
-        #expect(ratios.count == 2)
+        try #require(ratios.count == 2)
         #expect(abs(ratios[0] - 1.0 / 3.0) < 0.001)
         #expect(abs(ratios[1] - 0.5) < 0.001)
     }
 
     // MARK: - Directional neighbor lookup
 
-    @Test("neighborLeaf walks the immediate sibling of a single horizontal split")
-    func neighborLeaf_horizontalSplit_findsLeftAndRight() {
+    @Test(
+        "neighborLeaf reaches the sibling in either split direction and has no orthogonal neighbor",
+        arguments: [
+            NeighborAxis(split: .horizontal, forward: .right, backward: .left, orthogonal: [.up, .down]),
+            NeighborAxis(split: .vertical, forward: .down, backward: .up, orthogonal: [.left, .right])
+        ]
+    )
+    func neighborLeaf_singleSplit_usesItsAxis(axis: NeighborAxis) {
         let a = UUID()
         let b = UUID()
-        let tree = SplitTree(leafID: a).insert(at: a, direction: .horizontal, newID: b).tree
-        // `.horizontal` direction means a divider runs vertically and `a`
-        // sits on the left of `b`.
-        #expect(tree.neighborLeaf(of: a, direction: .right) == b)
-        #expect(tree.neighborLeaf(of: b, direction: .left) == a)
-        #expect(tree.neighborLeaf(of: a, direction: .up) == nil)
-        #expect(tree.neighborLeaf(of: a, direction: .down) == nil)
+        let tree = SplitTree(leafID: a).insert(at: a, direction: axis.split, newID: b).tree
+        #expect(tree.neighborLeaf(of: a, direction: axis.forward) == b)
+        #expect(tree.neighborLeaf(of: b, direction: axis.backward) == a)
+        for direction in axis.orthogonal {
+            #expect(tree.neighborLeaf(of: a, direction: direction) == nil)
+            #expect(tree.neighborLeaf(of: b, direction: direction) == nil)
+        }
     }
 
-    @Test("neighborLeaf walks the immediate sibling of a single vertical split")
-    func neighborLeaf_verticalSplit_findsUpAndDown() {
-        let a = UUID()
-        let b = UUID()
-        let tree = SplitTree(leafID: a).insert(at: a, direction: .vertical, newID: b).tree
-        // `.vertical` stacks the panes — `a` on top.
-        #expect(tree.neighborLeaf(of: a, direction: .down) == b)
-        #expect(tree.neighborLeaf(of: b, direction: .up) == a)
-        #expect(tree.neighborLeaf(of: a, direction: .left) == nil)
+    struct NeighborAxis {
+        let split: SplitDirection
+        let forward: SpatialDirection
+        let backward: SpatialDirection
+        let orthogonal: [SpatialDirection]
     }
 
     @Test("neighborLeaf finds the orthogonal neighbor of each corner in a 2x2 grid")
@@ -403,6 +386,10 @@ struct SplitTreeTests {
 
         #expect(tree.neighborLeaf(of: a, direction: .right) == b)
         #expect(tree.neighborLeaf(of: a, direction: .down) == c)
+        #expect(tree.neighborLeaf(of: b, direction: .left) == a)
+        #expect(tree.neighborLeaf(of: b, direction: .down) == d)
+        #expect(tree.neighborLeaf(of: c, direction: .right) == d)
+        #expect(tree.neighborLeaf(of: c, direction: .up) == a)
         #expect(tree.neighborLeaf(of: d, direction: .left) == c)
         #expect(tree.neighborLeaf(of: d, direction: .up) == b)
     }
@@ -433,19 +420,27 @@ struct SplitTreeTests {
 
     @Test("rendered rectangles override stored ratios for directional adjacency")
     func neighborLeaf_renderedRects_usesVisibleGeometry() {
-        let a = UUID()
-        let b = UUID()
-        let c = UUID()
-        let tree = SplitTree(leafID: a)
-            .insert(at: a, direction: .vertical, newID: b).tree
-            .insert(at: a, direction: .horizontal, newID: c).tree
+        let upperLeft = UUID()
+        let lowerLeft = UUID()
+        let upperRight = UUID()
+        let lowerRight = UUID()
+        let tree = SplitTree(root: .split(PaneSplit(
+            direction: .horizontal,
+            ratio: 0.5,
+            first: .split(PaneSplit(direction: .vertical, ratio: 0.05, first: .leaf(id: upperLeft), second: .leaf(id: lowerLeft))),
+            second: .split(PaneSplit(direction: .vertical, ratio: 0.75, first: .leaf(id: upperRight), second: .leaf(id: lowerRight)))
+        )))
+        // The 80pt pane floor moves both dividers within the columns. Both neighbors
+        // still overlap the origin and have the same gap along the move.
         let rects: [(id: UUID, rect: CGRect)] = [
-            (a, CGRect(x: 0, y: 0, width: 100, height: 100)),
-            (b, CGRect(x: 0, y: 106, width: 100, height: 194)),
-            (c, CGRect(x: 106, y: 150, width: 100, height: 150))
+            (upperLeft, CGRect(x: 0, y: 0, width: 100, height: 80)),
+            (lowerLeft, CGRect(x: 0, y: 81, width: 100, height: 219)),
+            (upperRight, CGRect(x: 101, y: 0, width: 100, height: 219)),
+            (lowerRight, CGRect(x: 101, y: 220, width: 100, height: 80))
         ]
 
-        #expect(tree.neighborLeaf(of: b, direction: .right, rects: rects) == c)
+        #expect(tree.neighborLeaf(of: lowerLeft, direction: .right) == upperRight)
+        #expect(tree.neighborLeaf(of: lowerLeft, direction: .right, rects: rects) == lowerRight)
     }
 
     @Test("rendered rectangles preserve visual up and down directions")
@@ -482,16 +477,40 @@ struct SplitTreeTests {
         #expect(restored == tree)
     }
 
-    @Test("the persisted JSON keys stay stable for existing state.json")
+    @Test("the persisted split layout decodes from and encodes to the state.json shape")
     func codable_persistedKeys_areStable() throws {
-        let a = UUID()
-        let b = UUID()
-        let tree = SplitTree(leafID: a).insert(at: a, direction: .horizontal, newID: b).tree
-        let data = try JSONEncoder().encode(tree)
-        let json = String(bytes: data, encoding: .utf8) ?? ""
-        for key in ["root", "focusedLeafID", "leaf", "split", "first", "second", "direction", "ratio"] {
-            #expect(json.contains("\"\(key)\""), "missing persisted key: \(key)")
+        let fixture = Data("""
+        {
+          "root": {"split": {"_0": {
+            "direction": "horizontal",
+            "ratio": 0.25,
+            "first": {"leaf": {"id": "00000000-0000-0000-0000-000000000001"}},
+            "second": {"split": {"_0": {
+              "direction": "vertical",
+              "ratio": 0.75,
+              "first": {"leaf": {"id": "00000000-0000-0000-0000-000000000002"}},
+              "second": {"leaf": {"id": "00000000-0000-0000-0000-000000000003"}}
+            }}}
+          }}},
+          "focusedLeafID": "00000000-0000-0000-0000-000000000003"
         }
-        #expect(json.contains("\"horizontal\""), "missing SplitDirection raw value")
+        """.utf8)
+        let a = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        let b = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000002"))
+        let c = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000003"))
+        let expected = SplitTree(
+            root: .split(PaneSplit(
+                direction: .horizontal,
+                ratio: 0.25,
+                first: .leaf(id: a),
+                second: .split(PaneSplit(direction: .vertical, ratio: 0.75, first: .leaf(id: b), second: .leaf(id: c)))
+            )),
+            focusedLeafID: c
+        )
+        #expect(try JSONDecoder().decode(SplitTree.self, from: fixture) == expected)
+
+        let persisted = try #require(JSONSerialization.jsonObject(with: fixture) as? NSDictionary)
+        let encoded = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(expected)) as? NSDictionary)
+        #expect(encoded == persisted)
     }
 }

@@ -14,7 +14,10 @@ struct FileOpenerTests {
 
     @Test("An unset app leaves file handling to macOS")
     func application_unsetUsesMacOSDefault() {
-        let resolution = FileOpener.application(for: nil) { _ in nil }
+        let resolution = FileOpener.application(for: nil) { identifier in
+            Issue.record("An unset app looked up \(identifier)")
+            return nil
+        }
 
         #expect(resolution == .macOSDefault)
         #expect(resolution.displayName == nil)
@@ -46,9 +49,11 @@ struct FileOpenerTests {
 
         let decoded = try JSONDecoder().decode(FileApplication.self, from: data)
         let encoded = try JSONEncoder().encode(decoded)
-        let object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
 
-        #expect(object?["future"] as? String == "value")
+        #expect(object["bundleIdentifier"] as? String == "com.example.Editor")
+        #expect(object["lastKnownDisplayName"] as? String == "Example Editor")
+        #expect(object["future"] as? String == "value")
     }
 
     // MARK: - Line launches
@@ -60,14 +65,16 @@ struct FileOpenerTests {
         EditorLineLaunch.make(bundleIdentifier: bundleIdentifier, applicationURL: appURL, file: file, position: position)
     }
 
-    @Test func vsCodeGetsItsFileURLWithLineAndColumn() throws {
-        let expected = try #require(URL(string: "vscode://file/Users/me/My%20Project/Sources/Main.swift:12:5"))
-        #expect(launch("com.microsoft.VSCode", FilePosition(line: 12, column: 5)) == .url(expected))
-    }
-
-    @Test func vsCodeOmitsAMissingColumn() throws {
-        let expected = try #require(URL(string: "vscode-insiders://file/Users/me/My%20Project/Sources/Main.swift:12"))
-        #expect(launch("com.microsoft.VSCodeInsiders", FilePosition(line: 12, column: nil)) == .url(expected))
+    @Test(arguments: [
+        ("com.microsoft.VSCode", "vscode", 5),
+        ("com.microsoft.VSCode", "vscode", nil),
+        ("com.microsoft.VSCodeInsiders", "vscode-insiders", 5),
+        ("com.microsoft.VSCodeInsiders", "vscode-insiders", nil)
+    ])
+    func vsCodeUsesItsEditionSchemeAndOnlySuppliedCoordinates(bundleIdentifier: String, scheme: String, column: Int?) throws {
+        let coordinate = column.map { "12:\($0)" } ?? "12"
+        let expected = try #require(URL(string: "\(scheme)://file/Users/me/My%20Project/Sources/Main.swift:\(coordinate)"))
+        #expect(launch(bundleIdentifier, FilePosition(line: 12, column: column)) == .url(expected))
     }
 
     @Test func xcodeUsesXedWithTheLineOnly() {

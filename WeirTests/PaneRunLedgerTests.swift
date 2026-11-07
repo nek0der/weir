@@ -75,6 +75,9 @@ struct PaneRunLedgerTests {
         // Attached elsewhere only: it left this pane.
         let elsewhere = UUID()
         #expect(ledger.note([PaneRunLedger.Run.test("a", in: [elsewhere], turn: "t1")]) == [pane])
+        #expect(ledger.epoch(inPane: pane) == nil)
+        #expect(ledger.epoch(inPane: elsewhere) != nil)
+        #expect(ledger.epoch(inPane: elsewhere) != epoch)
     }
 
     @Test func aRunArriving_movesNothingOn_andRunsInOnePaneAreComparedEach() {
@@ -93,7 +96,9 @@ struct PaneRunLedgerTests {
         let pane = UUID()
         _ = ledger.note([PaneRunLedger.Run.test("a", in: [pane], turn: nil)])
         let before = ledger.epoch(inPane: pane)
-        _ = ledger.note([])
+        #expect(before != nil)
+        #expect(ledger.note([]) == [pane])
+        #expect(ledger.epoch(inPane: pane) == nil)
         _ = ledger.note([PaneRunLedger.Run.test("b", in: [pane], turn: nil)])
         #expect(ledger.epoch(inPane: pane) != nil)
         #expect(ledger.epoch(inPane: pane) != before)

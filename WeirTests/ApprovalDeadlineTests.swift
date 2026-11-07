@@ -23,7 +23,10 @@ struct ApprovalDeadlineTests {
 
         // A reading from a restarted service describes requests we no longer
         // show.
-        store.applyServiceDeadlines([:], epoch: UUID())
+        let foreignReading = ServiceDeadline(
+            deadlineMs: 20000, serviceNowMs: 1000, receivedAt: Self.receivedAt.advanced(by: .seconds(1))
+        )
+        store.applyServiceDeadlines([held.id: foreignReading], epoch: UUID())
         #expect(store.serviceDeadlines == [held.id: reading])
     }
 
@@ -31,62 +34,70 @@ struct ApprovalDeadlineTests {
         let store = ApprovalPresentationStore()
         let epoch = UUID()
         let held = ApprovalPresentation.test(epoch: epoch)
-        store.receive([held], epoch: epoch)
-        store.applyServiceDeadlines(
-            [held.id: ServiceDeadline(deadlineMs: 10000, serviceNowMs: 0, receivedAt: Self.receivedAt)],
-            epoch: epoch
-        )
+        let remaining = ApprovalPresentation.test(epoch: epoch)
+        store.receive([held, remaining], epoch: epoch)
+        let reading = ServiceDeadline(deadlineMs: 10000, serviceNowMs: 0, receivedAt: Self.receivedAt)
+        store.applyServiceDeadlines([held.id: reading, remaining.id: reading], epoch: epoch)
+        #expect(store.serviceDeadlines == [held.id: reading, remaining.id: reading])
 
-        store.receive([], epoch: epoch)
+        store.receive([remaining], epoch: epoch)
 
-        #expect(store.serviceDeadlines.isEmpty)
+        #expect(store.serviceDeadlines == [remaining.id: reading])
     }
 
-    @Test func aWake_readsTheClockAgainAndAppliesIt() async {
+    @Test func eachWakeNotification_readsTheClockAgainAndAppliesIt() async throws {
         let epoch = UUID()
         let held = ApprovalPresentation.test(epoch: epoch)
-        let reading = ServiceDeadline(deadlineMs: 20000, serviceNowMs: 5000, receivedAt: SuspendingClock.now)
-        let reader = ClockReader(ApprovalControllerConnection.ServiceClockReading(epoch: epoch, deadlines: [held.id: reading]))
+        let received = SuspendingClock.now
+        let first = ServiceDeadline(deadlineMs: 20000, serviceNowMs: 5000, receivedAt: received)
+        let second = ServiceDeadline(deadlineMs: 20000, serviceNowMs: 7000, receivedAt: received + .seconds(1))
+        let reader = ClockReader([first, second].map {
+            ApprovalControllerConnection.ServiceClockReading(epoch: epoch, deadlines: [held.id: $0])
+        })
         let store = ApprovalPresentationStore(serviceClockReader: { try await reader.read() })
-        store.receive([held], epoch: epoch)
         let center = NotificationCenter()
         let wake = Notification.Name("test.wake")
+        store.receive([held], epoch: epoch)
         store.refreshServiceClock(onEvery: wake, in: center)
 
-        center.post(name: wake, object: nil)
-        await reader.release()
-        await pollUntil { store.serviceDeadlines[held.id] != nil }
-
-        #expect(store.serviceDeadlines == [held.id: reading])
+        for reading in [first, second] {
+            center.post(name: wake, object: nil)
+            await pollUntil { store.serviceDeadlines == [held.id: reading] }
+            try #require(store.serviceDeadlines == [held.id: reading])
+        }
+        #expect(await reader.reads == 2)
     }
 
     @Test func aReadingThatLandsAfterStop_isDropped() async throws {
         let epoch = UUID()
         let held = ApprovalPresentation.test(epoch: epoch)
         let reading = ServiceDeadline(deadlineMs: 20000, serviceNowMs: 5000, receivedAt: SuspendingClock.now)
-        let reader = ClockReader(ApprovalControllerConnection.ServiceClockReading(epoch: epoch, deadlines: [held.id: reading]))
-        let store = ApprovalPresentationStore(serviceClockReader: { try await reader.read() })
+        let reply = ApprovalControllerConnection.ServiceClockReading(epoch: epoch, deadlines: [held.id: reading])
+        let gate = Gate<ApprovalControllerConnection.ServiceClockReading>()
+        defer { gate.open(with: reply) }
+        let store = ApprovalPresentationStore(serviceClockReader: { await gate.wait() })
         store.receive([held], epoch: epoch)
 
         let refresh = try #require(store.refreshServiceClock())
+        await pollUntil { gate.requests == 1 }
+        try #require(gate.requests == 1)
         store.stop()
         // Back in the same epoch, so only the generation check can drop the
         // reading that was in flight across the stop.
         store.receive([held], epoch: epoch)
-        await reader.release()
+        gate.open(with: reply)
         await refresh.value
 
-        #expect(await reader.reads == 1)
+        #expect(gate.requests == 1)
         #expect(store.serviceDeadlines.isEmpty)
     }
 
-    @Test func beforeAnyProjection_aWakeReadsNothing() async {
-        let reader = ClockReader(ApprovalControllerConnection.ServiceClockReading(epoch: UUID(), deadlines: [:]))
+    @Test func beforeAnyProjection_refreshStartsNoClockRead() async {
+        let reader = ClockReader([ApprovalControllerConnection.ServiceClockReading(epoch: UUID(), deadlines: [:])])
         let store = ApprovalPresentationStore(serviceClockReader: { try await reader.read() })
 
         #expect(store.refreshServiceClock() == nil, "no read was started")
 
-        await reader.release()
         #expect(await reader.reads == 0)
     }
 
@@ -109,34 +120,37 @@ struct ApprovalDeadlineTests {
 
     // MARK: - The deadline check
 
-    @Test func aPassedDeadline_timesTheRequestOutAndKeepsTheCard() {
+    @Test func aPassedDeadline_timesTheRequestOutAndKeepsThePresentedCard() throws {
         let store = ApprovalPresentationStore()
         let card = TestApprovalCard(store)
         let epoch = UUID()
         let request = ApprovalPresentation.test(epoch: epoch)
         let passed = ServiceDeadline(deadlineMs: 5000, serviceNowMs: 5000, receivedAt: SuspendingClock.now)
 
-        store.apply(
-            ApprovalControllerConnection.Projection.test(pending: [request], deadlines: [request.id: passed]),
-            epoch: epoch,
-            now: Self.receivedAt
-        )
+        store.receive([request], epoch: epoch)
         card.present(request)
+        try #require(card.isCardOpen)
+        try #require(card.presentedApproval?.key == request.key)
+        #expect(store.ledger.entry(for: request)?.state == .held)
+
+        store.applyServiceDeadlines([request.id: passed], epoch: epoch)
 
         #expect(store.ledger.entry(for: request)?.state == .timedOut)
         #expect(card.isCardOpen)
+        #expect(card.presentedApproval?.key == request.key)
     }
 
     @Test func aDeadlineThatPassesLater_timesTheRequestOutThen() async {
         let store = ApprovalPresentationStore()
         let epoch = UUID()
         let request = ApprovalPresentation.test(epoch: epoch)
-        let soon = ServiceDeadline(deadlineMs: 5030, serviceNowMs: 5000, receivedAt: SuspendingClock.now)
+        let received = SuspendingClock.now
+        let soon = ServiceDeadline(deadlineMs: 6000, serviceNowMs: 5000, receivedAt: received)
 
         store.apply(
             ApprovalControllerConnection.Projection.test(pending: [request], deadlines: [request.id: soon]),
             epoch: epoch,
-            now: Self.receivedAt
+            now: received
         )
         #expect(store.ledger.entry(for: request)?.state == .held)
 
@@ -147,7 +161,7 @@ struct ApprovalDeadlineTests {
         #expect(store.ledger.entry(for: request)?.state == .timedOut)
     }
 
-    @Test func aRequestWithoutAServiceClock_isTimedOutOnlyByTheBroker() {
+    @Test func aRequestWithoutAServiceClock_doesNotTimeOutLocally() {
         let store = ApprovalPresentationStore()
         let epoch = UUID()
         // Its deadline reading alone would have passed long ago.
@@ -180,24 +194,19 @@ struct ApprovalDeadlineTests {
     }
 }
 
-/// A clock reader that holds its answer until the test releases it, so a
-/// test can act while the read is in flight.
+/// Distinct replies for successive injected clock reads.
 private actor ClockReader {
-    private let reading: ApprovalControllerConnection.ServiceClockReading
-    private let released = Gate<Void>()
+    private let readings: [ApprovalControllerConnection.ServiceClockReading]
     private(set) var reads = 0
 
-    init(_ reading: ApprovalControllerConnection.ServiceClockReading) {
-        self.reading = reading
+    init(_ readings: [ApprovalControllerConnection.ServiceClockReading]) {
+        self.readings = readings
     }
 
-    func read() async throws -> ApprovalControllerConnection.ServiceClockReading {
-        await released.wait()
+    func read() throws -> ApprovalControllerConnection.ServiceClockReading {
+        let index = reads
         reads += 1
-        return reading
-    }
-
-    func release() {
-        released.open()
+        guard readings.indices.contains(index) else { throw AgentIntegrationError.invalidResponse }
+        return readings[index]
     }
 }

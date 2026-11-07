@@ -70,11 +70,13 @@ struct TmuxTopologyTests {
 
     @Test func unvisitedServer_expiresOnlyAtSnapshotLifetime() {
         var prior = TmuxTopology(clients: ["/dev/tty1": binding], outcomes: [path: .success("")], observedAt: [path: 0])
-        prior.merge(TmuxTopology(), candidates: [path], now: 1)
-        #expect(prior.clients.count == 1)
+        prior.merge(TmuxTopology(), candidates: [path], now: TmuxTiming.snapshotLifetime)
+        #expect(prior.clients == ["/dev/tty1": binding])
+        #expect(prior.outcomes[path] == .success(""))
         prior.merge(TmuxTopology(), candidates: [path], now: TmuxTiming.snapshotLifetime + 1)
         #expect(prior.clients.isEmpty)
         #expect(prior.outcomes[path] == nil)
+        #expect(prior.observedAt[path] == nil)
     }
 
     /// A run's record names its server's start as the hook read it from
@@ -103,6 +105,6 @@ struct TmuxTopologyTests {
         #expect(TmuxTopology.onePane(start: "101").locations(for: endpoint).isEmpty)
         var shared = TmuxTopology.onePane()
         shared.panes += TmuxTopology.onePane(sessionID: "$9").panes
-        #expect(shared.locations(for: endpoint).count == 2)
+        #expect(shared.locations(for: endpoint).map(\.sessionID) == ["$2", "$9"])
     }
 }

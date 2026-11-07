@@ -300,12 +300,7 @@ mod tests {
             "git worktree add -f -b x /wt/x",
             "git worktree add -b x /wt/x main",
         ] {
-            assert_eq!(
-                WorktreeIntent::parse(command, None)
-                    .and_then(|it| it.plain_add_folder().map(str::to_owned)),
-                None,
-                "{command}"
-            );
+            assert_eq!(intent(command).plain_add_folder(), None, "{command}");
         }
     }
 
@@ -319,6 +314,7 @@ mod tests {
             let intent = WorktreeIntent::parse(command, Some("/repo")).expect(command);
             assert_eq!(intent.branch, "demo");
             assert_eq!(intent.cwd.as_deref(), Some("/repo"));
+            assert_eq!(intent.command, command);
         }
     }
 
@@ -372,12 +368,12 @@ mod tests {
             WorktreeIntent::parse(command, None)
                 .expect(command)
                 .git_directories()
-                .map(|found| found.join(" "))
+                .map(|found| found.into_iter().map(str::to_owned).collect::<Vec<_>>())
         };
-        assert_eq!(directories("git worktree add -b d x").as_deref(), Some(""));
+        assert_eq!(directories("git worktree add -b d x"), Some(Vec::new()));
         assert_eq!(
-            directories("git -C a -C worktree worktree add -b d x").as_deref(),
-            Some("a worktree")
+            directories("git -C a -C worktree worktree add -b d x"),
+            Some(vec!["a".to_owned(), "worktree".to_owned()])
         );
         for command in [
             "git -c alias.x=!touch${IFS}y x worktree add -b d x",
@@ -390,13 +386,19 @@ mod tests {
 
     #[test]
     fn a_rerouted_reply_keeps_the_rest_of_the_input() {
-        let payload = br#"{"tool_input":{"command":"old","description":"keep"}}"#;
+        let payload =
+            br#"{"tool_input":{"command":"old","description":"keep","extra":{"values":[1,true]}}}"#;
         let output = rerouted_hook_output(payload, "new", None).expect("output");
         let reply: Value = serde_json::from_slice(&output.stdout.expect("stdout")).expect("json");
-        let inner = &reply["hookSpecificOutput"];
-        assert_eq!(inner["updatedInput"]["command"], "new");
-        assert_eq!(inner["updatedInput"]["description"], "keep");
-        assert!(inner.get("permissionDecision").is_none());
+        assert_eq!(
+            reply,
+            serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "updatedInput": {"command":"new","description":"keep","extra":{"values":[1,true]}},
+                },
+            })
+        );
     }
 
     #[test]

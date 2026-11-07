@@ -59,7 +59,10 @@ struct AgentWorktreeSettingsModelTests {
         Kiro and OpenCode aren’t listed because Weir can’t step in before they run a command. \
         A worktree Kiro and OpenCode make gets the setup commands only when it lands in this project’s location.
         """)
-        #expect(two.note(locale: Self.ja, name: names)?.hasPrefix("Kiro、OpenCode は") == true)
+        #expect(two.note(locale: Self.ja, name: names) == """
+        Kiro、OpenCode は、コマンドの実行前に Weir が処理できないため表示していません。\
+        Kiro、OpenCode が作るワークツリーには、この場所に作られたときだけセットアップコマンドを適用します。
+        """)
     }
 
     /// The two sentences run on as the language puts them: one space in English, none
@@ -122,5 +125,7 @@ struct AgentWorktreeSettingsModelTests {
         let saved = try #require(session.projects.first { $0.id == project.id })
         #expect(!saved.routesWorktrees(for: .opencode))
         #expect(saved.routesWorktrees(for: .claude))
+        #expect(saved.routesWorktrees(for: .codex))
+        #expect(saved.routesWorktrees(for: .antigravity))
     }
 }

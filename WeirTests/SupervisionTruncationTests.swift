@@ -38,7 +38,17 @@ struct SupervisionTruncationTests {
             #expect(MenuLine.width(of: cut) > MenuLine.maxWidth * 0.9, "nearly all the room is used")
         }
         #expect(MenuLine.fit(japanese).count < MenuLine.fit(english).count)
-        #expect(MenuLine.fit("Fix tests") == "Fix tests")
+        let short = "Fix tests"
+        #expect(MenuLine.fit(short) == short)
+        #expect(MenuLine.fit(short, maxWidth: MenuLine.width(of: short)) == short)
+
+        let grapheme = "e\u{301}"
+        let longestFit = "Prefix \(grapheme)…"
+        let longer = "Prefix \(grapheme)X…"
+        let room = MenuLine.width(of: longestFit)
+        #expect(MenuLine.width(of: longer) > room)
+        let composed = MenuLine.fit("Prefix \(grapheme)XXXXXX", maxWidth: room)
+        #expect(Array(composed.unicodeScalars) == Array(longestFit.unicodeScalars))
     }
 
     /// Each kind of line loses the part its kind gives up.
@@ -57,20 +67,22 @@ struct SupervisionTruncationTests {
     /// tooltip and VoiceOver.
     @Test func aConversationsMenuName_cutsItsTitle_andKeepsItsNumber() {
         let title = "Review every libghostty patch on the fork and list the ones upstream took"
-        let choice = ConversationChoice(
-            conversation: TurnSummaryFixture.conversation("a"),
-            title: title,
-            ordinal: 2,
-            unviewedCount: 0
-        )
         let english = Locale(identifier: "en")
-        let menuName = ConversationText.menuName(choice, locale: english)
-        #expect(menuName.hasPrefix("Review every") && menuName.hasSuffix("… #2"))
-        #expect(MenuLine.width(of: menuName) <= MenuLine.maxWidth)
-        #expect(ConversationText.name(choice, locale: english) == "\(title) #2")
-        #expect(ConversationText.spokenName(choice, locale: english) == "Claude, \(title) #2")
+        let choices = [
+            ConversationChoice(conversation: TurnSummaryFixture.conversation("a"), title: title, ordinal: 1, unviewedCount: 0),
+            ConversationChoice(conversation: TurnSummaryFixture.conversation("b"), title: title, ordinal: 2, unviewedCount: 0)
+        ]
+        let suffixes = [" #1", " #2"]
+        let menuNames = choices.map { ConversationText.menuName($0, locale: english) }
+        #expect(menuNames[0] != menuNames[1])
+        for (menuName, suffix) in zip(menuNames, suffixes) {
+            #expect(menuName.hasPrefix("Review every") && menuName.hasSuffix("…" + suffix))
+            #expect(MenuLine.width(of: menuName) <= MenuLine.maxWidth)
+        }
+        #expect(choices.map { ConversationText.name($0, locale: english) } == suffixes.map { title + $0 })
+        #expect(choices.map { ConversationText.spokenName($0, locale: english) } == suffixes.map { "Claude, " + title + $0 })
         let short = ConversationChoice(
-            conversation: TurnSummaryFixture.conversation("b"),
+            conversation: TurnSummaryFixture.conversation("c"),
             title: "Fix tests",
             ordinal: nil,
             unviewedCount: 0
@@ -79,37 +91,30 @@ struct SupervisionTruncationTests {
     }
 
     @Test(arguments: [
-        "…/sample-reviews/demo-repos/alpha",
-        ".../repos/beta",
-        "/usr/local",
-        "/Users/me/weir src",
-        "~",
-        "~/notes",
-        " ~/padded",
-        "me@mac: ~/weir",
-        "me@mac: /Users/me/weir"
-    ])
-    func aTitleShapedLikeAPath_isCutAtItsHead(_ title: String) {
-        #expect(SupervisionTruncation.isPathTitle(title))
-        #expect(SupervisionTruncation.title(title) == .pathTitle)
-    }
-
-    @Test(arguments: [
-        "zsh",
-        "Claude Code",
-        "vim ~/notes",
-        "npm run build",
-        "alpha/beta",
-        "…weir",
-        "~notes",
-        "/init",
-        "/review-pr 123 fix",
-        "Question: which one?",
-        ""
-    ])
-    func aTitleThatIsANameOrACommand_isCutAtItsEnd(_ title: String) {
-        #expect(!SupervisionTruncation.isPathTitle(title))
-        #expect(SupervisionTruncation.title(title) == .name)
+        ("…/sample-reviews/demo-repos/alpha", .pathTitle),
+        (".../repos/beta", .pathTitle),
+        ("/usr/local", .pathTitle),
+        ("/Users/me/weir src", .pathTitle),
+        ("~", .pathTitle),
+        ("~/notes", .pathTitle),
+        (" ~/padded", .pathTitle),
+        ("me@mac: ~/weir", .pathTitle),
+        ("me@mac: /Users/me/weir", .pathTitle),
+        ("zsh", .name),
+        ("Claude Code", .name),
+        ("vim ~/notes", .name),
+        ("npm run build", .name),
+        ("alpha/beta", .name),
+        ("…weir", .name),
+        ("~notes", .name),
+        ("/init", .name),
+        ("/review-pr 123 fix", .name),
+        ("Question: which one?", .name),
+        ("", .name)
+    ] as [(String, SupervisionTruncation)])
+    func aTitleKeepsItsEndOnlyWhenItReadsAsAPath(_ title: String, expected: SupervisionTruncation) {
+        #expect(SupervisionTruncation.isPathTitle(title) == (expected == .pathTitle))
+        #expect(SupervisionTruncation.title(title) == expected)
     }
 
     @Test func aRowsFact_namingAFileOrACommand_keepsBothEnds_andProseItsStart() {
@@ -135,29 +140,62 @@ struct SupervisionTruncationTests {
 
     // MARK: - The models that name their lines' kinds
 
-    @Test func aNeedsAttentionRow_keepsTheFileItWaitsOn_andAQuestionsStart() {
+    private struct WaitLine {
+        let wait: PromptWait
+        let words: String
+        let truncation: SupervisionTruncation
+    }
+
+    @Test func attentionRows_cutNamedWaitSubjectsAndKeepTheStartOfOtherFacts() {
         var queue = AttentionQueue()
-        let waits = [
-            PromptWait(detail: "Edit: /repo/Sources/App.swift"),
-            PromptWait(detail: nil),
-            PromptWait.question(detail: "Which branch?")
+        let waits: [WaitLine] = [
+            .init(
+                wait: PromptWait(detail: "Edit: /repo/Sources/App.swift"),
+                words: "Waiting for approval: App.swift",
+                truncation: .subject
+            ),
+            .init(wait: PromptWait(detail: nil), words: "Needs response", truncation: .sentence),
+            .init(wait: .question(detail: "Which branch?"), words: "Question: Which branch?", truncation: .sentence)
         ]
-        for (offset, wait) in waits.enumerated() {
+        var expected: [AttentionItemID: (words: String, edge: SupervisionTruncation)] = [:]
+        for (offset, line) in waits.enumerated() {
+            let runtime = "r\(offset)"
+            let id = AttentionItemID.prompt(EpisodeKey(origin: .runtime(runtime), episodeToken: "1"))
             queue.insert(
-                id: .prompt(EpisodeKey(origin: .runtime("r\(offset)"), episodeToken: "1")),
-                kind: .prompt(wait),
-                subject: .runtime(id: "r\(offset)", provider: .claude, paneID: UUID(), tabID: nil, projectID: nil),
+                id: id,
+                kind: .prompt(line.wait),
+                subject: .runtime(id: runtime, provider: .claude, paneID: UUID(), tabID: nil, projectID: nil),
                 arrivedAt: Date(timeIntervalSince1970: TimeInterval(offset))
             )
+            expected[id] = (line.words, line.truncation)
         }
+        let held = ApprovalFact.test()
+        let missing = ApprovalFact.test()
+        for (offset, approval) in [held, missing].enumerated() {
+            queue.insert(
+                id: .approval(approval.key),
+                kind: .approval(approval),
+                subject: .unplaced(provider: .claude),
+                arrivedAt: Date(timeIntervalSince1970: TimeInterval(waits.count + offset))
+            )
+        }
+        expected[.approval(held.key)] = ("Waiting for approval: swift test", .subject)
+        expected[.approval(missing.key)] = ("Needs approval", .sentence)
+
         let model = NeedsAttentionListModel(
             items: queue.items,
             names: { _ in .init(title: "alpha", place: "alpha") },
-            request: { _ in nil },
+            request: { key in key == held.key ? .init(summary: "swift test", question: nil, toolName: "Bash") : nil },
             windowProjectID: nil,
             locale: Locale(identifier: "en")
         )
-        #expect(model.rows.map(\.factTruncation) == [.subject, .sentence, .sentence])
+        #expect(Set(model.rows.map(\.id)) == Set(expected.map(\.0)))
+        #expect(model.rows.count == expected.count)
+        for (id, line) in expected {
+            let row = model.rows.first { $0.id == id }
+            #expect(row?.fact == line.words)
+            #expect(row?.factTruncation == line.edge)
+        }
     }
 
     @MainActor
@@ -165,43 +203,56 @@ struct SupervisionTruncationTests {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
         let tab = session.openTab(container: .project(project.id))
         let paneID = try #require(tab.splitTree.allLeafIDs().first)
-        var queue = AttentionQueue()
-        queue.insert(
-            id: .prompt(EpisodeKey(origin: .runtime("r"), episodeToken: "1")),
-            kind: .prompt(PromptWait(detail: "Write: /Users/me/weir/notes.txt")),
-            subject: .runtime(id: "r", provider: .claude, paneID: paneID, tabID: tab.id, projectID: project.id),
-            arrivedAt: Date(timeIntervalSince1970: 0)
-        )
+        let id = AttentionItemID.prompt(EpisodeKey(origin: .runtime("r"), episodeToken: "1"))
         let registry = WindowRegistry(primary: session.primarySelection)
         registry.presenter = RecordingWindowPresenter()
-        let cards = AllProjectsModel.cards(AllProjectsModel.Sources(
-            session: session, window: session.primaryWindowID, registry: registry, queue: queue,
-            runtimes: [], approvals: ApprovalLedger(), pullRequest: { _ in nil }, gitFacts: { _ in nil },
-            locale: Locale(identifier: "en")
-        ))
-        #expect(try #require(cards.first).factTruncation == .subject)
+        let cases: [WaitLine] = [
+            .init(
+                wait: PromptWait(detail: "Write: /Users/me/weir/notes.txt"),
+                words: "Waiting for approval: notes.txt",
+                truncation: .subject
+            ),
+            .init(wait: .question(detail: "Which branch?"), words: "Question: Which branch?", truncation: .sentence)
+        ]
+        for line in cases {
+            var queue = AttentionQueue()
+            queue.insert(
+                id: id,
+                kind: .prompt(line.wait),
+                subject: .runtime(id: "r", provider: .claude, paneID: paneID, tabID: tab.id, projectID: project.id),
+                arrivedAt: Date(timeIntervalSince1970: 0)
+            )
+            let cards = AllProjectsModel.cards(AllProjectsModel.Sources(
+                session: session, window: session.primaryWindowID, registry: registry, queue: queue,
+                runtimes: [], approvals: ApprovalLedger(), pullRequest: { _ in nil }, gitFacts: { _ in nil },
+                locale: Locale(identifier: "en")
+            ))
+            #expect(cards.map(\.id) == [.project(project.id)])
+            let card = try #require(cards.first)
+            #expect(card.leadItemID == id)
+            #expect(card.factText == line.words)
+            #expect(card.factTruncation == line.truncation)
+        }
     }
 }
 
 /// A name set into a sentence is cut in its middle, by count, before the
 /// line is laid out (`SupervisionTruncation.middle`).
 struct SupervisionTruncationMiddleTests {
-    @Test func aNameWithinTheLimit_isLeftWhole() {
-        #expect(SupervisionTruncation.middle("feature/login", limit: 40) == "feature/login")
-        #expect(SupervisionTruncation.middle(String(repeating: "a", count: 40), limit: 40).count == 40)
-    }
-
-    @Test func aLongerName_keepsItsStartAndEnd_atTheLimit() {
+    @Test func cuttingAName_preservesWholeGraphemesAndBothEnds() {
+        let atLimit = String(repeating: "a", count: 40)
         let name = "nek0der/feature/" + String(repeating: "x", count: 60) + "/1021-1"
-        let cut = SupervisionTruncation.middle(name, limit: 40)
-        #expect(cut.count == 40)
-        #expect(cut.hasPrefix("nek0der/feature/"))
-        #expect(cut.hasSuffix("/1021-1"))
-        #expect(cut.contains("…"))
-    }
-
-    @Test func aLimitTooSmallToCut_leavesTheName() {
-        #expect(SupervisionTruncation.middle("feature/login", limit: 1) == "feature/login")
-        #expect(SupervisionTruncation.middle("", limit: 0).isEmpty)
+        let cases = [
+            ("feature/login", 40, "feature/login"),
+            (atLimit, 40, atLimit),
+            (name, 40, "nek0der/feature/xxx…xxxxxxxxxxxxx/1021-1"),
+            ("Ae\u{301}BCDEF", 6, "Ae\u{301}…DEF"),
+            ("feature/login", 1, "feature/login"),
+            ("", 0, "")
+        ]
+        for (input, limit, expected) in cases {
+            let cut = SupervisionTruncation.middle(input, limit: limit)
+            #expect(Array(cut.unicodeScalars) == Array(expected.unicodeScalars))
+        }
     }
 }

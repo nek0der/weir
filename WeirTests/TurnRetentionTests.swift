@@ -184,6 +184,8 @@ struct TurnRetentionTests {
 
     // MARK: - Through the projection
 
+    private struct CollectorGateTimedOut: Error {}
+
     /// A stub collector: records each batch, holds it until released when
     /// told to, and answers as told. Set up front and read from the
     /// collector's queue; its closures are `@Sendable`, since written in
@@ -224,8 +226,8 @@ struct TurnRetentionTests {
         func apply(_ ids: [String]) throws -> [TurnDeletion] {
             if ids.isEmpty {
                 lock.withLock { recoveryCount += 1 }
-                if holdsRecovery {
-                    gate.wait()
+                if holdsRecovery, gate.wait(timeout: .now() + .seconds(30)) != .success {
+                    throw CollectorGateTimedOut()
                 }
                 return try answer(ids)
             }
@@ -233,8 +235,8 @@ struct TurnRetentionTests {
                 recorded.append(ids)
                 return recorded.count == 1
             }
-            if holds, isFirst {
-                gate.wait()
+            if holds, isFirst, gate.wait(timeout: .now() + .seconds(30)) != .success {
+                throw CollectorGateTimedOut()
             }
             return try answer(ids)
         }
@@ -311,10 +313,12 @@ struct TurnRetentionTests {
             scene.adapter.turnProtection = { nil }
             #expect(await scene.adapter.turnsTaken(from: keepsAll, to: .standard) == 0, "nothing goes before turns are judged")
             #expect(collector.batches.isEmpty)
+            #expect(try FileManager.default.fileExists(atPath: scene.recordURL(scene.old).path))
+            #expect(try FileManager.default.fileExists(atPath: scene.recordURL(scene.unread).path))
         }
     }
 
-    @Test func aTurnPastTheLimits_isDeleted_andItsConversationIsReported() async throws {
+    @Test func aTurnPastTheLimits_isRequested_andItsReportedDeletionIsPublished() async throws {
         try await withTempDir { root in
             let collector = Collector()
             let scene = try scene(in: root, collector: collector)
@@ -348,12 +352,14 @@ struct TurnRetentionTests {
     @Test func aTurnOnItsWay_isNotAskedForAgain_andItsConversationOutlivesAPassThatDropsIt() async throws {
         try await withTempDir { root in
             let collector = Collector(holds: true)
+            defer { collector.release() }
             let scene = try scene(in: root, collector: collector)
             var forgotten: [TurnID: ConversationKey?] = [:]
             scene.adapter.onTurnsDeleted = { gone, _ in forgotten.merge(gone) { _, new in new } }
 
             scene.adapter.refresh()
             await pollUntilTurnsDeleted { collector.batches.count == 1 }
+            try #require(collector.batches == [[scene.old]])
             // The record is still there, so the rules choose the turn again:
             // only its being on its way keeps it from a second batch.
             scene.adapter.refresh()
@@ -393,6 +399,7 @@ struct TurnRetentionTests {
             scene.adapter.refresh()
             // Reported back: the turn is waiting, no longer on its way.
             await pollUntilTurnsDeleted { scene.adapter.turnDeletions.retryAfter[scene.old] != nil }
+            let firstRetry = try #require(scene.adapter.turnDeletions.retryAfter[scene.old])
             scene.adapter.refresh()
             // A batch is sent from the pass that asks for it.
             #expect(!scene.adapter.turnDeletions.isSending && scene.adapter.turnDeletions.waiting.isEmpty, "within the wait")
@@ -400,8 +407,12 @@ struct TurnRetentionTests {
 
             clock = clock.addingTimeInterval(11 * 60)
             scene.adapter.refresh()
-            await pollUntilTurnsDeleted { collector.batches.count == 2 }
-            #expect(collector.batches.count == 2, "asked again once the wait is over")
+            await pollUntilTurnsDeleted {
+                scene.adapter.turnDeletions.retryAfter[scene.old].map { $0 > firstRetry } == true
+            }
+            #expect(scene.adapter.turnDeletions.retryAfter[scene.old] == clock.addingTimeInterval(TurnDeletionQueue.retryDelay))
+            #expect(collector.batches == [[scene.old], [scene.old]], "asked again once the wait is over")
+            #expect(!scene.adapter.turnDeletions.isSending)
         }
     }
 
@@ -430,12 +441,14 @@ struct TurnRetentionTests {
     @Test func aTurnOpenedInAReviewWhileItsBatchWaits_isNotDeleted() async throws {
         try await withTempDir { root in
             let collector = Collector(holds: true)
+            defer { collector.release() }
             let scene = try scene(in: root, collector: collector)
             var forgotten: [TurnID: ConversationKey?] = [:]
             scene.adapter.onTurnsDeleted = { gone, _ in forgotten.merge(gone) { _, new in new } }
 
             scene.adapter.refresh()
             await pollUntilTurnsDeleted { collector.batches.count == 1 }
+            try #require(collector.batches == [[scene.old]])
             // The second turn is no longer protected: a pass asks for it,
             // and its batch waits behind the first.
             scene.adapter.turnProtection = { TurnProtection(protectedTurnIDs: [], shownConversations: []) }
@@ -475,13 +488,14 @@ struct TurnRetentionTests {
                     ? [TurnDeletion(outcome: .deleted, turnID: recovered, reason: nil, roots: nil)]
                     : ids.map { TurnDeletion(outcome: .deleted, turnID: $0, reason: nil, roots: nil) }
             }
+            defer { collector.release() }
             // No protection yet at launch: the sweep asks for nothing, and
             // the only batch is the one that finishes what was cut short.
             let scene = try scene(in: root, collector: collector)
             var forgotten: [TurnID: ConversationKey?] = [:]
             scene.adapter.onTurnsDeleted = { gone, _ in forgotten.merge(gone) { _, new in new } }
             await pollUntilTurnsDeleted { collector.recoveries == 1 }
-            #expect(collector.recoveries == 1, "sent at launch")
+            try #require(collector.recoveries == 1, "sent at launch")
             #expect(collector.batches.isEmpty)
 
             collector.release()
@@ -499,9 +513,11 @@ struct TurnRetentionTests {
         try await withTempDir { root in
             let file = root.appendingPathComponent(TurnDeletionFile.fileName)
             let first = Collector(holds: true)
+            defer { first.release() }
             let scene = try scene(in: root, collector: first, turnDeletionsURL: file)
             scene.adapter.refresh()
             await pollUntilTurnsDeleted { first.batches.count == 1 }
+            try #require(first.batches == [[scene.old]])
             #expect(TurnDeletionFile.read(file).elements.map(\.turnID) == [scene.old], "kept before the batch goes")
             // As the bridge leaves it when the quit comes: moved aside.
             let record = try scene.recordURL(scene.old)
@@ -534,7 +550,6 @@ struct TurnRetentionTests {
             #expect(forgotten[TurnID(old)]??.conversationID == "s1")
             await pollUntilTurnsDeleted { !FileManager.default.fileExists(atPath: file.path) }
             #expect(!FileManager.default.fileExists(atPath: file.path), "nothing is on its way, and the span is saved")
-            first.release()
         }
     }
 

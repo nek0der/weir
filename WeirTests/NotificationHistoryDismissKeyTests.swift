@@ -29,6 +29,7 @@ struct NotificationHistoryDismissKeyTests {
         #expect(delete.isPressed(key: .backspacePress, modifiers: .command))
         #expect(delete.isPressed(key: .backspacePress, modifiers: [.command, .capsLock]))
         #expect(!delete.isPressed(key: .backspacePress, modifiers: []))
+        #expect(!delete.isPressed(key: .backspacePress, modifiers: .capsLock))
     }
 
     /// A press of ⌫ carries U+007F, not the U+0008 of SwiftUI's `.delete`,

@@ -24,8 +24,11 @@ struct WorktreePlacementActionsTests {
 
     @Test func eachPlacement_isTheChoiceThatSetsIt() {
         let custom = WorktreePlacement.custom(URL(fileURLWithPath: "/tmp/wt"))
-        for placement in [WorktreePlacement.siblingPrefixed, .insideHidden, custom] {
-            let choice = WorktreePlacementActions.choice(of: placement)
+        let cases: [(WorktreePlacement, WorktreePlacementActions.Choice)] = [
+            (.siblingPrefixed, .siblingPrefixed), (.insideHidden, .insideHidden), (custom, .custom)
+        ]
+        for (placement, choice) in cases {
+            #expect(WorktreePlacementActions.choice(of: placement) == choice)
             let parent = WorktreePlacementActions.customParent(of: placement)
             #expect(WorktreePlacementActions.placement(for: choice, customParent: parent) == placement)
         }

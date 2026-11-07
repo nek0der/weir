@@ -44,9 +44,9 @@ struct InitialPromptFileTests {
             #expect(launch.command == "codex")
             #expect(launch.staged?.promptFile == file)
             #expect(launch.staged?.environment[InitialPromptFile.environmentKey] == file)
-
             session.clearStagedLaunch(paneID: pane)
             #expect(PaneHostRepresentable.launch(session: session, paneID: pane).staged == nil)
+            #expect(try String(contentsOfFile: file, encoding: .utf8) == "do it")
         }
     }
 
@@ -64,12 +64,14 @@ struct InitialPromptFileTests {
             let tab = try #require(session.tab(containing: pane))
             session.stageAgentExecutable(AgentInstallation(kind: .claude, executable: "/opt/tools/bin/claude"), paneID: pane)
             #expect(session.stagedLaunch(paneID: pane)?.agentExecutable != nil)
+            #expect(FileManager.default.fileExists(atPath: file))
 
             // A second pane, so closing the first closes a pane, not the tab.
             session.setActiveTab(tab.id)
             PaneActions.split(session, direction: .horizontal)
             session.update(tab.id) { $0.splitTree.focusedLeafID = pane }
             PaneActions.closeActivePane(session, registry: RecordingSurfaceRegistry())
+            #expect(session.tab(containing: pane) == nil)
             #expect(session.stagedLaunch(paneID: pane) == nil)
             #expect(!FileManager.default.fileExists(atPath: file))
             #expect(session.tab(tab.id)?.initialAgentExecutables.isEmpty == true)

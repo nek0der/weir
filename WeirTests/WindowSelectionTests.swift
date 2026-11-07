@@ -44,6 +44,9 @@ struct WindowSelectionTests {
         let data = try JSONEncoder().encode(id)
         #expect(String(bytes: data, encoding: .utf8) == "\"\(id.rawValue.uuidString)\"")
         #expect(try JSONDecoder().decode(WindowID.self, from: data) == id)
+        let stored = Data(#""10101010-2020-4030-8040-505050505050""#.utf8)
+        let decoded = try JSONDecoder().decode(WindowID.self, from: stored)
+        #expect(decoded.rawValue.uuidString == "10101010-2020-4030-8040-505050505050")
     }
 
     // MARK: - Finding a window's selection

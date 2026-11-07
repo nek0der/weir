@@ -31,7 +31,7 @@ struct UnreadTurnRulesTests {
         #expect(item.turn.changes == .changed(files: 4, added: 6, removed: 2))
         #expect(item.turn.check?.command == "make test", "the latest turn's check")
         #expect(item.turn.conversation == Fixture.conversation)
-        #expect(item.arrivedAt == UnreadTurnRules.date("2026-10-12T01:00:00Z"))
+        #expect(item.arrivedAt == Date(timeIntervalSince1970: 1_791_766_800))
     }
 
     @Test func aTurnThatChangedNothing_isItsOwnItem() throws {
@@ -93,7 +93,7 @@ struct UnreadTurnRulesTests {
 
         let byRuntime = UnreadTurnRules.byRuntime([old, resumed, elsewhere, unknown], history: history) { _ in false }
 
-        #expect(byRuntime["claude:new"]?.count == 1)
+        #expect(byRuntime["claude:new"]?.map(\.turn.turnID) == [TurnID("T1")])
         #expect(byRuntime["claude:old"] == [], "listed once, and not as its episode either")
         #expect(byRuntime["claude:elsewhere"] == nil, "no history yet: the episode decides")
         #expect(byRuntime["codex:x"] == nil)
@@ -122,8 +122,8 @@ struct UnreadTurnRulesTests {
     }
 
     @Test func recordTimes_readWithOrWithoutFractions() {
-        #expect(UnreadTurnRules.date("2026-10-11T21:18:21Z") != nil)
-        #expect(UnreadTurnRules.date("2026-10-11T21:18:21.250Z") != nil)
+        #expect(UnreadTurnRules.date("2026-10-11T21:18:21Z") == Date(timeIntervalSince1970: 1_791_753_501))
+        #expect(UnreadTurnRules.date("2026-10-11T21:18:21.250Z") == Date(timeIntervalSince1970: 1_791_753_501.25))
         #expect(UnreadTurnRules.date("yesterday") == nil)
         #expect(UnreadTurnRules.date(nil) == nil)
     }

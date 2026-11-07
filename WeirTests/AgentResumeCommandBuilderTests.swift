@@ -15,13 +15,21 @@ struct AgentResumeCommandBuilderTests {
 
     // MARK: - The strict resume
 
-    @Test("types the agent's own resume, with a quoted cd for a folder, and no fresh agent after it", arguments: AgentKind.allCases)
-    func strictResume_hasNoFallback(kind: AgentKind) {
+    @Test(
+        "The strict resume quotes the working directory and has no fallback",
+        arguments: AgentKind.allCases,
+        [
+            (nil as String?, ""),
+            ("", ""),
+            ("/tmp/repo", "cd '/tmp/repo' && "),
+            ("/Users/foo/Weir Dev/bar's repo", "cd '/Users/foo/Weir Dev/bar'\\''s repo' && ")
+        ]
+    )
+    func strictResume_hasNoFallback(kind: AgentKind, folder: (path: String?, prefix: String)) {
         let id = Self.sessionID
-        #expect(kind.strictResumeCommand(sessionId: id) == Self.resume(kind, id))
-        #expect(kind.strictResumeCommand(sessionId: id, cwd: "/tmp/repo") == "cd '/tmp/repo' && \(Self.resume(kind, id))")
-        // The builder types the strict resume as it is.
-        #expect(Self.resumeCommand(kind, sessionId: id, cwd: "/tmp/repo") == kind.strictResumeCommand(sessionId: id, cwd: "/tmp/repo"))
+        let expected = folder.prefix + Self.resume(kind, id)
+        #expect(kind.strictResumeCommand(sessionId: id, cwd: folder.path) == expected)
+        #expect(Self.resumeCommand(kind, sessionId: id, cwd: folder.path) == expected)
     }
 
     /// The state file is read, not trusted: a crafted id is never typed into
@@ -45,18 +53,7 @@ struct AgentResumeCommandBuilderTests {
     )
     func strictResume_refusesAFolderWithControlCharacters(kind: AgentKind, cwd: String) {
         #expect(kind.strictResumeCommand(sessionId: Self.sessionID, cwd: cwd) == nil)
-    }
-
-    @Test("single-quote-escapes spaces and apostrophes in the folder", arguments: AgentKind.allCases)
-    func strictResume_quotesPathsWithSpacesAndApostrophes(kind: AgentKind) {
-        let command = kind.strictResumeCommand(sessionId: Self.sessionID, cwd: "/Users/foo/Weir Dev/bar's repo")
-        // POSIX single-quote escape: close, backslash-quote, reopen.
-        #expect(command == "cd '/Users/foo/Weir Dev/bar'\\''s repo' && \(Self.resume(kind, Self.sessionID))")
-    }
-
-    @Test("treats an empty folder as absent", arguments: AgentKind.allCases)
-    func strictResume_treatsAnEmptyCwdAsAbsent(kind: AgentKind) {
-        #expect(kind.strictResumeCommand(sessionId: Self.sessionID, cwd: "") == Self.resume(kind, Self.sessionID))
+        #expect(Self.resumeCommand(kind, sessionId: Self.sessionID, cwd: cwd) == nil)
     }
 
     // MARK: - The resume at launch
@@ -64,14 +61,14 @@ struct AgentResumeCommandBuilderTests {
     @Test("resumes the pane the projection named, in the session's folder", arguments: AgentKind.allCases)
     func initialCommand_resumesTheNamedPane(kind: AgentKind) {
         let (tab, paneID) = AgentResumeFixture.tab([kind], cwd: "/tmp/repo")
-        let resume = Self.resume(kind, for: tab, paneID: paneID)
-        #expect(resume == AgentResume(
+        let expected = AgentResume(
             provider: kind,
             sessionID: Self.sessionID,
             cwd: "/tmp/repo",
             command: "cd '/tmp/repo' && \(Self.resume(kind, Self.sessionID))"
-        ))
-        #expect(Self.initialCommand(kind, for: tab, paneID: paneID) == resume?.command)
+        )
+        #expect(Self.resume(kind, for: tab, paneID: paneID) == expected)
+        #expect(Self.initialCommand(kind, for: tab, paneID: paneID) == expected.command)
     }
 
     /// Which provider resumes when both remember a session on one pane is
@@ -135,6 +132,11 @@ struct AgentResumeCommandBuilderTests {
 
         #expect(Self.initialCommand(kind, for: tab, paneID: firstPaneID) == Self.resume(kind, Self.sessionID))
         #expect(Self.initialCommand(kind, for: tab, paneID: otherPaneID) == nil)
+
+        let otherSessionID = "2a3e12a0-835f-4a1f-a467-4f4806a52a31"
+        AgentResumeFixture.stage([kind], on: &tab, paneID: otherPaneID, sessionID: otherSessionID, cwd: "/tmp/other")
+        #expect(Self.initialCommand(kind, for: tab, paneID: firstPaneID) == Self.resume(kind, Self.sessionID))
+        #expect(Self.initialCommand(kind, for: tab, paneID: otherPaneID) == "cd '/tmp/other' && \(Self.resume(kind, otherSessionID))")
     }
 
     @Test("defers to a command the person staged for the pane", arguments: AgentKind.allCases)

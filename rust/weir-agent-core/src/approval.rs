@@ -505,19 +505,25 @@ mod tests {
         let principal = Principal::Requester {
             run_id: request.key.run_id,
         };
-        broker.submit(&principal, request.clone(), 0).unwrap();
+        let original = broker.submit(&principal, request.clone(), 0).unwrap();
+        let sequence = broker.sequence();
 
         assert_eq!(
             broker.resolve(&principal, request.key, ApprovalDecision::AllowOnce, 1),
             Err(BrokerError::Unauthorized)
         );
+        assert_eq!(
+            broker.get(&Principal::Controller, request.key, 1),
+            Ok(original)
+        );
+        assert_eq!(broker.sequence(), sequence);
     }
 
     #[test]
     fn requester_cannot_read_or_cancel_another_run() {
         let mut broker = broker();
         let request = request(1, 2);
-        broker
+        let original = broker
             .submit(
                 &Principal::Requester {
                     run_id: request.key.run_id,
@@ -526,6 +532,7 @@ mod tests {
                 0,
             )
             .unwrap();
+        let sequence = broker.sequence();
         let other = Principal::Requester {
             run_id: RunId::new(id(3)),
         };
@@ -538,6 +545,11 @@ mod tests {
             broker.cancel(&other, request.key, 1),
             Err(BrokerError::Unauthorized)
         );
+        assert_eq!(
+            broker.get(&Principal::Controller, request.key, 1),
+            Ok(original)
+        );
+        assert_eq!(broker.sequence(), sequence);
     }
 
     #[test]
@@ -548,8 +560,14 @@ mod tests {
             run_id: request.key.run_id,
         };
         let first = broker.submit(&requester, request.clone(), 0).unwrap();
+        assert_eq!(first.request, request);
+        assert_eq!(first.state, ApprovalState::Pending);
+        assert_eq!(first.created_at_ms, 0);
+        assert_eq!(first.deadline_ms, 1_000);
+        let submitted_sequence = broker.sequence();
         let second = broker.submit(&requester, request.clone(), 10).unwrap();
         assert_eq!(first, second);
+        assert_eq!(broker.sequence(), submitted_sequence);
 
         let first = broker
             .resolve(
@@ -559,6 +577,11 @@ mod tests {
                 20,
             )
             .unwrap();
+        assert_eq!(
+            first.state,
+            ApprovalState::Resolved(ApprovalDecision::AllowOnce)
+        );
+        let resolved_sequence = broker.sequence();
         let second = broker
             .resolve(
                 &Principal::Controller,
@@ -568,60 +591,111 @@ mod tests {
             )
             .unwrap();
         assert_eq!(first, second);
-    }
-
-    #[test]
-    fn a_resubmit_naming_another_agent_run_conflicts() {
-        // The run that asked is part of the request's content, like its
-        // session: a retry under the same key may not move it to another run.
-        let mut broker = broker();
-        let mut request = request(1, 2);
-        request.agent_run_id = Some(id(7));
-        let requester = Principal::Requester {
-            run_id: request.key.run_id,
-        };
-        broker.submit(&requester, request.clone(), 0).unwrap();
-        let mut moved = request.clone();
-        moved.agent_run_id = Some(id(8));
-        assert_eq!(
-            broker.submit(&requester, moved, 1),
-            Err(BrokerError::RequestConflict)
-        );
-        let mut unnamed = request.clone();
-        unnamed.agent_run_id = None;
-        assert_eq!(
-            broker.submit(&requester, unnamed, 1),
-            Err(BrokerError::RequestConflict)
-        );
-        assert!(broker.submit(&requester, request, 1).is_ok());
-    }
-
-    #[test]
-    fn changed_submit_conflicts_and_late_allow_is_rejected() {
-        let mut broker = broker();
-        let request = request(1, 2);
-        let requester = Principal::Requester {
-            run_id: request.key.run_id,
-        };
-        broker.submit(&requester, request.clone(), 0).unwrap();
-        let mut changed = request.clone();
-        changed.tool_name = "Write".into();
-        assert_eq!(
-            broker.submit(&requester, changed, 1),
-            Err(BrokerError::RequestConflict)
-        );
+        assert_eq!(broker.sequence(), resolved_sequence);
         assert_eq!(
             broker.resolve(
                 &Principal::Controller,
                 request.key,
+                ApprovalDecision::Deny { message: None },
+                40
+            ),
+            Err(BrokerError::AlreadyTerminal)
+        );
+        assert_eq!(
+            broker.get(&Principal::Controller, request.key, 40),
+            Ok(first)
+        );
+        assert_eq!(broker.sequence(), resolved_sequence);
+    }
+
+    #[test]
+    fn a_resubmit_with_changed_content_conflicts_without_mutating_the_request() {
+        let unnamed = request(1, 2);
+        let named = ApprovalRequest {
+            agent_run_id: Some(id(7)),
+            ..unnamed.clone()
+        };
+        for (field, original, changed) in [
+            (
+                "agent run changed",
+                &named,
+                ApprovalRequest {
+                    agent_run_id: Some(id(8)),
+                    ..named.clone()
+                },
+            ),
+            ("agent run removed", &named, unnamed.clone()),
+            (
+                "tool changed",
+                &unnamed,
+                ApprovalRequest {
+                    tool_name: "Write".into(),
+                    ..unnamed.clone()
+                },
+            ),
+        ] {
+            let mut broker = broker();
+            let requester = requester_of(original);
+            let snapshot = broker.submit(&requester, original.clone(), 0).unwrap();
+            let sequence = broker.sequence();
+            assert_eq!(
+                broker.submit(&requester, changed, 1),
+                Err(BrokerError::RequestConflict),
+                "{field}"
+            );
+            assert_eq!(
+                broker.get(&Principal::Controller, original.key, 1),
+                Ok(snapshot.clone()),
+                "{field}"
+            );
+            assert_eq!(broker.sequence(), sequence, "{field}");
+            assert_eq!(
+                broker.submit(&requester, original.clone(), 1),
+                Ok(snapshot),
+                "{field}"
+            );
+            assert_eq!(broker.sequence(), sequence, "{field}");
+        }
+    }
+
+    #[test]
+    fn an_allow_is_accepted_before_the_deadline_and_rejected_at_it() {
+        let mut broker = broker();
+        let timely = request(1, 2);
+        let due = request(1, 3);
+        let requester = requester_of(&timely);
+        for item in [&timely, &due] {
+            let submitted = broker.submit(&requester, item.clone(), 0).unwrap();
+            assert_eq!(submitted.deadline_ms, 1_000);
+        }
+        assert_eq!(
+            broker
+                .resolve(
+                    &Principal::Controller,
+                    timely.key,
+                    ApprovalDecision::AllowOnce,
+                    999
+                )
+                .unwrap()
+                .state,
+            ApprovalState::Resolved(ApprovalDecision::AllowOnce)
+        );
+        assert_eq!(
+            broker.resolve(
+                &Principal::Controller,
+                due.key,
                 ApprovalDecision::AllowOnce,
                 1_000
             ),
             Err(BrokerError::AlreadyTerminal)
         );
         assert_eq!(
-            broker.get(&requester, request.key, 1_000).unwrap().state,
+            broker.get(&requester, due.key, 1_000).unwrap().state,
             ApprovalState::Expired
+        );
+        assert_eq!(
+            broker.get(&requester, timely.key, 1_000).unwrap().state,
+            ApprovalState::Resolved(ApprovalDecision::AllowOnce)
         );
     }
 
@@ -633,7 +707,9 @@ mod tests {
             run_id: request.key.run_id,
         };
         broker.submit(&requester, request.clone(), 0).unwrap();
-        broker.cancel(&requester, request.key, 10).unwrap();
+        let canceled = broker.cancel(&requester, request.key, 10).unwrap();
+        assert_eq!(canceled.state, ApprovalState::Canceled);
+        let sequence = broker.sequence();
 
         assert_eq!(
             broker.resolve(
@@ -644,21 +720,25 @@ mod tests {
             ),
             Err(BrokerError::AlreadyTerminal)
         );
+        assert_eq!(
+            broker.get(&Principal::Controller, request.key, 11),
+            Ok(canceled)
+        );
+        assert_eq!(broker.sequence(), sequence);
     }
 
     #[test]
     fn cancel_run_withdraws_only_that_runs_pending_requests() {
         let mut broker = broker();
-        let pending = request(1, 2);
+        let first = request(1, 2);
+        let second = request(1, 4);
         let answered = request(1, 3);
         let other_run = request(4, 5);
-        let requester = requester_of(&pending);
-        broker.submit(&requester, pending.clone(), 0).unwrap();
-        broker.submit(&requester, answered.clone(), 0).unwrap();
-        broker
-            .submit(&requester_of(&other_run), other_run.clone(), 0)
-            .unwrap();
-        broker
+        let requester = requester_of(&first);
+        for item in [&first, &second, &answered, &other_run] {
+            broker.submit(&requester_of(item), item.clone(), 0).unwrap();
+        }
+        let allowed = broker
             .resolve(
                 &Principal::Controller,
                 answered.key,
@@ -666,34 +746,50 @@ mod tests {
                 1,
             )
             .unwrap();
+        let original_other = broker
+            .get(&Principal::Controller, other_run.key, 1)
+            .unwrap();
+        assert_eq!(
+            allowed.state,
+            ApprovalState::Resolved(ApprovalDecision::AllowOnce)
+        );
+        assert_eq!(original_other.state, ApprovalState::Pending);
 
-        let canceled = broker.cancel_run(&requester, 2).unwrap();
+        let sequence = broker.sequence();
+        assert_eq!(
+            broker.cancel_run(&Principal::Controller, 2),
+            Err(BrokerError::Unauthorized)
+        );
+        assert_eq!(broker.sequence(), sequence);
+        for key in [first.key, second.key, other_run.key] {
+            assert_eq!(
+                broker.get(&Principal::Controller, key, 2).unwrap().state,
+                ApprovalState::Pending
+            );
+        }
 
+        let canceled = broker.cancel_run(&requester, 3).unwrap();
+        assert_eq!(canceled.len(), 2);
         assert_eq!(
             canceled
                 .iter()
                 .map(|record| record.request.key)
-                .collect::<Vec<_>>(),
-            vec![pending.key]
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([first.key, second.key])
+        );
+        for key in [first.key, second.key] {
+            assert_eq!(
+                broker.get(&requester, key, 4).unwrap().state,
+                ApprovalState::Canceled
+            );
+        }
+        assert_eq!(
+            broker.get(&Principal::Controller, answered.key, 4),
+            Ok(allowed)
         );
         assert_eq!(
-            broker.get(&requester, pending.key, 3).unwrap().state,
-            ApprovalState::Canceled
-        );
-        assert_ne!(
-            broker.get(&requester, answered.key, 3).unwrap().state,
-            ApprovalState::Canceled
-        );
-        assert_eq!(
-            broker
-                .get(&requester_of(&other_run), other_run.key, 3)
-                .unwrap()
-                .state,
-            ApprovalState::Pending
-        );
-        assert_eq!(
-            broker.cancel_run(&Principal::Controller, 4),
-            Err(BrokerError::Unauthorized)
+            broker.get(&Principal::Controller, other_run.key, 4),
+            Ok(original_other)
         );
     }
 
@@ -817,13 +913,13 @@ mod tests {
         let mut broker = small_broker();
         let pending = request(1, 2);
         let unread = request(1, 3);
-        broker
+        let pending_snapshot = broker
             .submit(&requester_of(&pending), pending.clone(), 0)
             .unwrap();
         broker
             .submit(&requester_of(&unread), unread.clone(), 0)
             .unwrap();
-        broker
+        let unread_snapshot = broker
             .resolve(
                 &Principal::Controller,
                 unread.key,
@@ -832,13 +928,30 @@ mod tests {
             )
             .unwrap();
         // The app reading how it ended does not consume it.
-        broker.get(&Principal::Controller, unread.key, 2).unwrap();
+        assert_eq!(
+            broker.get(&Principal::Controller, unread.key, 2),
+            Ok(unread_snapshot.clone())
+        );
+        let sequence = broker.sequence();
 
         let newcomer = request(1, 4);
         assert_eq!(
-            broker.submit(&requester_of(&newcomer), newcomer, 3),
+            broker.submit(&requester_of(&newcomer), newcomer.clone(), 3),
             Err(BrokerError::CapacityExceeded)
         );
+        assert_eq!(
+            broker.get(&Principal::Controller, pending.key, 3),
+            Ok(pending_snapshot)
+        );
+        assert_eq!(
+            broker.get(&Principal::Controller, unread.key, 3),
+            Ok(unread_snapshot)
+        );
+        assert_eq!(
+            broker.get(&Principal::Controller, newcomer.key, 3),
+            Err(BrokerError::NotFound)
+        );
+        assert_eq!(broker.sequence(), sequence);
     }
 
     #[test]
@@ -864,9 +977,19 @@ mod tests {
         // The slot freed for this one is the withdrawn request's, not the
         // answer the requester has yet to read.
         let newcomer = request(1, 4);
-        broker
-            .submit(&requester_of(&newcomer), newcomer, 3)
+        let accepted = broker
+            .submit(&requester_of(&newcomer), newcomer.clone(), 3)
             .unwrap();
+        assert_eq!(accepted.request, newcomer);
+        assert_eq!(accepted.state, ApprovalState::Pending);
+        assert_eq!(
+            broker.get(&Principal::Controller, newcomer.key, 3),
+            Ok(accepted)
+        );
+        assert_eq!(
+            broker.get(&Principal::Controller, other.key, 3),
+            Err(BrokerError::NotFound)
+        );
 
         let result = broker
             .get(&requester_of(&answered), answered.key, 999)
@@ -878,17 +1001,18 @@ mod tests {
     }
 
     #[test]
-    fn unconsumed_terminal_expires_after_double_lifetime() {
+    fn unconsumed_terminal_becomes_evictable_at_twice_its_timeout() {
         let mut broker = small_broker();
-        let live = request(1, 2);
+        let mut live = request(1, 2);
+        live.timeout_ms = 10_000;
         let abandoned = request(1, 3);
-        broker
+        let live_snapshot = broker
             .submit(&requester_of(&live), live.clone(), 0)
             .unwrap();
         broker
             .submit(&requester_of(&abandoned), abandoned.clone(), 0)
             .unwrap();
-        broker
+        let abandoned_snapshot = broker
             .resolve(
                 &Principal::Controller,
                 abandoned.key,
@@ -903,10 +1027,27 @@ mod tests {
             broker.submit(&requester_of(&early), early.clone(), 1_999),
             Err(BrokerError::CapacityExceeded)
         );
-        broker.submit(&requester_of(&early), early, 2_000).unwrap();
+        assert_eq!(
+            broker.get(&Principal::Controller, abandoned.key, 2_000),
+            Ok(abandoned_snapshot)
+        );
+        broker
+            .submit(&requester_of(&early), early.clone(), 2_000)
+            .unwrap();
         assert_eq!(
             broker.get(&Principal::Controller, abandoned.key, 2_001),
             Err(BrokerError::NotFound)
+        );
+        assert_eq!(
+            broker.get(&Principal::Controller, live.key, 2_001),
+            Ok(live_snapshot)
+        );
+        assert_eq!(
+            broker
+                .get(&Principal::Controller, early.key, 2_001)
+                .unwrap()
+                .state,
+            ApprovalState::Pending
         );
     }
 

@@ -55,14 +55,14 @@ struct WorktreeRoutingTests {
         #expect((entry["routing"] as? [String: Any])?["codex"] as? Bool == false)
 
         let steps = try #require(entry["bootstrap"] as? [[String: Any]])
-        #expect(steps.count == 2)
+        try #require(steps.count == 2)
         #expect(steps[0]["command"] as? String == "mkdir sub")
         #expect(steps[0]["cwd"] == nil)
         #expect(steps[1]["command"] as? String == "make")
         #expect(steps[1]["cwd"] as? String == "sub")
     }
 
-    @Test("the checks and worktrees the hook reads are optional items")
+    @Test("the hook receives declared checks and the project's worktree paths")
     func checks_areWrittenOnlyWhenTheProjectSetsThem() throws {
         let root = URL(fileURLWithPath: "/tmp/repo")
         var mine = project(root: root)
@@ -84,11 +84,13 @@ struct WorktreeRoutingTests {
                 )["projects"] as? [[String: Any]]
         )
 
+        try #require(projects.count == 2)
         #expect(json(projects[0], "checks") == ["just check"])
         #expect(json(projects[0], "worktrees") == ["/tmp/repo-feat"])
         // The defaults are the hook's own, so nothing is written for them,
         // and the file stays version 1 for a hook that predates checks.
         #expect(projects[1]["checks"] == nil)
+        #expect(json(projects[1], "worktrees") == [])
     }
 
     private func json(_ entry: [String: Any], _ key: String) -> [String]? {
@@ -115,17 +117,17 @@ struct WorktreeRoutingTests {
     func load_refreshesTheFile() throws {
         try withTempDir { root in
             let store = SessionStore(directory: root)
-            store.saveSynchronously(SessionSnapshot(
-                projects: [project(root: root.appendingPathComponent("repo"))],
-                tabs: []
-            ))
+            let projectRoot = root.appendingPathComponent("repo")
+            store.saveSynchronously(SessionSnapshot(projects: [project(root: projectRoot)], tabs: []))
             let url = root.appendingPathComponent(WorktreeRouting.fileName)
             try FileManager.default.removeItem(at: url)
 
             // Without this the hook would read nothing until the next save and
             // pass every interception through in the meantime.
             _ = SessionStore(directory: root).load()
-            #expect(FileManager.default.fileExists(atPath: url.path))
+            let routing = try JSONDecoder().decode(WorktreeRouting.self, from: Data(contentsOf: url))
+            #expect(routing.schemaVersion == 1)
+            #expect(routing.projects.map(\.root) == [projectRoot.path])
         }
     }
 
@@ -144,8 +146,7 @@ struct WorktreeRoutingTests {
             let data = try Data(contentsOf: url)
             let decoded = try JSONDecoder().decode(WorktreeRouting.self, from: data)
             #expect(decoded.schemaVersion == WorktreeRouting.currentVersion)
-            #expect(decoded.projects.count == 1)
-            #expect(decoded.projects[0].root.hasSuffix("/repo"))
+            #expect(decoded.projects.map(\.root) == [root.appendingPathComponent("repo").path])
         }
     }
 

@@ -72,6 +72,8 @@ struct ProjectScrollMemoryTests {
         let turns = ["t1", "t2", "t3", "t4"].map(TurnID.init)
         #expect(ProjectScrollMemory.selectedTurn(rows: turns, shownInReview: [turns[3], turns[1]], opensOn: turns[2]) == turns[1])
         #expect(ProjectScrollMemory.selectedTurn(rows: turns, shownInReview: [], opensOn: turns[2]) == turns[2])
+        #expect(ProjectScrollMemory.selectedTurn(rows: turns, shownInReview: [TurnID("gone")], opensOn: turns[2]) == turns[2])
+        #expect(ProjectScrollMemory.selectedTurn(rows: turns, shownInReview: [TurnID("gone")], opensOn: nil) == nil)
     }
 
     @Test func thePanelsPlace_isAnotherAgentsNoPlace() {
@@ -111,7 +113,9 @@ struct ProjectScrollMemoryTests {
 
         fixture.choose(fixture.aTab, in: window)
         #expect(window.scrollRestore?.memory.changes?.place.row == TurnID("a1"))
-        #expect(window.takeScrollRestore(for: .changes)?.projectID == fixture.a.id)
+        let restore = window.takeScrollRestore(for: .changes)
+        #expect(restore?.projectID == fixture.a.id)
+        #expect(restore?.memory.changes?.place.row == TurnID("a1"))
         #expect(window.takeScrollRestore(for: .changes) == nil, "once")
         #expect(fixture.registry.scrollMemories[fixture.a.id] == nil, "the window holds a's place now")
         #expect(fixture.registry.scrollMemories[fixture.b.id]?.changes?.place.row == TurnID("b1"))
@@ -180,6 +184,9 @@ struct ProjectScrollMemoryTests {
 
         // Opened later, its list is one opened, not one coming back.
         #expect(window.scrollRestore?.projectID == fixture.a.id)
+        #expect(window.scrollRestore?.memory.changes?.place.row == TurnID("a1"))
+        #expect(!window.selection.isChangesPanelPresented)
+        #expect(window.pendingScrollLists.isEmpty)
         #expect(window.takeScrollRestore(for: .changes) == nil)
     }
 

@@ -14,39 +14,46 @@ struct SettingsStoreTests {
     /// A garbled `settings.json` is renamed aside on init and the
     /// subsequent `saveNow()` lands on a fresh file, preserving the
     /// user's original bytes.
-    @Test("decode failure quarantines settings.json before defaults take over")
-    func decodeFailureQuarantinesFile() throws {
+    @Test("decode failure quarantines settings.json before defaults take over", arguments: [
+        #"{ "garbled": true, "#,
+        #"{"appearance":{},"font":{},"terminal":"wide","advanced":{}}"#
+    ])
+    func decodeFailureQuarantinesFile(json: String) throws {
         try withTempDir { dir in
-            let originalBytes = Data(#"{ "garbled": true, "#.utf8)
+            let originalBytes = Data(json.utf8)
             let live = dir.appendingPathComponent("settings.json")
             try originalBytes.write(to: live)
 
             let store = SettingsStore(directory: dir)
 
             let entries = try FileManager.default.contentsOfDirectory(atPath: dir.path)
-            let quarantined = entries.first { $0.hasPrefix("settings.json.bak-decode-failed-") }
-            try #require(quarantined != nil, "expected a quarantine sibling of settings.json")
-            let quarantinedURL = dir.appendingPathComponent(quarantined!)
-            #expect(try Data(contentsOf: quarantinedURL) == originalBytes)
-
-            // The store should hold the schema default, not the bad bytes.
+            let backup = try #require(entries.first { $0.hasPrefix("settings.json.bak-decode-failed-") })
+            let quarantined = dir.appendingPathComponent(backup)
+            #expect(entries == [backup])
+            #expect(!FileManager.default.fileExists(atPath: live.path))
+            #expect(try Data(contentsOf: quarantined) == originalBytes)
             #expect(store.settings == .default)
+            #expect(store.savingSuspension == nil)
+            #expect(MigrationBackup.readLedger(for: live) == nil)
+            #expect(SavingSuspendedNotice.alert(
+                launchSettings: store.savingSuspension,
+                failedSessionFile: nil,
+                isSettingsSaveFailing: store.hasFailedToSave,
+                settingsFile: live,
+                locale: Locale(identifier: "en")
+            ) == nil)
 
-            // A subsequent save lands at the fresh `settings.json` path
-            // without overwriting the bak file.
-            store.saveNow()
-            #expect(FileManager.default.fileExists(atPath: live.path))
-            #expect(try Data(contentsOf: quarantinedURL) == originalBytes)
+            try #require(store.saveNow())
+            #expect(try Self.read(live) == .default)
+            store.settings.terminal.minPaneSize = 140
+            try #require(store.saveNow())
+            #expect(try Self.read(live).terminal.minPaneSize == 140)
+            #expect(try Data(contentsOf: quarantined) == originalBytes)
         }
     }
 
-    /// `saveNow` says whether the file holds the settings; callers ignore it
-    /// today, so this pins what it means before one starts reading it.
-    @Test func saveNow_reportsWhetherTheFileWasWritten() throws {
-        try withTempDir { dir in
-            #expect(SettingsStore(directory: dir).saveNow())
-            #expect(!SettingsStore(directory: dir, writesFiles: false).saveNow(), "demo mode writes nothing")
-        }
+    private static func read(_ url: URL) throws -> WeirSettings {
+        try PersistenceCoders.makeDecoder().decode(WeirSettings.self, from: Data(contentsOf: url))
     }
 
     /// The file name is what users edit by hand and what older builds
@@ -59,8 +66,8 @@ struct SettingsStoreTests {
             #expect(store.settingsFileURL == file)
 
             store.settings.terminal.minPaneSize = 120
-            store.saveNow()
-            #expect(FileManager.default.fileExists(atPath: file.path))
+            try #require(store.saveNow())
+            #expect(try Self.read(file).terminal.minPaneSize == 120)
 
             let reloaded = SettingsStore(directory: dir)
             #expect(reloaded.settings.terminal.minPaneSize == 120)
@@ -83,6 +90,8 @@ struct SettingsStoreTests {
             #expect(store.settings.terminal.minPaneSize == 140)
             #expect(store.savingSuspension == .newerVersion)
             store.settings.terminal.minPaneSize = 160
+            #expect(!store.saveNow())
+            #expect(!store.hasFailedToSave)
             store.flushSynchronously()
 
             #expect(try Data(contentsOf: file) == bytes)
@@ -96,42 +105,41 @@ struct SettingsStoreTests {
     @Test func aNewerSchemaFileThatDoesNotDecode_staysInPlace_andIsNotWritten() throws {
         try withTempDir { dir in
             let file = dir.appendingPathComponent("settings.json")
-            var newer = try #require(
-                JSONSerialization.jsonObject(with: WeirSettings.makeFileEncoder().encode(WeirSettings.default)) as? [String: Any]
-            )
-            newer["schemaVersion"] = 99
-            newer["terminal"] = "a newer shape"
-            let bytes = try JSONSerialization.data(withJSONObject: newer)
+            let bytes = Data(#"{"schemaVersion":99,"appearance":{},"font":{},"terminal":"a newer shape","advanced":{}}"#.utf8)
             try bytes.write(to: file)
 
             let store = SettingsStore(directory: dir)
             #expect(store.savingSuspension == .newerVersionUnreadable)
-            #expect(store.settings.terminal == WeirSettings.default.terminal)
+            #expect(store.settings == .default)
+            #expect(try Data(contentsOf: file) == bytes)
             store.settings.terminal.minPaneSize = 160
-            #expect(!store.saveNow(), "saving is suspended")
+            #expect(!store.saveNow())
             store.flushSynchronously()
-
             #expect(try Data(contentsOf: file) == bytes)
-            let entries = try FileManager.default.contentsOfDirectory(atPath: dir.path)
-            #expect(!entries.contains { $0.contains(".bak-") })
 
-            // The watcher reading it again keeps it as it is too.
+            let handEdit = Data(#"{"schemaVersion":100,"appearance":{},"font":{},"terminal":"a different newer shape","advanced":{}}"#.utf8)
+            try handEdit.write(to: file)
             store.reloadFromDisk()
-            store.flushSynchronously()
             #expect(store.savingSuspension == .newerVersionUnreadable)
-            #expect(try Data(contentsOf: file) == bytes)
+            #expect(store.settings == .default)
+            store.flushSynchronously()
+            #expect(try Data(contentsOf: file) == handEdit)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["settings.json"])
         }
     }
 
     /// A settings.json that is there but cannot be read is set aside under a
     /// new name as it is, so the defaults saved later do not land on it.
-    @Test func aFileThatCannotBeRead_isSetAside() throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aFileThatCannotBeRead_isSetAside() throws {
         try withTempDir { dir in
             let file = dir.appendingPathComponent("settings.json")
             let original = try WeirSettings.testFileData(version: 2, overrides: ["newTab": TestShortcuts.commandN])
             try original.write(to: file)
             let manager = FileManager.default
             try manager.setAttributes([.posixPermissions: 0o000], ofItemAtPath: file.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path) }
+            try Self.requireReadDenied(file)
 
             let store = SettingsStore(directory: dir)
             #expect(store.savingSuspension == nil)
@@ -139,19 +147,31 @@ struct SettingsStoreTests {
             let aside = try #require(try manager.contentsOfDirectory(atPath: dir.path)
                 .first { $0.hasPrefix("settings.json.bak-read-failed-") })
             let asideURL = dir.appendingPathComponent(aside)
+            #expect(!manager.fileExists(atPath: file.path))
+            defer { try? manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: asideURL.path) }
             try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: asideURL.path)
             store.settings.terminal.minPaneSize = 160
             store.flushSynchronously()
 
             #expect(try Data(contentsOf: asideURL) == original)
-            #expect(manager.fileExists(atPath: file.path))
+            #expect(SettingsStore(directory: dir).settings.terminal.minPaneSize == 160)
         }
+    }
+
+    private static func requireReadDenied(_ file: URL) throws {
+        let descriptor = open(file.path, O_RDONLY)
+        let error = errno
+        if descriptor >= 0 {
+            close(descriptor)
+        }
+        try #require(descriptor == -1 && error == EACCES)
     }
 
     /// A folder that cannot be searched hides the file in it: that is not a
     /// first launch either. Saving stops, so a save once the folder opens
     /// up again cannot replace the file with the defaults.
-    @Test func aFileInAFolderThatCannotBeSearched_stopsSaving() throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aFileInAFolderThatCannotBeSearched_stopsSaving() throws {
         try withTempDir { root in
             let dir = root.appendingPathComponent("support")
             let manager = FileManager.default
@@ -161,6 +181,7 @@ struct SettingsStoreTests {
             try original.write(to: file)
             try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dir.path)
             defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+            try Self.requireReadDenied(file)
 
             let store = SettingsStore(directory: dir)
             #expect(store.savingSuspension == .unreadable)
@@ -179,11 +200,14 @@ struct SettingsStoreTests {
             let store = SettingsStore(directory: dir)
             store.settings.terminal.minPaneSize = 120
             store.flushSynchronously()
+            let saved = try Data(contentsOf: store.settingsFileURL)
+            try #require(try Self.read(store.settingsFileURL).terminal.minPaneSize == 120)
             store.settings.terminal.minPaneSize = 140
 
             store.reloadFromDisk()
 
             #expect(store.settings.terminal.minPaneSize == 140)
+            #expect(try Data(contentsOf: store.settingsFileURL) == saved)
         }
     }
 
@@ -191,9 +215,21 @@ struct SettingsStoreTests {
     /// the watcher off before the first save writes ours. That reload finds
     /// no file, which is nothing new, and must not undo the change waiting
     /// to be saved.
-    @Test func aReloadBeforeTheFirstSave_keepsAChangeMadeSinceTheLaunch() throws {
+    @Test(arguments: [false, true])
+    func aReloadBeforeTheFirstSave_keepsAChangeMadeSinceTheLaunch(hadQuarantinedFile: Bool) throws {
         try withTempDir { dir in
+            let original = Data(#"{ "broken": "#.utf8)
+            let file = dir.appendingPathComponent("settings.json")
+            if hadQuarantinedFile {
+                try original.write(to: file)
+            }
             let store = SettingsStore(directory: dir)
+            try #require(!FileManager.default.fileExists(atPath: file.path))
+            if hadQuarantinedFile {
+                let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+                let backup = try #require(names.first { $0.hasPrefix("settings.json.bak-decode-failed-") })
+                #expect(try Data(contentsOf: dir.appendingPathComponent(backup)) == original)
+            }
             store.settings.font.family = "Menlo"
 
             store.reloadFromDisk()
@@ -305,14 +341,26 @@ struct SettingsStoreTests {
         }
     }
 
-    @Test func moveSettingsFileAside_leavesNoSettingsFileBehind() throws {
+    @Test func restoreDefaultsForRelaunch_keepsTheOldFile_andQuitWritesDefaults() throws {
         try withTempDir { dir in
             let file = dir.appendingPathComponent("settings.json")
-            try Data("{}".utf8).write(to: file)
-            SettingsStore.moveSettingsFileAside(at: file)
-            let entries = try FileManager.default.contentsOfDirectory(atPath: dir.path)
-            #expect(entries.count == 1)
-            #expect(entries.first?.hasPrefix("settings.json.bak-init-failure-") == true)
+            var existing = WeirSettings.default
+            existing.terminal.minPaneSize = 160
+            let bytes = try WeirSettings.makeFileEncoder().encode(existing)
+            try bytes.write(to: file)
+            let store = SettingsStore(directory: dir)
+            try #require(store.settings.terminal.minPaneSize == 160)
+
+            store.restoreDefaultsForRelaunch()
+
+            #expect(store.settings == .default)
+            #expect(!FileManager.default.fileExists(atPath: file.path))
+            let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            let backup = try #require(names.first { $0.hasPrefix("settings.json.bak-init-failure-") })
+            store.flushSynchronously()
+            #expect(try Self.read(file) == .default)
+            #expect(SettingsStore(directory: dir).settings == .default)
+            #expect(try Data(contentsOf: dir.appendingPathComponent(backup)) == bytes)
         }
     }
 
@@ -352,53 +400,30 @@ struct SettingsStoreTests {
 
     /// A save that does not reach disk is reported, for the notice that
     /// tells the person, and the next save that lands takes it back.
-    @Test func aSaveThatFails_isReported_untilASaveLands() throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aSaveThatFails_isReported_untilASaveLands() throws {
         try withTempDir { dir in
             let manager = FileManager.default
             let store = SettingsStore(directory: dir)
+            store.settings.terminal.minPaneSize = 120
+            try #require(store.saveNow())
+            let before = try Data(contentsOf: store.settingsFileURL)
+            try #require(try Self.read(store.settingsFileURL).terminal.minPaneSize == 120)
             try manager.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
             defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
+            let probe = dir.appendingPathComponent("write-probe")
+            try #require(throws: (any Error).self) { try SecureFileWrite.writeAtomic(Data([1]), to: probe) }
 
             store.settings.terminal.minPaneSize = 140
             #expect(!store.saveNow())
             #expect(store.hasFailedToSave)
-            #expect(store.savingSuspension == nil, "nothing stopped the saving; it failed")
+            #expect(store.savingSuspension == nil)
+            #expect(try Data(contentsOf: store.settingsFileURL) == before)
 
             try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
-            #expect(store.saveNow())
+            try #require(store.saveNow())
             #expect(!store.hasFailedToSave)
-        }
-    }
-
-    /// A save skipped because saving is suspended is not a failure: the
-    /// suspension has its own sentence.
-    @Test func aSaveSkippedWhileSuspended_isNotAFailure() throws {
-        try withTempDir { dir in
-            let file = dir.appendingPathComponent("settings.json")
-            try WeirSettings.testFileData(version: WeirSettings.currentSchemaVersion + 1, overrides: [:]).write(to: file)
-            let store = SettingsStore(directory: dir)
-            #expect(store.savingSuspension == .newerVersion)
-
-            store.settings.terminal.minPaneSize = 140
-            #expect(!store.saveNow())
-            #expect(!store.hasFailedToSave)
-        }
-    }
-
-    /// A file the launch moved aside leaves no file, as a first launch does.
-    /// The watcher's next event finds none, which is nothing new, and must
-    /// not undo the change waiting to be saved.
-    @Test func aReloadAfterTheLaunchMovedTheFileAside_keepsAChangeNotSavedYet() throws {
-        try withTempDir { dir in
-            try Data(#"{ "broken": "#.utf8).write(to: dir.appendingPathComponent("settings.json"))
-            let store = SettingsStore(directory: dir)
-            #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path)
-                .contains { $0.hasPrefix("settings.json.bak-decode-failed-") })
-            store.settings.terminal.minPaneSize = 140
-
-            store.reloadFromDisk()
-
-            #expect(store.settings.terminal.minPaneSize == 140)
+            #expect(try Self.read(store.settingsFileURL).terminal.minPaneSize == 140)
         }
     }
 }

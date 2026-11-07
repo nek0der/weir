@@ -78,7 +78,10 @@ struct QuickTerminalHotKeyCenterTests {
     /// comes back only when the last one lets go, and releasing a token
     /// twice does not release anyone else's.
     @Test func hotKeyCenter_suspensions_areCountedPerOwner() {
-        let center = Self.makeCenter(hotKey: nil)
+        let center = Self.makeCenter(hotKey: .init(key: "ß", modifiers: [.control, .option]))
+        center.apply()
+        #expect(center.problem == .keyNotOnLayout)
+
         let keyboardRecorder = center.suspend()
         let quickTerminalRecorder = center.suspend()
         #expect(keyboardRecorder != quickTerminalRecorder)
@@ -87,9 +90,11 @@ struct QuickTerminalHotKeyCenterTests {
         #expect(center.isSuspended)
         center.resume(keyboardRecorder)
         #expect(center.isSuspended, "a token released twice must not release another owner's hold")
+        #expect(center.problem == nil)
 
         center.resume(quickTerminalRecorder)
         #expect(!center.isSuspended)
+        #expect(center.problem == .keyNotOnLayout)
     }
 
     /// Resetting a menu shortcut to its default bypasses both recorders, so

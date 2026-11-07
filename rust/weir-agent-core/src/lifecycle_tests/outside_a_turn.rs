@@ -166,8 +166,9 @@ fn a_tool_call_inside_a_turn_runs_until_the_turn_ends() {
 
 #[test]
 fn the_idle_prompt_writes_nothing_for_a_run_at_rest_or_waiting() {
-    let idle = |events: &[AgentEvent]| {
+    let idle = |events: &[AgentEvent], state| {
         let (record, _, _) = run(&claude(), events);
+        assert_eq!(record.state, state);
         apply(
             Some(&record),
             &AgentEvent::AwaitingPrompt {
@@ -175,37 +176,33 @@ fn the_idle_prompt_writes_nothing_for_a_run_at_rest_or_waiting() {
             },
             &context(),
             &claude(),
-            LATER,
+            A_MINUTE_LATER,
         )
         .run
     };
     // A finished turn, and a session at its prompt, already rest.
-    assert_eq!(idle(&[started(None), prompt("first"), stop()]), None);
-    assert_eq!(idle(&[started(None)]), None);
-    // A wait the transcript does not show ended is not ended by the agent
-    // being idle, in a turn or out.
     assert_eq!(
-        idle(&[
-            started(None),
-            prompt("first"),
-            AgentEvent::WaitingForInput {
-                detail: Some("Which color?".into()),
-                caller: Caller::Agent,
-            },
-        ]),
+        idle(
+            &[started(None), prompt("first"), stop()],
+            RunState::Finished
+        ),
         None
     );
+    assert_eq!(idle(&[started(None)], RunState::Idle), None);
     assert_eq!(
-        idle(&[
-            started(None),
-            prompt("first"),
-            stop(),
-            bash("rm notes.txt"),
-            AgentEvent::ApprovalRequested {
-                detail: None,
-                caller: Caller::Agent
-            },
-        ]),
+        idle(
+            &[
+                started(None),
+                prompt("first"),
+                stop(),
+                bash("rm notes.txt"),
+                AgentEvent::ApprovalRequested {
+                    detail: None,
+                    caller: Caller::Agent
+                },
+            ],
+            RunState::NeedsInput
+        ),
         None
     );
 }
@@ -498,7 +495,10 @@ fn an_idle_prompt_just_after_a_prompt_leaves_the_new_turn_open() {
     assert_eq!(idle_at(&record, NOW), None);
     assert_eq!(idle_at(&record, LATER), None);
     assert_eq!(idle_at(&record, "2026-09-14T00:00:54Z"), None);
-    assert!(idle_at(&record, "2026-09-14T00:00:55Z").is_some());
+    let ended = idle_at(&record, "2026-09-14T00:00:55Z").expect("the idle boundary has elapsed");
+    assert_eq!(ended.state, RunState::Finished);
+    assert_eq!(ended.run_started_at, None);
+    assert_ne!(ended.state_episode_token, record.state_episode_token);
 }
 
 #[test]

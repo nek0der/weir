@@ -51,14 +51,16 @@ struct LocalExcludeTests {
             let info = root.appendingPathComponent(".git/info")
             try FileManager.default.createDirectory(at: info, withIntermediateDirectories: true)
             let exclude = info.appendingPathComponent("exclude")
+            let block = "# >>> weir worktrees >>>\n/.worktrees/\n# <<< weir worktrees <<<\n"
             ensureLocalExcludeCoversWorktreesDir(repoRoot: root)
-            #expect(try String(contentsOf: exclude, encoding: .utf8).contains("/.worktrees/"))
+            #expect(try String(contentsOf: exclude, encoding: .utf8) == block)
 
             try "/build/".write(to: exclude, atomically: true, encoding: .utf8)
             ensureLocalExcludeCoversWorktreesDir(repoRoot: root)
-            let text = try String(contentsOf: exclude, encoding: .utf8)
-            #expect(text.hasPrefix("/build/\n"))
-            #expect(text.contains("/.worktrees/"))
+            #expect(try String(contentsOf: exclude, encoding: .utf8) == "/build/\n" + block)
+
+            ensureLocalExcludeCoversWorktreesDir(repoRoot: root)
+            #expect(try String(contentsOf: exclude, encoding: .utf8) == "/build/\n" + block)
         }
     }
 }

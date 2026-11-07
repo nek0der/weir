@@ -78,16 +78,28 @@ struct ReviewContinuityTests {
         await store.flushNavigationSave()
         let draft = try drafts.load(root: store.root)
         let saved = try #require(draft)
-        #expect(saved.comments.count == 1)
-        #expect(saved.lastFileID["uncommitted"] == file.id)
+        let comment = try #require(saved.comments.first)
+        #expect(saved.comments == store.comments)
+        #expect(comment.body == "Keep this comment.")
+        #expect(comment.file == file)
+        #expect(comment.anchor == ReviewAnchor(lineID: line.id, oldLine: line.oldLine, newLine: line.newLine))
+        #expect(saved.lastFileID == [ReviewScope.uncommitted.scopeID: file.id])
     }
 
     @Test func navigationQueuedAfterAnEditCannotOverwriteIt() async throws {
-        let root = URL(fileURLWithPath: "/tmp/review-write-order")
+        let root = URL(fileURLWithPath: "/tmp/weir-review-write-order-\(UUID())")
         let drafts = RecordingReviewDraftStore()
         let writer = ReviewDraftWriteCoordinator.shared
         let generation = writer.beginNavigation(for: root)
-        let committed = ReviewDraft(lastFileID: ["uncommitted": "newer"])
+        let comment = ReviewComment(
+            scopeIDs: [ReviewScope.uncommitted.scopeID],
+            file: FakeReviewRepository.unstagedFile,
+            fingerprint: "f1",
+            anchor: ReviewAnchor(lineID: 1, oldLine: nil, newLine: 1),
+            code: "let value = 1",
+            body: "Keep the newer edit."
+        )
+        let committed = ReviewDraft(comments: [comment], lastFileID: [ReviewScope.uncommitted.scopeID: "newer"])
         try writer.save(committed, root: root, storage: drafts)
         let saved = try await writer.saveNavigation(
             ReviewDraft(lastFileID: ["uncommitted": "older"]),
@@ -97,7 +109,9 @@ struct ReviewContinuityTests {
         )
         #expect(!saved)
         let restored = try drafts.load(root: root)
-        #expect(restored?.lastFileID["uncommitted"] == "newer")
+        #expect(restored?.comments == [comment])
+        #expect(restored?.lastFileID == [ReviewScope.uncommitted.scopeID: "newer"])
+        #expect(drafts.saves == 1)
     }
 
     @Test func deletingADraftCancelsDelayedNavigation() async throws {
@@ -154,19 +168,25 @@ struct ReviewContinuityTests {
     }
 
     /// A navigation save that failed is tried once more at quit.
-    @Test func quitting_triesAFailedNavigationSaveAgain() async {
-        let root = URL(fileURLWithPath: "/tmp/weir-review-quit-retry")
+    @Test func quitting_triesAFailedNavigationSaveAgain() async throws {
+        let root = URL(fileURLWithPath: "/tmp/weir-review-quit-retry-\(UUID())")
         let drafts = RecordingReviewDraftStore()
         let pool = ReviewDraftWriterPool(drafts: drafts, git: FakeReviewRepository())
         let writer = pool.writer(root: root)
         drafts.isFailing = true
-        writer.rememberOpenFile("b.swift", in: ReviewScope.uncommitted.scopeID) { _ in }
+        var warnings: [DisplayText] = []
+        writer.rememberOpenFile("b.swift", in: ReviewScope.uncommitted.scopeID) { warnings.append(DisplayText(error: $0)) }
         await writer.flushNavigationSave()
+        #expect(warnings == [DisplayText(error: ReviewError.storageFailed)])
+        #expect(drafts.saves == 1)
+        #expect(try drafts.load(root: root) == nil)
         drafts.isFailing = false
 
         pool.flushNavigationSaves()
+        pool.flushNavigationSaves()
 
-        #expect(ReviewDraftWriter(root: root, drafts: drafts).lastFileIDs[ReviewScope.uncommitted.scopeID] == "b.swift")
+        #expect(drafts.saves == 2)
+        #expect(ReviewDraftWriter(root: root, drafts: drafts).lastFileIDs == [ReviewScope.uncommitted.scopeID: "b.swift"])
     }
 
     /// Nothing waiting, nothing written: a quit after the last save adds none.

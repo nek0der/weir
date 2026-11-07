@@ -30,7 +30,8 @@ MIT = (
     "of this software, to deal in the Software without restriction.\n"
 )
 failures = 0
-root = tempfile.mkdtemp()
+temporary = tempfile.TemporaryDirectory()
+root = temporary.name
 
 
 def crate(name, version, license, files, authors=("Ann <ann@example.com>",), proc_macro=False):
@@ -136,8 +137,10 @@ expect("a dev-only crate is left out", "dev-only" not in out)
 old = crate("twice", "1.0.0", "MIT", {"LICENSE-MIT": "Copyright (c) 2019 Old\n\n" + MIT})
 new = crate("twice", "2.0.0", "MIT", {"LICENSE-MIT": "Copyright (c) 2024 New\n\n" + MIT})
 two = metadata([old, new], [("bridge", old["id"], None), ("bridge", new["id"], None)])
-outputs = {run(two)[1] for _ in range(8)}
-expect("two releases of one crate come out in one order", len(outputs) == 1
+results = [run(two) for _ in range(8)]
+outputs = {out for _, out, _ in results}
+expect("two releases of one crate come out in one order", all(code == 0 for code, _, _ in results)
+       and len(outputs) == 1
        and next(iter(outputs)).index("twice 1.0.0") < next(iter(outputs)).index("twice 2.0.0"))
 
 # What it refuses.

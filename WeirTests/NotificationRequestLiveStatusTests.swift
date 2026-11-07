@@ -15,9 +15,13 @@ struct NotificationRequestLiveStatusTests {
 
     /// The row `postRequestBanner` records for `request`: the run's ID and
     /// the request's key, and no event token.
-    private func row(for request: ApprovalPresentation, isRead: Bool = false) -> NotificationEntry {
+    private func row(
+        for request: ApprovalPresentation, isRead: Bool = false, timestamp: Date = Date(), pane: UUID? = nil
+    ) -> NotificationEntry {
         NotificationEntry.test(
             kind: .agentNeedsInput,
+            timestamp: timestamp,
+            paneID: pane,
             title: "Approval",
             body: "Bash",
             isRead: isRead,
@@ -66,7 +70,7 @@ struct NotificationRequestLiveStatusTests {
 
     // MARK: - From the notification to its ending
 
-    @Test func answeredOnTheCard_isNoLongerAmber_andTheSyncRetiresTheRow() async throws {
+    @Test func aSuccessfulDecision_resolvesTheHistoryRow_andTheSyncMarksItRead() async throws {
         try await withTempDir { dir in
             let history = NotificationHistoryStore(directory: dir)
             let attention = AttentionState()
@@ -76,52 +80,72 @@ struct NotificationRequestLiveStatusTests {
             history.record(row(for: request))
             let sync = NotificationReadSync(historyStore: history, attention: attention, requests: store.ledger)
 
-            let waiting = attention.liveStatus(for: history.entries[0], requests: store.ledger)
+            let waiting = try attention.liveStatus(for: #require(history.entries.first), requests: store.ledger)
             #expect(waiting == .stillWaiting)
-            #expect(mark(of: history.entries[0], live: waiting) == .approval)
+            #expect(try mark(of: #require(history.entries.first), live: waiting) == .approval)
             #expect(history.unreadCount == 1)
 
             store.resolve(request, .allowOnce)
             await store.waitUntilResolved(request)
 
-            let live = attention.liveStatus(for: history.entries[0], requests: store.ledger)
+            let live = try attention.liveStatus(for: #require(history.entries.first), requests: store.ledger)
             #expect(live == .resolved)
             await untilObserved { history.unreadCount == 0 }
             #expect(history.unreadCount == 0, "the ledger's change alone retires the row")
-            #expect(mark(of: history.entries[0], live: live) == .idle)
+            #expect(try mark(of: #require(history.entries.first), live: live) == .idle)
             history.flushSynchronously()
             _ = sync
         }
     }
 
-    @Test func expired_waitsAtTheAgentsPrompt_untilItsTurnIsOver() throws {
-        try withTempDir { dir in
+    @Test(arguments: [false, true])
+    func expired_waitsAtTheAgentsPrompt_untilItsTurnIsOver(stoppedFirst: Bool) throws {
+        try withTempDir { (dir: URL) throws in
             let history = NotificationHistoryStore(directory: dir)
             let attention = AttentionState()
             let store = acceptingStore()
-            let request = ApprovalPresentation.test()
+            let (session, pane) = ApprovalEpisodeEndTests.claudePane(.running)
+            let request = ApprovalPresentation.test(sessionID: "session")
             store.receive([request])
             history.record(row(for: request))
             let sync = NotificationReadSync(historyStore: history, attention: attention, requests: store.ledger)
+            store.releaseStaleApprovals(in: session)
+            if stoppedFirst {
+                store.stop()
+                #expect(store.ledger.epoch == nil)
+                #expect(store.ledger.entry(for: request)?.state == .held)
+                try expectHistory(history, attention: attention, ledger: store.ledger, waiting: true)
+            }
 
             store.receive([], epoch: request.epoch, terminals: [request.id: .expired])
+            store.releaseStaleApprovals(in: session)
             #expect(store.ledger.entry(for: request)?.state == .timedOut)
-            // The person answers it at the agent's own prompt now, and the
-            // attention list still lists it, so the row still waits.
-            #expect(attention.liveStatus(for: history.entries[0], requests: store.ledger) == .stillWaiting)
             sync.reconcile()
-            #expect(history.unreadCount == 1)
+            try expectHistory(history, attention: attention, ledger: store.ledger, waiting: true)
 
-            store.ledger.endEpisode(id: request.id)
-            #expect(attention.liveStatus(for: history.entries[0], requests: store.ledger) == .resolved)
+            ApprovalEpisodeEndTests.move(session, pane, to: .finished)
+            store.releaseStaleApprovals(in: session)
+            #expect(store.ledger.entry(for: request) == nil)
             sync.reconcile()
-            #expect(history.unreadCount == 0)
+            try expectHistory(history, attention: attention, ledger: store.ledger, waiting: false)
             history.flushSynchronously()
         }
     }
 
+    private func expectHistory(
+        _ history: NotificationHistoryStore, attention: AttentionState, ledger: ApprovalLedger,
+        waiting: Bool, sourceLocation: SourceLocation = #_sourceLocation
+    ) throws {
+        let entry = try #require(history.entries.first, sourceLocation: sourceLocation)
+        let live = attention.liveStatus(for: entry, requests: ledger)
+        #expect(live == (waiting ? .stillWaiting : .resolved), sourceLocation: sourceLocation)
+        #expect(entry.isRead == !waiting, sourceLocation: sourceLocation)
+        #expect(history.unreadCount == (waiting ? 1 : 0), sourceLocation: sourceLocation)
+        #expect(mark(of: entry, live: live) == (waiting ? .approval : .idle), sourceLocation: sourceLocation)
+    }
+
     @Test func withdrawn_isResolved() throws {
-        try withTempDir { dir in
+        try withTempDir { (dir: URL) throws in
             let history = NotificationHistoryStore(directory: dir)
             let attention = AttentionState()
             let store = acceptingStore()
@@ -133,7 +157,8 @@ struct NotificationRequestLiveStatusTests {
             store.receive([], epoch: request.epoch, terminals: [request.id: .canceled])
 
             #expect(store.ledger.entry(for: request)?.state == .withdrawn)
-            #expect(attention.liveStatus(for: history.entries[0], requests: store.ledger) == .resolved)
+            let resolved = try #require(history.entries.first)
+            #expect(attention.liveStatus(for: resolved, requests: store.ledger) == .resolved)
             sync.reconcile()
             #expect(history.unreadCount == 0)
             history.flushSynchronously()
@@ -141,7 +166,7 @@ struct NotificationRequestLiveStatusTests {
     }
 
     @Test func markedReadWhilePending_staysAmber() throws {
-        try withTempDir { dir in
+        try withTempDir { (dir: URL) throws in
             let history = NotificationHistoryStore(directory: dir)
             let attention = AttentionState()
             let store = acceptingStore()
@@ -151,7 +176,7 @@ struct NotificationRequestLiveStatusTests {
 
             history.markAllRead()
 
-            let entry = history.entries[0]
+            let entry = try #require(history.entries.first)
             #expect(entry.isRead)
             let live = attention.liveStatus(for: entry, requests: store.ledger)
             #expect(live == .stillWaiting)
@@ -202,17 +227,20 @@ struct NotificationRequestLiveStatusTests {
             history.record(row(for: earlier))
             let sync = NotificationReadSync(historyStore: history, attention: attention, requests: store.ledger)
 
-            #expect(attention.liveStatus(for: history.entries[0], requests: store.ledger) == nil)
+            let unread = try #require(history.entries.first)
+            #expect(attention.liveStatus(for: unread, requests: store.ledger) == nil)
             #expect(history.unreadCount == 1)
 
             // The service restarted meanwhile: a new epoch, listing nothing.
             store.receive([], epoch: UUID())
             await untilObserved { history.unreadCount == 0 }
             #expect(history.unreadCount == 0, "the epoch alone wakes the sync")
-            #expect(attention.liveStatus(for: history.entries[0], requests: store.ledger) == .resolved)
+            let resolved = try #require(history.entries.first)
+            #expect(attention.liveStatus(for: resolved, requests: store.ledger) == .resolved)
 
             store.stop()
-            #expect(attention.liveStatus(for: history.entries[0], requests: store.ledger) == nil)
+            let disconnected = try #require(history.entries.first)
+            #expect(attention.liveStatus(for: disconnected, requests: store.ledger) == nil)
             history.flushSynchronously()
             _ = sync
         }
@@ -220,135 +248,48 @@ struct NotificationRequestLiveStatusTests {
 
     // MARK: - A readiness drop while the TUI holds the request
 
-    /// A request handed to the TUI while its turn runs, its row recorded,
-    /// then the service's readiness check fails once (`stop`) and the store
-    /// reconnects to the same epoch, which lists nothing pending.
-    private func delegatedThenReconnected() -> ApprovalEpisodeEndTests.EndedRequest {
-        let fixture = ApprovalEpisodeEndTests.storeWithEndedRequest(state: .running, terminal: .resolved(.delegate))
-        // The pass that sees its turn under way.
-        fixture.store.releaseStaleApprovals(in: fixture.session)
-        fixture.store.stop()
-        fixture.store.receive([], epoch: fixture.request.epoch)
-        return fixture
+    enum Reconnect: CaseIterable {
+        case sameEpochAfterStop
+        case newEpochWithoutStop
+        case newEpochAfterStop
     }
 
-    @Test func aDelegatedRequest_staysAmberAndUnread_acrossAReadinessDrop() throws {
-        try withTempDir { dir in
+    @Test(arguments: Reconnect.allCases)
+    func aDelegatedRequest_staysWaitingAcrossReconnect_untilItsTurnEnds(reconnect: Reconnect) throws {
+        try withTempDir { (dir: URL) throws in
             let history = NotificationHistoryStore(directory: dir)
             let attention = AttentionState()
             let fixture = ApprovalEpisodeEndTests.storeWithEndedRequest(state: .running, terminal: .resolved(.delegate))
             let store = fixture.store
-            history.record(row(for: fixture.request))
+            let request = fixture.request
+            history.record(row(for: request))
             let sync = NotificationReadSync(historyStore: history, attention: attention, requests: store.ledger)
-            store.releaseStaleApprovals(in: fixture.session)
+            try #require(fixture.isKeptAfterAPass())
+            try expectHistory(history, attention: attention, ledger: store.ledger, waiting: true)
 
-            store.stop()
-            #expect(attention.liveStatus(for: history.entries[0], requests: store.ledger) == .stillWaiting)
-            store.receive([], epoch: fixture.request.epoch)
-            store.releaseStaleApprovals(in: fixture.session)
+            if reconnect != .newEpochWithoutStop {
+                store.stop()
+                #expect(store.ledger.epoch == nil)
+                try expectHistory(history, attention: attention, ledger: store.ledger, waiting: true)
+            }
+            let epoch = reconnect == .sameEpochAfterStop ? request.epoch : UUID()
+            store.receive([], epoch: epoch)
+            #expect(store.ledger.epoch == epoch)
+            try #require(fixture.isKeptAfterAPass())
+            #expect(store.ledger.entry(for: request)?.state == .handedToTerminal(since: ApprovalEpisodeEndTests.now))
             sync.reconcile()
-
-            let live = attention.liveStatus(for: history.entries[0], requests: store.ledger)
-            #expect(live == .stillWaiting, "the TUI still waits for it")
-            #expect(history.unreadCount == 1)
-            #expect(mark(of: history.entries[0], live: live) == .approval)
-            history.flushSynchronously()
-        }
-    }
-
-    @Test func aDelegatedRequest_answeredAfterTheReconnect_retiresItsRow() throws {
-        try withTempDir { dir in
-            let history = NotificationHistoryStore(directory: dir)
-            let attention = AttentionState()
-            let fixture = delegatedThenReconnected()
-            history.record(row(for: fixture.request))
-            let sync = NotificationReadSync(historyStore: history, attention: attention, requests: fixture.store.ledger)
-            sync.reconcile()
-            #expect(history.unreadCount == 1)
-
-            // Answered at the TUI: its turn goes on and ends.
-            fixture.agent(.finished, runStartedAt: nil)
-            fixture.store.releaseStaleApprovals(in: fixture.session)
-            sync.reconcile()
-
-            let live = attention.liveStatus(for: history.entries[0], requests: fixture.store.ledger)
-            #expect(live == .resolved)
-            #expect(history.unreadCount == 0)
-            #expect(mark(of: history.entries[0], live: live) == .idle)
-            history.flushSynchronously()
-        }
-    }
-
-    @Test func aDelegatedRequest_kept_whileTheServiceStaysDown_leavesWithItsTurn() {
-        let fixture = ApprovalEpisodeEndTests.storeWithEndedRequest(state: .running, terminal: .resolved(.delegate))
-        fixture.store.releaseStaleApprovals(in: fixture.session)
-        fixture.store.stop()
-        #expect(fixture.isKeptAfterAPass())
-
-        fixture.agent(.finished, runStartedAt: nil)
-
-        #expect(!fixture.isKeptAfterAPass())
-    }
-
-    // MARK: - A service that comes back in a new epoch
-
-    @Test func aDelegatedRequest_staysUnresolved_whenTheServiceComesBackInANewEpoch() throws {
-        try withTempDir { dir in
-            let history = NotificationHistoryStore(directory: dir)
-            let attention = AttentionState()
-            let fixture = ApprovalEpisodeEndTests.storeWithEndedRequest(state: .running, terminal: .resolved(.delegate))
-            let store = fixture.store
-            history.record(row(for: fixture.request))
-            let sync = NotificationReadSync(historyStore: history, attention: attention, requests: store.ledger)
-            store.releaseStaleApprovals(in: fixture.session)
-
-            store.receive([], epoch: UUID())
-            store.releaseStaleApprovals(in: fixture.session)
-            sync.reconcile()
-
-            let live = attention.liveStatus(for: history.entries[0], requests: store.ledger)
-            #expect(live == .stillWaiting, "the TUI still waits for it")
-            #expect(history.unreadCount == 1)
-            #expect(mark(of: history.entries[0], live: live) == .approval)
-
-            // Answered at the TUI: its turn goes on and ends.
-            fixture.agent(.finished, runStartedAt: nil)
-            store.releaseStaleApprovals(in: fixture.session)
-            sync.reconcile()
-
-            let ended = attention.liveStatus(for: history.entries[0], requests: store.ledger)
-            #expect(ended == .resolved)
-            #expect(history.unreadCount == 0)
-            #expect(mark(of: history.entries[0], live: ended) == .idle)
-            history.flushSynchronously()
-        }
-    }
-
-    @Test func aDelegatedRequest_acrossAStopAndANewEpoch_waitsUntilItsTurnEnds() throws {
-        try withTempDir { dir in
-            let history = NotificationHistoryStore(directory: dir)
-            let attention = AttentionState()
-            let fixture = ApprovalEpisodeEndTests.storeWithEndedRequest(state: .running, terminal: .resolved(.delegate))
-            history.record(row(for: fixture.request))
-            let sync = NotificationReadSync(historyStore: history, attention: attention, requests: fixture.store.ledger)
-            fixture.store.releaseStaleApprovals(in: fixture.session)
-
-            fixture.store.stop()
-            fixture.store.receive([], epoch: UUID())
-            sync.reconcile()
-            #expect(attention.liveStatus(for: history.entries[0], requests: fixture.store.ledger) == .stillWaiting)
-            #expect(history.unreadCount == 1)
+            try expectHistory(history, attention: attention, ledger: store.ledger, waiting: true)
 
             fixture.agent(.finished, runStartedAt: nil)
             #expect(!fixture.isKeptAfterAPass())
             sync.reconcile()
-            #expect(history.unreadCount == 0)
+            try expectHistory(history, attention: attention, ledger: store.ledger, waiting: false)
             history.flushSynchronously()
         }
     }
 
     @Test func aHeldRequest_ofAServiceThatRestarted_waitsAtTheAgentsPrompt() throws {
-        try withTempDir { dir in
+        try withTempDir { (dir: URL) throws in
             let history = NotificationHistoryStore(directory: dir)
             let attention = AttentionState()
             let store = acceptingStore()
@@ -360,29 +301,10 @@ struct NotificationRequestLiveStatusTests {
             store.receive([], epoch: UUID())
             sync.reconcile()
 
-            #expect(attention.liveStatus(for: history.entries[0], requests: store.ledger) == .stillWaiting)
+            let waiting = try #require(history.entries.first)
+            #expect(attention.liveStatus(for: waiting, requests: store.ledger) == .stillWaiting)
             #expect(history.unreadCount == 1)
             #expect(store.approvalForCard(request.id) == nil, "the new broker would refuse its buttons")
-            history.flushSynchronously()
-        }
-    }
-
-    @Test func aHeldRequest_thatExpiredDuringAnOutage_stillWaits() throws {
-        try withTempDir { dir in
-            let history = NotificationHistoryStore(directory: dir)
-            let attention = AttentionState()
-            let store = acceptingStore()
-            let request = ApprovalPresentation.test()
-            store.receive([request])
-            history.record(row(for: request))
-            let sync = NotificationReadSync(historyStore: history, attention: attention, requests: store.ledger)
-
-            store.stop()
-            store.receive([], epoch: request.epoch, terminals: [request.id: .expired])
-            sync.reconcile()
-
-            #expect(attention.liveStatus(for: history.entries[0], requests: store.ledger) == .stillWaiting)
-            #expect(history.unreadCount == 1)
             history.flushSynchronously()
         }
     }
@@ -419,7 +341,7 @@ struct NotificationRequestLiveStatusTests {
     }
 
     @Test func aDroppedSubscription_stillKeepsADelegatedRowWaiting() throws {
-        try withTempDir { dir in
+        try withTempDir { (dir: URL) throws in
             let history = NotificationHistoryStore(directory: dir)
             let attention = AttentionState()
             let store = acceptingStore()
@@ -430,40 +352,57 @@ struct NotificationRequestLiveStatusTests {
             store.receive([], epoch: request.epoch, terminals: [request.id: .resolved(.delegate)])
 
             store.connectionDidDrop()
+            #expect(store.ledger.epoch == request.epoch)
+            try expectHistory(history, attention: attention, ledger: store.ledger, waiting: true)
             store.receive([], epoch: request.epoch)
             sync.reconcile()
 
-            #expect(attention.liveStatus(for: history.entries[0], requests: store.ledger) == .stillWaiting)
-            #expect(history.unreadCount == 1)
+            try expectHistory(history, attention: attention, ledger: store.ledger, waiting: true)
             history.flushSynchronously()
         }
     }
 
-    @Test func historyList_drawsARequestRowFromTheLedger() {
+    @Test func historyList_keepsAReadRequestVisibleWhileTheLedgerWaits() throws {
         let attention = AttentionState()
         let store = acceptingStore()
         let request = ApprovalPresentation.test()
-        store.receive([request])
-        let entry = row(for: request, isRead: true)
-        let lookup = attention.liveStatusLookup(requests: store.ledger)
-
-        #expect(mark(of: entry, live: lookup(entry)) == .approval)
-        store.receive([], epoch: request.epoch, terminals: [request.id: .canceled])
-        #expect(mark(of: entry, live: lookup(entry)) == .idle)
-    }
-
-    @Test func beforeTheServiceIsRead_aRequestRowIsNotRetired() throws {
-        try withTempDir { dir in
-            let history = NotificationHistoryStore(directory: dir)
-            let attention = AttentionState()
-            let ledger = ApprovalLedger()
-            history.record(row(for: ApprovalPresentation.test()))
-
-            NotificationReadSync(historyStore: history, attention: attention, requests: ledger).reconcile()
-
-            #expect(attention.liveStatus(for: history.entries[0], requests: ledger) == nil)
-            #expect(history.unreadCount == 1)
-            history.flushSynchronously()
+        let other = (0..<3).map { _ in ApprovalPresentation.test(epoch: request.epoch) }
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let pane = UUID()
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        let entry = row(for: request, isRead: true, timestamp: now.addingTimeInterval(-10), pane: pane)
+        let newer = other.enumerated().map { index, request in
+            row(for: request, isRead: true, timestamp: now.addingTimeInterval(Double(index) - 5), pane: pane)
         }
+        store.receive([request] + other)
+        let terminals = Dictionary(uniqueKeysWithValues: other.map { ($0.id, BrokerTerminal.canceled) })
+        store.receive([request], epoch: request.epoch, terminals: terminals)
+        let lookup = attention.liveStatusLookup(requests: store.ledger)
+        func list(expanded: Set<NotificationHistoryList.SourceID> = []) -> NotificationHistoryList {
+            NotificationHistoryList(
+                entries: [entry] + newer, now: now, calendar: calendar,
+                expanded: expanded, liveStatus: lookup, canOpen: { _ in true }, place: { _ in nil },
+                projectsInOtherWindows: []
+            )
+        }
+
+        let waiting = list()
+        try #require(waiting.sources.count == 1)
+        let waitingSource = try #require(waiting.sources.first)
+        let visible = try #require(waitingSource.shown.first { $0.entry.id == entry.id })
+        #expect(visible.liveStatus == .stillWaiting)
+        #expect(mark(of: visible.entry, live: visible.liveStatus) == .approval)
+        #expect(waitingSource.foldableCount == 1)
+
+        store.receive([], epoch: request.epoch, terminals: [request.id: .canceled])
+
+        let settled = try #require(list().sources.first)
+        #expect(settled.shown.map(\.entry.id) == newer.reversed().map(\.id))
+        #expect(settled.foldableCount == 1)
+        let expanded = try #require(list(expanded: [settled.id]).sources.first)
+        let resolved = try #require(expanded.shown.first { $0.entry.id == entry.id })
+        #expect(resolved.liveStatus == .resolved)
+        #expect(mark(of: resolved.entry, live: resolved.liveStatus) == .idle)
     }
 }

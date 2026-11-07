@@ -393,7 +393,14 @@ mod tests {
             tool_result("p1", ""),
         ]);
         let reading = transcript_turn_reading(&bytes, Some("p1"));
-        assert!(reading.usage.expect("usage").is_partial);
+        assert_eq!(
+            reading.usage,
+            Some(TurnUsage {
+                is_partial: true,
+                ..usage(1, 2, 3, 4)
+            })
+        );
+        assert!(reading.is_awaiting_response);
     }
 
     #[test]
@@ -510,7 +517,7 @@ mod tests {
     #[test]
     fn a_turn_past_the_most_subagents_reads_them_partial() {
         let mut lines = vec![prompt("p1", "fan out"), reply("req_1", 1, 2, 3, 4)];
-        for index in 0..=MAX_SUBAGENTS {
+        for index in 0..=32 {
             lines.push(tool_result(
                 "p1",
                 &format!(r#","toolUseResult":{{"status":"completed","agentId":"a{index}"}}"#),
@@ -518,7 +525,10 @@ mod tests {
         }
         lines.push(reply("req_2", 1, 2, 3, 4));
         let reading = transcript_turn_reading(&transcript(&lines), Some("p1"));
-        assert_eq!(reading.subagents.len(), MAX_SUBAGENTS);
+        assert_eq!(
+            reading.subagents,
+            (0..32).map(|index| format!("a{index}")).collect::<Vec<_>>()
+        );
         assert!(reading.usage.expect("usage").is_partial);
     }
 
@@ -539,10 +549,12 @@ mod tests {
             r#"{"type":"user","isSidechain":true,"message":{"content":[{"type":"tool_result"}]}}"#
                 .to_owned(),
         ]);
-        assert!(
-            subagent_transcript_usage(&running)
-                .expect("usage")
-                .is_partial
+        assert_eq!(
+            subagent_transcript_usage(&running),
+            Some(TurnUsage {
+                is_partial: true,
+                ..usage(1, 1, 1, 1)
+            })
         );
         assert_eq!(subagent_transcript_usage(b""), None);
     }

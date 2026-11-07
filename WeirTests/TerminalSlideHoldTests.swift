@@ -27,15 +27,14 @@ struct TerminalSlideHoldTests {
 
     @Test func aGrowingPane_takesItsEndWidthAtOnce() {
         let widths = ruleWidths(from: 600, to: 900)
-        #expect(widths.allSatisfy { $0 == 900 })
+        #expect(widths == Array(repeating: 900, count: 15))
     }
 
     /// Shrinking, it keeps its width until the frame gets there, so no
     /// empty ground shows beside it during the slide.
     @Test func aShrinkingPane_keepsItsWidthUntilTheSlideEnds() {
         let widths = ruleWidths(from: 900, to: 600)
-        #expect(widths.dropLast().allSatisfy { $0 == 900 })
-        #expect(widths.last == 600)
+        #expect(widths == Array(repeating: 900, count: 14) + [600])
     }
 
     @Test func atRest_theTerminalTakesTheLayoutsSize() {

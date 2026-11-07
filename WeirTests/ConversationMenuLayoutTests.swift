@@ -26,10 +26,11 @@ struct ConversationMenuLayoutTests {
     @Test func reviewScopeMenu_keepsItsPlace_whateverTheNotesSay() async throws {
         let en = Locale(identifier: "en")
         let ja = Locale(identifier: "ja")
+        let viewed = try #require(ReviewTabText.includesViewedTurns(2, locale: ja))
         let noteSets: [[String]] = [
             [],
             [ReviewTabText.turnDiffNote(locale: en)],
-            [ReviewTabText.includesViewedTurns(2, locale: ja) ?? "", ReviewTabText.turnDiffNote(locale: ja)]
+            [viewed, ReviewTabText.turnDiffNote(locale: ja)]
         ]
         let conversation = ConversationChoice(conversation: Self.key("a"), ordinal: 4, unviewedCount: 1)
         for width: CGFloat in [WeirLayout.reviewMinWidth, 520, 730] {
@@ -64,7 +65,9 @@ struct ConversationMenuLayoutTests {
         let (window, host) = hostedInWindow(view, width: width, height: 240)
         defer { window.close() }
         let settled = await settledValue(in: host) { frame() }
-        return try #require(settled)
+        let frame = try #require(settled)
+        try #require(!frame.isEmpty)
+        return frame
     }
 
     // MARK: - The panel's head
@@ -155,7 +158,9 @@ struct ConversationMenuLayoutTests {
 
         let (window, host) = hostedInWindow(view, width: width, height: 240)
         defer { window.close() }
-        let frame = await settledValue(in: host) { recorder.frame }
-        return try #require(frame)
+        let measured = await settledValue(in: host) { recorder.frame }
+        let frame = try #require(measured)
+        try #require(!frame.isEmpty)
+        return frame
     }
 }

@@ -1,6 +1,5 @@
 // SupervisionTokensTests.swift
-// Weir — the supervision colors meet their contrast floors in light and dark, on every surface they are drawn on,
-// and each is one value however often it is asked for.
+// Weir — supervision token values and contrast on representative backgrounds in both appearances.
 
 import AppKit
 import SwiftUI
@@ -89,6 +88,8 @@ struct SupervisionTokensTests {
         Pair("toast words on a toast", Tokens.window, Tokens.text),
         // The popovers' opaque surface, with transparency off or reduced:
         // the palette, the history, the lists, and the approval card.
+        Pair("waiting badge count on its amber fill", Tokens.onWaiting, Tokens.waitingCount),
+        Pair("unread rail count on its blue fill", Tokens.onUnreadCount, Tokens.unreadCount),
         Pair("text on popover", Tokens.text, Tokens.popover),
         Pair("muted on popover", Tokens.muted, Tokens.popover),
         Pair("red text on popover", Tokens.stoppedText, Tokens.popover),
@@ -209,19 +210,10 @@ struct SupervisionTokensTests {
     ]
 
     @Test(arguments: [false, true])
-    func aWaitingCount_reachesFourAndAHalfToOne(isDark: Bool) {
-        let ratio = ContrastRatio.between(
-            SupervisionTokens.onWaiting.value(isDark: isDark),
-            SupervisionTokens.waitingCount.value(isDark: isDark)
-        )
-        #expect(ratio >= ContrastRatio.text)
-    }
-
-    @Test(arguments: [false, true])
     func text_reachesFourAndAHalfToOne(isDark: Bool) {
         for pair in Self.textPairs {
             let ratio = pair.ratio(isDark: isDark)
-            #expect(ratio >= ContrastRatio.text, "\(pair.name) in \(isDark ? "dark" : "light"): \(ratio)")
+            #expect(ratio >= 4.5, "\(pair.name) in \(isDark ? "dark" : "light"): \(ratio)")
         }
     }
 
@@ -229,7 +221,7 @@ struct SupervisionTokensTests {
     func textOnALaidOverGround_reachesFourAndAHalfToOne(isDark: Bool) {
         for pair in Self.overlayTextPairs {
             let ratio = pair.ratio(isDark: isDark)
-            #expect(ratio >= ContrastRatio.text, "\(pair.name) in \(isDark ? "dark" : "light"): \(ratio)")
+            #expect(ratio >= 4.5, "\(pair.name) in \(isDark ? "dark" : "light"): \(ratio)")
         }
     }
 
@@ -240,7 +232,7 @@ struct SupervisionTokensTests {
     /// fails here.
     @Test(arguments: [false, true])
     @MainActor
-    func mutedOnTheReviewsRowFills_reachesFourAndAHalfToOne(isDark: Bool) throws {
+    func mutedOnDeclaredReviewRowFillRecipes_reachesFourAndAHalfToOne(isDark: Bool) throws {
         let appearance = try #require(NSAppearance(named: isDark ? .darkAqua : .aqua))
         func laid(_ fill: Color, over ground: SRGB) throws -> SRGB {
             var resolved: NSColor?
@@ -259,10 +251,10 @@ struct SupervisionTokensTests {
         let mode = isDark ? "dark" : "light"
         let findBar = try laid(WeirColor.rowActiveFill.opacity(0.5), over: Tokens.window.value(isDark: isDark))
         let card = try laid(WeirColor.rowActiveFill.opacity(0.5), over: Tokens.popover.value(isDark: isDark))
-        let chip = try laid(WeirColor.rowHoverFill, over: card)
+        let chip = try laid(WeirColor.rowHoverFill.opacity(0.6), over: card)
         for (name, ground) in [("find bar", findBar), ("preview card", card), ("span chip", chip)] {
             let ratio = ContrastRatio.between(muted, ground)
-            #expect(ratio >= ContrastRatio.text, "muted on the \(name) in \(mode): \(ratio)")
+            #expect(ratio >= 4.5, "muted on the \(name) in \(mode): \(ratio)")
         }
     }
 
@@ -279,25 +271,37 @@ struct SupervisionTokensTests {
         let groundOnWindow = ContrastRatio.between(ground, window)
         let mode = isDark ? "dark" : "light"
         #expect(lineOnGround >= 1.8, "hatch on its ground in \(mode): \(lineOnGround)")
-        #expect(lineOnGround < ContrastRatio.icon, "hatch on its ground in \(mode): \(lineOnGround)")
+        #expect(lineOnGround < 3.0, "hatch on its ground in \(mode): \(lineOnGround)")
         #expect(groundOnWindow > 1.05, "ground on the diff in \(mode): \(groundOnWindow)")
         #expect(groundOnWindow < 1.5, "ground on the diff in \(mode): \(groundOnWindow)")
     }
 
     /// An overlay laid over a surface is the ink mixed in at its opacity:
     /// none leaves the surface, all of it is the ink.
-    @Test func anOverlay_mixesItsInkIntoTheSurface() {
+    @MainActor
+    @Test func anOverlay_mixesItsInkIntoTheSurface() throws {
         let white = SRGB(0xFFFFFF)
         #expect(ThemedOverlay(lightOpacity: 0, darkOpacity: 0).value(over: white, isDark: false) == white)
         #expect(ThemedOverlay(lightOpacity: 1, darkOpacity: 1).value(over: white, isDark: false) == SRGB(0x000000))
         #expect(ThemedOverlay(lightOpacity: 1, darkOpacity: 1).value(over: SRGB(0x000000), isDark: true) == white)
+        let overlay = ThemedOverlay(lightOpacity: 0.25, darkOpacity: 0.5)
+        let ground = SRGB(red: 0.25, green: 0.5, blue: 0.75)
+        #expect(overlay.value(over: ground, isDark: false) == SRGB(red: 0.1875, green: 0.375, blue: 0.5625))
+        #expect(overlay.value(over: ground, isDark: true) == SRGB(red: 0.625, green: 0.75, blue: 0.875))
+
+        let light = try Self.resolved(overlay.nsColor, in: .aqua)
+        let dark = try Self.resolved(overlay.nsColor, in: .darkAqua)
+        #expect(light.redComponent == 0 && light.greenComponent == 0 && light.blueComponent == 0)
+        #expect(dark.redComponent == 1 && dark.greenComponent == 1 && dark.blueComponent == 1)
+        #expect(light.alphaComponent == 0.25)
+        #expect(dark.alphaComponent == 0.5)
     }
 
     @Test(arguments: [false, true])
     func icons_reachThreeToOne(isDark: Bool) {
         for pair in Self.iconPairs {
             let ratio = pair.ratio(isDark: isDark)
-            #expect(ratio >= ContrastRatio.icon, "\(pair.name) in \(isDark ? "dark" : "light"): \(ratio)")
+            #expect(ratio >= 3.0, "\(pair.name) in \(isDark ? "dark" : "light"): \(ratio)")
         }
     }
 
@@ -318,33 +322,22 @@ struct SupervisionTokensTests {
         // "Unread tag" rows.
     }
 
-    /// The needs-input disc is the lightest amber a white "?" reads on at
-    /// 3:1, the same in both appearances: a step lighter in red or in
-    /// green, and the mark falls under it.
+    /// Either a one-byte red increase or a one-byte green increase drops
+    /// the white mark below its contrast floor.
     @Test(arguments: [false, true])
-    func theNeedsInputDisc_isTheLightestAmberAWhiteMarkReadsOn(isDark: Bool) {
+    func theNeedsInputDisc_isAtTheRedAndGreenContrastBoundary(isDark: Bool) {
         let disc = Tokens.waitingGlyph.value(isDark: isDark)
-        #expect(Tokens.onWaiting.value(isDark: isDark) == PrimaryButtonRule.lightLabel)
+        let white = SRGB(0xFFFFFF)
+        #expect(Tokens.onWaiting.value(isDark: isDark) == white)
         #expect(disc == Tokens.waitingGlyph.value(isDark: !isDark))
-        #expect(ContrastRatio.between(PrimaryButtonRule.lightLabel, disc) >= ContrastRatio.icon)
+        #expect(ContrastRatio.between(white, disc) >= 3.0)
         let step = 1.0 / 255
         let redder = SRGB(red: disc.red + step, green: disc.green, blue: disc.blue)
         let greener = SRGB(red: disc.red, green: disc.green + step, blue: disc.blue)
-        #expect(ContrastRatio.between(PrimaryButtonRule.lightLabel, redder) < ContrastRatio.icon)
-        #expect(ContrastRatio.between(PrimaryButtonRule.lightLabel, greener) < ContrastRatio.icon)
+        #expect(ContrastRatio.between(white, redder) < 3.0)
+        #expect(ContrastRatio.between(white, greener) < 3.0)
     }
 
-    /// The disc's edge is the selection rule's in light, where the disc
-    /// stands under 3:1 off a selected row, and the disc itself in dark.
-    @Test func theNeedsInputDiscsEdge_isTheSelectionRulesEdge() {
-        let light = SelectionEdgeRule.color(Tokens.waitingGlyph.value(isDark: false), on: Tokens.selection.value(isDark: false))
-        #expect(Tokens.waitingGlyphEdge.value(isDark: false).hexBytes == light.hexBytes)
-        #expect(Tokens.waitingGlyphEdge.dark == Tokens.waitingGlyph.dark)
-        #expect(ContrastRatio.between(Tokens.waitingGlyph.value(isDark: false), Tokens.selection.value(isDark: false)) < ContrastRatio.icon)
-    }
-
-    /// The badges wear the brands' colors, the same in light and dark, with
-    /// white letters on all but Codex's, whose mark is black on white.
     @Test(arguments: [false, true])
     func anAgentBadge_wearsItsBrandColorAndItsMarksLetters(isDark: Bool) {
         #expect(Tokens.claude.value(isDark: isDark) == SRGB(0xD97757))
@@ -352,38 +345,50 @@ struct SupervisionTokensTests {
         #expect(Tokens.codexBadgeForeground.value(isDark: isDark) == SRGB(0x000000))
         #expect(Tokens.antigravity.value(isDark: isDark) == SRGB(0x2B7BEF))
         #expect(Tokens.opencode.value(isDark: isDark) == SRGB(0x211E1E))
-        #expect(Tokens.badgeForeground.value(isDark: isDark) == PrimaryButtonRule.lightLabel)
+        #expect(Tokens.badgeForeground.value(isDark: isDark) == SRGB(0xFFFFFF))
+        #expect(AgentBrand.of(.claude) == AgentBrand(
+            letters: "Cl", fill: .solid(Tokens.claude), foreground: Tokens.badgeForeground, edge: Tokens.claudeEdge
+        ))
+        #expect(AgentBrand.of(.codex) == AgentBrand(
+            letters: "Cx", fill: .solid(Tokens.codex), foreground: Tokens.codexBadgeForeground, edge: Tokens.codexEdge
+        ))
+        #expect(AgentBrand.of(.antigravity) == AgentBrand(
+            letters: "Ag", fill: .antigravityMesh, foreground: Tokens.badgeForeground, edge: nil
+        ))
+        #expect(AgentBrand.of(.opencode) == AgentBrand(
+            letters: "Op", fill: .solid(Tokens.opencode), foreground: Tokens.badgeForeground, edge: Tokens.opencodeEdge
+        ))
     }
 
-    /// An edge draws only where its fill stands under 3:1 off a surface:
-    /// Claude's and Codex's in light. Elsewhere it is the fill.
-    @Test func aBadgesEdge_isTheFillWhereTheFillStandsOff() {
-        #expect(Tokens.claudeEdge.dark == Tokens.claude.dark)
-        #expect(Tokens.codexEdge.dark == Tokens.codex.dark)
-        #expect(Tokens.claudeEdge.light != Tokens.claude.light)
-        #expect(Tokens.codexEdge.light != Tokens.codex.light)
-    }
-
-    /// The written-out edges are the selection rule's, so a change to the
-    /// selected row's color cannot leave them behind. Compared at the 8 bits
-    /// a channel the written-out hex has.
-    @Test func aBadgesEdge_isTheSelectionRulesEdge() {
-        let claude = SelectionEdgeRule.color(Tokens.claude.value(isDark: false), on: Tokens.selection.value(isDark: false))
-        let codex = SelectionEdgeRule.color(Tokens.codex.value(isDark: false), on: Tokens.selection.value(isDark: false))
-        #expect(Tokens.claudeEdge.value(isDark: false).hexBytes == claude.hexBytes)
-        #expect(Tokens.codexEdge.value(isDark: false).hexBytes == codex.hexBytes)
+    /// Disc, Claude, and Codex edges match the quantized selection rule.
+    /// OpenCode's lighter dark edge also clears the floor.
+    @Test(arguments: [false, true])
+    func theDiscAndBadgeEdges_preserveSelectedRowContrast(isDark: Bool) {
+        let selection = Tokens.selection.value(isDark: isDark)
+        let cases = [
+            (name: "needs-input disc", fill: Tokens.waitingGlyph, edge: Tokens.waitingGlyphEdge),
+            (name: "Claude badge", fill: Tokens.claude, edge: Tokens.claudeEdge),
+            (name: "Codex badge", fill: Tokens.codex, edge: Tokens.codexEdge)
+        ]
+        for sample in cases {
+            let fill = sample.fill.value(isDark: isDark)
+            let edge = sample.edge.value(isDark: isDark)
+            #expect((ContrastRatio.between(fill, selection) < 3.0) == !isDark, "\(sample.name)")
+            #expect(ContrastRatio.between(edge, selection) >= 3.0, "\(sample.name)")
+            #expect(edge.hexBytes == SelectionEdgeRule.color(fill, on: selection).hexBytes, "\(sample.name)")
+            #expect((edge == fill) == isDark, "\(sample.name)")
+        }
+        let fill = Tokens.opencode.value(isDark: isDark)
+        let edge = Tokens.opencodeEdge.value(isDark: isDark)
+        #expect((ContrastRatio.between(fill, selection) < 3.0) == isDark, "OpenCode badge")
+        #expect(ContrastRatio.between(edge, selection) >= 3.0, "OpenCode badge")
+        #expect((edge == fill) == !isDark, "OpenCode badge")
     }
 
     @Test(arguments: [false, true])
-    func theWell_isAStepDarkerThanTheSurfaces(isDark: Bool) {
+    func theWell_isDarkerThanTheWindow(isDark: Bool) {
         let well = Tokens.well.value(isDark: isDark).luminance
         #expect(well < Tokens.window.value(isDark: isDark).luminance)
-    }
-
-    @Test(arguments: [false, true])
-    func aRailCount_readsOnItsBlue(isDark: Bool) {
-        let ratio = ContrastRatio.between(Tokens.onUnreadCount.value(isDark: isDark), Tokens.unreadCount.value(isDark: isDark))
-        #expect(ratio >= ContrastRatio.text, "\(ratio)")
     }
 
     // MARK: Conversation identity
@@ -409,14 +414,19 @@ struct SupervisionTokensTests {
         }
     }
 
-    /// Colors are told apart by their OKLab distance, which follows how far
-    /// apart they look, rather than by the angle between their hues.
+    /// The existing six indices remain in order. New colors may be added
+    /// at the end and must meet the same distance requirements.
     @Test(arguments: [false, true])
     func conversationIdentity_colorsStayApart(isDark: Bool) {
         let colors = Tokens.conversationIdentity.map { $0.value(isDark: isDark) }
-        // With fewer there is no pair, and the loops below check nothing.
-        #expect(colors.count >= 2)
+        let expected: [UInt32] = isDark
+            ? [0x4FC46B, 0xA77BF0, 0x2FC0C8, 0xEC6FB8, 0xEBCB45, 0xD9DCE2]
+            : [0x43C061, 0xA678F3, 0x29BBC3, 0xEF6CB9, 0xCAA611, 0x3A3D44]
+        #expect(Array(colors.prefix(expected.count)) == expected.map(SRGB.init))
+        let unread = Tokens.unread.value(isDark: isDark)
         for first in colors.indices {
+            let distanceFromUnread = OKLab.distance(colors[first], unread) * 100
+            #expect(distanceFromUnread >= 10, "color \(first) against unread: \(distanceFromUnread)")
             for second in colors.indices where second > first {
                 let distance = OKLab.distance(colors[first], colors[second]) * 100
                 #expect(distance >= 12, "colors \(first) and \(second): \(distance)")
@@ -424,18 +434,8 @@ struct SupervisionTokensTests {
         }
     }
 
-    /// No identity color may be taken for the unread blue.
-    @Test(arguments: [false, true])
-    func conversationIdentity_staysClearOfUnread(isDark: Bool) {
-        let unread = Tokens.unread.value(isDark: isDark)
-        for (index, color) in Tokens.conversationIdentity.enumerated() {
-            let distance = OKLab.distance(color.value(isDark: isDark), unread) * 100
-            #expect(distance >= 10, "color \(index): \(distance)")
-        }
-    }
-
-    /// A button inside a state's soft fill keeps its words readable at its
-    /// strongest step, and each step moves further from the rest face.
+    /// Each successive state moves further from rest while keeping the
+    /// label readable on its own fill.
     @Test(arguments: [false, true])
     func stateFillButton_keepsTextContrastAndStepsAwayFromRest(isDark: Bool) {
         let rest = Tokens.stateFillButton.value(isDark: isDark)
@@ -443,19 +443,44 @@ struct SupervisionTokensTests {
         let pressed = Tokens.stateFillButtonPressed.value(isDark: isDark)
         #expect(ContrastRatio.between(rest, hover) > 1)
         #expect(ContrastRatio.between(rest, pressed) > ContrastRatio.between(rest, hover))
-        #expect(ContrastRatio.between(Tokens.text.value(isDark: isDark), pressed) >= ContrastRatio.text)
+        #expect(isDark ? rest.luminance < hover.luminance : rest.luminance > hover.luminance)
+        #expect(isDark ? hover.luminance < pressed.luminance : hover.luminance > pressed.luminance)
+        for face in [rest, hover, pressed] {
+            #expect(ContrastRatio.between(Tokens.text.value(isDark: isDark), face) >= 4.5)
+        }
     }
 
-    /// A token's color is one value, the same each time it is asked for: a
-    /// new dynamic color each time compared unequal to the last, so every
-    /// view handed one read as changed on every pass, and SwiftUI drew it
-    /// again rather than keep what it had drawn.
-    @Test func aTokensColor_isTheSameValueEachTime() {
-        #expect(SupervisionTokens.text.color == SupervisionTokens.text.color)
-        #expect(SupervisionTokens.waitingGlyph.color == SupervisionTokens.waitingGlyph.color)
-        #expect(SupervisionTokens.reviewCard.color == SupervisionTokens.reviewCard.color)
-        #expect(SupervisionTokens.text.nsColor === SupervisionTokens.text.nsColor)
+    @MainActor
+    private static func resolved(_ color: NSColor, in name: NSAppearance.Name) throws -> NSColor {
+        let appearance = try #require(NSAppearance(named: name))
+        var resolved: NSColor?
+        appearance.performAsCurrentDrawingAppearance {
+            resolved = color.usingColorSpace(.sRGB)
+        }
+        return try #require(resolved)
     }
+
+    /// Reused colors still resolve independently for both drawing appearances.
+    @MainActor
+    @Test func aTokensColor_isStableAcrossReads_andStillResolvesPerAppearance() throws {
+        #expect(Tokens.text.color == Tokens.text.color)
+        #expect(Tokens.waitingGlyph.color == Tokens.waitingGlyph.color)
+        #expect(Tokens.reviewCard.color == Tokens.reviewCard.color)
+        #expect(Tokens.text.nsColor === Tokens.text.nsColor)
+        #expect(Tokens.reviewCard.nsColor === Tokens.reviewCard.nsColor)
+
+        let light = try #require(NSAppearance(named: .aqua))
+        let dark = try #require(NSAppearance(named: .darkAqua))
+        #expect(SRGB(Tokens.text.nsColor, in: light)?.hexBytes == Tokens.text.light.hexBytes)
+        #expect(SRGB(Tokens.text.nsColor, in: dark)?.hexBytes == Tokens.text.dark.hexBytes)
+        let lightCoat = try Self.resolved(Tokens.reviewCard.nsColor, in: .aqua)
+        let darkCoat = try Self.resolved(Tokens.reviewCard.nsColor, in: .darkAqua)
+        #expect(lightCoat.redComponent == 0)
+        #expect(darkCoat.redComponent == 1)
+        #expect(abs(Double(lightCoat.alphaComponent) - Tokens.reviewCard.lightOpacity) < 0.000_001)
+        #expect(abs(Double(darkCoat.alphaComponent) - Tokens.reviewCard.darkOpacity) < 0.000_001)
+    }
+
 }
 
 /// sRGB to OKLab (Björn Ottosson's matrices), only to measure how far apart

@@ -13,7 +13,6 @@ struct AgentCatalogTests {
         // The menu's order as people see it, so a reorder of either list
         // fails here rather than only moving both.
         #expect(AgentKind.allCases == [.claude, .codex, .antigravity, .opencode])
-        #expect(Set(AgentCatalog.entries.map(\.kind)) == Set(AgentKind.allCases))
         for kind in AgentKind.allCases {
             let entry = AgentCatalog.entry(for: kind)
             // What a pane types is the first name looked up.
@@ -51,6 +50,7 @@ struct AgentCatalogTests {
             == [.claude, .codex])
         // Every PATH in `searchPaths` is searched, not only the first.
         #expect(Self.installed(paths: ["/pane/bin", "/usr/bin"], executables: ["/pane/bin/codex"]) == [.codex])
+        #expect(Self.installed(paths: ["/pane/bin", "/usr/bin"], executables: ["/usr/bin/codex"]) == [.codex])
         #expect(Self.installed(paths: ["/usr/bin"], executables: ["/opt/tools/bin/codex"]).isEmpty)
         #expect(Self.installed(paths: [], executables: []).isEmpty)
     }
@@ -106,6 +106,7 @@ struct AgentCatalogTests {
 
     @Test func aRelativePathEntry_isSkipped() {
         #expect(Self.installed(paths: ["bin"], executables: ["bin/claude"]).isEmpty)
+        #expect(Self.installed(paths: ["bin:/absolute/bin"], executables: ["bin/claude", "/absolute/bin/codex"]) == [.codex])
     }
 
     @Test func anAgentWhereItsShimOrAVersionManagerPutsIt_isInstalled_offThePath() {

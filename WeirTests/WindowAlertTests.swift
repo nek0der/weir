@@ -45,17 +45,27 @@ struct WindowAlertTests {
     // MARK: - Real sheets
 
     @MainActor
-    @Test func aRealSheet_isAnsweredCancel_whenItsWindowCloses_andOnlyOneIsUpAtATime() {
+    @Test func aRealSheet_isAnsweredCancel_whenItsWindowCloses_andOnlyOneIsUpAtATime() throws {
         let window = Self.shownWindow()
+        defer {
+            if window.isVisible {
+                window.close()
+            }
+        }
         let record = SheetRecord()
         WindowAlert.begin(NSAlert(), on: window, isExclusive: true) { record.responses.append($0) }
-        #expect(window.attachedSheet != nil)
+        let sheet = try #require(window.attachedSheet)
+        #expect(record.responses.isEmpty)
         // A second close question while the first is up is dropped at once.
         let second = SheetRecord()
         WindowAlert.begin(NSAlert(), on: window, isExclusive: true) { second.responses.append($0) }
         #expect(second.responses == [.cancel])
+        #expect(window.attachedSheet === sheet)
+        #expect(record.responses.isEmpty)
+
         window.close()
         #expect(record.responses == [.cancel])
+        #expect(window.attachedSheet == nil)
     }
 
     /// A close question, which is exclusive, and a link's confirmation,

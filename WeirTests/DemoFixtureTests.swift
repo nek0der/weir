@@ -24,10 +24,30 @@ struct DemoFixtureTests {
         #expect(DemoFixture.OpenLayer(rawValue: "approval-card") == .approvalCard)
     }
 
-    /// The capture waits for these reports, so a scene without one stops it.
-    @Test func everySlotsScene_reportsItIsOnScreen() {
-        for slot in DemoFixture.Slot.allCases {
-            #expect(DemoFixture.transcript(for: slot).contains("WEIR_DEMO_PANES_READY"), "\(slot)")
+    /// A staged command must create a PID marker in the capture's readiness directory.
+    @Test(arguments: DemoFixture.Slot.allCases)
+    func everySlotsScene_writesAReadinessMarker(_ slot: DemoFixture.Slot) async throws {
+        let tab = try #require(DemoFixture.snapshot.tabs.first { $0.id == slot.tabID })
+        let command = try #require(tab.initialCommands[slot.paneID])
+        try await withTempDir { directory in
+            let ready = directory.appendingPathComponent("ready", isDirectory: true)
+            try FileManager.default.createDirectory(at: ready, withIntermediateDirectories: false)
+            let result = try #require(await runTool(
+                executable: URL(fileURLWithPath: "/usr/bin/env"),
+                arguments: [
+                    "-i", "HOME=\(directory.path)", "ZDOTDIR=\(directory.path)", "PATH=/usr/bin:/bin",
+                    "TERM=xterm", "WEIR_DEMO_PANES_READY=\(ready.path)",
+                    "/bin/sh", "-c", #"printf '\n' | /bin/zsh -f -c "$1""#, "scene", command
+                ],
+                workingDirectory: directory,
+                timeout: .seconds(5)
+            ))
+            #expect(result.exitCode == 0, "\(result.stderr)")
+            let markers = try FileManager.default.contentsOfDirectory(atPath: ready.path)
+            let marker = try #require(markers.first)
+            #expect(markers.count == 1)
+            #expect((Int(marker) ?? 0) > 0)
+            #expect(try Data(contentsOf: ready.appendingPathComponent(marker)).isEmpty)
         }
     }
 
@@ -35,6 +55,8 @@ struct DemoFixtureTests {
         #expect(DemoFixture.language(named: "ja") == .japanese)
         #expect(DemoFixture.language(named: "en") == .english)
         #expect(DemoFixture.language(named: nil) == .english)
+        #expect(DemoFixture.language(named: "JA") == .english)
+        #expect(DemoFixture.language(named: "fr") == .english)
     }
 
     /// Only the layers that show the approval stage one, so the landing
@@ -48,9 +70,12 @@ struct DemoFixtureTests {
         let pool = ReviewDraftWriterPool(drafts: DemoReviewDraftStore(), git: DemoReviewRepository())
         #expect(try await pool.root(of: root) == root, "Git is not asked")
         let session = pool.session(root: root)
-        _ = await session.reload(scope: .uncommitted, selectedFileID: DemoFixture.reviewedFile.id)
-        let diff = try await DemoReviewRepository().diff(DemoFixture.reviewedFile, root: root, scope: .uncommitted)
+        let file = DemoFixture.reviewedFile
+        #expect(session.lastFileID == file.id)
+        #expect(await session.reload(scope: .uncommitted, selectedFileID: nil) == .applied(selectedFileID: file.id))
+        let diff = try #require(session.diff)
 
+        #expect(diff.file == file)
         #expect(diff.lines.count(where: { $0.kind == .added }) == 31)
         #expect(diff.lines.count(where: { $0.kind == .removed }) == 4)
         #expect(session.errorMessage == nil)
@@ -60,17 +85,19 @@ struct DemoFixtureTests {
         #expect(diff.lines.contains { $0.id == comment.anchor.lineID && $0.text == comment.code })
         #expect(session.staleCommentIDs.isEmpty)
 
-        let counts = DemoFixture.stagedReviewFiles.map(\.stat)
-        #expect(DemoFixture.worktreeCounts == .changed(
-            files: counts.count,
-            added: counts.map(\.added).reduce(0, +),
-            removed: counts.map(\.removed).reduce(0, +)
-        ))
+        #expect(session.stats[file.id] == ReviewFileStat(added: 31, removed: 4))
+        #expect(session.files.count == 5)
+        #expect(session.stats.count == 5)
+        #expect(session.stats.values.map(\.added).reduce(0, +) == 160)
+        #expect(session.stats.values.map(\.removed).reduce(0, +) == 13)
+        #expect(DemoFixture.worktreeCounts == .changed(files: 5, added: 160, removed: 13))
     }
 
     @Test func stagedApproval_staysHeldWhileItsPaneIsOutOfSight_withAClockThatDoesNotMove() throws {
         let session = WorkspaceSession()
         _ = session.restore(from: DemoFixture.snapshot)
+        #expect(session.primarySelection.activeContainerID == DemoFixture.remindersContainer)
+        #expect(session.primarySelection.activeTabID == DemoFixture.Slot.reminders.tabID)
         let attention = AttentionState()
         AgentProjectionAdapter.seedRuntimes(fromBadgesIn: session, into: attention)
         let store = DemoFixture.makeApprovalStore()
@@ -85,6 +112,10 @@ struct DemoFixtureTests {
             summary: DemoFixture.stagedApproval.summary
         ))
         let key = try #require(store.ledger.entries.keys.first)
+        let request = DemoFixture.stagedApproval
+        #expect(key == ApprovalKey(epoch: request.epoch, runID: request.runID, requestID: request.requestID))
+        #expect(store.pending.map(\.id) == [DemoFixture.stagedApproval.id])
+        #expect(store.ledger.entries.count == 1)
         #expect(store.opensCard(key))
         // The request is in the proration worktree's pane, which its decision
         // bar and its sidebar row answer from.
@@ -114,14 +145,9 @@ struct DemoFixtureTests {
 
     @Test func appearance_isDarkOnlyWhenNamedSo() {
         #expect(DemoFixture.colorScheme(named: "dark") == .dark)
-        #expect(DemoFixture.colorScheme(named: "light") != .dark)
-        #expect(DemoFixture.colorScheme(named: nil) != .dark)
-        #expect(DemoFixture.colorScheme(named: "Dark") != .dark)
-    }
-
-    @Test("snapshot encodes at the current schema version")
-    func snapshot_versionMatchesCurrent() {
-        #expect(DemoFixture.snapshot.version == SessionSnapshot.currentVersion)
+        #expect(DemoFixture.colorScheme(named: "light") == .light)
+        #expect(DemoFixture.colorScheme(named: nil) == .light)
+        #expect(DemoFixture.colorScheme(named: "Dark") == .light)
     }
 
     @Test func snapshot_hasThreeProjects_andTheirWorktrees_inTheDocumentedOrder() throws {
@@ -150,7 +176,7 @@ struct DemoFixtureTests {
         #expect(snap.recentProjectPaths == snap.projects.map(\.rootURL))
     }
 
-    @Test func theWindow_showsTheRemindersAgent_inTheStrip_withTheChangesPanelOpen() throws {
+    @Test func restoringTheWindow_selectsReminders_andRestoresItsPanelLayout() throws {
         let window = try #require(DemoFixture.snapshot.windows.first)
         #expect(DemoFixture.snapshot.windows.count == 1)
         #expect(window.projectID == DemoFixture.duesmithProjectID)
@@ -162,6 +188,16 @@ struct DemoFixtureTests {
         #expect(window.isChangesPanelPresented)
         #expect(window.changesPanelWidth == 312)
         #expect(window.isFront)
+        let session = WorkspaceSession()
+        #expect(session.restore(from: DemoFixture.snapshot) == nil)
+        let selection = session.primarySelection
+        #expect(selection.shownProjectID == DemoFixture.duesmithProjectID)
+        #expect(selection.activeContainerID == DemoFixture.remindersContainer)
+        #expect(selection.activeTabID == DemoFixture.Slot.reminders.tabID)
+        #expect(selection.sidebarWidth == 264)
+        #expect(!selection.sidebarHidden)
+        #expect(selection.showsChangesPanel)
+        #expect(selection.changesPanelWidth == 312)
     }
 
     /// The agent's pane is not split: the 100-column rule for opening the
@@ -229,26 +265,31 @@ struct DemoFixtureTests {
     /// as a key. An agent's scene sets the terminal's title to its
     /// conversation's, which the tab shows, and holds the screen with its
     /// cursor hidden.
-    @Test func everyPanesCommand_typesNoEscapeCharacter_andAnAgentsHoldsTheScreen() {
-        for tab in DemoFixture.snapshot.tabs {
-            for (pane, command) in tab.initialCommands {
-                #expect(!command.contains("\u{1B}"), "\(pane)")
-                #expect(!command.contains("\n"), "\(pane)")
+    @Test func paneCommands_areSingleLine_andIncludeScreenHoldForSelectedScenes() throws {
+        let slotsThatHold: Set<DemoFixture.Slot> = [
+            .reminders, .remindersCodex, .dev, .prReview, .taxRounding, .proration,
+            .docs, .pageBreaks, .batchRender, .embedFonts, .marginOverflow
+        ]
+        let snapshot = DemoFixture.snapshot
+        #expect(Set(snapshot.tabs.flatMap { $0.splitTree.allLeafIDs() }) == Set(DemoFixture.Slot.allCases.map(\.paneID)))
+        for slot in DemoFixture.Slot.allCases {
+            let tab = try #require(snapshot.tabs.first { $0.id == slot.tabID })
+            #expect(Set(tab.initialCommands.keys) == [slot.paneID])
+            let command = try #require(tab.initialCommands[slot.paneID])
+            #expect(!command.contains("\u{1B}"), "\(slot)")
+            #expect(!command.contains("\n"), "\(slot)")
+            let holds = slotsThatHold.contains(slot)
+            #expect(command.contains("read -r") == holds, "\(slot)")
+            #expect(command.contains("printf '\\033[?25l%b'") == holds, "\(slot)")
+            #expect(command.hasSuffix("&& read -r; printf '\\033[?25h'") == holds, "\(slot)")
+            if let name = tab.conversationName {
+                #expect(name.paneID == slot.paneID)
+                #expect(DemoFixture.conversationTitle(of: slot) == name.name)
+                #expect(command.contains("printf '\\033]2;%s\\007' \(ShellQuote.single(name.name))") == holds, "\(slot)")
             }
         }
         let reminders = DemoFixture.transcript(for: .reminders)
         #expect(reminders.contains("&& clear && printf '\\033]2;%s\\007' 'Send overdue reminders' && "))
-        // Every agent's scene that holds the screen titles the terminal by
-        // the conversation that names its tab, so the two cannot drift.
-        for tab in DemoFixture.snapshot.tabs {
-            guard let name = tab.conversationName, let command = tab.initialCommands[name.paneID] else { continue }
-            #expect(DemoFixture.Slot.allCases.contains { DemoFixture.conversationTitle(of: $0) == name.name }, "\(tab.id)")
-            if command.contains("read -r") {
-                #expect(command.contains("printf '\\033]2;%s\\007' '\(name.name)'"), "\(tab.id)")
-            }
-        }
-        #expect(reminders.contains("printf '\\033[?25l%b'"))
-        #expect(reminders.hasSuffix("&& read -r; printf '\\033[?25h'"))
         #expect(reminders.contains("\\033[36m"))
     }
 
@@ -288,22 +329,16 @@ struct DemoFixtureTests {
     /// prompt is the demo's, and Ghostty's integration, which reports the
     /// pane's folder, is loaded.
     @Test(.disabled(if: !RepoFixture.hasLocalRepo, "no source tree"))
-    func aPanesShell_runsNoneOfTheHomesStartupFiles_andKeepsNoHistory() throws {
+    func aPanesShell_runsNoneOfTheHomesStartupFiles_andKeepsNoHistory() async throws {
         let root = try #require(RepoFixture.weirRoot)
         let files = root.appendingPathComponent("Weir/Resources/demo-shell", isDirectory: true)
         let ghostty = root.appendingPathComponent("Weir/Resources/ghostty", isDirectory: true)
-        try withTempDir { home in
+        try await withTempDir { home in
             let rc = "HISTFILE=$HOME/.zsh_history; SAVEHIST=100; setopt inc_append_history; print HOME_RC_RAN\n"
-            for name in [".zshenv", ".zprofile", ".zshrc"] {
+            for name in [".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout"] {
                 try rc.write(to: home.appendingPathComponent(name), atomically: true, encoding: .utf8)
             }
-            let printed = home.appendingPathComponent("printed")
-            FileManager.default.createFile(atPath: printed.path, contents: nil)
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: DemoFixture.shellCommand)
-            process.arguments = ["-il"]
-            process.currentDirectoryURL = home
-            process.environment = DemoFixture.shellEnvironment(
+            let environment = DemoFixture.shellEnvironment(
                 over: [
                     "HOME": home.path,
                     "PATH": "/usr/bin:/bin",
@@ -313,38 +348,74 @@ struct DemoFixtureTests {
                 startupDirectory: files,
                 panesReady: ""
             )
-            let input = Pipe()
-            let output = try FileHandle(forWritingTo: printed)
-            process.standardInput = input
-            process.standardOutput = output
-            process.standardError = output
-            try process.run()
             let line = #"print -r -- "scene [$HISTFILE] [$SAVEHIST] [$PROMPT] [${precmd_functions[(r)_ghostty_precmd]}]""#
-            input.fileHandleForWriting.write(Data("\(line)\nexit\n".utf8))
-            try input.fileHandleForWriting.close()
-            let exited = process.waitUntilExit(within: 10)
-            if !exited {
-                process.terminate()
-            }
-            try output.close()
-            #expect(exited)
-            let text = try String(contentsOf: printed, encoding: .utf8)
-            #expect(text.contains("scene [] [0] [demo@weir %1~ %% ] [_ghostty_precmd]"), "\(text)")
-            #expect(!text.contains("HOME_RC_RAN"), "\(text)")
+            let result = try #require(await runTool(
+                executable: URL(fileURLWithPath: "/usr/bin/env"),
+                arguments: ["-i"] + environment.map { "\($0.key)=\($0.value)" } + [
+                    "/bin/sh", "-c", #"printf '%s\n' "$1" exit | "$2" -il"#, "demo", line, DemoFixture.shellCommand
+                ],
+                workingDirectory: home,
+                timeout: .seconds(10)
+            ))
+            #expect(result.exitCode == 0, "\(result.stderr)")
+            #expect(result.stdout.contains("scene [] [0] [demo@weir %1~ %% ] [_ghostty_precmd]"), "\(result.stdout)")
+            #expect(!result.stdout.contains("HOME_RC_RAN"))
+            #expect(!result.stderr.contains("HOME_RC_RAN"))
             #expect(!FileManager.default.fileExists(atPath: home.appendingPathComponent(".zsh_history").path))
         }
     }
 
-    /// The script starts the demo shells in this folder under its isolated
-    /// home, and the footer and headers read it: the two have to agree.
+    /// A probe records the capture script's actual launch directory.
     @Test(.disabled(if: !RepoFixture.hasLocalRepo, "no source tree"))
-    func theScreenshotScript_startsShellsInTheSelectedWorktreesFolder() throws {
+    func theScreenshotScript_launchesFromTheSelectedWorktreesFolder() async throws {
         let root = try #require(RepoFixture.weirRoot)
-        let script = try String(contentsOf: root.appendingPathComponent("scripts/screenshot.sh"), encoding: .utf8)
+        let scriptURL = root.appendingPathComponent("scripts/screenshot.sh")
+        let script = try String(contentsOf: scriptURL, encoding: .utf8)
         let relative = DemoFixture.selectedWorktreeHomeRelativePath
         #expect(DemoFixture.selectedWorktreeRoot.path == "/Users/demo/\(relative)")
-        #expect(script.contains("DEMO_SHELL_DIR=\"${CAPTURE_HOME}/\(relative)\""))
         #expect(script.contains("let expectedPoints = CGSize(width: 1440, height: 900)"))
+        try await withTempDir { directory in
+            let app = directory.appendingPathComponent("Probe.app")
+            let binary = app.appendingPathComponent("Contents/MacOS/probe")
+            let stubSwift = directory.appendingPathComponent("bin/swift")
+            let record = directory.appendingPathComponent("launch")
+            try FileManager.default.createDirectory(at: binary.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: stubSwift.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let info = try PropertyListSerialization.data(fromPropertyList: ["CFBundleExecutable": "probe"], format: .xml, options: 0)
+            try info.write(to: app.appendingPathComponent("Contents/Info.plist"))
+            try Self.writeExecutable(
+                """
+                #!/bin/sh
+                printf '%s\\n' "$CFFIXED_USER_HOME" "$WEIR_DEMO" > "$DEMO_LAUNCH_RECORD"
+                pwd -P >> "$DEMO_LAUNCH_RECORD"
+                """,
+                at: binary
+            )
+            // Stop before activation or capture, even if the probe did not launch.
+            try Self.writeExecutable("#!/bin/sh\nexit 1\n", at: stubSwift)
+            let result = try #require(await runTool(
+                executable: URL(fileURLWithPath: "/usr/bin/env"),
+                arguments: [
+                    "-i", "HOME=\(directory.path)", "TMPDIR=\(directory.path)",
+                    "PATH=\(stubSwift.deletingLastPathComponent().path):/usr/bin:/bin",
+                    "DEMO_LAUNCH_RECORD=\(record.path)", "WEIR_SCREENSHOT_APP=\(app.path)", "/bin/bash", scriptURL.path
+                ],
+                workingDirectory: directory,
+                timeout: .seconds(15)
+            ))
+            #expect(result.exitCode == 1)
+            #expect(result.stderr.contains("the demo app is not running, so nothing was captured"))
+            let lines = try String(contentsOf: record, encoding: .utf8).split(separator: "\n").map(String.init)
+            try #require(lines.count == 3)
+            #expect(lines[1] == "1")
+            #expect(lines[2] == "\(lines[0])/\(relative)")
+            #expect(!FileManager.default.fileExists(atPath: lines[0]), "the script removed its capture home")
+        }
+    }
+
+    private static func writeExecutable(_ source: String, at url: URL) throws {
+        try source.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
     }
 
     @Test("snapshot survives a JSON round-trip without losing state")
@@ -356,11 +427,15 @@ struct DemoFixtureTests {
             SessionSnapshot.self,
             from: encoder.encode(original)
         )
-        #expect(restored.version == original.version)
-        #expect(restored.projects.count == original.projects.count)
-        #expect(restored.tabs.count == original.tabs.count)
+        #expect(original.version == SessionSnapshot.currentVersion)
+        #expect(restored.version == SessionSnapshot.currentVersion)
+        #expect(restored.projects == original.projects)
+        #expect(restored.tabs == original.tabs)
         #expect(restored.windows == original.windows)
         #expect(restored.projectViews == original.projectViews)
+        #expect(restored.recentProjectPaths == original.recentProjectPaths)
+        #expect(restored.conversationTabNames == original.conversationTabNames)
+        #expect(restored.unknownFields == original.unknownFields)
     }
 
     /// Switched to pdf-worker, the window comes back on its waiting agent.
@@ -369,6 +444,17 @@ struct DemoFixtureTests {
         let pdf = try #require(views.first { $0.projectID == DemoFixture.pdfWorkerProjectID })
         #expect(pdf.activeContainerID == DemoFixture.pageBreaksContainer)
         #expect(pdf.activeTabID == DemoFixture.Slot.pageBreaks.tabID)
+        let session = WorkspaceSession()
+        #expect(session.restore(from: DemoFixture.snapshot) == nil)
+        session.showProject(DemoFixture.pdfWorkerProjectID, in: session.primaryWindowID, intent: .person, reason: .person)
+        #expect(session.primarySelection.shownProjectID == DemoFixture.pdfWorkerProjectID)
+        #expect(session.primarySelection.activeContainerID == DemoFixture.pageBreaksContainer)
+        #expect(session.primarySelection.activeTabID == DemoFixture.Slot.pageBreaks.tabID)
+        let tab = try #require(session.tab(containing: DemoFixture.Slot.pageBreaks.paneID))
+        #expect(tab.id == session.primarySelection.activeTabID)
+        let badge = try #require(tab.agentBadges[.codex]?[DemoFixture.Slot.pageBreaks.paneID])
+        #expect(badge.state == .needsInput)
+        #expect(badge.waitKind == PromptWaitKind.approval.rawValue)
     }
 
     /// The demo request marks are keyed by hand-written `ContainerID`
@@ -379,7 +465,13 @@ struct DemoFixtureTests {
     @Test("every demo pull request is keyed to a container in the snapshot")
     func prStatus_keysResolveToSnapshotContainers() throws {
         let snap = DemoFixture.snapshot
-        #expect(DemoFixture.prStatus.values.map(\.number).sorted() == [57, 311, 317, 324, 326])
+        #expect(DemoFixture.prStatus.mapValues(\.number) == [
+            DemoFixture.batchRenderContainer: 57,
+            DemoFixture.csvExportContainer: 311,
+            DemoFixture.closedAgentContainer: 317,
+            DemoFixture.docsContainer: 324,
+            DemoFixture.prorationContainer: 326
+        ])
         for container in DemoFixture.prStatus.keys {
             switch container {
             case let .project(id):
@@ -393,22 +485,37 @@ struct DemoFixtureTests {
         }
     }
 
-    /// The Git facts are keyed the same way, so this connects them too.
-    @Test func everyStagedGitFact_isKeyedToAWorktreeInTheSnapshot() {
+    @Test func everyStagedGitFact_namesItsSnapshotCheckout() {
         let snap = DemoFixture.snapshot
-        let workspaces = Set(snap.projects.flatMap(SessionSidebarModel.containers(of:)))
-        #expect(!DemoFixture.gitFacts.isEmpty)
-        #expect(Set(DemoFixture.gitFacts.keys).isSubset(of: workspaces))
-        let reminders = DemoFixture.gitFacts[DemoFixture.remindersContainer]
+        let session = WorkspaceSession()
+        #expect(session.restore(from: snap) == nil)
+        let facts = DemoFixture.gitFacts
+        #expect(facts.compactMapValues(\.branch) == [
+            .project(DemoFixture.duesmithProjectID): "main",
+            DemoFixture.remindersContainer: "feat/overdue-reminders",
+            .worktree(projectID: DemoFixture.duesmithProjectID, worktreeID: DemoFixture.taxRoundingWorktreeID): "fix/tax-rounding",
+            DemoFixture.prorationContainer: "feat/proration",
+            .worktree(projectID: DemoFixture.duesmithProjectID, worktreeID: DemoFixture.webhookWorktreeID): "fix/webhook-timeout",
+            DemoFixture.docsContainer: "docs/invoices-api",
+            DemoFixture.csvExportContainer: "fix/csv-export",
+            DemoFixture.batchRenderContainer: "feat/batch-render",
+            DemoFixture.pageBreaksContainer: "fix/page-breaks",
+            DemoFixture.embedFontsContainer: "feat/embed-fonts",
+            DemoFixture.marginOverflowContainer: "fix/margin-overflow"
+        ])
+        for (container, fact) in facts {
+            #expect(fact.branch != nil)
+            #expect(CheckoutName.knownBranch(of: container, in: session) == fact.branch, "\(container)")
+        }
+        let reminders = facts[DemoFixture.remindersContainer]
         #expect(reminders?.proposedCommits == 2)
         #expect(reminders?.uncommittedFiles == 5, "what Claude's T4 and T5 and Codex's T1 changed")
     }
 
     /// Demo mode hands the fixture's requests to the syncer at
-    /// construction (`PRStatusSource.fixture`), and the syncer shows them
-    /// as they are: it reads no demo flag (false in the test runner) and
-    /// asks no CLI, not even for the row's "Refresh".
-    @Test func demoPRStatus_comesFromFixtureSource() {
+    /// construction (`PRStatusSource.fixture`), and a completed manual
+    /// refresh leaves those fixture rows in place.
+    @Test func demoPRStatus_comesFromFixtureSource() async {
         #expect(!DemoFixture.isDemoActive)
         if case .fixture = AppState.prStatusSource {
             Issue.record("a run that is not the demo reads the forge CLIs")
@@ -424,7 +531,7 @@ struct DemoFixtureTests {
         #expect(store.perContainer == DemoFixture.prStatus)
         for container in DemoFixture.prStatus.keys {
             #expect(store.forge(for: container) == nil)
-            syncer.refreshNow(container: container)
+            await syncer.refresh(container: container)
         }
         #expect(store.perContainer == DemoFixture.prStatus)
     }
@@ -434,8 +541,10 @@ struct DemoFixtureTests {
     /// `.invalid` so it can never resolve to one.
     @Test("demo request links point at a reserved, non-resolving host")
     func prStatus_urlsUseAReservedHost() {
+        #expect(!DemoFixture.prStatus.isEmpty)
         for info in DemoFixture.prStatus.values {
-            #expect(info.url.host()?.hasSuffix(".invalid") == true)
+            #expect(info.url.scheme == "https", "PR \(info.number)")
+            #expect(info.url.host()?.hasSuffix(".invalid") == true, "PR \(info.number)")
         }
     }
 
@@ -458,11 +567,25 @@ struct DemoFixtureTests {
     /// stopped agent's interrupted turn with what it had changed.
     @Test func theOtherConversations_areTheReviewsAnswers_andTheStoppedAgentsTurn() throws {
         let review = try DemoFixture.stagedTurns(of: DemoFixture.prReviewConversation)
+        #expect(review.map(\.displayNumber) == [1, 2])
+        #expect(review.map(\.phase) == [.finished, .finished])
         #expect(review.map(\.changes) == [.unchanged, .unchanged])
-        #expect(review.allSatisfy { $0.conversation.provider == .codex })
+        #expect(review.allSatisfy { $0.conversation == DemoFixture.prReviewConversation })
+        #expect(review.allSatisfy { $0.conversation.provider == .codex && $0.paneID == DemoFixture.Slot.prReview.paneID.uuidString })
+        #expect(review
+            .allSatisfy { $0.beginTree?.root == DemoFixture.duesmithRoot.path && $0.endTree?.root == DemoFixture.duesmithRoot.path })
+        let replies = review.compactMap(\.reply)
+        #expect(replies.count == 2)
+        #expect(replies.first?.hasPrefix("It moves credit notes") == true)
+        #expect(replies.last?.hasPrefix("Three problems.") == true)
         let webhook = try DemoFixture.stagedTurns(of: DemoFixture.webhookConversation)
         #expect(webhook.map(\.phase) == [.interrupted])
-        #expect(webhook.first?.changes == .changed(files: 2, added: 18, removed: 3))
+        let stopped = try #require(webhook.first)
+        #expect(stopped.changes == .changed(files: 2, added: 18, removed: 3))
+        #expect(stopped.conversation == DemoFixture.webhookConversation)
+        #expect(stopped.paneID == DemoFixture.Slot.webhook.paneID.uuidString)
+        #expect(stopped.endTree?.root == DemoFixture.folder("duesmith-fix-webhook-timeout").path)
+        #expect(stopped.reply == nil)
         #expect(DemoFixture.conversations().count == 4)
     }
 
@@ -470,9 +593,10 @@ struct DemoFixtureTests {
     /// after Claude's T4 and before T5, so the timeline reads T4, Codex's
     /// T1, T5.
     @Test func theCodexTurn_isInTheSelectedWorktree_betweenT4AndT5() throws {
-        let now = Date()
-        let codex = try DemoFixture.stagedTurns(of: DemoFixture.remindersCodexConversation, now: now)
-        let reminders = try DemoFixture.stagedTurns(of: DemoFixture.remindersConversation, now: now)
+        let staged = DemoFixture.stagedProjection
+        let codex = try #require(staged.turns.first { $0.key == DemoFixture.remindersCodexConversation }).turns
+        let reminders = try #require(staged.turns.first { $0.key == DemoFixture.remindersConversation }).turns
+        try #require(reminders.count == 5)
         #expect(codex.map(\.displayNumber) == [1])
         #expect(codex.first?.conversation.provider == .codex)
         #expect(codex.first?.changes == .changed(files: 1, added: 24, removed: 0))
@@ -480,21 +604,34 @@ struct DemoFixtureTests {
         #expect(codex.first?.paneID == DemoFixture.Slot.remindersCodex.paneID.uuidString)
         let timeline = ChangesPanelModel.timeline(reminders + codex)
         #expect(timeline.map(\.turnID) == (reminders.prefix(4) + codex + reminders.suffix(1)).map(\.turnID))
-        guard case let .range(range) = ReviewScopeCatalog.unviewedTurns(turns: timeline, isViewed: { _ in false }) else {
+        let viewed = ViewedLineStore(writesFiles: false)
+        staged.markViewedLines(in: viewed)
+        #expect(timeline.filter(viewed.isViewed).map(\.turnID) == reminders.prefix(3).map(\.turnID))
+        guard case let .range(range) = ReviewScopeCatalog.unviewedTurns(turns: timeline, isViewed: viewed.isViewed) else {
             Issue.record("expected the worktree's unviewed range")
             return
         }
-        #expect(ChangesPanelModel.comparison(range).begin == reminders.first?.beginTree?.tree)
-        #expect(ChangesPanelModel.comparison(range).end == reminders.last?.endTree?.tree)
+        #expect(range.turnIDs == (reminders[3...3] + codex + reminders[4...4]).map(\.turnID))
+        #expect(ChangesPanelModel.comparison(range).begin == reminders[3].beginTree?.tree)
+        #expect(ChangesPanelModel.comparison(range).end == reminders[4].endTree?.tree)
     }
 
     /// Every staged turn has ended, and each conversation's last one when its
     /// agent's badge says it did.
     @Test func everyConversation_endedBeforeNow_itsLastTurnAsItsBadgeSays() throws {
-        let now = Date()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let beforeSnapshot = Date()
+        let snapshot = DemoFixture.snapshot
+        let afterSnapshot = Date()
         let session = WorkspaceSession()
-        _ = session.restore(from: DemoFixture.snapshot)
+        _ = session.restore(from: snapshot)
         let format = ISO8601DateFormatter()
+        let secondsAgo: [ConversationKey: TimeInterval] = [
+            DemoFixture.remindersConversation: 80,
+            DemoFixture.remindersCodexConversation: 320,
+            DemoFixture.prReviewConversation: 860,
+            DemoFixture.webhookConversation: 560
+        ]
         for conversation in DemoFixture.conversations(now: now) {
             let ends = conversation.turns.compactMap { $0.finishedAt.flatMap(format.date(from:)) }
             #expect(ends.count == conversation.turns.count)
@@ -503,7 +640,11 @@ struct DemoFixtureTests {
             #expect(DemoFixture.conversation(forPane: pane) == conversation.key)
             let badge = try #require(session.tab(containing: pane)?.agentBadges[conversation.key.provider]?[pane])
             let last = try #require(ends.last)
-            #expect(abs(badge.updatedAt.timeIntervalSince(last)) < 2)
+            let offset = try #require(secondsAgo[conversation.key])
+            #expect(last == now.addingTimeInterval(-offset))
+            // Snapshot badges sample the wall clock internally.
+            #expect(badge.updatedAt >= beforeSnapshot.addingTimeInterval(-offset))
+            #expect(badge.updatedAt <= afterSnapshot.addingTimeInterval(-offset))
             #expect(badge.lastPrompt == conversation.turns.last?.promptHead)
         }
     }
@@ -521,9 +662,15 @@ struct DemoFixtureTests {
             let badge = try #require(tab.agentBadges[conversation.key.provider]?[pane])
             let name = tab.title
 
+            #expect(tab.displayTitle == name)
             #expect(badge.conversationID == conversation.key.conversationID)
             #expect(PaneHeaderRules.agentTitle(for: badge) == name)
-            #expect(tab.conversationName?.name == name)
+            #expect(tab.conversationName == ConversationName(
+                name: name, provider: conversation.key.provider, paneID: pane,
+                conversationID: conversation.key.conversationID, startedAt: badge.sessionStartedAt
+            ))
+            let providerTitle = conversation.key.provider == .claude ? badge.providerGeneratedTitle : badge.providerSessionTitle
+            #expect(providerTitle == name)
             #expect(conversation.turns.allSatisfy { $0.conversationTitle == name }, "\(name)")
             let agent = ChangesPanelModel.Agent(conversation: conversation.key, turns: conversation.turns)
             #expect(ChangesPanelModel.title(of: agent, liveTab: nil, rememberedTabName: nil) == name)

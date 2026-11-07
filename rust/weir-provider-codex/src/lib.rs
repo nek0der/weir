@@ -244,7 +244,7 @@ mod tests {
                 )
                 .cwd
         };
-        for event in normalize::TOOL_FOLDER_EVENTS {
+        for event in ["PreToolUse", "PostToolUse", "PermissionRequest"] {
             assert_eq!(cwd(event), None, "{event}");
         }
         for event in ["UserPromptSubmit", "Stop", "Interrupt"] {
@@ -253,8 +253,15 @@ mod tests {
     }
 
     #[test]
-    fn every_hook_inside_a_turn_names_it_and_a_stop_reads_its_own() {
-        for event in normalize::TURN_EVENTS {
+    fn hooks_inside_a_parent_turn_name_that_turn() {
+        for event in [
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "PermissionRequest",
+            "Stop",
+            "Interrupt",
+        ] {
             assert_eq!(
                 CodexAdapter.turn_marker(input(&format!(
                     r#"{{"hook_event_name":"{event}","turn_id":"t1"}}"#
@@ -281,18 +288,6 @@ mod tests {
             CodexAdapter.turn_marker(input(r#"{"hook_event_name":"PreCompact","turn_id":"t1"}"#)),
             None
         );
-        assert_eq!(
-            payload_turn_id(
-                input(r#"{"hook_event_name":"Stop","turn_id":"t1"}"#),
-                &["Stop"]
-            ),
-            Some("t1".into())
-        );
-        // No rollout read, nothing to say.
-        assert_eq!(
-            CodexAdapter.turn_reading(input(r#"{"hook_event_name":"Stop","turn_id":"t1"}"#), None),
-            TurnReading::default()
-        );
     }
 
     #[test]
@@ -303,7 +298,7 @@ mod tests {
             r#"{"type":"token_usage_record","payload":{"turn_id":"t1","turn_token_usage":{"input_tokens":120,"cached_input_tokens":20,"output_tokens":7,"total_tokens":127}}}"#,
             "\n",
         );
-        for event in normalize::TURN_END_EVENTS {
+        for event in ["Stop", "Interrupt"] {
             let payload = format!(r#"{{"hook_event_name":"{event}","turn_id":"t1"}}"#);
             let reading = CodexAdapter.turn_reading(
                 RawHookInput {
@@ -313,7 +308,21 @@ mod tests {
                 None,
             );
             assert_eq!(reading.marker.as_deref(), Some("t1"), "{event}");
-            assert!(reading.usage.is_some(), "{event}");
+            assert_eq!(
+                reading.usage,
+                Some(TurnUsage {
+                    input_tokens: 100,
+                    cache_read_tokens: 20,
+                    output_tokens: 7,
+                    ..TurnUsage::default()
+                }),
+                "{event}"
+            );
+            assert_eq!(
+                CodexAdapter.turn_reading(input(&payload), None),
+                TurnReading::default(),
+                "{event} without a rollout"
+            );
             assert!(
                 CodexAdapter
                     .transcript_path(input(&format!(

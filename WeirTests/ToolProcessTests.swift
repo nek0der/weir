@@ -99,7 +99,7 @@ struct ToolProcessTests {
                 named: "faketool",
                 in: ["", "/nonexistent-\(UUID().uuidString)", directory.path]
             )
-            #expect(found != nil)
+            #expect(found?.path == directory.appendingPathComponent("faketool").path)
         }
     }
 
@@ -114,20 +114,23 @@ struct ToolProcessTests {
             timeout: .seconds(10)
         )
         #expect(result?.isSuccess == true)
-        #expect(result?.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "hello")
+        #expect(result?.stdout == "hello\n")
+        #expect(result?.stderr == "")
     }
 
     @Test("reports a non-zero exit rather than treating it as failure to run")
     func runTool_reportsNonZeroExit() async {
         let result = await runTool(
             executable: URL(fileURLWithPath: "/bin/sh"),
-            arguments: ["-c", "exit 3"],
+            arguments: ["-c", "printf partial; printf failure >&2; exit 3"],
             workingDirectory: nil,
             timeout: .seconds(10)
         )
         #expect(result != nil)
         #expect(result?.exitCode == 3)
         #expect(result?.isSuccess == false)
+        #expect(result?.stdout == "partial")
+        #expect(result?.stderr == "failure")
     }
 
     @Test("a missing executable returns nil instead of trapping")
@@ -179,6 +182,7 @@ struct ToolProcessTests {
                 workingDirectory: nil,
                 timeout: .milliseconds(400)
             )
+            try #require(FileManager.default.fileExists(atPath: sleeper.path))
             #expect(result == nil)
             // The timeout, the two seconds' grace, and the read that stops once
             // the shell is gone come to under 3 seconds. The bound is well short
@@ -256,7 +260,12 @@ struct ToolProcessTests {
             await pollUntil(timeout: .seconds(5), interval: .milliseconds(10)) {
                 FileManager.default.fileExists(atPath: started.path)
             }
-            #expect(FileManager.default.fileExists(atPath: started.path))
+            let didStart = FileManager.default.fileExists(atPath: started.path)
+            if !didStart {
+                task.cancel()
+                _ = await task.value
+            }
+            try #require(didStart)
             let clock = SuspendingClock()
             let canceled = clock.now
             task.cancel()
@@ -317,19 +326,22 @@ struct ToolProcessTests {
             workingDirectory: nil,
             timeout: .seconds(10)
         )
-        #expect(result?.stdout.count == bytes)
-        #expect(result?.stderr.count == bytes)
+        #expect(result?.exitCode == 0)
+        #expect(result?.stdout == String(repeating: "a", count: bytes))
+        #expect(result?.stderr == String(repeating: "b", count: bytes))
     }
 
     @Test("supplied environment entries reach the child")
-    func runTool_layersEnvironment() async {
+    func runTool_layersEnvironment() async throws {
+        let inheritedHome = try #require(ProcessInfo.processInfo.environment["HOME"])
+        try #require(!inheritedHome.isEmpty)
         let result = await runTool(
             executable: URL(fileURLWithPath: "/bin/sh"),
-            arguments: ["-c", "printf %s \"$WEIR_TEST_VAR\""],
+            arguments: ["-c", "printf '%s\\n%s' \"$WEIR_TEST_VAR\" \"$HOME\""],
             workingDirectory: nil,
             environment: ["WEIR_TEST_VAR": "present"],
             timeout: .seconds(10)
         )
-        #expect(result?.stdout == "present")
+        #expect(result?.stdout == "present\n\(inheritedHome)")
     }
 }

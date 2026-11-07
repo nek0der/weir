@@ -24,17 +24,22 @@ struct ApprovalRequestStateTests {
 
     private static let sendingAllow = ApprovalRequestState.sending(.allowOnce, since: earlier)
     private static let sendingDelegate = ApprovalRequestState.sending(.delegate, since: earlier)
+    private static let userAnswer = ApprovalResolution.answer(["branch": "release", "checks": "all"])
+    private static let sendingDeny = ApprovalRequestState.sending(.deny, since: earlier)
+    private static let sendingAnswer = ApprovalRequestState.sending(userAnswer, since: earlier)
     private static let failed = ApprovalRequestState.sendFailed(.deny, error: "offline")
     private static let handed = ApprovalRequestState.handedToTerminal(since: earlier)
 
     /// At least one value of each state, and of each kind of event, for the
     /// grid to cross.
     private static let states: [ApprovalRequestState] = [
-        .held, sendingAllow, sendingDelegate, failed, handed, .timedOut, .withdrawn, .unknownResult, .answered(.allowOnce)
+        .held, sendingAllow, sendingDelegate, sendingDeny, sendingAnswer,
+        failed, handed, .timedOut, .withdrawn, .unknownResult, .answered(.allowOnce)
     ]
     private static let events: [ApprovalEvent] = [
-        .userDecided(.allowOnce), .userDecided(.delegate), .handedOverBySetting, .sendSucceeded, .sendFailed("offline"),
-        .brokerTerminal(.resolved(.deny)), .brokerTerminal(.resolved(.answer(["q": "a"]))),
+        .userDecided(.allowOnce), .userDecided(.delegate), .userDecided(.deny), .userDecided(userAnswer),
+        .handedOverBySetting, .sendSucceeded, .sendFailed("offline"), .sendFailed("connection reset"),
+        .brokerTerminal(.resolved(.allowOnce)), .brokerTerminal(.resolved(.deny)), .brokerTerminal(.resolved(.answer(["q": "a"]))),
         .brokerTerminal(.resolved(.delegate)), .brokerTerminal(.canceled),
         .brokerTerminal(.expired), .brokerRecordMissing, .deadlinePassed
     ]
@@ -80,7 +85,10 @@ struct ApprovalRequestStateTests {
     private static let openMoves: [(ApprovalEvent, ApprovalRequestState)] = [
         (.userDecided(.allowOnce), .sending(.allowOnce, since: now)),
         (.userDecided(.delegate), .sending(.delegate, since: now)),
+        (.userDecided(.deny), .sending(.deny, since: now)),
+        (.userDecided(userAnswer), .sending(userAnswer, since: now)),
         (.handedOverBySetting, .sending(.delegate, since: now)),
+        (.brokerTerminal(.resolved(.allowOnce)), .answered(.allowOnce)),
         (.brokerTerminal(.resolved(.deny)), .answered(.deny)),
         (.brokerTerminal(.resolved(.answer(["q": "a"]))), .answered(.answer(["q": "a"]))),
         (.brokerTerminal(.resolved(.delegate)), .handedToTerminal(since: now)),
@@ -93,6 +101,7 @@ struct ApprovalRequestStateTests {
     /// A send in flight waits for its own result or the broker's word; a
     /// visible pane and our deadline do not interrupt it.
     private static let brokerMoves: [(ApprovalEvent, ApprovalRequestState)] = [
+        (.brokerTerminal(.resolved(.allowOnce)), .answered(.allowOnce)),
         (.brokerTerminal(.resolved(.deny)), .answered(.deny)),
         (.brokerTerminal(.resolved(.answer(["q": "a"]))), .answered(.answer(["q": "a"]))),
         (.brokerTerminal(.resolved(.delegate)), .handedToTerminal(since: now)),
@@ -104,11 +113,20 @@ struct ApprovalRequestStateTests {
     private static let otherMoves: [Move] = [
         Move(sendingAllow, .sendSucceeded, .answered(.allowOnce)),
         Move(sendingDelegate, .sendSucceeded, .handedToTerminal(since: now)),
+        Move(sendingDeny, .sendSucceeded, .answered(.deny)),
+        Move(sendingAnswer, .sendSucceeded, .answered(userAnswer)),
         Move(sendingAllow, .sendFailed("offline"), .sendFailed(.allowOnce, error: "offline")),
         Move(sendingDelegate, .sendFailed("offline"), .sendFailed(.delegate, error: "offline")),
+        Move(sendingDeny, .sendFailed("offline"), .sendFailed(.deny, error: "offline")),
+        Move(sendingAnswer, .sendFailed("offline"), .sendFailed(userAnswer, error: "offline")),
+        Move(sendingAllow, .sendFailed("connection reset"), .sendFailed(.allowOnce, error: "connection reset")),
+        Move(sendingDelegate, .sendFailed("connection reset"), .sendFailed(.delegate, error: "connection reset")),
+        Move(sendingDeny, .sendFailed("connection reset"), .sendFailed(.deny, error: "connection reset")),
+        Move(sendingAnswer, .sendFailed("connection reset"), .sendFailed(userAnswer, error: "connection reset")),
         // Handed to the TUI: no event moves it; it leaves with its turn.
         // Timed out by our clock: the broker's own outcome still wins.
         Move(.timedOut, .brokerRecordMissing, .unknownResult),
+        Move(.timedOut, .brokerTerminal(.resolved(.allowOnce)), .answered(.allowOnce)),
         Move(.timedOut, .brokerTerminal(.resolved(.deny)), .answered(.deny)),
         Move(.timedOut, .brokerTerminal(.resolved(.answer(["q": "a"]))), .answered(.answer(["q": "a"]))),
         Move(.timedOut, .brokerTerminal(.resolved(.delegate)), .handedToTerminal(since: now)),
@@ -121,7 +139,7 @@ struct ApprovalRequestStateTests {
         let open = [ApprovalRequestState.held, failed].flatMap { state in
             openMoves.map { Move(state, $0.0, $0.1) }
         }
-        let sending = [sendingAllow, sendingDelegate].flatMap { state in
+        let sending = [sendingAllow, sendingDelegate, sendingDeny, sendingAnswer].flatMap { state in
             brokerMoves.map { Move(state, $0.0, $0.1) }
         }
         return open + sending + otherMoves
@@ -136,9 +154,15 @@ struct ApprovalRequestStateTests {
 
     @Test func transition_everyPairOfTheGrid() {
         let moves = Self.moves
+        for move in moves {
+            #expect(Self.states.contains(move.state), "Unreachable state \(move.state)")
+            #expect(Self.events.contains(move.event), "Unreachable event \(move.event)")
+        }
         for state in Self.states {
             for event in Self.events {
-                let expected = moves.first { $0.state == state && $0.event == event }?.next
+                let matches = moves.filter { $0.state == state && $0.event == event }
+                #expect(matches.count <= 1, "Duplicate move for \(state) + \(event)")
+                let expected = matches.first?.next
                 let actual = ApprovalRequestState.transition(state, event, now: Self.now)
                 #expect(actual == expected, "\(state) + \(event)")
             }
@@ -179,4 +203,19 @@ struct ApprovalRequestStateTests {
     func aRequestsBanner_staysOnlyWhileItLeadsSomewhere(_ state: ApprovalRequestState, _ keeps: Bool) {
         #expect(state.keepsBanner == keeps)
     }
+}
+
+extension ApprovalRequestStateTests {
+    @Test func isAnswerableOnCard_onlyAnOpenRequestOfAKindWeirAnswers() {
+        for state in Self.states {
+            let isOpen = switch state {
+            case .held, .sendFailed: true
+            case .sending, .handedToTerminal, .timedOut, .withdrawn, .unknownResult, .answered: false
+            }
+            #expect(state.isAnswerableOnCard(supportsNativeAnswer: true) == isOpen, "\(state)")
+            // A Codex question is never answered on the card, whatever its state.
+            #expect(!state.isAnswerableOnCard(supportsNativeAnswer: false), "\(state)")
+        }
+    }
+
 }

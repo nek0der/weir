@@ -143,12 +143,17 @@ struct AgentStoppedTurnTests {
                 recordURL: recordURL,
                 transcriptURL: transcriptURL
             )
-            let result = try await body(scene)
+            let result: Result<T, any Error>
+            do {
+                result = try await .success(body(scene))
+            } catch {
+                result = .failure(error)
+            }
             // We let the writes and passes settle, so nothing is left to
             // write into the directory once it goes.
             await stoppedTurns.writesSettled()
             await adapter.passesSettled()
-            return result
+            return try result.get()
         }
     }
 
@@ -247,7 +252,8 @@ struct AgentStoppedTurnTests {
                 scene.adapter.refresh()
             }
             await closer.writesSettled()
-            #expect(requests.all.count == StoppedTurnCloser.maximumAttempts)
+            #expect(requests.all.count == 3)
+            #expect(Set(requests.all).count == 1)
             // The badge alone still shows the turn stopped.
             #expect(scene.pass().runtime?.badge.state == .finished)
         }
@@ -257,7 +263,7 @@ struct AgentStoppedTurnTests {
     func aQuestionDeclinedWithEsc_isClosedOnDisk_byTheBridgesWriter() async throws {
         let closer = StoppedTurnCloser()
         try await withScene(transcript: "claude-2.1.309-question-declined.jsonl", stoppedTurns: closer) { scene in
-            let token = try scene.record()["stateEpisodeToken"] as? String
+            let token = try #require(scene.record()["stateEpisodeToken"] as? String)
             await closer.writesSettled()
             let record = try scene.record()
             #expect(record["state"] as? String == "finished")
@@ -327,6 +333,11 @@ struct AgentStoppedTurnTests {
         try await withScene(.working, transcript: "claude-2.1.309-question-open.jsonl", stoppedTurns: closer) { scene in
             #expect(scene.pass().runtime?.badge.state == .running)
             #expect(scene.pass().tabState == .running)
+            var notifications: [AgentNotificationKind] = []
+            scene.adapter.onNotify = { payload, _ in
+                notifications.append(payload.kind)
+                return true
+            }
 
             let report = try Self.reportedIdle(in: scene)
             scene.adapter.programStatus = { report }
@@ -336,6 +347,7 @@ struct AgentStoppedTurnTests {
             #expect(pass.runtime?.badge.state == .finished)
             #expect(pass.runtime?.badge.tool == nil)
             #expect(pass.runtime?.badge.stopReason == "interrupted")
+            #expect(!notifications.contains(.finished))
             #expect(pass.runtime?.badge.isWaitDeclined == false, "work was stopped, not a wait declined")
             #expect(pass.tabState == .finished)
             let request = try #require(requests.all.first)
@@ -350,7 +362,7 @@ struct AgentStoppedTurnTests {
     func workClaudeReportsIdleIn_isClosedOnDisk_byTheBridgesWriter() async throws {
         let closer = StoppedTurnCloser()
         try await withScene(.working, transcript: "claude-2.1.309-question-open.jsonl", stoppedTurns: closer) { scene in
-            let token = try scene.record()["stateEpisodeToken"] as? String
+            let token = try #require(scene.record()["stateEpisodeToken"] as? String)
             let report = try Self.reportedIdle(in: scene)
             scene.adapter.programStatus = { report }
             scene.adapter.refresh()

@@ -80,7 +80,7 @@ struct TmuxReattachCommandBuilderTests {
         #expect(command.contains("attach-session -t"))
     }
 
-    @Test("a restarted server falls back to the persisted session name")
+    @Test("the verified attach command includes the session ID and saved-name fallback")
     func initialCommand_verifiedBinding_includesNameFallback() throws {
         var verified = binding()
         verified.serverPID = "42"
@@ -92,11 +92,15 @@ struct TmuxReattachCommandBuilderTests {
         #expect(command.contains("attach-session -t '\\''=work'\\'''"))
     }
 
-    @Test("invalid generation data never uses the server-scoped id")
-    func initialCommand_invalidGeneration_usesNameOnly() throws {
-        var invalid = binding()
-        invalid.serverPID = "not-a-pid"
-        invalid.serverStartedAt = "100"
+    @Test("invalid generation data never uses the server-scoped id", arguments: [
+        ("not-a-pid", "100", "$3"),
+        ("42", "not-a-time", "$3"),
+        ("42", "100", "$bad")
+    ])
+    func initialCommand_invalidGeneration_usesNameOnly(pid: String, start: String, id: String) throws {
+        var invalid = binding(id: id)
+        invalid.serverPID = pid
+        invalid.serverStartedAt = start
         let command = try #require(
             TmuxReattachCommandBuilder.initialCommand(for: tab(invalid), paneID: pane)
         )
@@ -142,9 +146,8 @@ struct TmuxReattachCommandBuilderTests {
             )),
             paneID: pane
         ))
-        #expect(command.contains("if-shell -F"))
-        #expect(command.contains("#{pid},42"))
-        #expect(command.contains(path))
+        #expect(command.hasPrefix("tmux -S '/private/tmp/custom socket,one' if-shell -F "))
+        #expect(command.contains("'#{&&:#{==:#{pid},42},#{==:#{start_time},100}}'"))
     }
 
     /// A binding still provisional after a detach comes back through its

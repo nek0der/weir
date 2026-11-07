@@ -120,11 +120,17 @@ mod tests {
         let first = started("t1", "goal");
         let next = started("t2", "goal");
         let rollout = rollout(&[GOAL_SET, &first, changed, &next]);
-        assert_eq!(
-            unprompted_prompt(&rollout, "t1").prompt,
-            "Create a.txt, then b.txt"
-        );
-        assert_eq!(unprompted_prompt(&rollout, "t2").prompt, "Write the docs");
+        for (turn, objective) in [("t1", "Create a.txt, then b.txt"), ("t2", "Write the docs")] {
+            assert_eq!(
+                unprompted_prompt(&rollout, turn),
+                UnpromptedPrompt {
+                    prompt: objective.into(),
+                    kind: Some(PromptKind::Goal),
+                    cwd: None
+                },
+                "{turn}"
+            );
+        }
     }
 
     #[test]
@@ -141,11 +147,15 @@ mod tests {
     }
 
     #[test]
-    fn another_trigger_is_codex_s_own_message() {
+    fn an_unrecognized_trigger_is_injected_without_the_goal_objective() {
         let started = started("t1", "review");
         assert_eq!(
-            unprompted_prompt(&rollout(&[&started]), "t1").kind,
-            Some(PromptKind::Injected)
+            unprompted_prompt(&rollout(&[GOAL_SET, &started]), "t1"),
+            UnpromptedPrompt {
+                prompt: String::new(),
+                kind: Some(PromptKind::Injected),
+                cwd: None
+            }
         );
     }
 

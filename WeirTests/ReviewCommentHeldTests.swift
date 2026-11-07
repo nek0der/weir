@@ -66,7 +66,7 @@ struct ReviewCommentHeldTests {
         #expect(ReviewCommentRelocation.placement(of: comment, in: diff, scopeID: "s") == .notFound)
     }
 
-    @Test func aLargeRun_followsWhole() throws {
+    @Test func aLargeRun_followsOnlyWhenItsWholeQuoteMatches() throws {
         let lines = (0..<120).map { "+let value\($0) = \"\(String(repeating: "x", count: 40))\"" }
         let old = try ReviewDiffFixture.diff(
             of: Self.file,
@@ -80,16 +80,28 @@ struct ReviewCommentHeldTests {
         )
         let composer = try ReviewDiffFixture.composer(on: old)
         let added = new.lines.filter { $0.kind == .added }
+        try #require(added.count == 120)
 
         guard case let .moved(moved) = ReviewComposerFollow.outcome(of: composer, from: old, to: new) else {
-            Issue.record("not moved")
+            Issue.record("Expected the complete quote to follow.")
             return
         }
         #expect(moved.startLineID == added.first?.id)
         #expect(moved.lineID == added.last?.id)
+        #expect(moved.text == composer.text)
+        #expect(moved.side == composer.side)
+
+        var altered = lines
+        altered[110] = "+let changed = 0"
+        let partialMatch = try ReviewDiffFixture.diff(
+            of: Self.file,
+            fingerprint: "f3",
+            patch: "@@ -1,2 +1,122 @@\n head\n keep\n" + altered.joined(separator: "\n")
+        )
+        #expect(ReviewComposerFollow.outcome(of: composer, from: old, to: partialMatch) == .setAside)
     }
 
-    @Test func aLineLongerThanTheExcerpt_follows() throws {
+    @Test func aLineLongerThanTheExcerpt_mustMatchThroughItsEnd() throws {
         let long = String(repeating: "y", count: 3000)
         let old = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "f1", patch: "@@ -1,1 +1,2 @@\n keep\n+\(long)")
         let new = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "f2", patch: "@@ -1,2 +1,3 @@\n head\n keep\n+\(long)")
@@ -99,7 +111,18 @@ struct ReviewCommentHeldTests {
             Issue.record("not moved")
             return
         }
-        #expect(moved.lineID == new.lines.first { $0.kind == .added }?.id)
+        let added = try #require(new.lines.first { $0.kind == .added })
+        #expect(moved.startLineID == added.id)
+        #expect(moved.lineID == added.id)
+        #expect(moved.text == composer.text)
+
+        let differentSuffix = long.dropLast() + "z"
+        let partialMatch = try ReviewDiffFixture.diff(
+            of: Self.file,
+            fingerprint: "f3",
+            patch: "@@ -1,2 +1,3 @@\n head\n keep\n+\(differentSuffix)"
+        )
+        #expect(ReviewComposerFollow.outcome(of: composer, from: old, to: partialMatch) == .setAside)
     }
 
     @Test func aCommentOnRemovedLinesOnly_follows_inTheUnifiedLayoutAndTheOldColumn() throws {
@@ -117,7 +140,7 @@ struct ReviewCommentHeldTests {
         }
     }
 
-    @Test func anEditOpenedButUnchanged_justCloses_asTheDiffChanges() throws {
+    @Test func aSavedCommentEditOnAChangedDiff_closesIfUnchangedOrSetsAsideNewText() throws {
         let old = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "f1", patch: Self.written)
         let new = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "f2", patch: Self.moved)
         let line = try #require(old.lines.first { $0.kind == .added })
@@ -135,6 +158,8 @@ struct ReviewCommentHeldTests {
         #expect(ReviewComposerFollow.outcome(of: composer, from: old, to: new, editedBody: "Was") == .closed)
         composer.text = "Was, and now"
         #expect(ReviewComposerFollow.outcome(of: composer, from: old, to: new, editedBody: "Was") == .setAside)
+        #expect(ReviewComposerFollow.outcome(of: composer, from: old, to: new) == .setAside)
+        #expect(ReviewComposerFollow.outcome(of: composer, from: old, to: old, editedBody: "Was") == .kept)
     }
 
     @Test func aCommentFollowsItsCode_asTheDiffChangesUnderIt() throws {
@@ -166,8 +191,8 @@ struct ReviewCommentHeldTests {
             patch: "@@ -1,2 +1,4 @@\n keep\n+let added = 1\n+let added = 1\n tail"
         )
         let other = try ReviewDiffFixture.diff(
-            of: ReviewFile(path: "b.swift", layer: .unstaged, status: .modified),
-            fingerprint: "b",
+            of: Self.other,
+            fingerprint: "f1",
             patch: Self.written
         )
 
@@ -178,29 +203,8 @@ struct ReviewCommentHeldTests {
         #expect(ReviewComposerFollow.outcome(of: composer, from: old, to: nil) == .setAside)
     }
 
-    @Test func anEditUnderWay_isSetAside_asTheDiffChanges() throws {
-        let old = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "f1", patch: Self.written)
-        let new = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "f2", patch: Self.moved)
-        let line = try #require(old.lines.first { $0.kind == .added })
-        let comment = ReviewComment(
-            file: Self.file,
-            fingerprint: "f1",
-            anchor: ReviewAnchor(lineID: line.id, oldLine: nil, newLine: line.newLine),
-            code: line.text,
-            codeMarkers: "+",
-            body: "Was"
-        )
-        var composer = ReviewComposerState()
-        composer.edit(comment)
-        composer.text = "Was, and now"
-
-        // The comment stays on the code it was written on, out of date; the
-        // text typed into it is offered, not moved somewhere else.
-        #expect(ReviewComposerFollow.outcome(of: composer, from: old, to: new) == .setAside)
-        #expect(ReviewComposerFollow.outcome(of: composer, from: old, to: old) == .kept)
-    }
-
-    @Test func aCommentInOneColumn_followsItsLinesAcrossTheOtherColumns() throws {
+    @Test(arguments: [ReviewSide.new, .old])
+    func aCommentInOneColumn_followsItsLinesAcrossTheOtherColumns(side: ReviewSide) throws {
         let patch = "@@ -1,3 +1,3 @@\n keep\n-old line\n+new line\n tail"
         let old = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "f1", patch: patch)
         let new = try ReviewDiffFixture.diff(
@@ -208,23 +212,19 @@ struct ReviewCommentHeldTests {
             fingerprint: "f2",
             patch: "@@ -1,4 +1,4 @@\n head\n keep\n-old line\n+new line\n tail"
         )
-        // The new column: the context line and the added one, with the
-        // removed one between them in the unified order.
-        let newSide = try ReviewDiffFixture.composer(on: old, side: .new) { $0.text == "keep" || $0.kind == .added }
-        let added = try #require(new.lines.first { $0.kind == .added })
+        let changedKind: ReviewLine.Kind = side == .new ? .added : .removed
+        let composer = try ReviewDiffFixture.composer(on: old, side: side) { $0.text == "keep" || $0.kind == changedKind }
         let keep = try #require(new.lines.first { $0.text == "keep" })
-        guard case let .moved(moved) = ReviewComposerFollow.outcome(of: newSide, from: old, to: new) else {
-            Issue.record("the new column's run did not follow")
+        let changed = try #require(new.lines.first { $0.kind == changedKind })
+
+        guard case let .moved(moved) = ReviewComposerFollow.outcome(of: composer, from: old, to: new) else {
+            Issue.record("Expected the quote to follow its column.")
             return
         }
         #expect(moved.startLineID == keep.id)
-        #expect(moved.lineID == added.id)
-        // The old column, a removed line after the context.
-        let oldSide = try ReviewDiffFixture.composer(on: old, side: .old) { $0.text == "keep" || $0.kind == .removed }
-        guard case .moved = ReviewComposerFollow.outcome(of: oldSide, from: old, to: new) else {
-            Issue.record("the old column's run did not follow")
-            return
-        }
+        #expect(moved.lineID == changed.id)
+        #expect(moved.side == side)
+        #expect(moved.text == composer.text)
     }
 
     @Test func aCommentFromAnEarlierReview_inOneColumn_movesAcrossTheOtherColumns() throws {
@@ -315,96 +315,129 @@ struct ReviewCommentHeldTests {
             ),
             git: repository
         )
-        _ = await review.reload(scope: .uncommitted, selectedFileID: file.id)
+        review.stackLoader.publishInterval = .zero
+        let result = await review.reload(scope: .uncommitted, selectedFileID: file.id)
+        try #require(result == .applied(selectedFileID: file.id))
+        try #require(review.diff?.file.id == file.id)
         return (review, repository)
     }
 
-    @Test func anotherFileOpened_setsTheCommentAside_throughEveryWayAFileOpens() async throws {
+    @Test(arguments: [false, true])
+    func anotherFileOpened_setsTheCommentAside_forFreshAndStackedDiffs(usesStack: Bool) async throws {
         let mine = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "a", patch: Self.written)
         let theirs = try ReviewDiffFixture.diff(of: Self.other, fingerprint: "b", patch: Self.written)
+        let (review, repository) = try await Self.review([mine, theirs])
+        defer { review.releaseStack() }
+        review.composer = try ReviewDiffFixture.composer(on: mine)
 
-        // By reading it.
-        let (loaded, _) = try await Self.review([mine, theirs])
-        #expect(loaded.diff?.file.id == Self.file.id)
-        loaded.composer = try ReviewDiffFixture.composer(on: mine)
-        await loaded.load(Self.other)
-        #expect(loaded.diff?.file.id == Self.other.id)
-        #expect(loaded.unplacedComment == "Why this?")
-        #expect(!loaded.composer.isOpen)
+        if usesStack {
+            try await Self.loadOtherFile(in: review, fingerprint: "b")
+            let reads = repository.diffReadIDs
+            try #require(review.openFromStack(Self.other) != nil)
+            #expect(repository.diffReadIDs == reads)
+        } else {
+            await review.load(Self.other)
+            #expect(repository.diffReadIDs == [Self.file.id, Self.other.id])
+        }
 
-        // From what the stack read of it.
-        let (stacked, _) = try await Self.review([mine, theirs])
-        stacked.stackLoader.request([ReviewStackLoader.Request(file: Self.other, scope: .uncommitted)], window: [Self.other.id])
-        await pollUntil(timeout: .seconds(5), interval: .milliseconds(5)) { stacked.stackLoader.entries[Self.other.id] != nil }
-        stacked.composer = try ReviewDiffFixture.composer(on: mine)
-        #expect(stacked.openFromStack(Self.other) != nil)
-        #expect(stacked.unplacedComment == "Why this?")
+        #expect(review.diff?.file.id == Self.other.id)
+        #expect(review.diff?.fingerprint == "b")
+        #expect(review.unplacedComment == "Why this?")
+        #expect(!review.composer.isOpen)
     }
 
     @Test func aReviewReadAgainOnTheSameDiff_keepsTheComment() async throws {
         let mine = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "a", patch: Self.written)
-        let (review, _) = try await Self.review([mine])
+        let (review, repository) = try await Self.review([mine])
         let composer = try ReviewDiffFixture.composer(on: mine)
         review.composer = composer
+        let reads = repository.diffReadIDs
 
-        // What Refresh does, with nothing changed.
-        _ = await review.reload(scope: .uncommitted, selectedFileID: Self.file.id)
+        let result = await review.reload(scope: .uncommitted, selectedFileID: Self.file.id)
 
+        #expect(result == .applied(selectedFileID: Self.file.id))
+        #expect(repository.diffReadIDs == reads + [Self.file.id])
+        #expect(review.diff?.fingerprint == "a")
         #expect(review.composer == composer)
         #expect(review.unplacedComment == nil)
     }
 
     @Test func aCheckedOpenFile_isDrawnWhole_whileItsComposerIsOpen_andStillSaysItIsChecked() throws {
-        #expect(ReviewStackBuilder.unfolded(openFileID: "a", isComposerOpen: true) == ["a"])
-        #expect(ReviewStackBuilder.unfolded(openFileID: "a", isComposerOpen: false).isEmpty)
         #expect(ReviewStackBuilder.unfolded(openFileID: nil, isComposerOpen: true).isEmpty)
-
         let diff = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "a", patch: Self.written)
-        func stack(unfolded: Set<String>) -> ReviewStack {
+        let composerLine = try #require(diff.lines.first { $0.kind == .added })
+        for isComposerOpen in [false, true] {
             var input = ReviewStackBuilder.Input(files: [Self.file], slots: [Self.file.id: 0])
             input.viewed = [Self.file.id]
-            input.unfolded = unfolded
+            input.unfolded = ReviewStackBuilder.unfolded(openFileID: Self.file.id, isComposerOpen: isComposerOpen)
             input.open = diff
-            input.openRows = ReviewRowBuilder.rows(expanded: diff, comments: [], composerLineID: nil)
-            return ReviewStackBuilder.build(input) { _, diff, offset in
-                ReviewStackPiece.closed(diff, offset: offset, comments: [], staleCommentIDs: [], layout: .unified)
+            input.openRows = ReviewRowBuilder.rows(
+                expanded: diff, comments: [], composerLineID: isComposerOpen ? composerLine.id : nil
+            )
+            let drawn = ReviewStackBuilder.build(input) { _, _, _ in
+                Issue.record("The open file must not use the closed-file builder.")
+                return ReviewStackPiece(rows: [])
             }
-        }
-        for (unfolded, rowCount) in [(Set<String>(), 1), ([Self.file.id], 1 + diff.lines.count)] {
-            let drawn = stack(unfolded: unfolded)
-            let row = try #require(drawn.headerRow(of: Self.file.id))
-            guard case let .file(header) = drawn.rows[row].kind else {
-                Issue.record("no header")
+            let first = try #require(drawn.rows.first)
+            guard case let .file(header) = first.kind else {
+                Issue.record("Expected the file header as the first row.")
                 continue
             }
-            #expect(header.isViewed, "the check shows what is recorded")
-            #expect(drawn.rows.count >= rowCount)
+            #expect(header.file == Self.file)
+            #expect(header.isViewed)
+            #expect(header.isFolded == !isComposerOpen)
+            let expected: [ReviewRow.Kind] = isComposerOpen
+                ? diff.lines.flatMap { line -> [ReviewRow.Kind] in
+                    if line.kind == .hunk {
+                        return [.hunk(line)]
+                    }
+                    return line.id == composerLine.id ? [.code(line), .composer(line)] : [.code(line)]
+                }
+                : []
+            #expect(drawn.rows.dropFirst().map(\.kind) == expected)
         }
-        #expect(stack(unfolded: [Self.file.id]).rows.count > stack(unfolded: []).rows.count)
     }
 
     // MARK: - What holds the tab, and what it says
 
-    @Test func theRefusal_saysWhatHoldsTheTab() throws {
-        let fixture = Fixture()
-        fixture.primary.review = try ProjectWindowsFixture.review()
-        #expect(ReviewTabActions.heldCommentRefusal(fixture.primary) == nil)
-        let review = fixture.primary.writeComment()
-        #expect(ReviewTabActions.heldCommentRefusal(fixture.primary) == .unsavedComment)
+    @Test func closeAsked_refusesWhileACommentIsHeld_andClosesAfterItIsCleared() throws {
+        let fixture = ActionStoresFixture()
+        let window = fixture.window
+        let tab = try Fixture.review()
+        window.review = tab
+        let stores = fixture.review
+        let visibility = PaneVisibilityReporter(windowID: window.id, registry: fixture.windows)
+        defer { stores.toasts.dismiss(in: window.id) }
+        #expect(ReviewTabActions.heldCommentRefusal(window) == nil)
+        let review = window.writeComment()
+        let composer = review.composer
+
+        ReviewTabActions.closeAsked(window: window, stores: stores, paneVisibility: visibility)
+        #expect(ReviewTabActions.heldCommentRefusal(window) == .unsavedComment)
+        #expect(window.review?.opening == tab.opening)
+        #expect(window.reviewSession === review)
+        #expect(review.composer == composer)
+        #expect(stores.toasts.current(in: window.id)?.message == DisplayText(error: ReviewError.unsavedComment))
+        #expect(Set(stores.toasts.items.keys) == [window.id])
+
         review.setComposerAside()
-        #expect(ReviewTabActions.heldCommentRefusal(fixture.primary) == .unplacedCommentHeld)
-        #expect(fixture.primary.reviewHasUnsavedComment)
+        ReviewTabActions.closeAsked(window: window, stores: stores, paneVisibility: visibility)
+        #expect(ReviewTabActions.heldCommentRefusal(window) == .unplacedCommentHeld)
+        #expect(window.review?.opening == tab.opening)
+        #expect(window.reviewSession === review)
+        #expect(review.unplacedComment == "Why this?")
+        #expect(window.reviewHasUnsavedComment)
+        #expect(stores.toasts.current(in: window.id)?.message == DisplayText(error: ReviewError.unplacedCommentHeld))
+        #expect(Set(stores.toasts.items.keys) == [window.id])
+
+        stores.toasts.dismiss(in: window.id)
         review.unplacedComment = nil
-        #expect(ReviewTabActions.heldCommentRefusal(fixture.primary) == nil)
-        #expect(!fixture.primary.reviewHasUnsavedComment)
-        // Copied or thrown away from the banner, the tab closes.
-        ReviewTabActions.close(
-            window: fixture.primary,
-            session: fixture.session,
-            registry: RecordingSurfaceRegistry(),
-            paneVisibility: PaneVisibilityReporter(windowID: fixture.primary.id, registry: fixture.registry)
-        )
-        #expect(fixture.primary.review == nil)
+        #expect(ReviewTabActions.heldCommentRefusal(window) == nil)
+        #expect(!window.reviewHasUnsavedComment)
+        ReviewTabActions.closeAsked(window: window, stores: stores, paneVisibility: visibility)
+        #expect(window.review == nil)
+        #expect(window.reviewSession == nil)
+        #expect(stores.toasts.current(in: window.id) == nil)
 
         let ja = Locale(identifier: "ja")
         #expect(ReviewError.unplacedCommentHeld.message.resolved(in: ja) == "戻せなかったコメントを先にコピーするか破棄してください。")
@@ -424,7 +457,7 @@ struct ReviewCommentHeldTests {
         #expect(review.unplacedComment == "First\n\nSecond")
     }
 
-    @Test func aCommentThatCannotGoBack_isToldInBothLanguages() {
+    @Test func theUnplacedCommentCatalogMessage_isAvailableInEnglishAndJapanese() {
         let message = LocalizedStringResource(
             "The comment you were writing couldn’t be put back where it was. Copy it to write it again."
         )
@@ -435,44 +468,38 @@ struct ReviewCommentHeldTests {
 
     // MARK: - A review that cannot open
 
-    @Test func aReviewTabThatCannotOpen_offersItsComment_andDrawsNoOtherReview() throws {
-        let failing = ProjectWindowState.reviewSession(root: "/repo")
-        failing.composer = try ReviewDiffFixture.composer(on: ReviewDiffFixture.diff(of: Self.file, fingerprint: "a", patch: Self.written))
-        guard case .cannotOpen = ReviewPaneOpening.choose(kept: failing, resolved: .failure(ReviewError.gitFailed))
-        else {
-            Issue.record("opened")
+    @Test func reviewPaneOpening_reportsTheFailureOrKeepsTheSameRoot() throws {
+        let kept = ProjectWindowState.reviewSession(root: "/repo")
+        kept.composer = try ReviewDiffFixture.composer(on: ReviewDiffFixture.diff(of: Self.file, fingerprint: "a", patch: Self.written))
+        let composer = kept.composer
+
+        guard case let .cannotOpen(failure) = ReviewPaneOpening.choose(kept: kept, resolved: .failure(ReviewError.gitFailed)) else {
+            Issue.record("Expected the repository error.")
             return
         }
-        // Deciding touches nothing; the surface sets the comment aside.
-        #expect(failing.composer.text == "Why this?")
-        failing.setComposerAside()
-        #expect(failing.unplacedComment == "Why this?")
-        #expect(!failing.composer.isOpen)
+        #expect(failure == DisplayText(error: ReviewError.gitFailed))
+        #expect(kept.composer == composer)
 
-        // The worktree resolves to another repository: not the pool's
-        // review in its place.
-        let moved = ProjectWindowState.reviewSession(root: "/repo")
-        moved.composer = failing.composer
-        moved.composer.compose(start: 1, end: 1, side: nil)
-        moved.composer.text = "Moved"
-        guard case .cannotOpen = ReviewPaneOpening.choose(
-            kept: moved,
+        guard case let .cannotOpen(moved) = ReviewPaneOpening.choose(
+            kept: kept,
             resolved: .success(URL(fileURLWithPath: "/elsewhere"))
         ) else {
-            Issue.record("drew another review")
+            Issue.record("Expected the different repository to be refused.")
             return
         }
-        #expect(moved.composer.text == "Moved")
+        #expect(moved == DisplayText(error: ReviewError.worktreeMoved))
+        #expect(kept.composer == composer)
+        #expect(kept.unplacedComment == nil)
 
-        let kept = ProjectWindowState.reviewSession(root: "/repo")
         guard case let .kept(drawn) = ReviewPaneOpening.choose(
             kept: kept,
-            resolved: .success(URL(fileURLWithPath: "/repo/"))
+            resolved: .success(URL(fileURLWithPath: "/repo/sub/../", isDirectory: true))
         ) else {
-            Issue.record("not kept")
+            Issue.record("Expected the same standardized repository to keep its review.")
             return
         }
         #expect(drawn === kept)
+        #expect(drawn.composer == composer)
     }
 
     // MARK: - The owner
@@ -604,6 +631,10 @@ struct ReviewCommentHeldTests {
         #expect(ParkedReview.tabs(written, joining: [wentMeanwhile]).map(\.review.opening) == [written.review.opening])
     }
 
+}
+
+extension ReviewCommentHeldTests {
+
     // MARK: - The stack of a review with a comment
 
     /// The hold a surface puts on `review`'s stack, as
@@ -612,86 +643,130 @@ struct ReviewCommentHeldTests {
         review.stackLoader.hold(ReviewStackLoader.holdsPublishing(isComposingInputMethodText: isComposingInputMethodText))
     }
 
-    @Test func aTabBackWithItsComment_readsItsOtherFilesAgain_withNothingMoreDone() async throws {
+    private static func loadOtherFile(in review: ReviewSession, fingerprint: String) async throws {
+        review.loadStacked(window: [file.id, other.id])
+        await pollUntilStackRead {
+            review.stackLoader.entries[Self.other.id]?.diff?.fingerprint == fingerprint
+                && !review.stackLoader.stale.contains(Self.other.id)
+        }
+        try #require(review.stackLoader.entries[other.id]?.diff?.fingerprint == fingerprint)
+        try #require(!review.stackLoader.stale.contains(other.id))
+    }
+
+    @Test func reloadingARestoredReview_readsItsOtherFilesAgainWithoutLosingItsDraft() async throws {
         let fixture = Fixture()
         let mine = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "a", patch: Self.written)
         let theirs = try ReviewDiffFixture.diff(of: Self.other, fingerprint: "b", patch: Self.written)
-        let (review, _) = try await Self.review([mine, theirs])
+        let (review, repository) = try await Self.review([mine, theirs])
+        defer { review.releaseStack() }
         let window = fixture.primary
-        window.review = try ProjectWindowsFixture.review()
+        window.review = try Fixture.review()
         window.reviewSession = review
-        review.loadStacked(window: [Self.file.id, Self.other.id])
-        await pollUntil(timeout: .seconds(5), interval: .milliseconds(5)) { review.stackLoader.entries[Self.other.id] != nil }
-        review.composer = try ReviewDiffFixture.composer(on: mine)
-        // The composer is open, with no input method's text in it.
+        try await Self.loadOtherFile(in: review, fingerprint: "b")
+        #expect(repository.diffReadIDs == [Self.file.id, Self.other.id])
+        let composer = try ReviewDiffFixture.composer(on: mine)
+        review.composer = composer
         Self.hold(review, isComposingInputMethodText: false)
 
-        // To `b`, and back to `a`: the stack let go of, then drawn again.
         fixture.choose(fixture.bTab, in: window)
+        #expect(window.reviewSession == nil)
+        #expect(review.stackLoader.isReleased)
         #expect(review.stackLoader.entries.isEmpty)
         fixture.choose(fixture.aTab, in: window)
         #expect(window.reviewSession === review)
+        #expect(!review.stackLoader.isReleased)
+        #expect(review.composer == composer)
 
-        // What the surface drawn again does: read the scope again on the
-        // open file, hold as its composer says, and name the files on screen.
-        _ = await review.reload(scope: .uncommitted, selectedFileID: Self.file.id)
+        // The returning surface requests the selected file and the visible stack.
+        let reread = try ReviewDiffFixture.diff(of: Self.other, fingerprint: "b-returned", patch: Self.moved)
+        repository.replace(reread)
+        let result = await review.reload(scope: .uncommitted, selectedFileID: Self.file.id)
+        try #require(result == .applied(selectedFileID: Self.file.id))
         Self.hold(review, isComposingInputMethodText: false)
-        review.loadStacked(window: [Self.file.id, Self.other.id])
-        await pollUntil(timeout: .seconds(5), interval: .milliseconds(5)) { review.stackLoader.entries[Self.other.id] != nil }
+        try await Self.loadOtherFile(in: review, fingerprint: "b-returned")
 
-        #expect(review.stackLoader.entries[Self.other.id]?.diff != nil)
-        #expect(review.composer.text == "Why this?")
+        #expect(repository.diffReadIDs == [Self.file.id, Self.other.id, Self.file.id, Self.other.id])
+        #expect(review.composer == composer)
+        #expect(review.unplacedComment == nil)
     }
 
     @Test func refreshWithACommentBeingWritten_readsTheOtherFilesAgain() async throws {
         let mine = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "a", patch: Self.written)
         let theirs = try ReviewDiffFixture.diff(of: Self.other, fingerprint: "b", patch: Self.written)
-        let (review, _) = try await Self.review([mine, theirs])
-        review.loadStacked(window: [Self.file.id, Self.other.id])
-        await pollUntil(timeout: .seconds(5), interval: .milliseconds(5)) { review.stackLoader.entries[Self.other.id] != nil }
-        review.composer = try ReviewDiffFixture.composer(on: mine)
+        let (review, repository) = try await Self.review([mine, theirs])
+        defer { review.releaseStack() }
+        try await Self.loadOtherFile(in: review, fingerprint: "b")
+        #expect(repository.diffReadIDs == [Self.file.id, Self.other.id])
+        let composer = try ReviewDiffFixture.composer(on: mine)
+        review.composer = composer
         Self.hold(review, isComposingInputMethodText: false)
 
-        _ = await review.reload(scope: .uncommitted, selectedFileID: Self.file.id)
-        #expect(review.stackLoader.stale.contains(Self.other.id), "drawn until it is read again")
-        review.loadStacked(window: [Self.file.id, Self.other.id])
-        await pollUntil(timeout: .seconds(5), interval: .milliseconds(5)) { !review.stackLoader.stale.contains(Self.other.id) }
+        let refreshed = try ReviewDiffFixture.diff(of: Self.other, fingerprint: "b-refreshed", patch: Self.moved)
+        repository.replace(refreshed)
+        let result = await review.reload(scope: .uncommitted, selectedFileID: Self.file.id)
+        try #require(result == .applied(selectedFileID: Self.file.id))
+        #expect(review.stackLoader.stale.contains(Self.other.id))
+        #expect(review.stackLoader.entries[Self.other.id]?.diff?.fingerprint == "b")
+        try await Self.loadOtherFile(in: review, fingerprint: "b-refreshed")
 
-        #expect(!review.stackLoader.stale.contains(Self.other.id))
-        #expect(review.composer.text == "Why this?")
+        #expect(repository.diffReadIDs == [Self.file.id, Self.other.id, Self.file.id, Self.other.id])
+        #expect(review.composer == composer)
+        #expect(review.unplacedComment == nil)
     }
 
-    @Test func aReadWhileHeld_isWithheld_untilLetGo() async throws {
-        let mine = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "a", patch: Self.written)
-        let theirs = try ReviewDiffFixture.diff(of: Self.other, fingerprint: "b", patch: Self.written)
-        let (review, _) = try await Self.review([mine, theirs])
-        Self.hold(review, isComposingInputMethodText: true)
+    @Test func releasingAPublishHold_publishesTheCompletedReadWithoutReadingAgain() async throws {
+        let diff = try ReviewDiffFixture.diff(of: Self.other, fingerprint: "b", patch: Self.written)
+        let repository = StackReviewRepository(files: [Self.other], diffs: [diff])
+        let loader = ReviewStackLoader(git: repository, root: WorkspaceSessionFixture.projectRootURL("held"))
+        defer { loader.release(listed: [Self.other]) }
+        loader.publishInterval = .zero
+        loader.hold(true)
+        let revision = loader.revision
 
-        review.loadStacked(window: [Self.file.id, Self.other.id])
-        await pollUntil(timeout: .seconds(5), interval: .milliseconds(5)) { review.stackLoader.isWaitingToPublish(Self.other.id) }
+        loader.request([ReviewStackLoader.Request(file: Self.other, scope: .uncommitted)], window: [Self.other.id])
+        await pollUntilStackRead { loader.isWaitingToPublish(Self.other.id) }
+        try #require(loader.isWaitingToPublish(Self.other.id))
+        #expect(repository.diffReadIDs == [Self.other.id])
+        #expect(loader.entries.isEmpty)
+        #expect(loader.revision == revision)
 
-        #expect(review.stackLoader.isWaitingToPublish(Self.other.id), "read")
-        #expect(review.stackLoader.entries[Self.other.id] == nil, "and not published")
+        loader.hold(false)
 
-        Self.hold(review, isComposingInputMethodText: false)
-
-        #expect(review.stackLoader.entries[Self.other.id]?.diff != nil)
+        #expect(loader.entries[Self.other.id]?.diff?.fingerprint == "b")
+        #expect(!loader.isWaitingToPublish(Self.other.id))
+        #expect(loader.revision == revision + 1)
+        #expect(repository.diffReadIDs == [Self.other.id])
     }
 
-    @Test func onlyAnInputMethodsText_holdsTheStack_andADrawingAgainLetsGo() async throws {
+    @Test func resumingTheStack_discardsAnOldInputMethodHoldAndItsPendingRead() async throws {
         #expect(ReviewStackLoader.holdsPublishing(isComposingInputMethodText: true))
         #expect(!ReviewStackLoader.holdsPublishing(isComposingInputMethodText: false))
         let mine = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "a", patch: Self.written)
-        let theirs = try ReviewDiffFixture.diff(of: Self.other, fingerprint: "b", patch: Self.written)
-        let (review, _) = try await Self.review([mine, theirs])
-        // The surface that went held for an input method's text.
+        let theirs = try ReviewDiffFixture.diff(of: Self.other, fingerprint: "b-held", patch: Self.written)
+        let (review, repository) = try await Self.review([mine, theirs])
+        defer { review.releaseStack() }
+        review.composer = try ReviewDiffFixture.composer(on: mine)
         Self.hold(review, isComposingInputMethodText: true)
+        review.loadStacked(window: [Self.other.id])
+        await pollUntilStackRead { review.stackLoader.isWaitingToPublish(Self.other.id) }
+        try #require(review.stackLoader.isWaitingToPublish(Self.other.id))
+        #expect(repository.diffReadIDs == [Self.file.id, Self.other.id])
+        #expect(Set(review.stackLoader.entries.keys) == [Self.file.id])
+        #expect(review.stackLoader.entries[Self.file.id]?.diff?.fingerprint == "a")
+
         review.releaseStack()
-
+        #expect(review.stackLoader.isReleased)
+        #expect(!review.stackLoader.isWaitingToPublish(Self.other.id))
+        #expect(review.stackLoader.entries.isEmpty)
+        let next = try ReviewDiffFixture.diff(of: Self.other, fingerprint: "b-resumed", patch: Self.moved)
+        repository.replace(next)
         review.resumeStack()
-        review.loadStacked(window: [Self.file.id, Self.other.id])
-        await pollUntil(timeout: .seconds(5), interval: .milliseconds(5)) { review.stackLoader.entries[Self.other.id] != nil }
+        #expect(!review.stackLoader.isReleased)
+        review.loadStacked(window: [Self.other.id])
+        await pollUntilStackRead { review.stackLoader.entries[Self.other.id]?.diff?.fingerprint == "b-resumed" }
+        try #require(review.stackLoader.entries[Self.other.id]?.diff?.fingerprint == "b-resumed")
 
-        #expect(review.stackLoader.entries[Self.other.id]?.diff != nil)
+        #expect(repository.diffReadIDs == [Self.file.id, Self.other.id, Self.other.id])
+        #expect(!review.stackLoader.isWaitingToPublish(Self.other.id))
     }
 }

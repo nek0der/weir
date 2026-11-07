@@ -38,9 +38,15 @@ struct WorkspaceSessionTests {
         let s = WorkspaceSession()
         let tab = s.openTab(container: .loose)
         let paneID = try #require(tab.splitTree.allLeafIDs().first)
+        let other = s.openTab(container: .loose)
+        let otherPane = try #require(other.splitTree.allLeafIDs().first)
         s.markUnread(paneID: paneID)
+        s.markUnread(paneID: otherPane)
+        #expect(s.paneState(paneID).unreadCount == 1)
+
         s.clearUnread(paneID: paneID)
         #expect(s.paneState(paneID).unreadCount == 0)
+        #expect(s.paneState(otherPane).unreadCount == 1)
     }
 
     @Test("setBell toggles the per-pane ringing flag")
@@ -65,6 +71,7 @@ struct WorkspaceSessionTests {
         #expect(s.windowUnreadCount == 0)
         s.markUnread(paneID: paneID)
         #expect(s.hasUnread(in: .project(p.id)))
+        #expect(!s.hasUnread(in: .loose))
         #expect(s.windowUnreadCount == 1)
     }
 
@@ -75,7 +82,11 @@ struct WorkspaceSessionTests {
         let paneID = try #require(tab.splitTree.allLeafIDs().first)
         #expect(s.isRinging(in: .loose) == false)
         s.setBell(paneID: paneID, ringing: true)
+        #expect(s.isRinging(in: tab))
         #expect(s.isRinging(in: .loose))
+        s.setBell(paneID: paneID, ringing: false)
+        #expect(!s.isRinging(in: tab))
+        #expect(!s.isRinging(in: .loose))
     }
 
     @Test("windowUnreadCount sums every pane's unread count")

@@ -17,27 +17,36 @@ struct WorktreePathResolverTests {
 
             #expect(paths.resolved(link.path) == real.resolvingSymlinksInPath().path)
             #expect(paths.resolved(link.path) == paths.resolved(real.path), "both spellings are one worktree's records")
-            #expect(paths.isRoot(real.path)(link.path), "the link names the worktree it points at")
+            let isRoot = paths.isRoot(real.path)
+            #expect(isRoot(link.path))
+            #expect(isRoot(real.path))
+            #expect(!isRoot(real.appendingPathComponent("child").path))
         }
     }
 
-    @Test func eachSpelling_isResolvedOnce_untilItsFolderIsForgotten() {
+    @Test func forgettingAProject_resolvesItsDescendantsAgain_andKeepsOtherProjectsCached() {
         var resolutions: [String] = []
+        var linkTarget = "/projects/one/worktree"
         let paths = WorktreePathResolver { path in
             resolutions.append(path)
-            return path.replacingOccurrences(of: "/link", with: "/real")
+            return path == "/link" ? linkTarget : path
         }
 
-        #expect(paths.resolved("/tmp/link") == "/tmp/real")
-        #expect(paths.resolved("/tmp/link") == "/tmp/real")
-        #expect(resolutions == ["/tmp/link"], "the second call reads what the first resolved")
+        #expect(paths.resolved("/link") == "/projects/one/worktree")
+        #expect(paths.resolved("/link") == "/projects/one/worktree")
+        #expect(paths.resolved("/projects/one") == "/projects/one")
+        #expect(paths.resolved("/projects/one-other/worktree") == "/projects/one-other/worktree")
+        #expect(resolutions == ["/link", "/projects/one", "/projects/one-other/worktree"])
 
-        paths.forget(["/elsewhere"])
-        _ = paths.resolved("/tmp/link")
-        #expect(resolutions == ["/tmp/link"], "another folder's removal keeps it")
+        paths.forget([])
+        #expect(paths.generation == 0)
+        paths.forget(["/projects/one"])
+        #expect(paths.generation == 1)
+        linkTarget = "/projects/elsewhere/worktree"
 
-        paths.forget(["/tmp/real"])
-        _ = paths.resolved("/tmp/link")
-        #expect(resolutions == ["/tmp/link", "/tmp/link"], "its project's removal lets it go")
+        #expect(paths.resolved("/link") == "/projects/elsewhere/worktree")
+        #expect(paths.resolved("/projects/one") == "/projects/one")
+        #expect(paths.resolved("/projects/one-other/worktree") == "/projects/one-other/worktree")
+        #expect(resolutions == ["/link", "/projects/one", "/projects/one-other/worktree", "/link", "/projects/one"])
     }
 }

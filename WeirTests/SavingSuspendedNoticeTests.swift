@@ -54,9 +54,10 @@ struct SavingSuspendedNoticeTests {
             locale: Self.english
         ))
         #expect(notice.files == [Self.settingsFile])
-        #expect(notice.sentences.count == 1)
-        #expect(notice.sentences[0].hasPrefix("Your settings aren’t being saved: settings.json couldn’t be updated"))
-        #expect(notice.sentences[0].hasSuffix("so it is read as it was. Quit and reopen Weir to try again."))
+        try #require(notice.sentences.count == 1)
+        let sentence = notice.sentences[0]
+        #expect(sentence.hasPrefix("Your settings aren’t being saved: settings.json couldn’t be updated"))
+        #expect(sentence.hasSuffix("so it is read as it was. Quit and reopen Weir to try again."))
     }
 
     /// A file a newer build wrote is told apart, and says where to change
@@ -126,9 +127,8 @@ struct SavingSuspendedNoticeTests {
     }
 
     /// The smaller stores are named in Settings, after the sessions and the
-    /// settings, each with its own file; the alert leaves them out, as what
-    /// they hold is not lost work.
-    @Test func theSmallerStores_areNamedInSettingsOnly() throws {
+    /// settings, each with its own file.
+    @Test func theSmallerStores_followTheSessionAndSettings() throws {
         let history = Self.folder.appendingPathComponent("notifications.json")
         let ranking = Self.folder.appendingPathComponent("frecency.json")
         let viewed = Self.folder.appendingPathComponent("viewed-lines.json")
@@ -141,10 +141,14 @@ struct SavingSuspendedNoticeTests {
             ]
         )
         let notice = try #require(SavingSuspendedNotice.make(
-            status: status, settings: nil, isSettingsSaveFailing: false, settingsFile: Self.settingsFile, locale: Self.japanese
+            status: status, settings: .unreadable, isSettingsSaveFailing: false, settingsFile: Self.settingsFile, locale: Self.japanese
         ))
-        #expect(notice.files == [Self.sessionFile, history, ranking, viewed])
-        #expect(Array(notice.sentences.dropFirst()) == [
+        #expect(notice.files == [Self.sessionFile, Self.settingsFile, history, ranking, viewed])
+        #expect(Array(notice.sentences.prefix(2)) == [
+            SavingSuspendedText.sessionNotSaved(locale: Self.japanese),
+            SavingSuspendedText.settingsNotSaved(.unreadable, locale: Self.japanese)
+        ])
+        #expect(Array(notice.sentences.dropFirst(2)) == [
             "通知履歴を保存していません。notifications.json を使用できず、退避もできませんでした。フォルダーのアクセス権を確認するか、ファイルをフォルダーの外に移動してから、Weir を終了して再度開いてください。",
             "コマンドパレットの並び順を保存していません。frecency.json を使用できず、退避もできませんでした。フォルダーのアクセス権を確認するか、ファイルをフォルダーの外に移動してから、Weir を終了して再度開いてください。",
             "確認済みのターンを保存していません。viewed-lines.json を使用できず、退避もできませんでした。フォルダーのアクセス権を確認するか、ファイルをフォルダーの外に移動してから、Weir を終了して再度開いてください。"
@@ -167,9 +171,11 @@ struct SavingSuspendedNoticeTests {
     @Test func theAlert_namesOnlyTheStoresWhoseLossIsWork() throws {
         let stores: [SuspendedStore] = [
             .init(kind: .notificationHistory, file: Self.folder.appendingPathComponent("notifications.json")),
+            .init(kind: .paletteRanking, file: Self.folder.appendingPathComponent("frecency.json")),
             .init(kind: .stops, file: Self.folder.appendingPathComponent("stops.json")),
             .init(kind: .turnReads, file: Self.folder.appendingPathComponent("turn-reads.json")),
-            .init(kind: .pendingWork, file: Self.folder.appendingPathComponent("turn-deletions.json"))
+            .init(kind: .pendingWork, file: Self.folder.appendingPathComponent("turn-deletions.json")),
+            .init(kind: .viewedTurns, file: Self.folder.appendingPathComponent("viewed-lines.json"))
         ]
         let alert = try #require(SavingSuspendedNotice.alert(
             launchSettings: nil,
@@ -179,7 +185,8 @@ struct SavingSuspendedNoticeTests {
             settingsFile: Self.settingsFile,
             locale: Self.english
         ))
-        #expect(alert.files.map(\.lastPathComponent) == ["stops.json", "turn-deletions.json"])
+        #expect(alert.files.map(\.lastPathComponent) == ["stops.json", "turn-deletions.json", "viewed-lines.json"])
+        try #require(alert.sentences.count == 3)
         #expect(alert.sentences[1]
             == "Weir isn’t saving turn-deletions.json: it can’t be used and couldn’t be set aside. "
             + "Check the permissions of its folder or move it out, then quit and reopen Weir.")

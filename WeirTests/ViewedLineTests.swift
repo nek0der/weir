@@ -54,8 +54,11 @@ struct ViewedLineTests {
         let change = try #require(moved)
 
         #expect(change.from == Self.position(5))
+        #expect(change.to == Self.position(3))
         #expect(line.lastViewedTurnID == TurnID("t3"))
+        #expect(line.isViewed(Self.position(3)))
         #expect(!line.isViewed(Self.position(4)))
+        #expect(!line.isViewed(Self.position(5)))
         let again = line.retreat(toBefore: Self.position(4), earlier: Self.position(3), source: .turnRow)
         #expect(again == nil, "already below")
         _ = line.retreat(toBefore: Self.position(1), earlier: nil, source: .turnRow)
@@ -112,7 +115,7 @@ struct ViewedLineTests {
         }
 
         #expect(line.history.count == ViewedLine.historyLimit)
-        #expect(line.history.last?.to == Self.position(ViewedLine.historyLimit + 5))
+        #expect(line.history.map(\.to) == (6...(ViewedLine.historyLimit + 5)).map { Self.position($0) })
     }
 
     @Test func aLine_roundTripsThroughJSON_andReadsAnUnknownSource() throws {
@@ -123,7 +126,13 @@ struct ViewedLineTests {
 
         let newer = try #require(String(bytes: data, encoding: .utf8)).replacingOccurrences(of: "\"review\"", with: "\"palette\"")
         let decoded = try JSONDecoder().decode(ViewedLine.self, from: Data(newer.utf8))
-        #expect(decoded.history.first?.source == .unknown)
+        let originalMove = try #require(line.history.first)
+        let futureMove = try #require(decoded.history.first)
+        #expect(futureMove.source == .unknown)
+        #expect(futureMove.id == originalMove.id)
+        #expect(futureMove.to == originalMove.to)
+        #expect(decoded.position == line.position)
+        #expect(decoded.conversation == line.conversation)
     }
 
     @Test func theLatestEndedTurn_isTheLastThatFinished_notOneStillRunning() throws {
@@ -134,6 +143,7 @@ struct ViewedLineTests {
         ]
 
         #expect(ViewedLine.latestEnded(in: turns)?.turnID == TurnID("b"))
+        #expect(ViewedLine.latestEnded(in: Array(turns.suffix(1))) == nil)
         #expect(ViewedLine.latestEnded(in: []) == nil)
     }
 

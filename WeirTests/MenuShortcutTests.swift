@@ -60,6 +60,13 @@ struct MenuShortcutTests {
         item.showShortcut(MenuCommand.splitRight.shortcut(in: keyboard))
         #expect(item.keyEquivalent == String(Character(Self.scalar(NSF5FunctionKey))))
         #expect(item.keyEquivalentModifierMask == .control)
+
+        keyboard.unassign(.splitRight)
+        item.showShortcut(MenuCommand.splitRight.shortcut(in: keyboard))
+        #expect(MenuCommand.splitRight.shortcut(in: keyboard) == nil)
+        #expect(item.keyEquivalent.isEmpty)
+        #expect(item.keyEquivalentModifierMask.isEmpty)
+        #expect(MenuCommand.copy.shortcut(in: keyboard) == StoredShortcut(key: "c", modifiers: .command))
     }
 
     @Test("an action with no shortcut shows no key, while the Edit keys stay")
@@ -80,14 +87,18 @@ struct MenuShortcutTests {
     }
 
     @Test("a hand-edited key no menu can show leaves the item without one")
-    func shortcut_unknownStoredKey_showsNothing() {
+    func shortcut_unknownStoredKey_showsNothing() throws {
         var keyboard = KeyboardSettings()
         keyboard.setOverride(StoredShortcut(key: "not_a_key", modifiers: [.command]), for: .closeSurface)
-        #expect(MenuCommand.closePane.shortcut(in: keyboard)?.menuKeyEquivalent == nil)
+        let shortcut = try #require(MenuCommand.closePane.shortcut(in: keyboard))
+        #expect(shortcut.key == "not_a_key")
+        #expect(shortcut.menuKeyEquivalent == nil)
 
-        let item = NSMenuItem(title: "Close Pane", action: nil, keyEquivalent: "")
-        item.showShortcut(MenuCommand.closePane.shortcut(in: keyboard))
+        let item = NSMenuItem(title: "Close Pane", action: nil, keyEquivalent: "w")
+        item.keyEquivalentModifierMask = [.command, .shift]
+        item.showShortcut(shortcut)
         #expect(item.keyEquivalent.isEmpty)
+        #expect(item.keyEquivalentModifierMask.isEmpty)
     }
 
     @Test("a letter goes in lowercase, with Shift carried by the mask")
@@ -105,18 +116,24 @@ struct MenuShortcutTests {
         #expect(punctuation.modifiers == [.command, .option])
     }
 
-    @Test("every modifier maps to its AppKit flag")
-    func appKitModifierFlags_mapsEach() {
-        let all: ShortcutModifiers = [.command, .shift, .option, .control]
-        #expect(all.appKitModifierFlags == [.command, .shift, .option, .control])
-        #expect(ShortcutModifiers().appKitModifierFlags.isEmpty)
+    private nonisolated static let modifierMappings: [(ShortcutModifiers, NSEvent.ModifierFlags)] = [
+        ([], []),
+        (.command, .command),
+        (.shift, .shift),
+        (.option, .option),
+        (.control, .control),
+        ([.command, .shift, .option, .control], [.command, .shift, .option, .control])
+    ]
+
+    @Test("every modifier maps to its AppKit flag", arguments: modifierMappings)
+    func appKitModifierFlags_mapsEach(modifiers: ShortcutModifiers, flags: NSEvent.ModifierFlags) {
+        #expect(modifiers.appKitModifierFlags == flags)
     }
 
-    @Test func keyModifiers_fromAppKitFlags_keepsTheFourAndDropsTheRest() {
-        let flags: NSEvent.ModifierFlags = [.command, .shift, .option, .control, .capsLock, .function]
-        #expect(KeyModifiers(flags) == [.command, .shift, .option, .control])
-        let capsLockOnly: NSEvent.ModifierFlags = [.capsLock]
-        #expect(KeyModifiers(capsLockOnly).isEmpty)
+    @Test(arguments: modifierMappings)
+    func keyModifiers_fromAppKitFlags_keepsTheFourAndDropsTheRest(modifiers: ShortcutModifiers, flags: NSEvent.ModifierFlags) {
+        #expect(KeyModifiers(flags) == modifiers)
+        #expect(KeyModifiers(flags.union([.capsLock, .function])) == modifiers)
     }
 
     @Test("every named key is AppKit's character for that key", arguments: NamedKey.allCases)
@@ -152,6 +169,7 @@ struct MenuShortcutTests {
         #expect(try copy.isPressed(in: Self.keyDown("c", keyCode: 8, modifiers: .command)))
         // Caps Lock and the fn key are not part of a shortcut.
         #expect(try copy.isPressed(in: Self.keyDown("c", keyCode: 8, modifiers: [.command, .capsLock])))
+        #expect(try copy.isPressed(in: Self.keyDown("c", keyCode: 8, modifiers: [.command, .function])))
         #expect(try !copy.isPressed(in: Self.keyDown("C", keyCode: 8, modifiers: [.command, .shift])))
         #expect(try !copy.isPressed(in: Self.keyDown("c", keyCode: 8, modifiers: [.command, .option])))
         #expect(try !copy.isPressed(in: Self.keyDown("v", keyCode: 9, modifiers: .command)))

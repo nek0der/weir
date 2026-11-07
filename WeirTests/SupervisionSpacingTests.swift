@@ -16,17 +16,22 @@ struct SupervisionSpacingTests {
         #expect(Layout.headingInsets(isFirst: false).top == 12)
         // Every heading's words line up with the rows' (16pt from the edge).
         for isFirst in [true, false] {
-            #expect(Layout.popoverInset + Layout.headingInsets(isFirst: isFirst).leading == Layout.popoverWordsInset)
+            let heading = Layout.headingInsets(isFirst: isFirst)
+            #expect(Layout.popoverInset + heading.leading == 16)
+            #expect(Layout.paletteHeadingInsets(isFirst: isFirst) == heading)
+            #expect(Layout.notificationDayInsets(isFirst: isFirst) == heading)
         }
         #expect(Layout.popoverInset + Layout.popoverRowInsets.leading == Layout.popoverWordsInset)
-        #expect(Layout.paletteHeadingInsets(isFirst: true) == Layout.headingInsets(isFirst: true))
-        #expect(Layout.notificationDayInsets(isFirst: false) == Layout.headingInsets(isFirst: false))
+        #expect(Layout.popoverWordsInset == 16)
     }
 
     @Test func aPopoversField_keepsItsFocusRingClearOfTheEdge() {
-        // The ring stands 3pt outside the field (`supervisionFocusRing`).
-        let ringReach = Layout.keyboardRingWidth + 1
-        #expect(Layout.popoverInset + Layout.popoverFieldMargins.leading - ringReach >= 9)
-        #expect(Layout.popoverInset + Layout.popoverFieldMargins.leading == Layout.popoverFieldInset)
+        let margins = Layout.popoverFieldMargins
+        for margin in [margins.top, margins.leading, margins.trailing] {
+            let fieldInset = Layout.popoverInset + margin
+            #expect(fieldInset == Layout.popoverFieldInset)
+            #expect(fieldInset - Layout.focusRingOutset == 12)
+        }
+        #expect(margins.bottom - Layout.focusRingOutset == 8)
     }
 }

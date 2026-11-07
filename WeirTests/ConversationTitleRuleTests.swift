@@ -100,6 +100,7 @@ struct ConversationTitleRuleTests {
     @Test func title_whitespaceOnly_isIgnored() {
         let title = Self.title(tabName: "  ", remembered: " ", live: "\n", recorded: " \t", firstPrompt: TurnPrompt(head: "Fix it"))
         #expect(title == "Fix it")
+        #expect(Self.title(tabName: "  ", remembered: " ", live: "\n", recorded: " \t", firstPrompt: TurnPrompt(head: "  ")) == nil)
     }
 
     @Test func title_multiline_keepsFirstLine() {

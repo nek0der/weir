@@ -141,21 +141,27 @@ struct ReviewTurnsGitTests {
     }
 
     @MainActor
-    @Test func aGapWithAMissingSnapshot_isUnknown_notAFailure() async throws {
+    @Test(arguments: [true, false])
+    func aGapWithAMissingSnapshot_isUnknown_notAFailure(_ hasLatestEnd: Bool) async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
         let begin = try await Self.snapshot(["a.swift": "one\n"], in: repo)
-        // The second turn's begin was deleted by the retention sweep.
+        // A missing begin leaves the gap unknown. A surviving end can still
+        // anchor the changes made afterward.
+        let missing = TurnSummaryFixture.tree("b", 2)
+        await #expect(throws: TempGitRepo.GitFailure.self) { try await repo.git(["cat-file", "-e", missing + "^{tree}"]) }
+        let latestEnd = hasLatestEnd ? begin : TurnSummaryFixture.tree("e", 2)
         let turns = try [
             Self.turn(1, begin: begin, end: begin, root: repo.url),
-            Self.turn(2, begin: TurnSummaryFixture.tree("b", 2), end: TurnSummaryFixture.tree("e", 2), root: repo.url)
+            Self.turn(2, begin: missing, end: latestEnd, root: repo.url)
         ]
+        try repo.write("after both turns\n", to: "outside.swift")
 
         let owner = WorktreeChanges(git: .live)
         await owner.refresh(root: repo.url, turns: turns)
 
-        // A failure would leave no count at all, which reads as "being counted".
-        #expect(owner.outsideTurns[repo.url.path] == [])
+        let expected: Set<String> = hasLatestEnd ? ["outside.swift"] : []
+        #expect(owner.outsideTurns[repo.url.path] == expected)
         #expect(owner.incompleteOutsideTurns.contains(repo.url.path), "a.swift is uncommitted and may be in the gap")
     }
 
@@ -230,10 +236,16 @@ struct ReviewTurnsGitTests {
         #expect(kept.untrackedHashes["kept.txt"] == other)
 
         // Touched: hashed again, and the same contents as the tree held.
-        try repo.write("same\n", to: "kept.txt")
+        let path = repo.url.appendingPathComponent("kept.txt").path
+        let oldTime = try #require(FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date)
+        try FileManager.default.setAttributes([.modificationDate: oldTime.addingTimeInterval(-60)], ofItemAtPath: path)
+        let newTime = try #require(FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date)
+        try #require(newTime != oldTime)
         let touched = try await ReviewGit.pathsChanged(since: tree, at: repo.url, known: ["kept.txt": other])
+        let rehashed = try #require(touched.untrackedHashes["kept.txt"])
         #expect(touched.paths.isEmpty)
-        #expect(touched.untrackedHashes["kept.txt"]?.contents == held.contents)
+        #expect(rehashed.contents == held.contents)
+        #expect(rehashed.stat != held.stat)
     }
 
     @Test func anUntrackedFileTheLastTurnLeft_madeExecutable_countsAsChanged() async throws {

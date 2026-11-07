@@ -98,20 +98,21 @@ struct SharedValuesContractTests {
         // as the plain usage limit.
         let english = Locale(identifier: "en")
         let byLength = PlanUsageText.windowName("\(windows.minutesPrefix)1440", locale: english).resolved(in: english)
-        #expect(byLength.hasSuffix(" limit") && byLength != "Usage limit")
+        #expect(byLength == "1d limit")
     }
 
     @Test func theNames_areTheOnesTheHookReads() throws {
         let shared = try Self.sharedValues()
         #expect(WorktreeRouting.fileName == shared.worktreeRoutingFileName)
         #expect(PaneShellEnvironment.paneIDVariable == shared.paneIdentifierVariable)
+        let pane = UUID()
         let env = PaneShellEnvironment.variables(
-            paneID: UUID(),
+            paneID: pane,
             shimDirectories: [],
             zdotdir: nil,
             basePath: "/usr/bin"
         )
-        #expect(env[shared.paneIdentifierVariable] != nil)
+        #expect(env[shared.paneIdentifierVariable] == pane.uuidString)
     }
 
     @Test func theRolloutWatcher_looksForTheEventTheCrateReads() throws {
@@ -169,5 +170,6 @@ struct SharedValuesContractTests {
         // Every state this build knows is on one side or the other, so a new
         // one has to be placed in the file before either side can ship it.
         #expect(Set(atWork + notAtWork) == Set(AgentState.allCases))
+        #expect(atWork.count + notAtWork.count == AgentState.allCases.count)
     }
 }

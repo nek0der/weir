@@ -7,23 +7,25 @@ import Testing
 @testable import WeirDomain
 
 struct AttentionVisibilityTests {
-    static let pane = UUID()
+    static let first = UUID()
+    static let second = UUID()
+    static let elsewhere = UUID()
 
-    /// Seen while Weir is in front and a window attends the pane; a pane
-    /// minimized, hidden, covered, zoomed out, or under the review is left
-    /// out of the attended set.
     @Test(arguments: [
-        (Set([pane]), true, true),
-        (Set([pane]), false, false),
-        (Set<UUID>(), true, false)
+        (Set([first, second]), true, Set([first, second])),
+        (Set([first, second]), false, Set<UUID>()),
+        (Set<UUID>(), true, Set<UUID>()),
+        (Set<UUID>(), false, Set<UUID>())
     ])
-    func aPane_isSeen_whileWeirIsInFrontAndAWindowAttendsIt(
+    func onlyAttendedPanes_areSeenAndOnlyWhileWeirIsActive(
         attended: Set<UUID>,
         isAppActive: Bool,
-        isSeen: Bool
+        expected: Set<UUID>
     ) {
         let visibility = AttentionVisibility(attendedPanes: attended, isAppActive: isAppActive)
-        #expect(visibility.isSeen(Self.pane) == isSeen)
-        #expect(visibility.seenPanes.contains(Self.pane) == isSeen)
+        #expect(visibility.seenPanes == expected)
+        for pane in [Self.first, Self.second, Self.elsewhere] {
+            #expect(visibility.isSeen(pane) == expected.contains(pane))
+        }
     }
 }

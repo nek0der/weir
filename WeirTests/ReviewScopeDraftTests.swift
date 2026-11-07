@@ -36,34 +36,30 @@ struct ReviewScopeDraftTests {
 
     @Test func aNewComment_belongsToTheScopeOnScreen() async throws {
         let repository = try FakeReviewRepository.oneFile(Self.file)
-        let store = self.store(repository)
-        await store.refreshAsTheAppDoes()
-        await store.load(Self.file)
-
-        let line = try #require(store.diff?.lines.first { $0.isCommentable })
-        #expect(store.add(line: line, body: "Why?"))
-
-        #expect(store.comments.map(\.scopeIDs) == [["uncommitted"]])
-        #expect(store.comments(inScope: "uncommitted").count == 1)
-        #expect(try store.comments(inScope: TurnSummaryFixture.range().scopeID).isEmpty)
-    }
-
-    @Test func addToScope_doesNotDuplicateComments() async throws {
-        let repository = try FakeReviewRepository.oneFile(Self.file)
         let drafts = RecordingReviewDraftStore()
         let store = self.store(repository, drafts: drafts)
         await store.refreshAsTheAppDoes()
-        await store.load(Self.file)
-        let line = try #require(store.diff?.lines.first { $0.isCommentable })
-        store.add(line: line, body: "Why?")
-        let id = try #require(store.comments.first?.id)
+        let workingLine = try #require(store.diff?.lines.first { $0.isCommentable })
+        try #require(store.add(lines: [workingLine], side: nil, body: "Working copy"))
+        let working = try #require(store.shownComments.first)
 
-        #expect(store.addToScope([id], scopeID: "turns:range"))
-        #expect(store.addToScope([id], scopeID: "turns:range"), "adding twice changes nothing")
+        let range = try TurnSummaryFixture.range()
+        repository.files = [Self.rangeFile]
+        repository.diffs[Self.rangeFile.id] = try ReviewDiffFixture.diff(of: Self.rangeFile, fingerprint: "range")
+        _ = await store.reload(scope: .turns(range), selectedFileID: Self.rangeFile.id)
+        #expect(store.shownComments.isEmpty)
+        let rangeLine = try #require(store.diff?.lines.first { $0.isCommentable })
+        try #require(store.add(lines: [rangeLine], side: nil, body: "Fixed range"))
+        let fixed = try #require(store.shownComments.first)
 
-        #expect(store.comments.count == 1)
-        #expect(store.comments.first?.scopeIDs == ["uncommitted", "turns:range"])
-        #expect(try drafts.load(root: root)?.comments.count == 1, "held once in the file too")
+        #expect(working.id != fixed.id)
+        #expect(working.scopeIDs == ["uncommitted"])
+        #expect(fixed.scopeIDs == [range.scopeID])
+        #expect(store.shownComments == [fixed])
+        #expect(store.comments(inScope: "uncommitted") == [working])
+        let saved = try #require(try drafts.load(root: root))
+        #expect(saved.comments == [working, fixed])
+        #expect(saved.ranges == [range])
     }
 
     @Test func legacyComment_movesOnlyByExplicitActionAfterRevalidation() async throws {
@@ -122,11 +118,14 @@ struct ReviewScopeDraftTests {
         #expect(store.legacyComments.count == 1)
     }
 
-    @Test func aLegacyCommentWhoseFileIsNotInTheScope_saysSo() async throws {
+    @Test(arguments: [false, true])
+    func aLegacyCommentWhoseFileIsNotInTheScope_saysSo(_ hasOtherFile: Bool) async throws {
         let repository = FakeReviewRepository()
         let other = ReviewFile(path: "b.swift", layer: .turns, status: .modified)
-        repository.files = [other]
-        repository.diffs[other.id] = try ReviewDiffFixture.diff(of: other, fingerprint: "range")
+        if hasOtherFile {
+            repository.files = [other]
+            repository.diffs[other.id] = try ReviewDiffFixture.diff(of: other, fingerprint: "range")
+        }
         let drafts = RecordingReviewDraftStore()
         let comment = Self.legacy("about a.swift")
         try drafts.save(ReviewDraft(legacy: [comment]), root: root)
@@ -136,7 +135,9 @@ struct ReviewScopeDraftTests {
 
         await #expect(throws: ReviewError.legacyFileNotInScope) { try await store.moveLegacyComment(comment.id, to: .turns(range)) }
 
-        #expect(store.legacyComments.count == 1)
+        #expect(store.legacyComments == [comment])
+        #expect(store.shownComments.isEmpty)
+        #expect(try drafts.load(root: root)?.legacy == [comment])
     }
 
     @Test func aRangesComment_isInsertedOnlyWhileItsRangeAndTheCurrentCodeAgree() async throws {
@@ -145,43 +146,73 @@ struct ReviewScopeDraftTests {
         repository.files = [rangeFile]
         repository.diffs[rangeFile.id] = try ReviewDiffFixture.diff(of: rangeFile, fingerprint: "range")
         repository.sources[Self.file.id] = ["new"]
-        let store = self.store(repository)
+        let drafts = RecordingReviewDraftStore()
+        let store = self.store(repository, drafts: drafts)
         let range = try TurnSummaryFixture.range()
         _ = await store.reload(scope: .turns(range), selectedFileID: rangeFile.id)
         let line = try #require(store.diff?.lines.first { $0.isCommentable && $0.kind == .added })
         #expect(store.add(line: line, body: "Why?"))
 
-        #expect(try await store.insertable(store.comments).count == 1)
+        let comment = try #require(store.shownComments.first)
+        #expect(try await store.insertable([comment]) == [comment])
 
         // The worktree moved on: the range's diff still matches, the code does not.
         repository.sources[Self.file.id] = ["something else"]
-        await #expect(throws: ReviewError.self) { try await store.insertable(store.comments) }
-        #expect(store.staleCommentIDs.count == 1)
+        await #expect(throws: ReviewError.changed) { try await store.insertable([comment]) }
+        #expect(store.staleCommentIDs == [comment.id])
+        #expect(store.shownComments == [comment])
+        #expect(try drafts.load(root: root)?.comments == [comment])
     }
 
-    @Test func addingTheNextTurn_bringsTheRangesCommentsAndMarks_inANewScope() async throws {
+    enum FileChange: Sendable {
+        case unchanged, stats, fingerprint
+    }
+
+    @Test(arguments: [FileChange.unchanged, .stats, .fingerprint])
+    func addingTheNextTurn_bringsTheRangesCommentsAndStillValidMarks(_ change: FileChange) async throws {
         let repository = FakeReviewRepository()
         let rangeFile = ReviewFile(path: "a.swift", layer: .turns, status: .modified)
         repository.files = [rangeFile]
         repository.stats[rangeFile.id] = ReviewFileStat(added: 1, removed: 1)
         repository.diffs[rangeFile.id] = try ReviewDiffFixture.diff(of: rangeFile, fingerprint: "range")
-        let store = self.store(repository)
+        let drafts = RecordingReviewDraftStore()
+        let store = self.store(repository, drafts: drafts)
         let range = try TurnSummaryFixture.range()
         _ = await store.reload(scope: .turns(range), selectedFileID: rangeFile.id)
         let line = try #require(store.diff?.lines.first { $0.isCommentable })
-        store.add(line: line, body: "Why?")
+        try #require(store.add(line: line, body: "Why?"))
+        let comment = try #require(store.shownComments.first)
         store.setViewed(rangeFile.id, true)
+        let mark = try #require(store.viewed[rangeFile.id])
+        #expect(mark.fingerprint == "range")
         let extended = try #require(try range.extended(with: [TurnSummaryFixture.recordedTurn("T2", number: 2)]))
 
-        #expect(store.carryRange(to: extended))
-        _ = await store.reload(scope: .turns(extended), selectedFileID: store.diff?.file.id)
+        try #require(store.carryRange(to: extended))
+        #expect(store.carryRange(to: extended), "repeating the carry keeps one comment")
+        #expect(store.viewedByScope[extended.scopeID] == [rangeFile.id: mark])
+        if change == .stats {
+            repository.stats[rangeFile.id] = ReviewFileStat(added: 2, removed: 1)
+        } else if change == .fingerprint {
+            repository.diffsByScope[extended.scopeID] = try [rangeFile.id: ReviewDiffFixture.diff(of: rangeFile, fingerprint: "changed")]
+        }
+        _ = await store.reload(scope: .turns(extended), selectedFileID: rangeFile.id)
+        store.rememberOpenFile(rangeFile.id)
+        await store.flushNavigationSave()
 
         #expect(store.scope == .turns(extended), "the store reads the longer range")
         #expect(extended.numbers == 1...2)
         #expect(extended.scopeID != range.scopeID)
-        #expect(store.comments.count == 1, "held once")
-        #expect(store.comments.first?.scopeIDs == [range.scopeID, extended.scopeID])
-        #expect(store.viewed[rangeFile.id] != nil, "its file did not move, so it stays read")
+        var carried = comment
+        carried.scopeIDs = [range.scopeID, extended.scopeID]
+        #expect(store.shownComments == [carried])
+        let kept = change == .unchanged ? [rangeFile.id: mark] : [:]
+        #expect(store.viewed == kept)
+        #expect(store.viewedByScope[range.scopeID] == [rangeFile.id: mark])
+        let saved = try #require(try drafts.load(root: root))
+        #expect(saved.comments == [carried])
+        #expect(saved.ranges?.sorted { $0.scopeID < $1.scopeID } == [range, extended].sorted { $0.scopeID < $1.scopeID })
+        #expect(saved.viewed[range.scopeID] == [rangeFile.id: mark])
+        #expect((saved.viewed[extended.scopeID] ?? [:]) == kept)
     }
 
     @Test func aCommentInTwoRanges_isInsertedWhileTheRangeItQuotesStillHasItsDiff() async throws {
@@ -230,10 +261,20 @@ struct ReviewScopeDraftTests {
         let store = self.store(repository)
         _ = await store.reload(scope: .turns(first), selectedFileID: rangeFile.id)
         let line = try #require(store.diff?.lines.first { $0.isCommentable })
-        store.add(line: line, body: "About the first range")
+        try #require(store.add(line: line, body: "About the first range"))
+        let comment = try #require(store.shownComments.first)
+        #expect(comment.fingerprint == "first")
 
         _ = await store.reload(scope: .turns(second), selectedFileID: rangeFile.id)
 
+        #expect(store.scope == .turns(second))
+        #expect(store.diff?.fingerprint == "second")
+        #expect(store.shownComments.isEmpty)
+        #expect(store.staleCommentIDs.isEmpty)
+
+        _ = await store.reload(scope: .turns(first), selectedFileID: rangeFile.id)
+        #expect(store.diff?.fingerprint == "first")
+        #expect(store.shownComments == [comment])
         #expect(store.staleCommentIDs.isEmpty)
     }
 
@@ -257,6 +298,19 @@ struct ReviewScopeDraftTests {
         try await store.moveLegacyComment(classic.id, to: .turns(range))
 
         #expect(store.legacyComments.isEmpty)
+        let saved = try #require(try drafts.load(root: root))
+        let moved = try #require(saved.comments.first)
+        #expect(moved.id == classic.id)
+        #expect(moved.body == classic.body)
+        #expect(moved.file == rangeFile)
+        #expect(moved.scopeIDs == [range.scopeID])
+        #expect(moved.fingerprint == "range")
+        #expect(saved.legacy == nil)
+        #expect(saved.ranges == [range])
+        let reopened = self.store(repository, drafts: drafts)
+        _ = await reopened.reload(scope: .turns(range), selectedFileID: rangeFile.id)
+        #expect(reopened.shownComments == [moved])
+        #expect(reopened.legacyComments.isEmpty)
     }
 
     @Test func aPathTheTargetListsTwice_whereBothWouldTakeTheComment_isRefused() async throws {
@@ -276,60 +330,58 @@ struct ReviewScopeDraftTests {
         #expect(store.legacyComments.count == 1)
     }
 
-    @Test func readMarks_areKeptByScope() async throws {
+    @Test func readMarks_areKeptByScopeEvenWhenRangesShareAFileID() async throws {
         let repository = FakeReviewRepository()
         repository.files = [Self.file]
-        repository.stats[Self.file.id] = ReviewFileStat(added: 1, removed: 1)
+        repository.stats[Self.file.id] = ReviewFileStat(added: 2, removed: 1)
         let store = self.store(repository)
         await store.refreshAsTheAppDoes()
-
         store.setViewed(Self.file.id, true)
-        #expect(store.viewed[Self.file.id] != nil)
+        let workingMark = try #require(store.viewed[Self.file.id])
 
-        repository.files = [Self.rangeFile]
-        _ = try await store.reload(scope: .turns(TurnSummaryFixture.range()), selectedFileID: nil)
-
-        #expect(store.viewed.isEmpty, "read in one comparison is not read in another")
-        #expect(store.viewedByScope["uncommitted"]?[Self.file.id] != nil, "and the other's mark stays")
-    }
-
-    @Test func sameFileInTwoRanges_keepsSeparateMarks() async throws {
-        // The same `turns:a.swift` in two ranges' trees: before scopes, one
-        // mark answered for both.
-        let repository = FakeReviewRepository()
         repository.files = [Self.rangeFile]
         repository.stats[Self.rangeFile.id] = ReviewFileStat(added: 1, removed: 1)
-        let store = self.store(repository)
         let first = try ReviewScope.turns(TurnSummaryFixture.range())
         let next = try ReviewScope.turns(TurnSummaryFixture.range("T2", number: 2))
         _ = await store.reload(scope: first, selectedFileID: nil)
+        #expect(store.viewed.isEmpty)
         store.setViewed(Self.rangeFile.id, true)
+        let rangeMark = try #require(store.viewed[Self.rangeFile.id])
 
         _ = await store.reload(scope: next, selectedFileID: nil)
-        #expect(store.viewed[Self.rangeFile.id] == nil)
-
+        #expect(store.viewed.isEmpty)
         _ = await store.reload(scope: first, selectedFileID: nil)
-        #expect(store.viewed[Self.rangeFile.id] != nil)
+        #expect(store.viewed == [Self.rangeFile.id: rangeMark])
+
+        repository.files = [Self.file]
+        _ = await store.reload(scope: .uncommitted, selectedFileID: nil)
+        #expect(store.viewed == [Self.file.id: workingMark])
     }
 
     @Test func theMarksOfAScopeNoLongerOpen_goAfterTwoWeeks() {
         let now = Date(timeIntervalSince1970: 10_000_000)
-        let old = ReviewViewMark(added: 1, removed: 0, markedAt: now.addingTimeInterval(-ReviewDraftWriter.closedScopeMarkLifetime - 1))
+        let twoWeeks: TimeInterval = 14 * 24 * 60 * 60
+        let old = ReviewViewMark(added: 1, removed: 0, markedAt: now.addingTimeInterval(-twoWeeks - 1))
+        let cutoff = ReviewViewMark(added: 1, removed: 0, markedAt: now.addingTimeInterval(-twoWeeks))
         let recent = ReviewViewMark(added: 1, removed: 0, markedAt: now.addingTimeInterval(-60))
         let undated = ReviewViewMark(added: 1, removed: 0)
         let marks = [
             "turn:old": ["turn:a": old, "turn:b": recent, "turn:c": undated],
-            "uncommitted": ["unstaged:a": old]
+            "turns:closed": ["turns:a": old, "turns:b": cutoff],
+            "turns:open": ["turns:a": old],
+            "uncommitted": ["unstaged:a": old],
+            "branch:main": ["branch:a": old]
         ]
 
-        let kept = ReviewDraftWriter.pruned(marks, open: ["uncommitted"], now: now)
+        let kept = ReviewDraftWriter.pruned(marks, open: ["turns:open"], now: now)
 
-        #expect(kept["turn:old"] == ["turn:b": recent, "turn:c": undated])
-        #expect(kept["uncommitted"] == ["unstaged:a": old], "the open scope keeps what its list still carries")
-        // A scope that follows the worktree keeps its marks until their files
-        // move on, open or not.
-        let branch = ReviewDraftWriter.pruned(["branch:main": ["branch:a": old]], open: ["uncommitted"], now: now)
-        #expect(branch == ["branch:main": ["branch:a": old]])
+        #expect(kept == [
+            "turn:old": ["turn:b": recent, "turn:c": undated],
+            "turns:closed": ["turns:b": cutoff],
+            "turns:open": ["turns:a": old],
+            "uncommitted": ["unstaged:a": old],
+            "branch:main": ["branch:a": old]
+        ])
     }
 
     @Test func theOpenFileOfARangeNoLongerInUse_isNotKept() async throws {
@@ -337,23 +389,25 @@ struct ReviewScopeDraftTests {
         repository.files = [Self.rangeFile]
         let drafts = RecordingReviewDraftStore()
         let store = self.store(repository, drafts: drafts)
-        _ = try await store.reload(scope: .turns(TurnSummaryFixture.range()), selectedFileID: nil)
+        let first = try TurnSummaryFixture.range()
+        _ = await store.reload(scope: .turns(first), selectedFileID: nil)
         store.rememberOpenFile(Self.rangeFile.id)
         await store.flushNavigationSave()
+        #expect(try drafts.load(root: root)?.lastFileID == [first.scopeID: Self.rangeFile.id])
 
         let next = try TurnSummaryFixture.range("T2", number: 2)
         _ = await store.reload(scope: .turns(next), selectedFileID: nil)
         store.rememberOpenFile(Self.rangeFile.id)
         await store.flushNavigationSave()
 
-        let saved = try? drafts.load(root: root)
-        #expect(saved?.lastFileID.keys.sorted() == [next.scopeID])
+        #expect(try drafts.load(root: root)?.lastFileID == [next.scopeID: Self.rangeFile.id])
     }
 
     @Test func aDraftThatCannotBeSaved_keepsTheReviewInMemory_andSaysSo() async throws {
         let repository = try FakeReviewRepository.oneFile(Self.file)
         let drafts = RecordingReviewDraftStore()
-        drafts.loadError = ReviewDraftLoadError.migratedWithoutCopy(ReviewDraft(comments: []))
+        let kept = Self.legacy("Migrated comment")
+        drafts.loadError = ReviewDraftLoadError.migratedWithoutCopy(ReviewDraft(legacy: [kept]))
         let store = ReviewSession(root: root, git: repository, drafts: drafts)
         await store.refreshAsTheAppDoes()
         await store.load(Self.file)
@@ -363,7 +417,9 @@ struct ReviewScopeDraftTests {
         store.rememberOpenFile(Self.file.id)
         await store.flushNavigationSave()
 
-        #expect(store.comments.count == 1)
+        #expect(store.legacyComments == [kept])
+        #expect(store.shownComments.map(\.body) == ["Why?"])
+        #expect(store.lastFileID == Self.file.id)
         #expect(drafts.saves == 0, "nothing written over the only copy")
         #expect(store.isSavingSuspended)
         #expect(store.errorMessage == DisplayText(error: ReviewError.draftNotSaved))
@@ -385,21 +441,6 @@ struct ReviewScopeDraftTests {
         #expect(drafts.saves == 0)
     }
 
-    @Test func aLegacyCommentWhoseFileLeftTheList_staysWhereItIs() async throws {
-        let repository = FakeReviewRepository()
-        repository.files = []
-        let drafts = RecordingReviewDraftStore()
-        let comment = Self.legacy("about a file no longer changed")
-        try drafts.save(ReviewDraft(legacy: [comment]), root: root)
-        let store = self.store(repository, drafts: drafts)
-        let range = try ReviewScope.turns(TurnSummaryFixture.range())
-        _ = await store.reload(scope: range, selectedFileID: nil)
-
-        await #expect(throws: ReviewError.self) { try await store.moveLegacyComment(comment.id, to: range) }
-
-        #expect(store.legacyComments.map(\.id) == [comment.id])
-    }
-
     @Test func aDraftChangedWhileGitChecked_movesNothing() async throws {
         let repository = try FakeReviewRepository.oneFile(Self.rangeFile)
         // The quoted code is still where it was, so only the edit stops the move.
@@ -415,7 +456,8 @@ struct ReviewScopeDraftTests {
         repository.nextFilesGate = gate
 
         async let move: Void = store.moveLegacyComment(moving.id, to: range)
-        await gate.waitUntilRequested()
+        defer { gate.open(with: []) }
+        try await gate.waitUntilRequested()
         store.remove(other.id)
         gate.open(with: [Self.rangeFile])
 
@@ -425,7 +467,11 @@ struct ReviewScopeDraftTests {
         } catch ReviewError.checkInterrupted {
             // Expected: the reader edited the draft while Git ran.
         }
-        #expect(store.legacyComments.map(\.id) == [moving.id])
+        #expect(store.legacyComments == [moving])
+        #expect(store.shownComments.isEmpty)
+        let saved = try #require(try drafts.load(root: root))
+        #expect(saved.comments.isEmpty)
+        #expect(saved.legacy == [moving])
     }
 
     private enum LegacyMoveNavigation: CaseIterable {
@@ -461,7 +507,7 @@ struct ReviewScopeDraftTests {
 
         async let move: Void = store.moveLegacyComment(comment.id, to: originalScope)
         defer { gate.open(with: []) }
-        await gate.waitUntilRequested()
+        try await gate.waitUntilRequested()
         if navigation != .refreshesSameScope {
             repository.files = [workingFile]
             try #require(await store.reload(scope: .uncommitted, selectedFileID: nil) == .applied(selectedFileID: workingFile.id))
@@ -533,9 +579,16 @@ struct ReviewScopeDraftTests {
         await store.flushNavigationSave()
 
         repository.files = [Self.rangeFile]
-        _ = try await store.reload(scope: .turns(TurnSummaryFixture.range()), selectedFileID: nil)
+        let range = try TurnSummaryFixture.range()
+        _ = await store.reload(scope: .turns(range), selectedFileID: nil)
 
         #expect(store.lastFileID == nil)
-        #expect(try drafts.load(root: root)?.lastFileID == ["uncommitted": Self.file.id])
+        store.rememberOpenFile(Self.rangeFile.id)
+        await store.flushNavigationSave()
+        #expect(try drafts.load(root: root)?.lastFileID == ["uncommitted": Self.file.id, range.scopeID: Self.rangeFile.id])
+
+        repository.files = [Self.file]
+        _ = await store.reload(scope: .uncommitted, selectedFileID: nil)
+        #expect(store.lastFileID == Self.file.id)
     }
 }

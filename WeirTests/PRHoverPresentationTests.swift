@@ -29,9 +29,12 @@ struct PRHoverPresentationTests {
     func rowEntered_zeroDelay_publishes() {
         let presentation = makePresentation()
         let id = PRHoverSource(container: .worktree(projectID: UUID(), worktreeID: UUID()))
-        presentation.rowEntered(rowID: id, info: PRInfoFixture.make(), anchor: .zero, delay: .zero)
-        settle()
-        #expect(presentation.visible?.rowID == id)
+        let info = PRInfoFixture.make(number: 5)
+        presentation.rowEntered(rowID: id, info: info, anchor: Self.rowFrame, delay: .zero)
+
+        clock.advance(by: .zero)
+
+        #expect(presentation.visible == .init(rowID: id, info: info, anchorRect: Self.rowFrame))
     }
 
     @Test("leaving the row dismisses after the grace period")
@@ -39,11 +42,13 @@ struct PRHoverPresentationTests {
         let presentation = makePresentation()
         let id = PRHoverSource(container: .worktree(projectID: UUID(), worktreeID: UUID()))
         presentation.rowEntered(rowID: id, info: PRInfoFixture.make(), anchor: .zero, delay: .zero)
-        settle()
+        clock.advance(by: .zero)
+        #expect(presentation.visible?.rowID == id)
         presentation.rowExited(rowID: id)
-        clock.advance(by: PRHoverPresentation.dismissGrace / 2)
+
+        clock.advance(by: PRHoverPresentation.dismissGrace - .milliseconds(1))
         #expect(presentation.visible?.rowID == id, "the card waits out the grace period")
-        settle()
+        clock.advance(by: .milliseconds(1))
         #expect(presentation.visible == nil)
     }
 
@@ -64,22 +69,33 @@ struct PRHoverPresentationTests {
         #expect(presentation.visible == nil)
     }
 
-    /// SwiftUI delivers the enter for the next row before the leave for
-    /// the previous one. Leaving the first row cancels only a show the
-    /// first row armed, so the second row's card still appears.
-    @Test("enter-before-leave hand-off still shows the second row")
-    func handOff_enterBeforeLeave_showsSecondRow() {
+    /// SwiftUI can send the enter and leave in either order as the pointer crosses rows.
+    @Test("both hand-off event orders show the second row at its deadline", arguments: [false, true])
+    func handOff_showsSecondRow(_ entersFirst: Bool) {
         let presentation = makePresentation()
         let first = PRHoverSource(container: .worktree(projectID: UUID(), worktreeID: UUID()))
         let second = PRHoverSource(container: .worktree(projectID: UUID(), worktreeID: UUID()))
-        presentation.rowEntered(rowID: first, info: PRInfoFixture.make(number: 1), anchor: .zero, delay: .zero)
-        settle()
+        let firstInfo = PRInfoFixture.make(number: 1)
+        let secondInfo = PRInfoFixture.make(number: 2)
+        let secondFrame = Self.rowFrame.offsetBy(dx: 0, dy: 44)
+        let delay = PRHoverPresentation.openDelay
+        presentation.rowEntered(rowID: first, info: firstInfo, anchor: Self.rowFrame, delay: .zero)
+        clock.advance(by: .zero)
+        let firstCard = PRHoverPresentation.Snapshot(rowID: first, info: firstInfo, anchorRect: Self.rowFrame)
+        #expect(presentation.visible == firstCard)
 
-        presentation.rowEntered(rowID: second, info: PRInfoFixture.make(number: 2), anchor: .zero, delay: .zero)
-        presentation.rowExited(rowID: first)
-        settle()
-        #expect(presentation.visible?.rowID == second)
-        #expect(presentation.visible?.info.number == 2)
+        if !entersFirst {
+            presentation.rowExited(rowID: first)
+        }
+        presentation.rowEntered(rowID: second, info: secondInfo, anchor: secondFrame, delay: delay)
+        if entersFirst {
+            presentation.rowExited(rowID: first)
+        }
+        clock.advance(by: delay - .milliseconds(1))
+        #expect(presentation.visible == firstCard)
+
+        clock.advance(by: .milliseconds(1))
+        #expect(presentation.visible == .init(rowID: second, info: secondInfo, anchorRect: secondFrame))
     }
 
     /// A hovered row leaving the hierarchy never gets `onHover(false)`.
@@ -90,10 +106,10 @@ struct PRHoverPresentationTests {
         let presentation = makePresentation()
         let id = PRHoverSource(container: .worktree(projectID: UUID(), worktreeID: UUID()))
         presentation.rowEntered(rowID: id, info: PRInfoFixture.make(), anchor: .zero, delay: .zero)
-        settle()
+        clock.advance(by: .zero)
+        #expect(presentation.visible?.rowID == id)
 
         presentation.rowDisappeared(rowID: id)
-        settle()
         #expect(presentation.visible == nil)
 
         // A row left in the hovered set would keep every later card up,
@@ -124,19 +140,29 @@ struct PRHoverPresentationTests {
     }
 
     @Test("reset hides the card and leaves the machine usable")
-    func reset_clearsEverything() {
+    func resetCancelsPendingCardsAndAllowsLaterDismissal() {
         let presentation = makePresentation()
         let id = PRHoverSource(container: .worktree(projectID: UUID(), worktreeID: UUID()))
         presentation.rowEntered(rowID: id, info: PRInfoFixture.make(), anchor: .zero, delay: .zero)
         settle()
 
+        #expect(presentation.visible?.rowID == id)
+        let pending = PRHoverSource(container: .worktree(projectID: UUID(), worktreeID: UUID()))
+        presentation.cardHoverChanged(true)
+        presentation.rowEntered(rowID: pending, info: PRInfoFixture.make(number: 2), anchor: .zero, delay: PRHoverPresentation.openDelay)
+
         presentation.reset()
+        #expect(presentation.visible == nil)
+        clock.advance(by: PRHoverPresentation.openDelay)
         #expect(presentation.visible == nil)
 
         let next = PRHoverSource(container: .worktree(projectID: UUID(), worktreeID: UUID()))
         presentation.rowEntered(rowID: next, info: PRInfoFixture.make(number: 3), anchor: .zero, delay: .zero)
         settle()
         #expect(presentation.visible?.rowID == next)
+        presentation.rowExited(rowID: next)
+        settle()
+        #expect(presentation.visible == nil)
     }
 
     /// A pending show must not run once its row is gone — otherwise
@@ -153,8 +179,11 @@ struct PRHoverPresentationTests {
             delay: PRHoverPresentation.openDelay
         )
         clock.advance(by: PRHoverPresentation.openDelay / 2)
+        #expect(presentation.visible == nil)
         presentation.rowExited(rowID: id)
-        clock.advance(by: PRHoverPresentation.openDelay)
+        clock.advance(by: PRHoverPresentation.openDelay / 2)
+        #expect(presentation.visible == nil)
+        settle()
         #expect(presentation.visible == nil)
     }
 
@@ -162,28 +191,17 @@ struct PRHoverPresentationTests {
     func rowEntered_afterDelay_shows() {
         let presentation = makePresentation()
         let id = PRHoverSource(container: .worktree(projectID: UUID(), worktreeID: UUID()))
+        let info = PRInfoFixture.make(number: 8)
         presentation.rowEntered(
             rowID: id,
-            info: PRInfoFixture.make(),
-            anchor: .zero,
+            info: info,
+            anchor: Self.rowFrame,
             delay: PRHoverPresentation.openDelay
         )
-        clock.advance(by: PRHoverPresentation.openDelay / 2)
+        clock.advance(by: PRHoverPresentation.openDelay - .milliseconds(1))
         #expect(presentation.visible == nil)
-        clock.advance(by: PRHoverPresentation.openDelay / 2)
-        #expect(presentation.visible?.rowID == id)
-    }
-
-    /// A sidebar row's card opens from its mark and its fact only:
-    /// the rest of the row opens nothing, and hangs no card of its own.
-    @Test("the rest of a row opens no card")
-    func holdingTheRow_opensNothing() {
-        let presentation = makePresentation()
-        let id = PRHoverSource(container: .worktree(projectID: UUID(), worktreeID: UUID()))
-        presentation.anchorChanged(rowID: id, anchor: CGRect(x: 0, y: 0, width: 240, height: 44))
-        presentation.holdChanged(rowID: id, isHovering: true)
-        settle()
-        #expect(presentation.visible == nil)
+        clock.advance(by: .milliseconds(1))
+        #expect(presentation.visible == .init(rowID: id, info: info, anchorRect: Self.rowFrame))
     }
 
     /// The card a part opens hangs beside the whole row, not the part,
@@ -194,13 +212,18 @@ struct PRHoverPresentationTests {
         let id = PRHoverSource(container: .worktree(projectID: UUID(), worktreeID: UUID()))
         let row = CGRect(x: 0, y: 100, width: 240, height: 44)
         presentation.anchorChanged(rowID: id, anchor: row)
-        presentation.rowEntered(rowID: id, part: .mark, info: PRInfoFixture.make(), anchor: nil, delay: .zero)
-        settle()
-        #expect(presentation.visible?.anchorRect == row)
-
+        let info = PRInfoFixture.make(number: 4)
+        presentation.rowEntered(rowID: id, part: .mark, info: info, anchor: nil, delay: PRHoverPresentation.openDelay)
+        clock.advance(by: PRHoverPresentation.openDelay - .milliseconds(1))
+        #expect(presentation.visible == nil)
         let scrolled = row.offsetBy(dx: 0, dy: -30)
         presentation.anchorChanged(rowID: id, anchor: scrolled)
-        #expect(presentation.visible?.anchorRect == scrolled)
+
+        clock.advance(by: .milliseconds(1))
+        #expect(presentation.visible == .init(rowID: id, info: info, anchorRect: scrolled))
+        let scrolledAgain = scrolled.offsetBy(dx: 0, dy: -30)
+        presentation.anchorChanged(rowID: id, anchor: scrolledAgain)
+        #expect(presentation.visible == .init(rowID: id, info: info, anchorRect: scrolledAgain))
     }
 
     /// The pointer leaves the mark for the card across the rest of the
@@ -212,6 +235,9 @@ struct PRHoverPresentationTests {
         let id = PRHoverSource(container: .worktree(projectID: UUID(), worktreeID: UUID()))
         presentation.anchorChanged(rowID: id, anchor: Self.rowFrame)
         presentation.holdChanged(rowID: id, isHovering: true)
+        clock.advance(by: PRHoverPresentation.openDelay)
+        #expect(presentation.visible == nil, "the row body opens nothing on its own")
+
         presentation.rowEntered(rowID: id, part: .mark, info: PRInfoFixture.make(), anchor: nil, delay: .zero)
         settle()
         #expect(presentation.visible?.rowID == id)
@@ -251,12 +277,19 @@ struct PRHoverPresentationTests {
         let presentation = makePresentation()
         let id = PRHoverSource(container: .worktree(projectID: UUID(), worktreeID: UUID()))
         presentation.anchorChanged(rowID: id, anchor: Self.rowFrame)
-        presentation.rowEntered(rowID: id, part: .mark, info: PRInfoFixture.make(), anchor: nil, delay: .zero)
-        presentation.rowEntered(rowID: id, part: .fact, info: PRInfoFixture.make(), anchor: nil, delay: .zero)
-        settle()
+        let info = PRInfoFixture.make(number: 9)
+        let expected = PRHoverPresentation.Snapshot(rowID: id, info: info, anchorRect: Self.rowFrame)
+        presentation.rowEntered(rowID: id, part: .mark, info: info, anchor: nil, delay: .zero)
+        clock.advance(by: .zero)
+        #expect(presentation.visible == expected)
+
+        presentation.rowEntered(rowID: id, part: .fact, info: info, anchor: nil, delay: PRHoverPresentation.openDelay)
         presentation.rowDisappeared(rowID: id, part: .mark)
-        settle()
-        #expect(presentation.visible?.rowID == id)
+        #expect(presentation.visible == expected)
+        clock.advance(by: PRHoverPresentation.openDelay - .milliseconds(1))
+        #expect(presentation.visible == expected)
+        clock.advance(by: .milliseconds(1))
+        #expect(presentation.visible == expected)
 
         presentation.anchorDisappeared(rowID: id)
         #expect(presentation.visible == nil)
@@ -305,12 +338,24 @@ struct PRHoverPresentationTests {
         reporter.sourceChanged(to: id, in: presentation)
         reporter.frameChanged(Self.rowFrame, in: presentation)
         reporter.appeared(in: presentation)
-        reporter.disappeared(in: presentation)
-        reporter.appeared(in: presentation)
+        let info = PRInfoFixture.make(number: 10)
+        let expected = PRHoverPresentation.Snapshot(rowID: id, info: info, anchorRect: Self.rowFrame)
+        presentation.rowEntered(rowID: id, part: .fact, info: info, anchor: nil, delay: .zero)
+        clock.advance(by: .zero)
+        #expect(presentation.visible == expected)
 
-        presentation.rowEntered(rowID: id, part: .fact, info: PRInfoFixture.make(), anchor: nil, delay: .zero)
-        settle()
-        #expect(presentation.visible?.anchorRect == Self.rowFrame)
+        reporter.disappeared(in: presentation)
+        #expect(presentation.visible == nil)
+        presentation.rowDisappeared(rowID: id, part: .fact)
+        presentation.rowEntered(rowID: id, part: .fact, info: info, anchor: nil, delay: .zero)
+        clock.advance(by: .zero)
+        #expect(presentation.visible == nil)
+        presentation.rowExited(rowID: id, part: .fact)
+
+        reporter.appeared(in: presentation)
+        presentation.rowEntered(rowID: id, part: .fact, info: info, anchor: nil, delay: .zero)
+        clock.advance(by: .zero)
+        #expect(presentation.visible == expected)
     }
 
     /// The row moving to another branch takes the old branch's card away.
@@ -322,12 +367,20 @@ struct PRHoverPresentationTests {
         reporter.appeared(in: presentation)
         reporter.frameChanged(Self.rowFrame, in: presentation)
         reporter.sourceChanged(to: id, in: presentation)
-        presentation.rowEntered(rowID: id, part: .mark, info: PRInfoFixture.make(), anchor: nil, delay: .zero)
-        settle()
-        #expect(presentation.visible?.rowID == id)
+        let old = PRInfoFixture.make(number: 11)
+        presentation.rowEntered(rowID: id, part: .mark, info: old, anchor: nil, delay: .zero)
+        clock.advance(by: .zero)
+        #expect(presentation.visible == .init(rowID: id, info: old, anchorRect: Self.rowFrame))
 
         reporter.sourceChanged(to: nil, in: presentation)
         #expect(presentation.visible == nil)
+        presentation.rowDisappeared(rowID: id, part: .mark)
+
+        reporter.sourceChanged(to: id, in: presentation)
+        let new = PRInfoFixture.make(number: 12)
+        presentation.rowEntered(rowID: id, part: .mark, info: new, anchor: nil, delay: .zero)
+        clock.advance(by: .zero)
+        #expect(presentation.visible == .init(rowID: id, info: new, anchorRect: Self.rowFrame))
     }
 
     /// The sidebar's row and the session header's chip show the same

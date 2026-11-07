@@ -182,18 +182,23 @@ struct ReviewTurnRangeTests {
         #expect(ReviewScopeCatalog.unviewedTurns(turns: [t3, t4]) { _ in false } == .range(range), "not an incomplete record")
     }
 
-    /// A draft written before `endTurnID` was saved ends at its last turn,
-    /// and reads so.
-    @Test func aDraftWithoutTheEndTurn_endsAtItsLastTurn() throws {
+    /// Older drafts omitted one or both range keys.
+    @Test(arguments: [["endTurnID"], ["conversations"], ["endTurnID", "conversations"]])
+    func aDraftWithOlderRangeKeys_restoresItsEndAndConversation(_ omitted: [String]) throws {
         let range = try #require(ReviewTurnRange(turns: [Self.turn("T6", 6), Self.turn("T7", 7)]))
         let json = try #require(String(bytes: Self.sortedEncoder().encode(range), encoding: .utf8))
         #expect(json.contains(#""endTurnID":"T7""#), "the new key is written")
-        let old = json.replacingOccurrences(of: #""endTurnID":"T7","#, with: "")
-        #expect(!old.contains("endTurnID"))
+        var payload = try #require(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        for key in omitted {
+            #expect(payload.removeValue(forKey: key) != nil)
+        }
 
-        let decoded = try JSONDecoder().decode(ReviewTurnRange.self, from: Data(old.utf8))
+        let decoded = try JSONDecoder().decode(ReviewTurnRange.self, from: JSONSerialization.data(withJSONObject: payload))
         #expect(decoded == range)
         #expect(decoded.endTurnID == TurnID("T7"))
+        #expect(decoded.conversations == [range.conversation])
+        #expect(!decoded.isAcrossConversations)
+        #expect(try Self.sortedEncoder().encode(decoded) == Data(json.utf8))
     }
 
     /// The encoder with its keys in order, so a key can be cut out by
@@ -202,21 +207,6 @@ struct ReviewTurnRangeTests {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         return encoder
-    }
-
-    @Test func aDraftWithOnlyTheOldKeys_readsAsOneConversationsRange() throws {
-        let range = try #require(ReviewTurnRange(turns: [Self.turn("T6", 6), Self.turn("T7", 7)]))
-        let json = try #require(String(bytes: Self.sortedEncoder().encode(range), encoding: .utf8))
-        #expect(json.contains(#""conversations":"#), "the new key is written")
-
-        // The draft an older build wrote: no `conversations`.
-        let old = json.replacingOccurrences(of: #""conversations":\[[^\]]*\],"#, with: "", options: .regularExpression)
-        #expect(!old.contains("conversations"))
-        let decoded = try JSONDecoder().decode(ReviewTurnRange.self, from: Data(old.utf8))
-
-        #expect(decoded == range, "one conversation, the range's own")
-        #expect(decoded.conversations == [range.conversation])
-        #expect(!decoded.isAcrossConversations)
     }
 
     @Test func aRangeAcrossConversations_roundTrips_andRefusesAConversationNotAmongItsOwn() throws {
@@ -239,16 +229,27 @@ struct ReviewTurnRangeTests {
         )
         #expect(without != json)
         #expect(throws: DecodingError.self) { try JSONDecoder().decode(ReviewTurnRange.self, from: Data(without.utf8)) }
+
+        var payload = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        payload["conversations"] = try JSONSerialization.jsonObject(with: Self.sortedEncoder().encode([claude4.conversation]))
+        let missingEnd = try JSONSerialization.data(withJSONObject: payload)
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode(ReviewTurnRange.self, from: missingEnd) }
     }
 
     @Test func extending_addsLaterTurnsOfTheSameConversationInOrder() throws {
         let range = try #require(ReviewTurnRange(turns: [Self.turn("T6", 6)]))
 
-        let extended = try #require(try range.extended(with: [Self.turn("T7", 7)]))
+        let extended = try #require(try range.extended(with: [Self.turn("T7", 7), Self.turn("T8", 8)]))
 
-        #expect(extended.numbers == 6...7)
+        #expect(extended.numbers == 6...8)
+        #expect(extended.turnIDs == [TurnID("T6"), TurnID("T7"), TurnID("T8")])
+        #expect(extended.endTurnID == TurnID("T8"))
+        #expect(extended.conversation == range.conversation)
+        #expect(extended.root == range.root)
         #expect(extended.beginTree == Fixture.tree("b", 6))
-        #expect(extended.endTree == Fixture.tree("e", 7))
+        #expect(extended.endTree == Fixture.tree("e", 8))
+        #expect(try range.extended(with: [Self.turn("T7", 7, conversationID: "other")]) == nil)
+        #expect(try range.extended(with: [Self.turn("T7", 7, root: "/other")]) == nil)
         #expect(try range.extended(with: [Self.turn("T5", 5)]) == nil, "not after it")
         #expect(try range.extended(with: [Self.turn("T7", 7, hasEnd: false)]) == nil, "no end to read to")
         #expect(try range.extended(with: [Self.turn("T8", 8), Self.turn("T7", 7)]) == nil, "out of order")

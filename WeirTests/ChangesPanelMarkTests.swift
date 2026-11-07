@@ -69,7 +69,13 @@ struct ChangesPanelMarkTests {
         let oldCodex = try Self.oldMove(through: codex1, at: second)
         let oldClaude = try Self.oldMove(through: claude1, at: second)
         let old = try Self.list(turns, lines: [oldCodex.line, oldClaude.line])
-        #expect(old.line?.undo.count == 1, "no mark to group by, and the same second tells nothing")
+        let legacyUndo = try #require(old.line?.undo)
+        #expect(legacyUndo.count == 1, "no mark to group by, and the same second tells nothing")
+        let availableLegacyMoves = [
+            ViewedLineUndo(conversation: codex1.conversation, changeID: oldCodex.change.id),
+            ViewedLineUndo(conversation: claude1.conversation, changeID: oldClaude.change.id)
+        ]
+        #expect(legacyUndo.allSatisfy(availableLegacyMoves.contains))
         // A move with a place comes after every one without.
         let newClaude = Panel.line(through: claude1, at: Date(timeIntervalSince1970: 0), markID: UUID(), sequence: 1)
         let mixed = try Self.list(turns, lines: [oldCodex.line, newClaude.line])

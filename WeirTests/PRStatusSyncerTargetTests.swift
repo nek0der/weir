@@ -19,10 +19,11 @@ struct PRStatusSyncerTargetTests {
     /// A row one wake short of its interval still goes on that wake, and a
     /// finished request's row does not, however long it has waited.
     @Test func aRowIsDue_withHalfAWakeForgiven() {
-        let now = Date()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
         let open = PRInfoFixture.make(checks: .success)
         #expect(PRStatusSyncer.isDue(info: open, lastFetch: nil, now: now))
-        #expect(PRStatusSyncer.isDue(info: open, lastFetch: now.addingTimeInterval(-85), now: now))
+        #expect(!PRStatusSyncer.isDue(info: open, lastFetch: now.addingTimeInterval(-67.49), now: now))
+        #expect(PRStatusSyncer.isDue(info: open, lastFetch: now.addingTimeInterval(-67.5), now: now))
         #expect(!PRStatusSyncer.isDue(info: open, lastFetch: now.addingTimeInterval(-30), now: now))
         #expect(!PRStatusSyncer.isDue(info: PRInfoFixture.make(state: .merged), lastFetch: .distantPast, now: now))
     }
@@ -58,10 +59,10 @@ struct PRStatusSyncerTargetTests {
         let worktree = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session)
         let targets = PRStatusSyncer.enumerableTargets(session: session)
         #expect(targets.count == 2)
-        let match = try #require(targets.first {
-            $0.container == .worktree(projectID: project.id, worktreeID: worktree.id)
-        })
-        #expect(match.workingDirectory == worktree.workingDirectory)
+        #expect(Set(targets.map(\.container)) == [.project(project.id), .worktree(projectID: project.id, worktreeID: worktree.id)])
+        #expect(targets.first { $0.container == .project(project.id) }?.workingDirectory == project.rootURL)
+        #expect(targets.first { $0.container == .worktree(projectID: project.id, worktreeID: worktree.id) }?.workingDirectory
+            == worktree.workingDirectory)
     }
 
     /// A user-pinned row is a plain subdirectory the user added to the
@@ -71,7 +72,9 @@ struct PRStatusSyncerTargetTests {
     func enumerableTargets_userPinned_isExcluded() throws {
         let (session, project) = WorkspaceSessionFixture.withProject()
         try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, origin: .userPinned)
-        #expect(PRStatusSyncer.enumerableTargets(session: session).count == 1)
+        let targets = PRStatusSyncer.enumerableTargets(session: session)
+        #expect(targets.map(\.container) == [.project(project.id)])
+        #expect(targets.map(\.workingDirectory) == [project.rootURL])
     }
 
     /// Hidden rows draw nothing, and missing ones have no directory to
@@ -85,20 +88,29 @@ struct PRStatusSyncerTargetTests {
             isHidden: hidden,
             isMissing: !hidden
         )
-        #expect(PRStatusSyncer.enumerableTargets(session: session).count == 1)
+        let targets = PRStatusSyncer.enumerableTargets(session: session)
+        #expect(targets.map(\.container) == [.project(project.id)])
+        #expect(targets.map(\.workingDirectory) == [project.rootURL])
     }
 
     @Test("every project contributes, and each row appears once")
     func enumerableTargets_multipleProjects_areAllCovered() throws {
         let (session, first) = WorkspaceSessionFixture.withProject(name: "first")
         let second = session.addOrActivateProject(rootURL: WorkspaceSessionFixture.projectRootURL("second"), suggestedName: "second")
-        try WorkspaceSessionFixture.appendWorktree(to: first.id, in: session)
-        try WorkspaceSessionFixture.appendWorktree(to: second.id, in: session)
-        let containers = PRStatusSyncer.enumerableTargets(session: session).map(\.container)
-        #expect(containers.count == 4)
-        #expect(Set(containers).count == containers.count)
-        #expect(containers.contains(.project(first.id)))
-        #expect(containers.contains(.project(second.id)))
+        let firstWorktree = try WorkspaceSessionFixture.appendWorktree(to: first.id, in: session)
+        let secondWorktree = try WorkspaceSessionFixture.appendWorktree(to: second.id, in: session)
+        let expected: [ContainerID: URL] = [
+            .project(first.id): first.rootURL,
+            .project(second.id): second.rootURL,
+            .worktree(projectID: first.id, worktreeID: firstWorktree.id): firstWorktree.workingDirectory,
+            .worktree(projectID: second.id, worktreeID: secondWorktree.id): secondWorktree.workingDirectory
+        ]
+        let targets = PRStatusSyncer.enumerableTargets(session: session)
+        #expect(targets.count == 4)
+        #expect(Set(targets.map(\.container)) == Set(expected.keys))
+        for target in targets {
+            #expect(expected[target.container] == target.workingDirectory)
+        }
     }
 
     /// Only a worktree in Other Worktrees, one only Git reported and with no

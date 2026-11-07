@@ -21,9 +21,9 @@ struct FuzzyMatchTests {
         #expect(high.score > low.score)
     }
 
-    @Test("empty query matches everything with score 0")
-    func emptyQuery_matchesAll() throws {
-        let result = try #require(FuzzyMatch.score(query: "", candidate: "anything"))
+    @Test("empty query matches everything with score 0", arguments: ["anything", ""])
+    func emptyQuery_matchesAll(candidate: String) throws {
+        let result = try #require(FuzzyMatch.score(query: "", candidate: candidate))
         #expect(result.score == 0)
         #expect(result.matchedIndices.isEmpty)
     }
@@ -31,11 +31,15 @@ struct FuzzyMatchTests {
     @Test("no match returns nil")
     func noMatch_returnsNil() {
         #expect(FuzzyMatch.score(query: "xyz", candidate: "New Tab") == nil)
+        #expect(FuzzyMatch.score(query: "x", candidate: "") == nil)
     }
 
     @Test("case insensitive matching works")
-    func caseInsensitive() {
-        #expect(FuzzyMatch.score(query: "new tab", candidate: "New Tab") != nil)
+    func caseInsensitive() throws {
+        let match = try #require(FuzzyMatch.score(query: "new tab", candidate: "New Tab"))
+        let exactCase = try #require(FuzzyMatch.score(query: "New Tab", candidate: "New Tab"))
+        #expect(match.matchedIndices == Array(0..<7))
+        #expect(exactCase.score > match.score)
     }
 
     @Test("matched indices are the characters matched")
@@ -54,13 +58,15 @@ struct FuzzyMatchTests {
         ("nt", "Tx nxxxxxxxxxxxxxxxxxxxxxxt"),
         ("ab", "axxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxb"),
         ("fix", "feature/x-indexing-for-the-review-and-fix"),
-        ("wr", "Weir")
+        ("wr", "Weir"),
+        ("éz", "👩🏽‍💻 e\u{0301}Z")
     ])
     func aSubsequence_alwaysMatches(query: String, candidate: String) throws {
         let result = try #require(FuzzyMatch.score(query: query, candidate: candidate))
         let characters = Array(candidate.lowercased())
         #expect(result.matchedIndices.count == query.count)
         #expect(result.matchedIndices == result.matchedIndices.sorted())
+        try #require(result.matchedIndices.allSatisfy(characters.indices.contains))
         #expect(String(result.matchedIndices.map { characters[$0] }) == query.lowercased())
     }
 

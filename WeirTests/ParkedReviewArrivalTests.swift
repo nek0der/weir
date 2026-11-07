@@ -55,21 +55,12 @@ struct ParkedReviewArrivalTests {
 
     /// Waits for the task the switch scheduled to settle the arrival
     /// (`WindowRegistry.windowDidSwitchProject`), with no view looking.
-    private static func waitForTheSwitchToSettle(_ window: ProjectWindowState) async {
+    private static func waitForTheSwitchToSettle(_ window: ProjectWindowState) async throws {
+        let landing = ReviewArrival(window.selection)
         await pollUntil {
-            if case .pending = window.parkedReviewArrival {
-                return false
-            }
-            return true
+            window.parkedReviewArrival == .at(landing)
         }
-    }
-
-    /// Returns once every job already queued on the main actor has run, the
-    /// task a switch scheduled to settle its arrival among them: the main
-    /// actor runs its jobs in the order they were queued. For a test that
-    /// shows that task changes nothing, where no state says it has run.
-    private static func afterTheTasksQueuedOnTheMainActor() async {
-        await Task { @MainActor in }.value
+        try #require(window.parkedReviewArrival == .at(landing))
     }
 
     // MARK: - A switch that carries a target
@@ -87,7 +78,7 @@ struct ParkedReviewArrivalTests {
         if viewLooksFirst {
             #expect(ReviewTabActions.rowChange(for: fixture.primary) == .keep)
         }
-        await Self.waitForTheSwitchToSettle(fixture.primary)
+        try await Self.waitForTheSwitchToSettle(fixture.primary)
 
         #expect(fixture.primary.selection.activeContainerID == rows.rowQ)
         #expect(fixture.primary.review?.opening == rows.tab.opening)
@@ -107,7 +98,7 @@ struct ParkedReviewArrivalTests {
         let item = try #require(store.queue.items.first)
 
         store.jump(forward: true, in: fixture.primary)
-        await Self.waitForTheSwitchToSettle(fixture.primary)
+        try await Self.waitForTheSwitchToSettle(fixture.primary)
 
         #expect(fixture.primary.selection.activeTabID == fixture.aTab.id)
         #expect(fixture.primary.review?.opening == rows.tab.opening)
@@ -159,8 +150,9 @@ struct ParkedReviewArrivalTests {
 
         // Settled where the target is, so selected first.
         #expect(shown.selection.activeContainerID == rows.rowQ)
+        #expect(shown.selection.activeTabID == rows.qTab.id)
         #expect(shown.parkedReviewArrival == .at(ReviewArrival(shown.selection)))
-        await Self.waitForTheSwitchToSettle(shown)
+        try await Self.waitForTheSwitchToSettle(shown)
         #expect(shown === fixture.primary)
         #expect(shown.review?.opening == rows.tab.opening)
         #expect(shown.review?.isShown == false)
@@ -211,7 +203,7 @@ struct ParkedReviewArrivalTests {
         fixture.session.recordNavigation(from: left, in: fixture.primary.id)
 
         fixture.session.navigateBack(in: fixture.primary.id, intent: .person)
-        await Self.waitForTheSwitchToSettle(fixture.primary)
+        try await Self.waitForTheSwitchToSettle(fixture.primary)
 
         #expect(fixture.primary.selection.activeTabID == fixture.aTab.id)
         #expect(fixture.primary.review?.opening == tab.opening)
@@ -228,7 +220,7 @@ struct ParkedReviewArrivalTests {
 
         // Project ▾.
         fixture.registry.show(project: fixture.a.id, in: fixture.session, from: fixture.primary, intent: .person)
-        await Self.waitForTheSwitchToSettle(fixture.primary)
+        try await Self.waitForTheSwitchToSettle(fixture.primary)
 
         #expect(fixture.primary.review?.opening == rows.tab.opening)
         #expect(fixture.primary.review?.isShown == wasShown)
@@ -243,7 +235,7 @@ struct ParkedReviewArrivalTests {
         // As `AllProjectsActions.open` opens a card with no item.
         let target = try #require(fixture.registry.show(project: fixture.a.id, in: fixture.session, from: fixture.primary, intent: .person))
         fixture.session.setActiveContainer(rows.rowQ, in: target.id, intent: .person)
-        await Self.waitForTheSwitchToSettle(target)
+        try await Self.waitForTheSwitchToSettle(target)
 
         #expect(target.review?.opening == rows.tab.opening)
         #expect(target.review?.isShown == false)
@@ -263,7 +255,7 @@ struct ParkedReviewArrivalTests {
         #expect(fixture.primary.parkedReviewArrival == nil)
         #expect(fixture.registry.parkedReviews[fixture.a.id]?.tab?.review.opening == rows.tab.opening)
         fixture.registry.show(project: fixture.a.id, in: fixture.session, from: fixture.primary, intent: .person)
-        await Self.waitForTheSwitchToSettle(fixture.primary)
+        try await Self.waitForTheSwitchToSettle(fixture.primary)
 
         #expect(fixture.primary.review?.opening == rows.tab.opening)
         #expect(fixture.primary.review?.isShown == true)
@@ -277,21 +269,26 @@ struct ParkedReviewArrivalTests {
         let other = try fixture.window(showing: fixture.c)
         // `other` takes `a`'s tab, with a comment written in it there.
         fixture.registry.show(project: fixture.a.id, in: fixture.session, from: other, intent: .person)
+        let resolution = try #require(other.parkedReviewArrivalTask)
+        try #require(other.parkedReviewArrival == .pending(left: ReviewArrival(other.selection)))
         #expect(other.review?.opening == rows.tab.opening)
-        other.writeComment()
+        let text = "This comment survives the window closing."
+        other.writeComment(text)
 
         fixture.registry.close(other.id, in: fixture.session)
+        try #require(fixture.registry.window(other.id) == nil)
         // Whatever the task does now, it does to a window let go of.
-        await Self.afterTheTasksQueuedOnTheMainActor()
+        await resolution.value
 
         #expect(other.review == nil)
         #expect(other.parkedReviewArrival == nil)
         #expect(fixture.registry.parkedReviews[fixture.a.id]?.tab?.review.opening == rows.tab.opening)
         // The primary comes back to `a` and takes it, comment and all.
         fixture.registry.show(project: fixture.a.id, in: fixture.session, from: fixture.primary, intent: .person)
-        await Self.waitForTheSwitchToSettle(fixture.primary)
+        try await Self.waitForTheSwitchToSettle(fixture.primary)
         #expect(fixture.primary.review?.opening == rows.tab.opening)
         #expect(fixture.primary.reviewHasUnsavedComment)
+        #expect(fixture.primary.reviewSession?.composer.text == text)
     }
 
     // MARK: - Moves after the arrival
@@ -300,7 +297,9 @@ struct ParkedReviewArrivalTests {
         let fixture = Fixture()
         _ = try Self.reviewInRowR_thenLeave(fixture)
         fixture.registry.show(project: fixture.a.id, in: fixture.session, from: fixture.primary, intent: .person)
+        let resolution = try #require(fixture.primary.parkedReviewArrivalTask)
         let landed = ReviewArrival(fixture.primary.selection)
+        try #require(fixture.primary.parkedReviewArrival == .pending(left: landed))
 
         // A target shown as the switch ends: behind, where it stands.
         ReviewTabActions.putBehind(
@@ -311,11 +310,12 @@ struct ParkedReviewArrivalTests {
         )
         #expect(fixture.primary.parkedReviewArrival == .at(landed))
         #expect(fixture.primary.review?.isShown == false)
-        // The task that comes after finds nothing left to settle.
-        await Self.afterTheTasksQueuedOnTheMainActor()
-        #expect(fixture.primary.parkedReviewArrival == .at(landed))
-
         fixture.choose(fixture.aOther, in: fixture.primary)
+        try #require(fixture.primary.selection.activeTabID == fixture.aOther.id)
+        // The deferred resolution does not replace the arrival with the
+        // tab selected after landing.
+        await resolution.value
+        #expect(fixture.primary.parkedReviewArrival == .at(landed))
         #expect(!fixture.primary.isParkedReviewArrival())
         #expect(fixture.primary.parkedReviewArrival == nil)
     }

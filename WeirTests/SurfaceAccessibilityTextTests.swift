@@ -10,42 +10,54 @@ import Testing
 @MainActor
 struct SurfaceAccessibilityTextTests {
 
-    @Test func aLineWithNoControlCharacter_isTyped() {
-        #expect(AccessibilityTextRoute("echo hello") == .typed("echo hello"))
-        #expect(AccessibilityTextRoute("日本語のプロンプト") == .typed("日本語のプロンプト"))
+    @Test(arguments: [
+        ("echo hello" as String?, AccessibilityTextRoute.typed("echo hello") as AccessibilityTextRoute?),
+        ("日本語のプロンプト", .typed("日本語のプロンプト")),
+        (nil, nil),
+        ("", nil),
+        ("echo a\necho b", .pasted("echo a\necho b")),
+        ("echo a\n", .pasted("echo a\n")),
+        ("\t", .pasted("\t")),
+        ("\u{1B}[A", .pasted("\u{1B}[A")),
+        ("\n", .returnKey),
+        ("\r", .returnKey),
+        ("\r\n", .returnKey),
+        ("a\r\nb\rc", .pasted("a\nb\nc"))
+    ])
+    func accessibilityTextChoosesTheExactInputRoute(text: String?, expected: AccessibilityTextRoute?) throws {
+        let route = AccessibilityTextRoute(text)
+        #expect(route == expected)
+        if text == "\u{1B}[A" {
+            #expect(throws: ReviewError.invalidText) { try ReviewPrompt(validating: "\u{1B}[A") }
+        }
+        if text == "a\r\nb\rc", case let .pasted(payload) = try #require(route) {
+            _ = try ReviewPrompt(validating: payload)
+        }
     }
 
-    @Test func nothingToWrite_hasNoRoute() {
-        #expect(AccessibilityTextRoute(nil) == nil)
-        #expect(AccessibilityTextRoute("") == nil)
-    }
+    /// An escape would reach the program as keys if typed. AX must drop
+    /// the rejected paste, while still accepting a later ordinary write.
+    @Test(.tags(.ffi), .timeLimit(.minutes(1)), .enabled("libghostty is unavailable") { await GhosttyAvailability.isAvailable() })
+    func anEscape_isNotTextAPasteCarries() async throws {
+        let rejected = "\u{1B}[Aax-escape-rejected"
+        #expect(throws: ReviewError.invalidText) { try ReviewPrompt(validating: rejected) }
+        let (window, view) = try await readyCat()
+        defer { window.close() }
+        try #require(view.surface != nil)
+        #expect(!view.hasUnsubmittedInput)
+        let lastInput = view.lastKeyInputAt
 
-    /// Typed, a newline would be a Return, and a shell would run the line
-    /// before anyone saw it; as a paste, it meets bracketed paste or the
-    /// paste confirmation.
-    @Test(arguments: ["echo a\necho b", "echo a\n", "\t", "\u{1B}[A"])
-    func textWithAControlCharacter_isPasted(text: String) {
-        #expect(AccessibilityTextRoute(text) == .pasted(text))
-    }
+        view.setAccessibilitySelectedText(rejected)
 
-    /// A line break alone is how a client presses Return, and it carries no
-    /// text that could run unseen.
-    @Test(arguments: ["\n", "\r", "\r\n"])
-    func aLineBreakAlone_isTheReturnKey(text: String) {
-        #expect(AccessibilityTextRoute(text) == .returnKey)
-    }
-
-    /// A paste refuses a carriage return, so a client's other line endings
-    /// would drop the whole text.
-    @Test func carriageReturns_arePastedAsNewlines() throws {
-        #expect(AccessibilityTextRoute("a\r\nb\rc") == .pasted("a\nb\nc"))
-        _ = try ReviewPrompt(validating: "a\nb\nc")
-    }
-
-    /// An escape a client writes would reach the program as keys. The paste
-    /// refuses it, so it is dropped rather than typed.
-    @Test func anEscape_isNotTextAPasteCarries() {
-        #expect(throws: ReviewError.self) { try ReviewPrompt(validating: "\u{1B}[A") }
+        #expect(!view.hasUnsubmittedInput)
+        #expect(view.lastKeyInputAt == lastInput)
+        #expect(view.takeStagedPaste() == nil)
+        view.setAccessibilitySelectedText("ax-typed-after-refusal")
+        try #require(await screen(of: view, shows: "ax-typed-after-refusal"))
+        let output = try #require(view.activeScreenText())
+        #expect(!output.contains("ax-escape-rejected"))
+        #expect(!output.contains("[200~"))
+        #expect(view.hasUnsubmittedInput)
     }
 
     /// The whole-value setter is refused, so a client that cannot insert
@@ -61,31 +73,33 @@ struct SurfaceAccessibilityTextTests {
 
     // MARK: - Into a terminal
 
-    /// A pane running `cat` behind bracketed paste: `cat`'s terminal echoes
-    /// what it receives, and a paste shows its framing (`^[[200~`) where a
-    /// typed line shows none.
-    private func mountedCat() throws -> (window: NSWindow, view: SurfaceView) {
+    /// Mounts a real Ghostty surface running the fixture command in its own window.
+    private func mountedTerminal(_ command: String) throws -> (window: NSWindow, view: SurfaceView) {
         let ghosttyApp = try #require(GhosttyApp.placeholder.target)
         let view = SurfaceView(ghosttyApp: ghosttyApp) { app, config in
             var config = config
-            return #"/bin/sh -c "printf '\033[?2004hcat-ready\n'; exec cat""#.withCString { command in
+            return command.withCString { command in
                 config.command = command
                 return SurfaceView.newGhosttySurface(app: app, config: config)
             }
         }
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [], backing: .buffered, defer: true)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 300), styleMask: [], backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
         window.contentView = view
         return (window, view)
     }
 
-    /// A pane whose shell has asked for bracketed paste, found by the marker
-    /// the shell prints right after the request. Text typed before then is
-    /// echoed by the terminal as well, so seeing it proves nothing.
+    /// Waits for the shell to enable bracketed paste before handing input to
+    /// `cat`. The terminal echoes each line, then `cat` repeats it once submitted.
     private func readyCat() async throws -> (window: NSWindow, view: SurfaceView) {
-        let mounted = try mountedCat()
-        #expect(await screen(of: mounted.view, shows: "cat-ready"))
-        return mounted
+        let mounted = try mountedTerminal(#"/bin/sh -c "printf '\033[?2004hcat-ready\n'; exec cat""#)
+        do {
+            try #require(await screen(of: mounted.view, shows: "cat-ready"))
+            return mounted
+        } catch {
+            mounted.window.close()
+            throw error
+        }
     }
 
     private func screen(of view: SurfaceView, shows text: String) async -> Bool {
@@ -141,6 +155,7 @@ struct SurfaceAccessibilityTextTests {
             replacementRange: NSRange(location: NSNotFound, length: 0)
         )
 
+        try #require(view.hasMarkedText())
         view.setAccessibilitySelectedText("\n")
 
         #expect(!view.hasMarkedText())
@@ -148,6 +163,7 @@ struct SurfaceAccessibilityTextTests {
             (view.activeScreenText()?.components(separatedBy: "before-composed").count ?? 0) > 2
         }
         #expect(view.activeScreenText()?.components(separatedBy: "before-composed").count == 3)
+        #expect(!view.hasUnsubmittedInput)
     }
 
     /// A line a client writes during a composition follows the composed text
@@ -162,20 +178,55 @@ struct SurfaceAccessibilityTextTests {
             replacementRange: NSRange(location: NSNotFound, length: 0)
         )
 
+        try #require(view.hasMarkedText())
         view.setAccessibilitySelectedText("-then-typed")
 
         #expect(!view.hasMarkedText())
-        #expect(await screen(of: view, shows: "composed-then-typed"))
+        try #require(await screen(of: view, shows: "composed-then-typed"))
+        #expect(view.activeScreenText()?.components(separatedBy: "composed-then-typed").count == 2)
+        #expect(view.hasUnsubmittedInput)
+
+        view.setAccessibilitySelectedText("\r\n")
+
+        await pollUntil(timeout: .seconds(10), interval: .milliseconds(50)) {
+            view.activeScreenText()?.components(separatedBy: "composed-then-typed").count == 3
+        }
+        #expect(view.activeScreenText()?.components(separatedBy: "composed-then-typed").count == 3)
+        #expect(!view.hasUnsubmittedInput)
     }
 
     @Test(.tags(.ffi), .timeLimit(.minutes(1)), .enabled("libghostty is unavailable") { await GhosttyAvailability.isAvailable() })
     func linesAClientWrites_reachTheTerminalAsOnePaste() async throws {
-        let (window, view) = try await readyCat()
+        let text = "first-line\nsecond-line"
+        let expected = "\u{1B}[200~\(text)\u{1B}[201~".utf8.map { String(format: "%02x", $0) }.joined()
+        // Read raw PTY bytes rather than relying on terminal echo to make
+        // both escape sequences visible. The second read detects any byte
+        // inserted between the end of the frame and the typed sentinel.
+        let script = [
+            "/bin/stty raw -echo opost onlcr",
+            #"printf '\033[?2004hax-raw-ready\n'"#,
+            "/bin/dd bs=1 count=\(expected.count / 2) 2>/dev/null | /usr/bin/od -An -v -tx1",
+            #"printf 'ax-frame-seen\n'"#,
+            "/bin/dd bs=1 count=1 2>/dev/null | /usr/bin/od -An -v -tx1",
+            #"printf 'ax-tail-seen\n'"#,
+            "exec /bin/cat"
+        ].joined(separator: "; ")
+        let (window, view) = try mountedTerminal("/bin/sh -c \"\(script)\"")
         defer { window.close() }
-        view.setAccessibilitySelectedText("first-line\nsecond-line")
+        try #require(await screen(of: view, shows: "ax-raw-ready"))
 
-        #expect(await screen(of: view, shows: "second-line"))
-        #expect(view.activeScreenText()?.contains("[200~first-line") == true)
+        view.setAccessibilitySelectedText(text)
+
+        try #require(await screen(of: view, shows: "ax-frame-seen"), "received \(view.activeScreenText() ?? "")")
+        view.setAccessibilitySelectedText("!")
+        try #require(await screen(of: view, shows: "ax-tail-seen"))
+        let output = try #require(view.activeScreenText())
+        let sections = output.components(separatedBy: "ax-frame-seen")
+        try #require(sections.count == 2)
+        let frame = try #require(sections[0].components(separatedBy: "ax-raw-ready").last)
+        let tail = try #require(sections[1].components(separatedBy: "ax-tail-seen").first)
+        #expect(frame.filter { !$0.isWhitespace } == expected)
+        #expect(tail.filter { !$0.isWhitespace } == "21")
         #expect(view.takeStagedPaste() == nil)
     }
 }

@@ -30,6 +30,19 @@ struct ReviewStackLoaderTests {
         )
     }
 
+    private static func requireCompletion(
+        of task: Task<Void, Never>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async throws {
+        let completed = Recorded(false)
+        Task {
+            await task.value
+            completed.value = true
+        }
+        await pollUntil(timeout: .seconds(10), interval: .milliseconds(5)) { completed.value }
+        try #require(completed.value, "the task finished", sourceLocation: sourceLocation)
+    }
+
     // MARK: - Released
 
     @Test func aReleasedStack_readsNothingUntilItIsDrawnAgain() async throws {
@@ -39,6 +52,7 @@ struct ReviewStackLoaderTests {
         let window = Set(files.map(\.id))
         loader.request(Self.requests(files), window: window)
         await pollUntilStackRead { loader.entries.count == files.count }
+        try #require(Set(loader.entries.keys) == window)
         let ticket = loader.beginSearch()
 
         loader.release(listed: files)
@@ -49,11 +63,11 @@ struct ReviewStackLoaderTests {
         let reads = repository.diffReads
         // What was worked out before, arriving after: a scroll, and Find's
         // estimate, old ticket and new.
-        loader.request(Self.requests(files), window: window)
+        loader.request(Self.requests(files), window: [files[0].id])
         loader.requestAll(Self.requests(files), estimates: [:], ticket: ticket)
         loader.requestAll(Self.requests(files), estimates: [:], ticket: loader.beginSearch())
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(repository.diffReads == reads)
+        #expect(loader.window == window)
+        #expect(loader.searchCoverage == .none)
         #expect(loader.entries.isEmpty)
 
         // A read of the list that ends after the release lets nothing in.
@@ -64,7 +78,9 @@ struct ReviewStackLoaderTests {
         loader.request(Self.requests(files), window: window)
         await pollUntilStackRead { loader.entries.count == files.count }
         #expect(!loader.isReleased)
-        #expect(loader.entries.count == files.count)
+        #expect(Set(loader.entries.keys) == window)
+        #expect(repository.diffReads == reads + files.count)
+        #expect(repository.diffReadIDs.dropFirst(reads).sorted() == files.map(\.id).sorted())
     }
 
     @Test func aSessionKeptOffScreen_letsGoOfItsStack() async throws {
@@ -73,6 +89,7 @@ struct ReviewStackLoaderTests {
         let session = session(repository)
         session.stackLoader.request(Self.requests(files), window: Set(files.map(\.id)))
         await pollUntilStackRead { session.stackLoader.entries.count == files.count }
+        try #require(Set(session.stackLoader.entries.keys) == Set(files.map(\.id)))
 
         session.releaseStack()
 
@@ -84,16 +101,22 @@ struct ReviewStackLoaderTests {
 
     @Test func reads_runFourAtATime_fromOneQueue() async throws {
         let files = Self.files(12)
-        let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files), delay: .milliseconds(20))
+        let gate = Gate<Void>()
+        defer { gate.open() }
+        let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files), readGate: gate)
         let loader = ReviewStackLoader(git: repository, root: root)
         let window = Set(files.map(\.id))
 
         // Asked twice, as a scroll asks on every event.
         loader.request(Self.requests(Array(files.prefix(6))), window: window)
         loader.request(Self.requests(files), window: window)
+        await pollUntil { gate.requests >= 4 }
+        try #require(gate.requests == 4)
+        gate.open()
         await pollUntilStackRead { loader.entries.count == files.count }
 
-        #expect(loader.entries.count == files.count)
+        #expect(Set(loader.entries.keys) == window)
+        #expect(repository.diffReadIDs.sorted() == files.map(\.id).sorted())
         #expect(repository.peak <= 4, "never more Git processes than the cap")
         #expect(repository.peak > 1, "and more than one")
         #expect(repository.diffReads == files.count, "each file read once")
@@ -101,42 +124,63 @@ struct ReviewStackLoaderTests {
 
     @Test func reads_forAPreviousList_areDropped() async throws {
         let files = Self.files(3)
-        let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files), delay: .milliseconds(40))
+        let gate = Gate<Void>()
+        defer { gate.open() }
+        let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files), readGate: gate)
         let loader = ReviewStackLoader(git: repository, root: root)
-        loader.request(Self.requests(files), window: Set(files.map(\.id)))
-        // The reads are under way when the range changes.
-        await pollUntilStackRead { repository.diffReads > 0 }
+        loader.concurrency = 1
+        loader.request(Self.requests(Array(files.prefix(2))), window: Set(files.map(\.id)))
+        try await gate.waitUntilRequested()
+        try #require(repository.diffReadIDs == [files[0].id])
 
-        loader.retire(.anotherScope, listed: files)
-        try await Task.sleep(for: .milliseconds(200))
+        let retired = try #require(loader.retire(.anotherScope, listed: files))
+        let retiredRevision = loader.revision
+        gate.open()
+        try await Self.requireCompletion(of: retired)
 
         #expect(loader.entries.isEmpty, "another range's diffs never land in this one")
+        #expect(!loader.isWaitingToPublish(files[0].id))
+        #expect(loader.revision == retiredRevision)
+        #expect(repository.diffReadIDs == [files[0].id])
+        let current = files[2]
+        loader.request(Self.requests([current]), window: [current.id])
+        await pollUntilStackRead { loader.entries[current.id]?.diff != nil }
+        try #require(loader.entries[current.id]?.diff != nil)
+        #expect(Set(loader.entries.keys) == [current.id])
+        #expect(repository.diffReadIDs == [files[0].id, current.id])
     }
 
     @Test func aFileThatLeftTheWindow_isNotStarted() async throws {
-        let files = Self.files(8)
-        let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files), delay: .milliseconds(30))
+        let files = Self.files(3)
+        let gate = Gate<Void>()
+        defer { gate.open() }
+        let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files), readGate: gate)
         let loader = ReviewStackLoader(git: repository, root: root)
         loader.concurrency = 1
         loader.request(Self.requests(files), window: Set(files.map(\.id)))
+        try await gate.waitUntilRequested()
+        try #require(repository.diffReadIDs == [files[0].id])
 
-        // The reader moved on before the queue reached the rest.
-        loader.request([], window: [files[0].id])
-        try await Task.sleep(for: .milliseconds(200))
+        // Reaching the last queued file establishes that the excluded files
+        // ahead of it have been considered, without a wall-clock delay.
+        loader.request([], window: [files[2].id])
+        gate.open()
+        await pollUntilStackRead { loader.entries[files[2].id] != nil }
 
-        #expect(repository.diffReads <= 2, "only the read already under way, and the one still in the window")
+        #expect(loader.entries[files[2].id] != nil)
+        #expect(repository.diffReadIDs == [files[0].id, files[2].id])
     }
 
     @Test func theFirstResult_isPublishedAtOnce() async throws {
         let files = Self.files(1)
         let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files))
         let loader = ReviewStackLoader(git: repository, root: root)
-        loader.publishInterval = .seconds(30)
+        loader.publishInterval = .seconds(60)
 
         loader.request(Self.requests(files), window: [files[0].id])
-        await pollUntilStackRead { !loader.entries.isEmpty }
+        await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) { loader.entries[files[0].id] != nil }
 
-        #expect(loader.entries.count == 1, "not held for the interval")
+        #expect(loader.entries[files[0].id]?.diff?.fingerprint == files[0].path, "not held for the interval")
     }
 
     // MARK: - The budget
@@ -146,7 +190,7 @@ struct ReviewStackLoaderTests {
         let diffs = try Self.diffs(files, lines: 2)
         let loader = ReviewStackLoader(git: StackReviewRepository(files: files, diffs: diffs), root: root)
         loader.retire(.anotherScope, listed: files)
-        loader.lineBudget = 12
+        loader.lineBudget = 20
         // f2 and f3 on screen.
         loader.request([], window: [files[2].id, files[3].id])
 
@@ -158,6 +202,10 @@ struct ReviewStackLoaderTests {
         #expect(loader.entries[files[2].id] != nil && loader.entries[files[3].id] != nil, "the screen stays")
         #expect(loader.entries[files[4].id] != nil, "and the file just read")
         #expect(loader.entries[files[0].id] == nil, "the farthest goes first")
+        #expect(loader.entries[files[1].id] != nil, "only one eviction was needed")
+
+        loader.lineBudget = 12
+        loader.remember(diffs[4], state: nil, serial: loader.beginRead(), scope: .uncommitted)
         #expect(loader.entries[files[1].id] == nil)
 
         // Over the budget with the screen alone, nothing on it goes.
@@ -167,27 +215,31 @@ struct ReviewStackLoaderTests {
         #expect(Set(loader.entries.keys) == Set(files.suffix(3).map(\.id)))
     }
 
-    @Test func find_readsTheWholeRange_orSaysItSearchesWhatIsRead() throws {
+    @Test func find_readsTheWholeRange_orSaysItSearchesWhatIsRead() async throws {
         let files = Self.files(4)
-        let loader = try ReviewStackLoader(git: StackReviewRepository(files: files, diffs: Self.diffs(files)), root: root)
-        loader.lineBudget = 100
+        let diffs = try Self.diffs(files)
+        let scenarios: [(estimates: [Int], expectedIndices: [Int])] = [
+            ([25, 25, 25, 25], [0, 1, 2, 3]),
+            ([60, 50, 40, 1], [0, 2])
+        ]
+        for scenario in scenarios {
+            let repository = StackReviewRepository(files: files, diffs: diffs)
+            let loader = ReviewStackLoader(git: repository, root: root)
+            loader.lineBudget = 100
+            loader.requestAll(
+                Self.requests(files),
+                estimates: Dictionary(uniqueKeysWithValues: zip(files.map(\.id), scenario.estimates)),
+                ticket: loader.beginSearch()
+            )
+            #expect(loader.searchCoverage == (scenario.expectedIndices.count == files.count ? .everyFile : .loadedFilesOnly))
+            let expected = Set(scenario.expectedIndices.map { files[$0].id })
+            await pollUntilStackRead { expected.isSubset(of: loader.entries.keys) }
+            #expect(Set(loader.entries.keys) == expected)
+            #expect(repository.diffReadIDs.sorted() == expected.sorted())
 
-        loader.requestAll(
-            Self.requests(files),
-            estimates: Dictionary(uniqueKeysWithValues: files.map { ($0.id, 20) }),
-            ticket: loader.beginSearch()
-        )
-        #expect(loader.searchCoverage == .everyFile)
-
-        loader.requestAll(
-            Self.requests(files),
-            estimates: Dictionary(uniqueKeysWithValues: files.map { ($0.id, 40) }),
-            ticket: loader.beginSearch()
-        )
-        #expect(loader.searchCoverage == .loadedFilesOnly)
-
-        loader.endSearch()
-        #expect(loader.searchCoverage == .none)
+            loader.endSearch()
+            #expect(loader.searchCoverage == .none)
+        }
     }
 
     @Test func otherFilesHighlights_areFoundByTheirBand() {
@@ -208,7 +260,13 @@ struct ReviewStackLoaderTests {
 
         _ = await tab.reload(scope: .uncommitted, selectedFileID: nil)
 
-        #expect(tab.stackLoader.entries.count == 1)
+        let opened = try #require(tab.diff)
+        #expect(opened.file.id == files[0].id)
+        #expect(Set(tab.stackLoader.entries.keys) == [files[0].id])
+        let cached = try #require(tab.stackLoader.entries[files[0].id]?.diff)
+        #expect(cached.file == opened.file)
+        #expect(cached.fingerprint == opened.fingerprint)
+        #expect(cached.lines == opened.lines)
     }
 
     @Test func aReadFile_opensWithoutGit_inEveryComparison() async throws {
@@ -248,8 +306,11 @@ struct ReviewStackLoaderTests {
 
         #expect(session.stackLoader.stale.contains(files[1].id))
         #expect(session.openFromStack(files[1]) == nil, "drawn only until it is read again: `load` reads it")
+        let current = try ReviewDiffFixture.rewritten(files[1], lines: 2, fingerprint: "after refresh")
+        repository.replace(current)
         await session.load(files[1])
         #expect(session.diff?.file == files[1])
+        #expect(session.diff?.fingerprint == "after refresh")
     }
 
     @Test func aRangeOfTurns_keepsWhatItReadAcrossARefresh() async throws {
@@ -261,9 +322,16 @@ struct ReviewStackLoaderTests {
         session.loadStacked(window: files.map(\.id))
         await pollUntilStackRead { !session.stackLoader.needsDiff(files[1].id) }
 
+        let cached = try #require(session.stackLoader.entries[files[1].id]?.diff)
+        let reads = repository.diffReadIDs.filter { $0 == files[1].id }
         _ = await session.reload(scope: .turns(range), selectedFileID: files[0].id)
 
         #expect(!session.stackLoader.needsDiff(files[1].id), "two trees cannot change: nothing to read again")
+        let retained = try #require(session.stackLoader.entries[files[1].id]?.diff)
+        #expect(retained.file == cached.file)
+        #expect(retained.fingerprint == cached.fingerprint)
+        #expect(retained.lines == cached.lines)
+        #expect(repository.diffReadIDs.filter { $0 == files[1].id } == reads)
     }
 
     @Test func aReadFileThatChanged_raisesTheRefreshBanner() async throws {
@@ -293,12 +361,17 @@ struct ReviewStackLoaderTests {
 
         try repository.replace(ReviewDiffFixture.rewritten(files[1], lines: 2, fingerprint: "edited"))
         _ = await session.reload(scope: .uncommitted, selectedFileID: files[0].id)
+        let peerLine = try #require(session.diff?.lines.first { $0.kind == .added })
+        #expect(session.add(line: peerLine, body: "Unchanged peer"))
+        let peer = try #require(session.comments.first { $0.body == "Unchanged peer" })
+        #expect(peer.id != comment.id)
         session.loadStacked(window: files.map(\.id))
         await pollUntilStackRead {
             session.stackLoader.entries[files[1].id]?.diff?.fingerprint == "edited"
         }
 
-        #expect(session.staleCommentIDs.contains(comment.id), "written on code that has changed since")
+        try #require(session.stackLoader.entries[files[1].id]?.diff?.fingerprint == "edited")
+        #expect(session.staleCommentIDs == [comment.id], "written on code that has changed since")
     }
 
     // MARK: - The change check
@@ -310,13 +383,22 @@ struct ReviewStackLoaderTests {
         _ = await session.reload(scope: .uncommitted, selectedFileID: files[0].id)
         session.loadStacked(window: files.map(\.id))
         await pollUntilStackRead { files.allSatisfy { !session.stackLoader.needsDiff($0.id) } }
+        try #require(Set(session.stackLoader.entries.keys) == Set(files.map(\.id)))
         let indexReads = repository.indexStateReads
         let fingerprints = repository.fingerprintCalls
 
         await session.detectChanges()
 
         #expect(repository.indexStateReads == indexReads + 1, "one read for nine files")
+        #expect(repository.lastIndexReadPaths == Set(files.dropFirst().map(\.path)))
         #expect(repository.fingerprintCalls == fingerprints, "and none file by file")
+        #expect(!session.hasPendingChanges)
+
+        let last = try #require(files.last)
+        repository.change(last.id, fingerprint: "edited")
+        await session.detectChanges()
+        #expect(session.hasPendingChanges)
+        #expect(repository.fingerprintCalls == fingerprints)
     }
 
     @Test func aStagedAndAnUnstagedDiffOfOnePath_areWatchedApart() async throws {
@@ -340,6 +422,13 @@ struct ReviewStackLoaderTests {
         repository.stage("a.swift")
         await session.detectChanges()
         #expect(session.hasPendingChanges, "staging changes both diffs of the path")
+
+        let loader = session.stackLoader
+        let refreshed = try #require(loader.entries[staged.id]?.diff)
+        let state = try #require(await loader.takeState(of: staged, scope: .uncommitted))
+        loader.remember(refreshed, state: state, serial: loader.beginRead(), scope: .uncommitted)
+        #expect(await !loader.hasChangedFiles(excluding: unstaged.id, scope: .uncommitted))
+        #expect(await loader.hasChangedFiles(excluding: staged.id, scope: .uncommitted))
     }
 
     @Test func aHeadThatMovedByItself_raisesTheBanner() async throws {
@@ -366,6 +455,7 @@ struct ReviewStackLoaderTests {
         loader.request(Self.requests(files), window: [files[0].id])
         // The read ends held, not published: wait for that, not for a time.
         await pollUntilStackRead { loader.isWaitingToPublish(files[0].id) }
+        try #require(loader.isWaitingToPublish(files[0].id))
         repository.onRead(nil)
         loader.hold(false)
 
@@ -409,6 +499,7 @@ struct ReviewStackLoaderTests {
         loader.hold(true)
         loader.request(Self.requests(files), window: [files[0].id])
         await pollUntilStackRead { loader.isWaitingToPublish(files[0].id) }
+        try #require(loader.isWaitingToPublish(files[0].id))
         // The file is opened, and its own load is kept before the stack's
         // is published.
         let newer = try ReviewDiffFixture.rewritten(files[0], lines: 2, fingerprint: "newer")
@@ -448,30 +539,64 @@ struct ReviewStackLoaderTests {
         let files = Self.files(3)
         let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files))
         let loader = ReviewStackLoader(git: repository, root: root)
+        loader.concurrency = 1
         let ticket = loader.beginSearch()
         loader.endSearch()
 
-        // The estimate comes back after Esc.
-        loader.requestAll(Self.requests(files), estimates: [:], ticket: ticket)
-        try await Task.sleep(for: .milliseconds(50))
+        // The estimate comes back after Esc. A subsequent on-screen read
+        // gives the single queue a result past any stale request.
+        loader.requestAll(Self.requests(Array(files.prefix(2))), estimates: [:], ticket: ticket)
+        let visible = files[2]
+        loader.request(Self.requests([visible]), window: Set(files.map(\.id)))
+        await pollUntilStackRead { loader.entries[visible.id]?.diff != nil }
+        try #require(loader.entries[visible.id]?.diff != nil)
 
         #expect(loader.searchCoverage == .none)
-        #expect(repository.diffReads == 0)
+        #expect(repository.diffReadIDs == [visible.id])
+
+        let earlier = Array(files.prefix(2))
+        loader.requestAll(
+            Self.requests(earlier),
+            estimates: Dictionary(uniqueKeysWithValues: earlier.map { ($0.id, 1) }),
+            ticket: loader.beginSearch()
+        )
+        await pollUntilStackRead { Set(loader.entries.keys) == Set(files.map(\.id)) }
+        #expect(Set(loader.entries.keys) == Set(files.map(\.id)))
+        #expect(loader.searchCoverage == .everyFile)
+        #expect(repository.diffReadIDs == [visible.id] + earlier.map(\.id))
     }
 
     @Test func aFindOpenedAndClosedAtOnce_inTheSession_readsNothing() async throws {
-        let files = Self.files(4)
+        let files = Self.files(3)
         let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files))
         let session = session(repository)
-        _ = await session.reload(scope: .uncommitted, selectedFileID: files[0].id)
-        let reads = repository.diffReads
+        let opened = files[0]
+        let searched = files[1]
+        let visible = files[2]
+        _ = await session.reload(scope: .uncommitted, selectedFileID: opened.id)
+        try #require(session.diff?.file.id == opened.id)
+        try #require(repository.diffReadIDs == [opened.id])
+        let loader = session.stackLoader
+        loader.concurrency = 1
 
-        session.loadStackForSearch(files)
-        session.stackLoader.endSearch()
-        try await Task.sleep(for: .milliseconds(100))
+        // Close Find on the same main-actor turn, before its estimate starts.
+        let closing = session.loadStackForSearch([searched])
+        loader.endSearch()
+        try await Self.requireCompletion(of: closing)
+        #expect(loader.searchCoverage == .none)
 
-        #expect(session.stackLoader.searchCoverage == .none)
-        #expect(repository.diffReads == reads, "the estimate that came back late was dropped")
+        // Let the same queue read a visible file after the estimate has returned.
+        session.loadStacked(window: [visible.id])
+        await pollUntilStackRead { loader.entries[visible.id]?.diff != nil }
+        try #require(loader.entries[visible.id]?.diff != nil)
+        #expect(loader.entries[searched.id] == nil)
+        #expect(repository.diffReadIDs == [opened.id, visible.id])
+
+        try await Self.requireCompletion(of: session.loadStackForSearch([searched]))
+        #expect(loader.searchCoverage == .everyFile)
+        await pollUntilStackRead { loader.entries[searched.id]?.diff != nil }
+        #expect(loader.entries[searched.id]?.diff?.file.id == searched.id)
+        #expect(repository.diffReadIDs == [opened.id, visible.id, searched.id])
     }
 
     // MARK: - The fingerprint fallback
@@ -484,18 +609,19 @@ struct ReviewStackLoaderTests {
         _ = await session.reload(scope: .uncommitted, selectedFileID: files[0].id)
         session.loadStacked(window: files.map(\.id))
         await pollUntilStackRead { files.allSatisfy { !session.stackLoader.needsDiff($0.id) } }
+        try #require(Set(session.stackLoader.entries.keys) == Set(files.map(\.id)))
         // The last of the forty in the order the check walks them.
         let last = try #require(files.dropFirst().map(\.id).max())
         repository.change(last, fingerprint: "edited")
 
-        var calls = repository.fingerprintCalls
+        let baselineReads = repository.fingerprintReadIDs.count
+        let expected = files.dropFirst().map(\.id).sorted()
         await session.detectChanges()
-        #expect(repository.fingerprintCalls - calls == ReviewStackLoader.fingerprintRound)
+        #expect(Array(repository.fingerprintReadIDs.dropFirst(baselineReads)) == Array(expected.prefix(ReviewStackLoader.fingerprintRound)))
         #expect(!session.hasPendingChanges, "not in the first round")
 
-        calls = repository.fingerprintCalls
         await session.detectChanges()
-        #expect(repository.fingerprintCalls - calls == 40 - ReviewStackLoader.fingerprintRound, "the rest")
+        #expect(Array(repository.fingerprintReadIDs.dropFirst(baselineReads)) == expected)
         #expect(session.hasPendingChanges)
     }
 
@@ -516,25 +642,35 @@ struct ReviewStackLoaderTests {
         #expect(session.hasPendingChanges, "its diff says so")
     }
 
+}
+
+extension ReviewStackLoaderTests {
+
     // MARK: - Holding and in flight
 
     @Test func aReadWaitingToBePublished_isNotAskedForAgain() async throws {
-        let files = Self.files(2)
+        let files = Self.files(3)
         let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files))
         let loader = ReviewStackLoader(git: repository, root: root)
-        loader.publishInterval = .seconds(30)
+        loader.concurrency = 1
+        loader.publishInterval = .seconds(60)
         let window = Set(files.map(\.id))
+        let firstTwo = Self.requests(Array(files.prefix(2)))
 
-        loader.request(Self.requests(files), window: window)
-        // One published at once, the other waiting out the interval.
-        await pollUntilStackRead { repository.diffReads == 2 && loader.entries.count == 1 }
-        loader.request(Self.requests(files), window: window)
-        try await Task.sleep(for: .milliseconds(50))
+        loader.request(firstTwo, window: window)
+        await pollUntilStackRead { loader.isWaitingToPublish(files[1].id) }
+        try #require(loader.entries[files[0].id]?.diff != nil && loader.isWaitingToPublish(files[1].id))
 
-        #expect(repository.diffReads == 2)
+        loader.request(firstTwo, window: window)
+        loader.request(Self.requests([files[2]]), window: window)
+        // Once the later queued file finishes, the single reader must
+        // already have considered any duplicate queued before it.
+        await pollUntilStackRead { loader.isWaitingToPublish(files[2].id) }
+        try #require(loader.isWaitingToPublish(files[2].id))
+        #expect(repository.diffReadIDs == files.map(\.id))
     }
 
-    @Test func nothingIsPublished_whileACommentIsBeingWritten() async throws {
+    @Test func aPublishingHold_keepsCompletedDiffsOffScreen() async throws {
         let files = Self.files(1)
         let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files))
         let loader = ReviewStackLoader(git: repository, root: root)
@@ -543,28 +679,35 @@ struct ReviewStackLoaderTests {
 
         loader.request(Self.requests(files), window: [files[0].id])
         await pollUntilStackRead { loader.isWaitingToPublish(files[0].id) }
-        #expect(loader.isWaitingToPublish(files[0].id), "the read ended")
+        try #require(loader.isWaitingToPublish(files[0].id))
+        #expect(loader.entries.isEmpty)
         #expect(loader.revision == revision, "the rows under the composer stay as they are")
 
         loader.hold(false)
-        #expect(loader.entries.count == 1)
+        #expect(loader.entries[files[0].id]?.diff?.fingerprint == files[0].path)
+        #expect(!loader.isWaitingToPublish(files[0].id))
     }
 
     @Test func find_keepsItsCoverageAcrossARefresh_andAsksForTheNewList() async throws {
-        let files = Self.files(3)
+        let files = Self.files(4)
+        let initial = Array(files.prefix(3))
+        let updated = Array(files.suffix(3))
         let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files))
         let loader = ReviewStackLoader(git: repository, root: root)
-        loader.retire(.anotherScope, listed: files)
-        loader.requestAll(Self.requests(files), estimates: [:], ticket: loader.beginSearch())
-        await pollUntilStackRead { loader.entries.count == 3 }
+        loader.retire(.anotherScope, listed: initial)
+        loader.requestAll(Self.requests(initial), estimates: [:], ticket: loader.beginSearch())
+        await pollUntilStackRead { loader.entries.count == initial.count }
+        try #require(Set(loader.entries.keys) == Set(initial.map(\.id)))
+        let readsBefore = repository.diffReadIDs.count
 
-        loader.retire(.sameScope, listed: files)
-        #expect(loader.searchCoverage == .everyFile, "the note does not come and go")
+        loader.retire(.sameScope, listed: updated)
+        #expect(loader.searchCoverage == .everyFile, "a same-scope refresh preserves the active search coverage")
         // As the review asks when the list is read again with Find open.
-        loader.requestAll(Self.requests(files), estimates: [:], ticket: loader.beginSearch())
-        await pollUntilStackRead { files.allSatisfy { !loader.needsDiff($0.id) } }
+        loader.requestAll(Self.requests(updated), estimates: [:], ticket: loader.beginSearch())
+        await pollUntilStackRead { updated.allSatisfy { !loader.needsDiff($0.id) } }
 
-        #expect(files.allSatisfy { !loader.needsDiff($0.id) })
+        #expect(Set(loader.entries.keys) == Set(updated.map(\.id)))
+        #expect(repository.diffReadIDs.dropFirst(readsBefore).sorted() == updated.map(\.id).sorted())
     }
 
     @Test func theGutter_keepsTheWidestTheRangeNeeded() async throws {
@@ -641,15 +784,17 @@ struct ReviewStackLoaderTests {
         _ = await session.reload(scope: .uncommitted, selectedFileID: otherID)
         session.loadStacked(window: [manualID, otherID])
         await pollUntilStackRead {
-            session.stackLoader.entries[manualID]?.diff?.fingerprint != marked && !session.stackLoader.needsDiff(manualID)
+            session.stackLoader.entries[manualID]?.diff != nil && !session.stackLoader.needsDiff(manualID)
         }
 
+        let changed = try #require(session.stackLoader.entries[manualID]?.diff)
+        #expect(changed.fingerprint != marked)
         #expect(session.viewed[manualID] == nil, "new content to read")
     }
 
     // MARK: - The viewed line
 
-    @Test func checkingEveryFile_makesTheButtonPrimary_andMovesNoLine() async throws {
+    @Test func fileMarks_makeTheBandPrimary_beforeTheSeparateLineAdvance() async throws {
         let files = Self.files(3)
         let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files))
         let session = session(repository)
@@ -671,17 +816,19 @@ struct ReviewStackLoaderTests {
         let context = ReviewTabModel.Context(turns: turns, isViewed: lines.isViewed, branchBase: "main")
         let tab = try ReviewTabModel.open(.unviewedTurns, context, root: "/repo", agentPaneID: UUID(), current: nil).get()
 
+        try #require(Set(session.files.map(\.id)) == Set(files.map(\.id)))
         for file in session.files {
             session.setViewed(file.id, true)
         }
 
+        #expect(Set(session.viewed.keys) == Set(files.map(\.id)))
         let status = ReviewTabModel.bandStatus(tab.selection, fileIDs: session.files.map(\.id), viewed: Set(session.viewed.keys))
         #expect(status == .allFilesViewed, "the band's button turns primary")
         #expect(lines.line(of: conversation) == line, "the line is where it was")
         #expect(!lines.isViewed(turns[1]))
         #expect(ReviewTabModel.markViewed(tab, context) == .throughTurn(ReviewTabTurn(id: TurnID("T7"), number: 7)))
 
-        // The band's button is what moves it.
+        // Advance the separate viewed line through the proposed turn.
         lines.markViewed(through: turns[2], source: .decisionBar)
         #expect(ReviewTabModel.markViewed(tab, context) == nil)
     }

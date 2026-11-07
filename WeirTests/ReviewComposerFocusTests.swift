@@ -71,10 +71,12 @@ struct ReviewComposerFocusTests {
     @Test func fileRailOverlayConsumesTableCommandsAndOwnsEscape() {
         var composeCount = 0
         var closeOverlayCount = 0
+        var closeReviewCount = 0
         let parent = makeTable(
             isOverlayPresented: true,
             onCompose: { composeCount += 1 },
-            onCloseOverlay: { closeOverlayCount += 1 }
+            onCloseOverlay: { closeOverlayCount += 1 },
+            onClose: { closeReviewCount += 1 }
         )
         let coordinator = parent.makeCoordinator()
 
@@ -82,6 +84,7 @@ struct ReviewComposerFocusTests {
         #expect(composeCount == 0)
         #expect(coordinator.handle(.close))
         #expect(closeOverlayCount == 1)
+        #expect(closeReviewCount == 0)
     }
 
     @Test func loadingSnapshotConsumesMutationKeysButStillAllowsClosing() {

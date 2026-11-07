@@ -121,25 +121,20 @@ struct ReviewTabTextTests {
             .fileTag(ReviewFileTag(provider: .codex, ordinal: nil, turns: [1]), locale: Self.en) == "Changed during Codex’s T1")
     }
 
-    /// A tag names its conversation by title, as the changes panel does,
-    /// with the number only where another conversation has the title too.
-    @Test func fileTag_titledConversation_namesItByTitle() {
-        let titled = ReviewFileTag(provider: .claude, title: "Review the fork", ordinal: nil, turns: [2])
-        #expect(ReviewTabText.fileTag(titled, locale: Self.en) == "Changed during Review the fork’s T2")
-        let shared = ReviewFileTag(provider: .claude, title: "Fix tests", ordinal: 2, turns: [3])
-        #expect(ReviewTabText.fileTag(shared, locale: Self.en) == "Changed during Fix tests #2’s T3")
-        #expect(ReviewTabText.unreadableNote([shared], locale: Self.en)
-            == "Couldn’t read the files changed during Fix tests #2’s T3, so a tag may be missing")
-    }
-
     /// A tag whose title alone names it shows no number, its identity bar
     /// telling it apart; one whose title another has too keeps its number.
     /// VoiceOver hears the kind before the title, which the badge shows and
     /// the tooltip leaves to it.
-    @Test func fileTag_titledConversation_showsNoNumber_andIsSpokenWithItsKind() {
+    @Test func titledFileTags_disambiguateSharedTitles_andSpeakTheProvider() {
         let titled = ReviewFileTag(provider: .claude, title: "Review the fork", ordinal: nil, turns: [2], identity: 1)
         #expect(ReviewTabText.fileTagNumber(titled) == nil)
-        #expect(ReviewTabText.fileTagNumber(ReviewFileTag(provider: .claude, title: "Fix tests", ordinal: 2, turns: [3])) == "#2")
+        let shared = ReviewFileTag(provider: .claude, title: "Fix tests", ordinal: 2, turns: [3])
+        #expect(ReviewTabText.fileTagNumber(shared) == "#2")
+        let titleOnly = ReviewFileTag(provider: .claude, title: "Review the fork", ordinal: nil, turns: [2])
+        #expect(ReviewTabText.fileTag(titleOnly, locale: Self.en) == "Changed during Review the fork’s T2")
+        #expect(ReviewTabText.fileTag(shared, locale: Self.en) == "Changed during Fix tests #2’s T3")
+        #expect(ReviewTabText.unreadableNote([shared], locale: Self.en)
+            == "Couldn’t read the files changed during Fix tests #2’s T3, so a tag may be missing")
         #expect(ReviewTabText.fileTagsHelp([titled], unreadable: [], locale: Self.en) == "Changed during Review the fork’s T2")
         #expect(ReviewTabText.fileTagsSpoken([titled], unreadable: [], locale: Self.en) == "Changed during Claude, Review the fork’s T2")
         #expect(ReviewTabText.fileTagsSpoken([titled], unreadable: [], locale: Self.ja)

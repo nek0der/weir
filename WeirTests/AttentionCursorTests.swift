@@ -71,6 +71,12 @@ struct AttentionCursorTests {
 
     @Test func anEmptyList_goesNowhere() {
         #expect(Self.walk(AttentionQueue(), count: 1).landed == [nil])
+
+        let initial = Self.walk(Self.queue([("a", Self.here)]), count: 1)
+        #expect(initial.state.current == Self.id("a"))
+        let empty = Self.walk(AttentionQueue(), from: (initial.state, initial.project), count: 1)
+        #expect(empty.landed == [nil])
+        #expect(empty.state == AttentionCursorState(windowGroup: .project(Self.here)))
     }
 
     @Test func thisProject_comesFirst_inArrivalOrder() {
@@ -86,7 +92,11 @@ struct AttentionCursorTests {
     @Test func aRequestWithNoPane_isAStopOnTheWay_notADeadEnd() {
         // Its card opens and the window stays; the walk still moves on.
         let queue = Self.queue([("a", Self.here), ("u1", nil), ("x", Self.there)])
-        #expect(Self.walk(queue, count: 4).landed == Self.ids("a", "u1", "x", "a"))
+        let atCard = Self.walk(queue, count: 2)
+        #expect(atCard.landed == Self.ids("a", "u1"))
+        #expect(atCard.project == Self.here)
+        #expect(atCard.state.group == .noProject)
+        #expect(Self.walk(queue, from: (atCard.state, atCard.project), count: 2).landed == Self.ids("x", "a"))
     }
 
     @Test func withNoOtherProject_theRoundStartsOver() {
@@ -127,7 +137,7 @@ struct AttentionCursorTests {
     }
 
     @Test func anItemLeavingAsItIsRead_doesNotRestartTheRound() {
-        // An unread turn leaves the list once its pane is seen.
+        // A stop can leave the list while the cursor still points to it.
         let full = Self.queue([("s", Self.here), ("t", Self.here), ("x", Self.there)])
         let walked = Self.walk(full, count: 2)
         var read = full

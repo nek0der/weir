@@ -137,9 +137,10 @@ struct SettingsRowMetricsTests {
     /// Each kind of row steps as far as a native pop-up row does, within
     /// the half point the form rounds a row by; a row half a point off
     /// makes a pane's rows uneven.
-    @Test(arguments: RowKind.allCases)
+    @Test(arguments: RowKind.allCases.filter { $0 != .popUp })
     func everyRowKind_stepsLikeAPopUpRow(kind: RowKind) {
         let popUp = Self.pitch(of: .popUp)
+        #expect(popUp > 0)
         let row = Self.pitch(of: kind)
         #expect(abs(row - popUp) <= 0.5, "\(kind) rows step \(row), pop-up rows \(popUp)")
     }

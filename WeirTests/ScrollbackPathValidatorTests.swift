@@ -90,23 +90,48 @@ struct ScrollbackPathValidatorTests {
         }
     }
 
-    /// A `.vt` symlink that lives lexically inside the sandbox but
-    /// resolves to a target outside it is the strongest realistic
-    /// attack against the validator — `URL.standardizedFileURL`
-    /// strips `..` but does NOT walk symlinks. The validator pairs
-    /// `resolvingSymlinksInPath()` with the prefix check; without
-    /// that step a planted `<sandbox>/leak.vt -> ~/.ssh/id_rsa`
-    /// would survive every other shape this suite already pins.
-    @Test("a `.vt` symlink whose target is outside the sandbox is rejected")
+    @Test("a leaf symlink is rejected even when its target is a valid scrollback file")
+    func leafSymlinkToSandboxedVt_rejected() throws {
+        try withFiles { files in
+            let target = files.directory.appendingPathComponent("target.vt")
+            let link = files.directory.appendingPathComponent("link.vt")
+            try Data("scrollback".utf8).write(to: target)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+            try #require(link.resolvingSymlinksInPath() == target)
+            try #require(files.validatedPath(target.path) == target.path)
+
+            #expect(files.validatedPath(link.path) == nil)
+        }
+    }
+
+    @Test("a leaf symlink to an outside scrollback file is rejected")
     func symlinkOutsideSandbox_rejected() throws {
         try withFiles { files in
-            let fm = FileManager.default
-            let targetURL = files.directory.deletingLastPathComponent().appendingPathComponent("victim")
-            let linkURL = files.directory.appendingPathComponent("leak.vt")
-            try Data("secret".utf8).write(to: targetURL)
-            try fm.createSymbolicLink(at: linkURL, withDestinationURL: targetURL)
+            let target = files.directory.deletingLastPathComponent().appendingPathComponent("outside.vt")
+            let link = files.directory.appendingPathComponent("link.vt")
+            try Data("scrollback".utf8).write(to: target)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+            try #require(link.resolvingSymlinksInPath() == target)
 
-            #expect(files.validatedPath(linkURL.path) == nil)
+            #expect(files.validatedPath(link.path) == nil)
+        }
+    }
+
+    @Test("a normal scrollback leaf through a symlinked parent outside the sandbox is rejected")
+    func symlinkedParentOutsideSandbox_rejected() throws {
+        try withFiles { files in
+            let fm = FileManager.default
+            let outside = files.directory.deletingLastPathComponent().appendingPathComponent("outside", isDirectory: true)
+            try fm.createDirectory(at: outside, withIntermediateDirectories: true)
+            let target = outside.appendingPathComponent("pane.vt")
+            try Data("scrollback".utf8).write(to: target)
+            let link = files.directory.appendingPathComponent("linked-parent")
+            try fm.createSymbolicLink(at: link, withDestinationURL: outside)
+            let linkedLeaf = link.appendingPathComponent("pane.vt")
+            try #require(linkedLeaf.resolvingSymlinksInPath() == target)
+            try #require(try linkedLeaf.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == false)
+
+            #expect(files.validatedPath(linkedLeaf.path) == nil)
         }
     }
 }

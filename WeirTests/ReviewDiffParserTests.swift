@@ -15,10 +15,18 @@ struct ReviewDiffParserTests {
         #expect(throws: ReviewError.invalidDiff) { try ReviewDiffParser.parse(patch) }
     }
 
-    @Test func parserBoundsTheRowCount() {
-        let count = ReviewDiffParser.maxRows + 1
-        let patch = "@@ -1,\(count) +1,\(count) @@\n" + String(repeating: " x\n", count: count)
-        #expect(throws: ReviewError.tooLarge) { try ReviewDiffParser.parse(patch) }
+    @Test func parserBoundsTheRowCount() throws {
+        func patch(contextCount: Int) -> String {
+            "@@ -1,\(contextCount) +1,\(contextCount) @@\n" + String(repeating: " x\n", count: contextCount)
+        }
+        // The header itself consumes one row.
+        let rows = try ReviewDiffParser.parse(patch(contextCount: ReviewDiffParser.maxRows - 1))
+        #expect(rows.count == ReviewDiffParser.maxRows)
+        #expect(rows.first?.kind == .hunk)
+        #expect(rows.last?.newLine == ReviewDiffParser.maxRows - 1)
+        #expect(throws: ReviewError.tooLarge) {
+            try ReviewDiffParser.parse(patch(contextCount: ReviewDiffParser.maxRows))
+        }
     }
 
     /// A line whose content starts with a combining mark is still a line.

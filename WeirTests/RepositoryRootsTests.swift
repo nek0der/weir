@@ -30,8 +30,8 @@ struct RepositoryRootsTests {
             held?.open()
         }
 
-        func waitUntilHeld() async {
-            await held?.waitUntilRequested()
+        func waitUntilHeld() async throws {
+            try await held?.waitUntilRequested()
         }
     }
 
@@ -58,7 +58,7 @@ struct RepositoryRootsTests {
         #expect(!roots.isRoot("/repo/app", of: answer))
     }
 
-    @Test func twoAsksAtOnce_askGitOnce_andBothGetTheAnswer() async {
+    @Test func twoAsksAtOnce_askGitOnce_andBothGetTheAnswer() async throws {
         let git = TopLevelStub([.success(URL(fileURLWithPath: "/repo"))], isHeld: true)
         let roots = RepositoryRoots(topLevel: { try await git.topLevel($0) }, paths: WorktreePathResolver(resolveLinks: { $0 }))
 
@@ -70,8 +70,14 @@ struct RepositoryRootsTests {
         let second = Task { await roots.resolve(Self.folder) }
         // Both waiting on the ask before Git answers.
         await pollUntil { roots.waitingCallers[Self.folder.path, default: 0] >= 2 }
-        #expect(roots.waitingCallers[Self.folder.path, default: 0] == 2)
-        await git.waitUntilHeld()
+        do {
+            try #require(roots.waitingCallers[Self.folder.path, default: 0] == 2)
+            try await git.waitUntilHeld()
+        } catch {
+            await git.release()
+            _ = await (first.value, second.value)
+            throw error
+        }
         await git.release()
         _ = await (first.value, second.value)
 

@@ -28,8 +28,11 @@ struct DropdownListKeysTests {
     @Test func theWorktreeDropdown_opensOnTheCheckoutShown() {
         let entries = [entry(nil), entry(UUID()), entry(UUID())]
         let ids = WorktreeDropdownEntry.choosable(entries)
-        #expect(Keys.opening(ids, on: ids[2]).id == ids[2])
-        #expect(Keys.opening(ids, on: .loose).id == ids[0])
+        let current = entries[2].container
+        let selection = Keys.opening(ids, on: current)
+        #expect(selection.id == current)
+        #expect(Keys.chosen(selection, in: ids) == current)
+        #expect(Keys.opening(ids, on: .loose).id == entries[0].container)
     }
 
     /// A worktree whose folder is gone cannot be opened: the keys pass it

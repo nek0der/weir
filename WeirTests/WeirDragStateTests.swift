@@ -130,10 +130,16 @@ struct WeirDragStateTests {
         let window = Self.window
         let hold = Duration.seconds(WeirMotion.landingHold)
         state.land(on: .loose, in: window)
+        #expect(state.landing?.container == .loose)
+        #expect(state.landing?.window == window)
+
         clock.advance(by: hold / 2)
-        state.land(on: .loose, in: window)
+        let next = ContainerID.project(Self.docs.projectID)
+        let nextWindow = WindowID()
+        state.land(on: next, in: nextWindow)
         clock.advance(by: hold / 2)
-        #expect(state.landing != nil)
+        #expect(state.landing?.container == next)
+        #expect(state.landing?.window == nextWindow)
         clock.advance(by: hold / 2)
         #expect(state.landing == nil)
     }
@@ -165,7 +171,9 @@ struct WeirDragStateTests {
 
         state.beginRest(on: Self.docs)
         state.endRest(on: Self.billing)
-        clock.advance(by: wait)
+        clock.advance(by: wait / 2)
+        #expect(state.springOpenProjects.isEmpty)
+        clock.advance(by: wait / 2)
         #expect(state.springOpenProjects == [Self.docs])
         state.end()
     }

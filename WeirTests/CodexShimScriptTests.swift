@@ -43,8 +43,8 @@ struct CodexShimScriptTests {
             let process = try ShimHarness.run(ShimHarness.shim("codex"), args, environment: environment, currentDirectory: dir)
             #expect(process.terminationStatus == 0, sourceLocation: sourceLocation)
 
-            let argv = ShimHarness.recordedArgv(argvFile) ?? []
-            let lines = ((try? String(contentsOf: envFile, encoding: .utf8)) ?? "")
+            let argv = try #require(ShimHarness.recordedArgv(argvFile), sourceLocation: sourceLocation)
+            let lines = try String(contentsOf: envFile, encoding: .utf8)
                 .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
             return Handoff(
                 argv: argv,
@@ -55,10 +55,13 @@ struct CodexShimScriptTests {
         }
     }
 
-    @Test("hands the user's arguments through unchanged")
-    func passesArgumentsThrough() throws {
-        let handoff = try runShim(["exec", "--skip-git-repo-check", "hello world"])
-        #expect(handoff.argv.suffix(3) == ["exec", "--skip-git-repo-check", "hello world"])
+    @Test("Direct launches without hook flags pass the complete argv unchanged", arguments: [
+        ["exec", "--skip-git-repo-check", "hello world"],
+        ["resume"]
+    ])
+    func passesArgumentsThrough(args: [String]) throws {
+        let handoff = try runShim(args)
+        #expect(handoff.argv == args)
     }
 
     /// The flags arrive through the environment rather than being built
@@ -73,12 +76,6 @@ struct CodexShimScriptTests {
         #expect(handoff.argv == [
             "-c", "hooks.Stop=[{hooks=[]}]", "-c", "tui.terminal_title=[]", "resume"
         ])
-    }
-
-    @Test("leaves the command line alone when there are no hook flags")
-    func noHookArguments_passesThrough() throws {
-        let handoff = try runShim(["resume"])
-        #expect(handoff.argv == ["resume"])
     }
 
     /// `exec` gives the shim's shell pid to the agent, so exporting it
@@ -203,9 +200,10 @@ struct CodexShimScriptTests {
                 seenFound(try? String(contentsOfFile: ran.path + ".found", encoding: .utf8))
             }
             if let seenAgent {
-                let left = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?
-                    .filter { $0.hasPrefix("weir-hosted-env.") } ?? []
-                seenAgent(ShimHarness.recordedEnvironment(codexArgv.appendingPathExtension("env")) ?? [:], left)
+                let left = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+                    .filter { $0.hasPrefix("weir-hosted-env.") }
+                let recorded = try #require(ShimHarness.recordedEnvironment(codexArgv.appendingPathExtension("env")))
+                seenAgent(recorded, left)
             }
             if let recorded = argv(tmuxArgv) {
                 return .tmux(recorded)
@@ -417,7 +415,7 @@ struct CodexShimScriptTests {
         #expect(try runShimHosted([], paneID: nil) == .direct([]))
     }
 
-    @Test("starts a hosted agent with an emptied record directory empty")
+    @Test("preserves empty record directory variables when hosting an agent")
     func hostedLaunch_passesEmptyRecordDirectories() throws {
         // A demo pane empties them; the session must not take the tmux
         // server's values, which are another build's directories.

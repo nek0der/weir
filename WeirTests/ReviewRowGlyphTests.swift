@@ -7,19 +7,27 @@ import Testing
 
 @MainActor
 struct ReviewRowGlyphTests {
-    @Test func aSelectedChangedLine_showsItsSign_sinceTheFillIsTheAccent() {
-        #expect(ReviewRowPainter.kindGlyph(for: .added, isSelected: true, differentiatesWithoutColor: false) == "+")
-        #expect(ReviewRowPainter.kindGlyph(for: .removed, isSelected: true, differentiatesWithoutColor: false) == "\u{2212}")
+    private struct GlyphCase: Sendable {
+        let isSelected: Bool
+        let differentiatesWithoutColor: Bool
+        let signs: [String?]
     }
 
-    @Test func differentiateWithoutColor_showsTheSign_onEveryChangedLine() {
-        #expect(ReviewRowPainter.kindGlyph(for: .added, isSelected: false, differentiatesWithoutColor: true) == "+")
-        #expect(ReviewRowPainter.kindGlyph(for: .removed, isSelected: false, differentiatesWithoutColor: true) == "\u{2212}")
-    }
-
-    @Test func anUnselectedLine_leavesItToTheFill() {
-        #expect(ReviewRowPainter.kindGlyph(for: .added, isSelected: false, differentiatesWithoutColor: false) == nil)
-        #expect(ReviewRowPainter.kindGlyph(for: .removed, isSelected: false, differentiatesWithoutColor: false) == nil)
+    @Test(arguments: [
+        GlyphCase(isSelected: true, differentiatesWithoutColor: false, signs: ["+", "\u{2212}"]),
+        GlyphCase(isSelected: true, differentiatesWithoutColor: true, signs: ["+", "\u{2212}"]),
+        GlyphCase(isSelected: false, differentiatesWithoutColor: true, signs: ["+", "\u{2212}"]),
+        GlyphCase(isSelected: false, differentiatesWithoutColor: false, signs: [nil, nil])
+    ])
+    private func changedLinesShowSignsWhenSelectedOrDifferentiatingWithoutColor(_ input: GlyphCase) {
+        let signs = [ReviewLine.Kind.added, .removed].map {
+            ReviewRowPainter.kindGlyph(
+                for: $0,
+                isSelected: input.isSelected,
+                differentiatesWithoutColor: input.differentiatesWithoutColor
+            )
+        }
+        #expect(signs == input.signs)
     }
 
     @Test func aLineThatIsNotAChange_neverShowsASign() {

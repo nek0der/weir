@@ -61,6 +61,7 @@ struct NotificationDeliveryStatusTests {
     @Test("visible delivery keeps agent rows unread until runtime handling")
     @MainActor func initialReadState_agentRowsRequireRuntimeHandling() {
         #expect(WeirNotificationManager.initialReadState(kind: .desktop, isSourceVisible: true))
+        #expect(!WeirNotificationManager.initialReadState(kind: .desktop, isSourceVisible: false))
         #expect(!WeirNotificationManager.initialReadState(kind: .agentFinished, isSourceVisible: true))
         #expect(!WeirNotificationManager.initialReadState(kind: .agentNeedsInput, isSourceVisible: true))
         #expect(!WeirNotificationManager.initialReadState(kind: .agentError, isSourceVisible: true))

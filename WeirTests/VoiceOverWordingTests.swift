@@ -1,5 +1,5 @@
 // VoiceOverWordingTests.swift
-// Weir — what VoiceOver reads says counts, places, turns, and lines in words, not in the symbols drawn for the eye.
+// Weir — localized accessibility text for counts, places, turns, and lines.
 
 import Foundation
 import Testing
@@ -35,36 +35,83 @@ struct VoiceOverWordingTests {
         let passed = PRChecks(conclusion: .success, counts: .init(passed: 4, total: 4))
         #expect(PRChecksText.spoken(passed, forge: .gitHub, locale: Self.japanese) == "チェック成功、4 件中 4 件")
         let running = PRChecks(conclusion: .pending, counts: nil)
-        #expect(PRChecksText.spoken(running, forge: .gitLab, locale: Self.english) == PRChecksText.make(
-            running,
-            forge: .gitLab,
-            locale: Self.english
-        ))
+        #expect(PRChecksText.make(running, forge: .gitLab, locale: Self.english) == "Pipeline running")
+        #expect(PRChecksText.spoken(running, forge: .gitLab, locale: Self.english) == "Pipeline running")
+        #expect(PRChecksText.spoken(running, forge: .gitLab, locale: Self.japanese) == "パイプライン実行中")
     }
 
-    @Test func theTimeLeft_isReadAsMinutesAndSeconds_notAClock() {
-        let english = ApprovalCardModel.spokenTimeLeftText(for: .seconds(522), locale: Self.english)
-        #expect(english.contains("8 minutes") && english.contains("42 seconds") && english.hasSuffix("left"), "\(english)")
-        let japanese = ApprovalCardModel.spokenTimeLeftText(for: .seconds(522), locale: Self.japanese)
-        #expect(japanese.hasPrefix("残り") && japanese.contains("8分") && japanese.contains("42秒"), "\(japanese)")
-        #expect(!japanese.contains(":"))
-        #expect(ApprovalCardModel.spokenTimeLeftText(for: .zero, locale: Self.english) == "0 seconds left", "nothing left still says so")
+    @Test(arguments: [
+        (Duration.zero, "0:00", ["0 seconds"], ["0秒"]),
+        (.milliseconds(1), "0:01", ["1 second"], ["1秒"]),
+        (.seconds(59), "0:59", ["59 seconds"], ["59秒"]),
+        (.milliseconds(59001), "1:00", ["1 minute"], ["1分"]),
+        (.seconds(60), "1:00", ["1 minute"], ["1分"]),
+        (.seconds(522), "8:42", ["8 minutes", "42 seconds"], ["8分", "42秒"])
+    ])
+    func timeLeft_usesRoundedUnitsInAccessibilityText(
+        remaining: Duration,
+        clock: String,
+        englishUnits: [String],
+        japaneseUnits: [String]
+    ) {
+        func check(_ text: String, units: [String]) {
+            var tail = text[...]
+            for unit in units {
+                guard let range = tail.range(of: unit) else {
+                    Issue.record("Missing \(unit) in \(text)")
+                    return
+                }
+                tail = tail[range.upperBound...]
+            }
+            #expect(!text.contains(":"))
+        }
+
+        #expect(ApprovalCardModel.clockText(for: remaining) == clock)
+        let english = ApprovalCardModel.spokenTimeLeftText(for: remaining, locale: Self.english)
+        #expect(english.hasSuffix("left"))
+        let japanese = ApprovalCardModel.spokenTimeLeftText(for: remaining, locale: Self.japanese)
+        #expect(japanese.hasPrefix("残り"))
+        if englishUnits.count == 1 {
+            #expect(english == "\(englishUnits[0]) left")
+        }
+        check(english, units: englishUnits)
+        check(japanese, units: japaneseUnits)
     }
 
-    @Test func aCodeLine_saysWhereItSits_andWhetherItWasAddedOrRemoved() {
-        let added = ReviewLine(id: 1, kind: .added, text: "new value", oldLine: nil, newLine: 11)
-        let removed = ReviewLine(id: 2, kind: .removed, text: "old value", oldLine: 10, newLine: nil)
-        let context = ReviewLine(id: 3, kind: .context, text: "shared", oldLine: 12, newLine: 13)
-        #expect(added.spokenPosition(locale: Self.english) == "Added, new line 11")
-        #expect(removed.spokenPosition(locale: Self.japanese) == "削除、変更前 10 行目")
-        #expect(context.spokenPosition(locale: Self.japanese) == "変更前 12 行目、変更後 13 行目")
-        #expect(
-            ReviewComment.spokenPosition(oldStart: nil, oldEnd: nil, newStart: 12, newEnd: 18, locale: Self.english) == "Lines 12 to 18"
+    @Test(arguments: [
+        (ReviewLine(id: 1, kind: .added, text: "new value", oldLine: nil, newLine: 11), "Added, new line 11", "追加、変更後 11 行目"),
+        (ReviewLine(id: 2, kind: .removed, text: "old value", oldLine: 10, newLine: nil), "Removed, old line 10", "削除、変更前 10 行目"),
+        (ReviewLine(id: 3, kind: .context, text: "shared", oldLine: 12, newLine: 13), "Old line 12, new line 13", "変更前 12 行目、変更後 13 行目")
+    ])
+    func reviewLineAccessibilityText_namesItsSideAndKind(line: ReviewLine, english: String, japanese: String) {
+        #expect(line.spokenPosition(locale: Self.english) == english)
+        #expect(line.spokenPosition(locale: Self.japanese) == japanese)
+    }
+
+    private struct CommentSpan: Sendable {
+        var oldStart: Int?
+        var oldEnd: Int?
+        var newStart: Int?
+        var newEnd: Int?
+
+        func text(in locale: Locale) -> String {
+            ReviewComment.spokenPosition(oldStart: oldStart, oldEnd: oldEnd, newStart: newStart, newEnd: newEnd, locale: locale)
+        }
+    }
+
+    @Test(arguments: [
+        (CommentSpan(newStart: 12, newEnd: 18), "Lines 12 to 18", "12 から 18 行目"),
+        (.init(oldStart: 10, oldEnd: 10, newStart: 12, newEnd: 12), "Old line 10, new line 12", "変更前 10 行目、変更後 12 行目"),
+        (.init(oldStart: 9), "Line 9", "9 行目"),
+        (
+            .init(oldStart: 18, oldEnd: 12, newStart: 31, newEnd: 29),
+            "Old line 12 to 18, new line 29 to 31",
+            "変更前 12 から 18 行目、変更後 29 から 31 行目"
         )
-        #expect(
-            ReviewComment.spokenPosition(oldStart: 10, oldEnd: 10, newStart: 12, newEnd: 12, locale: Self.english)
-                == "Old line 10, new line 12"
-        )
+    ])
+    private func commentAccessibilityText_namesItsLineOrSpan(span: CommentSpan, english: String, japanese: String) {
+        #expect(span.text(in: Self.english) == english)
+        #expect(span.text(in: Self.japanese) == japanese)
     }
 
     @Test func aHunksComment_isNamedByItsLine_notItsHeader() throws {
@@ -94,8 +141,19 @@ struct VoiceOverWordingTests {
         #expect(ReviewStackText.spokenProgress(progress, locale: Self.japanese) == "3 件中 1 件を確認済み")
     }
 
-    @Test func anAllProjectsCardsPlace_isReadAsAList() {
-        #expect(AllProjectsText.spokenPlace(project: "weir", branch: "feat/pricing", locale: Self.japanese) == "weir、feat/pricing")
-        #expect(AllProjectsText.spokenPlace(project: "weir", branch: nil, locale: Self.english) == "weir")
+    @Test(arguments: [
+        (String?.some("feat/pricing"), String?.none, "weir, feat/pricing", "weir、feat/pricing"),
+        (nil, nil, "weir", "weir"),
+        ("legacy-branch", "fix-tax", "weir, fix-tax", "weir、fix-tax"),
+        ("legacy-branch", "weir", "weir", "weir")
+    ])
+    func cardPlaceAccessibilityText_usesCheckoutBeforeBranch(
+        branch: String?,
+        checkout: String?,
+        english: String,
+        japanese: String
+    ) {
+        #expect(AllProjectsText.spokenPlace(project: "weir", branch: branch, checkout: checkout, locale: Self.english) == english)
+        #expect(AllProjectsText.spokenPlace(project: "weir", branch: branch, checkout: checkout, locale: Self.japanese) == japanese)
     }
 }

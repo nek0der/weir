@@ -77,5 +77,6 @@ mod tests {
         assert_eq!(holder.kind, Kind::Unknown);
         assert_eq!(holder.optional, None);
         assert_eq!(read(r#"{"kind":"known"}"#).kind, Kind::Known);
+        assert_eq!(read(r#"{"optional":"known"}"#).optional, Some(Kind::Known));
     }
 }

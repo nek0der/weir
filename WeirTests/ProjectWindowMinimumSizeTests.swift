@@ -44,6 +44,8 @@ struct ProjectWindowMinimumSizeTests {
 
     @Test func newWindow_hasTheMinimumBeforeItIsShown() throws {
         let window = try #require(Self.makeController().window)
+        defer { window.close() }
+        #expect(!window.isVisible)
         #expect(window.contentMinSize == NSSize(
             width: WeirLayout.Supervision.windowMinWidth,
             height: WeirLayout.mainWindowMinHeight + Self.titleBarHeight

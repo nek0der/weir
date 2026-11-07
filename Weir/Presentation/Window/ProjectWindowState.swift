@@ -308,6 +308,9 @@ final class ProjectWindowState: Identifiable {
     /// the window where it stands, or as it arrives at a row it waits for,
     /// comes settled where the window stands (`ParkedReview.opening(at:in:)`).
     @ObservationIgnored var parkedReviewArrival: ParkedReviewArrival?
+    /// The most recent deferred arrival resolution, which can finish after
+    /// a target or window close has already handled the arrival.
+    @ObservationIgnored private(set) var parkedReviewArrivalTask: Task<Void, Never>?
     /// Whether the registry has let the window go. What its views
     /// still report as they go is not taken.
     @ObservationIgnored private(set) var isClosed = false
@@ -445,6 +448,14 @@ final class ProjectWindowState: Identifiable {
         reviewPresentation.close()
     }
 
+    /// Schedules resolution after the caller has finished selecting the
+    /// destination of a project switch.
+    func scheduleParkedReviewArrival() {
+        parkedReviewArrivalTask = Task { @MainActor [weak self] in
+            self?.resolveParkedReviewArrival()
+        }
+    }
+
     /// Settles where the switch that brought a parked review tab back landed
     /// the window: the one place that decides whether the tab comes back in
     /// front. A switch that carries a target (⌘J, a notification, an
@@ -573,16 +584,15 @@ final class ProjectWindowState: Identifiable {
         case let .set(result) where isSelectedPane: decisionBarDone[paneID] = result
         case .set: break
         }
-        // A "Done" the bar set since is newer than one left by the review
-        // tab, and keeps the bar. An insert's line shows over the pane's
-        // items, until they change.
+        // A line already set by the bar takes precedence over a pending
+        // result. Insert and resume results may show over unread turns.
         if let pending = pendingDecisionBarDone[paneID], !isCurrent(pending) {
             pendingDecisionBarDone[paneID] = nil
         } else if let pending = pendingDecisionBarDone[paneID] {
             let isTaken = DecisionBarContent.takes(pending, over: items)
-            // An insert's line is true only just after it: one the bar
-            // cannot show now would later say "Press Return" about comments
-            // sent long since.
+            // Insert and resume results describe the action just completed.
+            // If another item blocks them now, discard them rather than
+            // showing an outdated result when that item later leaves.
             if isTaken || pending.showsOverItems {
                 pendingDecisionBarDone[paneID] = nil
             }

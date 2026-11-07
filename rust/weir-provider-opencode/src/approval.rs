@@ -93,6 +93,9 @@ mod tests {
         )
         .expect("an object")
         .expect("a request");
+        assert_eq!(request.provider.as_str(), "opencode");
+        assert_eq!(request.timeout_ms, 570_000);
+        assert!(request.questions.is_empty());
         assert_eq!(request.tool_name, "Bash");
         assert_eq!(request.input, json!({"command": "touch a"}));
         assert_eq!(request.summary.as_deref(), Some("touch a"));
@@ -124,7 +127,7 @@ mod tests {
     #[test]
     fn any_other_event_is_no_request() {
         assert_eq!(
-            approval_request(br#"{"hook_event_name":"session.tool.called"}"#),
+            approval_request(br#"{"hook_event_name":"session.tool.called","data":{"action":"shell","resources":["ls"]}}"#),
             Ok(None)
         );
     }
@@ -142,6 +145,16 @@ mod tests {
             }),
             Some(Ok(r#"{"decision":"reject","message":"not now"}"#.to_owned()))
         );
+        assert_eq!(
+            output(ApprovalDecision::Deny { message: None }),
+            Some(Ok(r#"{"decision":"reject"}"#.to_owned()))
+        );
         assert_eq!(output(ApprovalDecision::Delegate), None);
+        assert_eq!(
+            output(ApprovalDecision::Answer {
+                answers: std::collections::BTreeMap::new()
+            }),
+            None
+        );
     }
 }

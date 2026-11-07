@@ -23,10 +23,8 @@ struct SidebarListModelTests {
         openedByDrag: Set<UUID> = []
     ) -> SidebarListModel {
         let window = window ?? fixture.primary
-        let showing = { (id: UUID) -> WindowID? in
-            let other = fixture.registry.window(showingProject: id, in: fixture.session)
-            return other?.id == window.id ? nil : other?.id
-        }
+        let others = fixture.session.otherWindowsByProject(than: window.id)
+        let showing = { (id: UUID) in others[id] }
         let sections = SidebarPresentedSections.computed(
             projectsOf: fixture.session,
             window: window.id,
@@ -86,12 +84,17 @@ struct SidebarListModelTests {
 
     /// An item of `kind` in a pane of `project`, as the attention list holds
     /// one.
-    private static func item(_ kind: AttentionItemKind, in project: Project, _ queue: inout AttentionQueue) {
-        let run = UUID().uuidString
+    private static func item(
+        _ id: AttentionItemID,
+        _ kind: AttentionItemKind,
+        in project: Project,
+        runtimeID: String = UUID().uuidString,
+        _ queue: inout AttentionQueue
+    ) {
         queue.insert(
-            id: .stop(EpisodeKey(origin: .runtime(run), episodeToken: "1")),
+            id: id,
             kind: kind,
-            subject: .runtime(id: run, provider: .claude, paneID: UUID(), tabID: nil, projectID: project.id),
+            subject: .runtime(id: runtimeID, provider: .claude, paneID: UUID(), tabID: nil, projectID: project.id),
             arrivedAt: Date()
         )
     }
@@ -104,8 +107,21 @@ struct SidebarListModelTests {
     @Test func noProject_saysThereIsNone_andAProjectListsIt() {
         let fixture = Fixture()
 
-        #expect(SidebarListModel(groups: []).emptyState == .noProjects)
-        #expect(Self.model(fixture).emptyState == nil)
+        for project in [fixture.a, fixture.b, fixture.c] {
+            fixture.session.removeProject(project.id)
+        }
+        let empty = Self.model(fixture)
+        #expect(empty.emptyState == .noProjects)
+        #expect(empty.headers.isEmpty && empty.items.isEmpty)
+
+        let project = fixture.session.addOrActivateProject(
+            rootURL: WorkspaceSessionFixture.projectRootURL("restored"),
+            suggestedName: "restored"
+        )
+        let populated = Self.model(fixture)
+        #expect(populated.emptyState == nil)
+        #expect(populated.headers.map(\.id) == [project.id])
+        #expect(populated.headers.map(\.name) == ["restored"])
     }
 
     // MARK: - Order and folds
@@ -133,19 +149,28 @@ struct SidebarListModelTests {
 
     /// A header the person folded stays folded, the window's own included,
     /// and its rows are counted rather than built.
-    @Test func aFoldedHeader_countsItsRows_andBuildsNone() {
+    @Test func aFoldedHeader_countsItsRows_andBuildsNone() throws {
         let fixture = Fixture()
+        _ = try WorkspaceSessionFixture.appendWorktree(to: fixture.a.id, in: fixture.session, admission: .created)
+        _ = try WorkspaceSessionFixture.appendWorktree(to: fixture.a.id, in: fixture.session, admission: .discovered)
         fixture.primary.selection.sidebarArrangement = SidebarArrangement(
             projectOrder: [fixture.a.id, fixture.b.id, fixture.c.id],
             collapsedProjects: [fixture.a.id]
         )
 
         let model = Self.model(fixture)
-        let header = model.headers[0]
+        let group = try #require(model.groups.first)
+        let header = group.header
 
+        #expect(header.id == fixture.a.id)
         #expect(header.isCollapsed)
-        #expect(header.workingCount == 1)
-        #expect(model.rows.map(\.id) == [.project(fixture.b.id), .project(fixture.c.id)])
+        #expect(header.workingCount == 2)
+        #expect(header.moreCount == 1)
+        #expect(group.rows == nil)
+        #expect(model.items.map(\.id) == [
+            .header(fixture.a.id), .header(fixture.b.id), .row(.project(fixture.b.id)),
+            .header(fixture.c.id), .row(.project(fixture.c.id))
+        ])
     }
 
     /// A folded project a dragged tab rested on is drawn open for the drag
@@ -170,6 +195,7 @@ struct SidebarListModelTests {
     @Test func theDefaultFold_opensTheWindowsProject_andOneWithRows_butNotAnotherWindows() {
         #expect(SidebarFoldDefault.isOpen(isCurrent: true, isInOtherWindow: false, workingCount: 0))
         #expect(SidebarFoldDefault.isOpen(isCurrent: false, isInOtherWindow: false, workingCount: 2))
+        #expect(!SidebarFoldDefault.isOpen(isCurrent: false, isInOtherWindow: false, workingCount: 0))
         #expect(!SidebarFoldDefault.isOpen(isCurrent: false, isInOtherWindow: false, workingCount: 1))
         #expect(!SidebarFoldDefault.isOpen(isCurrent: false, isInOtherWindow: true, workingCount: 5))
     }
@@ -182,6 +208,8 @@ struct SidebarListModelTests {
         #expect(Self.scratchModel(fixture) == before)
         #expect(!before.isOnScratch)
         #expect(before.answerKey == nil)
+        fixture.session.renameRow(.project(fixture.a.id), to: "Project-only name", runtimes: [])
+        #expect(Self.scratchModel(fixture) == before)
         fixture.session.setActiveContainer(.loose, in: fixture.primary.id, intent: .person)
         let after = Self.scratchModel(fixture)
         #expect(after != before)
@@ -195,6 +223,10 @@ struct SidebarListModelTests {
         #expect(!Self.scratchRow(fixture).isActive)
         fixture.session.setActiveContainer(.loose, in: fixture.primary.id, intent: .person)
         #expect(Self.scratchRow(fixture).isActive)
+        #expect(!Self.model(fixture).items.contains { $0.id == .row(.loose) })
+
+        fixture.primary.selection.isChoosingProject = true
+        #expect(!Self.scratchRow(fixture).isActive)
         #expect(!Self.model(fixture).items.contains { $0.id == .row(.loose) })
     }
 
@@ -232,6 +264,7 @@ struct SidebarListModelTests {
         let fixture = Fixture()
         _ = fixture.session.openTab(container: .loose, in: fixture.primary.id, intent: .person, selects: false)
         let row = Self.scratchRow(fixture)
+        #expect(row.hasTabs)
         #expect(row.fact.glyph == .shell)
         #expect(row.agentKinds.isEmpty)
         #expect(!row.isMainFolder)
@@ -247,27 +280,23 @@ struct SidebarListModelTests {
         let pane = try #require(tab.splitTree.allLeafIDs().first)
         let run = UUID().uuidString
         var queue = AttentionQueue()
+        let waiting = AttentionItemID.prompt(EpisodeKey(origin: .runtime(run), episodeToken: "1"))
+        let approval = ApprovalFact.test()
+        Self.item(.approval(approval.key), .approval(approval), in: fixture.a, &queue)
         queue.insert(
-            id: .stop(EpisodeKey(origin: .runtime(run), episodeToken: "1")),
+            id: waiting,
             kind: .prompt(PromptWait(detail: nil)),
             subject: .runtime(id: run, provider: .claude, paneID: pane, tabID: tab.id, projectID: nil),
             arrivedAt: Date()
         )
         let row = Self.scratchRow(fixture, queue: queue)
         #expect(row.fact.glyph == .needsResponse)
+        #expect(row.leadItemID == waiting)
+        #expect(row.leadPaneID == pane)
         #expect(row.agentKinds == [.claude])
         #expect(!row.isActive)
         let folder = URL(fileURLWithPath: "/tmp/weir-scratch")
         #expect(SessionRowFactText.scratchHint(startFolder: folder, locale: Self.japanese) == "タブはweir-scratchで開始します")
-    }
-
-    /// A window choosing a project shows nothing, so the scratch row it was
-    /// on stands there unmarked.
-    @Test func theScratchRow_isNotActiveWhileTheWindowChoosesAProject() {
-        let fixture = Fixture()
-        fixture.session.setActiveContainer(.loose, in: fixture.primary.id, intent: .person)
-        fixture.session.primarySelection.isChoosingProject = true
-        #expect(!Self.scratchRow(fixture).isActive)
     }
 
     // MARK: - Another window's project
@@ -276,7 +305,12 @@ struct SidebarListModelTests {
     /// by default.
     @Test func aProjectAnotherWindowShows_isMarked_andFoldedByDefault() throws {
         let fixture = Fixture()
+        _ = try WorkspaceSessionFixture.appendWorktree(to: fixture.b.id, in: fixture.session, admission: .created)
+        let before = try #require(Self.model(fixture).headers.first { $0.id == fixture.b.id })
+        #expect(before.workingCount == 2)
+        #expect(!before.isCollapsed)
         let other = try fixture.window(showing: fixture.b)
+        fixture.registry.hide(other.id)
 
         let model = Self.model(fixture)
         let header = try #require(model.headers.first { $0.id == fixture.b.id })
@@ -296,18 +330,23 @@ struct SidebarListModelTests {
     @Test func aFoldedHeader_showsAWaitAStopAndARun_inThatOrder_butNoUnread() {
         let fixture = Fixture()
         var queue = AttentionQueue()
-        Self.item(.unread(UnreadTurn(turnID: TurnID("t"), changes: .unknown)), in: fixture.b, &queue)
-        Self.item(.stop(.processExited), in: fixture.b, &queue)
-        Self.item(.approval(ApprovalFact.test()), in: fixture.b, &queue)
-        Self.item(.approval(ApprovalFact.test()), in: fixture.b, &queue)
-        Self.item(.stop(.processExited), in: fixture.a, &queue)
+        let turn = TurnID("t")
+        let first = ApprovalFact.test()
+        let second = ApprovalFact.test()
+        let elsewhere = ApprovalFact.test()
+        Self.item(.unread(turn), .unread(UnreadTurn(turnID: turn, changes: .unknown)), in: fixture.b, &queue)
+        let stopped = AttentionItemID.stop(EpisodeKey(origin: .runtime("stopped"), episodeToken: "1"))
+        Self.item(stopped, .stop(.processExited), in: fixture.b, runtimeID: "stopped", &queue)
+        Self.item(.approval(first.key), .approval(first), in: fixture.b, &queue)
+        Self.item(.approval(elsewhere.key), .approval(elsewhere), in: fixture.a, &queue)
+        Self.item(.approval(second.key), .approval(second), in: fixture.b, &queue)
 
         let model = Self.model(fixture, queue: queue, running: [fixture.b.id: 2, fixture.a.id: 1])
         let folded = model.headers.first { $0.id == fixture.b.id }
         let open = model.headers.first { $0.id == fixture.a.id }
 
         #expect(folded?.marks == [.needsApproval, .stopped, .running])
-        #expect(folded?.requestKeys.count == 2, "its card stands beside the header")
+        #expect(folded?.requestKeys == [first.key, second.key], "its cards stand beside the header")
         #expect(open?.marks == [], "an open header's rows show their own")
         #expect(open?.requestKeys == [])
     }
@@ -359,8 +398,8 @@ struct SidebarListModelTests {
     /// every project (`AppState.sidebarSections(in:)`) gives for it.
     @Test func theWindowsProjectPlacedAlone_isWhatTheSidebarDraws() throws {
         let fixture = Fixture()
-        _ = try WorkspaceSessionFixture.appendWorktree(to: fixture.a.id, in: fixture.session, admission: .discovered)
-        _ = try WorkspaceSessionFixture.appendWorktree(to: fixture.a.id, in: fixture.session, admission: .created)
+        let discovered = try WorkspaceSessionFixture.appendWorktree(to: fixture.a.id, in: fixture.session, admission: .discovered)
+        let created = try WorkspaceSessionFixture.appendWorktree(to: fixture.a.id, in: fixture.session, admission: .created)
         let project = try #require(fixture.session.project(fixture.a.id))
         let alone = SidebarPresentedSections.computed(
             project: project,
@@ -378,10 +417,15 @@ struct SidebarListModelTests {
             pullRequest: { _ in nil },
             gitFacts: { _ in nil }
         )
-        #expect(alone.ordered(project).map(\.row) == every.ordered(project).map(\.row))
-        #expect(alone.ordered(project).map(\.section) == every.ordered(project).map(\.section))
-        #expect(SessionRowNavigation.workingRows(in: fixture.primary, session: fixture.session, sections: alone)
-            == SessionRowNavigation.workingRows(in: fixture.primary, session: fixture.session, sections: every))
+        let folder = ContainerID.project(project.id)
+        let createdRow = ContainerID.worktree(projectID: project.id, worktreeID: created.id)
+        let discoveredRow = ContainerID.worktree(projectID: project.id, worktreeID: discovered.id)
+        for sections in [alone, every] {
+            #expect(sections.ordered(project).map(\.row) == [folder, createdRow, discoveredRow])
+            #expect(sections.ordered(project).map(\.section) == [.working, .working, .other])
+            #expect(SessionRowNavigation.workingRows(in: fixture.primary, session: fixture.session, sections: sections)
+                == [folder, createdRow])
+        }
     }
 
     /// With the sidebar hidden, every project placed as it stands
@@ -398,14 +442,14 @@ struct SidebarListModelTests {
         let elsewhereRow = ContainerID.worktree(projectID: fixture.b.id, worktreeID: elsewhere.id)
         let place = {
             let others = fixture.session.otherWindowsByProject(than: window.id)
-            return window.presentedSections(computed: .computed(
-                projectsOf: fixture.session,
-                window: window.id,
-                windowShowing: { others[$0] },
+            return window.presentedSections(
+                session: fixture.session,
+                others: others,
                 queue: AttentionQueue(),
                 pullRequest: { _ in nil },
-                gitFacts: { _ in nil }
-            ), isDragging: false)
+                gitFacts: { _ in nil },
+                isDragging: false
+            )
         }
         window.isSidebarPresented = false
         window.present(place())
@@ -415,7 +459,8 @@ struct SidebarListModelTests {
         window.present(place())
 
         #expect(window.presentedWorkingRows.contains(row))
-        #expect(SessionRowNavigation.workingRows(in: window, session: fixture.session, sections: window.presentedSections).contains(row))
+        #expect(SessionRowNavigation.workingRows(in: window, session: fixture.session, sections: window.presentedSections)
+            == [.project(fixture.a.id), row])
         #expect(window.presentedSections.section(of: elsewhereRow) == .other)
         #expect(SupervisionPaletteFacts(window: window, session: fixture.session).rowSections[elsewhereRow] == .other)
     }
@@ -426,10 +471,14 @@ struct SidebarListModelTests {
         let fixture = Fixture()
         let other = try fixture.window(showing: fixture.b)
 
-        let others = fixture.session.otherWindowsByProject(than: fixture.primary.id)
+        fixture.registry.hide(other.id)
+        let pending = WindowSelection()
+        pending.projectID = fixture.c.id
+        fixture.session.addSelection(pending)
+        #expect(fixture.registry.window(pending.windowID) == nil)
 
-        #expect(others == [fixture.b.id: other.id])
-        #expect(fixture.session.otherWindowsByProject(than: other.id) == [fixture.a.id: fixture.primary.id])
+        #expect(fixture.session.otherWindowsByProject(than: fixture.primary.id) == [fixture.b.id: other.id, fixture.c.id: pending.windowID])
+        #expect(fixture.session.otherWindowsByProject(than: other.id) == [fixture.a.id: fixture.primary.id, fixture.c.id: pending.windowID])
     }
 
     // MARK: - Words
@@ -488,11 +537,13 @@ struct SidebarListModelTests {
         #expect(SidebarHeaderText.contents([], locale: Self.english) == nil)
         #expect(SidebarHeaderText.contents(["Needs approval", "Running"], locale: Self.english) == "Contains: Needs approval and Running")
         #expect(SidebarHeaderText.contents(["承認待ち"], locale: Self.japanese) == "内訳：承認待ち")
+        #expect(SidebarHeaderText.contents(["承認待ち", "実行中"], locale: Self.japanese) == "内訳：承認待ち、実行中")
     }
 
     @Test func thePlusAndTheOtherWindowMark_nameTheProject() {
         #expect(SidebarHeaderText.newWorktree(in: "alpha").resolved(in: Self.english) == "New Worktree in alpha…")
         #expect(SidebarHeaderText.newWorktree(in: "alpha").resolved(in: Self.japanese) == "alpha に新規ワークツリー…")
+        #expect(SidebarHeaderText.otherWindowHelp("beta").resolved(in: Self.english) == "Brings forward the window that shows beta")
         #expect(SidebarHeaderText.otherWindowHelp("beta").resolved(in: Self.japanese) == "beta を表示しているウインドウを手前に移動します")
     }
 }

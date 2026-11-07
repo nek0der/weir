@@ -106,25 +106,28 @@ struct ReviewIntralineDiffTests {
     @MainActor
     @Test func searchAndTextSelectionOverrideIntralineBackground() throws {
         let styled = try #require(ReviewRowPainter.styled(
-            "abc",
+            "abcd",
             language: nil,
-            match: "b",
+            match: "bc",
             attributes: ReviewRowPainter.attributes(
                 font: ReviewRowMetrics.font,
                 color: .labelColor,
                 alignment: .left,
                 truncates: false
             ),
-            intralineRanges: [NSRange(location: 0, length: 3)],
+            intralineRanges: [NSRange(location: 0, length: 4)],
             intralineKind: .added,
-            selectedRange: NSRange(location: 2, length: 1)
+            selectedRange: NSRange(location: 2, length: 2)
         ))
 
         let intraline = try #require(styled.attribute(.backgroundColor, at: 0, effectiveRange: nil) as? NSColor)
         let search = try #require(styled.attribute(.backgroundColor, at: 1, effectiveRange: nil) as? NSColor)
-        let selection = try #require(styled.attribute(.backgroundColor, at: 2, effectiveRange: nil) as? NSColor)
+        let overlap = try #require(styled.attribute(.backgroundColor, at: 2, effectiveRange: nil) as? NSColor)
+        let selection = try #require(styled.attribute(.backgroundColor, at: 3, effectiveRange: nil) as? NSColor)
         #expect(!intraline.isEqual(search))
+        #expect(!intraline.isEqual(selection))
         #expect(search.isEqual(NSColor.findHighlightColor))
+        #expect(overlap.isEqual(NSColor.selectedTextBackgroundColor))
         #expect(selection.isEqual(NSColor.selectedTextBackgroundColor))
     }
 

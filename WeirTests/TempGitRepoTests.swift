@@ -11,25 +11,50 @@ struct TempGitRepoTests {
     /// once lacked.
     static let isolation = [("core.autocrlf", "false"), ("tag.gpgsign", "false"), ("core.excludesFile", "/dev/null")]
 
-    @Test func theRepository_getsTheLocalOverrides() async throws {
+    @Test func theRepositoryAndItsTeammatesClone_getTheLocalOverrides() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
-        for (key, value) in Self.isolation {
-            #expect(try await repo.git(["config", "--local", "--get", key]) == value, "\(key)")
-        }
+        try await expectLocalOverrides(in: repo.url)
+
+        let bare = try await repo.addBareOrigin()
+        let pushedTip = try await repo.advance(bare)
+        let clone = repo.scratch.appendingPathComponent("\(repo.url.lastPathComponent)-clone")
+        try #require(try await TempGitRepo.git(["rev-parse", "HEAD"], in: clone) == pushedTip)
+        try await expectLocalOverrides(in: clone)
     }
 
-    /// The teammate's clone gets these overrides as the repository it moves
-    /// on does, though it once lacked them.
-    @Test func theTeammatesClone_getsTheLocalOverridesToo() async throws {
-        let repo = try await TempGitRepo.make()
-        defer { repo.cleanup() }
-        let bare = try await repo.addBareOrigin()
-        _ = try await repo.advance(bare)
-        let clone = repo.scratch.appendingPathComponent("\(repo.url.lastPathComponent)-clone")
+    @Test func aFailedSeedCommit_removesTheRepositoryScratch() async throws {
+        let arguments = ["commit", "--not-a-git-commit-option"]
+        var attemptedScratch: URL?
+        defer {
+            if let attemptedScratch {
+                try? FileManager.default.removeItem(at: attemptedScratch)
+            }
+        }
 
+        do {
+            let repo = try await TempGitRepo.make { url in
+                attemptedScratch = url.deletingLastPathComponent()
+                let worktree = try await TempGitRepo.git(["rev-parse", "--is-inside-work-tree"], in: url)
+                try #require(worktree == "true")
+                try await TempGitRepo.git(arguments, in: url)
+            }
+            repo.cleanup()
+            Issue.record("The invalid commit unexpectedly succeeded")
+        } catch let failure as TempGitRepo.GitFailure {
+            #expect(failure.arguments == arguments)
+        }
+
+        let scratch = try #require(attemptedScratch)
+        #expect(!FileManager.default.fileExists(atPath: scratch.path))
+    }
+
+    private func expectLocalOverrides(in directory: URL) async throws {
         for (key, value) in Self.isolation {
-            #expect(try await TempGitRepo.git(["config", "--local", "--get", key], in: clone) == value, "\(key)")
+            #expect(
+                try await TempGitRepo.git(["config", "--local", "--get", key], in: directory) == value,
+                "\(directory.lastPathComponent): \(key)"
+            )
         }
     }
 }

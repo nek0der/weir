@@ -37,6 +37,10 @@ struct PopoverGroundTests {
         let resolver = ReduceTransparencyResolver()
         resolver.apply(userEnabled: false)
         #expect(PopoverGround(resolver: resolver) == .opaque)
+
+        resolver.apply(userEnabled: true)
+        let expected: PopoverGround = resolver.systemReducesTransparency ? .opaque : .material
+        #expect(PopoverGround(resolver: resolver) == expected)
         // With no resolver in reach the part keeps the material.
         #expect(PopoverGround(resolver: nil) == .material)
     }
@@ -129,7 +133,7 @@ struct PopoverGroundTests {
         for ground in grounds {
             for (name, token) in texts {
                 let ratio = ContrastRatio.between(token.value(isDark: isDark), ground)
-                #expect(ratio >= ContrastRatio.text, "\(name) in \(isDark ? "dark" : "light"): \(ratio)")
+                #expect(ratio >= 4.5, "\(name) in \(isDark ? "dark" : "light"): \(ratio)")
             }
         }
     }

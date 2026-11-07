@@ -32,16 +32,17 @@ impl Repo {
         let root =
             std::env::temp_dir().join(format!("weir-hook-git-{name}-{}", uuid::Uuid::new_v4()));
         let path = root.join(directory);
-        fs::create_dir_all(&path).expect("repo dir");
-        git(&path, &["init", "-q", "-b", "main"]);
+        let repo = Self { root, path };
+        fs::create_dir_all(&repo.path).expect("repo dir");
+        git_runner::required(&repo.path, &["init", "-q", "-b", "main"]);
         // The code under test runs git with the developer's own
         // configuration, where a global `core.excludesFile` that ignores,
         // say, `*.bin` would hide the fixtures' untracked files from it.
-        git(&path, &["config", "core.excludesFile", "/dev/null"]);
-        fs::write(path.join("README.md"), "fixture\n").expect("readme");
-        git(&path, &["add", "README.md"]);
-        git(
-            &path,
+        git_runner::required(&repo.path, &["config", "core.excludesFile", "/dev/null"]);
+        fs::write(repo.path.join("README.md"), "fixture\n").expect("readme");
+        git_runner::required(&repo.path, &["add", "README.md"]);
+        git_runner::required(
+            &repo.path,
             &[
                 "-c",
                 "user.name=fixture",
@@ -53,7 +54,7 @@ impl Repo {
                 "base",
             ],
         );
-        Self { root, path }
+        repo
     }
 
     pub fn git_dir(&self) -> PathBuf {

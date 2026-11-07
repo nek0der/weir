@@ -49,16 +49,6 @@ extension ChangesPanelModelTests {
         choices.map { ConversationText.name($0, locale: english) }
     }
 
-    @Test func choices_titledConversation_namesByTitle() throws {
-        let agents = try [Self.titled("a", "Review the fork"), Self.titled("b", "Fix tests")].map { Panel.agent([$0]) }
-
-        let named = ChangesPanelModel.conversations(Panel.input(agents))
-
-        #expect(named.first?.title == "Review the fork")
-        #expect(named.first?.ordinal == nil, "a title of its own needs no number")
-        #expect(Self.names(named) == ["Review the fork", "Fix tests"])
-    }
-
     /// A conversation's name carries its number only where its title, or
     /// its kind, does not tell it apart; the cards and file tags tell the
     /// rest apart by their identity colors.
@@ -72,7 +62,13 @@ extension ChangesPanelModelTests {
 
         let named = ChangesPanelModel.conversations(Panel.input(agents + [codex]))
 
+        #expect(named.map(\.title) == ["Review the fork", "Fix tests", nil, nil])
         #expect(named.map(\.ordinal) == [nil, nil, 3, nil], "a title of its own needs no number in its name")
+        #expect(Self.names(named) == ["Review the fork", "Fix tests", "Claude #3", "Codex"])
+
+        let onlyTitled = ChangesPanelModel.conversations(Panel.input(Array(agents.prefix(2))))
+        #expect(onlyTitled.map(\.ordinal) == [nil, nil])
+        #expect(Self.names(onlyTitled) == ["Review the fork", "Fix tests"])
     }
 
     /// A conversation whose tab the person named is still called by that
@@ -198,20 +194,23 @@ extension ChangesPanelModelTests {
     }
 
     @Test func theGate_saysWhyAnEntryIsOff_onEveryRow_andUnderTheLastEntryOnly() throws {
-        let turns = try [Self.recorded(4), Self.recorded(5), Self.recorded(6)]
+        let turns = try [Self.recorded(4), Self.recorded(5), Self.recorded(6), Self.recorded(7, phase: "started")]
         var input = Panel.input([Panel.agent(turns)], lines: [Panel.line(through: turns[0]).line])
         input.restoreBlocker = { _ in .agentWaiting }
 
         let list = try Panel.list(ChangesPanelModel.make(input))
 
-        #expect(list.rows.map(\.restoreBlocker) == [.agentWaiting, .agentWaiting, .agentWaiting])
-        #expect(list.rows.map(\.showsBlockerNote) == [false, false, true])
+        #expect(list.rows.map(\.offersRestore) == [true, true, true, false])
+        #expect(list.rows.map(\.restoreBlocker) == [.agentWaiting, .agentWaiting, .agentWaiting, nil])
+        #expect(list.rows.map(\.showsBlockerNote) == [false, false, true, false])
     }
 
     @Test func theGatesReason_isNotSaid_whileTheRestoreCanRun() throws {
         let turns = try [Self.recorded(4), Self.recorded(5)]
         let list = try Panel.list(ChangesPanelModel.make(Panel.input([Panel.agent(turns)])))
 
+        #expect(list.rows.map(\.offersRestore) == [true, true])
+        #expect(list.rows.map(\.restoreBlocker) == [nil, nil])
         #expect(list.rows.map(\.showsBlockerNote) == [false, false])
     }
 }

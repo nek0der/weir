@@ -29,39 +29,35 @@ struct InstalledAgentRuleTests {
         #expect(shown == [.claude, .codex])
     }
 
-    @Test func addTabOffer_withNoAgentWorking_hasNoNote() {
-        let offer = AddTabOffer(catalog: catalog, installed: [.claude, .codex], isAgentWorkingInFolder: false)
-        #expect(offer.agents == [.claude, .codex])
-        #expect(offer.note == nil)
+    @Test(
+        "The add-tab offer shows catalog order and exactly the applicable note",
+        arguments: [
+            ([AgentKind.codex, .claude] as [AgentKind]?, false, [AgentKind.claude, .codex], nil as AddTabOffer.Note?),
+            ([.claude], true, [.claude], .agentAlreadyWorking),
+            ([], false, [], .noAgentFound),
+            ([], true, [], .noAgentFound),
+            (nil, false, [.claude, .codex, .antigravity, .opencode], nil)
+        ]
+    )
+    func addTabOffer_matchesLookupAndWorkingState(
+        installed: [AgentKind]?,
+        isWorking: Bool,
+        expectedAgents: [AgentKind],
+        expectedNote: AddTabOffer.Note?
+    ) {
+        let offer = AddTabOffer(catalog: catalog, installed: installed, isAgentWorkingInFolder: isWorking)
+        #expect(offer.agents == expectedAgents)
+        #expect(offer.note == expectedNote)
     }
 
-    @Test func addTabOffer_withAnAgentWorking_saysSoOnce() {
-        let offer = AddTabOffer(catalog: catalog, installed: [.claude], isAgentWorkingInFolder: true)
-        #expect(offer.note == .agentAlreadyWorking)
-    }
-
-    /// With none found, the note says where we looked, whether or not an
-    /// agent works in the folder: it is the one that explains the menu.
-    @Test func addTabOffer_withNoAgentFound_saysWhereWeLooked() {
-        for isWorking in [false, true] {
-            let offer = AddTabOffer(catalog: catalog, installed: [], isAgentWorkingInFolder: isWorking)
-            #expect(offer.agents.isEmpty)
-            #expect(offer.note == .noAgentFound)
-        }
-    }
-
-    /// Before the lookup, the note never says none was found.
-    @Test func addTabOffer_beforeAnyLookup_offersEveryAgent() {
-        let offer = AddTabOffer(catalog: catalog, installed: nil, isAgentWorkingInFolder: false)
-        #expect(offer.agents == catalog)
-        #expect(offer.note == nil)
-    }
-
+    @MainActor
     @Test func addTabMenu_endsWithTheShell() {
         let offer = AddTabOffer(catalog: catalog, installed: [.codex], isAgentWorkingInFolder: false)
-        #expect(AddTabMenu.items(of: offer) == [.agent(.codex), .shell])
+        let withAgent = AddTabMenu.items(of: offer)
+        #expect(withAgent == [.agent(.codex), .shell])
         let none = AddTabOffer(catalog: catalog, installed: [], isAgentWorkingInFolder: false)
-        #expect(AddTabMenu.items(of: none) == [.shell])
+        let shellOnly = AddTabMenu.items(of: none)
+        #expect(shellOnly == [.shell])
     }
 }
 
@@ -85,6 +81,7 @@ struct InstalledAgentsStoreTests {
             projectID == withCodex ? [Self.installation(.claude), Self.installation(.codex)] : [Self.installation(.claude)]
         }
         await store.refresh(projectID: withCodex)
+        #expect(store.installedAgents(for: nil) == nil)
         await store.refresh(projectID: nil)
         #expect(store.installedAgents(for: withCodex) == [.claude, .codex])
         #expect(store.installedAgents(for: nil) == [.claude])
@@ -137,12 +134,30 @@ struct InstalledAgentsStoreTests {
     /// Coming to the front looks again for every project looked up once,
     /// so an agent removed meanwhile leaves the menus.
     @Test func refreshKnown_looksAgainForEveryProjectLookedUp() async {
-        let project = UUID()
+        let first = UUID()
+        let second = UUID()
         let isInstalled = Recorded(true)
-        let store = InstalledAgentsStore { _ in isInstalled.value ? [Self.installation(.codex)] : [] }
-        await store.refresh(projectID: project)
+        let lookedUp = Recorded<[UUID?]>([])
+        let store = InstalledAgentsStore { project in
+            lookedUp.update { $0.append(project) }
+            return isInstalled.value ? [Self.installation(.codex)] : []
+        }
+        await store.refresh(projectID: first)
+        await store.refresh(projectID: second)
+        await store.refresh(projectID: nil)
+        #expect(store.installedAgents(for: first) == [.codex])
+        #expect(store.installedAgents(for: second) == [.codex])
+        #expect(store.installedAgents(for: nil) == [.codex])
+
         isInstalled.value = false
+        lookedUp.value = []
         await store.refreshKnown()
-        #expect(store.installedAgents(for: project) == [])
+
+        #expect(Set(lookedUp.value) == [first, second, nil])
+        #expect(lookedUp.value.count == 3)
+        #expect(store.installedAgents(for: first) == [])
+        #expect(store.installedAgents(for: second) == [])
+        #expect(store.installedAgents(for: nil) == [])
+        #expect(store.installedAnywhere == [])
     }
 }

@@ -28,6 +28,21 @@ struct NewSessionKeyTests {
         KeyCase(testDescription: "an input method's Return", hasMarkedText: true, expected: .pass),
         KeyCase(testDescription: "Option-Return", modifiers: .option, expected: .pass),
         KeyCase(testDescription: "Control-Return", modifiers: .control, expected: .pass),
+        KeyCase(testDescription: "Option-Command-Return", modifiers: [.option, .command], expected: .pass),
+        KeyCase(
+            testDescription: "Control-Command-Return with marked text",
+            modifiers: [.control, .command],
+            hasMarkedText: true,
+            expected: .pass
+        ),
+        KeyCase(testDescription: "Shift-Return with marked text", modifiers: .shift, hasMarkedText: true, expected: .pass),
+        KeyCase(testDescription: "Shift-Command-Return", modifiers: [.shift, .command], expected: .create),
+        KeyCase(
+            testDescription: "Shift-Command-Return with marked text",
+            modifiers: [.shift, .command],
+            hasMarkedText: true,
+            expected: .swallow
+        ),
         KeyCase(testDescription: "⌘ with another key", isReturn: false, modifiers: .command, expected: .pass)
     ])
     func action_followsTheKey(_ key: KeyCase) {

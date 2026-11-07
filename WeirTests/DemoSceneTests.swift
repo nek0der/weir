@@ -185,8 +185,26 @@ struct DemoSceneTests {
         ])
         #expect(window.sidebar?.collapsedProjects == [DemoFixture.pdfWorkerProjectID])
         #expect(window.sidebar?.openSections.isEmpty == true)
-        let pdf = try Self.scene().rows(DemoFixture.pdfWorkerProjectID)
-        #expect(pdf.contains { $0.fact.glyph == .needsApproval })
+        let scene = Self.scene()
+        let sidebar = SidebarListModel(
+            session: scene.session,
+            window: scene.session.primaryWindowID,
+            sections: SidebarPresentedSections(sections: [:]),
+            windowShowing: { _ in nil },
+            sources: .init(
+                queue: scene.queue,
+                runtimes: scene.runtimes,
+                approvals: ApprovalLedger(),
+                pullRequest: { DemoFixture.prStatus[$0] },
+                gitFacts: { DemoFixture.gitFacts[$0] },
+                running: { _ in 0 },
+                locale: Self.english
+            )
+        )
+        let header = try #require(sidebar.headers.first { $0.id == DemoFixture.pdfWorkerProjectID })
+        #expect(header.isCollapsed)
+        #expect(header.marks == [.needsApproval])
+        #expect(sidebar.rows(ofProject: DemoFixture.pdfWorkerProjectID).isEmpty)
     }
 
     /// pdf-worker's and dotfiles' rows: a wait, an idle agent with a merged

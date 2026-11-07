@@ -18,19 +18,15 @@ struct MenuBarApprovalRuleTests {
         MenuBarApprovalRule.offer(isQuestion: isQuestion, supportsNativeAnswer: supportsNativeAnswer, command: command, state: state)
     }
 
-    @Test func offer_shortCommand_allowsOrDenies() {
-        #expect(Self.offer("make test") == .allowOrDeny)
-    }
-
-    @Test func offer_sixtyCharacters_allowsOrDenies_sixtyOne_doesNot() {
-        let sixty = String(repeating: "a", count: 60)
-        #expect(Self.offer(sixty) == .allowOrDeny)
-        #expect(Self.offer(sixty + "a") == .tooLong)
-    }
-
-    @Test func offer_countsCharactersNotBytes() {
-        let sixty = String(repeating: "あ", count: 60)
-        #expect(Self.offer(sixty) == .allowOrDeny)
+    @Test(arguments: [
+        ("make test", MenuBarApprovalRule.Offer.allowOrDeny),
+        (String(repeating: "a", count: 60), .allowOrDeny),
+        (String(repeating: "a", count: 61), .tooLong),
+        (String(repeating: "あ", count: 60), .allowOrDeny),
+        (String(repeating: "あ", count: 61), .tooLong)
+    ])
+    func offer_commandLengthCountsCharacters(command: String, expected: MenuBarApprovalRule.Offer) {
+        #expect(Self.offer(command) == expected)
     }
 
     @Test(arguments: [
@@ -79,8 +75,22 @@ struct MenuBarApprovalRuleTests {
     }
 
     @Test func offer_questions_followWhoAnswersThem() {
-        #expect(Self.offer(nil, isQuestion: true) == .answerInWeir)
-        #expect(Self.offer(nil, isQuestion: true, supportsNativeAnswer: false) == .openPane)
+        let now = SuspendingClock.now
+        let rows: [(ApprovalRequestState, (native: MenuBarApprovalRule.Offer, terminal: MenuBarApprovalRule.Offer))] = [
+            (.held, (.answerInWeir, .openPane)),
+            (.sendFailed(.deny, error: "offline"), (.answerInWeir, .openPane)),
+            (.sending(.allowOnce, since: now), (.sending, .sending)),
+            (.sending(.delegate, since: now), (.sending, .sending)),
+            (.handedToTerminal(since: now), (.handedToTerminal, .handedToTerminal)),
+            (.timedOut, (.timedOut, .timedOut)),
+            (.withdrawn, (.openPane, .openPane)),
+            (.unknownResult, (.openPane, .openPane)),
+            (.answered(.allowOnce), (.answered, .answered))
+        ]
+        for (state, expected) in rows {
+            #expect(Self.offer(nil, isQuestion: true, supportsNativeAnswer: true, state: state) == expected.native, "\(state)")
+            #expect(Self.offer(nil, isQuestion: true, supportsNativeAnswer: false, state: state) == expected.terminal, "\(state)")
+        }
     }
 
     @Test func offer_handedOrTimedOut_isAnsweredInTheTerminal() {

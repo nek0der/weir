@@ -28,12 +28,18 @@ struct ReviewRailLayoutTests {
         #expect(failures.isEmpty)
     }
 
-    @Test func listWidth_staysInsideItsRange() {
-        #expect(ReviewRail.width(10, in: 900) == ReviewRail.minimum)
-        #expect(ReviewRail.width(10000, in: 2000) == ReviewRail.maximum)
-        #expect(ReviewRail.width(300, in: 529) == nil)
-        #expect(ReviewRail.isInline(in: ReviewRail.inlineMinimumWidth))
-        #expect(!ReviewRail.isInline(in: ReviewRail.inlineMinimumWidth - 1))
+    @Test("The rail keeps the requested width when possible and yields space to the diff", arguments: [
+        (CGFloat(10), CGFloat(900), 170 as CGFloat?),
+        (232, 900, 232),
+        (10000, 2000, 460),
+        (400, 640, 280),
+        (300, 530, 170),
+        (300, 529, nil),
+        (232, 500, nil)
+    ])
+    func listWidth_staysInsideItsRange(requested: CGFloat, available: CGFloat, expected: CGFloat?) {
+        #expect(ReviewRail.width(requested, in: available) == expected)
+        #expect(ReviewRail.isInline(in: available) == (expected != nil))
     }
 
     /// A drag reports fractional widths; what is stored is whole points,
@@ -133,15 +139,6 @@ struct ReviewRailLayoutTests {
         #expect(ReviewFileTree.showsLayerHeadings(files: mixed, isTree: true))
     }
 
-    /// The list goes away rather than pushing the diff out of the window.
-    @Test func theFileListYieldsWhenThereIsNoRoomForBoth() {
-        #expect(ReviewRail.width(232, in: 900) == 232)
-        // Wide enough for both, but not for the width that was asked for.
-        #expect(ReviewRail.width(400, in: 640) == 640 - ReviewRail.diffMinimum)
-        // Not wide enough for the list and a readable diff together.
-        #expect(ReviewRail.width(232, in: 500) == nil)
-    }
-
     /// The tree groups by the directory that holds each file, and the files at
     /// the repository root group under an empty path.
     @Test func fileRailGroupsFilesByTheirDirectory() {
@@ -155,7 +152,11 @@ struct ReviewRailLayoutTests {
         // and `\.path` on one compiles but crashes the test host.
         // swiftformat:disable:next preferKeyPath
         #expect(groups.map { $0.path } == ["", "Weir/App"])
-        #expect(groups[1].files.count == 2)
+        // swiftformat:disable:next preferKeyPath
+        #expect(groups.map { $0.files.map(\.id) } == [
+            ["unstaged:README.md"],
+            ["staged:Weir/App/Scene.swift", "unstaged:Weir/App/WeirApp.swift"]
+        ])
         #expect(ReviewFileTree.name("Weir/App/WeirApp.swift") == "WeirApp.swift")
         #expect(ReviewFileTree.parent("Weir/App/WeirApp.swift") == "Weir/App")
         #expect(ReviewFileTree.parent("README.md") == nil)
@@ -179,6 +180,17 @@ struct ReviewRailLayoutTests {
     /// per frame.
     @Test func scrollingTheRail_changesThePinOnlyWhenItMoves() {
         let tops: [String: CGFloat] = ["a": 0, "b": 300, "c": 640, "d": 900, "e": 1400, "f": 1800]
+        let expectedPins: [Int: ReviewRailPin] = [
+            0: .none,
+            1: ReviewRailPin(id: "a", offset: 0),
+            93: ReviewRailPin(id: "a", offset: -3),
+            99: ReviewRailPin(id: "a", offset: -21),
+            100: ReviewRailPin(id: "a", offset: 0),
+            101: ReviewRailPin(id: "b", offset: 0),
+            214: ReviewRailPin(id: "c", offset: 0),
+            301: ReviewRailPin(id: "d", offset: 0),
+            467: ReviewRailPin(id: "e", offset: 0)
+        ]
         var pin = ReviewRailPin.none
         var pinWrites = 0
         var offsetReports = 0
@@ -198,6 +210,9 @@ struct ReviewRailLayoutTests {
             if next != pin {
                 pin = next
                 pinWrites += 1
+            }
+            if let expected = expectedPins[frame] {
+                #expect(pin == expected, "frame \(frame)")
             }
         }
         #expect(pinWrites < offsetReports / 10)

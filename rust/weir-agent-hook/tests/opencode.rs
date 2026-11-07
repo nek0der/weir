@@ -14,7 +14,7 @@ use weir_agent_hook::{
 };
 use weir_agent_model::{
     ChangeSummary, FailureKind, RunRecord, RunState, SnapshotStatus, TurnPhase, TurnRecord,
-    UsageLimitScope, run_record_file_name, session_hint_file_name,
+    UsageLimitScope, WaitKind, run_record_file_name, session_hint_file_name,
 };
 
 const PROVIDER: &str = "opencode";
@@ -66,10 +66,22 @@ impl Scratch {
             })
             .collect();
         payloads.sort();
+        assert!(!payloads.is_empty(), "no payloads in {case}");
         for path in payloads {
-            let payload: Value =
-                serde_json::from_slice(&fs::read(&path).expect("payload")).expect("json");
-            self.call(&payload, &NoSnapshots);
+            self.replay_call(&path);
+        }
+    }
+
+    fn replay_call(&self, path: &Path) {
+        let payload: Value =
+            serde_json::from_slice(&fs::read(path).expect("payload")).expect("json");
+        self.call(&payload, &NoSnapshots);
+    }
+
+    fn replay_only(&self, case: &str, names: &[&str]) {
+        let directory = case_directory(case);
+        for name in names {
+            self.replay_call(&directory.join(format!("{name}.json")));
         }
     }
 
@@ -119,10 +131,17 @@ fn two_turns_keep_their_prompts_replies_and_what_each_used() {
     let turns = scratch.turns();
     assert_eq!(turns.len(), 2);
     assert_eq!(turns[0].phase, TurnPhase::Finished);
+    assert_eq!(turns[1].phase, TurnPhase::Finished);
     assert_eq!(
         turns[0].prompt_head.as_deref(),
         Some("Reply with only the word ONE")
     );
+    assert_eq!(
+        turns[1].prompt_head.as_deref(),
+        Some("Run the shell command echo TWO and then reply DONE")
+    );
+    assert_eq!(turns[0].reply_head.as_deref(), Some("ONE"));
+    assert_eq!(turns[1].reply_head.as_deref(), Some("DONE"));
     let usage = turns[0].usage.expect("usage");
     assert_eq!(
         (
@@ -218,9 +237,26 @@ fn a_new_session_closes_the_turn_short_and_moves_the_run() {
 #[test]
 fn a_manual_compaction_opens_no_turn_and_leaves_the_run_at_rest() {
     let scratch = Scratch::new();
-    scratch.replay("compact");
-    assert_eq!(scratch.turns().len(), 1);
-    assert_ne!(scratch.record().state, RunState::Compacting);
+    scratch.replay_only(
+        "compact",
+        &[
+            "0001-weir.launch",
+            "0002-weir.prepare",
+            "0003-weir.session",
+            "0004-session.execution.started",
+            "0005-session.step.started",
+            "0006-session.execution.succeeded",
+        ],
+    );
+    let turns = scratch.turns();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].phase, TurnPhase::Finished);
+    scratch.replay_only("compact", &["0007-session.compaction.started"]);
+    assert_eq!(scratch.record().state, RunState::Compacting);
+    assert_eq!(scratch.turns(), turns);
+    scratch.replay_only("compact", &["0008-session.compaction.ended"]);
+    assert_eq!(scratch.record().state, RunState::Idle);
+    assert_eq!(scratch.turns(), turns);
 }
 
 #[test]
@@ -285,18 +321,79 @@ fn a_rate_limit_being_retried_is_work_going_on() {
 
 #[test]
 fn an_approval_answered_goes_back_to_work_and_a_refused_one_still_ends_the_turn() {
-    let scratch = Scratch::new();
-    scratch.replay("approval-card-once");
-    assert_eq!(scratch.record().state, RunState::Finished);
-    let scratch = Scratch::new();
-    scratch.replay("approval-card-reject");
-    assert_eq!(scratch.record().state, RunState::Finished);
+    for (case, reply, completion) in [
+        (
+            "approval-card-once",
+            "0008-permission.replied",
+            &[
+                "0009-session.tool.success",
+                "0010-session.execution.succeeded",
+            ][..],
+        ),
+        (
+            "approval-card-reject",
+            "0008-session.tool.failed",
+            &["0009-session.execution.succeeded"][..],
+        ),
+    ] {
+        let scratch = Scratch::new();
+        scratch.replay_only(
+            case,
+            &[
+                "0001-weir.launch",
+                "0002-weir.prepare",
+                "0003-weir.session",
+                "0004-session.execution.started",
+                "0005-session.step.started",
+                "0006-session.tool.called",
+                "0007-permission.asked",
+            ],
+        );
+        assert_eq!(scratch.record().state, RunState::NeedsInput, "{case}");
+        scratch.replay_only(case, &[reply]);
+        assert_eq!(scratch.record().state, RunState::Running, "{case}");
+        assert_eq!(scratch.record().wait_kind, None, "{case}");
+        scratch.replay_only(case, completion);
+        assert_eq!(scratch.record().state, RunState::Finished, "{case}");
+        let turns = scratch.turns();
+        let [turn] = turns.as_slice() else {
+            panic!("{case}: expected one turn: {turns:?}");
+        };
+        assert_eq!(turn.phase, TurnPhase::Finished, "{case}");
+    }
 }
 
 #[test]
 fn a_question_keeps_the_run_waiting_until_it_is_answered() {
     let scratch = Scratch::new();
-    scratch.replay("question");
+    scratch.replay_only(
+        "question",
+        &[
+            "0001-weir.launch",
+            "0002-weir.prepare",
+            "0003-weir.session",
+            "0004-session.execution.started",
+            "0005-session.step.started",
+            "0006-session.tool.called",
+            "0007-form.created",
+        ],
+    );
+    let record = scratch.record();
+    assert_eq!(record.state, RunState::NeedsInput);
+    assert_eq!(record.wait_kind, Some(WaitKind::Question));
+
+    scratch.replay_only("question", &["0008-form.replied"]);
+    let record = scratch.record();
+    assert_eq!(record.state, RunState::Running);
+    assert_eq!(record.wait_kind, None);
+
+    scratch.replay_only(
+        "question",
+        &[
+            "0009-session.tool.success",
+            "0010-session.execution.succeeded",
+        ],
+    );
     assert_eq!(scratch.record().state, RunState::Finished);
     assert_eq!(scratch.turns().len(), 1);
 }
@@ -452,6 +549,7 @@ fn a_limits_words_keep_to_the_records_text_contract() {
         .label
         .expect("words");
     assert!(!label.contains('\u{1b}'));
+    assert!(label.starts_with("over"));
     assert!(label.len() <= weir_agent_model::MAX_RECORD_TEXT_BYTES);
 }
 
@@ -520,6 +618,7 @@ fn a_worktree_it_made_in_the_projects_folder_gets_the_setup_and_the_event_with_n
     );
     assert!(folder.join("bootstrapped").exists());
     assert_eq!(worktree_events(&scratch), 1);
+    assert!(!scratch.root.join("worktrees-awaited").exists());
 }
 
 /// A worktree that was already there is not set up again on the strength of words
@@ -551,10 +650,7 @@ fn an_existing_worktree_is_not_set_up_on_words_that_only_name_it() {
         format!("git worktree add -b x {}", other.display()),
     ] {
         let outcome = finish(tool_success(&repo, &command, 0));
-        assert!(
-            !matches!(outcome, HookOutcome::Intercepted { .. }),
-            "{command}: {outcome:?}"
-        );
+        assert_eq!(outcome, HookOutcome::Applied, "{command}");
     }
     let mut cut: Value = serde_json::from_slice(&tool_success(
         &repo,
@@ -564,10 +660,7 @@ fn an_existing_worktree_is_not_set_up_on_words_that_only_name_it() {
     .expect("json");
     cut["command_complete"] = json!(false);
     let outcome = finish(serde_json::to_vec(&cut).expect("bytes"));
-    assert!(
-        !matches!(outcome, HookOutcome::Intercepted { .. }),
-        "{outcome:?}"
-    );
+    assert_eq!(outcome, HookOutcome::Applied);
     assert!(!folder.join("bootstrapped").exists());
     assert_eq!(worktree_events(&scratch), 0);
 }
@@ -707,4 +800,6 @@ fn a_tools_start_leaves_no_mark_and_changes_nothing() {
         HookOutcome::Applied
     );
     assert!(!scratch.root.join("worktrees-awaited").exists());
+    assert_eq!(worktree_events(&scratch), 0);
+    assert!(!repo.path.with_file_name("repo-x").exists());
 }

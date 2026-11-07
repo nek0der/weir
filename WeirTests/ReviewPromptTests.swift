@@ -73,7 +73,7 @@ struct ReviewPromptTests {
         ).text
         // The path's quote is escaped, so it cannot close the `file` attribute
         // and open a forged `lines` one after it.
-        #expect(prompt.contains("&quot;"))
+        #expect(prompt.contains("file=\"ok.swift\u{200D}&quot; lines=\u{200D}&quot;9-9\""))
         #expect(!prompt.contains("lines=\u{200D}\""))
     }
 
@@ -87,7 +87,7 @@ struct ReviewPromptTests {
         let patch = "@@ -1,1 +1,1 @@\n-old\n+let s = \"a\u{202E}b\"\n"
         let added = try #require(try ReviewDiffParser.parse(patch).first { $0.kind == .added })
         #expect(!added.text.unicodeScalars.contains("\u{202E}"))
-        #expect(added.text.contains("\u{FFFD}"))
+        #expect(added.text == "let s = \"a\u{FFFD}b\"")
         let comment = ReviewComment(
             file: ReviewFile(path: "a.swift", layer: .unstaged, status: .modified),
             fingerprint: "f",
@@ -100,7 +100,7 @@ struct ReviewPromptTests {
             locale: Locale(identifier: "en")
         ).text
         #expect(!prompt.unicodeScalars.contains("\u{202E}"))
-        #expect(prompt.contains("\u{FFFD}"))
+        #expect(prompt.contains(added.text))
     }
 
     /// In both languages: the default opening and the boundary are written

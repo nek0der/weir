@@ -28,6 +28,8 @@ struct CheckCommandsDraftTests {
         let row = list.add()
 
         #expect(list.rows.last == CheckCommandsDraft.Row(id: row, text: ""))
+        #expect(list.differsFromDefaults(), "Restore Default can clear the added row")
+        #expect(list.commands() == nil)
         list.setText("  just   check  ", of: row)
         #expect(list.commands() == ["make test*", "cargo test", "just check"])
     }
@@ -74,8 +76,10 @@ struct CheckCommandsDraftTests {
     @Test func restoringDefaults_bringsBackTheDefaultsAndSavesNil() {
         var list = draft(["just check"])
         list.add()
+        let custom = list
         list.restoreDefaults()
 
+        #expect(CheckCommandsDraft.save(from: custom, to: list) == .commands(nil))
         #expect(list.rows.map(\.text) == defaults)
         #expect(list.commands() == nil)
         #expect(!list.differsFromDefaults())
@@ -115,8 +119,11 @@ struct CheckCommandsDraftTests {
         let row = list.add()
         list.setText("swift test --filter \u{201C}Turn\u{201D}", of: row)
 
-        let typed = list.commands(normalizing: CommandLineText.sanitizeSmartPunctuation)
-        #expect(typed == ["swift test --filter \"Turn\""])
+        let normalizing = CommandLineText.sanitizeSmartPunctuation
+        #expect(list.commands(normalizing: normalizing) == ["swift test --filter \"Turn\""])
+
+        let normalized = draft(["swift test --filter \"Turn\""])
+        #expect(CheckCommandsDraft.save(from: normalized, to: list, normalizing: normalizing) == .nothing)
     }
 
     @Test func theDefaults_comeFromTheHook() throws {
@@ -144,7 +151,9 @@ struct CheckCommandsPersistenceTests {
         var project = Project(name: "r", rootURL: URL(fileURLWithPath: "/tmp/r"))
         project.checkCommands = []
         let data = try PersistenceCoders.makeEncoder().encode(project)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
+        #expect(object["checkCommands"] as? [String] == [])
         #expect(try JSONDecoder().decode(Project.self, from: data).checkCommands == [])
     }
 

@@ -397,13 +397,17 @@ mod tests {
             },
         )
         .continuing()
-        .then(retire);
+        .then(retire.clone());
 
         // Dropping the hint is best-effort because it may belong to a newer
         // run, but the retirement it leads to must not act on a record that
         // changed underneath.
         assert_eq!(chain.on_mismatch, OnMismatch::Continue);
+        assert_eq!(chain.then, [retire]);
         assert_eq!(chain.then[0].on_mismatch, OnMismatch::Abort);
+        let value = serde_json::to_value(&chain).expect("encode");
+        assert_eq!(value["onMismatch"], "continue");
+        assert_eq!(value["then"][0]["onMismatch"], "abort");
     }
 
     #[test]
@@ -413,11 +417,12 @@ mod tests {
             pid: Patch::Clear,
             ..RecordPatch::default()
         };
-        let text = serde_json::to_string(&patch).expect("encode");
-        assert!(text.contains("\"state\""), "{text}");
-        assert!(text.contains("\"pid\":\"clear\""), "{text}");
-        assert!(!text.contains("killedByWeirAt"), "{text}");
-        let back: RecordPatch = serde_json::from_str(&text).expect("decode");
+        let value = serde_json::to_value(&patch).expect("encode");
+        assert_eq!(
+            value,
+            serde_json::json!({"state":{"set":"unknown"},"pid":"clear"})
+        );
+        let back: RecordPatch = serde_json::from_value(value).expect("decode");
         assert_eq!(back, patch);
     }
 
@@ -504,14 +509,20 @@ mod tests {
         let intent: ResumeIntent = serde_json::from_str(text).expect("decode");
         assert_eq!(intent.pid, "4242");
         assert_eq!(intent.owner_run_id.as_deref(), Some("OWNER"));
-        let back = serde_json::to_string(&intent).expect("encode");
-        assert!(back.contains("\"runID\""), "{back}");
-        assert!(back.contains("\"createdAt\""), "{back}");
+        let back = serde_json::to_value(&intent).expect("encode");
+        assert_eq!(
+            back,
+            serde_json::from_str::<serde_json::Value>(text).expect("fixture")
+        );
 
         // An intent from before hints recorded their owner still decodes.
         let legacy = r#"{"runID":"RUN","paneID":"11111111-1111-4111-8111-111111111111",
             "sessionID":"S","pid":"4242","createdAt":"2026-09-14T12:00:00Z"}"#;
         let intent: ResumeIntent = serde_json::from_str(legacy).expect("decode legacy");
         assert!(intent.owner_run_id.is_none());
+        assert_eq!(
+            serde_json::to_value(&intent).expect("encode"),
+            serde_json::from_str::<serde_json::Value>(legacy).expect("legacy fixture")
+        );
     }
 }

@@ -101,18 +101,6 @@ struct ProjectViewTests {
 
     // MARK: - Saved and read back
 
-    @Test func aProjectsView_roundTripsThroughTheSnapshot() throws {
-        let fixture = Fixture()
-        fixture.session.projectViews[fixture.left.id] = fixture.leftView
-
-        let json = try JSONObjectFixture.object(encoding: fixture.session.makeSnapshot())
-        let restored = try fixture.relaunched()
-
-        #expect(json["version"] as? Int == 6)
-        #expect((json["projectViews"] as? [Any])?.count == 1)
-        #expect(restored.projectViews == [fixture.left.id: fixture.leftViewAsWritten])
-    }
-
     @Test func aSnapshotWithoutProjectViews_readsAsNoMemory() throws {
         let fixture = Fixture()
         fixture.session.projectViews[fixture.left.id] = fixture.leftView
@@ -151,40 +139,50 @@ struct ProjectViewTests {
         let fixture = Fixture()
         let third = fixture.addProject("third")
         fixture.session.projectViews[fixture.left.id] = fixture.leftView
+        fixture.session.projectViews[third.id] = Self.staleView(of: third)
         var json = try JSONObjectFixture.object(encoding: fixture.session.makeSnapshot())
-        let views = try #require(json["projectViews"] as? [Any])
-        // One whose width is not a number, and one with no project.
-        let unreadable: [Any] = [
-            ["projectID": third.id.uuidString, "sidebarWidth": "wide"],
-            ["sidebarWidth": 300]
+        let views = try #require(json["projectViews"] as? [[String: Any]])
+        try #require(views.count == 2)
+        json["projectViews"] = [
+            views[0], ["projectID": third.id.uuidString, "sidebarWidth": "wide"], ["sidebarWidth": 300], views[1]
         ]
-        json["projectViews"] = unreadable + views
 
-        let restored = try Fixture.relaunch(JSONSerialization.data(withJSONObject: json))
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let decoded = try JSONDecoder().decode(SessionSnapshot.self, from: data)
+        let restored = try Fixture.relaunch(data)
+        let good = [fixture.leftViewAsWritten, Self.staleView(of: third)]
 
-        #expect(restored.projectViews == [fixture.left.id: fixture.leftViewAsWritten])
+        #expect(decoded.projectViews == good)
+        #expect(restored.projectViews == Dictionary(uniqueKeysWithValues: good.map { ($0.projectID, $0) }))
     }
 
     @Test func aProjectShownInAWindow_isSavedByWhatTheWindowShows() throws {
         let fixture = Fixture()
         let hidden = fixture.addProject("hidden")
-        let window = fixture.session.addWindow(showing: hidden.id, layoutFrom: fixture.session.primaryWindowID).windowID
-        fixture.session.setWindow(window, isHidden: true)
-        // Views no save should write: each project is shown by a window,
-        // the second one hidden beside the first.
+        let visible = fixture.session.primarySelection
+        visible.sidebarWidth = 301
+        let selection = fixture.session.addWindow(showing: hidden.id, layoutFrom: visible.windowID)
+        let hiddenTab = fixture.session.openTab(container: .project(hidden.id), in: selection.windowID)
+        selection.sidebarWidth = 363
+        selection.sidebarHidden = true
+        selection.isChangesPanelPresented = true
+        selection.changesPanelWidth = 475
+        fixture.session.setWindow(selection.windowID, isHidden: true)
         fixture.session.projectViews[fixture.shown.id] = Self.staleView(of: fixture.shown)
         fixture.session.projectViews[hidden.id] = Self.staleView(of: hidden)
         fixture.session.projectViews[fixture.left.id] = fixture.leftView
 
         let snapshot = fixture.session.makeSnapshot()
-
-        // The shown window's record, and the hidden one's selection as its
-        // project's view: a hidden window beside a shown one is not saved
-        // as a window.
-        let hiddenView = try #require(fixture.session.selection(window)?.projectView(for: hidden.id))
+        let window = try #require(snapshot.windows.first)
         #expect(snapshot.windows.map(\.projectID) == [fixture.shown.id])
-        #expect(snapshot.projectViews == [fixture.leftView, hiddenView])
-        #expect(hiddenView.sidebarWidth != 999)
+        #expect(window.activeContainerID == .project(fixture.shown.id))
+        #expect(window.activeTabID == fixture.shownTab.id)
+        #expect(window.sidebarWidth == 301)
+        #expect(!window.isHidden)
+        #expect(snapshot.projectViews == [fixture.leftView, ProjectView(
+            projectID: hidden.id, activeContainerID: .project(hidden.id), activeTabID: hiddenTab.id,
+            sidebarWidth: 363, sidebarHidden: true, isChangesPanelPresented: true, changesPanelWidth: 475
+        )])
     }
 
     /// The window whose record holds a project's place.
@@ -263,8 +261,11 @@ struct ProjectViewTests {
         let fixture = Fixture()
         fixture.session.projectViews[fixture.left.id] = fixture.leftView
         let restored = try fixture.relaunched()
-        restored.closeTab(fixture.leftFirst.id)
-
+        let stale = UUID()
+        restored.projectViews[fixture.left.id]?.activeTabID = stale
+        #expect(restored.tab(stale) == nil)
+        #expect(restored.projectViews[fixture.left.id]?.activeTabID == stale)
+        #expect(restored.tabs(in: .project(fixture.left.id)).map(\.id) == [fixture.leftFirst.id, fixture.leftLast.id])
         restored.primarySelection.sidebarWidth = 280
 
         let window = restored.addWindow(showing: fixture.left.id, layoutFrom: restored.primaryWindowID).windowID
@@ -278,14 +279,18 @@ struct ProjectViewTests {
 
     // MARK: - Put back and forgotten
 
-    @Test func removingAProject_forgetsItsView() {
+    @Test func removingAProject_forgetsOnlyItsView() {
         let fixture = Fixture()
+        let kept = fixture.addProject("kept")
+        let keptView = Self.staleView(of: kept)
         fixture.session.projectViews[fixture.left.id] = fixture.leftView
+        fixture.session.projectViews[kept.id] = keptView
 
         fixture.session.removeProject(fixture.left.id)
 
-        #expect(fixture.session.projectViews.isEmpty)
-        #expect(fixture.session.makeSnapshot().projectViews.isEmpty)
+        #expect(fixture.session.project(fixture.left.id) == nil)
+        #expect(fixture.session.projectViews == [kept.id: keptView])
+        #expect(fixture.session.makeSnapshot().projectViews == [keptView])
     }
 
     @Test func aWindowSwitchingToAProject_startsFromItsRememberedView_andForgetsIt() throws {
@@ -294,6 +299,8 @@ struct ProjectViewTests {
         let frame = CGRect(x: 10, y: 20, width: 900, height: 700)
         fixture.session.primarySelection.frame = frame
         fixture.session.primarySelection.sidebarWidth = 280
+        let outgoingFilter = ConversationKey(provider: .codex, conversationID: "shown", isFallback: true)
+        fixture.session.primarySelection.changesPanelFilter = outgoingFilter
         fixture.session.projectViews[fixture.left.id] = fixture.leftView
 
         fixture.session.showProject(fixture.left.id, in: window, intent: .person, reason: .person)
@@ -303,7 +310,7 @@ struct ProjectViewTests {
         // The tab the window was on, not the project's last session.
         #expect(selection.activeTabID == fixture.leftFirst.id)
         #expect(selection.activeContainerID == .project(fixture.left.id))
-        #expect(selection.changesPanelFilter?.conversationID == "c1")
+        #expect(selection.changesPanelFilter == fixture.leftView.changesPanelFilter)
         // The window's own layout stays the window's: its frame, and its
         // chrome, whatever the view of an earlier build says.
         #expect(selection.frame == frame)
@@ -312,7 +319,10 @@ struct ProjectViewTests {
         #expect(!selection.isChangesPanelPresented)
         #expect(selection.changesPanelWidth == nil)
         // The view is the window's now; the project it left keeps one.
-        #expect(Set(fixture.session.projectViews.keys) == [fixture.shown.id])
+        #expect(fixture.session.projectViews == [fixture.shown.id: ProjectView(
+            projectID: fixture.shown.id, activeContainerID: .project(fixture.shown.id), activeTabID: fixture.shownTab.id,
+            sidebarWidth: 280, sidebarHidden: false, isChangesPanelPresented: false, changesPanelFilter: outgoingFilter
+        )])
         #expect(fixture.session.projectsWithWindowRecords.isDisjoint(with: fixture.session.projectViews.keys))
     }
 
@@ -339,7 +349,10 @@ struct ProjectViewTests {
         let fixture = Fixture()
         ProjectSwitchRecorder.connect(to: fixture.session)
         let gone = fixture.addProject("gone")
-        let window = fixture.session.addWindow(showing: gone.id, layoutFrom: fixture.session.primaryWindowID).windowID
+        let selectionBefore = fixture.session.addWindow(showing: gone.id, layoutFrom: fixture.session.primaryWindowID)
+        let window = selectionBefore.windowID
+        selectionBefore.sidebarWidth = 275
+        selectionBefore.changesPanelWidth = 355
         fixture.session.projectViews[fixture.left.id] = fixture.leftView
 
         // The window's project goes: it switches at once to the project
@@ -347,11 +360,17 @@ struct ProjectViewTests {
         fixture.session.removeProject(gone.id)
         let selection = try #require(fixture.session.selection(window))
 
+        #expect(fixture.session.project(gone.id) == nil)
+        #expect(selection === selectionBefore)
         #expect(selection.projectID == fixture.left.id)
+        #expect(selection.activeContainerID == .project(fixture.left.id))
         #expect(selection.activeTabID == fixture.leftFirst.id)
-        #expect(selection.changesPanelFilter?.conversationID == "c1")
-        #expect(selection.sidebarWidth == SessionLayoutDefaults.sidebarWidth)
+        #expect(selection.changesPanelFilter == fixture.leftView.changesPanelFilter)
+        #expect(selection.sidebarWidth == 275)
+        #expect(!selection.sidebarHidden)
         #expect(!selection.isChangesPanelPresented)
+        #expect(selection.changesPanelWidth == 355)
+        #expect(fixture.session.primarySelection.activeTabID == fixture.shownTab.id)
         #expect(fixture.session.projectViews.isEmpty)
     }
 
@@ -405,6 +424,10 @@ struct ProjectViewTests {
         // The other window closes, so `left` keeps what it showed; then a
         // project no window shows goes away.
         fixture.session.removeWindow(window)
+        let kept = try #require(fixture.session.projectViews[fixture.left.id])
+        #expect(kept.activeContainerID == .project(fixture.left.id))
+        #expect(kept.activeTabID == fixture.leftFirst.id)
+        #expect(kept.sidebarWidth == 333)
         let gone = fixture.addProject("gone")
         fixture.session.removeProject(gone.id)
 
@@ -413,43 +436,30 @@ struct ProjectViewTests {
         // the project.
         #expect(fixture.session.primarySelection.projectID == fixture.shown.id)
         #expect(fixture.session.primarySelection.activeTabID == scratch.id)
-        #expect(fixture.session.projectViews[fixture.left.id]?.activeTabID == fixture.leftFirst.id)
-        #expect(fixture.session.projectViews[fixture.left.id]?.sidebarWidth == 333)
+        #expect(fixture.session.primarySelection.activeContainerID == .loose)
+        #expect(fixture.session.projectViews[fixture.left.id] == kept)
     }
 
     @Test func aViewNamingNoContainer_opensItsProjectsLastSession() throws {
         let fixture = Fixture()
+        fixture.session.closeTab(fixture.leftFirst.id)
+        fixture.session.closeTab(fixture.leftLast.id)
+        let worktree = try WorkspaceSessionFixture.appendWorktree(to: fixture.left.id, in: fixture.session)
+        let row = ContainerID.worktree(projectID: fixture.left.id, worktreeID: worktree.id)
+        let checkout = fixture.session.openTab(container: row, in: fixture.session.primaryWindowID, intent: .person, selects: false)
         var json = try JSONObjectFixture.object(encoding: fixture.session.makeSnapshot())
         json["projectViews"] = [["projectID": fixture.left.id.uuidString]]
 
         let restored = try Fixture.relaunch(JSONSerialization.data(withJSONObject: json))
-        #expect(restored.projectViews[fixture.left.id]?.activeContainerID == .loose)
+        #expect(restored.projectViews == [fixture.left.id: ProjectView(
+            projectID: fixture.left.id, activeContainerID: .loose, activeTabID: nil
+        )])
+        #expect(restored.tabs(in: .project(fixture.left.id)).isEmpty)
         let window = restored.addWindow(showing: fixture.left.id, layoutFrom: restored.primaryWindowID).windowID
 
-        #expect(restored.selection(window)?.activeTabID == fixture.leftLast.id)
-    }
-
-    @Test func aWindowsProjectView_writesItsChrome_whichApplyLeavesAsTheOtherWindowHasIt() {
-        let fixture = Fixture()
-        let source = WindowSelection(activeTabID: fixture.leftFirst.id, activeContainerID: .project(fixture.left.id))
-        source.sidebarWidth = 333
-        source.sidebarHidden = true
-        source.isChangesPanelPresented = true
-        source.changesPanelWidth = 444
-        source.changesPanelFilter = ConversationKey(provider: .claude, conversationID: "c1", isFallback: false)
-
-        let view = source.projectView(for: fixture.left.id)
-        let target = WindowSelection(sidebarWidth: 280)
-        target.apply(view)
-
-        // Written whole, the chrome for the build before.
-        #expect(view == fixture.leftView)
-        // Put back: the panel's agent alone. The chrome is the window's.
-        #expect(target.changesPanelFilter == source.changesPanelFilter)
-        #expect(target.sidebarWidth == 280)
-        #expect(!target.sidebarHidden)
-        #expect(!target.isChangesPanelPresented)
-        #expect(target.changesPanelWidth == nil)
+        #expect(restored.selection(window)?.activeTabID == checkout.id)
+        #expect(restored.selection(window)?.activeContainerID == row)
+        #expect(restored.projectViews.isEmpty)
     }
 
     /// The window is laid out from its record, through every switch: a
@@ -467,11 +477,15 @@ struct ProjectViewTests {
             "activeContainerID": ["project": ["_0": fixture.left.id.uuidString]],
             "sidebarWidth": 399,
             "sidebarHidden": true,
-            "isChangesPanelPresented": true,
-            "changesPanelWidth": 555
+            "isChangesPanelPresented": false,
+            "changesPanelWidth": 555,
+            "changesPanelAgent": "codex"
         ]]
         let restored = try Fixture.relaunch(JSONSerialization.data(withJSONObject: json))
-        #expect(restored.projectViews[fixture.left.id]?.sidebarWidth == 399)
+        #expect(restored.projectViews == [fixture.left.id: ProjectView(
+            projectID: fixture.left.id, activeContainerID: .project(fixture.left.id), activeTabID: fixture.leftFirst.id,
+            sidebarWidth: 399, sidebarHidden: true, isChangesPanelPresented: false, changesPanelWidth: 555
+        )])
         let selection = restored.primarySelection
         #expect(selection.sidebarWidth == 280)
         #expect(selection.isChangesPanelPresented)
@@ -480,6 +494,8 @@ struct ProjectViewTests {
         restored.showProject(fixture.left.id, in: restored.primaryWindowID, intent: .person, reason: .person)
 
         #expect(selection.activeTabID == fixture.leftFirst.id)
+        #expect(selection.activeContainerID == .project(fixture.left.id))
+        #expect(selection.changesPanelFilter == nil)
         #expect(selection.sidebarWidth == 280)
         #expect(!selection.sidebarHidden)
         #expect(selection.isChangesPanelPresented)
@@ -500,6 +516,8 @@ struct ProjectViewTests {
         // The view of the project left, as the build before reads it.
         let views = try #require(json["projectViews"] as? [[String: Any]])
         let shown = try #require(views.first { $0["projectID"] as? String == fixture.shown.id.uuidString })
+        #expect(shown["activeTabID"] as? String == fixture.shownTab.id.uuidString)
+        #expect((shown["activeContainerID"] as? [String: [String: String]]) == ["project": ["_0": fixture.shown.id.uuidString]])
         #expect(shown["sidebarWidth"] as? Double == 280)
         #expect(shown["sidebarHidden"] as? Bool == true)
         #expect(shown["isChangesPanelPresented"] as? Bool == true)
@@ -518,14 +536,23 @@ struct ProjectViewTests {
         fixture.session.addWindow(showing: other.id, layoutFrom: fixture.session.primaryWindowID)
         fixture.session.projectViews[fixture.left.id] = fixture.leftView
 
-        let restored = try fixture.relaunched()
+        let snapshot = fixture.session.makeSnapshot()
+        let json = try JSONObjectFixture.object(encoding: snapshot)
+        let view = try #require((json["projectViews"] as? [[String: Any]])?.first)
+        #expect(json["version"] as? Int == 6)
+        #expect((json["projectViews"] as? [[String: Any]])?.count == 1)
+        #expect(view["projectID"] as? String == fixture.left.id.uuidString)
+        #expect(view["changesPanelAgent"] == nil)
+        #expect(view["changesPanelFilter"] == nil)
+        #expect(snapshot.windows.map(\.projectID) == [fixture.shown.id, other.id])
+        let restored = try Fixture.relaunch(snapshot)
         let saved = restored.makeSnapshot()
 
         let written = fixture.leftViewAsWritten
         #expect(restored.projectViews == [fixture.left.id: written])
         #expect(saved.projectViews == [written])
         // The window made again keeps its project out of the views.
-        #expect(saved.windows.compactMap(\.projectID).contains(other.id))
+        #expect(saved.windows.map(\.projectID) == [fixture.shown.id, other.id])
         #expect(restored.carriedRootFields["projectViews"] == nil)
     }
 
@@ -534,11 +561,12 @@ struct ProjectViewTests {
         var snapshot = fixture.session.makeSnapshot()
         var second = fixture.leftView
         second.sidebarWidth = 111
+        second.activeTabID = fixture.leftLast.id
         snapshot.projectViews = [fixture.leftView, second]
 
         let restored = try Fixture.relaunch(snapshot)
 
-        #expect(restored.projectViews[fixture.left.id]?.sidebarWidth == 333)
+        #expect(restored.projectViews == [fixture.left.id: fixture.leftViewAsWritten])
     }
 
     @Test func theViews_areSavedInTheProjectsOrder() {
@@ -562,7 +590,7 @@ struct ProjectViewTests {
         #expect(after == [third.id, fixture.left.id])
     }
 
-    @Test func aChangeToAProjectView_schedulesASave() {
+    @Test func savedStateObservation_reportsAProjectViewChange() {
         let fixture = Fixture()
         let notified = Recorded(false)
         withObservationTracking {

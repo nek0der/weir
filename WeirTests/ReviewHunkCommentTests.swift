@@ -54,7 +54,11 @@ struct ReviewHunkCommentTests {
     @Test func aRun_staysInsideItsHunk() throws {
         let lines = try Self.lines()
         let run = try #require(ReviewHunkRun.run(ofHunk: Self.header(1, in: lines), in: lines, layout: .unified))
-        #expect(lines.filter { $0.id >= run.start && $0.id <= run.end }.allSatisfy { $0.hunkIndex == 1 })
+        let covered = lines.filter { $0.id >= run.start && $0.id <= run.end }
+        let target = try #require(lines.first { $0.hunkIndex == 1 && $0.kind == .removed })
+        #expect(covered.map(\.id) == [target.id])
+        #expect(covered.map(\.text) == ["eleven"])
+        #expect(run.start == target.id && run.end == target.id)
     }
 
     /// A hunk of context alone is taken whole; a line that is not a hunk

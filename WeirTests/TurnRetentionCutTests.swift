@@ -16,6 +16,7 @@ struct TurnRetentionCutTests {
 
         #expect(TurnRetentionCut.needsConfirmation(from: saved, to: fewerDays, removing: 3))
         #expect(TurnRetentionCut.needsConfirmation(from: saved, to: fewerTurns, removing: 1))
+        #expect(!TurnRetentionCut.needsConfirmation(from: saved, to: saved, removing: 3))
         #expect(!TurnRetentionCut.needsConfirmation(from: saved, to: wider, removing: 0))
         // A wider limit deletes nothing, whatever the count says.
         #expect(!TurnRetentionCut.needsConfirmation(from: saved, to: wider, removing: 5))

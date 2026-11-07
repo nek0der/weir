@@ -757,11 +757,10 @@ mod tests {
 
     #[test]
     fn the_runtime_identifier_joins_the_provider_and_run() {
-        let provider = ProviderId::new("codex").expect("provider id");
-        assert_eq!(
-            RuntimePresentation::identifier(&provider, "RUN"),
-            "codex:RUN"
-        );
+        for (provider, expected) in [("codex", "codex:RUN"), ("claude", "claude:RUN")] {
+            let provider = ProviderId::new(provider).expect("provider id");
+            assert_eq!(RuntimePresentation::identifier(&provider, "RUN"), expected);
+        }
     }
 
     #[test]
@@ -775,16 +774,16 @@ mod tests {
         );
         let input: ProjectionInput = serde_json::from_value(serde_json::json!({
             "now": {"wall": "2026-10-17T00:00:00Z", "monotonicMs": 0},
-            "marks": {"viewed": {}, "dismissed": {"claude:b": "t2"}}
+            "marks": {"viewed": {"claude:a": "t1"}, "dismissed": {"claude:b": "t2"}}
         }))
         .expect("an input with dismissed marks parses");
-        assert!(input.marks.viewed.is_empty());
+        assert_eq!(input.marks.viewed, marks.viewed);
     }
 
     #[test]
-    fn the_resume_window_covers_both_the_intent_and_the_kill_marker() {
-        // The launch rule reads the intent's age and the kill marker's age in
-        // the same pass; one window keeps them from drifting apart.
+    fn resume_and_viewed_finished_retention_windows_are_one_day() {
+        // Launch shares the resume window across the intent and kill marker.
+        // The projection ages viewed finishes using its own window.
         assert_eq!(RESUME_WINDOW_SECS, 86_400);
         assert_eq!(VIEWED_FINISHED_RETENTION_SECS, 86_400);
     }

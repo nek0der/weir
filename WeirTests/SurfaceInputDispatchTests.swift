@@ -55,6 +55,7 @@ struct SurfaceInputDispatchTests {
         )
         surface.activeKeyEvent = optionDelete
         defer { surface.activeKeyEvent = nil }
+        #expect(!surface.hasForwardedActiveKeyEvent)
 
         surface.doCommand(by: #selector(NSResponder.deleteWordBackward(_:)))
 
@@ -88,7 +89,12 @@ struct SurfaceInputDispatchTests {
             characters: "\u{7F}"
         )
 
-        view.keyDown(with: optionDelete)
+        view.activeKeyEvent = optionDelete
+        view.doCommand(by: #selector(NSResponder.deleteWordBackward(_:)))
+        try #require(view.hasForwardedActiveKeyEvent)
+
+        let next = try NSEvent.testKeyDown(keyCode: UInt16(kVK_ANSI_A), characters: "a")
+        view.keyDown(with: next)
 
         #expect(!view.hasForwardedActiveKeyEvent)
         #expect(view.activeKeyEvent == nil)

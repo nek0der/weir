@@ -65,15 +65,20 @@ struct PaneStripTabWidthsTests {
     /// never drawn narrower than a shorter one with the same marks, and the
     /// tabs past the strip's edge only when every one is at its minimum.
     @Test(arguments: 2...8)
-    func anyNumberOfTabs_atAnyWidth_stayInTheirBounds(count: Int) {
+    func anyNumberOfTabs_atAnyWidth_stayInTheirBounds(count: Int) throws {
         let tabs = (0..<count).map { index in
             Tab(ideal: 90 + CGFloat((index * 73) % 170), bare: 62)
         }
-        let minimums = tabs.map { $0.minimum(titleMinimum: Self.titleMinimum) }
+        let minimums = tabs.map { min($0.ideal, $0.bare + Self.titleMinimum) }
         let spacing: CGFloat = 2
+        let gaps = spacing * CGFloat(count - 1)
+        let minimumTotal = minimums.reduce(0, +) + gaps
+        let idealTotal = tabs.map(\.ideal).reduce(0, +) + gaps
         for available in stride(from: CGFloat(160), through: 1600, by: 37) {
             let widths = Self.widths(tabs, available: available, spacing: spacing)
-            let total = widths.reduce(0, +) + spacing * CGFloat(count - 1)
+            try #require(widths.count == count)
+            let total = widths.reduce(0, +) + gaps
+            #expect(abs(total - max(minimumTotal, min(idealTotal, available))) < 0.001, "available \(available)")
             for (index, width) in widths.enumerated() {
                 #expect(width >= minimums[index] - 0.001)
                 #expect(width <= tabs[index].ideal + 0.001)
@@ -444,16 +449,31 @@ struct PaneStripTabsLayoutTests {
             let fade = WeirLayout.Supervision.paneStripEdgeFadeWidth
             let strip = Self.hosted(items, width: width, selected: .terminal(items[0].id), settings: settings, window: window)
             defer { strip.window.close() }
-            _ = try #require(await strip.settledFrames())
+            let initial = try #require(await strip.settledFrames())
+            try #require(initial[5].minX > width)
+            try #require(abs(initial[0].minX) <= 0.5)
+            try #require(strip.recorder.overflow == PaneStripOverflow(hasLeading: false, hasTrailing: true))
 
             strip.selection.selected = .terminal(items[5].id)
-            let scrolled = try #require(await strip.settledFrames())
+            let scrolledFrames = await strip.settledFrames { frames in
+                frames[5].minX >= fade - 0.5 && frames[5].maxX <= width - fade + 0.5
+                    && strip.recorder.overflow == PaneStripOverflow(hasLeading: true, hasTrailing: true)
+            }
+            let targetDescription = String(describing: strip.recorder.frames[5])
+            let appliedDescription = String(describing: strip.recorder.appliedSelection)
+            let expectedDescription = String(describing: strip.selection.selected)
+            let diagnostic = "Target: \(targetDescription); selected: \(appliedDescription); expected: \(expectedDescription)"
+            let motionDiagnostic = "Offsets: \(strip.recorder.offsets); phases: \(strip.recorder.phases)"
+            let scrolled = try #require(scrolledFrames, "\(diagnostic); \(motionDiagnostic)")
             #expect(scrolled[5].minX >= fade - 0.5, "\(scrolled[5])")
             #expect(scrolled[5].maxX <= width - fade + 0.5, "\(scrolled[5]) in \(width)")
             #expect(strip.recorder.overflow == PaneStripOverflow(hasLeading: true, hasTrailing: true))
 
             strip.selection.selected = .terminal(items[0].id)
-            let back = try #require(await strip.settledFrames())
+            let back = try #require(await strip.settledFrames { frames in
+                abs(frames[0].minX) <= 0.5
+                    && strip.recorder.overflow == PaneStripOverflow(hasLeading: false, hasTrailing: true)
+            })
             #expect(abs(back[0].minX) <= 0.5, "\(back[0])")
             #expect(strip.recorder.overflow == PaneStripOverflow(hasLeading: false, hasTrailing: true))
         }
@@ -482,23 +502,24 @@ private struct HostedStrip {
     /// review's.
     let count: Int
 
-    /// Returns the tabs' frames once the strip has taken the current
-    /// selection and come to rest: unchanged for longer than the strip's
-    /// scroll takes, so a scroll still under way, or one not yet begun, is
-    /// not taken for its end. We time the rest rather than count checks,
-    /// since a loaded machine stretches each check. We force a layout only
-    /// until the strip has taken the selection: on macOS 27, one forced
-    /// through the scroll keeps the animated scroll from ever moving the
-    /// offset. It returns `nil` if the frames never rest.
-    func settledFrames() async -> [CGRect]? {
+    /// Returns stable frames after the current selection is observed and
+    /// the optional geometry condition holds. Selection acknowledgment
+    /// alone does not prove that scrolling started. Force layout only for
+    /// initial frame discovery, leaving subsequent scroll layout to the
+    /// host. Returns `nil` on timeout.
+    func settledFrames(matching predicate: ([CGRect]) -> Bool = { _ in true }) async -> [CGRect]? {
         let clock = ContinuousClock()
         var last: [CGRect]?
         var lastChange = clock.now
         var settled: [CGRect]?
         await pollUntil(timeout: .seconds(5), interval: .milliseconds(10)) {
             let frames = (0..<count).compactMap { recorder.frames[$0] }
-            guard frames.count == count, recorder.appliedSelection == selection.selected else {
+            guard frames.count == count else {
                 host.layoutSubtreeIfNeeded()
+                lastChange = clock.now
+                return false
+            }
+            guard recorder.appliedSelection == selection.selected, predicate(frames) else {
                 lastChange = clock.now
                 return false
             }
@@ -550,6 +571,12 @@ private struct StripHost: View {
         } action: { _, overflow in
             recorder.overflow = overflow
         }
+        .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.x } action: { _, offset in
+            recorder.offsets.append(offset)
+        }
+        .onScrollPhaseChange { _, phase in
+            recorder.phases.append(String(describing: phase))
+        }
         // We note the selection the strip has been handed, so a wait for it
         // to rest begins only once the strip has seen the change.
         .onChange(of: selection.selected, initial: true) { _, selected in
@@ -563,6 +590,8 @@ private struct StripHost: View {
 private final class TabFrames {
     var frames: [Int: CGRect] = [:]
     var overflow: PaneStripOverflow?
+    var offsets: [CGFloat] = []
+    var phases: [String] = []
     /// This is the selection the strip last saw (`StripHost`).
     var appliedSelection: PaneStripSelectedTab?
 }

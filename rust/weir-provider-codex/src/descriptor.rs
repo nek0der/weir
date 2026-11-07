@@ -132,14 +132,20 @@ mod tests {
     }
 
     #[test]
-    fn recipe_lists_every_subscribed_event() {
+    fn recipe_projects_the_subscription_with_its_trust_metadata() {
         let recipe = install_recipe();
-        let body: serde_json::Value =
-            serde_json::from_str(&recipe.settings_fragments[0].body).expect("JSON");
-        assert_eq!(
-            body["events"].as_array().map(Vec::len),
-            Some(SUBSCRIBED_EVENTS.len())
-        );
+        let [fragment] = recipe.settings_fragments.as_slice() else {
+            panic!("expected one settings fragment");
+        };
+        assert_eq!(fragment.target, "codex.hooks");
+        let body: serde_json::Value = serde_json::from_str(&fragment.body).expect("JSON");
+        let events = body["events"].as_array().expect("event array");
+        assert_eq!(events.len(), SUBSCRIBED_EVENTS.len());
+        for (entry, (event, label, timeout)) in events.iter().zip(SUBSCRIBED_EVENTS) {
+            assert_eq!(entry["event"], event);
+            assert_eq!(entry["label"], label, "{event}");
+            assert_eq!(entry["timeout_seconds"], timeout, "{event}");
+        }
         assert_eq!(body["worktree_matcher"], "^Bash$");
     }
 }

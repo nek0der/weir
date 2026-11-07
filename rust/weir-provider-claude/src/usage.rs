@@ -166,8 +166,14 @@ mod tests {
         ] {
             let line = REJECTED.replace("five_hour", window);
             let found = transcript_usage_limit(&tail(&[PROMPT, &line]));
-            assert!(
-                matches!(&found, Finding::Limit(limit) if limit.scope == scope),
+            assert_eq!(
+                found,
+                Finding::Limit(UsageLimit {
+                    resets_at: Some("2026-10-07T06:00:00Z".to_owned()),
+                    window: Some(window.to_owned()),
+                    scope,
+                    ..UsageLimit::default()
+                }),
                 "{window}"
             );
         }
@@ -251,10 +257,12 @@ mod tests {
     #[test]
     fn claude_codes_own_notice_after_the_error_is_passed_over() {
         let notice = r#"{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"Usage limit reached · continuing automatically at 3:45pm"}]}}"#;
-        assert!(matches!(
+        let baseline = transcript_usage_limit(&tail(&[PROMPT, REJECTED]));
+        assert!(matches!(baseline, Finding::Limit(_)));
+        assert_eq!(
             transcript_usage_limit(&tail(&[PROMPT, REJECTED, notice])),
-            Finding::Limit(_)
-        ));
+            baseline
+        );
     }
 
     #[test]
@@ -287,9 +295,11 @@ mod tests {
     #[test]
     fn a_subagent_line_is_passed_over() {
         let subagent = r#"{"type":"assistant","isSidechain":true,"message":{"content":[]}}"#;
-        assert!(matches!(
+        let baseline = transcript_usage_limit(&tail(&[PROMPT, REJECTED]));
+        assert!(matches!(baseline, Finding::Limit(_)));
+        assert_eq!(
             transcript_usage_limit(&tail(&[PROMPT, REJECTED, subagent])),
-            Finding::Limit(_)
-        ));
+            baseline
+        );
     }
 }

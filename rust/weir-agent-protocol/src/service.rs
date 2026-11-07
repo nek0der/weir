@@ -43,6 +43,8 @@ pub struct ApprovalService {
     started_at: Instant,
     broker: Mutex<ApprovalBroker>,
     changed: Condvar,
+    #[cfg(test)]
+    wait_entered: Mutex<Option<std::sync::mpsc::Sender<()>>>,
 }
 
 /// A platform-authenticated, stateful connection to an [`ApprovalService`].
@@ -89,6 +91,8 @@ impl ApprovalService {
                 maximum_records.min(MAXIMUM_RECORDS),
             )),
             changed: Condvar::new(),
+            #[cfg(test)]
+            wait_entered: Mutex::new(None),
         }
     }
 
@@ -310,6 +314,11 @@ impl ApprovalService {
             let remaining_ms = request_remaining_ms.min(caller_remaining_ms);
             if remaining_ms == 0 {
                 continue;
+            }
+            // The broker guard is still held when the test sees this signal.
+            #[cfg(test)]
+            if let Some(entered) = self.wait_entered.lock().unwrap().take() {
+                let _ = entered.send(());
             }
             let waited = self
                 .changed
@@ -548,4 +557,105 @@ fn unevictable(broker: &mut ApprovalBroker, now_ms: u64) -> Result<Option<u64>, 
         .unevictable_count(now_ms)
         .map_err(|_| ServeError::Synchronization)?;
     Ok(Some(u64::try_from(count).unwrap_or(u64::MAX)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ApprovalDecisionWire, ApprovalKeyWire, ApprovalRequestWire, ApprovalStateWire};
+    use serde_json::json;
+    use std::{sync::mpsc, thread};
+    use weir_agent_core::{ProviderId, RunId};
+
+    #[test]
+    fn a_pending_wait_releases_the_broker_for_a_controller_resolution() {
+        let service = ApprovalService::new(8);
+        let run_id = Uuid::from_u128(1);
+        let request_id = Uuid::from_u128(2);
+        let principal = Principal::Requester {
+            run_id: RunId::new(run_id),
+        };
+        let key = ApprovalKeyWire { run_id, request_id };
+        let submitted = service
+            .handle_authenticated(
+                &principal,
+                RequestBody::ApprovalSubmit(ApprovalRequestWire {
+                    run_id,
+                    request_id,
+                    provider: ProviderId::new("claude").unwrap(),
+                    session_id: None,
+                    operation_id: None,
+                    tool_name: "Bash".into(),
+                    summary: None,
+                    input: json!({"command": "pwd"}),
+                    timeout_ms: 10_000,
+                    questions: Vec::new(),
+                    agent_run_id: None,
+                }),
+            )
+            .unwrap();
+        let ResponseBody::ApprovalResult(submitted) = submitted else {
+            panic!("expected a pending request");
+        };
+        assert!(matches!(submitted.state, ApprovalStateWire::Pending));
+
+        let (signal, entered) = mpsc::channel();
+        *service.wait_entered.lock().unwrap() = Some(signal);
+        let (resolved, controller_response) = mpsc::channel();
+        let (reply, requester_response) = mpsc::channel();
+        thread::scope(|scope| {
+            let waiter = scope.spawn(|| {
+                let result = service.handle_authenticated(
+                    &principal,
+                    RequestBody::ApprovalWait {
+                        key: key.clone(),
+                        maximum_wait_ms: 4_000,
+                    },
+                );
+                let _ = reply.send(result);
+            });
+
+            // A signaled wait holds the guard and has already read Pending.
+            // Start the controller only then, with a shorter deadline than
+            // the waiter, so finishing after the wait cannot pass the test.
+            entered
+                .recv_timeout(Duration::from_secs(1))
+                .expect("requester entered wait");
+            let controller = scope.spawn(|| {
+                let result = service.handle_authenticated(
+                    &Principal::Controller,
+                    RequestBody::ApprovalResolve {
+                        key: key.clone(),
+                        decision: ApprovalDecisionWire::AllowOnce,
+                    },
+                );
+                let _ = resolved.send(result);
+            });
+            let controller_result = controller_response.recv_timeout(Duration::from_secs(1));
+            let waiter_result = requester_response.recv_timeout(Duration::from_secs(1));
+            // Join both workers even on a missed response deadline. The
+            // wait and its request both have finite deadlines.
+            waiter.join().expect("requester worker");
+            controller.join().expect("controller worker");
+            let resolved = controller_result
+                .expect("controller resolved while requester was waiting")
+                .unwrap();
+            let result = waiter_result
+                .expect("requester woke before its own deadline")
+                .unwrap();
+            for response in [resolved, result] {
+                let ResponseBody::ApprovalResult(snapshot) = response else {
+                    panic!("expected approval result, got {response:?}");
+                };
+                assert_eq!(snapshot.request.run_id, run_id);
+                assert_eq!(snapshot.request.request_id, request_id);
+                assert!(matches!(
+                    snapshot.state,
+                    ApprovalStateWire::Resolved {
+                        result: ApprovalDecisionWire::AllowOnce,
+                    }
+                ));
+            }
+        });
+    }
 }

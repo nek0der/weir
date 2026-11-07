@@ -121,6 +121,16 @@ struct PRStatusFetcherTests {
         return #"{"data":{"rateLimit":\#(rateLimit),"repository":{\#(fields.joined(separator: ","))}}}"#
     }
 
+    private static func hasArgument(_ value: String, for flag: String, in arguments: [String]) -> Bool {
+        zip(arguments, arguments.dropFirst()).contains { $0 == flag && $1 == value }
+    }
+
+    private static func expectedHeads(_ rows: [PRStatusRow], isAnswered: Bool = true) -> [ContainerID: PRStatusFetcher.Lookup] {
+        Dictionary(uniqueKeysWithValues: zip(rows, ["main", "a", "b"]).map { row, branch in
+            (row.container, PRStatusFetcher.Lookup(forge: .gitHub, isAnswered: isAnswered, head: .branch(branch)))
+        })
+    }
+
     @Test("a repository's rows cost one query and three Git reads of its own, with each row's head asked for by its owner")
     func rows_costOneQuery() async throws {
         let (repo, rows) = try await repository()
@@ -139,8 +149,10 @@ struct PRStatusFetcherTests {
 
         #expect(cli.calls.count == 1)
         let arguments = try #require(cli.calls.first)
-        #expect(arguments.contains("owner=acme") && arguments.contains("repo=app"))
-        #expect(arguments.contains("b0=main") && arguments.contains("b1=a") && arguments.contains("b2=b"))
+        #expect(Self.hasArgument("github.com", for: "--hostname", in: arguments))
+        for field in ["owner=acme", "repo=app", "b0=main", "b1=a", "b2=b"] {
+            #expect(Self.hasArgument(field, for: "-f", in: arguments))
+        }
         // A `git symbolic-ref` per row before the query and after it, and
         // for the repository one `git config` for its forge, which is kept
         // for the next lookup, then one for its branches and one
@@ -148,11 +160,15 @@ struct PRStatusFetcherTests {
         #expect(git.runs == rows.count * 2 + 3)
         #expect(batch.lookups[rows[0].container] == PRStatusFetcher.Lookup(forge: .gitHub, head: .branch("main")))
         #expect(batch.lookups[rows[1].container]?.info?.number == 5)
+        #expect(batch.lookups[rows[1].container]?.head == .branch("a"))
+        #expect(batch.lookups[rows[2].container]?.info?.number == 6)
         #expect(batch.lookups[rows[2].container]?.info?.state == .merged)
+        #expect(batch.lookups[rows[2].container]?.head == .branch("b"))
+        #expect(Set(batch.lookups.keys) == Set(rows.map(\.container)))
         #expect(batch.isQuotaLow == false)
     }
 
-    @Test("a rate-limited host is asked nothing until its reset, then once, and the rows keep what they showed")
+    @Test("a rate limit suppresses requests to the host until the reset")
     func rateLimit_holdsTheHostUntilTheReset() async throws {
         let (repo, rows) = try await repository()
         defer { repo.cleanup() }
@@ -161,17 +177,20 @@ struct PRStatusFetcherTests {
         cli.script(Self.ok(Self.body(["", "", ""])))
         let fetcher = makeFetcher(cli)
 
-        let limited = await fetcher.lookup(rows)
-        #expect(limited.lookups.values.allSatisfy { !$0.isAnswered })
-        let held = await fetcher.lookup(rows)
+        let unanswered = Self.expectedHeads(rows, isAnswered: false)
+        let answered = Self.expectedHeads(rows)
+        #expect(await fetcher.lookup(rows).lookups == unanswered)
+        #expect(await fetcher.lookup(rows).lookups == unanswered)
         #expect(cli.calls.count == 1)
-        #expect(held.lookups.values.allSatisfy { !$0.isAnswered })
 
-        clock.advance(by: 120)
-        let probe = await fetcher.lookup(rows)
+        clock.advance(by: 119)
+        #expect(await fetcher.lookup(rows).lookups == unanswered)
+        #expect(cli.calls.count == 1)
+
+        clock.advance(by: 1)
+        #expect(await fetcher.lookup(rows).lookups == answered)
         #expect(cli.calls.count == 2)
-        #expect(!probe.lookups.values.contains { !$0.isAnswered })
-        _ = await fetcher.lookup(rows)
+        #expect(await fetcher.lookup(rows).lookups == answered)
         #expect(cli.calls.count == 3)
     }
 
@@ -184,8 +203,10 @@ struct PRStatusFetcherTests {
         // `git config` that did not run, or ran past its limit.
         let batch = await makeFetcher(cli, remotes: { _, _ in nil }).lookup(rows)
         #expect(cli.calls.isEmpty)
-        #expect(batch.lookups.count == rows.count)
-        #expect(batch.lookups.values.allSatisfy { $0 == PRStatusFetcher.Lookup(isAnswered: false) })
+        let expected = Dictionary(uniqueKeysWithValues: rows.map {
+            ($0.container, PRStatusFetcher.Lookup(isAnswered: false))
+        })
+        #expect(batch.lookups == expected)
     }
 
     @Test("a checkout with no remote is answered with no forge, and the forge is not asked")
@@ -196,8 +217,10 @@ struct PRStatusFetcherTests {
         let cli = ScriptedForgeCLI()
         let batch = await makeFetcher(cli).lookup(rows)
         #expect(cli.calls.isEmpty)
-        #expect(batch.lookups.count == rows.count)
-        #expect(batch.lookups.values.allSatisfy { $0 == PRStatusFetcher.Lookup() })
+        let expected = Dictionary(uniqueKeysWithValues: rows.map {
+            ($0.container, PRStatusFetcher.Lookup())
+        })
+        #expect(batch.lookups == expected)
     }
 
     @Test("a checkout that switches branch during the query gets no answer")
@@ -205,27 +228,39 @@ struct PRStatusFetcherTests {
         let (repo, rows) = try await repository()
         defer { repo.cleanup() }
         let moved = rows[1].workingDirectory
+        let checkout = Recorded<String?>(nil)
         let cli = ScriptedForgeCLI {
-            _ = try? await TempGitRepo.git(["checkout", "-q", "-b", "elsewhere"], in: moved)
+            do {
+                try await TempGitRepo.git(["checkout", "-q", "-b", "elsewhere"], in: moved)
+                let head = try await TempGitRepo.git(["symbolic-ref", "--short", "HEAD"], in: moved)
+                checkout.update { $0 = head }
+            } catch {
+                Issue.record("could not switch the checkout during the forge query: \(error)")
+            }
         }
         cli.script(Self.ok(Self.body(["", Self.request(5, owner: "acme"), ""])))
         let batch = await makeFetcher(cli).lookup(rows)
-        #expect(batch.lookups[rows[1].container] == PRStatusFetcher.Lookup(forge: .gitHub, isAnswered: false))
-        #expect(batch.lookups[rows[2].container]?.isAnswered == true)
+        #expect(checkout.value == "elsewhere")
+        var expected = Self.expectedHeads(rows)
+        expected[rows[1].container] = PRStatusFetcher.Lookup(forge: .gitHub, isAnswered: false)
+        #expect(batch.lookups == expected)
     }
 
     @Test("the repository `gh repo set-default` chose is the one asked, not a fork cloned as origin")
     func setDefault_namesTheRepositoryAsked() async throws {
         let (repo, rows) = try await repository()
         defer { repo.cleanup() }
-        try await repo.git(["remote", "set-url", "origin", "git@github.com:me/app.git"])
-        try await repo.git(["remote", "add", "parent", "git@github.com:acme/app.git"])
+        try await repo.git(["remote", "set-url", "origin", "git@github.com:me/app-fork.git"])
+        try await repo.git(["remote", "add", "parent", "git@github.com:acme/app-parent.git"])
         try await repo.git(["config", "remote.parent.gh-resolved", "base"])
         let cli = ScriptedForgeCLI()
         cli.script(Self.ok(Self.body(["", "", ""])))
         _ = await makeFetcher(cli).lookup(rows)
+        #expect(cli.calls.count == 1)
         let arguments = try #require(cli.calls.first)
-        #expect(arguments.contains("owner=acme"))
+        #expect(Self.hasArgument("github.com", for: "--hostname", in: arguments))
+        #expect(Self.hasArgument("owner=acme", for: "-f", in: arguments))
+        #expect(Self.hasArgument("repo=app-parent", for: "-f", in: arguments))
     }
 
     @Test("a branch its first five requests do not settle is asked again, alone, for 30")
@@ -241,10 +276,16 @@ struct PRStatusFetcherTests {
         #expect(cli.calls.count == 2)
         let again = try #require(cli.calls.last)
         // Only `a`, which the first five did not settle, is asked again.
-        #expect(again.contains("b0=a") && !again.contains("b1=b") && !again.contains("b0=main"))
+        let branchVariables = again.filter { $0.range(of: #"^b[0-9]+="#, options: .regularExpression) != nil }
+        #expect(branchVariables == ["b0=a"])
+        #expect(Self.hasArgument("b0=a", for: "-f", in: again))
         #expect(again.contains { $0.contains("first: 30") })
-        #expect(batch.lookups[rows[1].container]?.info?.number == 42)
-        #expect(batch.lookups[rows[2].container]?.isAnswered == true)
+        let retried = try #require(batch.lookups[rows[1].container])
+        #expect(retried.info?.number == 42)
+        #expect(retried.head == .branch("a"))
+        #expect(retried.isAnswered)
+        #expect(batch.lookups[rows[0].container] == PRStatusFetcher.Lookup(forge: .gitHub, head: .branch("main")))
+        #expect(batch.lookups[rows[2].container] == PRStatusFetcher.Lookup(forge: .gitHub, head: .branch("b")))
     }
 
     @Test("GitLab's pages are read on, so a branch's request past another branch's hundred is found")
@@ -272,16 +313,28 @@ struct PRStatusFetcherTests {
         return #"{"data":{"project":{"mergeRequests":{"pageInfo":\#(pageInfo),"nodes":[\#(requests.joined(separator: ","))]}}}}"#
     }
 
-    @Test("gh's set-default picks the base repository, then gh's order of remotes", arguments: [
+    @Test("gh's set-default picks the base repository in remote order", arguments: [
         ("remote.origin.gh-resolved base", "acme/app"),
         ("remote.origin.gh-resolved parent/app", "parent/app"),
         ("remote.fork.gh-resolved base", "me/app"),
-        ("", "acme/app")
+        ("", "acme/app"),
+        ("remote.fork.gh-resolved base\nremote.origin.gh-resolved base", "acme/app")
     ])
     func baseRepository_followsGh(config: String, expected: String) {
         let remotes = "remote.origin.url git@github.com:acme/app.git\nremote.fork.url https://github.com/me/app.git\n"
         let parsed = PRStatusRepository.parse(config: remotes + config, pushes: "", branches: [])
         #expect(parsed.baseRepository(forge: .gitHub) == PRStatusRepository.BaseRepository(host: "github.com", path: expected))
+    }
+
+    @Test func gitLabIgnoresGitHubDefaultRepositoryMarkers() {
+        let config = """
+        remote.origin.url git@gitlab.com:group/sub/app.git
+        remote.fork.url git@gitlab.com:me/app.git
+        remote.fork.gh-resolved base
+        remote.origin.gh-resolved other/app
+        """
+        let parsed = PRStatusRepository.parse(config: config, pushes: "", branches: [])
+        #expect(parsed.baseRepository(forge: .gitLab) == PRStatusRepository.BaseRepository(host: "gitlab.com", path: "group/sub/app"))
     }
 
     // MARK: - Head branches
@@ -311,11 +364,21 @@ struct PRStatusFetcherTests {
         // Otherwise the local name, on the push remote, which may be a URL.
         ("branch.x.merge refs/heads/y\nbranch.x.pushremote git@github.com:me/app.git", "", .branch(name: "x", owner: "me")),
         ("remote.pushdefault fork", "", .branch(name: "x", owner: "me")),
-        ("", "", .branch(name: "x", owner: "acme"))
+        ("", "", .branch(name: "x", owner: "acme")),
+        ("branch.x.pushremote fork\nremote.pushdefault origin\nbranch.x.remote parent", "", .branch(name: "x", owner: "me")),
+        ("remote.pushdefault fork\nbranch.x.remote parent", "", .branch(name: "x", owner: "me")),
+        ("branch.x.pushremote origin", "refs/heads/x\tfork\trefs/remotes/fork/feature", .branch(name: "feature", owner: "me"))
     ])
     func selector_followsGhsRules(config: String, pushes: String, expected: PRHeadSelector) {
-        let remotes = "remote.origin.url git@github.com:acme/app.git\nremote.fork.url https://github.com/me/app.git\n"
+        let remotes = "remote.origin.url git@github.com:acme/app.git\nremote.fork.url https://github.com/me/app.git\nremote.parent.url git@github.com:parent/app.git\n"
         let parsed = PRStatusRepository.parse(config: remotes + config, pushes: pushes, branches: ["x"])
         #expect(parsed.selector(for: "x", baseOwner: "acme") == expected)
     }
+
+    @Test func gitLabAsksForTheLocalBranchOfAGitHubPullRequestRef() {
+        let parsed = PRStatusRepository.parse(config: "branch.x.merge refs/pull/42/head", pushes: "", branches: ["x"])
+        #expect(parsed.selector(for: "x", baseOwner: "acme", forge: .gitHub) == .number(42))
+        #expect(parsed.selector(for: "x", baseOwner: "acme", forge: .gitLab) == .branch(name: "x", owner: nil))
+    }
+
 }

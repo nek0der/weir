@@ -67,6 +67,11 @@ struct ProjectSettingsTextTests {
     @Test func theFilesToCopy_sayWhatTheyAreFor() {
         #expect(ProjectSettingsText.filesToCopy.resolved(in: Self.english) == "Files to Copy into New Worktrees")
         #expect(ProjectSettingsText.filesToCopy.resolved(in: Self.japanese) == "新しいワークツリーにコピーするファイル")
-        #expect(ProjectSettingsText.filesToCopyFooter.resolved(in: Self.japanese).hasPrefix(".env など Git が無視するファイルを"))
+        #expect(ProjectSettingsText.filesToCopyFooter.resolved(in: Self.english) == """
+        Files Git ignores, such as .env, copied from the project folder each time Weir creates a worktree. One path or pattern per line.
+        """)
+        #expect(ProjectSettingsText.filesToCopyFooter.resolved(in: Self.japanese) == """
+        .env など Git が無視するファイルを、Weir がワークツリーを作成するたびにプロジェクトのフォルダーからコピーします。1 行に 1 つのパスまたはパターンを入力します。
+        """)
     }
 }

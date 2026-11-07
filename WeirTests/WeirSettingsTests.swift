@@ -1,7 +1,5 @@
 // WeirSettingsTests.swift
-// Weir — Codable round-trip + default-value guards for the settings store.
-// Breakage here silently corrupts the user's settings.json on the next
-// write, so we gate every schema-affecting change with this suite.
+// Weir — settings defaults, the persisted JSON shape, and compatibility across versions.
 
 import Foundation
 import Testing
@@ -13,10 +11,15 @@ struct WeirSettingsTests {
 
     // MARK: - Defaults
 
-    @Test("WeirSettings.default stamps the current schema version")
-    func default_usesCurrentSchemaVersion() {
-        #expect(WeirSettings.default.schemaVersion == WeirSettings.currentSchemaVersion)
+    private static let legacy = Data(#"""
+    {
+      "schemaVersion": 1,
+      "appearance": {"accentColor": "blue", "backgroundOpacity": 0.65, "transparency": "off"},
+      "font": {"size": 17, "ligatures": true, "lineHeight": 2},
+      "terminal": {"scrollbackLines": 27000, "bellAction": "audio", "cursorStyle": "bar", "cursorBlink": "off"},
+      "advanced": {"hostsAgentsInTmux": true, "reviewInstructions": "Keep this note."}
     }
+    """#.utf8)
 
     @Test("appearance defaults: transparency enabled, default accent, near-opaque pane background")
     func default_appearanceDefaults() {
@@ -25,11 +28,6 @@ struct WeirSettingsTests {
         #expect(s.accentColor == .default)
         #expect(s.backgroundOpacity == 0.92)
         #expect(s.unfocusedPaneOpacity == 0.7)
-    }
-
-    @Test("jumping to a finished agent opens its turn by default")
-    func default_jumpOpensTurnReview() {
-        #expect(WeirSettings.default.jumpOpensTurnReview)
     }
 
     @Test("font defaults: nil family lets libghostty pick the system mono")
@@ -43,12 +41,21 @@ struct WeirSettingsTests {
 
     // MARK: - Codable round-trip
 
-    @Test("encode → decode yields an equivalent value (defaults)")
-    func codable_default_roundTrip() throws {
+    @Test func theDefaultFile_writesItsCurrentVersionAndSections() throws {
         let original = WeirSettings.default
-        let data = try JSONEncoder().encode(original)
-        let restored = try JSONDecoder().decode(WeirSettings.self, from: data)
-        #expect(restored == original)
+        let data = try WeirSettings.makeFileEncoder().encode(original)
+        let object = try JSONObjectFixture.object(data)
+        let sections = [
+            "appearance", "font", "terminal", "keyboard", "confirmations", "advanced", "quickTerminal", "review", "general", "newSession"
+        ]
+
+        #expect(original.schemaVersion == WeirSettings.currentSchemaVersion)
+        #expect(object["schemaVersion"] as? Int == WeirSettings.currentSchemaVersion)
+        #expect(object["jumpOpensTurnReview"] as? Bool == true)
+        for section in sections {
+            #expect(object[section] is [String: Any], "expected the \(section) section")
+        }
+        #expect(try JSONDecoder().decode(WeirSettings.self, from: data) == original)
     }
 
     /// Every field touched here is moved *off* its default, so a
@@ -76,22 +83,22 @@ struct WeirSettingsTests {
             lastKnownDisplayName: "Example Editor"
         )
         settings.jumpOpensTurnReview = false
+        settings.general.showMenuBarExtra = false
+        settings.general.notifyOnUsageLimitReset = true
+        settings.advanced.turnRetention = TurnRetentionSettings(days: 30, turns: 120)
 
-        let data = try JSONEncoder().encode(settings)
+        let data = try WeirSettings.makeFileEncoder().encode(settings)
         let restored = try JSONDecoder().decode(WeirSettings.self, from: data)
         #expect(restored == settings)
     }
 
-    @Test("settings written before turn review default the jump behavior on")
-    func decode_missingJumpOpensTurnReview_defaultsToOn() throws {
-        let data = try JSONEncoder().encode(WeirSettings.default)
-        var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
-        object["jumpOpensTurnReview"] = nil
-        let legacy = try JSONSerialization.data(withJSONObject: object)
+    @Test func jumpReview_defaultsOnForNewAndOlderSettings() throws {
+        #expect(WeirSettings.default.jumpOpensTurnReview)
 
-        let decoded = try JSONDecoder().decode(WeirSettings.self, from: legacy)
+        let decoded = try JSONDecoder().decode(WeirSettings.self, from: Self.legacy)
 
         #expect(decoded.jumpOpensTurnReview)
+        #expect(decoded.font.size == 17)
     }
 
     @Test func existingAdvancedSettingsDefaultReviewFields() throws {
@@ -108,30 +115,30 @@ struct WeirSettingsTests {
         let data = Data(#"{"reviewFileApplication":{"bundleIdentifier":"com.example.Editor","lastKnownDisplayName":"Example Editor"}}"#
             .utf8)
         let restored = try JSONDecoder().decode(AdvancedSettings.self, from: data)
-        #expect(restored.fileApplication?.bundleIdentifier == "com.example.Editor")
+        #expect(restored.fileApplication == FileApplication(
+            bundleIdentifier: "com.example.Editor", lastKnownDisplayName: "Example Editor"
+        ))
 
-        let encoded = try JSONEncoder().encode(restored)
-        let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        #expect(object["reviewFileApplication"] != nil)
+        let object = try JSONObjectFixture.object(encoding: restored)
+        #expect(object["reviewFileApplication"] as? [String: String] == [
+            "bundleIdentifier": "com.example.Editor", "lastKnownDisplayName": "Example Editor"
+        ])
+        #expect(object["fileApplication"] == nil)
     }
 
-    @Test("malformed JSON throws a DecodingError rather than crashing")
-    func decode_malformedJSON_throws() {
-        let garbage = Data("{schemaVersion: 1}".utf8) // unquoted key — invalid JSON
-        #expect(throws: DecodingError.self) {
-            _ = try JSONDecoder().decode(WeirSettings.self, from: garbage)
-        }
-    }
+    // MARK: - Compatibility with earlier settings files
 
-    // MARK: - Forward compatibility (unknown enum cases / missing fields)
+    @Test(arguments: ["appearance", "font", "terminal", "advanced"])
+    func aMissingRequiredSection_isReportedByKey(_ section: String) throws {
+        var object = try JSONObjectFixture.object(Self.legacy)
+        try #require(object.removeValue(forKey: section) != nil)
 
-    /// A file that holds only the schema version is not settings, and is
-    /// refused rather than read as every default.
-    @Test("a file without its sections does not decode")
-    func decode_missingSections_throws() throws {
-        let partial = Data(#"{"schemaVersion": 1}"#.utf8)
-        #expect(throws: (any Error).self) {
-            _ = try JSONDecoder().decode(WeirSettings.self, from: partial)
+        do {
+            _ = try WeirSettingsJSON.decode(object)
+            Issue.record("expected the missing \(section) section to fail decoding")
+        } catch let DecodingError.keyNotFound(key, context) {
+            #expect(key.stringValue == section)
+            #expect(context.codingPath.isEmpty)
         }
     }
 
@@ -144,27 +151,28 @@ struct WeirSettingsTests {
         // `AppearanceSettings` decode.
         let data = Data(#"""
         {"schemaVersion":1,
-         "appearance":{"accentColor":"graphite","backgroundOpacity":0.92,"transparency":"on"},
+         "appearance":{"accentColor":"graphite","backgroundOpacity":0.65,"transparency":"off","colorScheme":"dark"},
          "font":{"size":13,"ligatures":false,"lineHeight":0},
          "terminal":{},
          "advanced":{"ghosttyConfig":"off"}}
         """#.utf8)
         let decoded = try JSONDecoder().decode(WeirSettings.self, from: data)
         #expect(decoded.appearance.accentColor == .default)
+        #expect(decoded.appearance.backgroundOpacity == 0.65)
+        #expect(decoded.appearance.transparency == .off)
+        #expect(decoded.appearance.colorScheme == .dark)
     }
 
     @Test("terminal section without quickTab keys decodes with cwd defaults")
     func decode_terminalMissingQuickTabKeys_defaults() throws {
-        let data = Data(#"""
-        {"schemaVersion":1,
-         "appearance":{"accentColor":"default","backgroundOpacity":0.92,"transparency":"on"},
-         "font":{"size":13,"ligatures":false,"lineHeight":0},
-         "terminal":{"scrollbackLines":10000,"bellAction":"visual","cursorStyle":"block","cursorBlink":"on"},
-         "advanced":{"ghosttyConfig":"off"}}
-        """#.utf8)
-        let decoded = try JSONDecoder().decode(WeirSettings.self, from: data)
-        #expect(decoded.terminal.quickTabCwdMode == .inheritPrevious)
-        #expect(decoded.terminal.quickTabCwdPath == nil)
+        let terminal = try JSONDecoder().decode(WeirSettings.self, from: Self.legacy).terminal
+
+        #expect(terminal.quickTabCwdMode == .inheritPrevious)
+        #expect(terminal.quickTabCwdPath == nil)
+        #expect(terminal.scrollbackLines == 27000)
+        #expect(terminal.bellAction == .audio)
+        #expect(terminal.cursorStyle == .bar)
+        #expect(terminal.cursorBlink == .off)
     }
 
     /// The pane header setting is gone: panes show their header by the
@@ -209,30 +217,23 @@ struct WeirSettingsTests {
         #expect(aboveRange.unfocusedPaneOpacity == 1.0)
     }
 
-    /// Holding is the default, so the key is written only when someone
-    /// turned it off; a file that never had it keeps holding.
-    @Test func approvalHold_isWrittenOnlyWhenTurnedOff() throws {
-        var advanced = AdvancedSettings()
-        let untouched = try JSONSerialization.jsonObject(with: JSONEncoder().encode(advanced)) as? [String: Any]
-        #expect(untouched?["approvalHoldWhileHidden"] == nil)
-
-        advanced.holdsApprovals = false
-        let written = try JSONSerialization.jsonObject(with: JSONEncoder().encode(advanced)) as? [String: Any]
-        #expect(written?["approvalHoldWhileHidden"] as? Bool == false)
+    /// A file that never stored the hold setting keeps holding. Turning it
+    /// off writes the legacy key beside any keys from a newer build.
+    @Test func approvalHold_writesOnlyOptOut_andKeepsUnknownKeys() throws {
+        let untouched = try JSONObjectFixture.object(encoding: AdvancedSettings())
+        #expect(untouched["approvalHoldWhileHidden"] == nil)
 
         let legacy = try JSONDecoder().decode(AdvancedSettings.self, from: Data("{}".utf8))
         #expect(legacy.holdsApprovals)
-    }
 
-    /// A key a newer build added survives a round trip through this one,
-    /// next to the hold setting.
-    @Test func approvalHold_keepsUnknownAdvancedKeys() throws {
         let data = Data(#"{"approvalHoldWhileHidden":false,"futureKey":1}"#.utf8)
         let decoded = try JSONDecoder().decode(AdvancedSettings.self, from: data)
-        let written = try JSONSerialization.jsonObject(with: JSONEncoder().encode(decoded)) as? [String: Any]
+        let written = try JSONObjectFixture.object(encoding: decoded)
 
-        #expect(decoded.holdsApprovals == false)
-        #expect(written?["futureKey"] as? Int == 1)
+        #expect(!decoded.holdsApprovals)
+        #expect(decoded.unknownFields["futureKey"] == .int(1))
+        #expect(written["approvalHoldWhileHidden"] as? Bool == false)
+        #expect(written["futureKey"] as? Int == 1)
     }
 
     /// Earlier builds wrote both pull-request switches into every
@@ -306,71 +307,46 @@ struct WeirSettingsTests {
 
     // MARK: - Sidecar forward-compat round-trip
 
-    @Test("WeirSettings preserves unknown root-level keys across decode → encode")
-    func weirSettings_unknownRootKey_roundTrips() throws {
-        let raw = Data("""
-        {
-          "schemaVersion": 1,
-          "appearance": {"accentColor": "default", "backgroundOpacity": 0.92,
-                         "transparency": "on", "colorScheme": "system"},
-          "font": {"size": 13, "ligatures": false, "lineHeight": 0},
-          "terminal": {"scrollbackLines": 10000, "bellAction": "visual",
-                       "cursorStyle": "block", "cursorBlink": "on",
-                       "quickTabCwdMode": "inheritPrevious"},
-          "advanced": {"ghosttyConfig": "off"},
-          "futurePluginSection": {"enabled": true, "label": "plug-A"}
-        }
-        """.utf8)
+    @Test func unknownRootAndAppearanceFields_surviveFileEncoding() throws {
+        var object = try JSONObjectFixture.object(Self.legacy)
+        var appearance = try #require(object["appearance"] as? [String: Any])
+        appearance["futureDarkModeAccent"] = "#ff00aa"
+        object["appearance"] = appearance
+        object["futurePluginSection"] = ["enabled": true, "label": "plug-A"]
 
-        let decoded = try JSONDecoder().decode(WeirSettings.self, from: raw)
-        #expect(decoded.unknownFields["futurePluginSection"] != nil)
+        let decoded = try WeirSettingsJSON.decode(object)
+        #expect(decoded.unknownFields["futurePluginSection"] == .object(["enabled": .bool(true), "label": .string("plug-A")]))
+        #expect(decoded.appearance.unknownFields["futureDarkModeAccent"] == .string("#ff00aa"))
+        #expect(decoded.appearance.accentColor == .blue)
 
-        let reencoded = try JSONEncoder().encode(decoded)
-        let asAny = try JSONSerialization.jsonObject(with: reencoded) as? [String: Any]
-        let plugin = try #require(asAny?["futurePluginSection"] as? [String: Any])
+        let written = try JSONObjectFixture.object(encoding: decoded, with: WeirSettings.makeFileEncoder())
+        let plugin = try #require(written["futurePluginSection"] as? [String: Any])
+        let savedAppearance = try #require(written["appearance"] as? [String: Any])
         #expect(plugin["enabled"] as? Bool == true)
         #expect(plugin["label"] as? String == "plug-A")
-    }
-
-    @Test("Section-level unknown fields survive decode → encode (AppearanceSettings)")
-    func appearanceSettings_unknownField_roundTrips() throws {
-        let raw = Data("""
-        {
-          "accentColor": "default",
-          "backgroundOpacity": 0.92,
-          "transparency": "on",
-          "colorScheme": "system",
-          "futureDarkModeAccent": "#ff00aa"
-        }
-        """.utf8)
-
-        let decoded = try JSONDecoder().decode(AppearanceSettings.self, from: raw)
-        #expect(decoded.unknownFields["futureDarkModeAccent"] == .string("#ff00aa"))
-
-        let reencoded = try JSONEncoder().encode(decoded)
-        let asAny = try JSONSerialization.jsonObject(with: reencoded) as? [String: Any]
-        #expect(asAny?["futureDarkModeAccent"] as? String == "#ff00aa")
+        #expect(savedAppearance["futureDarkModeAccent"] as? String == "#ff00aa")
+        #expect(savedAppearance["accentColor"] as? String == "blue")
+        #expect(written["futureDarkModeAccent"] == nil)
     }
 
     // MARK: - Review
 
     @Test func theReviewSection_isOptional_andRoundTrips_keepingWhatANewerBuildWrote() throws {
         #expect(WeirSettings().review.externalDiffCommand.isEmpty)
-        // A file from before the section reads with its default.
-        var withoutReview = try JSONSerialization.jsonObject(with: JSONEncoder().encode(WeirSettings())) as? [String: Any] ?? [:]
-        withoutReview.removeValue(forKey: "review")
-        let older = try JSONDecoder().decode(WeirSettings.self, from: JSONSerialization.data(withJSONObject: withoutReview))
+        let older = try JSONDecoder().decode(WeirSettings.self, from: Self.legacy)
         #expect(older.review == ReviewSettings())
+        #expect(older.font.size == 17)
 
-        var settings = WeirSettings()
-        settings.review.externalDiffCommand = "tig --all"
-        let decoded = try JSONDecoder().decode(WeirSettings.self, from: JSONEncoder().encode(settings))
+        var object = try JSONObjectFixture.object(Self.legacy)
+        object["review"] = ["externalDiffCommand": "tig --all", "fromLater": 7]
+        let decoded = try WeirSettingsJSON.decode(object)
         #expect(decoded.review.externalDiffCommand == "tig --all")
+        #expect(decoded.review.unknownFields == ["fromLater": .int(7)])
 
-        let later = try JSONDecoder().decode(ReviewSettings.self, from: Data(#"{"externalDiffCommand":"tig","fromLater":1}"#.utf8))
-        let again = try JSONDecoder().decode(ReviewSettings.self, from: JSONEncoder().encode(later))
-        #expect(again == later)
-        #expect(again.unknownFields["fromLater"] != nil)
+        let written = try JSONObjectFixture.object(encoding: decoded, with: WeirSettings.makeFileEncoder())
+        let review = try #require(written["review"] as? [String: Any])
+        #expect(review["externalDiffCommand"] as? String == "tig --all")
+        #expect(review["fromLater"] as? Int == 7)
     }
 
     // MARK: - General, new session, and retention sections
@@ -387,30 +363,15 @@ struct WeirSettingsTests {
     }
 
     @Test func aFileWrittenBeforeThem_readsTheDefaults() throws {
-        var object = try JSONObjectFixture.object(encoding: WeirSettings.default)
-        object.removeValue(forKey: "general")
-        object.removeValue(forKey: "newSession")
-        var advanced = try #require(object["advanced"] as? [String: Any])
-        advanced.removeValue(forKey: "turnRetention")
-        object["advanced"] = advanced
-
-        let settings = try WeirSettingsJSON.decode(object)
+        let settings = try JSONDecoder().decode(WeirSettings.self, from: Self.legacy)
 
         #expect(settings.general == GeneralSettings())
         #expect(settings.newSession == NewSessionSettings())
         #expect(settings.advanced.turnRetention == TurnRetentionSettings())
-    }
-
-    @Test func theNewSettings_roundTrip() throws {
-        var settings = WeirSettings.default
-        settings.general.showMenuBarExtra = false
-        settings.general.notifyOnUsageLimitReset = true
-        settings.newSession.lastAgent = "codex"
-        settings.advanced.turnRetention = TurnRetentionSettings(days: 30, turns: 120)
-
-        let decoded = try JSONDecoder().decode(WeirSettings.self, from: JSONEncoder().encode(settings))
-
-        #expect(decoded == settings)
+        #expect(settings.appearance.accentColor == .blue)
+        #expect(settings.font.size == 17)
+        #expect(settings.advanced.hostsAgentsInTmux)
+        #expect(settings.advanced.reviewInstructions == "Keep this note.")
     }
 
     @Test func keysALaterBuildAdded_toTheNewSections_areWrittenBack() throws {
@@ -423,37 +384,33 @@ struct WeirSettingsTests {
 
         let written = try JSONObjectFixture.object(encoding: WeirSettingsJSON.decode(object))
 
-        #expect((written["general"] as? [String: Any])?["laterKey"] as? Int == 1)
+        let general = try #require(written["general"] as? [String: Any])
+        #expect(general["laterKey"] as? Int == 1)
+        #expect(general["showMenuBarExtra"] as? Bool == false)
         #expect((written["newSession"] as? [String: Any])?["laterKey"] as? String == "x")
-        let retention = (written["advanced"] as? [String: Any])?["turnRetention"] as? [String: Any]
-        #expect(retention?["laterKey"] as? Bool == true)
-        #expect(retention?["days"] as? Int == 20)
+        let retention = try #require((written["advanced"] as? [String: Any])?["turnRetention"] as? [String: Any])
+        #expect(retention["laterKey"] as? Bool == true)
+        #expect(retention["days"] as? Int == 20)
+        #expect(retention["turns"] as? Int == 100)
     }
 
-    /// Settings an earlier build wrote with the moved groups' count still
-    /// read, and the count is not written back.
-    @Test func settingsWithTheMovedGroups_read_andDropThem() throws {
-        let written = Data(#"{"showMenuBarExtra":true,"movedGroups":{"groups":2,"tabs":4},"later":1}"#.utf8)
+    @Test func generalSettings_dropTheMovedGroupCounts_andCarryTheGuideDismissal() throws {
+        let written = Data(#"""
+        {"showMenuBarExtra":false,"movedGroups":{"groups":2,"tabs":4},"isFirstRunGuideDismissed":true,"later":1}
+        """#.utf8)
         let general = try JSONDecoder().decode(GeneralSettings.self, from: written)
-        #expect(general.showMenuBarExtra)
-        #expect(general.unknownFields == ["later": .int(1)], "a later build's key is still kept")
-        let saved = try #require(String(data: JSONEncoder().encode(general), encoding: .utf8))
-        #expect(!saved.contains("movedGroups"))
-        #expect(saved.contains("later"))
-    }
+        #expect(!general.showMenuBarExtra)
+        #expect(general.unknownFields == ["isFirstRunGuideDismissed": .bool(true), "later": .int(1)])
 
-    /// The first-run guide's flag from a build that showed it is carried
-    /// as it was, so going back a build does not show the guide again, and
-    /// a file this build starts never gains it.
-    @Test func theFirstRunGuidesFlag_isCarried_andNeverStarted() throws {
-        let written = Data(#"{"showMenuBarExtra":true,"isFirstRunGuideDismissed":true}"#.utf8)
-        let general = try JSONDecoder().decode(GeneralSettings.self, from: written)
-        #expect(general.unknownFields == ["isFirstRunGuideDismissed": .bool(true)])
-        let saved = try #require(String(data: JSONEncoder().encode(general), encoding: .utf8))
-        #expect(saved.contains(#""isFirstRunGuideDismissed":true"#))
+        let saved = try JSONObjectFixture.object(encoding: general)
+        #expect(saved["movedGroups"] == nil)
+        #expect(saved["showMenuBarExtra"] as? Bool == false)
+        #expect(saved["isFirstRunGuideDismissed"] as? Bool == true)
+        #expect(saved["later"] as? Int == 1)
 
-        let fresh = try #require(String(data: JSONEncoder().encode(GeneralSettings()), encoding: .utf8))
-        #expect(!fresh.contains("isFirstRunGuideDismissed"))
+        let fresh = try JSONObjectFixture.object(encoding: GeneralSettings())
+        #expect(fresh["movedGroups"] == nil)
+        #expect(fresh["isFirstRunGuideDismissed"] == nil)
     }
 }
 
