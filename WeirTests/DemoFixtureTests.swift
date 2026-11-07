@@ -99,17 +99,17 @@ struct DemoFixtureTests {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
         let now = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 1, hour: 1, minute: 22)))
-        func shown(_ name: String?) -> DateComponents {
-            calendar.dateComponents(
-                [.hour, .minute],
-                from: now.addingTimeInterval(DemoFixture.clockShift(named: name, now: now, calendar: calendar))
-            )
+        func shown(_ name: String?) -> Date {
+            now.addingTimeInterval(DemoFixture.clockShift(named: name, now: now, calendar: calendar))
         }
-        #expect(shown("09:15").hour == 9)
-        #expect(shown("09:15").minute == 15)
-        #expect(shown(nil).hour == 14)
-        #expect(shown(nil).minute == 30)
-        #expect(shown("25:00").hour == 14, "not a time of day")
+        let named = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 1, hour: 9, minute: 15)))
+        let fallback = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 1, hour: 14, minute: 30)))
+        #expect(shown("09:15") == named)
+        let midnight = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 1)))
+        #expect(shown("00:00") == midnight)
+        for invalid in [nil, "25:00", "09:60", "09::15", "09:bad:15", "09:15:bad"] {
+            #expect(shown(invalid) == fallback, "Invalid time: \(invalid ?? "<absent>")")
+        }
     }
 
     @Test func appearance_isDarkOnlyWhenNamedSo() {

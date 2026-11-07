@@ -50,9 +50,15 @@ enum DemoFixture {
     /// How far `now` is from the named time on its own day; a name that is not a
     /// time of day stands for the default, an afternoon's.
     static func clockShift(named name: String?, now: Date, calendar: Calendar = .current) -> TimeInterval {
-        let parts = (name ?? "").split(separator: ":").compactMap { Int($0) }
-        let isTime = parts.count == 2 && (0..<24).contains(parts[0]) && (0..<60).contains(parts[1])
-        let (hour, minute) = isTime ? (parts[0], parts[1]) : (14, 30)
+        let parts = (name ?? "").split(separator: ":", omittingEmptySubsequences: false)
+        let (hour, minute) = if parts.count == 2,
+                                let hour = Int(parts[0]), (0..<24).contains(hour),
+                                let minute = Int(parts[1]), (0..<60).contains(minute)
+        {
+            (hour, minute)
+        } else {
+            (14, 30)
+        }
         guard let target = calendar.date(bySettingHour: hour, minute: minute, second: 0, of: now) else { return 0 }
         return target.timeIntervalSince(now)
     }
