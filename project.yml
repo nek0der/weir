@@ -432,6 +432,9 @@ targets:
         # target fails to link.
         PRODUCT_MODULE_NAME: Weir
         SWIFT_PACKAGE_NAME: weir
+        # Weir declares no App Intents. Enable metadata extraction when adding
+        # intents so Xcode can generate their registration and shortcut data.
+        LM_SKIP_METADATA_EXTRACTION: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_HARDENED_RUNTIME: YES
         # Cargo reads its rustup-managed toolchain outside the repository, which
@@ -530,6 +533,8 @@ targets:
         PRODUCT_NAME: WeirTests
         BUNDLE_LOADER: $(TEST_HOST)
         SWIFT_PACKAGE_NAME: weir
+        # This test bundle declares no App Intents metadata.
+        LM_SKIP_METADATA_EXTRACTION: YES
         # Debug builds rename the product to "Weir Dev.app" (see the
         # Debug override on the Weir target). The test host must
         # match — without the per-config split the test bundle would
