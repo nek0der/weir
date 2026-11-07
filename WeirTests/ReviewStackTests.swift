@@ -374,18 +374,47 @@ struct ReviewStackTests {
         #expect(!ReviewSourceCheck.matches(["head", "keep", "new"], diff: diff), "cut short")
     }
 
-    @Test func theFindBar_saysWhatItDidNotSearch() {
+    @Test func theFindBar_describesLimitedSearchCoverage() throws {
         func note(_ isLoadedFilesOnly: Bool, _ skipsViewedFiles: Bool, _ locale: Locale) -> String? {
             ReviewStackText.findNote(isLoadedFilesOnly: isLoadedFilesOnly, skipsViewedFiles: skipsViewedFiles, locale: locale)
         }
         #expect(note(false, false, Self.en) == nil)
-        #expect(note(false, true, Self.en) == "Viewed files aren’t searched.", "the word the checkbox and the list use")
-        #expect(note(false, true, Self.ja) == "確認済みのファイルは検索しません。")
+        #expect(note(false, true, Self.en) == "Folded or hidden viewed files aren’t searched.")
+        #expect(note(false, true, Self.ja) == "折りたたみ中または非表示の確認済みファイルは検索対象外です。")
         #expect(note(true, true, Self.en) ==
-            "Searching only the files loaded so far, not the viewed ones: this scope is too large to load at once.")
-        #expect(note(true, true, Self.ja) == "この範囲は一度に読み込めないため、確認済みを除く読み込んだファイルだけを検索しています。")
+            "This scope is too large to load at once. Searching loaded files, excluding folded or hidden viewed files.")
+        #expect(note(true, true, Self.ja) ==
+            "この範囲は一度に読み込めないため、読み込み済みのファイルだけを検索します。折りたたみ中または非表示の確認済みファイルは検索対象外です。")
         #expect(note(true, false, Self.en) == "Searching only the files loaded so far: this scope is too large to load at once.")
         #expect(note(true, false, Self.ja) == "この範囲は一度に読み込めないため、読み込んだファイルだけを検索しています。")
+
+        let viewed = [Self.second.id: Self.mark(at: 1), Self.third.id: Self.mark(at: 1)]
+        var opened = ReviewStackOpenedFiles()
+        opened.toggle(Self.second.id, isFolded: true, viewed: viewed)
+        let unfolded = ReviewStackBuilder.unfolded(openFileID: Self.first.id, isComposerOpen: false, opened: opened.ids(viewed: viewed))
+        let stack = try Self.stack(open: Self.first, entries: Self.all(), viewed: Set(viewed.keys), unfolded: unfolded)
+        let folded = Set(viewed.keys).subtracting(unfolded)
+        let targets = ReviewWorkspaceView.findFiles(listed: Self.files, totalCount: Self.files.count, folded: folded)
+        #expect(targets.files == [Self.first, Self.second])
+        #expect(targets.skipsViewedFiles)
+        #expect(Self.searchedFiles(stack, "new 1") == Set(targets.files.map(\.id)))
+        #expect(Self.header(stack, Self.second)?.isViewed == true)
+        #expect(Self.header(stack, Self.second)?.isFolded == false)
+        #expect(Self.header(stack, Self.third)?.isViewed == true)
+        #expect(Self.header(stack, Self.third)?.isFolded == true)
+    }
+
+    @Test func findExcludesAViewedFileWhenHiddenEvenIfItsDiffIsUnfolded() {
+        let files = [Self.first, Self.second]
+        let viewed: Set = [Self.second.id]
+        let listed = ReviewFileTree.listed(files, hidingViewed: true, viewed: viewed, open: Self.first.id)
+        let hidden = ReviewWorkspaceView.findFiles(listed: listed, totalCount: files.count, folded: [])
+        #expect(hidden.files == [Self.first])
+        #expect(hidden.skipsViewedFiles)
+
+        let shown = ReviewWorkspaceView.findFiles(listed: files, totalCount: files.count, folded: [])
+        #expect(shown.files == files)
+        #expect(!shown.skipsViewedFiles)
     }
 
     @Test func theHeader_carriesTheMarksAndTheCounts() throws {

@@ -73,4 +73,23 @@ struct ReviewHunkHeaderTests {
         let lines = try ReviewDiffParser.parse("diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b\n")
         #expect(lines.map { $0.hunkHeader != nil } == [false, true, false, false])
     }
+
+    @Test func closedFileHunk_keepsItsHeaderAndCommentLabelAfterOffset() throws {
+        let lines = try ReviewDiffParser.parse("@@ -10,1 +12,1 @@\n-old\n+new\n")
+        let original = try #require(lines.first { $0.kind == .hunk })
+        let file = ReviewFile(path: "file.txt", layer: .turns, status: .modified)
+        let diff = ReviewDiff(file: file, fingerprint: "current", lines: lines)
+        let offset = ReviewStackIDs.offset(forSlot: 1)
+        let piece = ReviewStackPiece.closed(diff, offset: offset, comments: [], staleCommentIDs: [], layout: .unified)
+        let shifted = try #require(piece.hunkHeaders.first)
+
+        #expect(shifted.id == original.id + offset)
+        #expect(piece.commentableHunks.contains(shifted.id))
+        #expect(shifted.hunkHeader == ReviewHunkHeader(oldStart: 10, oldCount: 1, newStart: 12, newCount: 1))
+        #expect(shifted.hunkHeader?.firstLine == 12)
+        #expect(
+            ReviewHunkCommentText.commentLabel(header: shifted.hunkHeader, locale: Locale(identifier: "en"))
+                == "Comment on the Hunk at Line 12"
+        )
+    }
 }

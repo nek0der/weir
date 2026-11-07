@@ -428,11 +428,23 @@ struct ReviewScopeDraftTests {
         #expect(store.legacyComments.map(\.id) == [moving.id])
     }
 
-    @Test func aScopeChosenInTheReviewTabWhileGitChecked_movesNothing_andSaysNothing() async throws {
+    private enum LegacyMoveNavigation: CaseIterable {
+        case movesAway
+        case returnsBeforeResult
+        case returnsBeforeError
+        case refreshesSameScope
+    }
+
+    @Test(arguments: LegacyMoveNavigation.allCases)
+    private func aPendingLegacyMove_isCanceledByAScopeChange_andSurvivesASameScopeRefresh(
+        _ navigation: LegacyMoveNavigation
+    ) async throws {
         let repository = FakeReviewRepository()
         let rangeFile = ReviewFile(path: "a.swift", layer: .turns, status: .modified)
         repository.files = [rangeFile]
         repository.diffs[rangeFile.id] = try ReviewDiffFixture.diff(of: rangeFile, fingerprint: "range")
+        let workingFile = FakeReviewRepository.unstagedFile
+        repository.diffs[workingFile.id] = try ReviewDiffFixture.diff(of: workingFile, fingerprint: "worktree")
         repository.sources[Self.file.id] = ["new"]
         let drafts = RecordingReviewDraftStore()
         let comment = Self.legacy("about this code")
@@ -442,22 +454,50 @@ struct ReviewScopeDraftTests {
             git: repository
         )
         let range = try TurnSummaryFixture.range()
-        _ = await store.reload(scope: .turns(range), selectedFileID: rangeFile.id)
+        let originalScope = ReviewScope.turns(range)
+        try #require(await store.reload(scope: originalScope, selectedFileID: rangeFile.id) == .applied(selectedFileID: rangeFile.id))
         let gate = Gate<[ReviewFile]>()
         repository.nextFilesGate = gate
 
-        async let move: Void = store.moveLegacyComment(comment.id, to: .turns(range))
+        async let move: Void = store.moveLegacyComment(comment.id, to: originalScope)
+        defer { gate.open(with: []) }
         await gate.waitUntilRequested()
-        _ = await store.reload(scope: .uncommitted, selectedFileID: nil)
-        gate.open(with: [rangeFile])
+        if navigation != .refreshesSameScope {
+            repository.files = [workingFile]
+            try #require(await store.reload(scope: .uncommitted, selectedFileID: nil) == .applied(selectedFileID: workingFile.id))
+        }
+        if navigation != .movesAway {
+            repository.files = [rangeFile]
+            try #require(await store.reload(scope: originalScope, selectedFileID: rangeFile.id) == .applied(selectedFileID: rangeFile.id))
+        }
+        #expect(store.scope == (navigation == .movesAway ? .uncommitted : originalScope))
+        gate.open(with: navigation == .returnsBeforeError ? [] : [rangeFile])
+
+        if navigation == .refreshesSameScope {
+            try await move
+            let moved = try #require(store.comments(inScope: range.scopeID).first)
+            #expect(moved.id == comment.id)
+            #expect(moved.body == comment.body)
+            #expect(moved.file == rangeFile)
+            #expect(moved.fingerprint == "range")
+            #expect(store.legacyComments.isEmpty)
+            let saved = try #require(try drafts.load(root: root))
+            #expect(saved.comments == [moved])
+            #expect(saved.legacy == nil)
+            return
+        }
 
         do {
             try await move
-            Issue.record("moved into a scope no longer on screen")
-        } catch is CancellationError {
-            // Expected: the comment stays where it was.
+            Issue.record("A scope change should have canceled the pending move.")
+        } catch {
+            #expect(error is CancellationError)
         }
-        #expect(store.legacyComments.map(\.id) == [comment.id])
+        #expect(store.legacyComments == [comment])
+        #expect(store.comments(inScope: range.scopeID).isEmpty)
+        let saved = try #require(try drafts.load(root: root))
+        #expect(saved.comments.isEmpty)
+        #expect(saved.legacy == [comment])
         #expect(store.errorMessage == nil, "nothing for the banner: the reader moved on")
     }
 

@@ -207,9 +207,15 @@ enum SupervisionWindowActions {
 
     /// Goes to the scratch tabs, closing every layer over the window: one left
     /// open would hide the move, and the key would seem to do nothing.
-    static func showScratch(in window: ProjectWindowState, session: WorkspaceSession) {
+    static func showScratch(
+        in window: ProjectWindowState,
+        session: WorkspaceSession,
+        registry: any SurfaceViewProviding,
+        paneVisibility: PaneVisibilityReporter
+    ) {
         window.closeLayers(Set(WindowLayer.allCases), session: session)
         session.setActiveContainer(.loose, in: window.id, intent: .person)
+        ReviewTabActions.putBehind(window: window, session: session, registry: registry, paneVisibility: paneVisibility)
     }
 
     /// A row's Open Changes Panel: the row selected and the panel opened in
@@ -664,7 +670,10 @@ enum SupervisionWindowActions {
         case .toggleChangesPanel:
             ChangesPanelActions.toggle(window, session: session)
         case .showScratch:
-            showScratch(in: window, session: session)
+            showScratch(
+                in: window, session: session, registry: state.registry,
+                paneVisibility: PaneVisibilityReporter(windowID: window.id, registry: state.windowRegistry)
+            )
         case .showNeedsAttention:
             showNeedsAttention(in: window)
         case .showOpenTabs:
@@ -731,7 +740,12 @@ enum SupervisionWindowActions {
             cameToFront: { [window] in windowCameToFront(window) },
             goBack: { [window, state] in goBack(in: window, session: state.session) },
             goForward: { [window, state] in goForward(in: window, session: state.session) },
-            showScratch: { [window, state] in showScratch(in: window, session: state.session) },
+            showScratch: { [window, state] in
+                showScratch(
+                    in: window, session: state.session, registry: state.registry,
+                    paneVisibility: PaneVisibilityReporter(windowID: window.id, registry: state.windowRegistry)
+                )
+            },
             openFolder: { [window, state] in
                 openFolder(from: window, session: state.session, registry: state.windowRegistry, frecency: state.frecencyStore)
             },

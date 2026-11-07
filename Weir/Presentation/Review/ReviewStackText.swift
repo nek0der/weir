@@ -85,8 +85,8 @@ enum ReviewStackText {
         let resource: LocalizedStringResource? = switch (isLoadedFilesOnly, skipsViewedFiles) {
         case (true, true):
             LocalizedStringResource(
-                "Searching only the files loaded so far, not the viewed ones: this scope is too large to load at once.",
-                comment: "Review find bar: Find searches the files read, less the viewed ones, as the range is too large"
+                "This scope is too large to load at once. Searching loaded files, excluding folded or hidden viewed files.",
+                comment: "Review find bar: the scope exceeds the load budget and some viewed files are folded or hidden"
             )
         case (true, false):
             LocalizedStringResource(
@@ -95,8 +95,8 @@ enum ReviewStackText {
             )
         case (false, true):
             LocalizedStringResource(
-                "Viewed files aren’t searched.",
-                comment: "Review find bar: viewed files are folded away and not searched"
+                "Folded or hidden viewed files aren’t searched.",
+                comment: "Review find bar: viewed files that are folded or hidden are omitted"
             )
         case (false, false):
             nil

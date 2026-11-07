@@ -161,7 +161,8 @@ extension ReviewLine {
             newLine: newLine,
             isExpansion: isExpansion,
             hunkIndex: hunkIndex,
-            endsInCarriageReturn: endsInCarriageReturn
+            endsInCarriageReturn: endsInCarriageReturn,
+            hunkHeader: hunkHeader
         )
     }
 }
