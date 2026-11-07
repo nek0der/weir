@@ -4,6 +4,7 @@
 import Foundation
 import Testing
 @testable import Weir
+@testable import WeirDomain
 
 @MainActor
 @Suite(.timeLimit(.minutes(1)))
@@ -111,17 +112,98 @@ struct NewSessionPullRequestTests {
         }
     }
 
+    enum LookupInterruption: Sendable, CaseIterable {
+        case none, differentNumber, cleared, foreignLink, choseFromMenu, leftSource, cancelledAndRetyped
+    }
+
+    private struct GatedLookup: PullRequestReading {
+        let reply = Gate<PullRequestLookup>()
+        let numbers = Recorded<[Int]>([])
+
+        func availability(repoRoot _: URL) async -> PullRequestAvailability {
+            .available(.fixture)
+        }
+
+        func pullRequest(_ number: Int, in _: PullRequestRepository, repoRoot _: URL) async -> PullRequestLookup {
+            numbers.update { $0.append(number) }
+            return await reply.wait()
+        }
+
+        func openPullRequests(in _: PullRequestRepository, repoRoot _: URL) async -> [PullRequestHead] {
+            [.fixture(12, branch: "menu-head")]
+        }
+    }
+
+    @Test(arguments: LookupInterruption.allCases)
+    func onlyTheCurrentLookupCanSetTheRequest(_ interruption: LookupInterruption) async throws {
+        try await Self.withFixture { fixture, _ in
+            let reader = GatedLookup()
+            fixture.pullRequests = reader
+            var model = try await Self.pullRequestForm(fixture)
+            model.setPullRequestText("12")
+            let menu = await NewSessionActions.openPullRequests(for: model, stores: fixture.stores)
+            let picked = try #require(menu.first)
+            let current = model
+            let task = Task { await NewSessionActions.lookUpPullRequest(12, for: current, stores: fixture.stores) }
+            await reader.reply.waitUntilRequested()
+            #expect(reader.numbers.value == [12])
+            let oldReply = PullRequestHead.fixture(12, branch: "lookup-head")
+            switch interruption {
+            case .none:
+                break
+            case .differentNumber:
+                model.setPullRequestText("13")
+            case .cleared:
+                model.setPullRequestText("")
+            case .foreignLink:
+                model.setPullRequestText("https://github.com/another/app/pull/12")
+            case .choseFromMenu:
+                model.choosePullRequest(picked)
+            case .leftSource:
+                model.source = .newBranch
+            case .cancelledAndRetyped:
+                model.setPullRequestText("13")
+                task.cancel()
+                model.setPullRequestText("12")
+            }
+            let before = model.pullRequest
+            reader.reply.open(with: .found(oldReply))
+            if let lookup = await task.value {
+                model.setPullRequestLookup(lookup, for: 12)
+            }
+
+            #expect(model.pullRequest == (interruption == .none ? .found(oldReply) : before))
+            if interruption == .cancelledAndRetyped {
+                let next = FakePullRequests()
+                let fresh = PullRequestHead.fixture(12, branch: "fresh-head")
+                next.add(fresh)
+                fixture.pullRequests = next
+                try await Self.lookUp(12, in: &model, fixture)
+                #expect(next.asked == [12])
+                #expect(model.pullRequest == .found(fresh))
+            }
+        }
+    }
+
     /// A link to another repository's request is not looked up: its number
     /// here would be another request.
     @Test func aLinkToAnotherRepository_isRefused_andNotLookedUp() async throws {
-        try await Self.withFixture { fixture, _ in
+        try await Self.withFixture { fixture, forge in
+            let forge = try #require(forge)
+            let ownRequest = PullRequestHead.fixture(12, branch: "own-head")
+            forge.add(ownRequest)
             var model = try await Self.pullRequestForm(fixture)
             model.setPullRequestText("https://github.com/someone/else/pull/12")
             #expect(model.problem == .pullRequestElsewhere("github.com/someone/else"))
             #expect(model.branchLine == .problem(.pullRequestElsewhere("github.com/someone/else")))
+            #expect(model.plan == nil)
+            #expect(await NewSessionActions.lookUpPullRequest(12, for: model, stores: fixture.stores) == nil)
+            #expect(forge.asked.isEmpty)
             model.setPullRequestText("https://github.com/acme/app/pull/12")
             #expect(model.pullRequestLinkElsewhere == nil)
             #expect(model.pullRequest == .lookingUp(12))
+            #expect(await NewSessionActions.lookUpPullRequest(12, for: model, stores: fixture.stores) == .found(ownRequest))
+            #expect(forge.asked == [12])
         }
     }
 
@@ -145,9 +227,11 @@ struct NewSessionPullRequestTests {
             model.openPullRequests = await NewSessionActions.openPullRequests(for: model, stores: fixture.stores)
             let picked = try #require(model.openPullRequests.first)
             model.choosePullRequest(picked)
+            #expect(model.pullRequest == .found(picked))
             #expect(model.pullRequestNumber == 5)
             #expect(model.outcome == .pullRequest(number: 5, branch: "feat/five", isExisting: false))
-            #expect(forge?.asked.isEmpty == true, "the menu's request needs no lookup")
+            #expect(await NewSessionActions.lookUpPullRequest(5, for: model, stores: fixture.stores) == nil)
+            #expect(forge?.asked == [])
         }
     }
 

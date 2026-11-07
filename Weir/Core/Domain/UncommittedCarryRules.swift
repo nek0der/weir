@@ -99,15 +99,17 @@ package enum UncommittedCarryRules {
         return count
     }
 
-    /// Whether `git diff-tree -r -z` (its raw form) changes a gitlink: a
-    /// submodule's pointer, or a repository inside the worktree that
-    /// `git add` would take as one.
+    /// Whether `git diff-tree -r -z --no-renames` reports a changed gitlink.
+    /// Each raw header is followed by exactly one path, which can itself start with a colon.
     package static func touchesGitlinks(rawDiff: String) -> Bool {
-        // Each change is `:<old mode> <new mode> <old> <new> <status>`, then
-        // its path in a field of its own.
-        rawDiff.split(separator: "\0").contains { field in
-            field.hasPrefix(":") && field.dropFirst().split(separator: " ").prefix(2).contains("160000")
+        var fields = rawDiff.split(separator: "\0")[...]
+        while let header = fields.popFirst() {
+            if header.hasPrefix(":"), header.dropFirst().split(separator: " ").prefix(2).contains("160000") {
+                return true
+            }
+            _ = fields.popFirst()
         }
+        return false
     }
 
     /// The conflicted paths in what `git merge-tree --write-tree

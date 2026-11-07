@@ -109,10 +109,26 @@ struct GitFactsTests {
         #expect(try await read(repo.url).unpushedCommits == 0)
     }
 
-    @Test func aFolderThatIsNoWorkTree_hasNoFacts() async throws {
+    @Test(arguments: [false, true])
+    func aFolderThatIsNoWorkTree_hasNoFacts(isBare: Bool) async throws {
         try await withTempDir { folder in
+            if isBare {
+                try await TempGitRepo.git(["-c", "init.templateDir=", "init", "--bare", "-q"], in: folder)
+            }
             #expect(await ReviewGit.facts(at: folder) == .notWorkTree)
         }
+    }
+
+    @Test func aRepositoryWithUnreadableConfiguration_hasUnansweredFacts() async throws {
+        let repo = try await TempGitRepo.make()
+        defer { repo.cleanup() }
+        _ = try await read(repo.url)
+        let config = repo.url.appendingPathComponent(".git/config")
+        let original = try Data(contentsOf: config)
+        try Data("[broken\n".utf8).write(to: config)
+        #expect(await ReviewGit.facts(at: repo.url) == .unanswered)
+        try original.write(to: config)
+        _ = try await read(repo.url)
     }
 
     /// The facts at `folder`, which a real repository must give.

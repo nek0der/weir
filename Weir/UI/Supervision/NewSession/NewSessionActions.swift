@@ -251,8 +251,12 @@ enum NewSessionActions {
 
     /// The request the field names, as the forge has it now.
     static func lookUpPullRequest(_ number: Int, for model: NewSessionModel, stores: NewSessionStores) async -> PullRequestLookup? {
-        guard let reader = stores.pullRequests, case let .available(repository) = model.context.pullRequests else { return nil }
-        return await reader.pullRequest(number, in: repository, repoRoot: model.context.project.rootURL)
+        guard model.pullRequestLookupNumber == number, let reader = stores.pullRequests,
+              case let .available(repository) = model.context.pullRequests, !Task.isCancelled
+        else { return nil }
+        let lookup = await reader.pullRequest(number, in: repository, repoRoot: model.context.project.rootURL)
+        // The reader may still return after SwiftUI cancels the previous field task.
+        return Task.isCancelled ? nil : lookup
     }
 
     /// The open requests the field's menu lists.

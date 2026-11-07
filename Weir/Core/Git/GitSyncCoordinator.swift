@@ -272,19 +272,19 @@ private final class ProjectSync {
         for info in liveInfos {
             infosByPath[info.path.standardizedFileURL] = info
         }
-        // Branch-name fallback index. `git worktree move` changes the
-        // path mid-flight, so a race between the move and our model
-        // update can leave us seeing an old path locally and the new
-        // path in `git worktree list`. Branch is stable across
-        // renames, so falling back to it keeps the UUID in place.
-        var infosByBranch: [String: GitWorktreeInfo] = [:]
-        for info in liveInfos {
-            if let b = info.branch, !b.isEmpty, infosByBranch[b] == nil {
-                infosByBranch[b] = info
-            }
-        }
-
         let inFlight = session.worktreeMutationsInFlight
+        let reservedPaths = Set(oldGitWorktrees.map(\.workingDirectory.standardizedFileURL))
+        // A branch can be checked out more than once. Exact path ownership
+        // takes precedence across all rows, and only an unambiguous move
+        // can inherit an old row's identity through its branch.
+        let unmatchedOld = oldGitWorktrees.filter {
+            infosByPath[$0.workingDirectory.standardizedFileURL] == nil
+        }
+        let oldByBranch = Dictionary(grouping: unmatchedOld, by: { $0.gitRef?.branchName })
+        let newByBranch = Dictionary(grouping: liveInfos.filter {
+            !reservedPaths.contains($0.path.standardizedFileURL)
+        }, by: \.branch)
+
         var result: [Worktree] = []
         var consumedPaths: Set<URL> = []
 
@@ -305,8 +305,10 @@ private final class ProjectSync {
                 if let info = infosByPath[oldPath], !consumedPaths.contains(info.path.standardizedFileURL) {
                     return info
                 }
-                if let branch = old.gitRef?.branchName,
-                   let info = infosByBranch[branch],
+                if let branch = old.gitRef?.branchName, !branch.isEmpty,
+                   oldByBranch[branch]?.count == 1,
+                   let candidates = newByBranch[branch], candidates.count == 1,
+                   let info = candidates.first,
                    !consumedPaths.contains(info.path.standardizedFileURL)
                 {
                     return info

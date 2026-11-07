@@ -125,7 +125,11 @@ actor ToolLocator {
         let fm = FileManager.default
         for directory in directories where !directory.isEmpty {
             let candidate = URL(fileURLWithPath: directory).appendingPathComponent(name)
-            if fm.isExecutableFile(atPath: candidate.path) {
+            var isDirectory: ObjCBool = false
+            if fm.fileExists(atPath: candidate.path, isDirectory: &isDirectory),
+               !isDirectory.boolValue,
+               fm.isExecutableFile(atPath: candidate.path)
+            {
                 return candidate
             }
         }

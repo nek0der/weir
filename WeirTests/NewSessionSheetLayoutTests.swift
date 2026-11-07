@@ -111,15 +111,21 @@ struct NewSessionSheetLayoutTests {
     }
 
     /// A pull request's answer comes over the network after its number is
-    /// typed: the sheet is as tall while it is looked up as once it is
-    /// found, under a long branch, a long title, and a fork, or not.
+    /// typed. The sheet keeps the same height while checking availability,
+    /// waiting for the lookup, and showing either a long result or no match.
     @Test(arguments: ["en", "ja"])
     func theSheet_keepsItsSize_asAPullRequestsAnswerArrives(language: String) throws {
         try withTempDir { directory in
             var typed = Self.model(branches: ["main"])
             typed.source = .pullRequest
             typed.setPullRequestText("12")
+            #expect(typed.context.pullRequests == .checking)
             #expect(typed.awaitsPullRequestAnswer)
+            let size = Self.sheetSize(typed, language: language, directory: directory)
+
+            typed.setPullRequestAvailability(.available(.fixture))
+            #expect(typed.pullRequestLookupNumber == 12)
+            #expect(Self.sheetSize(typed, language: language, directory: directory) == size, "\(language) looking up")
             var found = typed
             let head = PullRequestHead(
                 number: 12,
@@ -132,7 +138,8 @@ struct NewSessionSheetLayoutTests {
             found.setPullRequestLookup(.found(head), for: 12)
             var missing = typed
             missing.setPullRequestLookup(.notFound(12), for: 12)
-            let size = Self.sheetSize(typed, language: language, directory: directory)
+            try #require(found.pullRequest == .found(head))
+            try #require(missing.pullRequest == .notFound(12))
             #expect(Self.sheetSize(found, language: language, directory: directory) == size, "\(language) found")
             #expect(Self.sheetSize(missing, language: language, directory: directory) == size, "\(language) not found")
         }
