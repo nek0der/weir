@@ -420,7 +420,7 @@ the title and body from commits.
 - Use [Swift Testing](https://developer.apple.com/documentation/testing)
   (`@Test`, `#expect`), not XCTest.
 - Give tests descriptive names without a `test_` prefix, such as
-  `@Test func addOrActivateProject_existingPath_activatesContainer()`.
+  `@Test func openProject_existingProjectWithTabs_activatesWithoutOpeningAnother()`.
 - Use `@MainActor` for stateful and UI suites.
 - Reuse fixtures from `WeirTests/Support/`, including `RepoFixture`,
   `TempGitRepo`, `WithTempDir`, `FakeGit`, `WorkspaceSessionFixture`,

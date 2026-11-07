@@ -3,7 +3,7 @@ name: design-tests
 description: Designs tests for Weir when adding or changing behavior, fixing a bug, or reviewing and consolidating existing tests. Checks which cases are needed, whether assertions detect the intended regression, and whether fixtures, asynchronous waits, and test boundaries preserve that guarantee.
 ---
 
-# Design tests for a change
+# Design and review tests
 
 Use this when choosing, writing, or reviewing tests in Weir's Swift suites,
 Rust crates, OpenCode plugin, or script self-tests. It also applies when
@@ -41,9 +41,10 @@ does not replace the repository's required checks or verification in the app.
 5. Select cases for the behavior's risks. Consider boundaries, failure,
    cancellation, ordering, and cleanup where they affect the contract; do
    not add every category to every test. Set up the condition the test's name
-   describes, then observe the result, including required and forbidden
-   effects. Report unsupported environments through the test runner's skip
-   mechanism, limiting the condition to affected tests. In Swift Testing,
+   describes, checking fixture defaults and any setup that may repair or
+   replace that condition before the operation. Then observe required and
+   forbidden effects. Use the test runner's skip mechanism for unsupported
+   environments and limit the condition to affected tests. In Swift Testing,
    use the test's or suite's `.enabled` or `.disabled` traits. Within an
    enabled test, make unmet prerequisites fail explicitly instead of
    returning early and reporting success.
@@ -124,6 +125,11 @@ Weir; the links do not impose additional rules or need to be read on every use.
 - Run the affected cases and confirm they were selected and executed. After
   consolidation, confirm that the remaining cases retain the removed cases'
   distinct guarantees and required execution environments.
+- After a broad review, compare related cases in the resulting suite.
+  Check that fixture identities, case names, comments, and assertions describe
+  the same contract, and that equivalent cases agree on waits, cleanup, and
+  environment conditions. Preserve justified differences between test layers.
+  A passing run alone does not establish this consistency.
 - Complete the applicable checks in the contributor guide's
   [verification requirements](../../../CONTRIBUTING.md#before-opening-the-pr),
   [running the checks](../../../CONTRIBUTING.md#running-the-checks), and
