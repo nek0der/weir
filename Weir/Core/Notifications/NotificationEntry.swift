@@ -169,7 +169,10 @@ struct NotificationEntry: Codable, Identifiable, Equatable {
         title = try container.decode(String.self, forKey: .title)
         body = try container.decode(String.self, forKey: .body)
         exitCode = try container.decodeIfPresent(Int.self, forKey: .exitCode)
-        durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds)
+        // Ignore an unsupported duration without discarding the entry.
+        durationSeconds = try container.decodeIfPresent(Double.self, forKey: .durationSeconds).flatMap { seconds in
+            DurationText.wholeSeconds(seconds) == nil ? nil : seconds
+        }
         isRead = try container.decode(Bool.self, forKey: .isRead)
         runtimeID = try container.decodeIfPresent(String.self, forKey: .runtimeID)
         eventToken = try container.decodeIfPresent(String.self, forKey: .eventToken)

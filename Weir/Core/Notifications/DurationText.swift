@@ -10,16 +10,18 @@ import Foundation
 enum DurationText {
     /// How long a command ran: "48.2s" under a minute, then "2m 14s". The
     /// banner's body and the history's row say it the same way. `locale` is
-    /// the one the sentence around it is resolved in.
+    /// the one the sentence around it is resolved in. An unsupported
+    /// duration has no value to display.
     static func command(_ seconds: Double, locale: Locale) -> String {
-        if seconds < 60 {
+        guard let whole = wholeSeconds(seconds) else { return "—" }
+        if whole < 60 {
             return Duration.seconds(seconds).formatted(
                 .units(allowed: [.seconds], width: .narrow, fractionalPart: .show(length: 1))
                     .locale(locale)
             )
         }
         // Whole seconds past a minute: "2m 14s", not "2m 14.6s".
-        return Duration.seconds(Int(seconds)).formatted(
+        return Duration.seconds(whole).formatted(
             .units(allowed: [.minutes, .seconds], width: .narrow)
                 .locale(locale)
         )
@@ -31,7 +33,7 @@ enum DurationText {
     /// has waited 4m 50s has not waited five minutes. The prompt cache's
     /// panel and Needs Attention's wait both say it this way.
     static func compact(_ interval: TimeInterval, locale: Locale) -> String {
-        let seconds = max(0, Int(interval))
+        guard interval.isFinite, let seconds = wholeSeconds(max(0, interval)) else { return "—" }
         let floored = if seconds >= 86400 {
             seconds / 86400 * 86400
         } else if seconds >= 3600 {
@@ -45,5 +47,12 @@ enum DurationText {
             .units(allowed: [.days, .hours, .minutes, .seconds], width: .narrow, maximumUnitCount: 1)
                 .locale(locale)
         )
+    }
+
+    /// Truncates a supported elapsed time without trapping on an invalid
+    /// value. The history decoder can discard that value before formatting.
+    static func wholeSeconds(_ interval: TimeInterval) -> Int? {
+        guard interval.isFinite, interval >= 0 else { return nil }
+        return Int(exactly: interval.rounded(.towardZero))
     }
 }

@@ -14,6 +14,41 @@ struct DurationTextTests {
         #expect(DurationText.command(48.25, locale: en).contains("48.2") || DurationText.command(48.25, locale: en).contains("48.3"))
     }
 
+    @Test func aDecodedCommandKeepsItsExitFactWhenTheDurationIsUnsupported() throws {
+        let decoder = PersistenceCoders.makeDecoder()
+        for (seconds, expectedFacts) in [
+            ("1e20", "exit 1"),
+            ("9223372036854775808", "exit 1"),
+            ("-2", "exit 1"),
+            ("134.6", "exit 1 2m 14s"),
+            ("null", "exit 1")
+        ] {
+            let data = Data("""
+            {"id":"00000000-0000-4000-8000-000000000001","kind":"commandFinished",
+             "timestamp":"2026-10-29T04:20:00Z","title":"Build","body":"Finished","exitCode":1,
+             "durationSeconds":\(seconds),"isRead":false}
+            """.utf8)
+            let entry = try decoder.decode(NotificationEntry.self, from: data)
+            let lines = NotificationHistoryRowText.lines(of: entry, sourceTabTitle: nil, locale: en)
+
+            #expect(lines.headline == "Command failed")
+            #expect(lines.factsText == expectedFacts, "recorded duration: \(seconds)")
+        }
+    }
+
+    @Test func commandAndCompact_handleOutOfRangeDurations() {
+        for invalid in [Double.nan, .infinity, -.infinity, 1e20, Double(Int.max)] {
+            #expect(DurationText.command(invalid, locale: en) == "—")
+            #expect(DurationText.compact(invalid, locale: en) == "—")
+        }
+        #expect(DurationText.command(-1e20, locale: en) == "—")
+        #expect(DurationText.compact(-1e20, locale: en) == "0s")
+
+        let lastRepresentable = Double(Int.max).nextDown
+        #expect(DurationText.command(lastRepresentable, locale: en) != "—")
+        #expect(DurationText.compact(lastRepresentable, locale: en) != "—")
+    }
+
     @Test func aCompactDuration_roundsDownToTheLargestUnit() {
         let style = Duration.UnitsFormatStyle.units(
             allowed: [.days, .hours, .minutes, .seconds],
