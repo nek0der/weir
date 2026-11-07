@@ -268,6 +268,100 @@ struct GitSyncCoordinatorTests {
         }
     }
 
+    @Test func anExactPathMatch_keepsItsIdentity_whenAnEarlierRowSharesItsBranch() async throws {
+        try await withTempDir { root in
+            let (session, project) = WorkspaceSessionFixture.withProject(rootURL: root)
+            let index = try #require(session.projects.firstIndex { $0.id == project.id })
+            var removed = WorktreeFixture.make(
+                label: "Removed",
+                workingDirectory: root.appendingPathComponent("removed"),
+                admission: .opened
+            )
+            var surviving = WorktreeFixture.make(
+                label: "Surviving",
+                workingDirectory: root.appendingPathComponent("surviving"),
+                admission: .opened
+            )
+            removed.displayName = "Removed"
+            surviving.displayName = "Surviving"
+            removed.gitRef = GitRef(branchName: "shared")
+            surviving.gitRef = GitRef(branchName: "shared")
+            session.projects[index].worktrees = [removed, surviving]
+            let info = Self.listed(surviving.workingDirectory, headSHA: "fresh", branch: "shared")
+            let coordinator = GitSyncCoordinator(session: session, listWorktrees: { _ in [info] })
+            await pollUntil(timeout: .seconds(3)) {
+                session.projects[index].worktrees.contains { $0.gitRef?.headSHA == "fresh" }
+            }
+            let rows = session.projects[index].worktrees
+            let kept = try #require(rows.first { $0.id == surviving.id })
+            let missing = try #require(rows.first { $0.id == removed.id })
+            #expect(rows.count == 2)
+            #expect(kept.workingDirectory == surviving.workingDirectory)
+            #expect(kept.displayName == "Surviving")
+            #expect(kept.gitRef?.headSHA == "fresh")
+            #expect(kept.missingSince == nil)
+            #expect(missing.workingDirectory == removed.workingDirectory)
+            #expect(missing.missingSince != nil)
+            withExtendedLifetime(coordinator) {}
+        }
+    }
+
+    @Test func branchFallback_preservesIdentityOnlyForAnUnambiguousMove() async throws {
+        for (oldCount, newCount, isFirstChanging) in [(1, 1, false), (1, 2, false), (2, 1, false), (2, 1, true)] {
+            try await withTempDir { root in
+                let (session, project) = WorkspaceSessionFixture.withProject(rootURL: root)
+                let index = try #require(session.projects.firstIndex { $0.id == project.id })
+                let old = (0..<oldCount).map { number in
+                    var row = WorktreeFixture.make(workingDirectory: root.appendingPathComponent("old-\(number)"), admission: .opened)
+                    row.displayName = "Saved \(number)"
+                    row.gitRef = GitRef(branchName: "shared")
+                    return row
+                }
+                session.projects[index].worktrees = old
+                let change = Gate<Void>()
+                defer { change.open() }
+                let changing = Task { @MainActor in
+                    if isFirstChanging {
+                        await session.withWorktreeMutationGated(old[0].id) { await change.wait() }
+                    }
+                }
+                if isFirstChanging {
+                    await pollUntil { session.worktreeMutationsInFlight.contains(old[0].id) }
+                    try #require(session.worktreeMutationsInFlight.contains(old[0].id))
+                }
+                let infos = (0..<newCount).map { Self.listed(root.appendingPathComponent("new-\($0)"), headSHA: "fresh", branch: "shared") }
+                let coordinator = GitSyncCoordinator(session: session, listWorktrees: { _ in infos })
+                await pollUntil(timeout: .seconds(3)) {
+                    session.projects[index].worktrees.filter { $0.gitRef?.headSHA == "fresh" }.count == newCount
+                }
+                let rows = session.projects[index].worktrees
+                if oldCount == 1, newCount == 1 {
+                    #expect(rows.map(\.id) == old.map(\.id))
+                    #expect(rows.first?.workingDirectory == infos[0].path)
+                    #expect(rows.first?.displayName == "Saved 0")
+                    #expect(rows.first?.missingSince == nil)
+                } else {
+                    #expect(rows.count == oldCount + newCount)
+                    for previous in old {
+                        let retained = try #require(rows.first { $0.id == previous.id })
+                        #expect(retained.workingDirectory == previous.workingDirectory)
+                        if isFirstChanging, previous.id == old[0].id {
+                            #expect(retained == previous)
+                        } else {
+                            #expect(retained.missingSince != nil)
+                        }
+                    }
+                    let fresh = rows.filter { $0.gitRef?.headSHA == "fresh" }
+                    #expect(Set(fresh.map(\.workingDirectory)) == Set(infos.map(\.path)))
+                    #expect(fresh.allSatisfy { $0.admission == .discovered && $0.missingSince == nil })
+                }
+                change.open()
+                await changing.value
+                withExtendedLifetime(coordinator) {}
+            }
+        }
+    }
+
     // MARK: - Admission
 
     /// The project's git rows once a sync has listed every one of `paths`.

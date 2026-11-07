@@ -75,10 +75,18 @@ extension NewSessionModel {
         return linked
     }
 
-    /// The lookup's answer for `number`, dropped when the field names
-    /// another number by now.
+    /// The field can start or accept a lookup while it is waiting for this
+    /// repository's request. A menu choice has its answer already.
+    var pullRequestLookupNumber: Int? {
+        guard source == .pullRequest, case .available = context.pullRequests,
+              pullRequestLinkElsewhere == nil, case let .lookingUp(number) = pullRequest,
+              pullRequestNumber == number
+        else { return nil }
+        return number
+    }
+
     mutating func setPullRequestLookup(_ lookup: PullRequestLookup, for number: Int) {
-        guard pullRequestNumber == number else { return }
+        guard pullRequestLookupNumber == number else { return }
         pullRequest = switch lookup {
         case let .found(head): .found(head)
         case let .notFound(number): .notFound(number)

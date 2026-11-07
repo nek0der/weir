@@ -74,6 +74,7 @@ struct UncommittedCarryRulesTests {
         #expect(UncommittedCarryRules.touchesGitlinks(rawDiff: ":160000 160000 ddd eee M\0sub\0"))
         // A path that reads like a mode is a path.
         #expect(!UncommittedCarryRules.touchesGitlinks(rawDiff: ":100644 100644 aaa bbb M\0160000\0"))
+        #expect(!UncommittedCarryRules.touchesGitlinks(rawDiff: ":100644 100644 aaa bbb M\0:160000 harmless.txt\0"))
     }
 
     @Test func theConflictedPaths_areTheLinesAfterTheTree() {

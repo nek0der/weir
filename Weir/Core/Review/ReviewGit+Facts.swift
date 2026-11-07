@@ -23,7 +23,17 @@ extension ReviewGit {
                 ["status", "--porcelain=v2", "--branch", "--untracked-files=all"],
                 at: folder,
                 limit: factsStatusLimitBytes
-            ) else { return .notWorkTree }
+            ) else {
+                // A failed status may mean unreadable configuration or an
+                // untrusted owner. Only confirmed absence clears stored facts.
+                let probe = try await GitProcess.run(["rev-parse", "--is-inside-work-tree"], cwd: folder)
+                if GitWorktreeList.isOutsideRepository(probe)
+                    || (probe.succeeded && probe.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "false")
+                {
+                    return .notWorkTree
+                }
+                return .unanswered
+            }
             let parsed = GitStatus.parse(status)
             // A base that does not resolve leaves the counts unknown rather
             // than the facts missing: the uncommitted files still stand.

@@ -867,14 +867,8 @@ extension NewSessionSheet {
         }
     }
 
-    /// The number to look up while the field names one not looked up yet,
-    /// from a pull request source a CLI can read; else `nil`, which looks
-    /// up nothing.
     private var pullRequestLookupKey: Int? {
-        guard let model, model.source == .pullRequest, case .available = model.context.pullRequests,
-              model.pullRequestLinkElsewhere == nil, case let .lookingUp(number) = model.pullRequest
-        else { return nil }
-        return number
+        model?.pullRequestLookupNumber
     }
 
     /// Looks up the number the field names, once typing pauses: each key

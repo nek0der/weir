@@ -64,6 +64,18 @@ struct ToolProcessTests {
         try withTempDir { directory in
             try writeStub(named: "faketool", into: directory, executable: false)
             #expect(ToolLocator.firstExecutable(named: "faketool", in: [directory.path]) == nil)
+
+            let folder = directory.appendingPathComponent("faketool")
+            try FileManager.default.removeItem(at: folder)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+            try #require(FileManager.default.isExecutableFile(atPath: folder.path))
+            #expect(ToolLocator.firstExecutable(named: "faketool", in: [directory.path]) == nil)
+
+            try withTempDir { later in
+                try writeStub(named: "faketool", into: later)
+                let found = ToolLocator.firstExecutable(named: "faketool", in: [directory.path, later.path])
+                #expect(found?.path == later.appendingPathComponent("faketool").path)
+            }
         }
     }
 
