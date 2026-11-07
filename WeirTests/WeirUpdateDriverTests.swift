@@ -120,6 +120,14 @@ struct WeirUpdateDriverTests {
             })
         }
 
+        var isIdle: Bool {
+            if case .idle = model.state {
+                model.sessionID == nil
+            } else {
+                false
+            }
+        }
+
         /// A check that finds no update, returning its acknowledgment count.
         func checkFindingNothing() -> () -> Int {
             var acks = 0
@@ -361,6 +369,61 @@ struct WeirUpdateDriverTests {
         #expect(first != nil)
         #expect(harness.model.sessionID != nil)
         #expect(harness.model.sessionID != first)
+    }
+
+    @Test func anInstalledReport_dismissesAfterFiveSeconds_withoutOpeningACheck() throws {
+        let harness = Harness(isInSight: true)
+        var acknowledgements = 0
+        harness.driver.showInstallingUpdate(withApplicationTerminated: true, retryTerminatingApplication: {})
+        harness.driver.showUpdateInstalledAndRelaunched(false, acknowledgement: { acknowledgements += 1 })
+        let id = try #require(harness.model.sessionID)
+        guard case let .installed(acknowledgement) = harness.model.state else {
+            Issue.record("expected the install completion")
+            return
+        }
+        #expect(acknowledgements == 1)
+        #expect(!harness.driver.hasOpenSession)
+
+        harness.clock.advance(by: .milliseconds(4999))
+        #expect(harness.model.sessionID == id)
+        #expect(harness.model.showsBadge)
+
+        acknowledgement.call()
+        harness.clock.advance(by: .milliseconds(1))
+        #expect(harness.isIdle)
+        #expect(!harness.model.showsBadge)
+        #expect(!harness.driver.hasOpenSession)
+        #expect(acknowledgements == 1)
+        #expect(harness.startedChecks == 0)
+    }
+
+    @Test func anEarlierInstallTimer_doesNotDismissTheNextInstallReport() throws {
+        let harness = Harness(isInSight: true)
+        var firstAcks = 0
+        var secondAcks = 0
+        harness.driver.showInstallingUpdate(withApplicationTerminated: true, retryTerminatingApplication: {})
+        harness.driver.showUpdateInstalledAndRelaunched(false, acknowledgement: { firstAcks += 1 })
+        let first = try #require(harness.model.sessionID)
+        harness.clock.advance(by: .seconds(2))
+
+        harness.driver.showInstallingUpdate(withApplicationTerminated: true, retryTerminatingApplication: {})
+        harness.driver.showUpdateInstalledAndRelaunched(false, acknowledgement: { secondAcks += 1 })
+        let second = try #require(harness.model.sessionID)
+        try #require(second != first)
+
+        // The first timer falls due while the same state shows a newer report.
+        harness.clock.advance(by: .seconds(3))
+        guard case .installed = harness.model.state else {
+            Issue.record("the earlier timer dismissed the newer install report")
+            return
+        }
+        #expect(harness.model.sessionID == second)
+        #expect(!harness.driver.hasOpenSession)
+
+        harness.clock.advance(by: .seconds(2))
+        #expect(harness.isIdle)
+        #expect(firstAcks == 1)
+        #expect(secondAcks == 1)
     }
 
     // MARK: - Check for Updates through the updater stack
