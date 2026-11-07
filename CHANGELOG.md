@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.19](https://github.com/nek0der/weir/compare/v0.1.18...v0.1.19) (2026-11-07)
+
+
+### Bug Fixes
+
+* **agent:** keep plan usage when one value is out of range, and keep a turn's passed check ([#363](https://github.com/nek0der/weir/issues/363)) ([189cddd](https://github.com/nek0der/weir/commit/189cdddf73159ddba91167e88a18673038271e32))
+* **agent:** stop late reports from replacing a pane's newer agent or stop, and keep a reopened tab's run ([#364](https://github.com/nek0der/weir/issues/364)) ([e6f0ae2](https://github.com/nek0der/weir/commit/e6f0ae2fd2043dbf6f8f80ca9305be4e516396f6))
+* **demo:** use the default time of day when the demo clock names an invalid one ([#368](https://github.com/nek0der/weir/issues/368)) ([55d5ecc](https://github.com/nek0der/weir/commit/55d5ecc36256ac6d80992379e6f552c9f19bfbda))
+* **design:** darken three light conversation colors so each mark stands out on a hovered row ([#369](https://github.com/nek0der/weir/issues/369)) ([c38b743](https://github.com/nek0der/weir/commit/c38b743b433eaac6f68621cbbf381360b1558254))
+* **notifications:** show a dash for an unusable duration, and keep the history entry that holds it ([#366](https://github.com/nek0der/weir/issues/366)) ([c7ecf69](https://github.com/nek0der/weir/commit/c7ecf69a0a4caae3da3331ad8d1a11954c3c1920))
+* **review:** search the files Find's note names, and keep each line's hunk header in a stacked file ([#361](https://github.com/nek0der/weir/issues/361)) ([c502657](https://github.com/nek0der/weir/commit/c5026570c20ea27ab079c361f3c5208b20a47be3))
+* **supervision:** keep a moved pane's own folder and the focus when the pane to split has closed ([#360](https://github.com/nek0der/weir/issues/360)) ([fb9ce6d](https://github.com/nek0der/weir/commit/fb9ce6df228f44ba245ed37b1b0c5f96a4f7c199))
+* **updates:** let the badge for an installed update clear itself after five seconds ([#367](https://github.com/nek0der/weir/issues/367)) ([efdf393](https://github.com/nek0der/weir/commit/efdf3930dd4f2997da5661b09aa2f33becd756a0))
+* **worktree:** keep each worktree's identity when two share a branch, and drop stale pull request lookups ([#365](https://github.com/nek0der/weir/issues/365)) ([abba7a7](https://github.com/nek0der/weir/commit/abba7a7d954aad408c9760226b6e1e17a9d1c3c2))
+
 ## [0.1.18](https://github.com/nek0der/weir/compare/v0.1.17...v0.1.18) (2026-11-06)
 
 
