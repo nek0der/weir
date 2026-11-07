@@ -22,44 +22,56 @@ final class Gate<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var state = State.closed
     private var waiting: [CheckedContinuation<Value, Never>] = []
-    private var observers: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
     private var requestCount = 0
+    private var observerCount = 0
 
     /// How many callers have reached `wait()`, held or not.
     var requests: Int {
         lock.withLock { requestCount }
     }
 
+    /// How many tasks passed the initial cancellation check and are observing calls.
+    var observingCount: Int {
+        lock.withLock { observerCount }
+    }
+
     /// Returns the value the test opens with, at once if it already has.
     func wait() async -> Value {
         await withCheckedContinuation { continuation in
-            let (ready, reached): (Value?, [CheckedContinuation<Void, Never>]) = lock.withLock {
+            let ready: Value? = lock.withLock {
                 requestCount += 1
-                let reached = takeObservers(reaching: requestCount)
                 if case let .open(value) = state {
-                    return (value, reached)
+                    return value
                 }
                 waiting.append(continuation)
-                return (nil, reached)
+                return nil
             }
-            reached.forEach { $0.resume() }
             if let ready {
                 continuation.resume(returning: ready)
             }
         }
     }
 
-    /// Returns once `count` callers have reached `wait()`.
-    func waitUntilRequested(_ count: Int = 1) async {
-        await withCheckedContinuation { continuation in
-            let isReached = lock.withLock {
-                guard requestCount < count else { return true }
-                observers.append((count, continuation))
-                return false
+    struct RequestTimeout: Error, Equatable {
+        let expected: Int
+        let actual: Int
+    }
+
+    /// Waits for callers to reach the gate, failing when the deadline passes
+    /// or this task is canceled. Callers still own releasing held responses,
+    /// including when this prerequisite fails.
+    func waitUntilRequested(_ count: Int = 1, timeout: Duration = .seconds(2)) async throws {
+        let deadline = SuspendingClock.now + timeout
+        try Task.checkCancellation()
+        lock.withLock { observerCount += 1 }
+        defer { lock.withLock { observerCount -= 1 } }
+        while true {
+            let actual = requests
+            guard actual < count else { return }
+            guard SuspendingClock.now < deadline else {
+                throw RequestTimeout(expected: count, actual: actual)
             }
-            if isReached {
-                continuation.resume()
-            }
+            try await Task.sleep(for: .milliseconds(1))
         }
     }
 
@@ -73,12 +85,6 @@ final class Gate<Value: Sendable>: @unchecked Sendable {
         held.forEach { $0.resume(returning: value) }
     }
 
-    /// Called under the lock.
-    private func takeObservers(reaching count: Int) -> [CheckedContinuation<Void, Never>] {
-        let reached = observers.filter { $0.count <= count }.map(\.continuation)
-        observers.removeAll { $0.count <= count }
-        return reached
-    }
 }
 
 extension Gate where Value == Void {

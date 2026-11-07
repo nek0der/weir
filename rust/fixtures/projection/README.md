@@ -80,7 +80,10 @@ The part of `ProjectionInput` that does not come from the state directories.
 | `marks` | `viewed`, a map from runtime ID to episode token |
 | `presence` | tmux attachments per endpoint, and whether each location is active |
 | `resumeIntents` | Live resume intents, which keep a dead record from being retired |
-| `acknowledged` | Outcomes of the commands the previous pass returned |
+
+Each corpus case starts from a fresh projection state. Command acknowledgments
+from a previous pass belong in the multi-pass notification tests, not in
+`input.json`. The corpus reader rejects unknown input fields.
 
 ## Adding a case
 

@@ -18,21 +18,6 @@ extension AttentionItem {
         testItem(id: .stop(EpisodeKey(origin: .runtime("r"), episodeToken: "1")), kind: .stop(reason), pane: pane)
     }
 
-    /// A wait at `runtime`'s prompt in `pane`, arrived now, as the window
-    /// suites hand it to a decision bar. Filed under the run's stop episode,
-    /// not a prompt's, as those suites have always built it; what they read
-    /// is the pane and the kind, never the id.
-    static func testPrompt(in pane: UUID, runtime: String = "a") -> AttentionItem {
-        var queue = AttentionQueue()
-        queue.insert(
-            id: .stop(EpisodeKey(origin: .runtime(runtime), episodeToken: "1")),
-            kind: .prompt(PromptWait(detail: nil)),
-            subject: .runtime(id: runtime, provider: .claude, paneID: pane, tabID: nil, projectID: nil),
-            arrivedAt: Date()
-        )
-        return queue.items[0]
-    }
-
     /// `runtime`'s stop at `limit` (an exited process when nil), in a pane
     /// of its own, first in the list, arrived at `arrivedAt`.
     static func testUsageLimitStop(
@@ -74,8 +59,10 @@ extension AttentionItem {
         for (offset, kind) in kinds.enumerated() {
             let episode = AttentionItemID.stop(EpisodeKey(origin: .runtime("r\(offset)"), episodeToken: "1"))
             let id: AttentionItemID = switch kind {
-            case let .approval(fact) where filesRequestsByKey, let .question(fact) where filesRequestsByKey:
+            case let .approval(fact) where filesRequestsByKey:
                 .approval(fact.key)
+            case let .question(fact) where filesRequestsByKey:
+                .question(fact.key)
             default:
                 episode
             }

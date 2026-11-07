@@ -9,11 +9,13 @@ import Foundation
 /// lookup asked about.
 actor ScriptedPRStatusLookups: PRStatusLookups {
     private struct Waiting {
+        let id: UUID
         let rows: [PRStatusRow]
         let continuation: CheckedContinuation<PRStatusBatch, Never>
     }
 
     private var waiting: [Waiting] = []
+    private var isFinished = false
     /// The rows of every lookup made, in order.
     private(set) var asked: [[ContainerID]] = []
     private(set) var invalidationCount = 0
@@ -33,12 +35,17 @@ actor ScriptedPRStatusLookups: PRStatusLookups {
         asked.append(rows.map(\.container))
         runningCount += 1
         peakRunningCount = max(peakRunningCount, runningCount)
-        // A test that fails while a lookup waits cancels it on the way out;
-        // answering then keeps the test from waiting out its time limit.
+        let id = UUID()
         let batch = await withTaskCancellationHandler {
-            await withCheckedContinuation { waiting.append(Waiting(rows: rows, continuation: $0)) }
+            await withCheckedContinuation { continuation in
+                if isFinished || Task.isCancelled {
+                    continuation.resume(returning: PRStatusBatch())
+                } else {
+                    waiting.append(Waiting(id: id, rows: rows, continuation: continuation))
+                }
+            }
         } onCancel: {
-            Task { await self.answerAll() }
+            Task { await self.cancelLookup(id) }
         }
         runningCount -= 1
         return batch
@@ -64,9 +71,36 @@ actor ScriptedPRStatusLookups: PRStatusLookups {
         waiting.removeFirst().continuation.resume(returning: PRStatusBatch(lookups: lookups, isQuotaLow: false))
     }
 
-    private func answerAll() {
-        while !waiting.isEmpty {
-            answer(PRStatusFetcher.Lookup(isAnswered: false))
+    /// Ends pending and future lookups with an empty batch.
+    func finish() {
+        isFinished = true
+        let pending = waiting
+        waiting.removeAll()
+        for request in pending {
+            request.continuation.resume(returning: PRStatusBatch())
         }
     }
+
+    private func cancelLookup(_ id: UUID) {
+        guard let index = waiting.firstIndex(where: { $0.id == id }) else { return }
+        waiting.remove(at: index).continuation.resume(returning: PRStatusBatch())
+    }
+}
+
+/// Releases the waiters a test started, including follow-ups that register
+/// after the test exits.
+@MainActor
+func withPRStatusCleanup(
+    clock: ManualPRStatusClock,
+    lookups: ScriptedPRStatusLookups,
+    perform: () async throws -> Void
+) async throws {
+    defer { clock.finish() }
+    do {
+        try await perform()
+    } catch {
+        await lookups.finish()
+        throw error
+    }
+    await lookups.finish()
 }

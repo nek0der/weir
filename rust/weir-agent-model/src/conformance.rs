@@ -7,12 +7,13 @@
 //! adds them) and `approval_request`, and compares the result with the
 //! case's `expected.json` and `approval.expected.json`. The negative set is
 //! shared by all providers: every adapter must reject oversized or
-//! non-object input and pass unknown events through as one `Extension`.
+//! non-object input and preserve unknown events as one `Extension`.
 
 use crate::{
     AgentEvent, ApprovalRequest, HookContext, MAX_HOOK_INPUT_BYTES, NormalizeError,
     ProviderAdapter, RawHookInput,
 };
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
@@ -77,8 +78,8 @@ impl HookContext {
 /// # Panics
 ///
 /// Panics when the fixture tree itself is malformed (unreadable directory or
-/// `expected.json` that is not `Vec<Vec<AgentEvent>>`), because that is a
-/// repository error rather than an adapter failure.
+/// `expected.json` that is not `Vec<Vec<AgentEvent>>`) or when no cases are
+/// found or a case contains no payloads.
 #[must_use]
 pub fn run_normalize(
     adapter: &dyn ProviderAdapter,
@@ -88,7 +89,7 @@ pub fn run_normalize(
     for case in cases_under(provider_root) {
         let expected_path = case.join("expected.json");
         let expected: Vec<Vec<AgentEvent>> = read_json(&expected_path);
-        let payloads = payloads_in(&case);
+        let payloads = case_payloads(&case);
         if payloads.len() != expected.len() {
             failures.push(ConformanceFailure {
                 case: case.clone(),
@@ -133,7 +134,8 @@ pub fn run_normalize(
 ///
 /// # Panics
 ///
-/// Panics when the fixture tree itself is malformed.
+/// Panics when the fixture tree itself is malformed, no cases are found, or a
+/// case contains no payloads.
 #[must_use]
 pub fn run_approval(
     adapter: &dyn ProviderAdapter,
@@ -142,64 +144,102 @@ pub fn run_approval(
     let mut failures = Vec::new();
     for case in cases_under(provider_root) {
         let expected_path = case.join("approval.expected.json");
-        let expected: BTreeMap<String, Option<ApprovalRequest>> = if expected_path.exists() {
+        let mut expected: BTreeMap<String, Option<ApprovalRequest>> = if expected_path.exists() {
             read_json(&expected_path)
         } else {
             BTreeMap::new()
         };
-        for payload in payloads_in(&case) {
+        for payload in case_payloads(&case) {
             let bytes = fs::read(&payload).expect("payload is readable");
             let actual = adapter.approval_request(RawHookInput {
                 bytes: &bytes,
                 transcript: None,
             });
-            let wanted = expected.get(&file_name(&payload)).cloned().flatten();
+            let name = file_name(&payload);
+            let wanted = expected.remove(&name).flatten();
             let matches = matches!(&actual, Ok(request) if *request == wanted);
             if !matches {
                 failures.push(ConformanceFailure {
                     case: case.clone(),
-                    payload: Some(file_name(&payload)),
+                    payload: Some(name),
                     expected: format!("{wanted:?}"),
                     got: format!("{actual:?}"),
                 });
             }
         }
+        failures.extend(expected.into_keys().map(|name| ConformanceFailure {
+            case: case.clone(),
+            payload: Some(name),
+            expected: "a payload listed in approval.expected.json".to_owned(),
+            got: "no matching payload file".to_owned(),
+        }));
     }
     failures
 }
 
 /// Runs the shared negative set plus a synthesized oversized payload.
 ///
-/// Each input must produce `TooLarge`, `NotAnObject`, or exactly one
-/// `Extension`; the oversized payload is generated here rather than stored,
-/// so the repository does not carry a megabyte of padding.
+/// Oversized input must produce `TooLarge` with the hook input limit.
+/// Malformed JSON and non-object roots must produce `NotAnObject`.
+/// Unknown events must produce one `Extension` with the original name and
+/// payload. The oversized payload is generated to keep padding out of the
+/// repository.
 ///
 /// # Panics
 ///
-/// Panics when `negative_root` cannot be read.
+/// Panics when a directory or fixture cannot be read, or when a negative
+/// fixture contains a JSON object without an event name.
 #[must_use]
 pub fn run_negative(
     adapter: &dyn ProviderAdapter,
     negative_root: &Path,
 ) -> Vec<ConformanceFailure> {
-    let mut inputs: Vec<(PathBuf, Vec<u8>)> = payloads_in(negative_root)
-        .into_iter()
-        .map(|path| {
-            let bytes = fs::read(&path).expect("negative payload is readable");
-            (path, bytes)
-        })
-        .collect();
+    let payloads = payloads_in(negative_root);
+    let mut failures: Vec<_> = [
+        "array-root.json",
+        "string-root.json",
+        "truncated.json",
+        "unknown-event.json",
+    ]
+    .into_iter()
+    .map(|name| negative_root.join(name))
+    .filter(|path| !payloads.contains(path))
+    .map(|case| ConformanceFailure {
+        case,
+        payload: None,
+        expected: "required negative fixture".to_owned(),
+        got: "no matching payload file".to_owned(),
+    })
+    .collect();
+    let inputs = payloads.into_iter().map(|path| {
+        let bytes =
+            fs::read(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        (path, bytes)
+    });
     let mut oversized = br#"{"hook_event_name":"Stop","padding":""#.to_vec();
-    oversized.resize(MAX_HOOK_INPUT_BYTES + 1024, b'x');
-    oversized.extend_from_slice(b"\"}");
-    inputs.push((
+    let suffix = b"\"}";
+    oversized.resize(MAX_HOOK_INPUT_BYTES + 1 - suffix.len(), b'x');
+    oversized.extend_from_slice(suffix);
+    let oversized_input = (
         negative_root.join("<synthesized oversized payload>"),
         oversized,
-    ));
+    );
 
     let context = HookContext::fixture_for(adapter.descriptor());
-    let mut failures = Vec::new();
-    for (path, bytes) in inputs {
+    for (path, bytes) in inputs.chain([oversized_input]) {
+        let wanted = if bytes.len() > MAX_HOOK_INPUT_BYTES {
+            Err(NormalizeError::TooLarge {
+                limit: MAX_HOOK_INPUT_BYTES,
+            })
+        } else if let Ok(payload @ Value::Object(_)) = serde_json::from_slice::<Value>(&bytes) {
+            let name = payload["hook_event_name"]
+                .as_str()
+                .unwrap_or_else(|| panic!("missing event name in {}", path.display()))
+                .to_owned();
+            Ok(vec![AgentEvent::Extension { name, payload }])
+        } else {
+            Err(NormalizeError::NotAnObject)
+        };
         let actual = adapter.normalize(
             RawHookInput {
                 bytes: &bytes,
@@ -207,15 +247,11 @@ pub fn run_negative(
             },
             &context,
         );
-        let accepted = match &actual {
-            Err(NormalizeError::TooLarge { .. } | NormalizeError::NotAnObject) => true,
-            Ok(events) => matches!(events.as_slice(), [AgentEvent::Extension { .. }]),
-        };
-        if !accepted {
+        if actual != wanted {
             failures.push(ConformanceFailure {
                 case: path,
                 payload: None,
-                expected: "TooLarge, NotAnObject, or one Extension".to_owned(),
+                expected: format!("{wanted:?}"),
                 got: format!("{actual:?}"),
             });
         }
@@ -237,6 +273,11 @@ fn cases_under(provider_root: &Path) -> Vec<PathBuf> {
             }
         }
     }
+    assert!(
+        !cases.is_empty(),
+        "no fixture cases under {}",
+        provider_root.display()
+    );
     cases
 }
 
@@ -251,6 +292,16 @@ fn payloads_in(case: &Path) -> Vec<PathBuf> {
                 && !file_name(path).ends_with("expected.json")
         })
         .collect()
+}
+
+fn case_payloads(case: &Path) -> Vec<PathBuf> {
+    let payloads = payloads_in(case);
+    assert!(
+        !payloads.is_empty(),
+        "no payloads in fixture case {}",
+        case.display()
+    );
+    payloads
 }
 
 fn transcript_for(payload: &Path) -> Option<Vec<u8>> {
@@ -317,17 +368,34 @@ mod tests {
         parse_object,
     };
 
+    type NormalizeFixture = fn(&[u8]) -> Result<Vec<AgentEvent>, NormalizeError>;
+
     /// Turns every object into one `Extension` named after its event, and
     /// treats a `PermissionRequest` as an approval for `tool_name`.
     struct PassThrough {
         descriptor: ProviderDescriptor,
+        normalize_bytes: NormalizeFixture,
     }
 
     impl PassThrough {
         fn new() -> Self {
             Self {
                 descriptor: ProviderDescriptor::fixture("fake", [Capability::ApprovalHook]),
+                normalize_bytes: Self::preserve_payload,
             }
+        }
+
+        fn preserve_payload(bytes: &[u8]) -> Result<Vec<AgentEvent>, NormalizeError> {
+            let object = parse_object(bytes, MAX_HOOK_INPUT_BYTES)?;
+            let name = object
+                .get("hook_event_name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown")
+                .to_owned();
+            Ok(vec![AgentEvent::Extension {
+                name,
+                payload: serde_json::Value::Object(object),
+            }])
         }
     }
 
@@ -345,16 +413,7 @@ mod tests {
             input: RawHookInput<'_>,
             _context: &HookContext,
         ) -> Result<Vec<AgentEvent>, NormalizeError> {
-            let object = parse_object(input.bytes, MAX_HOOK_INPUT_BYTES)?;
-            let name = object
-                .get("hook_event_name")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown")
-                .to_owned();
-            Ok(vec![AgentEvent::Extension {
-                name,
-                payload: serde_json::Value::Object(object),
-            }])
+            (self.normalize_bytes)(input.bytes)
         }
 
         fn approval_request(
@@ -394,37 +453,6 @@ mod tests {
         }
     }
 
-    /// Produces no events at all, which the negative set must reject.
-    struct Empty(PassThrough);
-    impl ProviderAdapter for Empty {
-        fn descriptor(&self) -> &ProviderDescriptor {
-            self.0.descriptor()
-        }
-        fn install_recipe(&self) -> InstallRecipe {
-            InstallRecipe::default()
-        }
-        fn normalize(
-            &self,
-            _input: RawHookInput<'_>,
-            _context: &HookContext,
-        ) -> Result<Vec<AgentEvent>, NormalizeError> {
-            Ok(Vec::new())
-        }
-        fn approval_request(
-            &self,
-            _input: RawHookInput<'_>,
-        ) -> Result<Option<ApprovalRequest>, NormalizeError> {
-            Ok(None)
-        }
-        fn approval_output(
-            &self,
-            _decision: &ApprovalDecision,
-            _request: &serde_json::Value,
-        ) -> ProviderOutput {
-            ProviderOutput::default()
-        }
-    }
-
     /// A scratch fixture tree that removes itself.
     struct Tree(PathBuf);
 
@@ -440,6 +468,18 @@ mod tests {
             let path = self.0.join(relative);
             fs::create_dir_all(path.parent().expect("parent")).expect("create case");
             fs::write(path, contents).expect("write fixture");
+        }
+
+        fn negative() -> Self {
+            let tree = Self::new("negative");
+            tree.write("truncated.json", "{\"hook_event_name\":");
+            tree.write("array-root.json", "[1]");
+            tree.write("string-root.json", r#""text""#);
+            tree.write(
+                "unknown-event.json",
+                r#"{"hook_event_name":"Whatever","payload":{"nested":[1,2,3]}}"#,
+            );
+            tree
         }
     }
 
@@ -492,7 +532,17 @@ mod tests {
                 Some("0001-Stop.json".into())
             ]
         );
-        assert!(failures[2].expected.contains("<missing>"));
+        assert!(
+            failures
+                .iter()
+                .all(|failure| failure.case == tree.0.join("2026-09/basic"))
+        );
+        assert_eq!(failures[0].expected, "2 entries in expected.json");
+        assert_eq!(failures[0].got, "1 entries");
+        assert_eq!(failures[1].expected, "[Compacting]");
+        assert!(failures[1].got.contains("Extension"));
+        assert_eq!(failures[2].expected, "<missing>");
+        assert!(failures[2].got.contains("Extension"));
     }
 
     #[test]
@@ -526,15 +576,129 @@ mod tests {
     }
 
     #[test]
-    fn negative_set_accepts_errors_and_single_extensions_only() {
-        let tree = Tree::new("negative");
-        tree.write("truncated.json", "{\"hook_event_name\":");
-        tree.write("array-root.json", "[1]");
-        tree.write("unknown.json", r#"{"hook_event_name":"Whatever"}"#);
-        assert_eq!(run_negative(&PassThrough::new(), &tree.0), Vec::new());
+    fn approval_reports_unmatched_keys_even_when_their_value_is_null() {
+        let tree = Tree::new("unmatched-approval");
+        tree.write(
+            "2026-09/ask/0000-Stop.json",
+            r#"{"hook_event_name":"Stop"}"#,
+        );
+        tree.write(
+            "2026-09/ask/approval.expected.json",
+            r#"{"0000-Stop.json":null,"0001-Stop.json":null,"0002-PermissionRequest.json":{"provider":"fake","tool_name":"Bash","input":null,"timeout_ms":1}}"#,
+        );
+        let failures = run_approval(&PassThrough::new(), &tree.0);
+        let names: Vec<_> = failures
+            .iter()
+            .map(|failure| failure.payload.as_deref())
+            .collect();
+        assert_eq!(
+            names,
+            [Some("0001-Stop.json"), Some("0002-PermissionRequest.json")]
+        );
+    }
 
-        let failures = run_negative(&Empty(PassThrough::new()), &tree.0);
-        // Three files plus the synthesized oversized payload all fail.
-        assert_eq!(failures.len(), 4);
+    #[test]
+    #[should_panic(expected = "no fixture cases under")]
+    fn an_empty_provider_root_fails_discovery() {
+        let tree = Tree::new("empty-provider");
+        let _ = run_normalize(&PassThrough::new(), &tree.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "no payloads in fixture case")]
+    fn an_empty_case_cannot_pass_normalization() {
+        let tree = Tree::new("empty-normalize-case");
+        tree.write("2026-09/empty/expected.json", "[]");
+        let _ = run_normalize(&PassThrough::new(), &tree.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "no payloads in fixture case")]
+    fn an_empty_case_cannot_pass_approval() {
+        let tree = Tree::new("empty-approval-case");
+        tree.write("2026-09/empty/approval.expected.json", "{}");
+        let _ = run_approval(&PassThrough::new(), &tree.0);
+    }
+
+    #[test]
+    fn a_missing_negative_fixture_is_reported_by_name() {
+        let tree = Tree::negative();
+        fs::remove_file(tree.0.join("string-root.json")).expect("remove fixture");
+        let failures = run_negative(&PassThrough::new(), &tree.0);
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].case, tree.0.join("string-root.json"));
+        assert_eq!(failures[0].payload, None);
+        assert_eq!(failures[0].expected, "required negative fixture");
+        assert_eq!(failures[0].got, "no matching payload file");
+    }
+
+    #[test]
+    fn the_negative_set_rejects_wrong_errors_and_altered_extensions() {
+        let tree = Tree::negative();
+        let mut adapter = PassThrough::new();
+        assert_eq!(run_negative(&adapter, &tree.0), Vec::new());
+
+        let oversized = "<synthesized oversized payload>";
+        let wrong_results: [(NormalizeFixture, &[&str]); 5] = [
+            (
+                |_| Ok(Vec::new()),
+                &[
+                    "array-root.json",
+                    "string-root.json",
+                    "truncated.json",
+                    "unknown-event.json",
+                    oversized,
+                ],
+            ),
+            (
+                |_| Err(NormalizeError::NotAnObject),
+                &["unknown-event.json", oversized],
+            ),
+            (
+                |bytes| {
+                    PassThrough::preserve_payload(bytes)
+                        .map_err(|_| NormalizeError::TooLarge { limit: 1 })
+                },
+                &[
+                    "array-root.json",
+                    "string-root.json",
+                    "truncated.json",
+                    oversized,
+                ],
+            ),
+            (
+                |bytes| {
+                    let object = parse_object(bytes, MAX_HOOK_INPUT_BYTES)?;
+                    Ok(vec![AgentEvent::Extension {
+                        name: "changed".to_owned(),
+                        payload: Value::Object(object),
+                    }])
+                },
+                &["unknown-event.json"],
+            ),
+            (
+                |bytes| {
+                    let object = parse_object(bytes, MAX_HOOK_INPUT_BYTES)?;
+                    let name = object["hook_event_name"]
+                        .as_str()
+                        .expect("event name")
+                        .to_owned();
+                    Ok(vec![AgentEvent::Extension {
+                        name,
+                        payload: Value::Null,
+                    }])
+                },
+                &["unknown-event.json"],
+            ),
+        ];
+        for (normalize_bytes, rejected) in wrong_results {
+            adapter.normalize_bytes = normalize_bytes;
+            let failures = run_negative(&adapter, &tree.0);
+            let names: Vec<_> = failures
+                .iter()
+                .map(|failure| file_name(&failure.case))
+                .collect();
+            assert_eq!(names, rejected, "{failures:?}");
+        }
     }
 }

@@ -22,19 +22,6 @@ extension SessionLaunchFixture {
         store.begin(projectID: project.id, worktreeID: worktree.id, request: request, notes: notes, in: session, window: window)
     }
 
-    /// Whether every launch still listed waits for its agent's start
-    /// (`.starting`): one that ran to its end without notes is no longer
-    /// listed, and one kept `.done` with notes, or waiting in its terminal,
-    /// does not count.
-    var hasStarted: Bool {
-        store.launches.values.allSatisfy { launch in
-            if case .starting = launch.phase {
-                return true
-            }
-            return false
-        }
-    }
-
     /// A fixture whose one setup step writes its pid to `dir/pid` and runs
     /// until it is stopped, begun with `request`; returns once the step
     /// runs, with its pid. One that `ignoresTERM` runs on until the SIGKILL

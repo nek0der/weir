@@ -19,17 +19,10 @@ final class ManualPRStatusClock: PRStatusClock, @unchecked Sendable {
     private var current: Date
     private var sleepers: [Sleeper] = []
     private var nextID = 0
+    private var isFinished = false
 
     init(start: Date = Date(timeIntervalSince1970: 1_800_000_000)) {
         current = start
-    }
-
-    deinit {
-        // A sleeper left at the end of a suite is told it was canceled, so
-        // its task ends rather than leaking its continuation.
-        for sleeper in sleepers {
-            sleeper.continuation.resume(throwing: CancellationError())
-        }
     }
 
     func now() -> Date {
@@ -54,7 +47,7 @@ final class ManualPRStatusClock: PRStatusClock, @unchecked Sendable {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
                 let outcome: Result<Void, any Error>? = lock.withLock {
-                    if Task.isCancelled {
+                    if isFinished || Task.isCancelled {
                         return .failure(CancellationError())
                     }
                     let deadline = current.addingTimeInterval(interval)
@@ -72,6 +65,19 @@ final class ManualPRStatusClock: PRStatusClock, @unchecked Sendable {
                 return sleepers.remove(at: index)
             }
             sleeper?.continuation.resume(throwing: CancellationError())
+        }
+    }
+
+    /// Ends pending and future sleeps with `CancellationError`.
+    func finish() {
+        let pending: [Sleeper] = lock.withLock {
+            isFinished = true
+            let pending = sleepers
+            sleepers.removeAll()
+            return pending
+        }
+        for sleeper in pending {
+            sleeper.continuation.resume(throwing: CancellationError())
         }
     }
 

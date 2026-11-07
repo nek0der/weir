@@ -18,27 +18,9 @@ enum HookAgent: String, CaseIterable, Sendable, CustomTestStringConvertible {
         rawValue
     }
 
-    /// The variable the provider's recipe names for `placeholder`, as its shim
-    /// exports it; `nil` when the recipe names none.
-    private func recipeVariable(_ placeholder: AgentInstallRecipe.Placeholder) -> String? {
-        AgentProviderRegistry.recipes[rawValue]?.environment.first { $0.value == placeholder }?.name
-    }
-
-    /// The variable naming the folder the run records land in. Empty only
-    /// when the registry cannot be read, which every test here then fails on.
-    var statesVariable: String {
-        recipeVariable(.stateDirectory) ?? ""
-    }
-
-    /// The variable naming the folder the resume hints land in.
-    var sessionsVariable: String {
-        recipeVariable(.sessionDirectory) ?? ""
-    }
-
-    /// The variable naming the folder working-directory events land in.
-    /// Only Claude reports a change of directory, so Codex's recipe names none.
-    var cwdEventsVariable: String? {
-        recipeVariable(.cwdEventsDirectory)
+    enum RecipeError: Error, Equatable {
+        case missingVariable(provider: HookAgent, placeholder: AgentInstallRecipe.Placeholder)
+        case duplicateVariable(provider: HookAgent, name: String)
     }
 
     /// The pid the shim exports before it execs the agent, which the hook
@@ -65,16 +47,36 @@ enum HookAgent: String, CaseIterable, Sendable, CustomTestStringConvertible {
     /// `HOME` is `dir` too: the helper finds the agent's own folder
     /// (`~/.claude`, `~/.codex`) under `$HOME` when its variable is unset,
     /// and a test must not reach the real one.
-    func environment(in dir: URL, paneID: String) -> [String: String] {
+    func environment(in dir: URL, paneID: String, recipeVariables: [AgentInstallRecipe.Variable]? = nil) throws -> [String: String] {
+        let variables = recipeVariables ?? AgentProviderRegistry.recipes[rawValue]?.environment ?? []
+        func name(for placeholder: AgentInstallRecipe.Placeholder) -> String? {
+            variables.first { $0.value == placeholder }?.name
+        }
+        func requiredName(for placeholder: AgentInstallRecipe.Placeholder) throws -> String {
+            guard let name = name(for: placeholder), !name.isEmpty else {
+                throw RecipeError.missingVariable(provider: self, placeholder: placeholder)
+            }
+            return name
+        }
+        let states = try requiredName(for: .stateDirectory)
+        let sessions = try requiredName(for: .sessionDirectory)
+        let cwdEvents = name(for: .cwdEventsDirectory)
+        if cwdEvents == "" {
+            throw RecipeError.missingVariable(provider: self, placeholder: .cwdEventsDirectory)
+        }
+        var names: Set = ["PATH", "HOME", "WEIR_PANE_ID"]
+        for name in [states, sessions] + [cwdEvents].compactMap(\.self) {
+            guard names.insert(name).inserted else { throw RecipeError.duplicateVariable(provider: self, name: name) }
+        }
         var environment = [
             "PATH": ShimHarness.systemPath,
             "HOME": dir.path,
             "WEIR_PANE_ID": paneID,
-            statesVariable: dir.appendingPathComponent("states").path,
-            sessionsVariable: dir.appendingPathComponent("sessions").path
+            states: dir.appendingPathComponent("states").path,
+            sessions: dir.appendingPathComponent("sessions").path
         ]
-        if let cwdEventsVariable {
-            environment[cwdEventsVariable] = dir.appendingPathComponent("cwd").path
+        if let cwdEvents {
+            environment[cwdEvents] = dir.appendingPathComponent("cwd").path
         }
         return environment
     }
@@ -143,7 +145,7 @@ enum HookScriptHarness {
             let paneID = UUID().uuidString
             try prepare?(dir, states, paneID)
             for (eventIndex, payload) in payloads.enumerated() {
-                var environment = agent.environment(in: dir, paneID: paneID)
+                var environment = try agent.environment(in: dir, paneID: paneID)
                 environment["WEIR_HOOK_HELPER"] = helper.path
                 environment.merge(extraEnvironment) { _, new in new }
                 // A payload without a `cwd` happened where the hook runs.
