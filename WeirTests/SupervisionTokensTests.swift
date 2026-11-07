@@ -388,16 +388,19 @@ struct SupervisionTokensTests {
 
     // MARK: Conversation identity
 
-    /// The identity bar is a decoration beside a badge whose conversation is
-    /// named in words, and is hidden from VoiceOver, so it is held to 2:1
-    /// rather than the 3:1 a mark that carries meaning alone needs. Light: a card (`0xF7F7F8`),
-    /// and the selected tab and the pane (the terminal's white). Dark: a
-    /// card on the window and the selected tab on the terminal's ground.
+    /// The identity bar is decorative. The Changes card is on the window's
+    /// ground at rest and takes the hover token when its panel is opaque.
     @Test(arguments: [false, true])
-    func conversationIdentity_staysVisible_onCardAndTab(isDark: Bool) {
-        let grounds: [(String, SRGB)] = isDark
-            ? [("card", Tokens.window.dark), ("tab", Tokens.terminal.dark)]
-            : [("card", SRGB(0xF7F7F8)), ("tab and pane", Tokens.terminal.light)]
+    func conversationIdentity_staysVisible_onRepresentativeCardAndTerminalGrounds(isDark: Bool) throws {
+        var grounds = [
+            ("window", Tokens.window.value(isDark: isDark)),
+            ("hovered card and tab", Tokens.hover.value(isDark: isDark)),
+            ("terminal", Tokens.terminal.value(isDark: isDark))
+        ]
+        if !isDark {
+            grounds.append(("representative light card", SRGB(0xF7F7F8)))
+        }
+        try #require(Tokens.conversationIdentity.count >= 6)
         for (index, color) in Tokens.conversationIdentity.enumerated() {
             for (name, ground) in grounds {
                 let ratio = ContrastRatio.between(color.value(isDark: isDark), ground)

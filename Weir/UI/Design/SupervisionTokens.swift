@@ -710,11 +710,12 @@ enum SupervisionTokens {
     /// fill. A softer gray from the palette (`line`, `faint`) would have
     /// left the badge's shape under 3:1, and black would have read as a
     /// frame around the letters. In dark the white stands 12.65:1 off
-    /// everything. Where an edge is the fill, it draws nothing. The edges
-    /// are `SelectionEdgeRule.color(fill, on: selection)`, written out so
-    /// the badge needs no work at draw time. Antigravity's badge has none:
-    /// its blue already stands 3:1 off, and a blue edge would ring the
-    /// colors on its top.
+    /// everything. Where an edge is the fill, it draws nothing. The Claude
+    /// and Codex edges use `SelectionEdgeRule.color(fill, on: selection)`,
+    /// written out so the badge needs no work at draw time. OpenCode's
+    /// dark edge clears the same floor with a lighter, fixed color.
+    /// Antigravity's badge has none: its blue already stands 3:1 off, and
+    /// a blue edge would ring the colors on its top.
     static let claudeEdge = ThemedColor(light: 0xC36B4E, dark: 0xD97757)
     static let codexEdge = ThemedColor(light: 0x7F7F7F, dark: 0xFFFFFF)
     static let opencodeEdge = ThemedColor(light: 0x211E1E, dark: 0x8E8989)
@@ -753,15 +754,16 @@ enum SupervisionTokens {
     /// (`ConversationIdentityBar`) stands before a badge whose
     /// conversation every place also names in words, and is hidden from
     /// VoiceOver, so they are held to 2:1 off a card and a tab rather than
-    /// the 3:1 a mark that carries meaning alone needs. They stand apart by
-    /// their OKLab distance, which follows how far apart colors look, and
-    /// none is near the unread blue.
+    /// the 3:1 a mark that carries meaning alone needs. The light green,
+    /// teal, and yellow also clear 2:1 on the hover fill. The
+    /// colors stand apart by their OKLab distance, and none is near the
+    /// unread blue.
     static let conversationIdentity: [ThemedColor] = [
-        ThemedColor(light: 0x44C462, dark: 0x4FC46B),
+        ThemedColor(light: 0x43C061, dark: 0x4FC46B),
         ThemedColor(light: 0xA678F3, dark: 0xA77BF0),
-        ThemedColor(light: 0x2ABEC6, dark: 0x2FC0C8),
+        ThemedColor(light: 0x29BBC3, dark: 0x2FC0C8),
         ThemedColor(light: 0xEF6CB9, dark: 0xEC6FB8),
-        ThemedColor(light: 0xCDA911, dark: 0xEBCB45),
+        ThemedColor(light: 0xCAA611, dark: 0xEBCB45),
         ThemedColor(light: 0x3A3D44, dark: 0xD9DCE2)
     ]
 
