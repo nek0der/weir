@@ -68,6 +68,7 @@ enum SessionSnapshotV5 {
     }
 
     private static let continueWhereTheActiveTabIs = "inheritPrevious"
+    private static let version5GroupModes: Set<String> = ["home", continueWhereTheActiveTabIs, "fixed"]
     /// The supervision window's sidebar default when this step was
     /// written.
     private static let sidebarWidth = 304.0
@@ -147,7 +148,11 @@ enum SessionSnapshotV5 {
         if let palette = group["paletteIndex"] {
             tab["paletteIndex"] = palette
         }
-        tab["cwdMode"] = group["cwdMode"] as? String ?? continueWhereTheActiveTabIs
+        if let mode = group["cwdMode"] as? String, version5GroupModes.contains(mode) {
+            tab["cwdMode"] = mode
+        } else {
+            tab["cwdMode"] = continueWhereTheActiveTabIs
+        }
         if let path = group["cwdPath"] {
             tab["cwdPath"] = path
         }

@@ -176,6 +176,8 @@ struct SessionSnapshotV6MigrationTests {
         case null
         /// A value that names no mode, which version 5 refused.
         case notAName
+        /// A string that does not name a version 5 mode.
+        case unknownName
         /// "Continue where the active tab is", written out.
         case inheritPrevious
     }
@@ -201,6 +203,7 @@ struct SessionSnapshotV6MigrationTests {
         case .absent: fields.removeValue(forKey: "cwdMode")
         case .null: fields["cwdMode"] = NSNull()
         case .notAName: fields["cwdMode"] = 3
+        case .unknownName: fields["cwdMode"] = "futureMode"
         case .inheritPrevious: fields["cwdMode"] = "inheritPrevious"
         }
         containers[0]["group"] = fields

@@ -318,6 +318,30 @@ struct TabActionsMovePaneTests {
         #expect(moved.titleOverride == nil)
     }
 
+    @Test func movePaneToNewTab_keepsItsOwnReportedDirectory() throws {
+        let (session, source) = try Self.sourceAndPane()
+        session.quickTabDefaultsProvider = { (mode: .inheritPrevious, path: nil) }
+        let pane = try #require(source.splitTree.allLeafIDs().last)
+        let sibling = try #require(source.splitTree.allLeafIDs().first)
+        try #require(pane != sibling)
+        session.update(source.id) {
+            $0.workingDirectory = "/tmp/weir-launch"
+            $0.pwd = "/tmp/weir-sibling"
+        }
+        session.setWorkingDirectory(paneID: sibling, path: "/tmp/weir-sibling")
+        session.setWorkingDirectory(paneID: pane, path: "/tmp/weir-moved")
+
+        TabActions.movePaneToNewTab(session, paneID: pane)
+
+        let moved = try #require(session.tab(containing: pane))
+        #expect(moved.id != source.id)
+        #expect(moved.pwd == "/tmp/weir-moved")
+        #expect(session.workingDirectory(paneID: sibling) == "/tmp/weir-sibling")
+        #expect(session.tab(source.id)?.pwd == "/tmp/weir-sibling")
+        let next = session.openTab(container: .loose)
+        #expect(next.workingDirectory == "/tmp/weir-moved")
+    }
+
     /// A pane in a tab no window shows, moved in the window named (the one
     /// its views pass), gets a tab of its own there.
     @Test func movePaneToNewTab_ofAPaneNoWindowShows_movesItInTheWindowNamed() throws {
