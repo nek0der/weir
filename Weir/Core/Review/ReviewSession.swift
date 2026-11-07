@@ -18,6 +18,9 @@ final class ReviewSession {
     /// What the list is a list of. This view's own: another window on the
     /// same worktree can be reading another comparison.
     private(set) var scope: ReviewScope = .uncommitted
+    /// Identifies the current visit to this scope. Refreshing the same scope
+    /// preserves its in-flight operations.
+    @ObservationIgnored private(set) var scopeGeneration = UUID()
     /// The branch available to compare against, kept even while reading the
     /// worktree. Comments written on the branch have to stay validatable after
     /// the reader switches back, or switching views would age out everything
@@ -241,6 +244,9 @@ final class ReviewSession {
                 writer.rememberRange(range)
             }
             let isSameScope = targetScope == scope
+            if !isSameScope {
+                scopeGeneration = UUID()
+            }
             scope = targetScope
             files = latestFiles
             listReadCount += 1

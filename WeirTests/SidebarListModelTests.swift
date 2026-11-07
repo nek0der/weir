@@ -199,12 +199,31 @@ struct SidebarListModelTests {
     }
 
     /// The command shows the scratch tabs at once, with nothing left over them.
-    @Test func showScratch_closesTheLayers_andGoesToTheScratchTabs() {
+    @Test(arguments: [false, true])
+    func showScratch_closesTheLayers_andGoesToTheScratchTabs(reviewIsShown: Bool) throws {
         let fixture = Fixture()
+        let scratch = fixture.scratchTab()
+        if reviewIsShown {
+            fixture.choose(scratch, in: fixture.primary)
+            try Fixture.windowWritingAComment(fixture.primary, isOfNoProject: true)
+            try #require(fixture.primary.review?.isShown == true)
+        }
+        let opening = fixture.primary.review?.opening
+        let reviewSession = fixture.primary.reviewSession
+        let composer = reviewSession?.composer
         fixture.primary.isAllProjectsPresented = true
-        SupervisionWindowActions.showScratch(in: fixture.primary, session: fixture.session)
+        SupervisionWindowActions.showScratch(
+            in: fixture.primary, session: fixture.session, registry: RecordingSurfaceRegistry(),
+            paneVisibility: PaneVisibilityReporter(windowID: fixture.primary.id, registry: fixture.registry)
+        )
         #expect(!fixture.primary.isAllProjectsPresented)
         #expect(Self.scratchRow(fixture).isActive)
+        #expect(fixture.primary.selection.activeTabID == scratch.id)
+        #expect(fixture.session.scratchOwnerWindowID == fixture.primary.id)
+        #expect(fixture.primary.review?.opening == opening)
+        #expect(fixture.primary.reviewSession === reviewSession)
+        #expect(fixture.primary.reviewSession?.composer == composer)
+        #expect(fixture.primary.review?.isShown != true)
     }
 
     /// With only shells in it, the row wears a shell's mark and no badge, as

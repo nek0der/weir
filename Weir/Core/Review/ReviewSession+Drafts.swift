@@ -161,15 +161,13 @@ extension ReviewSession {
     /// must name one place. For a fixed range the quoted code must also still
     /// be where it was. Nothing moves a comment on its own.
     ///
-    /// The review moves into the scope on screen, so a target that is not
-    /// that scope when the move starts, or a scope chosen while Git ran,
-    /// ends the move with `CancellationError`: the comment stays
-    /// where it was, and neither the move nor the reason it failed is about
-    /// what the reader is looking at now.
+    /// A scope change invalidates the move, even if the reader returns to
+    /// the original scope before Git finishes.
     func moveLegacyComment(_ id: UUID, to target: ReviewScope) async throws {
         // Not a scope on screen: nothing to ask Git about.
         guard scope == target else { throw CancellationError() }
         guard let comment = comments.first(where: { $0.id == id }), comment.isLegacy else { return }
+        let generation = scopeGeneration
         let expected = comments
         let moved: ReviewComment
         do {
@@ -177,10 +175,10 @@ extension ReviewSession {
             if case .turns = target {
                 guard await quotesCurrentCode(moved) else { throw ReviewError.legacyCodeMoved }
             }
-        } catch where scope != target {
+        } catch where scopeGeneration != generation {
             throw CancellationError()
         }
-        guard scope == target else { throw CancellationError() }
+        guard scopeGeneration == generation else { throw CancellationError() }
         // The reader edited the draft while Git ran.
         guard comments == expected, let index = comments.firstIndex(where: { $0.id == id }) else {
             throw ReviewError.checkInterrupted

@@ -54,14 +54,25 @@ extension ReviewWorkspaceView {
         ].joined(separator: ",")
     }
 
-    /// What the find bar adds: that it searches only the files read, when
-    /// the range is more than the review holds at once, and that it skips
-    /// the checked files folded to their headers.
+    /// A viewed file can be excluded by the rail or by its folded diff.
+    /// Find uses the same selection for requesting diffs and describing omissions.
+    static func findFiles(
+        listed: [ReviewFile],
+        totalCount: Int,
+        folded: Set<String>
+    ) -> (files: [ReviewFile], skipsViewedFiles: Bool) {
+        let files = listed.filter { !folded.contains($0.id) }
+        return (files, files.count < totalCount)
+    }
+
+    private var findFiles: (files: [ReviewFile], skipsViewedFiles: Bool) {
+        Self.findFiles(listed: listedFiles, totalCount: reviewSession.files.count, folded: foldedFileIDs)
+    }
+
     var findNote: String? {
-        let folded = foldedFileIDs
-        return ReviewStackText.findNote(
+        ReviewStackText.findNote(
             isLoadedFilesOnly: reviewSession.stackLoader.searchCoverage == .loadedFilesOnly,
-            skipsViewedFiles: reviewSession.files.contains { folded.contains($0.id) },
+            skipsViewedFiles: findFiles.skipsViewedFiles,
             locale: locale
         )
     }
@@ -71,8 +82,7 @@ extension ReviewWorkspaceView {
     /// open. A folded file (or a hidden one) is not searched; a checked
     /// file opened again is searched like any other.
     func loadStackForSearch() {
-        let folded = foldedFileIDs
-        reviewSession.loadStackForSearch(listedFiles.filter { !folded.contains($0.id) })
+        reviewSession.loadStackForSearch(findFiles.files)
     }
 
     /// Every file of the range, under its header.
