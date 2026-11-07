@@ -354,7 +354,7 @@ extension NeedsAttentionListModel {
         switch item.subject {
         case let .runtime(_, provider, paneID, tabID, _):
             guard let tab = tabID.flatMap({ session.tab($0) }) ?? session.tab(containing: paneID) else {
-                return Names(title: provider.rawValue.capitalized, place: nil)
+                return Names(title: AgentCatalog.entry(for: provider).displayName, place: nil)
             }
             let rowName = SessionSidebarModel.rowName(of: tab.container, in: session, locale: locale)
             // Which pane, once the row's name alone leaves two items alike.
@@ -381,7 +381,7 @@ extension NeedsAttentionListModel {
                 place: project.map { AgentStatusText.place(project: $0.name, checkout: row.flatMap { session.rowCheckout(of: $0)?.shown }) }
             )
         case let .unplaced(provider):
-            return Names(title: provider.rawValue.capitalized, place: nil)
+            return Names(title: AgentCatalog.entry(for: provider).displayName, place: nil)
         }
     }
 }

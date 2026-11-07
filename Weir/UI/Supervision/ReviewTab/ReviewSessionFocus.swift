@@ -40,9 +40,10 @@ enum ReviewSessionFocus {
 
     /// Whether the session a review of `conversation` belongs to is in front of what
     /// will take the text. Only the agent the pane hosts counts, in the tmux pane in front:
-    /// another agent's run there, or a process gone since, has no say, and its
-    /// channel would answer nothing. An agent with no tabs, or a pane with no run of
-    /// one, has nothing to ask. The run gives both channel and session, as one pair.
+    /// another agent's run there, or a process gone since, has no say. A
+    /// conversation named in this pane requires a live run of that conversation.
+    /// An agent with no tabs, or a pane with no run of one, has nothing to ask.
+    /// The run gives both channel and session, as one pair.
     static func show(
         conversation: ConversationKey?,
         destination: ReviewDestination,
@@ -54,14 +55,17 @@ enum ReviewSessionFocus {
         // A run with a channel is one of an agent with tabs; no other has one.
         guard let agent = destination.agent else { return true }
         let pane = destination.paneID
-        let receivers = runtimes().filter { run in
+        let candidates = runtimes().filter { run in
             run.kind == agent
                 && run.paneIDs.contains(pane)
                 && (run.tmuxLocations[pane]?.isActive ?? true)
                 && run.tabChannel != nil
-                && run.processID.map(isAlive) ?? true
         }
+        let receivers = candidates.filter { $0.processID.map(isAlive) ?? true }
         let wanted = receivers.first { $0.conversation != nil && $0.conversation == conversation }
+        if let conversation, wanted == nil, candidates.contains(where: { $0.conversation == conversation }) {
+            return false
+        }
         // With none named, the latest of a live family: a closed tab may be all that is left.
         let latest = receivers.max { $0.badge.updatedAt < $1.badge.updatedAt }
         guard let channel = (wanted ?? latest)?.tabChannel else { return true }

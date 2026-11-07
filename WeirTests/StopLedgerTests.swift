@@ -178,11 +178,44 @@ struct StopLedgerTests: StopLedgerFixture {
         #expect(ledger.records.isEmpty)
     }
 
-    @Test func aNewerStopOfTheConversationInThePane_replacesTheOlder() {
+    @Test(arguments: [false, true], [false, true])
+    func aNewerStopOfTheConversationInThePane_replacesTheOlder(newerFirst: Bool, reverseReports: Bool) throws {
+        let older = Self.run("a", .error, turn: "T1")
+        let newer = Self.run("b", .error, at: 50, episode: "9", turn: "T2")
         var ledger = StopLedger()
-        _ = ledger.update(runtimes: [Self.run("a", .error)], paneExists: Self.always)
-        _ = ledger.update(runtimes: [Self.run("b", .error, at: 50, episode: "9")], paneExists: Self.always)
-        #expect(ledger.records.keys.map(\.self) == [StopLedger.itemID(of: Self.run("b", .error, episode: "9"))])
+        _ = ledger.update(runtimes: [newerFirst ? newer : older], paneExists: Self.always)
+        let reports = reverseReports ? [newer, older] : [older, newer]
+        _ = ledger.update(runtimes: reports, paneExists: Self.always)
+        let newerID = StopLedger.itemID(of: newer)
+        #expect(Set(ledger.records.keys) == [newerID])
+        let retained = try #require(ledger.record(newerID))
+        #expect(retained.runtimeID == newer.runtimeID)
+        #expect(retained.stoppedAt == Self.start.addingTimeInterval(50))
+        #expect(retained.turnID == TurnID("T2"))
+        let (previous, _) = AttentionQueueReducer.reduce(
+            AttentionQueue(), input: .init(runtimes: [newerFirst ? newer : older])
+        )
+        let (queue, _) = AttentionQueueReducer.reduce(
+            previous,
+            input: .init(runtimes: reports, dismissedStops: ledger.dismissed)
+        )
+        #expect(queue.items.map(\.id) == [newerID])
+        _ = ledger.update(runtimes: [older], paneExists: Self.always)
+        let kept = ledger.retained(besides: [older]).map { record in
+            AttentionQueueReducer.RetainedStop(
+                itemID: record.itemID, runtimeID: record.runtimeID, provider: record.provider,
+                paneID: record.paneID, tabID: nil, projectID: nil,
+                reason: record.reason, stoppedAt: record.stoppedAt
+            )
+        }
+        let (afterExit, effects) = AttentionQueueReducer.reduce(
+            queue, input: .init(runtimes: [older], retainedStops: kept, dismissedStops: ledger.dismissed)
+        )
+        #expect(afterExit.items.map(\.id) == [newerID])
+        #expect(effects.isEmpty)
+        let nextEpisode = Self.run("a", .error, at: 100, episode: "2", turn: "T3")
+        _ = ledger.update(runtimes: [nextEpisode], paneExists: Self.always)
+        #expect(Set(ledger.records.keys) == [StopLedger.itemID(of: nextEpisode)])
     }
 
     /// Two runs of the same agent in one pane (two tmux sessions attached

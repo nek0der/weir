@@ -124,17 +124,15 @@ package struct StopLedger: Equatable, Sendable {
     package private(set) var records: [AttentionItemID: Record] = [:]
     /// The resumes typed at launch, by pane (`markResumingAtLaunch`).
     package private(set) var launchResumes: [UUID: LaunchResume] = [:]
-    /// Stops that ended while their run still says so (an agent killed
-    /// outright, or left in its error in one pane while its conversation
-    /// was resumed in another, stays in error until its record is cleaned
-    /// up): the person moved on, or the conversation is back. Neither kept
-    /// here again nor listed.
+    /// Error episodes excluded from the list while their runtimes still
+    /// report them. The person moved on, the conversation resumed, or a
+    /// newer stop superseded the episode.
     package private(set) var dismissed: Set<AttentionItemID> = []
 
     package init() {}
 
     /// The ledger as the last launch left it (`StopLedgerStore`): its
-    /// stops and the ones the person moved on from. A stop whose pane the
+    /// stops and suppressed error episodes. A stop whose pane the
     /// session did not restore ends at the first `update`, as any whose
     /// pane is closed does.
     package init(restoring records: [Record], dismissed: Set<AttentionItemID>) {
@@ -179,7 +177,18 @@ package struct StopLedger: Equatable, Sendable {
             // what it did last, and replaces the older. Another run's stop
             // stays: its row resumes its own conversation, which needs its
             // record whichever run stopped first.
+            // Runtime reports are not ordered by stop time. A stale report
+            // must not replace a newer stop retained from this or a prior pass.
+            guard !records.values.contains(where: {
+                $0.paneID == paneID && Self.isSameRun($0, as: runtime) && $0.stoppedAt > runtime.updatedAt
+            }) else {
+                dismissed.insert(itemID)
+                continue
+            }
             for (other, record) in records where record.paneID == paneID && Self.isSameRun(record, as: runtime) {
+                if record.stoppedAt < runtime.updatedAt, inError.contains(other) {
+                    dismissed.insert(other)
+                }
                 records[other] = nil
             }
             records[itemID] = Record(

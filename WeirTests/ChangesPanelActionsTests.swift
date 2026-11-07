@@ -423,7 +423,7 @@ struct ChangesPanelActionsTests {
             var runtime = AgentRuntimePresentation.test(
                 kind: .opencode,
                 runID: id,
-                badge: AgentBadge(state: .idle, updatedAt: Date()),
+                badge: AgentBadge(state: .idle, updatedAt: Date(), providerSessionTitle: isBehind ? "Background work" : "Shown work"),
                 paneIDs: [pane],
                 sessionID: "ses_\(id)",
                 conversation: TurnSummaryFixture.conversation(id, provider: .opencode)
@@ -437,6 +437,10 @@ struct ChangesPanelActionsTests {
         let request = AgentTabFocus.requestURL(channel: pane)
         try? FileManager.default.removeItem(at: request)
         let behind = TurnSummaryFixture.conversation("behind", provider: .opencode)
+
+        let live = ChangesPanelActions.liveTab(in: container, stores: fixture.changes)
+        #expect(live(behind)?.providerTitle == "Background work")
+        #expect(live(TurnSummaryFixture.conversation("shown", provider: .opencode))?.providerTitle == "Shown work")
 
         #expect(ChangesPanelActions.offersShowTab(of: behind, window: fixture.window, stores: fixture.changes))
         ChangesPanelActions.showTab(of: behind, window: fixture.window, stores: fixture.changes)

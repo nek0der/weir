@@ -943,9 +943,10 @@ The file is `{"schemaVersion": 1, "records": [...], "dismissed": [...]}`.
   and whether its last resume failed (`resumeFailed`). The `reason` is told
   apart by its `kind`: `processExited`, `error` with its `message`,
   `usageLimit` with its `usageLimit`, or `notResumedAtLaunch`.
-- `dismissed` lists the stops the person moved on from whose run may still
-  report an error. An entry whose run no longer reports an error at the next
-  look is dropped from the list.
+- `dismissed` lists stops the person moved on from and stops superseded by
+  a newer stop of the same run or conversation in the pane, while their runs
+  still report those error episodes. An entry whose run no longer reports
+  that error episode at the next look is dropped from the list.
 
 A resume still under way at quit is written as if none were under way. The
 shell it was typed into ended with the launch, so the stop offers the resume

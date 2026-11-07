@@ -123,25 +123,28 @@ final class PaneProgramStatusStore {
     /// A pane's command returned to the shell: what its program reported is
     /// over, cleared or not, as one killed or crashed sends no clear.
     func commandReturnedToShell(in pane: UUID) {
-        // Read before `forget`, which takes the pane out: only the first
-        // return says anything new, and every shell command ends in one.
-        let isFirstReturn = !panesBackAtShell.contains(pane)
-        forget(pane)
-        panesBackAtShell.insert(pane)
-        if isFirstReturn {
+        let removedAgent = removeReport(in: pane)
+        let isFirstReturn = panesBackAtShell.insert(pane).inserted
+        // The callback can read the projection input synchronously.
+        if removedAgent || isFirstReturn {
             onChange?()
         }
     }
 
-    /// Forgets what a pane's program reported, once its surface closed or its
-    /// command returned to the shell.
+    /// Forgets the pane after its surface closes.
     func forget(_ pane: UUID) {
         panesBackAtShell.remove(pane)
-        panesAgentLeft.remove(pane)
-        guard let removed = statuses.removeValue(forKey: pane) else { return }
-        if agentApps.contains(removed.app) {
+        if removeReport(in: pane) {
             onChange?()
         }
+    }
+
+    /// Removes the report and its title suppression. Returns whether an
+    /// agent's report changed the projection input.
+    private func removeReport(in pane: UUID) -> Bool {
+        panesAgentLeft.remove(pane)
+        guard let removed = statuses.removeValue(forKey: pane) else { return false }
+        return agentApps.contains(removed.app)
     }
 
     /// The statuses as one pass reads them, keyed by pane.
