@@ -13,7 +13,8 @@ use weir_agent_hook::{
     HookEnv, HookOutcome, HookRuntime, NoSnapshots, run_hook, run_worktree_hook,
 };
 use weir_agent_model::{
-    RunRecord, RunState, TurnRecord, run_record_file_name, session_hint_file_name,
+    RunRecord, RunState, TurnPhase, TurnRecord, WaitKind, run_record_file_name,
+    session_hint_file_name,
 };
 
 const PROVIDER: &str = "antigravity";
@@ -74,6 +75,7 @@ impl Scratch {
             })
             .collect();
         payloads.sort();
+        assert!(!payloads.is_empty(), "no payloads in {case}");
         for path in payloads {
             self.replay_call(&path);
         }
@@ -145,11 +147,36 @@ impl Drop for Scratch {
 }
 
 #[test]
-fn turns_with_the_same_words_are_two_turns() {
+fn turns_with_the_same_prompt_keep_their_own_step_and_reply() {
     let scratch = Scratch::new();
     scratch.replay("two-turns");
     assert_eq!(scratch.record().state, RunState::Finished);
-    assert_eq!(scratch.turns().len(), 3);
+    let turns = scratch.turns();
+    let [first, second, third] = turns.as_slice() else {
+        panic!("expected three turns: {turns:?}");
+    };
+    assert_eq!(
+        first.prompt_head.as_deref(),
+        Some("Run the shell command: date. Then say done.")
+    );
+    for (turn, step, reply) in [
+        (first, "1", "done."),
+        (second, "5", "ok"),
+        (third, "7", "ok"),
+    ] {
+        assert_eq!(turn.phase, TurnPhase::Finished);
+        assert_eq!(turn.reply_head.as_deref(), Some(reply));
+        assert_eq!(
+            turn.provider_turn_id
+                .as_deref()
+                .and_then(|marker| marker.rsplit_once('#'))
+                .map(|(_, step)| step),
+            Some(step)
+        );
+    }
+    assert_eq!(second.prompt_head.as_deref(), Some("say ok"));
+    assert_eq!(third.prompt_head.as_deref(), Some("say ok"));
+    assert_ne!(second.turn_id, third.turn_id);
 }
 
 #[test]
@@ -159,6 +186,7 @@ fn a_resume_with_no_session_start_still_names_the_conversation() {
     let record = scratch.record();
     let session = record.session_id.clone().expect("session");
     assert_eq!(record.state, RunState::Finished);
+    assert_eq!(session, "00000000-0000-4000-8000-000000000001");
     assert_eq!(
         scratch.hint().get("sessionId").and_then(Value::as_str),
         Some(session.as_str())
@@ -214,10 +242,16 @@ fn a_fresh_launch_rests_and_its_own_session_start_does_no_harm() {
 fn a_continue_learns_its_conversation_from_the_first_request() {
     let scratch = Scratch::new();
     scratch.report_launch("");
-    scratch.replay("resume");
+    assert_eq!(scratch.record().session_id, None);
+    scratch.replay_only("resume", &["0001-PreInvocation"]);
     let record = scratch.record();
-    assert!(record.session_id.is_some());
-    assert_eq!(record.state, RunState::Finished);
+    assert_eq!(
+        record.session_id.as_deref(),
+        Some("00000000-0000-4000-8000-000000000001")
+    );
+    assert_eq!(record.state, RunState::Running);
+    scratch.replay_only("resume", &["0002-PostInvocation", "0003-Stop"]);
+    assert_eq!(scratch.record().state, RunState::Finished);
     assert_eq!(scratch.turns().len(), 1);
 }
 
@@ -227,20 +261,6 @@ fn a_daemon_ending_after_the_stop_begins_the_turn_it_began_and_no_other() {
     scratch.replay("background-command");
     assert_eq!(scratch.record().state, RunState::Finished);
     assert_eq!(scratch.turns().len(), 2);
-}
-
-#[test]
-fn a_prompted_turn_keeps_the_step_it_began_at() {
-    let scratch = Scratch::new();
-    scratch.replay("two-turns");
-    let mut steps: Vec<u64> = scratch
-        .turns()
-        .iter()
-        .filter_map(|turn| turn.provider_turn_id.as_deref()?.rsplit_once('#'))
-        .filter_map(|(_, step)| step.parse().ok())
-        .collect();
-    steps.sort_unstable();
-    assert_eq!(steps, [1, 5, 7]);
 }
 
 #[test]
@@ -334,6 +354,14 @@ fn clear_moves_the_run_to_the_new_conversation() {
     let record = scratch.record();
     assert_eq!(record.state, RunState::Finished);
     assert_eq!(record.first_prompt.as_deref(), Some("say two"));
+    assert_eq!(
+        record.session_id.as_deref(),
+        Some("00000000-0000-4000-8000-000000000009")
+    );
+    assert_eq!(
+        scratch.hint()["sessionId"],
+        "00000000-0000-4000-8000-000000000009"
+    );
 }
 
 #[test]
@@ -342,6 +370,11 @@ fn a_declined_write_leaves_the_turn_open_for_the_status_report_to_end() {
     scratch.replay("write-declined");
     let record = scratch.record();
     assert_eq!(record.state, RunState::Running);
+    let turns = scratch.turns();
+    let [turn] = turns.as_slice() else {
+        panic!("expected one open turn: {turns:?}");
+    };
+    assert_eq!(turn.phase, TurnPhase::Started);
     assert!(
         record.transcript_path.is_some(),
         "the app reads it to end the turn"
@@ -351,7 +384,28 @@ fn a_declined_write_leaves_the_turn_open_for_the_status_report_to_end() {
 #[test]
 fn a_question_waits_until_its_tool_returns() {
     let scratch = Scratch::new();
-    scratch.replay("question");
+    scratch.replay_only(
+        "question",
+        &["0001-SessionStart", "0002-PreInvocation", "0003-PreToolUse"],
+    );
+    let record = scratch.record();
+    assert_eq!(record.state, RunState::NeedsInput);
+    assert_eq!(record.wait_kind, Some(WaitKind::Question));
+
+    scratch.replay_only("question", &["0004-PostToolUse"]);
+    let record = scratch.record();
+    assert_eq!(record.state, RunState::Running);
+    assert_eq!(record.wait_kind, None);
+
+    scratch.replay_only(
+        "question",
+        &[
+            "0005-PostInvocation",
+            "0006-PreInvocation",
+            "0007-PostInvocation",
+            "0008-Stop",
+        ],
+    );
     assert_eq!(scratch.record().state, RunState::Finished);
     assert_eq!(scratch.turns().len(), 1);
 }

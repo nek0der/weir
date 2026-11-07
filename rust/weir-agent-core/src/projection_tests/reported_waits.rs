@@ -4,6 +4,7 @@
 //! pane last made (OSC 7501) and shows the run waiting until the next one.
 
 use super::*;
+use weir_agent_model::{CommandOutcome, NotificationKind, NotifyCommand, OnMismatch};
 
 /// A run at work inside a turn, whose record last changed at 12:03:00.
 fn working() -> ProjectionInput {
@@ -39,6 +40,26 @@ fn notifies(commands: &[Command]) -> bool {
         .any(|command| matches!(command.op, CommandOp::Notify(_)))
 }
 
+fn notices(commands: &[Command]) -> Vec<&NotifyCommand> {
+    commands
+        .iter()
+        .filter_map(|command| match &command.op {
+            CommandOp::Notify(notice) => Some(notice),
+            _ => None,
+        })
+        .collect()
+}
+
+fn assert_no_record_write(commands: &[Command]) {
+    assert!(
+        commands.iter().all(|command| !matches!(
+            command.op,
+            CommandOp::Update(_) | CommandOp::EndStoppedTurn { .. }
+        )),
+        "{commands:?}"
+    );
+}
+
 #[test]
 fn a_permission_report_is_a_wait_for_a_provider_that_announces_it_no_other_way() {
     let mut input = reporting(
@@ -56,7 +77,15 @@ fn a_permission_report_is_a_wait_for_a_provider_that_announces_it_no_other_way()
     let badge = &projection.runtimes[0].badge;
     assert_eq!(badge.state, RunState::NeedsInput);
     assert_eq!(badge.wait_kind, Some(WaitKind::Approval));
-    assert!(notifies(&commands), "a new wait is news");
+    let delivered = notices(&commands);
+    let [notice] = delivered.as_slice() else {
+        panic!("expected one notice, got {delivered:?}");
+    };
+    assert_eq!(notice.kind, NotificationKind::NeedsInput);
+    assert_eq!(notice.provider, claude());
+    assert_eq!(notice.pane, PANE.parse::<Uuid>().expect("pane"));
+    assert_eq!(notice.runtime_id, format!("claude:{RUN}"));
+    assert_no_record_write(&commands);
 
     // The person allowed it; the agent reports its work again.
     let mut input = reporting(
@@ -70,8 +99,12 @@ fn a_permission_report_is_a_wait_for_a_provider_that_announces_it_no_other_way()
             .capabilities
             .insert(Capability::ProgramStatusAnnouncesPermission);
     }
-    let (_, projection, _) = pass(&state, &input);
-    assert_eq!(projection.runtimes[0].badge.state, RunState::Running);
+    let (_, projection, commands) = pass(&state, &input);
+    let badge = &projection.runtimes[0].badge;
+    assert_eq!(badge.state, RunState::Running);
+    assert_eq!(badge.wait_kind, None);
+    assert!(!notifies(&commands));
+    assert_no_record_write(&commands);
 }
 
 #[test]
@@ -119,32 +152,46 @@ fn a_second_question_in_the_same_turn_is_announced_again() {
         )
     };
     let (state, _, _) = pass(&ProjectionState::default(), &working());
-    let (state, _, first) = pass(&state, &question("2026-09-14T12:03:10Z"));
+    let (state, projection, first) = pass(&state, &question("2026-09-14T12:03:10Z"));
+    assert_eq!(
+        projection.runtimes[0].badge.wait_kind,
+        Some(WaitKind::Question)
+    );
+    let first = notices(&first);
+    let [notice] = first.as_slice() else {
+        panic!("expected one first notice, got {first:?}");
+    };
+    assert_eq!(notice.kind, NotificationKind::NeedsInput);
+    let mut same_question = question("2026-09-14T12:03:10Z");
+    same_question.acknowledged = vec![CommandOutcome::Notified {
+        runtime_id: notice.runtime_id.clone(),
+        event_token: notice.event_token.clone(),
+        state: RunState::NeedsInput,
+    }];
+    let (state, _, commands) = pass(&state, &same_question);
+    assert!(!notifies(&commands), "the delivered question still waits");
+
     let answered = reporting(
         working(),
         ProgramState::Working,
         None,
         "2026-09-14T12:03:20Z",
     );
-    let (state, _, _) = pass(&state, &answered);
-    let (_, projection, second) = pass(&state, &question("2026-09-14T12:03:30Z"));
-    assert_eq!(projection.runtimes[0].badge.state, RunState::NeedsInput);
-    assert!(notifies(&first));
-    assert!(notifies(&second), "the second wait is news too");
-}
+    let (state, projection, commands) = pass(&state, &answered);
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Running);
+    assert!(!notifies(&commands));
 
-#[test]
-fn an_auth_report_shows_the_run_waiting_on_a_sign_in() {
-    let input = reporting(
-        working(),
-        ProgramState::Blocked,
-        Some(BlockedKind::Auth),
-        "2026-09-14T12:03:10Z",
+    let (_, projection, second) = pass(&state, &question("2026-09-14T12:03:30Z"));
+    assert_eq!(
+        projection.runtimes[0].badge.wait_kind,
+        Some(WaitKind::Question)
     );
-    let (_, projection, _) = pass(&ProjectionState::default(), &input);
-    let badge = &projection.runtimes[0].badge;
-    assert_eq!(badge.state, RunState::NeedsInput);
-    assert_eq!(badge.wait_kind, Some(WaitKind::SignIn));
+    let second = notices(&second);
+    let [next] = second.as_slice() else {
+        panic!("expected one second notice, got {second:?}");
+    };
+    assert_eq!(next.kind, NotificationKind::NeedsInput);
+    assert_eq!(next.runtime_id, notice.runtime_id);
 }
 
 /// `input` with its providers declaring that an `auth` report settles, and
@@ -225,30 +272,40 @@ fn a_repeated_auth_report_settles_from_its_first() {
 #[test]
 fn a_report_after_the_auth_asks_for_no_later_pass() {
     let mut input = settling_auth("2026-09-14T12:03:10Z");
+    let now = at("2026-09-14T12:03:12Z");
+    let (previous, pending, _) =
+        project_with(&ProjectionState::default(), &input, &now, &mut |_, _| false);
+    assert_eq!(pending.next_pass_in_ms, Some(3_000));
     for status in input.program_status.values_mut() {
         status.state = ProgramState::Working;
         status.kind = None;
+        status.observed_at = now.wall.clone();
+        status.state_since = now.wall.clone();
     }
-    let (_, projection, _) = project_with(
-        &ProjectionState::default(),
-        &input,
-        &at("2026-09-14T12:03:12Z"),
-        &mut |_, _| false,
-    );
+    let (_, projection, commands) = project_with(&previous, &input, &now, &mut |_, _| false);
     assert_eq!(projection.next_pass_in_ms, None);
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Running);
+    assert!(!notifies(&commands));
 }
 
 #[test]
 fn a_closed_panes_auth_report_asks_for_no_later_pass() {
     let mut input = settling_auth("2026-09-14T12:03:10Z");
-    input.program_status.clear();
-    let (_, projection, _) = project_with(
-        &ProjectionState::default(),
-        &input,
-        &at("2026-09-14T12:03:12Z"),
-        &mut |_, _| false,
+    let now = at("2026-09-14T12:03:12Z");
+    let (previous, pending, _) =
+        project_with(&ProjectionState::default(), &input, &now, &mut |_, _| false);
+    assert_eq!(pending.next_pass_in_ms, Some(3_000));
+    assert_eq!(
+        pending.runtimes[0].panes,
+        [PANE.parse::<Uuid>().expect("pane")]
     );
+
+    input.tabs.clear();
+    input.program_status.clear();
+    let (_, projection, commands) = project_with(&previous, &input, &now, &mut |_, _| false);
     assert_eq!(projection.next_pass_in_ms, None);
+    assert!(projection.badges.is_empty());
+    assert!(!notifies(&commands));
 }
 
 #[test]
@@ -269,6 +326,7 @@ fn an_auth_report_of_a_provider_that_does_not_settle_is_a_wait_at_once() {
         projection.runtimes[0].badge.wait_kind,
         Some(WaitKind::SignIn)
     );
+    assert_eq!(projection.runtimes[0].badge.state, RunState::NeedsInput);
     assert_eq!(projection.next_pass_in_ms, None);
 }
 
@@ -284,7 +342,7 @@ fn antigravity_badge(status: (ProgramState, Option<BlockedKind>), wall: &str) ->
     input.program_status.insert(
         PANE.parse().expect("pane"),
         ProgramStatus {
-            app: descriptor.program_status_app.clone().expect("app"),
+            app: "antigravity".to_owned(),
             state: status.0,
             kind: status.1,
             observed_at: "2026-09-14T12:03:10Z".to_owned(),
@@ -324,20 +382,60 @@ fn antigravitys_own_descriptor_reads_its_status_reports() {
     );
 }
 
+fn reporting_codex(
+    mut input: ProjectionInput,
+    state: ProgramState,
+    kind: Option<BlockedKind>,
+    at: &str,
+) -> ProjectionInput {
+    let descriptor = weir_provider_codex::CodexAdapter.descriptor().clone();
+    for record in &mut input.records {
+        record.provider = descriptor.id.clone();
+    }
+    input.providers = [(descriptor.id.clone(), descriptor)].into_iter().collect();
+    input.program_status.insert(
+        PANE.parse().expect("pane"),
+        ProgramStatus {
+            app: "codex".to_owned(),
+            state,
+            kind,
+            observed_at: at.to_owned(),
+            state_since: at.to_owned(),
+        },
+    );
+    input
+}
+
 #[test]
 fn a_question_left_after_the_turn_shows_on_a_finished_run() {
-    // Codex blocks on an async question only once its turn is over.
-    let input = reporting(
-        finished_input(Vec::new()),
+    let input = finished_input(Vec::new());
+    let mut input = reporting_codex(input, ProgramState::Idle, None, "2026-09-14T12:03:00Z");
+    input.records[0].content = Some(record(Some(4), "2026-09-14T12:03:00Z", "finished").replace(
+        r#""state":"finished""#,
+        r#""state":"finished","detail":"previous event""#,
+    ));
+    let (state, projection, _) = pass(&ProjectionState::default(), &input);
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Finished);
+
+    let blocked = reporting_codex(
+        input.clone(),
         ProgramState::Blocked,
         Some(BlockedKind::Question),
         "2026-09-14T12:03:10Z",
     );
-    let (_, projection, _) = pass(&ProjectionState::default(), &input);
+    let (state, projection, commands) = pass(&state, &blocked);
     let badge = &projection.runtimes[0].badge;
     assert_eq!(badge.state, RunState::NeedsInput);
     assert_eq!(badge.wait_kind, Some(WaitKind::Question));
+    assert_eq!(badge.detail, None);
     assert_eq!(badge.stop_reason, None);
+    assert_no_record_write(&commands);
+
+    let answered = reporting_codex(input, ProgramState::Idle, None, "2026-09-14T12:03:20Z");
+    let (_, projection, commands) = pass(&state, &answered);
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Finished);
+    assert_eq!(projection.runtimes[0].badge.wait_kind, None);
+    assert!(!notifies(&commands));
 }
 
 #[test]
@@ -361,15 +459,20 @@ fn a_block_without_a_question_or_a_sign_in_changes_nothing() {
 }
 
 #[test]
-fn a_report_from_before_the_record_changed_is_no_evidence() {
-    let input = reporting(
-        working(),
-        ProgramState::Blocked,
-        Some(BlockedKind::Question),
-        "2026-09-14T12:02:59Z",
-    );
-    let (_, projection, _) = pass(&ProjectionState::default(), &input);
-    assert_eq!(projection.runtimes[0].badge.state, RunState::Running);
+fn a_report_is_evidence_from_the_second_the_record_changed() {
+    for (at, expected) in [
+        ("2026-09-14T12:02:59Z", RunState::Running),
+        ("2026-09-14T12:03:00Z", RunState::NeedsInput),
+    ] {
+        let input = reporting(
+            working(),
+            ProgramState::Blocked,
+            Some(BlockedKind::Question),
+            at,
+        );
+        let (_, projection, _) = pass(&ProjectionState::default(), &input);
+        assert_eq!(projection.runtimes[0].badge.state, expected, "{at}");
+    }
 }
 
 #[test]
@@ -490,7 +593,7 @@ fn a_run_whose_session_ended_takes_no_report_from_its_pane() {
     let mut input = finished_input(Vec::new());
     let content = record(Some(5), "2026-09-14T12:03:00Z", "unknown").replace(
         r#""state":"unknown""#,
-        r#""state":"unknown","waitKind":"approval""#,
+        r#""state":"unknown","waitKind":"approval","lastHookEvent":"session_ended""#,
     );
     input.records = vec![file(Some(content))];
     let input = reporting(
@@ -500,7 +603,9 @@ fn a_run_whose_session_ended_takes_no_report_from_its_pane() {
         "2026-09-14T12:03:10Z",
     );
     let (_, projection, commands) = pass(&ProjectionState::default(), &input);
-    assert_ne!(projection.runtimes[0].badge.state, RunState::NeedsInput);
+    let badge = &projection.runtimes[0].badge;
+    assert_eq!(badge.state, RunState::Unknown);
+    assert_eq!(badge.wait_kind, None);
     assert!(!notifies(&commands));
 }
 
@@ -508,34 +613,44 @@ fn a_run_whose_session_ended_takes_no_report_from_its_pane() {
 /// there now, and the report is its alone.
 #[test]
 fn of_two_runs_in_a_pane_only_the_latest_takes_its_report() {
+    const NEWER: &str = "BBBBBBBB-2222-4222-8222-BBBBBBBBBBB2";
     let mut input = working();
-    let older = record(Some(3), "2026-09-14T12:01:00Z", "running")
-        .replace(RUN, "BBBBBBBB-2222-4222-8222-BBBBBBBBBBB2");
+    input.records[0].content = Some(record(Some(99), "2026-09-14T12:01:00Z", "running"));
+    let newer = record(Some(3), "2026-09-14T12:03:00Z", "running").replace(RUN, NEWER);
     input.records.push(RecordFile {
-        name: "BBBBBBBB-2222-4222-8222-BBBBBBBBBBB2".to_owned(),
-        ..file(Some(older))
+        name: NEWER.to_owned(),
+        ..file(Some(newer))
     });
-    let input = reporting(
+    let mut input = reporting(
         input,
         ProgramState::Blocked,
         Some(BlockedKind::Question),
         "2026-09-14T12:03:10Z",
     );
-    let (_, projection, commands) = pass(&ProjectionState::default(), &input);
-    let waiting: Vec<_> = projection
-        .runtimes
-        .iter()
-        .filter(|runtime| runtime.badge.state == RunState::NeedsInput)
-        .map(|runtime| runtime.run_id.clone())
-        .collect();
-    assert_eq!(waiting, [Some(RUN.to_owned())]);
-    assert_eq!(
-        commands
+    for _ in 0..2 {
+        let (_, projection, commands) = pass(&ProjectionState::default(), &input);
+        let observed: BTreeMap<_, _> = projection
+            .runtimes
             .iter()
-            .filter(|command| matches!(command.op, CommandOp::Notify(_)))
-            .count(),
-        1
-    );
+            .map(|runtime| {
+                (
+                    runtime.run_id.as_deref().expect("run ID"),
+                    runtime.badge.state,
+                )
+            })
+            .collect();
+        assert_eq!(
+            observed,
+            BTreeMap::from([(RUN, RunState::Running), (NEWER, RunState::NeedsInput)])
+        );
+        let delivered = notices(&commands);
+        let [notice] = delivered.as_slice() else {
+            panic!("expected one notice, got {delivered:?}");
+        };
+        assert_eq!(notice.kind, NotificationKind::NeedsInput);
+        assert_eq!(notice.runtime_id, format!("claude:{NEWER}"));
+        input.records.reverse();
+    }
 }
 
 /// `input` with its providers declaring that a report of `error` is a failure.
@@ -550,35 +665,55 @@ fn announcing_failure(mut input: ProjectionInput) -> ProjectionInput {
 
 #[test]
 fn an_error_report_is_a_failure_for_a_provider_that_announces_it_no_other_way() {
-    let input = announcing_failure(reporting(
-        working(),
+    let mut base = working();
+    let content = base.records[0].content.as_mut().expect("record");
+    *content = content.replace(
+        r#""state":"running""#,
+        r#""state":"running","detail":"earlier event""#,
+    );
+    let error = reporting(
+        base.clone(),
         ProgramState::Error,
         None,
         "2026-09-14T12:03:10Z",
-    ));
-    let (state, projection, commands) = pass(&ProjectionState::default(), &input);
+    );
+
+    let (_, projection, commands) = pass(&ProjectionState::default(), &error);
+    let badge = &projection.runtimes[0].badge;
+    assert_eq!(
+        badge.state,
+        RunState::Running,
+        "provider does not announce failure by report"
+    );
+    assert_eq!(badge.detail.as_deref(), Some("earlier event"));
+    assert!(badge.run_started_at.is_some());
+    assert!(!notifies(&commands));
+
+    let (state, projection, commands) =
+        pass(&ProjectionState::default(), &announcing_failure(error));
     let badge = &projection.runtimes[0].badge;
     assert_eq!(badge.state, RunState::Error);
     assert_eq!(badge.detail, None);
+    assert_eq!(badge.run_started_at, None);
     assert_eq!(badge.stop_reason, None);
-    assert!(notifies(&commands), "a new failure is news");
+    let delivered = notices(&commands);
+    let [notice] = delivered.as_slice() else {
+        panic!("expected one failure notice, got {delivered:?}");
+    };
+    assert_eq!(notice.kind, NotificationKind::Failed);
+    assert_eq!(notice.runtime_id, format!("claude:{RUN}"));
+    assert!(!notice.presents_banner);
+    assert_no_record_write(&commands);
 
-    // The person tried again; the agent reports its work.
-    let input = announcing_failure(reporting(
-        working(),
+    let recovered = announcing_failure(reporting(
+        base,
         ProgramState::Working,
         None,
         "2026-09-14T12:03:20Z",
     ));
-    let (_, projection, _) = pass(&state, &input);
+    let (_, projection, commands) = pass(&state, &recovered);
     assert_eq!(projection.runtimes[0].badge.state, RunState::Running);
-}
-
-#[test]
-fn an_error_report_changes_nothing_without_the_capability() {
-    let input = reporting(working(), ProgramState::Error, None, "2026-09-14T12:03:10Z");
-    let (_, projection, _) = pass(&ProjectionState::default(), &input);
-    assert_eq!(projection.runtimes[0].badge.state, RunState::Running);
+    assert!(!notifies(&commands));
 }
 
 #[test]
@@ -617,15 +752,17 @@ fn restored_input(attempted: &str) -> ProjectionInput {
 /// the record it read is left as it was.
 #[test]
 fn a_restored_run_whose_agent_reports_rests_with_no_news() {
-    let input = reporting(
+    let input = reporting_codex(
         restored_input("2026-09-14T12:05:00Z"),
         ProgramState::Idle,
         None,
         "2026-09-14T12:05:03Z",
     );
-    let (_, projection, commands) = pass(&ProjectionState::default(), &input);
+    let (state, projection, commands) = pass(&ProjectionState::default(), &input);
     assert_eq!(projection.runtimes[0].badge.state, RunState::Idle);
+    assert_eq!(state.accepted[RUN].record.state, RunState::Unknown);
     assert!(!notifies(&commands));
+    assert_no_record_write(&commands);
 }
 
 /// A resume that failed leaves the shell in front, which reports nothing.
@@ -659,58 +796,98 @@ fn a_restored_run_whose_session_ended_stays_unknown_despite_a_report() {
     input.records = vec![file(Some(
         record(Some(5), "2026-09-14T12:03:00Z", "unknown").replace(
             r#""state":"unknown""#,
-            r#""state":"unknown","resumeAttemptedAt":"2026-09-14T12:02:00Z""#,
+            r#""state":"unknown","lastHookEvent":"session_ended","resumeAttemptedAt":"2026-09-14T12:02:00Z""#,
         ),
     ))];
-    let input = reporting(input, ProgramState::Idle, None, "2026-09-14T12:03:10Z");
-    let (_, projection, _) = pass(&ProjectionState::default(), &input);
-    assert_eq!(projection.runtimes[0].badge.state, RunState::Unknown);
-}
-
-/// An agent killed before its first prompt sends no hook: its pane's command
-/// returning to the shell is what takes the run off the pane. The record is
-/// kept for the next launch's resume.
-#[test]
-fn a_restored_run_leaves_its_pane_when_the_command_returns_to_the_shell() {
-    let mut input = restored_input("2026-09-14T12:05:00Z");
-    input
-        .panes_back_at_shell
-        .insert(PANE.parse().expect("pane"));
+    let input = reporting_codex(input, ProgramState::Idle, None, "2026-09-14T12:03:10Z");
     let (_, projection, commands) = pass(&ProjectionState::default(), &input);
-    assert!(projection.runtimes[0].panes.is_empty());
-    assert!(!commands.iter().any(|it| matches!(it.op, CommandOp::Retire)));
+    assert_eq!(projection.runtimes[0].badge.state, RunState::Unknown);
+    assert!(!notifies(&commands));
+    assert_no_record_write(&commands);
 }
 
-/// `codex resume` typed again in that pane reports: the run is back.
+/// The record survives when the command returns to the shell before its
+/// first prompt. A fresh report can attach it to the same pane again.
 #[test]
-fn a_restored_run_returns_to_its_pane_when_its_agent_reports_again() {
-    let mut input = restored_input("2026-09-14T12:05:00Z");
-    input
-        .panes_back_at_shell
-        .insert(PANE.parse().expect("pane"));
-    let input = reporting(input, ProgramState::Idle, None, "2026-09-14T12:06:00Z");
-    let (_, projection, _) = pass(&ProjectionState::default(), &input);
-    assert_eq!(projection.runtimes[0].panes.len(), 1);
-    assert_eq!(projection.runtimes[0].badge.state, RunState::Idle);
+fn a_restored_run_detaches_at_the_shell_and_reattaches_after_a_new_report() {
+    let pane = PANE.parse::<Uuid>().expect("pane");
+    let mut input = reporting_codex(
+        restored_input("2026-09-14T12:05:00Z"),
+        ProgramState::Idle,
+        None,
+        "2026-09-14T12:05:03Z",
+    );
+    let (state, projection, _) = pass(&ProjectionState::default(), &input);
+    assert_eq!(
+        projection.runtimes[0].attachment,
+        AttachmentResolution::Attached
+    );
+    assert_eq!(projection.runtimes[0].panes, [pane]);
+
+    input.panes_back_at_shell.insert(pane);
+    input.program_status.clear();
+    let (state, projection, commands) = pass(&state, &input);
+    assert_eq!(
+        projection.runtimes[0].attachment,
+        AttachmentResolution::Detached
+    );
+    assert!(projection.runtimes[0].panes.is_empty());
+    assert!(resume_retirement_commands(&commands).is_empty());
+
+    let input = reporting_codex(input, ProgramState::Idle, None, "2026-09-14T12:06:00Z");
+    let (_, projection, commands) = pass(&state, &input);
+    let runtime = &projection.runtimes[0];
+    assert_eq!(runtime.run_id.as_deref(), Some(RUN));
+    assert_eq!(runtime.attachment, AttachmentResolution::Attached);
+    assert_eq!(runtime.panes, [pane]);
+    assert_eq!(runtime.badge.state, RunState::Idle);
+    assert!(!notifies(&commands));
 }
 
 /// A tmux client returning to the shell leaves the run alive in tmux.
 #[test]
 fn a_restored_tmux_run_keeps_its_place_when_the_client_returns_to_the_shell() {
     let mut input = restored_input("2026-09-14T12:05:00Z");
-    let content = input.records[0].content.clone().expect("record").replace(
+    let content = input.records[0].content.as_mut().expect("record");
+    *content = content.replace(
+        r#""state":"unknown""#,
+        r#""state":"unknown","isTmuxHosted":true,"tmuxSocketPath":"/tmp/socket","tmuxPaneId":"%3","tmuxServerPID":"42","tmuxServerStartedAt":"100""#,
+    );
+    let pane = PANE.parse::<Uuid>().expect("pane");
+    input
+        .presence
+        .attachments
+        .insert("/tmp/socket|42|100|%3".into(), vec![pane]);
+    let (state, projection, _) = pass(&ProjectionState::default(), &input);
+    assert_eq!(
+        projection.runtimes[0].attachment,
+        AttachmentResolution::Attached
+    );
+    assert_eq!(projection.runtimes[0].panes, [pane]);
+
+    input.panes_back_at_shell.insert(pane);
+    let (_, projection, commands) = pass(&state, &input);
+    assert_eq!(
+        projection.runtimes[0].attachment,
+        AttachmentResolution::Attached
+    );
+    assert_eq!(projection.runtimes[0].panes, [pane]);
+    assert!(resume_retirement_commands(&commands).is_empty());
+
+    // A hosted run whose endpoint has yet to be recorded is still unresolved.
+    let mut unresolved = restored_input("2026-09-14T12:05:00Z");
+    let content = unresolved.records[0].content.as_mut().expect("record");
+    *content = content.replace(
         r#""state":"unknown""#,
         r#""state":"unknown","isTmuxHosted":true"#,
     );
-    input.records = vec![file(Some(content))];
-    input
-        .panes_back_at_shell
-        .insert(PANE.parse().expect("pane"));
-    let (_, projection, _) = pass(&ProjectionState::default(), &input);
-    assert_ne!(
+    unresolved.panes_back_at_shell.insert(pane);
+    let (_, projection, commands) = pass(&ProjectionState::default(), &unresolved);
+    assert_eq!(
         projection.runtimes[0].attachment,
-        AttachmentResolution::Detached
+        AttachmentResolution::Unresolved
     );
+    assert!(resume_retirement_commands(&commands).is_empty());
 }
 
 /// Records of a resume that ended before its first prompt: the run it came
@@ -739,42 +916,74 @@ fn resume_ended_input(ended_at: &str, ended_session: &str) -> ProjectionInput {
     input
 }
 
-fn retires_restored_run(commands: &[Command]) -> bool {
-    commands
-        .iter()
-        .flat_map(|command| std::iter::once(command).chain(command.then.iter()))
-        .any(|command| {
-            matches!(command.op, CommandOp::Retire)
-                && matches!(&command.target, Target::Record { storage_id, .. } if storage_id == RUN)
-        })
+/// Retirement or hint-deletion commands, including commands in a chain.
+fn resume_retirement_commands(commands: &[Command]) -> Vec<&Command> {
+    fn collect<'a>(commands: &'a [Command], selected: &mut Vec<&'a Command>) {
+        for command in commands {
+            if matches!(command.op, CommandOp::Retire)
+                || matches!(command.target, Target::SessionHint { .. })
+            {
+                selected.push(command);
+            }
+            collect(&command.then, selected);
+        }
+    }
+    let mut selected = Vec::new();
+    collect(commands, &mut selected);
+    selected
 }
 
-/// `/quit` before the first prompt: the conversation ended, so the run it was
-/// resumed from goes, with its hint, and no later launch resumes it.
 #[test]
-fn a_restored_run_is_retired_when_its_resume_reports_the_session_ended() {
-    let input = resume_ended_input("2026-09-14T12:05:30Z", "s1");
-    let (_, _, commands) = pass(&ProjectionState::default(), &input);
-    assert!(retires_restored_run(&commands));
-    assert!(
-        commands
-            .iter()
-            .any(|it| matches!(it.target, Target::SessionHint { .. }))
-    );
-}
-
-/// An end of another conversation in the pane says nothing of this one.
-#[test]
-fn another_conversations_end_leaves_a_restored_run() {
-    let input = resume_ended_input("2026-09-14T12:05:30Z", "s2");
-    let (_, _, commands) = pass(&ProjectionState::default(), &input);
-    assert!(!retires_restored_run(&commands));
-}
-
-/// An end from before this launch's attempt is an earlier resume's.
-#[test]
-fn an_end_from_before_the_attempt_leaves_a_restored_run() {
-    let input = resume_ended_input("2026-09-14T12:04:30Z", "s1");
-    let (_, _, commands) = pass(&ProjectionState::default(), &input);
-    assert!(!retires_restored_run(&commands));
+fn a_restored_run_is_retired_only_by_a_fresh_end_of_its_own_session() {
+    for (label, at, session, retires) in [
+        ("matching end", "2026-09-14T12:05:30Z", "s1", true),
+        ("other conversation", "2026-09-14T12:05:30Z", "s2", false),
+        ("older than resume", "2026-09-14T12:04:30Z", "s1", false),
+    ] {
+        let (_, _, commands) = pass(
+            &ProjectionState::default(),
+            &resume_ended_input(at, session),
+        );
+        let relevant = resume_retirement_commands(&commands);
+        if !retires {
+            assert!(relevant.is_empty(), "{label}: {relevant:?}");
+            continue;
+        }
+        let [hint, record] = relevant.as_slice() else {
+            panic!("{label}: expected a hint and its record, got {relevant:?}");
+        };
+        assert_eq!(hint.op, CommandOp::Delete);
+        assert_eq!(
+            hint.target,
+            Target::SessionHint {
+                provider: claude(),
+                pane: PANE.parse().expect("pane"),
+            }
+        );
+        assert_eq!(
+            hint.expect,
+            Precondition::HintOwner {
+                run_id: Some(RUN.into())
+            }
+        );
+        assert_eq!(hint.on_mismatch, OnMismatch::Continue);
+        assert_eq!(hint.then.as_slice(), std::slice::from_ref(*record));
+        assert_eq!(record.op, CommandOp::Retire);
+        assert_eq!(
+            record.target,
+            Target::Record {
+                provider: claude(),
+                storage_id: RUN.into()
+            }
+        );
+        assert_eq!(
+            record.expect,
+            Precondition::RecordUnchanged {
+                storage_id: RUN.into(),
+                revision: Some(5),
+                pid: None,
+                updated_at: "2026-09-14T12:03:00Z".into(),
+            }
+        );
+    }
 }

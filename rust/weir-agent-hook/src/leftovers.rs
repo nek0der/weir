@@ -324,6 +324,11 @@ mod tests {
         let _ = fs::remove_file(&link);
         assert_eq!(swept.sidecars, 0);
         assert!(scratch.exists("gone.json.flock"));
+        assert_eq!(
+            sweep_leftovers(&[&scratch.0], SystemTime::now()).sidecars,
+            1
+        );
+        assert!(!scratch.exists("gone.json.flock"));
     }
 
     #[test]
@@ -334,8 +339,12 @@ mod tests {
         scratch.touch(".not-a.tmp.file");
         let fresh = sweep_leftovers(&[&scratch.0], SystemTime::now());
         assert_eq!(fresh.temporaries, 0);
+        assert!(scratch.exists(".run.json.tmp.4242"));
+        assert!(scratch.exists(".hint.json.tmp-6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F10"));
         let old = sweep_leftovers(&[&scratch.0], later(TEMPORARY_AGE));
         assert_eq!(old.temporaries, 2);
+        assert!(!scratch.exists(".run.json.tmp.4242"));
+        assert!(!scratch.exists(".hint.json.tmp-6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F10"));
         assert!(scratch.exists(".not-a.tmp.file"));
     }
 
@@ -407,17 +416,17 @@ mod tests {
     #[test]
     fn no_counter_is_swept_beside_a_turn_record_this_build_cannot_read() {
         let scratch = Scratch::new("unreadable-turn");
-        fs::write(
-            scratch.0.join(weir_agent_model::turn_record_file_name(
-                "6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F20",
-            )),
-            br#"{"schemaVersion":99}"#,
-        )
-        .expect("turn");
-        scratch.touch(&conversation("any").counter_file_name());
-        assert_eq!(
-            sweep_leftovers(&[&scratch.0], later(COUNTER_AGE)).counters,
-            0
-        );
+        let record = scratch.0.join(weir_agent_model::turn_record_file_name(
+            "6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F20",
+        ));
+        fs::write(&record, br#"{"schemaVersion":99}"#).expect("turn");
+        let counter = conversation("any").counter_file_name();
+        scratch.touch(&counter);
+        let now = later(COUNTER_AGE);
+        assert_eq!(sweep_leftovers(&[&scratch.0], now).counters, 0);
+        assert!(scratch.exists(&counter));
+        fs::remove_file(record).expect("remove unreadable turn");
+        assert_eq!(sweep_leftovers(&[&scratch.0], now).counters, 1);
+        assert!(!scratch.exists(&counter));
     }
 }

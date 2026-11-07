@@ -37,7 +37,7 @@ fails=0
 # 1.2.3, and the stand-in tools, under the directory given as $1.
 make_fixture() {
   local root="$1"
-  mkdir -p "$root/scripts" "$root/bin" "$root/Weir.app/Contents/Resources" "$root/Weir.xcodeproj"
+  mkdir -p "$root/tmp" "$root/scripts" "$root/bin" "$root/Weir.app/Contents/Resources" "$root/Weir.xcodeproj"
   cp "$SCRIPT" "$root/scripts/package-dmg.sh"
   cp "$REPO_ROOT/scripts/built-app-path.sh" "$root/scripts/built-app-path.sh"
   : > "$root/Weir.xcodeproj/project.pbxproj"
@@ -67,28 +67,32 @@ echo "    FULL_PRODUCT_NAME = Weir.app"
 }
 
 # $1 case name, $2 expected verdict ("reaches" the dmg step or "stops" before
-# it), then a command that mutates the fixture whose root it receives last.
+# it), $3 required diagnostics, then a command that mutates the fixture.
 run_case() {
-  local name="$1" expect="$2"
-  shift 2
+  local name="$1" expect="$2" diagnostics="$3"
+  shift 3
   local root
   root="$(mktemp -d -p "$TMP")"
   make_fixture "$root"
   "$@" "$root"
 
-  local output actual app_argument=("$root/Weir.app")
+  local output actual exit_status=0 matches=true diagnostic app_argument=("$root/Weir.app")
   [[ -f "$root/no-argument" ]] && app_argument=()
-  output="$(PATH="$root/bin:$PATH" "$root/scripts/package-dmg.sh" ${app_argument[@]+"${app_argument[@]}"} 2>&1 || true)"
+  output="$(TMPDIR="$root/tmp" PATH="$root/bin:$PATH" "$root/scripts/package-dmg.sh" ${app_argument[@]+"${app_argument[@]}"} 2>&1)" || exit_status=$?
+  while IFS= read -r diagnostic; do
+    [[ "$output" == *"$diagnostic"* ]] || matches=false
+  done <<<"$diagnostics"
   if grep -q REACHED-CREATE-DMG <<<"$output"; then
     actual="reaches"
   else
     actual="stops"
   fi
-  if [[ "$actual" == "$expect" ]]; then
+  if [[ "$actual" == "$expect" && "$exit_status" == 1 && "$matches" == true ]]; then
     printf '  ok   %s\n' "$name"
     passes=$((passes + 1))
   else
-    printf '  FAIL %s (expected %s, got %s)\n%s\n' "$name" "$expect" "$actual" "$output" >&2
+    printf '  FAIL %s (expected %s and diagnostics %s, got %s, exit %s)\n%s\n' \
+      "$name" "$expect" "$diagnostics" "$actual" "$exit_status" "$output" >&2
     fails=$((fails + 1))
   fi
 }
@@ -100,7 +104,8 @@ unchanged() { :; }
 accepted_without_ticket() {
   printf 'accepted\nsource=Developer ID\n' > "$1/spctl-output"
 }
-rejected() { printf 'rejected\nsource=Unnotarized Developer ID\n' > "$1/spctl-output"; }
+# A valid source isolates the rejection verdict from the ticket check.
+rejected() { printf 'rejected\nsource=Notarized Developer ID\n' > "$1/spctl-output"; }
 bad_signature() { printf '#!/bin/sh\nexit 1\n' > "$1/bin/codesign"; }
 no_version() { plutil -remove CFBundleShortVersionString "$1/Weir.app/Contents/Info.plist"; }
 unexpanded_version() {
@@ -121,17 +126,18 @@ no_argument_no_project() {
   rm -rf "$1/Weir.xcodeproj"
 }
 
-run_case "a notarized app with a version reaches the dmg step" reaches unchanged
-run_case "an app accepted without a notarization ticket stops" stops accepted_without_ticket
-run_case "an app Gatekeeper rejects stops" stops rejected
-run_case "an app whose signature does not verify stops" stops bad_signature
-run_case "an app with no version stops" stops no_version
-run_case "an app with an unexpanded version stops" stops unexpanded_version
-run_case "an app with an empty version stops" stops empty_version
-run_case "an app whose Info.plist does not parse stops" stops unreadable_plist
-run_case "without a path, this checkout's Release app reaches the dmg step" reaches no_argument
-run_case "without a path or a Release build, it stops" stops no_argument_no_build
-run_case "without a path or a generated project, it stops" stops no_argument_no_project
+run_case 'a notarized app with a version reaches the dmg step' reaches REACHED-CREATE-DMG unchanged
+run_case 'an app accepted without a notarization ticket stops' stops 'App is not notarized or stapled.' accepted_without_ticket
+run_case 'an app Gatekeeper rejects stops' stops 'App is not notarized or stapled.' rejected
+run_case 'an app whose signature does not verify stops' stops 'App signature verification failed.' bad_signature
+run_case 'an app with no version stops' stops 'Could not read a version from' no_version
+run_case 'an app with an unexpanded version stops' stops 'Could not read a version from' unexpanded_version
+run_case 'an app with an empty version stops' stops 'Could not read a version from' empty_version
+run_case 'an app whose Info.plist does not parse stops' stops 'Could not read a version from' unreadable_plist
+run_case 'without a path, this checkout'"'"'s Release app reaches the dmg step' reaches REACHED-CREATE-DMG no_argument
+run_case 'without a path or a Release build, it stops' stops 'Weir.app not found' no_argument_no_build
+run_case 'without a path or a generated project, it stops' stops 'has not been generated; run make xcodegen first
+Weir.app not found' no_argument_no_project
 
 echo
 if [[ $fails -eq 0 ]]; then

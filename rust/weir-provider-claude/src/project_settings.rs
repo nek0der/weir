@@ -314,9 +314,13 @@ mod tests {
     fn a_gitdir_that_is_not_a_worktree_of_its_repository_keeps_the_worktree_root() {
         for fake in [
             // `gitdir` names another worktree's `.git`.
-            Fake::repository_with_worktree().file("/r/.git/worktrees/w/gitdir", "/x/.git\n"),
+            Fake::repository_with_worktree()
+                .file("/r/.git/worktrees/w/gitdir", "/x/.git\n")
+                .file("/x/.git", "gitdir: /r/.git/worktrees/x\n"),
             // `commondir` names a repository the folder is not under.
-            Fake::repository_with_worktree().file("/r/.git/worktrees/w/commondir", "/elsewhere\n"),
+            Fake::repository_with_worktree()
+                .file("/r/.git/worktrees/w/commondir", "/elsewhere\n")
+                .dir("/elsewhere"),
             // Not a `gitdir:` line.
             Fake::repository_with_worktree().file("/w/.git", "nonsense\n"),
         ] {
@@ -366,11 +370,32 @@ mod tests {
         // Without the `.gitignore` Claude Code writes there, it is any folder.
         let plain = Fake::new().dir("/d/connector-downloads/repo");
         let files = project_files(Path::new("/d/connector-downloads/repo"), &plain);
-        assert!(files.shared.is_some());
+        assert_eq!(
+            files,
+            ProjectFiles {
+                local: paths(&["/d/connector-downloads/repo/.claude/settings.local.json"]),
+                shared: Some(PathBuf::from(
+                    "/d/connector-downloads/repo/.claude/settings.json"
+                )),
+            }
+        );
     }
 
     #[test]
-    fn a_relative_or_dotted_start_is_resolved_by_name() {
-        assert_eq!(normalized(Path::new("/a/./b/../c")), PathBuf::from("/a/c"));
+    fn a_dotted_start_resolves_before_selecting_the_project_files() {
+        let files = project_files(
+            Path::new("/r/./b/../sub"),
+            &Fake::new().dir("/r").dir("/r/.git").dir("/r/sub"),
+        );
+        assert_eq!(
+            files,
+            ProjectFiles {
+                local: paths(&[
+                    "/r/.claude/settings.local.json",
+                    "/r/sub/.claude/settings.local.json"
+                ]),
+                shared: Some(PathBuf::from("/r/sub/.claude/settings.json")),
+            }
+        );
     }
 }

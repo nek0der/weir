@@ -802,6 +802,16 @@ mod tests {
             transcript(r#"{"transcript_path":"/a.jsonl"}"#, &["Stop"]),
             None
         );
+        for unusable_path in [
+            r#"{"hook_event_name":"Stop"}"#,
+            r#"{"hook_event_name":"Stop","transcript_path":42}"#,
+        ] {
+            assert_eq!(
+                transcript(unusable_path, &["Stop"]),
+                None,
+                "{unusable_path}"
+            );
+        }
         assert_eq!(
             transcript_path_for_events(
                 RawHookInput {
@@ -811,6 +821,20 @@ mod tests {
                 &["Stop"]
             ),
             Err(NormalizeError::NotAnObject)
+        );
+        // Valid JSON still exceeds the selector's input budget before it can name a file.
+        let oversized = format!("{stop}{}", " ".repeat(MAX_HOOK_INPUT_BYTES));
+        assert_eq!(
+            transcript_path_for_events(
+                RawHookInput {
+                    bytes: oversized.as_bytes(),
+                    transcript: None
+                },
+                &["Stop"]
+            ),
+            Err(NormalizeError::TooLarge {
+                limit: MAX_HOOK_INPUT_BYTES
+            })
         );
     }
 
@@ -826,7 +850,14 @@ mod tests {
             parse_object(b"not json", 64),
             Err(NormalizeError::NotAnObject)
         );
-        let object = parse_object(b"{\"a\":1}", 64).expect("object");
-        assert_eq!(object.get("a"), Some(&Value::from(1)));
+        let valid = br#"{"a":1}"#;
+        let object = parse_object(valid, valid.len()).expect("object at the byte limit");
+        assert_eq!(Value::Object(object), serde_json::json!({"a": 1}));
+        assert_eq!(
+            parse_object(valid, valid.len() - 1),
+            Err(NormalizeError::TooLarge {
+                limit: valid.len() - 1
+            })
+        );
     }
 }

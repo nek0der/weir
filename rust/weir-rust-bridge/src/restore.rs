@@ -172,15 +172,36 @@ mod tests {
 
     fn run(entry: Entry, input: &[u8]) -> (i32, Option<Value>) {
         let mut out: *mut u8 = ptr::dangling_mut();
-        let mut out_len: usize = 99;
+        let mut out_len = usize::MAX;
         // SAFETY: Every pointer is a live local of this test.
         let status = unsafe { entry(input.as_ptr(), input.len(), &raw mut out, &raw mut out_len) };
-        // SAFETY: The pair is what this call wrote.
+        assert_ne!(out, ptr::dangling_mut(), "output pointer was not written");
+        assert_ne!(out_len, usize::MAX, "output length was not written");
+        // SAFETY: These are initialized outputs from the ABI call.
         let body = unsafe { take_bytes(out, out_len) };
         (
             status,
-            body.and_then(|body| serde_json::from_slice(&body).ok()),
+            body.map(|body| serde_json::from_slice(&body).expect("JSON body")),
         )
+    }
+
+    #[cfg(unix)]
+    fn repository() -> tempfile::TempDir {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let mut git = std::process::Command::new("git");
+        git.env_clear();
+        if let Some(path) = std::env::var_os("PATH") {
+            git.env("PATH", path);
+        }
+        let status = git
+            .args(["init", "-q"])
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .current_dir(scratch.path())
+            .status()
+            .expect("Git init");
+        assert!(status.success());
+        scratch
     }
 
     #[test]
@@ -216,16 +237,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn journals_that_cannot_be_read_are_an_incomplete_list_not_none() {
-        use std::os::unix::fs::PermissionsExt;
-        let scratch = tempfile::tempdir().expect("scratch");
-        let root = scratch.path().join("repo");
-        std::fs::create_dir(&root).unwrap();
-        let initialized = std::process::Command::new("git")
-            .args(["init", "-q"])
-            .current_dir(&root)
-            .status()
-            .unwrap();
-        assert!(initialized.success());
+        let scratch = repository();
+        let root = scratch.path();
         let journals = root
             .join(".git/weir")
             .join(weir_agent_model::RESTORE_DIRECTORY);
@@ -239,9 +252,9 @@ mod tests {
             )
         );
 
-        std::fs::set_permissions(&journals, std::fs::Permissions::from_mode(0o000)).unwrap();
+        std::fs::remove_dir(&journals).expect("empty journals directory");
+        std::fs::write(&journals, b"not a directory").expect("occupied journal path");
         let unreadable = run(weir_restore_recover_v1, &input);
-        std::fs::set_permissions(&journals, std::fs::Permissions::from_mode(0o700)).unwrap();
 
         assert_eq!(
             unreadable,
@@ -250,12 +263,20 @@ mod tests {
                 Some(serde_json::json!({"journals": [], "settled": [], "isIncomplete": true}))
             )
         );
+        assert_eq!(
+            std::fs::read(&journals).expect("untouched journal path"),
+            b"not a directory"
+        );
     }
 
     #[test]
     fn input_that_is_not_a_request_is_refused() {
         assert_eq!(run(weir_restore_turn_v1, b"[]"), (TURN_INVALID_INPUT, None));
         assert_eq!(run(weir_restore_undo_v1, b"{}"), (TURN_INVALID_INPUT, None));
+        assert_eq!(
+            run(weir_discard_hunks_v1, b"[]"),
+            (TURN_INVALID_INPUT, None)
+        );
         assert_eq!(
             run(weir_restore_recover_v1, b""),
             (TURN_INVALID_INPUT, None)
@@ -270,5 +291,46 @@ mod tests {
             weir_restore_recover_v1(b"/tmp".as_ptr(), 4, ptr::null_mut(), ptr::null_mut())
         };
         assert_eq!(status, TURN_NULL_POINTER);
+
+        #[cfg(unix)]
+        {
+            let scratch = repository();
+            let root = scratch.path().to_str().expect("root").as_bytes();
+            let journals = scratch
+                .path()
+                .join(".git/weir")
+                .join(weir_agent_model::RESTORE_DIRECTORY);
+            std::fs::create_dir_all(&journals).expect("journals");
+            let untold = journals.join("settled.untold");
+            let id = "4C1E8F7A-0000-4000-8000-000000000001";
+            let contents = format!("{id}\n");
+            std::fs::write(&untold, &contents).expect("untold operations");
+            let mut out_len = usize::MAX;
+            // SAFETY: The input bytes and output length are live locals.
+            let refused = unsafe {
+                weir_restore_recover_v1(
+                    root.as_ptr(),
+                    root.len(),
+                    ptr::null_mut(),
+                    &raw mut out_len,
+                )
+            };
+            assert_eq!(refused, TURN_NULL_POINTER);
+            assert_eq!(out_len, usize::MAX);
+            assert_eq!(
+                std::fs::read_to_string(&untold).expect("untold operations"),
+                contents
+            );
+            assert_eq!(
+                run(weir_restore_recover_v1, root),
+                (
+                    TURN_OK,
+                    Some(serde_json::json!({
+                        "journals": [], "settled": [id], "isIncomplete": false,
+                    }))
+                )
+            );
+            assert!(!untold.exists());
+        }
     }
 }

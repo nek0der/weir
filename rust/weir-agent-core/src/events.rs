@@ -232,7 +232,18 @@ mod tests {
             cwd_events: vec![cwd_file("2026-09-14T12:00:00Z")],
             ..ProjectionInput::default()
         };
-        assert_eq!(cwd_changes(&route(&mut state, &input, &alive())).len(), 1);
+        assert_eq!(
+            route(&mut state, &input, &alive()),
+            [Command::new(
+                CommandOp::CwdChanged {
+                    pane: pane(),
+                    new_cwd: "/tmp/after".to_owned(),
+                    old_cwd: Some("/tmp/before".to_owned()),
+                },
+                Target::Host,
+                Precondition::None,
+            )]
+        );
 
         // The same record on a rescan is the same move.
         assert!(cwd_changes(&route(&mut state, &input, &alive())).is_empty());
@@ -245,7 +256,7 @@ mod tests {
         assert_eq!(cwd_changes(&route(&mut state, &later, &alive())).len(), 1);
 
         // Once the pane is gone the offer is moot, and its history goes too.
-        let mut state = ProjectionState::default();
+        assert!(state.cwd_seen.contains_key(&pane()));
         let closed = BTreeSet::new();
         assert!(cwd_changes(&route(&mut state, &input, &closed)).is_empty());
         assert!(state.cwd_seen.is_empty());
@@ -262,7 +273,15 @@ mod tests {
             ..ProjectionInput::default()
         };
         assert!(cwd_changes(&route(&mut state, &input, &alive())).is_empty());
-        assert_eq!(state.cwd_seen.len(), 1);
+        assert_eq!(
+            state.cwd_seen.get(&pane()).map(String::as_str),
+            Some("2026-09-14T12:00:00Z")
+        );
+        let next = ProjectionInput {
+            is_bootstrap: false,
+            ..input
+        };
+        assert!(route(&mut state, &next, &alive()).is_empty());
     }
 
     #[test]
@@ -272,7 +291,7 @@ mod tests {
             cwd_events: vec![cwd_file("2026-09-14T12:00:00Z")],
             ..ProjectionInput::default()
         };
-        route(&mut state, &input, &alive());
+        assert_eq!(cwd_changes(&route(&mut state, &input, &alive())).len(), 1);
 
         let unreadable = ProjectionInput {
             cwd_events: vec![RecordFile {
@@ -282,6 +301,10 @@ mod tests {
             ..ProjectionInput::default()
         };
         assert!(cwd_changes(&route(&mut state, &unreadable, &alive())).is_empty());
+        assert_eq!(
+            state.cwd_seen.get(&pane()).map(String::as_str),
+            Some("2026-09-14T12:00:00Z")
+        );
 
         // Readable again, same record: still the same move.
         assert!(cwd_changes(&route(&mut state, &input, &alive())).is_empty());
@@ -295,11 +318,26 @@ mod tests {
             ..ProjectionInput::default()
         };
         let commands = route(&mut state, &input, &BTreeSet::new());
-        assert!(matches!(
-            &commands[0].op,
-            CommandOp::GitSyncRefetch { repo_root } if repo_root == "/repo"
-        ));
-        assert!(matches!(commands[1].op, CommandOp::Delete));
+        assert_eq!(
+            commands,
+            [
+                Command::new(
+                    CommandOp::GitSyncRefetch {
+                        repo_root: "/repo".to_owned()
+                    },
+                    Target::Host,
+                    Precondition::None,
+                ),
+                Command::new(
+                    CommandOp::Delete,
+                    Target::WorktreeEvent {
+                        provider: claude(),
+                        file_name: "0001-create.json".to_owned()
+                    },
+                    Precondition::Exists,
+                ),
+            ]
+        );
 
         // Still present because the delete has not landed yet; it must not be
         // routed a second time.
@@ -324,6 +362,18 @@ mod tests {
         };
         assert!(route(&mut state, &input, &BTreeSet::new()).is_empty());
         assert!(state.worktree_seen.is_empty());
+        let committed = ProjectionInput {
+            worktree_events: vec![
+                worktree_file("0001-create.json", "/repo"),
+                worktree_file("0002-create.json", "/repo"),
+            ],
+            ..input
+        };
+        assert_eq!(route(&mut state, &committed, &BTreeSet::new()).len(), 4);
+        assert_eq!(
+            state.worktree_seen,
+            BTreeSet::from(["0001-create.json".to_owned(), "0002-create.json".to_owned()])
+        );
     }
 
     #[test]
@@ -337,8 +387,18 @@ mod tests {
             ..ProjectionInput::default()
         };
         let commands = route(&mut state, &input, &BTreeSet::new());
-        assert_eq!(commands.len(), 1);
-        assert!(matches!(commands[0].op, CommandOp::Delete));
+        assert_eq!(
+            commands,
+            [Command::new(
+                CommandOp::Delete,
+                Target::WorktreeEvent {
+                    provider: claude(),
+                    file_name: "0001-create.json".to_owned()
+                },
+                Precondition::Exists,
+            )]
+        );
+        assert!(route(&mut state, &input, &BTreeSet::new()).is_empty());
     }
 
     #[test]

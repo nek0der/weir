@@ -553,9 +553,33 @@ mod tests {
             }
             let commands = on_launch(&input, NOW);
             assert_eq!(ops(&commands), vec!["delete"], "{name}");
+            assert_eq!(
+                commands[0].target,
+                Target::SessionHint {
+                    provider: provider(name),
+                    pane: PANE.parse().expect("pane")
+                }
+            );
+            assert_eq!(
+                commands[0].expect,
+                Precondition::HintOwner {
+                    run_id: Some(RUN.to_owned())
+                }
+            );
+            assert_eq!(
+                commands[0].on_mismatch,
+                weir_agent_model::OnMismatch::Continue
+            );
             assert!(
                 matches!(commands[0].then[0].op, CommandOp::Retire),
                 "{name}"
+            );
+            assert_eq!(
+                commands[0].then[0].target,
+                Target::Record {
+                    provider: provider(name),
+                    storage_id: RUN.to_owned()
+                }
             );
         }
     }
@@ -565,6 +589,24 @@ mod tests {
         let input = base("codex", true, record_json(""), PidStatus::Alive);
         let commands = on_terminate(&input, NOW);
         assert_eq!(ops(&commands), vec!["write-intent", "update"]);
+        assert_eq!(commands[0].op, CommandOp::WriteResumeIntent(intent(NOW)));
+        assert_eq!(
+            commands[0].target,
+            Target::ResumeIntent {
+                run_id: RUN.to_owned()
+            }
+        );
+        let CommandOp::Update(marker) = &commands[1].op else {
+            panic!("expected kill marker");
+        };
+        assert_eq!(marker.killed_by_weir_at, Patch::Set(NOW.to_owned()));
+        assert_eq!(
+            commands[1].target,
+            Target::Record {
+                provider: provider("codex"),
+                storage_id: RUN.to_owned()
+            }
+        );
 
         // A run inside tmux survives the exit, so neither is written.
         let mut hosted = input.clone();
@@ -577,10 +619,11 @@ mod tests {
         assert!(on_terminate(&gone, NOW).is_empty());
     }
 
+    const SIBLING: &str = "BBBBBBBB-1111-4111-8111-BBBBBBBBBBB2";
+
     /// A second session's run in one process: the hint names the last run a session
     /// started in, whichever is on screen.
     fn with_sibling(mut input: LifecycleInput) -> LifecycleInput {
-        const SIBLING: &str = "BBBBBBBB-1111-4111-8111-BBBBBBBBBBB2";
         input.records.push(RecordFile {
             provider: provider("opencode"),
             name: SIBLING.to_owned(),
@@ -596,12 +639,18 @@ mod tests {
     fn a_quit_marks_every_sibling_and_writes_one_intent_for_the_hints_owner() {
         let input = with_sibling(base("opencode", true, record_json(""), PidStatus::Alive));
         let commands = on_terminate(&input, NOW);
-        let all = ops(&commands);
-        assert_eq!(
-            all.iter().filter(|op| **op == "update").count(),
-            2,
-            "{all:?}"
-        );
+        let mut marked: Vec<&str> = commands
+            .iter()
+            .filter_map(|command| match (&command.op, &command.target) {
+                (CommandOp::Update(patch), Target::Record { storage_id, .. }) => {
+                    assert_eq!(patch.killed_by_weir_at, Patch::Set(NOW.to_owned()));
+                    Some(storage_id.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        marked.sort_unstable();
+        assert_eq!(marked, [RUN, SIBLING]);
         let intents: Vec<&ResumeIntent> = commands
             .iter()
             .filter_map(|command| match &command.op {
@@ -609,8 +658,15 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert_eq!(intents.len(), 1, "{all:?}");
-        assert_eq!(intents[0].session_id, "B");
+        assert_eq!(
+            intents,
+            [&ResumeIntent {
+                run_id: SIBLING.to_owned(),
+                owner_run_id: Some(SIBLING.to_owned()),
+                session_id: "B".to_owned(),
+                ..intent(NOW)
+            }]
+        );
     }
 
     #[test]
@@ -634,7 +690,23 @@ mod tests {
         // The intent is only dropped once the restore actually lands.
         let restore = &commands[0];
         assert_eq!(restore.on_mismatch, weir_agent_model::OnMismatch::Abort);
-        assert!(matches!(restore.then[0].op, CommandOp::Delete));
+        assert_eq!(
+            restore.expect,
+            Precondition::PidAndRevision {
+                pid: Some("4242".to_owned()),
+                revision: Some(4)
+            }
+        );
+        let [consume] = restore.then.as_slice() else {
+            panic!("expected one intent consumption");
+        };
+        assert_eq!(consume.op, CommandOp::Delete);
+        assert_eq!(
+            consume.target,
+            Target::ResumeIntent {
+                run_id: RUN.to_owned()
+            }
+        );
 
         let CommandOp::Update(patch) = &restore.op else {
             panic!("expected an update");
@@ -708,6 +780,10 @@ mod tests {
             commands[0].on_mismatch,
             weir_agent_model::OnMismatch::Continue
         );
+        let CommandOp::Update(restore) = &commands[0].op else {
+            panic!("expected restore update");
+        };
+        assert_eq!(restore.killed_by_weir_at, Patch::Clear);
 
         // A marker older than the window is treated as no marker at all, so a
         // run that never came back cannot be restored forever.

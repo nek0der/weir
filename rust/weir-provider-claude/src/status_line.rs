@@ -310,14 +310,21 @@ mod tests {
         let usage = ClaudeStatusLine
             .plan_usage(input.as_bytes(), at(1_793_240_000))
             .expect("usage");
-        assert_eq!(usage.windows.len(), 2);
-        assert_eq!(usage.windows[0].kind, "five_hour");
-        assert!((usage.windows[0].used_percent - 42.5).abs() < f64::EPSILON);
         assert_eq!(
-            usage.windows[0].resets_at.as_deref(),
-            Some("2026-10-29T04:20:00Z")
+            usage.windows,
+            vec![
+                PlanUsageWindow {
+                    kind: "five_hour".into(),
+                    used_percent: 42.5,
+                    resets_at: Some("2026-10-29T04:20:00Z".into())
+                },
+                PlanUsageWindow {
+                    kind: "seven_day".into(),
+                    used_percent: 83.0,
+                    resets_at: Some("2026-11-04T20:00:00Z".into())
+                },
+            ]
         );
-        assert_eq!(usage.windows[1].kind, "seven_day");
         assert_eq!(usage.observed_at, "2026-10-29T02:13:20Z");
     }
 
@@ -328,9 +335,14 @@ mod tests {
         let usage = ClaudeStatusLine
             .plan_usage(input.as_bytes(), at(0))
             .expect("usage");
-        assert_eq!(usage.windows.len(), 1);
-        assert_eq!(usage.windows[0].kind, "seven_day");
-        assert_eq!(usage.windows[0].resets_at, None);
+        assert_eq!(
+            usage.windows,
+            vec![PlanUsageWindow {
+                kind: "seven_day".into(),
+                used_percent: 4.0,
+                resets_at: None
+            }]
+        );
     }
 
     #[test]
@@ -453,7 +465,14 @@ mod tests {
                 USER,
             ]
         );
-        assert_eq!(sources(None, Some("user,project,local")).len(), 3);
+        assert_eq!(
+            sources(None, Some("user,project,local")),
+            [
+                SettingsSource::File(managed_settings_path()),
+                SettingsSource::LaunchVariable(LAUNCH_SETTINGS_VARIABLE),
+                USER
+            ]
+        );
     }
 
     /// `claude --setting-sources user` reads no project file, so its
@@ -537,13 +556,20 @@ mod tests {
     #[test]
     fn user_status_line_takes_the_highest_layer_that_sets_a_command() {
         let user =
-            json!({ "statusLine": { "type": "command", "command": "user.sh", "padding": 0 } });
-        let project = json!({ "statusLine": { "type": "command", "command": "project.sh" } });
-        let layers = [None, None, None, Some(project), Some(user)];
+            json!({ "statusLine": { "type": "command", "command": "user.sh", "padding": 2 } });
+        let project = json!({ "type": "command", "command": "project.sh", "padding": 0 });
+        let layers = [
+            None,
+            None,
+            None,
+            Some(json!({ "statusLine": &project })),
+            Some(user),
+        ];
         let chosen = ClaudeStatusLine
             .user_status_line(&layers)
             .expect("a status line");
         assert_eq!(ClaudeStatusLine.command(&chosen), Some("project.sh"));
+        assert_eq!(&chosen, project.as_object().expect("setting object"));
     }
 
     #[test]

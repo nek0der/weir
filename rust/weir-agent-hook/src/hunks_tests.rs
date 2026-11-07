@@ -7,7 +7,7 @@ fn text(lines: &str) -> Text {
 }
 
 fn bytes(text: Text) -> String {
-    String::from_utf8(text.into_bytes()).unwrap_or_default()
+    String::from_utf8(text.into_bytes()).expect("fixture text is UTF-8")
 }
 
 /// Two hunks of one file, as `git diff -U1` writes them.
@@ -32,7 +32,7 @@ const AFTER: &str = "a\nB\nc\nd\ne\nf\ng\nh\ni2\ni\n";
 
 #[test]
 fn a_patch_reads_as_its_hunks_with_their_headers() {
-    let hunks = parse(TWO.as_bytes()).unwrap_or_default();
+    let hunks = parse(TWO.as_bytes()).expect("valid patch");
     assert_eq!(hunks.len(), 2);
     assert_eq!(hunks[0].header, "@@ -1,3 +1,3 @@");
     assert_eq!(
@@ -44,7 +44,7 @@ fn a_patch_reads_as_its_hunks_with_their_headers() {
 
 #[test]
 fn every_hunk_taken_back_gives_the_old_file() {
-    let hunks = parse(TWO.as_bytes()).unwrap_or_default();
+    let hunks = parse(TWO.as_bytes()).expect("valid patch");
     let (result, outcomes) = reverse(text(AFTER), &hunks, &[0, 1]);
     assert_eq!(bytes(result), BEFORE);
     assert_eq!(outcomes, vec![Ok(()), Ok(())]);
@@ -54,8 +54,9 @@ fn every_hunk_taken_back_gives_the_old_file() {
 /// back before, moved it.
 #[test]
 fn one_hunk_is_taken_back_wherever_the_others_left_it() {
-    let hunks = parse(TWO.as_bytes()).unwrap_or_default();
-    let (second_only, _) = reverse(text(AFTER), &hunks, &[1]);
+    let hunks = parse(TWO.as_bytes()).expect("valid patch");
+    let (second_only, outcomes) = reverse(text(AFTER), &hunks, &[1]);
+    assert_eq!(outcomes, vec![Ok(())]);
     assert_eq!(bytes(second_only.clone()), "a\nB\nc\nd\ne\nf\ng\nh\ni\n");
     let (both, outcomes) = reverse(second_only, &hunks, &[0]);
     assert_eq!(bytes(both), BEFORE);
@@ -71,10 +72,10 @@ fn one_hunk_is_taken_back_wherever_the_others_left_it() {
 
 #[test]
 fn a_hunk_whose_lines_changed_since_is_left_alone() {
-    let hunks = parse(TWO.as_bytes()).unwrap_or_default();
+    let hunks = parse(TWO.as_bytes()).expect("valid patch");
     let edited = AFTER.replace("i2", "i3");
-    let (result, outcomes) = reverse(text(&edited), &hunks, &[0, 1]);
-    assert_eq!(outcomes, vec![Ok(()), Err(Mismatch::NotFound)]);
+    let (result, outcomes) = reverse(text(&edited), &hunks, &[1, 0]);
+    assert_eq!(outcomes, vec![Err(Mismatch::NotFound), Ok(())]);
     assert_eq!(bytes(result), edited.replace('B', "b"));
 }
 
@@ -87,25 +88,26 @@ fn the_newline_at_the_end_is_put_back_as_it_was() {
 \\ No newline at end of file
 +b
 ";
-    let hunks = parse(patch.as_bytes()).unwrap_or_default();
+    let hunks = parse(patch.as_bytes()).expect("valid patch");
     let (result, outcomes) = reverse(text("a\nb\n"), &hunks, &[0]);
     assert_eq!(outcomes, vec![Ok(())]);
     assert_eq!(bytes(result), "a\nb");
     // A file that ends otherwise than the hunk says is not the hunk's.
-    let (_, outcomes) = reverse(text("a\nb"), &hunks, &[0]);
+    let (unchanged, outcomes) = reverse(text("a\nb"), &hunks, &[0]);
     assert_eq!(outcomes, vec![Err(Mismatch::NotFound)]);
+    assert_eq!(bytes(unchanged), "a\nb");
 }
 
 #[test]
 fn a_file_the_range_added_or_deleted_reverses_to_nothing_or_back() {
     let added = "@@ -0,0 +1,2 @@\n+a\n+b\n";
-    let hunks = parse(added.as_bytes()).unwrap_or_default();
+    let hunks = parse(added.as_bytes()).expect("valid patch");
     let (result, outcomes) = reverse(text("a\nb\n"), &hunks, &[0]);
     assert_eq!(outcomes, vec![Ok(())]);
     assert!(result.is_empty());
 
     let deleted = "@@ -1,2 +0,0 @@\n-a\n-b\n";
-    let hunks = parse(deleted.as_bytes()).unwrap_or_default();
+    let hunks = parse(deleted.as_bytes()).expect("valid patch");
     let (result, outcomes) = reverse(text(""), &hunks, &[0]);
     assert_eq!(outcomes, vec![Ok(())]);
     assert_eq!(bytes(result), "a\nb\n");
@@ -115,7 +117,7 @@ fn a_file_the_range_added_or_deleted_reverses_to_nothing_or_back() {
 /// made again by hand is not the hunk's.
 #[test]
 fn a_hunk_with_no_new_lines_matches_only_an_empty_file() {
-    let deleted = parse(b"@@ -1,2 +0,0 @@\n-a\n-b\n").unwrap_or_default();
+    let deleted = parse(b"@@ -1,2 +0,0 @@\n-a\n-b\n").expect("valid patch");
     let (result, outcomes) = reverse(text("z\n"), &deleted, &[0]);
     assert_eq!(outcomes, vec![Err(Mismatch::NotFound)]);
     assert_eq!(bytes(result), "z\n");
@@ -125,9 +127,11 @@ fn a_hunk_with_no_new_lines_matches_only_an_empty_file() {
 /// taken back from either.
 #[test]
 fn a_moved_hunk_found_twice_is_left_alone() {
-    let hunks = parse(b"@@ -2,1 +2,1 @@\n-x\n+y\n").unwrap_or_default();
-    let (_, outcomes) = reverse(text("a\nb\ny\nc\ny\n"), &hunks, &[0]);
+    let hunks = parse(b"@@ -2,1 +2,1 @@\n-x\n+y\n").expect("valid patch");
+    let ambiguous = "a\nb\ny\nc\ny\n";
+    let (unchanged, outcomes) = reverse(text(ambiguous), &hunks, &[0]);
     assert_eq!(outcomes, vec![Err(Mismatch::NotFound)]);
+    assert_eq!(bytes(unchanged), ambiguous);
     let (result, outcomes) = reverse(text("a\ny\nc\ny\n"), &hunks, &[0]);
     assert_eq!(
         outcomes,
@@ -140,7 +144,7 @@ fn a_moved_hunk_found_twice_is_left_alone() {
 /// The function name after the ranges is the file's own bytes.
 #[test]
 fn a_header_whose_function_name_is_not_text_still_reads() {
-    let hunks = parse(b"@@ -1 +1 @@ fn \xff\n-a\n+b\n").unwrap_or_default();
+    let hunks = parse(b"@@ -1 +1 @@ fn \xff\n-a\n+b\n").expect("valid patch");
     assert_eq!(hunks.len(), 1);
     assert_eq!(hunks[0].header, "@@ -1 +1 @@");
 }
@@ -155,7 +159,7 @@ fn a_patch_git_would_not_write_is_refused() {
 #[test]
 fn bytes_that_are_not_text_are_kept_as_they_are() {
     let patch = b"@@ -1 +1 @@\n-\xff\r\n+x\r\n";
-    let hunks = parse(patch).unwrap_or_default();
+    let hunks = parse(patch).expect("valid patch");
     let (result, outcomes) = reverse(Text::from_bytes(b"x\r\n"), &hunks, &[0]);
     assert_eq!(outcomes, vec![Ok(())]);
     assert_eq!(result.into_bytes(), b"\xff\r\n".to_vec());

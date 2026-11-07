@@ -462,7 +462,7 @@ mod tests {
     #[test]
     fn accepts_lowercase_ascii_digits_and_dashes() {
         for value in ["claude", "codex", "gemini-cli", "a", "x1-2"] {
-            assert!(ProviderId::new(value).is_ok(), "{value}");
+            assert_eq!(ProviderId::new(value).unwrap().as_str(), value);
         }
     }
 
@@ -513,9 +513,18 @@ mod tests {
 
     #[test]
     fn capabilities_serialize_as_snake_case() {
-        let json = serde_json::to_string(&Capability::ResumeDefersToOtherLiveSession).expect("ok");
-        assert_eq!(json, "\"resume_defers_to_other_live_session\"");
-        let json = serde_json::to_string(&Capability::CacheWindow).expect("ok");
-        assert_eq!(json, "\"cache_window\"");
+        for (capability, wire) in [
+            (
+                Capability::ResumeDefersToOtherLiveSession,
+                r#""resume_defers_to_other_live_session""#,
+            ),
+            (Capability::CacheWindow, r#""cache_window""#),
+        ] {
+            assert_eq!(serde_json::to_string(&capability).unwrap(), wire);
+            assert_eq!(
+                serde_json::from_str::<Capability>(wire).unwrap(),
+                capability
+            );
+        }
     }
 }

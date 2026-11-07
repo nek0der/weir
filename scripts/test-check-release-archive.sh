@@ -49,27 +49,27 @@ make_good_archive() {
     "$archive/Info.plist"
 }
 
-# $1 case name, $2 expected verdict ("pass" or "fail"), then a command that
-# mutates the good archive whose path it receives as its last argument.
+# $1 case name, $2 exit status, $3 required diagnostic lines, then the
+# command that mutates the archive. Empty diagnostics mean no refusal.
 run_case() {
-  local name="$1" expect="$2"
-  shift 2
+  local name="$1" expected_status="$2" diagnostics="$3"
+  shift 3
   local archive
   archive="$(mktemp -d -p "$TMP")/Weir.xcarchive"
   make_good_archive "$archive"
   "$@" "$archive"
 
-  local actual
-  if "$CHECKER" "$archive" >/dev/null 2>&1; then
-    actual="pass"
-  else
-    actual="fail"
-  fi
-  if [[ "$actual" == "$expect" ]]; then
+  local output exit_status=0 matches=true diagnostic
+  output="$("$CHECKER" "$archive" 2>&1)" || exit_status=$?
+  while IFS= read -r diagnostic; do
+    [[ -z "$diagnostic" || "$output" == *"$diagnostic"* ]] || matches=false
+  done <<<"$diagnostics"
+  if [[ "$exit_status" == "$expected_status" && "$matches" == true ]]; then
     printf '  ok   %s\n' "$name"
     passes=$((passes + 1))
   else
-    printf '  FAIL %s (expected %s, got %s)\n' "$name" "$expect" "$actual" >&2
+    printf '  FAIL %s (expected exit %s and diagnostics %s, got exit %s)\n%s\n' \
+      "$name" "$expected_status" "$diagnostics" "$exit_status" "$output" >&2
     fails=$((fails + 1))
   fi
 }
@@ -120,24 +120,25 @@ automation_channel() {
   printf 'weir-automation-protocol/1' >> "$1/Products/Applications/Weir.app/Contents/MacOS/Weir"
 }
 
-run_case "a distributable archive passes" pass unchanged
-run_case "the v0.1.5 generic archive fails" fail generic_archive
-run_case "a stray product beside the app fails" fail stray_product
-run_case "a missing ApplicationProperties fails" fail no_application_properties
-run_case "a missing AgentIntegrationService fails" fail missing_service
-run_case "a missing AgentIntegrationHookHelper fails" fail missing_hook_helper
-run_case "a missing Sparkle.framework fails" fail missing_sparkle
-run_case "a missing release service plist fails" fail missing_service_plist
-run_case "a malformed release service plist fails" fail malformed_service_plist
-run_case "a bundled development service plist fails" fail dev_service_plist
-run_case "a service plist with the development label fails" fail dev_label
-run_case "a service plist with no label fails" fail missing_label
-run_case "a service plist naming another program fails" fail wrong_program
-run_case "a service plist without the requester service fails" fail missing_requester
-run_case "a service plist with the controller service off fails" fail disabled_controller
-run_case "a service plist with an extra Mach service fails" fail extra_mach_service
-run_case "a missing archive fails" fail missing_archive
-run_case "a binary with the verification channel fails" fail automation_channel
+run_case 'a distributable archive passes' 0 '' unchanged
+run_case 'the v0.1.5 generic archive fails' 1 'FAIL: Info.plist has no ApplicationProperties:ApplicationPath
+FAIL: Products/ holds more than' generic_archive
+run_case 'a stray product beside the app fails' 1 'FAIL: Products/ holds more than' stray_product
+run_case 'a missing ApplicationProperties fails' 1 'FAIL: Info.plist has no ApplicationProperties:ApplicationPath' no_application_properties
+run_case 'a missing AgentIntegrationService fails' 1 'FAIL: Contents/MacOS/AgentIntegrationService is missing or not executable' missing_service
+run_case 'a missing AgentIntegrationHookHelper fails' 1 'FAIL: Contents/MacOS/AgentIntegrationHookHelper is missing or not executable' missing_hook_helper
+run_case 'a missing Sparkle.framework fails' 1 'FAIL: Sparkle.framework is not embedded' missing_sparkle
+run_case 'a missing release service plist fails' 1 'FAIL: the release agent integration service plist is missing' missing_service_plist
+run_case 'a malformed release service plist fails' 1 'FAIL: the agent integration service plist does not lint' malformed_service_plist
+run_case 'a bundled development service plist fails' 1 'FAIL: the development service plist is bundled in a Release archive' dev_service_plist
+run_case 'a service plist with the development label fails' 1 'FAIL: the service plist'"'"'s Label is' dev_label
+run_case 'a service plist with no label fails' 1 'FAIL: the service plist'"'"'s Label is' missing_label
+run_case 'a service plist naming another program fails' 1 'FAIL: the service plist'"'"'s BundleProgram is' wrong_program
+run_case 'a service plist without the requester service fails' 1 'FAIL: the service plist does not publish the Mach service com.nekoder.weir.agent-integration-service.requester' missing_requester
+run_case 'a service plist with the controller service off fails' 1 'FAIL: the service plist does not publish the Mach service com.nekoder.weir.agent-integration-service.controller' disabled_controller
+run_case 'a service plist with an extra Mach service fails' 1 'FAIL: the service plist publishes 3 Mach services, not 2' extra_mach_service
+run_case 'a missing archive fails' 1 'FAIL: archive not found at' missing_archive
+run_case 'a binary with the verification channel fails' 1 'FAIL: the Debug-only verification channel is compiled into a Release binary' automation_channel
 
 echo
 if [[ $fails -eq 0 ]]; then

@@ -561,7 +561,9 @@ mod tests {
 
     impl Engine {
         fn new() -> Self {
-            Self(weir_projection_engine_create_v1())
+            let engine = weir_projection_engine_create_v1();
+            assert!(!engine.is_null(), "projection engine");
+            Self(engine)
         }
 
         fn pass(&self, input: &str) -> Pass {
@@ -584,7 +586,7 @@ mod tests {
             let body = unsafe { take_bytes(out, out_len) };
             Pass {
                 status,
-                body: body.and_then(|body| serde_json::from_slice(&body).ok()),
+                body: body.map(|body| serde_json::from_slice(&body).expect("projection JSON")),
                 proposal,
             }
         }
@@ -622,6 +624,9 @@ mod tests {
             "begin": {"kind": "pending"},
             "end": {"kind": "pending"},
             "changes": {"kind": "unknown"},
+            "skippedBegin": [],
+            "skippedEnd": [],
+            "appliedEvents": [],
         });
         serde_json::json!({
             "turnFiles": [{"provider": "claude", "name": TURN_ID, "content": record.to_string()}],
@@ -682,11 +687,14 @@ mod tests {
         )
         .expect("write");
         let pass = engine.pass(&input);
+        assert_eq!(pass.status, PROJECTION_OK);
         assert_eq!(badge_state(&pass), "finished");
         let badge = &pass.body.as_ref().expect("body")["projection"]["runtimes"][0]["badge"];
         assert!(badge.get("waitKind").is_none());
         // The file is read once for each version it had, not once per pass.
-        engine.pass(&input);
+        let repeated = engine.pass(&input);
+        assert_eq!(repeated.status, PROJECTION_OK);
+        assert_eq!(badge_state(&repeated), "finished");
         let reads = unsafe { &*engine.0 }.waits.lock().expect("waits").reads();
         assert_eq!(reads, 2);
     }
@@ -696,6 +704,7 @@ mod tests {
         let engine = Engine::new();
         let pass = engine.pass("{}");
         assert_eq!(pass.status, PROJECTION_OK);
+        assert_ne!(pass.proposal, 0);
         let body = pass.body.expect("body");
         assert!(body.get("state").is_none());
         assert!(body.get("projection").is_some());
@@ -738,12 +747,7 @@ mod tests {
             "not committed yet"
         );
         assert_eq!(engine.commit(pass.proposal), PROJECTION_OK);
-        // The hand-written record leaves out fields a rewrite fills in, so
-        // the rules read it as one they may not delete; which records may go
-        // is the sweep's own tests' matter, not this boundary's.
-        for turn in unsafe { &*engine.0 }.memory().committed.turns.values_mut() {
-            turn.is_deletable = true;
-        }
+        assert!(engine.committed().turns[TURN_ID].is_deletable);
         assert_eq!(engine.turns_taken(&a_change_to(60)), (PROJECTION_OK, 1));
         assert_eq!(engine.turns_taken(&a_change_to(7_200)), (PROJECTION_OK, 0));
         // Counting deletes nothing.
@@ -776,30 +780,28 @@ mod tests {
     }
 
     #[test]
-    fn a_commit_names_the_pass_it_read() {
-        let engine = Engine::new();
-        let first = engine.pass(&a_turn());
-        // Another pass ran in between, from the same state: committing the
-        // first keeps the first, not the one made after it.
-        let second = engine.pass("{}");
-        assert_ne!(first.proposal, second.proposal);
-        assert_eq!(engine.commit(first.proposal), PROJECTION_OK);
-        assert_eq!(engine.committed().turns.len(), 1);
-        // The second was made from the state that commit replaced.
-        assert_eq!(engine.commit(second.proposal), PROJECTION_NOT_PROPOSED);
-        assert_eq!(engine.committed().turns.len(), 1);
-    }
-
-    #[test]
-    fn a_pass_made_before_a_commit_cannot_undo_it() {
-        let engine = Engine::new();
-        // A pass away from the host's main thread starts first...
-        let away = engine.pass("{}");
-        // ...and one run in place finishes and commits before it returns.
-        let in_place = engine.pass(&a_turn());
-        assert_eq!(engine.commit(in_place.proposal), PROJECTION_OK);
-        assert_eq!(engine.commit(away.proposal), PROJECTION_NOT_PROPOSED);
-        assert_eq!(engine.committed().turns.len(), 1);
+    fn a_commit_keeps_the_named_proposal_and_invalidates_the_other() {
+        let with_turn = a_turn();
+        for (inputs, chosen) in [
+            ([with_turn.as_str(), "{}"], 0),
+            (["{}", with_turn.as_str()], 1),
+        ] {
+            let engine = Engine::new();
+            let [first, second] = inputs.map(|input| engine.pass(input));
+            assert_eq!(first.status, PROJECTION_OK);
+            assert_eq!(second.status, PROJECTION_OK);
+            assert_ne!(first.proposal, second.proposal);
+            let proposals = [first.proposal, second.proposal];
+            assert_eq!(engine.commit(proposals[chosen]), PROJECTION_OK);
+            let committed = engine.committed();
+            assert_eq!(committed.turns.len(), 1);
+            assert!(committed.turns.contains_key(TURN_ID));
+            assert_eq!(
+                engine.commit(proposals[1 - chosen]),
+                PROJECTION_NOT_PROPOSED
+            );
+            assert_eq!(engine.committed(), committed);
+        }
     }
 
     #[test]
@@ -808,6 +810,8 @@ mod tests {
         let first = engine.pass(&a_turn());
         let failed = engine.pass("not json");
         assert_eq!(failed.status, PROJECTION_INVALID_INPUT);
+        assert!(failed.body.is_none());
+        assert_eq!(failed.proposal, 0);
         assert_eq!(engine.commit(failed.proposal), PROJECTION_NOT_PROPOSED);
         assert_eq!(engine.commit(first.proposal), PROJECTION_OK);
         assert_eq!(engine.committed().turns.len(), 1);
@@ -815,13 +819,26 @@ mod tests {
 
     #[test]
     fn only_the_latest_proposals_are_kept() {
-        let engine = Engine::new();
-        let oldest = engine.pass(&a_turn());
-        let _ = engine.pass("{}");
-        let latest = engine.pass("{}");
-        assert_eq!(engine.commit(oldest.proposal), PROJECTION_NOT_PROPOSED);
-        assert_eq!(engine.commit(latest.proposal), PROJECTION_OK);
-        assert!(engine.committed().turns.is_empty());
+        for commit_latest in [false, true] {
+            let engine = Engine::new();
+            let oldest = engine.pass(&a_turn());
+            let middle = engine.pass("{}");
+            let latest = engine.pass(&a_turn());
+            assert_eq!(oldest.status, PROJECTION_OK);
+            assert_eq!(middle.status, PROJECTION_OK);
+            assert_eq!(latest.status, PROJECTION_OK);
+            assert_eq!(engine.commit(oldest.proposal), PROJECTION_NOT_PROPOSED);
+            let proposal = if commit_latest {
+                latest.proposal
+            } else {
+                middle.proposal
+            };
+            assert_eq!(engine.commit(proposal), PROJECTION_OK);
+            assert_eq!(
+                engine.committed().turns.contains_key(TURN_ID),
+                commit_latest
+            );
+        }
     }
 
     #[test]
@@ -885,23 +902,17 @@ mod tests {
     #[test]
     fn an_oversized_input_reports_a_limit_rather_than_reading_it() {
         let engine = Engine::new();
-        let mut out: *mut u8 = ptr::null_mut();
-        let mut out_len: usize = 0;
-        let mut proposal: u64 = 0;
-        let probe = b"{}";
-        let status = unsafe {
-            weir_projection_engine_pass_v1(
-                engine.0,
-                probe.as_ptr(),
-                MAX_PROJECTION_INPUT_BYTES + 1,
-                NOW.as_ptr(),
-                NOW.len(),
-                &raw mut out,
-                &raw mut out_len,
-                &raw mut proposal,
-            )
-        };
-        assert_eq!(status, PROJECTION_INPUT_TOO_LARGE);
+        let mut bytes = vec![b' '; MAX_PROJECTION_INPUT_BYTES + 1];
+        bytes[..2].copy_from_slice(b"{}");
+        let input = std::str::from_utf8(&bytes).expect("valid input");
+        assert_eq!(
+            engine.pass(&input[..MAX_PROJECTION_INPUT_BYTES]).status,
+            PROJECTION_OK
+        );
+        let rejected = engine.pass(input);
+        assert_eq!(rejected.status, PROJECTION_INPUT_TOO_LARGE);
+        assert!(rejected.body.is_none());
+        assert_eq!(rejected.proposal, 0);
     }
 
     #[test]
@@ -919,17 +930,26 @@ mod tests {
                 .join()
         });
         assert!(shared.memory.is_poisoned());
-        assert_eq!(engine.pass("{}").status, PROJECTION_OK);
-        assert_eq!(engine.committed().turns.len(), 1);
+        let pass = engine.pass(&the_turn_by_name());
+        assert_eq!(pass.status, PROJECTION_OK);
+        assert_eq!(engine.commit(pass.proposal), PROJECTION_OK);
+        assert!(engine.committed().turns.contains_key(TURN_ID));
     }
 
     #[test]
     fn the_lifecycle_calls_return_a_command_list() {
-        for call in [
-            weir_projection_on_launch_v1 as unsafe extern "C" fn(_, _, _, _, _, _) -> i32,
-            weir_projection_on_terminate_v1,
-        ] {
-            let input = b"{}";
+        use weir_agent_model::{CommandOp, Target};
+        const RUN: &str = "AAAAAAAA-1111-4111-8111-AAAAAAAAAAA1";
+        const PANE: &str = "11111111-1111-4111-8111-111111111111";
+        type LifecycleCall = unsafe extern "C" fn(
+            *const u8,
+            usize,
+            *const u8,
+            usize,
+            *mut *mut u8,
+            *mut usize,
+        ) -> i32;
+        let call = |call: LifecycleCall, input: &[u8]| {
             let now = b"2026-09-14T12:00:00Z";
             let mut out: *mut u8 = ptr::null_mut();
             let mut out_len: usize = 0;
@@ -946,9 +966,50 @@ mod tests {
             assert_eq!(status, PROJECTION_OK);
             // SAFETY: The pair is what this call wrote.
             let body = unsafe { take_bytes(out, out_len) }.expect("body");
-            let commands: Value = serde_json::from_slice(&body).expect("decode");
-            assert_eq!(commands, Value::Array(vec![]));
-        }
+            serde_json::from_slice::<Vec<Command>>(&body).expect("command list")
+        };
+        assert!(call(weir_projection_on_launch_v1, b"{}").is_empty());
+        assert!(call(weir_projection_on_terminate_v1, b"{}").is_empty());
+
+        let provider = weir_agent_hook::adapter_for("codex")
+            .expect("Codex")
+            .descriptor();
+        let record = serde_json::json!({
+            "schemaVersion": 3, "paneId": PANE, "runId": RUN, "revision": 3,
+            "state": "finished", "updatedAt": "2026-09-14T11:00:00Z", "pid": "4242",
+        });
+        let hint = serde_json::json!({ "schemaVersion": 1, "paneId": PANE, "runId": RUN, "sessionId": "s" });
+        let input = |pid_status: &str| {
+            serde_json::json!({
+            "providers": {"codex": provider},
+            "records": [{"provider": "codex", "name": RUN, "content": record.to_string()}],
+            "sessionRecords": [{"provider": "codex", "name": PANE, "content": hint.to_string()}],
+            "pidStatus": {"4242": pid_status},
+        }).to_string()
+        };
+
+        let launch = call(weir_projection_on_launch_v1, input("dead").as_bytes());
+        let [delete] = launch.as_slice() else {
+            panic!("expected launch retirement: {launch:?}");
+        };
+        let pane_id: uuid::Uuid = PANE.parse().expect("pane");
+        assert!(
+            matches!((&delete.op, &delete.target), (CommandOp::Delete, Target::SessionHint { pane, .. }) if *pane == pane_id)
+        );
+        assert!(
+            matches!(delete.then.as_slice(), [Command { op: CommandOp::Retire, target: Target::Record { storage_id, .. }, .. }] if storage_id == RUN)
+        );
+
+        let quit = call(weir_projection_on_terminate_v1, input("alive").as_bytes());
+        let [intent, marker] = quit.as_slice() else {
+            panic!("expected quit intent and marker: {quit:?}");
+        };
+        assert!(
+            matches!(&intent.op, CommandOp::WriteResumeIntent(intent) if intent.run_id == RUN && intent.session_id == "s")
+        );
+        assert!(
+            matches!((&marker.op, &marker.target), (CommandOp::Update(_), Target::Record { storage_id, .. }) if storage_id == RUN)
+        );
     }
 
     #[test]

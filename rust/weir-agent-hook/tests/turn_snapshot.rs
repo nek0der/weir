@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use support::{
     PANE, RUN, Repo, SESSION_START, STOP, STOP_AFTER_STOP_HOOK, call, call_as, git, only_turn,
-    prompt, provider_env, read_turns, turn_env,
+    prompt, provider_env, read_turns, turn_env, turn_ref,
 };
 use weir_agent_hook::{
     GitSnapshots, HookOutcome, HookRuntime, LARGE_FILE_BYTES, NoSnapshots, SnapshotRunner,
@@ -21,10 +21,16 @@ use weir_agent_model::{ChangeSummary, SnapshotStatus, TurnPhase};
 fn capture_writes_a_private_index_without_touching_the_real_index() {
     let repo = Repo::new("capture");
     fs::write(repo.path.join("untracked.txt"), "new\n").expect("untracked");
+    let index = repo.git_dir().join("index");
+    let original_index = fs::read(&index).expect("real index");
     let (tree, root) = captured(
         &GitSnapshots
             .capture(&repo.path, PANE, TurnSide::Begin)
             .status,
+    );
+    assert_eq!(
+        fs::read(&index).expect("real index after capture"),
+        original_index
     );
     assert_eq!(tree.len(), 40);
     assert_eq!(
@@ -153,19 +159,11 @@ fn a_turn_records_what_it_changed_and_pins_both_trees() {
         "{:?}",
         turn.changes
     );
-    for side in ["begin", "end"] {
-        assert!(
-            git(
-                &repo.path,
-                &[
-                    "rev-parse",
-                    "--verify",
-                    "-q",
-                    &format!("refs/weir/turns/{}/{side}", turn.turn_id)
-                ]
-            )
-            .is_some(),
-            "{side} is pinned"
+    for (side, status) in [("begin", &turn.begin), ("end", &turn.end)] {
+        assert_eq!(
+            turn_ref(&repo, &turn.turn_id, side),
+            Some(captured(status).0),
+            "{side} pin matches the recorded tree"
         );
     }
     // Only the turn's refs: the pane has none.
@@ -296,6 +294,7 @@ fn commit_of(repo: &Repo, tree: &str) -> String {
 #[test]
 fn a_turn_outside_a_repository_finishes_without_an_end_taken_where_the_hook_runs() {
     let scratch = tempfile::tempdir().expect("scratch");
+    let hook_repo = Repo::new("stop-elsewhere");
     let outside = scratch.path().to_path_buf();
     let states = outside.join("support/states");
     let env = turn_env(&states, &uuid::Uuid::new_v4().to_string());
@@ -304,8 +303,12 @@ fn a_turn_outside_a_repository_finishes_without_an_end_taken_where_the_hook_runs
         &prompt(&outside),
         &HookRuntime::new(&env, &GitSnapshots),
     );
-    let env = turn_env(&states, &uuid::Uuid::new_v4().to_string());
-    let _ = run_hook("claude", STOP, &HookRuntime::new(&env, &GitSnapshots));
+    let env =
+        turn_env(&states, &uuid::Uuid::new_v4().to_string()).in_directory(hook_repo.path.clone());
+    assert_eq!(
+        run_hook("claude", STOP, &HookRuntime::new(&env, &GitSnapshots)),
+        HookOutcome::Applied
+    );
 
     let turn = only_turn(&states);
     assert_eq!(turn.phase, TurnPhase::Finished);
@@ -321,6 +324,10 @@ fn a_turn_outside_a_repository_finishes_without_an_end_taken_where_the_hook_runs
         ChangeSummary::Unavailable {
             reason: "notGit".into()
         }
+    );
+    assert_eq!(
+        git(&hook_repo.path, &["for-each-ref", "refs/weir/turns"]).as_deref(),
+        Some("")
     );
 }
 
@@ -451,7 +458,11 @@ fn a_large_file_is_excluded_by_its_literal_name() {
     let names = git(&repo.path, &["ls-tree", "--name-only", &tree]).expect("tree");
     assert!(names.lines().any(|name| name == "ab.bin"), "{names}");
     assert!(!names.lines().any(|name| name.contains('*')), "{names}");
-    assert_eq!(begin.skipped.len(), 1);
+    let [skipped] = begin.skipped.as_slice() else {
+        panic!("expected one skip: {:?}", begin.skipped);
+    };
+    assert_eq!(skipped.path, "a*.bin");
+    assert_eq!(skipped.size_bytes, LARGE_FILE_BYTES + 1);
 }
 
 #[test]
@@ -531,13 +542,26 @@ struct LandsDuringTheEnd<'a> {
     states: &'a Path,
     provider: &'a str,
     payload: &'a [u8],
+    call_not_before: Option<&'a str>,
     has_injected_hook: std::cell::Cell<bool>,
 }
 
 impl SnapshotRunner for LandsDuringTheEnd<'_> {
     fn capture(&self, cwd: &Path, pane_id: &str, side: TurnSide) -> weir_agent_core::SnapshotTaken {
         if side == TurnSide::End && !self.has_injected_hook.replace(true) {
-            call_as(self.provider, self.states, self.payload);
+            let env = provider_env(
+                self.provider,
+                self.states,
+                &uuid::Uuid::new_v4().to_string(),
+            );
+            let mut runtime = HookRuntime::new(&env, &GitSnapshots);
+            if let Some(time) = self.call_not_before {
+                time.clone_into(&mut runtime.now);
+            }
+            assert_eq!(
+                run_hook(self.provider, self.payload, &runtime),
+                HookOutcome::Applied
+            );
         }
         GitSnapshots.capture(cwd, pane_id, side)
     }
@@ -579,6 +603,7 @@ fn an_idle_prompt_whose_run_stopped_while_its_end_was_prepared_writes_nothing() 
         states: &states,
         provider: "claude",
         payload: STOP_AFTER_STOP_HOOK,
+        call_not_before: None,
         has_injected_hook: std::cell::Cell::new(false),
     };
     let env = turn_env(&states, &uuid::Uuid::new_v4().to_string());
@@ -617,6 +642,7 @@ fn an_idle_prompt_overtaken_by_a_prompt_while_its_end_was_prepared_writes_nothin
         states: &states,
         provider: "claude",
         payload: &next_prompt,
+        call_not_before: None,
         has_injected_hook: std::cell::Cell::new(false),
     };
     let env = turn_env(&states, &uuid::Uuid::new_v4().to_string());
@@ -682,19 +708,16 @@ fn a_usage_limit_overtaken_by_a_prompt_while_its_end_was_prepared_writes_nothing
         .as_deref()
         .and_then(weir_agent_model::parse_utc_seconds)
         .expect("the first turn's start");
-    // The next prompt comes a second after the limit, as a person's does.
-    while weir_agent_model::parse_utc_seconds(&weir_agent_hook::format_utc_seconds(
-        std::time::SystemTime::now(),
-    ))
-    .is_some_and(|now| now <= reached_at)
-    {
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
+    // The next prompt's hook has already observed a later second.
+    let next_call_at = weir_agent_hook::format_utc_seconds(
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(reached_at + 1),
+    );
     let next_prompt = codex_prompt("second");
     let runner = LandsDuringTheEnd {
         states: &states,
         provider: "codex",
         payload: &next_prompt,
+        call_not_before: Some(&next_call_at),
         has_injected_hook: std::cell::Cell::new(false),
     };
     let env = provider_env("codex", &states, &uuid::Uuid::new_v4().to_string());
@@ -713,7 +736,12 @@ fn a_usage_limit_overtaken_by_a_prompt_while_its_end_was_prepared_writes_nothing
 
     let record = record();
     assert_eq!(record.state, weir_agent_model::RunState::Running);
-    assert!(record.run_started_at.is_some(), "the second turn runs");
+    let next_started = record
+        .run_started_at
+        .as_deref()
+        .and_then(weir_agent_model::parse_utc_seconds)
+        .expect("the second turn runs");
+    assert!(next_started > reached_at);
     assert_eq!(record.usage_limit, None);
     assert_eq!(record.last_prompt.as_deref(), Some("second"));
 }
@@ -840,9 +868,18 @@ fn a_snapshot_starts_neither_the_repositorys_fsmonitor_nor_its_hooks() {
         .expect("pin");
     assert_eq!(GitSnapshots.unpin(root, None, "turn"), Ok(true));
     GitSnapshots.remove(&repo.path, PANE).expect("remove");
-    assert_eq!(
-        fs::read_to_string(&marker).ok(),
-        None,
-        "a repository program ran"
+    assert!(!marker.exists(), "a repository program ran");
+
+    git(&repo.path, &["status", "--porcelain"]).expect("ordinary index read");
+    git(
+        &repo.path,
+        &["update-ref", "refs/weir-test/control", "HEAD"],
+    )
+    .expect("ordinary ref update");
+    let ran = fs::read_to_string(marker).expect("the repository programs are runnable");
+    assert!(ran.lines().any(|line| line == "fsmonitor"), "{ran}");
+    assert!(
+        ran.lines().any(|line| line == "reference-transaction"),
+        "{ran}"
     );
 }

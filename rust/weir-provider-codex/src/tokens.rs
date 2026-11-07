@@ -245,9 +245,9 @@ fn file_url_path(url: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn record(turn: &str, input: u64, cached: u64, output: u64) -> String {
+    fn record(turn: &str, input: u64, cached: u64, written: u64, output: u64) -> String {
         format!(
-            r#"{{"timestamp":"t","type":"token_usage_record","payload":{{"turn_id":"{turn}","usage":{{"input_tokens":1}},"turn_token_usage":{{"input_tokens":{input},"cached_input_tokens":{cached},"cache_write_input_tokens":0,"output_tokens":{output},"reasoning_output_tokens":0,"total_tokens":{}}}}}}}"#,
+            r#"{{"timestamp":"t","type":"token_usage_record","payload":{{"turn_id":"{turn}","usage":{{"input_tokens":1}},"turn_token_usage":{{"input_tokens":{input},"cached_input_tokens":{cached},"cache_write_input_tokens":{written},"output_tokens":{output},"reasoning_output_tokens":0,"total_tokens":{}}}}}}}"#,
             input + output
         )
     }
@@ -271,16 +271,16 @@ mod tests {
     #[test]
     fn the_turn_takes_its_last_running_total_without_the_cached_input() {
         let bytes = rollout(&[
-            record("a", 43_649, 0, 254),
-            record("b", 10, 0, 10),
-            record("a", 96_113, 94_464, 807),
-            record("c", 5, 0, 5),
+            record("a", 43_649, 0, 0, 254),
+            record("b", 10, 0, 0, 10),
+            record("a", 96_113, 94_464, 100, 807),
+            record("c", 5, 0, 0, 5),
         ]);
         assert_eq!(
             rollout_turn_reading(&bytes, "a").usage,
             Some(TurnUsage {
-                input_tokens: 1_649,
-                cache_write_tokens: 0,
+                input_tokens: 1_549,
+                cache_write_tokens: 100,
                 cache_read_tokens: 94_464,
                 output_tokens: 807,
                 is_partial: false,
@@ -298,7 +298,7 @@ mod tests {
             command("a", r#""/bin/zsh","-lc","cargo test""#, "failed", "101"),
             command("b", r#""/bin/zsh","-lc","ls""#, "completed", "0"),
             command("a", r#""/bin/bash","-c","cargo test""#, "completed", "0"),
-            command("a", r#""/bin/zsh","-lc","sleep 99""#, "in_progress", "null"),
+            command("a", r#""/bin/zsh","-lc","sleep 99""#, "in_progress", "143"),
             // Declined, so never run, and two shapes we do not read.
             command("a", r#""/bin/zsh","-lc","rm -rf x""#, "declined", "null"),
             command("a", r#""cargo","test""#, "completed", "0"),
@@ -329,7 +329,14 @@ mod tests {
             command("a", r#""/bin/zsh","-lc","cargo test""#, "completed", "0"),
         ]);
         let reading = rollout_turn_reading(&bytes, "a");
-        assert_eq!(reading.commands.map(|runs| runs.len()), Some(1));
+        assert_eq!(
+            reading.commands,
+            Some(vec![CommandRun {
+                command: "cargo test".into(),
+                exit_code: Some(0),
+                cwd: Some("/Users/me/my repo".into()),
+            }])
+        );
         assert!(
             reading.are_commands_partial,
             "another turn's start is not this one's"
@@ -359,9 +366,9 @@ mod tests {
 
     #[test]
     fn a_subagent_counts_each_request_of_the_turn_that_put_it_to_work() {
-        let request = |root: &str, input: u64, cached: u64, output: u64| {
+        let request = |turn: &str, root: &str, input: u64, cached: u64, output: u64| {
             format!(
-                r#"{{"type":"token_usage_record","payload":{{"turn_id":"c","root_turn_id":"{root}","usage":{{"input_tokens":{input},"cached_input_tokens":{cached},"output_tokens":{output}}},"turn_token_usage":{{"input_tokens":999}}}}}}"#
+                r#"{{"type":"token_usage_record","payload":{{"turn_id":"{turn}","root_turn_id":"{root}","usage":{{"input_tokens":{input},"cached_input_tokens":{cached},"output_tokens":{output}}},"turn_token_usage":{{"input_tokens":999}}}}}}"#
             )
         };
         let turn = |kind: &str, turn: &str, root: &str| {
@@ -378,13 +385,13 @@ mod tests {
         };
         let rollout = [
             turn("task_started", "c0", "t0"),
-            request("t0", 50, 0, 5),
+            request("c0", "t0", 50, 0, 5),
             turn("task_complete", "c0", "t0"),
             turn("task_started", "c1", "t1"),
-            request("t1", 100, 0, 10),
+            request("c1", "t1", 100, 0, 10),
             turn("turn_aborted", "c1", "t1"),
             turn("task_started", "c2", "t1"),
-            request("t1", 120, 100, 2),
+            request("c2", "t1", 120, 100, 2),
             turn("task_complete", "c2", "t1"),
             // A later turn put it to work again, and it is still at it.
             turn("task_started", "c3", "t2"),
@@ -414,7 +421,7 @@ mod tests {
             Some(usage(120, 100, 12, false))
         );
         let cut = [
-            request("t1", 120, 100, 2),
+            request("c2", "t1", 120, 100, 2),
             turn("task_complete", "c2", "t1"),
         ]
         .join("\n");

@@ -256,8 +256,9 @@ mod tests {
 
     #[test]
     fn a_payload_that_is_not_an_object_is_an_error() {
-        assert!(question_turn(b"[]").is_err());
-        assert!(question_turn(b"not json").is_err());
+        for payload in [b"[]".as_slice(), b"not json"] {
+            assert_eq!(question_turn(payload), Err(NormalizeError::NotAnObject));
+        }
     }
 
     /// The helper hears of a turn's end only from the template's hooks.
@@ -268,8 +269,23 @@ mod tests {
         let hooks = template["hooks"].as_object().unwrap();
         let mut events: Vec<&str> = hooks
             .iter()
-            .filter(|(_, groups)| groups.to_string().contains("question-turn-ended"))
-            .map(|(event, _)| event.as_str())
+            .flat_map(|(event, groups)| {
+                groups
+                    .as_array()
+                    .expect("hook groups")
+                    .iter()
+                    .flat_map(move |group| {
+                        group["hooks"]
+                            .as_array()
+                            .expect("group hooks")
+                            .iter()
+                            .filter_map(move |hook| {
+                                (hook["type"] == "command"
+                                    && hook["command"] == "@@APPROVAL_HELPER@@ question-turn-ended")
+                                    .then_some(event.as_str())
+                            })
+                    })
+            })
             .collect();
         events.sort_unstable();
         assert_eq!(events, TURN_END_EVENTS);
@@ -299,7 +315,9 @@ mod tests {
         assert_eq!(request.summary.as_deref(), Some("Inspect status"));
         let payload =
             br#"{"hook_event_name":"PermissionRequest","tool_name":"Edit","tool_input":[1]}"#;
-        assert!(approval_request(payload).expect("ok").is_some());
+        let request = approval_request(payload).expect("ok").expect("approval");
+        assert_eq!(request.input, json!([1]));
+        assert_eq!(request.summary, None);
     }
 
     #[test]
@@ -345,18 +363,38 @@ mod tests {
 
     #[test]
     fn ask_user_question_carries_typed_questions_and_the_first_prompt_as_summary() {
-        let payload = br#"{"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","session_id":"s","tool_input":{"questions":[{"question":"Which color?","header":"Color","multiSelect":true,"options":[{"label":"Red","description":"warm"},{"label":"Blue"}]},{"question":"Which size?","options":[{"label":"S"}]}]}}"#;
+        let payload = br#"{"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","session_id":"s","tool_input":{"description":"Choose parameters","questions":[{"header":"Missing prompt"},{"question":"Which color?","header":"Color","multiSelect":true,"options":[{"label":"Red","description":"warm"},{"description":"Missing label"},{"label":"Blue"}]},{"question":"Which size?","options":[{"label":"S"}]}]}}"#;
         let request = approval_request(payload).expect("ok").expect("approval");
         assert_eq!(request.summary.as_deref(), Some("Which color?"));
-        assert_eq!(request.questions.len(), 2);
-        let first = &request.questions[0];
-        assert_eq!(first.header.as_deref(), Some("Color"));
-        assert_eq!(first.prompt, "Which color?");
-        assert!(first.multi_select);
-        assert_eq!(first.options[0].label, "Red");
-        assert_eq!(first.options[0].description.as_deref(), Some("warm"));
-        assert_eq!(first.options[1].description, None);
-        assert!(!request.questions[1].multi_select);
+        assert_eq!(
+            request.questions,
+            vec![
+                ApprovalQuestion {
+                    header: Some("Color".into()),
+                    prompt: "Which color?".into(),
+                    options: vec![
+                        ApprovalQuestionOption {
+                            label: "Red".into(),
+                            description: Some("warm".into())
+                        },
+                        ApprovalQuestionOption {
+                            label: "Blue".into(),
+                            description: None
+                        },
+                    ],
+                    multi_select: true,
+                },
+                ApprovalQuestion {
+                    header: None,
+                    prompt: "Which size?".into(),
+                    options: vec![ApprovalQuestionOption {
+                        label: "S".into(),
+                        description: None
+                    }],
+                    multi_select: false,
+                },
+            ]
+        );
     }
 
     #[test]
@@ -398,21 +436,17 @@ mod tests {
 
     #[test]
     fn answer_without_questions_in_the_input_delegates() {
-        let answers = std::collections::BTreeMap::new();
-        assert_eq!(
-            approval_output(
-                &ApprovalDecision::Answer { answers },
-                &json!({"tool_name": "AskUserQuestion", "input": {}})
-            )
-            .stdout,
-            None
-        );
-        assert_eq!(
-            approval_output(&ApprovalDecision::AllowOnce, &Value::Null)
-                .stdout
-                .map(|bytes| String::from_utf8(bytes).expect("utf8")),
-            Some(r#"{"hookSpecificOutput":{"decision":{"behavior":"allow"},"hookEventName":"PermissionRequest"}}"#.to_owned())
-        );
+        let decision = ApprovalDecision::Answer {
+            answers: std::collections::BTreeMap::from([("q".to_owned(), "a".to_owned())]),
+        };
+        for input in [json!({}), json!({ "questions": "q" })] {
+            let request = json!({"tool_name": "AskUserQuestion", "input": input});
+            assert_eq!(
+                approval_output(&decision, &request).stdout,
+                None,
+                "{request}"
+            );
+        }
     }
 
     #[test]

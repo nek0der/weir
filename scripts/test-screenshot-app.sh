@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/test-screenshot-app.sh
-# Weir — self-test for the app `screenshot.sh` launches.
+# Weir — self-test for bundle selection in `screenshot.sh`.
 #
 # `make screenshot` hands the script the app this project just built. Were the
 # script to search DerivedData, it would take the newest Weir.app of any
@@ -53,7 +53,7 @@ touch -t 202001010000 "$HANDED" "$CHECKOUT_RELEASE" "$CHECKOUT_DEBUG" "$DEBUG_ON
 # `built-app-path.sh` asks xcodebuild where the checkout builds its app. The
 # stand-in answers only for the checkout's own project and the Weir scheme: it
 # prints the two settings the lookup reads, as `-showBuildSettings` does, for
-# the folder FAKE_PRODUCTS names. Any other call fails, so a case that launches
+# the folder FAKE_PRODUCTS names. Any other call fails, so a case that selects
 # the checkout's app proves which project was asked.
 cat > "$TMP/bin/xcodebuild" <<EOF
 #!/bin/sh
@@ -76,11 +76,11 @@ failures=0
 run_script() {
   local script="$1"
   shift
-  (cd "$TMP/cwd" && env HOME="$TMP/home" PATH="$STUB_PATH" "$@" "$script" 2>&1) || true
+  (cd "$TMP/cwd" && env HOME="$TMP/home" PATH="$STUB_PATH" WEIR_SCREENSHOT_APP= WEIR_SCREENSHOT_OUT="$TMP/cwd/hero.png" "$@" "$script" 2>&1) || true
 }
 
-# The app the checkout's script named.
-launched() {
+# The bundle the checkout's script selected.
+selected_app() {
   run_script "$CHECKOUT/scripts/screenshot.sh" "$@" | sed -n 's/^Launching: //p'
 }
 
@@ -95,16 +95,16 @@ check() {
 }
 
 check "the app handed over wins over a newer one in DerivedData" \
-  "$HANDED" "$(launched FAKE_PRODUCTS="$TMP/products" WEIR_SCREENSHOT_APP="$HANDED")"
+  "$HANDED" "$(selected_app FAKE_PRODUCTS="$TMP/products" WEIR_SCREENSHOT_APP="$HANDED")"
 check "without one, this checkout's Release app wins over a newer one in DerivedData" \
-  "$CHECKOUT_RELEASE" "$(launched FAKE_PRODUCTS="$TMP/products")"
+  "$CHECKOUT_RELEASE" "$(selected_app FAKE_PRODUCTS="$TMP/products")"
 check "without a Release build, this checkout's Debug app is used" \
-  "$DEBUG_ONLY" "$(launched FAKE_PRODUCTS="$TMP/debug-only")"
+  "$DEBUG_ONLY" "$(selected_app FAKE_PRODUCTS="$TMP/debug-only")"
 
-# A checkout whose project was never generated launches nothing and says how
-# to generate it.
+# A checkout without a generated project selects no bundle and says how
+# to generate the project.
 ungenerated="$(run_script "$UNGENERATED/scripts/screenshot.sh" FAKE_PRODUCTS="$TMP/products")"
-check "without a generated project, nothing is launched" \
+check "without a generated project, no bundle is selected" \
   "" "$(printf '%s\n' "$ungenerated" | sed -n 's/^Launching: //p')"
 check "without a generated project, the error names make xcodegen" \
   "yes" "$(grep -q 'run make xcodegen first' <<<"$ungenerated" && echo yes || echo no)"

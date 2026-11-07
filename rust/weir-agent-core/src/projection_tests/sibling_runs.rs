@@ -172,14 +172,17 @@ fn a_banner_from_behind_the_shown_tab_is_not_suppressed_by_the_pane() {
         .as_ref()
         .map(|content| content.replace(r#""revision":3"#, r#""revision":4"#));
     let (_, _, commands) = project_with(&previous, &notify_input, &now(), &mut |_, _| false);
-    let notice = commands
+    let notices: Vec<_> = commands
         .iter()
-        .find_map(|command| match &command.op {
+        .filter_map(|command| match &command.op {
             CommandOp::Notify(notify) => Some(notify),
             _ => None,
         })
-        .expect("the wait is announced");
-    assert!(notice.runtime_id.contains(BEHIND));
+        .collect();
+    let [notice] = notices.as_slice() else {
+        panic!("expected one wait notice: {commands:?}");
+    };
+    assert_eq!(notice.runtime_id, format!("claude:{BEHIND}"));
     assert!(!notice.suppress_when_pane_focused);
 }
 
@@ -188,17 +191,20 @@ fn a_dead_process_retires_every_sibling_and_says_both_at_work_stopped() {
     let mut input = siblings("running", "needsInput");
     input.pid_status = [("4242".to_owned(), PidStatus::Dead)].into_iter().collect();
     let (projection, commands) = project(&input);
-    let retired = commands
+    let mut retired: Vec<_> = commands
         .iter()
         .flat_map(|command| std::iter::once(command).chain(command.then.iter()))
-        .filter(|command| matches!(command.op, CommandOp::Retire))
-        .count();
-    assert_eq!(retired, 2, "{commands:?}");
-    assert_ne!(runtime(&projection, SHOWN).badge.state, RunState::Running);
-    assert_ne!(
-        runtime(&projection, BEHIND).badge.state,
-        RunState::NeedsInput
-    );
+        .filter_map(|command| match (&command.op, &command.target) {
+            (CommandOp::Retire, weir_agent_model::Target::Record { storage_id, .. }) => {
+                Some(storage_id.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    retired.sort_unstable();
+    assert_eq!(retired, [SHOWN, BEHIND], "{commands:?}");
+    assert_eq!(runtime(&projection, SHOWN).badge.state, RunState::Error);
+    assert_eq!(runtime(&projection, BEHIND).badge.state, RunState::Error);
 }
 
 #[test]

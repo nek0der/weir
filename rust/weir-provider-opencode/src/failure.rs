@@ -77,6 +77,7 @@ mod tests {
             assert_eq!(limit.scope, scope, "{name}");
             assert_eq!(limit.label.as_deref(), Some("Over"));
             assert_eq!(limit.resets_at, None);
+            assert_eq!(limit.window, None);
         }
     }
 
@@ -88,6 +89,14 @@ mod tests {
         )
         .expect("a limit");
         assert_eq!(limit.resets_at.as_deref(), Some("1970-01-01T00:01:30Z"));
+        for invalid in [json!(-1), json!("90000"), Value::Null] {
+            let limit = usage_limit(
+                &error(&json!({"type":"provider.quota","message":"Retry after 90 seconds","retryAfterMs":invalid})),
+                UNIX_EPOCH,
+            ).expect("still a limit");
+            assert_eq!(limit.resets_at, None);
+            assert_eq!(limit.label.as_deref(), Some("Retry after 90 seconds"));
+        }
     }
 
     #[test]

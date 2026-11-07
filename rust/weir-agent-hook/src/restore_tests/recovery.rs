@@ -38,13 +38,24 @@ fn recover_classifies_interrupted_journal() {
     repo.write("a.txt", "a\n");
     interrupt(&ops[2]);
     let recovery = recover(&repo.path, NOW).unwrap();
-    assert!(matches!(
-        worktree.journal(&ops[2]).unwrap().unwrap().stage,
-        RestoreStage::PartiallyApplied {
-            reason: StageReason::Interrupted,
-            ..
-        }
-    ));
+    let RestoreStage::PartiallyApplied {
+        reason,
+        current_tree,
+        ..
+    } = worktree.journal(&ops[2]).unwrap().unwrap().stage
+    else {
+        panic!("expected partial recovery");
+    };
+    assert_eq!(reason, StageReason::Interrupted);
+    assert_eq!(repo.git(&["show", &format!("{current_tree}:a.txt")]), "a");
+    assert_eq!(
+        repo.git(&["show", &format!("{current_tree}:new/made.txt")]),
+        "made"
+    );
+    assert!(
+        repo.git_status(&["cat-file", "-e", &format!("{current_tree}:keep.txt")])
+            .is_none()
+    );
     assert!(
         recovery
             .journals
@@ -52,6 +63,9 @@ fn recover_classifies_interrupted_journal() {
             .all(|journal| !journal.stage.is_interrupted())
     );
     // The call that settled it says so, once: the person is told once.
+    assert_eq!(repo.read("a.txt").as_deref(), Some("a\n"));
+    assert_eq!(repo.read("new/made.txt").as_deref(), Some("made\n"));
+    assert_eq!(repo.read("keep.txt"), None);
     assert_eq!(recovery.settled, [ops[2].clone()]);
     assert!(recover(&repo.path, NOW).unwrap().settled.is_empty());
 }
@@ -114,7 +128,22 @@ fn only_finished_journals_past_their_lifetime_are_dropped() {
         &aborted.before_tree,
     ]);
 
-    let journals = recover(&repo.path, NOW).unwrap().journals;
+    let cutoff = "2026-01-31T00:00:00Z";
+    assert_eq!(
+        super::super::journal::JOURNAL_LIFETIME_SECS,
+        30 * 24 * 60 * 60
+    );
+    let retained = recover(&repo.path, cutoff).unwrap().journals;
+    assert!(
+        retained
+            .iter()
+            .any(|journal| journal.op_id == aborted.op_id)
+    );
+    assert!(is_pinned(&repo, &restore_undo_ref(&aborted.op_id)));
+
+    let journals = recover(&repo.path, "2026-01-31T00:00:01Z")
+        .unwrap()
+        .journals;
 
     assert_eq!(
         journals
@@ -225,7 +254,11 @@ fn recovery_judges_what_the_staging_area_still_holds() {
     assert_eq!(kept[0].path, "keep.txt");
     assert!(!staging.join("gen-2").exists());
     assert!(!staging.join("ready-1/a.txt").exists());
-    assert!(staging.join("ready-1/keep.txt").exists());
+    assert_eq!(
+        fs::read_to_string(staging.join("ready-1/keep.txt")).unwrap(),
+        "a save of nobody's tree\n"
+    );
+    assert_eq!(repo.read("keep.txt").as_deref(), Some("keep\n"));
     // A save stays aside, so the area keeps the file that hides it from
     // Git: the check for an emptied area lists it anew, not from where the
     // listing above ended.
@@ -260,7 +293,10 @@ fn recovery_never_follows_a_staging_area_that_is_a_link() {
 
     let _ = recover(&repo.path, NOW).unwrap();
 
-    assert!(elsewhere.join("side/gen-1/keep.txt").exists());
+    assert_eq!(
+        fs::read_to_string(elsewhere.join("side/gen-1/keep.txt")).unwrap(),
+        "not the restore's\n"
+    );
     assert!(
         worktree
             .journal(&journal.op_id)
@@ -514,7 +550,11 @@ fn an_old_restore_goes_once_a_commit_refuses_its_undo() {
     // Moved and back: nothing refuses the undo, so nothing goes.
     repo.commit("later");
     repo.git(&["reset", "-q", "--soft", &head]);
-    assert_eq!(listed(&repo, NOW).len(), 2);
+    let mut retained = listed(&repo, NOW);
+    retained.sort();
+    let mut expected = vec![restored.op_id.clone(), old.op_id.clone()];
+    expected.sort();
+    assert_eq!(retained, expected);
     assert!(is_pinned(&repo, &restore_undo_ref(&old.op_id)));
 
     repo.commit("later");
@@ -581,6 +621,8 @@ fn an_old_restore_its_undo_can_apply_to_or_with_a_save_aside_stays() {
     let journals = listed(&repo, years_later);
     assert!(journals.contains(&aside.op_id));
     assert!(!journals.contains(&restored.op_id));
+    assert_eq!(repo.read(".weir-kept/a.txt").as_deref(), Some("theirs\n"));
+    assert!(is_pinned(&repo, &restore_undo_ref(&aside.op_id)));
 
     // The save is gone: nothing keeps the record past its lifetime.
     fs::remove_dir_all(repo.path.join(".weir-kept")).unwrap();
@@ -645,4 +687,5 @@ fn what_an_operation_settled_waits_while_a_hook_holds_the_lock() {
     drop(held);
 
     assert_eq!(recover(&repo.path, NOW).unwrap().settled, [cut_short.op_id]);
+    assert!(recover(&repo.path, NOW).unwrap().settled.is_empty());
 }

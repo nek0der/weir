@@ -456,54 +456,54 @@ mod tests {
 
     #[test]
     fn event_id_uses_tool_use_id_for_claude_tool_events() {
-        let invocation = Some(uuid::Uuid::from_u128(9));
-        let before = event_id_of(
-            r#"{"hook_event_name":"PreToolUse","tool_use_id":"toolu_01"}"#,
-            invocation,
-        );
-        let after = event_id_of(
-            r#"{"hook_event_name":"PostToolUse","tool_use_id":"toolu_01"}"#,
-            invocation,
-        );
-        assert_eq!(before.as_deref(), Some("claude:tool:toolu_01:PreToolUse"));
-        assert_eq!(after.as_deref(), Some("claude:tool:toolu_01:PostToolUse"));
-        // A retry under a new invocation id is still the same tool hook.
-        assert_eq!(
-            event_id_of(
-                r#"{"hook_event_name":"PreToolUse","tool_use_id":"toolu_01"}"#,
-                Some(uuid::Uuid::from_u128(10))
+        for (hook, expected) in [
+            ("PreToolUse", "claude:tool:toolu_01:PreToolUse"),
+            ("PostToolUse", "claude:tool:toolu_01:PostToolUse"),
+            (
+                "PostToolUseFailure",
+                "claude:tool:toolu_01:PostToolUseFailure",
             ),
-            before
-        );
+            ("PermissionDenied", "claude:tool:toolu_01:PermissionDenied"),
+        ] {
+            let payload =
+                serde_json::json!({"hook_event_name": hook, "tool_use_id": "toolu_01"}).to_string();
+            for invocation in [
+                None,
+                Some(uuid::Uuid::from_u128(9)),
+                Some(uuid::Uuid::from_u128(10)),
+            ] {
+                assert_eq!(
+                    event_id_of(&payload, invocation).as_deref(),
+                    Some(expected),
+                    "{hook}: {invocation:?}"
+                );
+            }
+        }
     }
 
     #[test]
     fn event_id_uses_invocation_id_otherwise() {
-        let invocation = Some(uuid::Uuid::from_u128(9));
-        assert_eq!(
-            event_id_of(
-                r#"{"hook_event_name":"UserPromptSubmit","prompt":"hi"}"#,
-                invocation
-            )
-            .as_deref(),
-            Some("claude:invocation:00000000-0000-0000-0000-000000000009")
-        );
-        // A tool hook without its id falls back too.
-        assert_eq!(
-            event_id_of(r#"{"hook_event_name":"PreToolUse"}"#, invocation).as_deref(),
-            Some("claude:invocation:00000000-0000-0000-0000-000000000009")
-        );
-        assert_eq!(event_id_of(r#"{"hook_event_name":"Stop"}"#, None), None);
-        // The same prompt sent twice is two events; one call retried is one.
-        let prompt = r#"{"hook_event_name":"UserPromptSubmit","prompt":"hi"}"#;
-        assert_ne!(
-            event_id_of(prompt, Some(uuid::Uuid::from_u128(1))),
-            event_id_of(prompt, Some(uuid::Uuid::from_u128(2)))
-        );
-        assert_eq!(
-            event_id_of(prompt, Some(uuid::Uuid::from_u128(1))),
-            event_id_of(prompt, Some(uuid::Uuid::from_u128(1)))
-        );
+        for payload in [
+            r#"{"hook_event_name":"UserPromptSubmit","prompt":"hi"}"#,
+            r#"{"hook_event_name":"UserPromptSubmit","tool_use_id":"incidental"}"#,
+            r#"{"hook_event_name":"PreToolUse"}"#,
+            r#"{"hook_event_name":"PreToolUse","tool_use_id":""}"#,
+            r#"{"hook_event_name":"Stop"}"#,
+        ] {
+            assert_eq!(event_id_of(payload, None), None, "{payload}");
+            for (invocation, expected) in [
+                (1, "claude:invocation:00000000-0000-0000-0000-000000000001"),
+                (2, "claude:invocation:00000000-0000-0000-0000-000000000002"),
+            ] {
+                for _retry in 0..2 {
+                    assert_eq!(
+                        event_id_of(payload, Some(uuid::Uuid::from_u128(invocation))).as_deref(),
+                        Some(expected),
+                        "{payload}"
+                    );
+                }
+            }
+        }
     }
 
     fn events(payload: &str, transcript: Option<&str>) -> Vec<AgentEvent> {
@@ -536,9 +536,11 @@ mod tests {
         let transcript = concat!(
             "{\"type\":\"custom-title\",\"customTitle\":\"old name\"}\n",
             "{\"type\":\"ai-title\",\"aiTitle\":\"first\"}\n",
-            "not json\n",
             "{\"type\":\"custom-title\",\"customTitle\":\"mine\"}\n",
             "{\"type\":\"ai-title\",\"aiTitle\":\"second\"}\n",
+            "{\"type\":\"custom-title\",\"customTitle\":42}\n",
+            "{\"type\":\"ai-title\",\"aiTitle\":null}\n",
+            "{\"type\":\"custom-title\",broken json\n",
         );
         let actual = events(r#"{"hook_event_name":"Stop"}"#, Some(transcript));
         assert_eq!(
@@ -709,23 +711,38 @@ mod tests {
 
     #[test]
     fn ask_user_question_reports_the_question_text_and_nothing_without_one() {
-        let payload = r#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Which color?"}]}}"#;
-        assert_eq!(
-            events(payload, None),
-            vec![AgentEvent::WaitingForInput {
-                detail: Some("Which color?".into()),
-                caller: Caller::Agent,
-            }]
-        );
-        let payload =
-            r#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{}}"#;
-        assert_eq!(
-            events(payload, None),
-            vec![AgentEvent::WaitingForInput {
-                detail: None,
-                caller: Caller::Agent
-            }]
-        );
+        for (input, expected) in [
+            (
+                serde_json::json!({"questions": [{"question": "Which color?"}]}),
+                Some("Which color?"),
+            ),
+            (
+                serde_json::json!({"question": "Which folder?"}),
+                Some("Which folder?"),
+            ),
+            (serde_json::json!({}), None),
+            (serde_json::json!({"questions": [{"question": "  "}]}), None),
+            (serde_json::json!({"question": "\n"}), None),
+            (serde_json::json!({"questions": [{"question": 42}]}), None),
+        ] {
+            for (agent_id, expected_caller) in [
+                (None, Caller::Agent),
+                (Some("child-1"), Caller::Subagent("child-1".into())),
+            ] {
+                let payload = serde_json::json!({
+                    "hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion",
+                    "tool_input": input, "agent_id": agent_id,
+                });
+                assert_eq!(
+                    events(&payload.to_string(), None),
+                    vec![AgentEvent::WaitingForInput {
+                        detail: expected.map(str::to_owned),
+                        caller: expected_caller,
+                    }],
+                    "{payload}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -783,10 +800,13 @@ mod tests {
                 }]
             );
             let payload = format!(r#"{{"hook_event_name":"{name}","tool_name":"Bash"}}"#);
-            assert!(matches!(
-                events(&payload, None).as_slice(),
-                [AgentEvent::Extension { .. }]
-            ));
+            assert_eq!(
+                events(&payload, None),
+                vec![AgentEvent::Extension {
+                    name: name.into(),
+                    payload: serde_json::from_str(&payload).expect("valid payload"),
+                }]
+            );
         }
     }
 
@@ -809,6 +829,15 @@ mod tests {
         );
         assert_eq!(
             denied(
+                r#"{"hook_event_name":"PermissionDenied","tool_name":"Edit","tool_input":{"file_path":"/repo/config.json"},"reason":"Protected file"}"#
+            ),
+            Some(DeniedAction {
+                action: "/repo/config.json".into(),
+                reason: "Protected file".into()
+            })
+        );
+        assert_eq!(
+            denied(
                 r#"{"hook_event_name":"PermissionDenied","tool_name":"WebFetch","tool_input":{"url":"https://example.com"}}"#
             ),
             Some(DeniedAction {
@@ -826,6 +855,17 @@ mod tests {
 
     #[test]
     fn tool_detail_prefers_the_command_then_the_path_then_the_name() {
+        assert_eq!(
+            events(
+                r#"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cat /command.txt","file_path":"/different.txt"}}"#,
+                None
+            ),
+            vec![AgentEvent::ToolStarted {
+                tool: "Bash".into(),
+                detail: Some("Bash: cat /command.txt".into()),
+                caller: Caller::Agent
+            }]
+        );
         let payload = r#"{"hook_event_name":"PreToolUse","tool_name":"Edit","tool_input":{"file_path":"/a.txt"}}"#;
         assert_eq!(
             events(payload, None),
@@ -888,35 +928,6 @@ mod tests {
     }
 
     #[test]
-    fn only_the_idle_notification_asks_for_the_transcript() {
-        let path = |payload: &str| {
-            transcript_path(RawHookInput {
-                bytes: payload.as_bytes(),
-                transcript: None,
-            })
-            .expect("ok")
-        };
-        assert_eq!(
-            path(
-                r#"{"hook_event_name":"Notification","notification_type":"idle_prompt","transcript_path":"/t/x.jsonl"}"#
-            ),
-            Some("/t/x.jsonl".into())
-        );
-        assert_eq!(
-            path(
-                r#"{"hook_event_name":"Notification","notification_type":"permission_prompt","transcript_path":"/t/x.jsonl"}"#
-            ),
-            None
-        );
-        assert_eq!(
-            path(
-                r#"{"hook_event_name":"PreToolUse","notification_type":"idle_prompt","transcript_path":"/t/x.jsonl"}"#
-            ),
-            None
-        );
-    }
-
-    #[test]
     fn only_a_prompt_or_a_call_that_waits_names_its_transcript() {
         let path = |payload: &str| {
             turn_transcript_path(RawHookInput {
@@ -958,20 +969,26 @@ mod tests {
 
     #[test]
     fn other_notifications_and_unknown_events_pass_through_as_extensions() {
-        let payload = r#"{"hook_event_name":"Notification","notification_type":"auth_success","message":"m"}"#;
-        assert!(matches!(
-            events(payload, None).as_slice(),
-            [AgentEvent::Extension { name, .. }] if name == "Notification"
-        ));
-        let payload = r#"{"hook_event_name":"SubagentStart"}"#;
-        assert!(matches!(
-            events(payload, None).as_slice(),
-            [AgentEvent::Extension { name, .. }] if name == "SubagentStart"
-        ));
-        assert!(matches!(
-            events(r#"{"cwd":"/x"}"#, None).as_slice(),
-            [AgentEvent::Extension { name, .. }] if name == "unknown"
-        ));
+        for (payload, name) in [
+            (
+                r#"{"hook_event_name":"Notification","notification_type":"auth_success","message":"m"}"#,
+                "Notification",
+            ),
+            (
+                r#"{"hook_event_name":"SubagentStart","agent_id":"child-1"}"#,
+                "SubagentStart",
+            ),
+            (r#"{"cwd":"/x"}"#, "unknown"),
+        ] {
+            assert_eq!(
+                events(payload, None),
+                vec![AgentEvent::Extension {
+                    name: name.into(),
+                    payload: serde_json::from_str(payload).expect("valid payload"),
+                }],
+                "{payload}",
+            );
+        }
     }
 
     #[test]
@@ -998,7 +1015,7 @@ mod tests {
 
     #[test]
     fn cwd_changed_reads_the_new_and_the_old_folder() {
-        let payload = r#"{"hook_event_name":"CwdChanged","cwd":"/repo/src","old_cwd":"/repo","new_cwd":"/repo/src"}"#;
+        let payload = r#"{"hook_event_name":"CwdChanged","cwd":"/hook-context","old_cwd":"/repo","new_cwd":"/repo/src"}"#;
         assert_eq!(
             events(payload, None),
             vec![AgentEvent::CwdChanged {
@@ -1043,7 +1060,7 @@ mod tests {
 {"type":"assistant","isApiErrorMessage":true,"error":"rate_limit","quotaLimits":{"status":"allowed"}}"#;
         assert_eq!(
             events(
-                r#"{"hook_event_name":"StopFailure","error":"rate_limit"}"#,
+                r#"{"hook_event_name":"StopFailure","error":"rate_limit","last_assistant_message":"You've hit your session limit"}"#,
                 Some(allowed)
             ),
             vec![AgentEvent::Failed {
@@ -1052,51 +1069,54 @@ mod tests {
                 kind: None,
             }]
         );
-    }
-
-    #[test]
-    fn a_failed_stop_asks_for_the_transcript() {
-        let payload = br#"{"hook_event_name":"StopFailure","error":"rate_limit","transcript_path":"/tmp/t.jsonl"}"#;
         assert_eq!(
-            transcript_path(RawHookInput {
-                bytes: payload,
-                transcript: None,
-            })
-            .unwrap()
-            .as_deref(),
-            Some("/tmp/t.jsonl")
+            events(
+                r#"{"hook_event_name":"StopFailure","error":"rate_limit","last_assistant_message":"You've hit your session limit"}"#,
+                None
+            ),
+            vec![AgentEvent::Failed {
+                error: "rate_limit".into(),
+                usage_limit: Some(UsageLimit::default()),
+                kind: None
+            }]
         );
     }
 
     #[test]
-    fn transcript_is_requested_only_for_prompt_and_stop() {
-        let stop = r#"{"hook_event_name":"Stop","transcript_path":"/t/x.jsonl"}"#;
-        assert_eq!(
-            transcript_path(RawHookInput {
-                bytes: stop.as_bytes(),
-                transcript: None
+    fn transcript_is_requested_only_for_events_that_read_it() {
+        for (hook, notification, path, expected) in [
+            ("UserPromptSubmit", "", "/t/x.jsonl", Some("/t/x.jsonl")),
+            ("Stop", "", "/t/x.jsonl", Some("/t/x.jsonl")),
+            ("StopFailure", "", "/t/x.jsonl", Some("/t/x.jsonl")),
+            (
+                "Notification",
+                "idle_prompt",
+                "/t/x.jsonl",
+                Some("/t/x.jsonl"),
+            ),
+            ("Notification", "permission_prompt", "/t/x.jsonl", None),
+            ("PreToolUse", "", "/t/x.jsonl", None),
+            ("PreToolUse", "idle_prompt", "/t/x.jsonl", None),
+            ("Stop", "", "/etc/passwd", None),
+            ("Notification", "idle_prompt", "/t/x.txt", None),
+        ] {
+            let payload = serde_json::json!({
+                "hook_event_name": hook,
+                "notification_type": notification,
+                "transcript_path": path,
             })
-            .expect("ok"),
-            Some("/t/x.jsonl".into())
-        );
-        let tool = r#"{"hook_event_name":"PreToolUse","transcript_path":"/t/x.jsonl"}"#;
-        assert_eq!(
-            transcript_path(RawHookInput {
-                bytes: tool.as_bytes(),
-                transcript: None
-            })
-            .expect("ok"),
-            None
-        );
-        let other = r#"{"hook_event_name":"Stop","transcript_path":"/etc/passwd"}"#;
-        assert_eq!(
-            transcript_path(RawHookInput {
-                bytes: other.as_bytes(),
-                transcript: None
-            })
-            .expect("ok"),
-            None
-        );
+            .to_string();
+            assert_eq!(
+                transcript_path(RawHookInput {
+                    bytes: payload.as_bytes(),
+                    transcript: None,
+                })
+                .expect("valid hook")
+                .as_deref(),
+                expected,
+                "{payload}",
+            );
+        }
     }
 
     #[test]
@@ -1119,6 +1139,16 @@ mod tests {
                     transcript: None
                 })
                 .expect("ok"),
+            None
+        );
+        let payload = br#"{"hook_event_name":"PreToolUse","tool_name":"Edit","cwd":"/r","tool_input":{"command":"git worktree add -b demo ../demo"}}"#;
+        assert_eq!(
+            ClaudeAdapter
+                .worktree_intent(RawHookInput {
+                    bytes: payload,
+                    transcript: None
+                })
+                .expect("valid payload"),
             None
         );
     }
@@ -1238,22 +1268,6 @@ mod tests {
         assert_eq!(
             run(r#"{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{}}"#),
             None
-        );
-    }
-
-    #[test]
-    fn a_bash_result_leaves_a_waiting_question_alone() {
-        // The question stays until its own tool answers: a command that
-        // finished meanwhile is not an answer.
-        let events = events(
-            r#"{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"cargo test"}}"#,
-            None,
-        );
-        assert!(
-            !events
-                .iter()
-                .any(|event| matches!(event, AgentEvent::ToolFinished { .. })),
-            "{events:?}"
         );
     }
 }

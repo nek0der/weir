@@ -136,8 +136,12 @@ mod tests {
     #[test]
     fn recipe_carries_the_hook_template() {
         let recipe = install_recipe();
+        let [fragment] = recipe.settings_fragments.as_slice() else {
+            panic!("expected one settings fragment");
+        };
+        assert_eq!(fragment.target, "claude.settings");
         let template: serde_json::Value =
-            serde_json::from_str(&recipe.settings_fragments[0].body).expect("template is JSON");
+            serde_json::from_str(&fragment.body).expect("template is JSON");
         assert!(template["hooks"]["PermissionRequest"].is_array());
         // The end snapshot stages and writes a tree like the start one, so a
         // large repository with a cold index needs the same 600 s the start

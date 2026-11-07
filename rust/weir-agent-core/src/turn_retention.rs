@@ -500,10 +500,11 @@ mod tests {
             sweep(&ProjectionState::default(), &state, &input, &now).is_empty(),
             "the host has not judged it yet"
         );
+        assert_eq!(deleted(&state, input.turn_sweep), ["a-1"]);
     }
 
     #[test]
-    fn a_started_turn_whose_run_left_this_pass_stays() {
+    fn a_started_turn_stays_for_the_pass_that_loses_its_run() {
         let mut started = turn("a", 1, 30);
         started.phase = TurnPhase::Started;
         let now_state = state(vec![started]);
@@ -523,22 +524,28 @@ mod tests {
             sweep(&previous, &now_state, &input, &now).is_empty(),
             "the host saw it running when it last judged"
         );
+        assert_eq!(deleted(&now_state, input.turn_sweep), ["a-1"]);
     }
 
     #[test]
     fn exactly_the_age_limit_stays() {
         let mut limits = limits();
         limits.max_age_secs = 30 * DAY;
-        assert!(deleted(&state(vec![turn("a", 1, 30)]), Some(limits)).is_empty());
+        let mut older = turn("a", 2, 30);
+        older.started_at = "2026-09-11T23:59:59Z".into();
+        assert_eq!(
+            deleted(&state(vec![turn("a", 1, 30), older]), Some(limits)),
+            ["a-2"]
+        );
     }
 
     /// A conversation shown in a pane keeps its latest
     /// `TURNS_KEPT_PER_SHOWN_CONVERSATION` turns whatever their age, and
     /// against a count limit below that; past it, the count limit takes the
-    /// oldest as it does anywhere. Not shown, age alone decides.
+    /// oldest as it does anywhere.
     #[test]
-    fn a_shown_conversation_keeps_its_latest_turns_against_age_and_count_only() {
-        let kept = TURNS_KEPT_PER_SHOWN_CONVERSATION;
+    fn a_shown_conversation_keeps_its_latest_turns_against_age_and_count() {
+        let kept = 20;
         let numbers = |count: usize| 1..=u32::try_from(count).expect("a small count");
         let names = |count: usize| {
             numbers(count)
@@ -562,12 +569,16 @@ mod tests {
             "not shown: age decides"
         );
 
-        let fresh: Vec<TurnSummary> = numbers(5).map(|number| turn("a", number, 0)).collect();
+        let fresh: Vec<TurnSummary> = numbers(kept + 1)
+            .map(|number| turn("a", number, 0))
+            .chain(numbers(4).map(|number| turn("b", number, 0)))
+            .collect();
         let mut below = shown.clone();
         below.max_per_conversation = 3;
-        assert!(
-            deleted(&state(fresh), Some(below)).is_empty(),
-            "a count limit below the kept number takes none of them"
+        assert_eq!(
+            deleted(&state(fresh), Some(below)),
+            ["a-1", "b-1"],
+            "only the first shown turn and the extra unshown turn are past the count"
         );
 
         let many: Vec<TurnSummary> = numbers(kept + 5)
@@ -628,10 +639,14 @@ mod tests {
     fn a_held_turn_whose_age_does_not_read_holds_its_worktree() {
         let mut odd = in_worktree(turn("a", 2, 0), "/w");
         odd.started_at = "yesterday".to_owned();
-        let turns = vec![in_worktree(turn("a", 1, 40), "/w"), odd.clone()];
         let mut limits = limits();
-        limits.held_turn_ids.insert(odd.turn_id);
-        assert!(deleted(&state(turns), Some(limits)).is_empty());
+        limits.held_turn_ids.insert(odd.turn_id.clone());
+        let turns = vec![
+            in_worktree(turn("a", 1, 40), "/w"),
+            odd,
+            in_worktree(turn("b", 1, 39), "/other"),
+        ];
+        assert_eq!(deleted(&state(turns), Some(limits)), ["b-1"]);
     }
 
     /// `turn` in repository `repository`, holding `bytes` of snapshots.
@@ -685,6 +700,10 @@ mod tests {
         ];
         let mut limits = limits();
         limits.max_repository_bytes = Some(50);
+        assert_eq!(
+            deleted(&state(turns.clone()), Some(limits.clone())),
+            ["a-1", "a-2"]
+        );
         limits.held_turn_ids.insert("a-1".to_owned());
         assert!(
             deleted(&state(turns), Some(limits)).is_empty(),
@@ -710,16 +729,27 @@ mod tests {
             turn("a", 4, 0),
         ];
         let mut limits = limits();
-        limits.max_turns = Some(2);
         limits.protected_turn_ids = ["a-1", "a-3"].map(str::to_owned).into();
-        // The read ones, a-2 and a-4, before any unread one.
+        let established = state(turns);
+        limits.max_turns = Some(3);
         assert_eq!(
-            deleted(&state(turns.clone()), Some(limits.clone())),
-            ["a-2", "a-4"]
+            deleted(&established, Some(limits.clone())),
+            ["a-2"],
+            "oldest read first"
         );
+        limits.max_turns = Some(2);
+        assert_eq!(deleted(&established, Some(limits.clone())), ["a-2", "a-4"]);
+        limits.max_turns = Some(1);
+        assert_eq!(
+            deleted(&established, Some(limits.clone())),
+            ["a-1", "a-2", "a-4"],
+            "once the read turns are chosen, only the oldest unread turn is added"
+        );
+        limits.max_turns = Some(2);
         limits.held_turn_ids.insert("a-1".to_owned());
-        let in_one_worktree = turns
-            .into_iter()
+        let in_one_worktree = established
+            .turns
+            .into_values()
             .map(|turn| in_worktree(turn, "/w"))
             .collect();
         assert_eq!(
@@ -740,7 +770,13 @@ mod tests {
         limits.max_repository_bytes = Some(50);
         limits.max_turns = Some(2);
         // a-1 goes for the size, which brings the count to the cap too.
-        assert_eq!(deleted(&state(turns), Some(limits)), ["a-1"]);
+        assert_eq!(
+            deleted(&state(turns.clone()), Some(limits.clone())),
+            ["a-1"]
+        );
+        // A tighter cap must select another turn, not count a-1 twice.
+        limits.max_turns = Some(1);
+        assert_eq!(deleted(&state(turns), Some(limits)), ["a-1", "a-2"]);
     }
 
     #[test]
@@ -749,15 +785,11 @@ mod tests {
         unknown.repository = Some("/r/.git".to_owned());
         let turns = vec![unknown, sized(turn("a", 2, 1), "/r/.git", 10)];
         let mut limits = limits();
+        let state = state(turns);
+        limits.max_repository_bytes = Some(10);
+        assert!(deleted(&state, Some(limits.clone())).is_empty());
         limits.max_repository_bytes = Some(5);
-        assert_eq!(deleted(&state(turns), Some(limits)), ["a-2"]);
-    }
-
-    #[test]
-    fn a_turn_still_started_by_a_run_that_is_gone_is_history() {
-        let mut cut_short = turn("a", 1, 30);
-        cut_short.phase = TurnPhase::Started;
-        assert_eq!(deleted(&state(vec![cut_short]), Some(limits())), ["a-1"]);
+        assert_eq!(deleted(&state, Some(limits)), ["a-2"]);
     }
 
     #[test]
@@ -775,9 +807,10 @@ mod tests {
             .chain([turn("b", 1, 500)])
             .collect();
         let gone = deleted(&state(turns), Some(limits()));
-        assert_eq!(gone.len(), MAX_TURN_DELETIONS_PER_PASS);
-        assert_eq!(gone[0], "b-1");
-        assert_eq!(gone[1], "a-1");
+        let first_hundred = std::iter::once("b-1".to_owned())
+            .chain((1..100).map(|number| format!("a-{number}")))
+            .collect::<Vec<_>>();
+        assert_eq!(gone, first_hundred);
     }
 
     #[test]
@@ -800,11 +833,19 @@ mod tests {
         let state = state(vec![turn("a", 1, 30)]);
         let commands = sweep(&state, &state, &input, &now);
         assert_eq!(
-            commands[0].target,
-            Target::Turn {
-                provider: ProviderId::new("claude").expect("provider id"),
-                turn_id: "a-1".to_owned()
-            }
+            commands,
+            [Command {
+                op: CommandOp::DeleteTurn {
+                    turn_id: "a-1".to_owned()
+                },
+                target: Target::Turn {
+                    provider: ProviderId::new("claude").expect("provider id"),
+                    turn_id: "a-1".to_owned(),
+                },
+                expect: Precondition::None,
+                on_mismatch: weir_agent_model::OnMismatch::Abort,
+                then: Vec::new(),
+            }]
         );
     }
 

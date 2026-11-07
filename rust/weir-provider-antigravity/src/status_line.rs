@@ -131,12 +131,22 @@ mod tests {
             .plan_usage(input, UNIX_EPOCH)
             .expect("usage");
         assert_eq!(usage.windows.len(), 1);
+        assert_eq!(usage.observed_at, "1970-01-01T00:00:00Z");
+        assert_eq!(usage.reset_credits, None);
         assert_eq!(usage.windows[0].kind, PlanUsageWindow::SEVEN_DAY);
         assert!((usage.windows[0].used_percent - 25.0).abs() < f64::EPSILON);
         assert_eq!(
             usage.windows[0].resets_at.as_deref(),
             Some("2026-11-08T04:03:03Z")
         );
+        for (remaining, used) in [(0.0, 100.0), (1.0, 0.0), (-0.25, 125.0), (1.25, -25.0)] {
+            let input =
+                serde_json::json!({"quota": {"gemini-weekly": {"remaining_fraction": remaining}}});
+            let usage = AntigravityStatusLine
+                .plan_usage(input.to_string().as_bytes(), UNIX_EPOCH)
+                .expect("finite usage");
+            assert!((usage.windows[0].used_percent - used).abs() < f64::EPSILON);
+        }
     }
 
     #[test]
@@ -172,6 +182,12 @@ mod tests {
     #[test]
     fn our_own_relay_is_never_the_persons_status_line() {
         let layer = serde_json::json!({"statusLine":{"type":"command","command":"/x/helper statusline antigravity"}});
+        let user = serde_json::json!({"type":"command","command":"printf status","padding":2});
+        let inherited = serde_json::json!({"statusLine": user});
+        assert_eq!(
+            AntigravityStatusLine.user_status_line(&[Some(layer.clone()), Some(inherited)]),
+            user.as_object().cloned()
+        );
         assert!(
             AntigravityStatusLine
                 .user_status_line(&[Some(layer)])

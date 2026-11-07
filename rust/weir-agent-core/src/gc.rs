@@ -298,12 +298,41 @@ mod tests {
         // The hint goes first and best-effort; the record goes after and only
         // if nothing has rewritten it.
         assert!(matches!(chain[0].op, CommandOp::Delete));
-        assert_eq!(chain[0].on_mismatch, weir_agent_model::OnMismatch::Continue);
-        assert!(matches!(chain[0].then[0].op, CommandOp::Retire));
         assert_eq!(
-            chain[0].then[0].on_mismatch,
-            weir_agent_model::OnMismatch::Abort
+            chain[0].target,
+            Target::SessionHint {
+                provider: claude(),
+                pane: PANE.parse().expect("pane")
+            }
         );
+        assert_eq!(
+            chain[0].expect,
+            Precondition::HintOwner {
+                run_id: Some(RUN.to_owned())
+            }
+        );
+        assert_eq!(chain[0].on_mismatch, weir_agent_model::OnMismatch::Continue);
+        let [retire] = chain[0].then.as_slice() else {
+            panic!("expected one retirement");
+        };
+        assert_eq!(retire.op, CommandOp::Retire);
+        assert_eq!(
+            retire.target,
+            Target::Record {
+                provider: claude(),
+                storage_id: RUN.to_owned()
+            }
+        );
+        assert_eq!(
+            retire.expect,
+            Precondition::RecordUnchanged {
+                storage_id: RUN.to_owned(),
+                revision: Some(4),
+                pid: Some("4242".to_owned()),
+                updated_at: "2026-09-14T12:00:00Z".to_owned()
+            }
+        );
+        assert_eq!(retire.on_mismatch, weir_agent_model::OnMismatch::Abort);
     }
 
     #[test]
@@ -382,7 +411,7 @@ mod tests {
     fn a_run_a_restore_has_claimed_is_left_alone() {
         let entries = records(vec![(RUN, run(Some(RUN), Some("4242")))]);
         let mut input = input(PidStatus::Dead);
-        input.resume_intents = vec![intent("2026-09-14T12:00:00Z")];
+        input.resume_intents = vec![intent("2026-09-13T12:10:01Z")];
         assert!(retirements(&sweep(&entries, &input, &BTreeSet::new(), &now())).is_empty());
     }
 
@@ -392,7 +421,7 @@ mod tests {
         // here would keep the record and the intent on disk indefinitely.
         let entries = records(vec![(RUN, run(Some(RUN), Some("4242")))]);
         let mut input = input(PidStatus::Dead);
-        input.resume_intents = vec![intent("2026-09-13T12:00:00Z")];
+        input.resume_intents = vec![intent("2026-09-13T12:10:00Z")];
         assert_eq!(
             retirements(&sweep(&entries, &input, &BTreeSet::new(), &now())).len(),
             1
@@ -438,18 +467,37 @@ mod tests {
     fn every_pass_sweeps_the_pane_stores_it_is_responsible_for() {
         let mut input = ProjectionInput::default();
         let mut descriptor = descriptor();
+        let alive = BTreeSet::from([PANE.parse().expect("pane")]);
         input.providers.insert(claude(), descriptor.clone());
-        let commands = sweep(&BTreeMap::new(), &input, &BTreeSet::new(), &now());
-        assert_eq!(commands.len(), 2, "two pane stores, nothing to prune");
-        assert_eq!(prunes(&commands), 0);
+        let cleanup = |store| {
+            Command::new(
+                CommandOp::CleanupPaneStore {
+                    keep: alive.clone(),
+                    max: MAX_PANE_RECORDS,
+                },
+                Target::PaneStore {
+                    provider: claude(),
+                    store,
+                },
+                Precondition::None,
+            )
+        };
+        let commands = sweep(&BTreeMap::new(), &input, &alive, &now());
+        assert_eq!(
+            commands,
+            [
+                cleanup(PaneStoreKind::Sessions),
+                cleanup(PaneStoreKind::CwdEvents)
+            ]
+        );
 
         // A provider that reports no cwd changes has no such directory to
         // sweep, so it gets one fewer command rather than an empty one.
         descriptor.capabilities.clear();
         input.providers.insert(claude(), descriptor);
         assert_eq!(
-            sweep(&BTreeMap::new(), &input, &BTreeSet::new(), &now()).len(),
-            1
+            sweep(&BTreeMap::new(), &input, &alive, &now()),
+            [cleanup(PaneStoreKind::Sessions)]
         );
     }
 

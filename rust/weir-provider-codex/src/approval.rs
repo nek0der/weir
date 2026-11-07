@@ -87,13 +87,19 @@ mod tests {
 
     #[test]
     fn keeps_the_turn_identifier_as_correlation_metadata() {
-        let payload = br#"{"hook_event_name":"PermissionRequest","session_id":"codex-session","turn_id":"turn-7","tool_name":"shell","tool_input":{"description":"Inspect status"}}"#;
+        let payload = br#"{"hook_event_name":"PermissionRequest","session_id":"codex-session","turn_id":"turn-7","tool_name":"shell","tool_input":{"command":["git","status"],"description":"Inspect status"}}"#;
         let request = approval_request(payload).expect("ok").expect("approval");
         assert_eq!(request.provider.as_str(), "codex");
         assert_eq!(request.session_id.as_deref(), Some("codex-session"));
         assert_eq!(request.operation_id.as_deref(), Some("turn-7"));
         assert_eq!(request.tool_name, "shell");
         assert_eq!(request.summary.as_deref(), Some("Inspect status"));
+        assert_eq!(
+            request.input,
+            json!({ "command": ["git", "status"], "description": "Inspect status" })
+        );
+        assert_eq!(request.timeout_ms, APPROVAL_TIMEOUT_MS);
+        assert!(request.questions.is_empty());
     }
 
     #[test]
@@ -103,51 +109,53 @@ mod tests {
             br#"{"hook_event_name":"PermissionRequest","tool_name":"","tool_input":{}}"#,
             br#"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":7}"#,
         ] {
-            assert_eq!(approval_request(payload).expect("ok"), None);
+            assert_eq!(approval_request(payload).expect("ok"), None, "{}", String::from_utf8_lossy(payload));
         }
         assert_eq!(approval_request(b"\"x\""), Err(NormalizeError::NotAnObject));
     }
 
     #[test]
     fn decisions_render_the_hook_output_the_agent_reads() {
-        let allow = approval_output(&ApprovalDecision::AllowOnce, &Value::Null)
-            .stdout
-            .expect("bytes");
-        assert_eq!(
-            String::from_utf8(allow).expect("utf8"),
-            r#"{"hookSpecificOutput":{"decision":{"behavior":"allow"},"hookEventName":"PermissionRequest"}}"#
-        );
-        let deny = approval_output(&ApprovalDecision::Deny { message: None }, &Value::Null)
-            .stdout
-            .expect("bytes");
-        assert_eq!(
-            String::from_utf8(deny).expect("utf8"),
-            r#"{"hookSpecificOutput":{"decision":{"behavior":"deny"},"hookEventName":"PermissionRequest"}}"#
-        );
-        let told = approval_output(
-            &ApprovalDecision::Deny {
-                message: Some("Blocked".into()),
-            },
-            &Value::Null,
-        )
-        .stdout
-        .expect("bytes");
-        assert_eq!(
-            String::from_utf8(told).expect("utf8"),
-            r#"{"hookSpecificOutput":{"decision":{"behavior":"deny","message":"Blocked"},"hookEventName":"PermissionRequest"}}"#
-        );
-        assert_eq!(
-            approval_output(&ApprovalDecision::Delegate, &Value::Null).stdout,
-            None
-        );
+        for (decision, output) in [
+            (
+                ApprovalDecision::AllowOnce,
+                r#"{"hookSpecificOutput":{"decision":{"behavior":"allow"},"hookEventName":"PermissionRequest"}}"#,
+            ),
+            (
+                ApprovalDecision::Deny { message: None },
+                r#"{"hookSpecificOutput":{"decision":{"behavior":"deny"},"hookEventName":"PermissionRequest"}}"#,
+            ),
+            (
+                ApprovalDecision::Deny {
+                    message: Some("Blocked".into()),
+                },
+                r#"{"hookSpecificOutput":{"decision":{"behavior":"deny","message":"Blocked"},"hookEventName":"PermissionRequest"}}"#,
+            ),
+        ] {
+            assert_eq!(
+                approval_output(&decision, &Value::Null).stdout.as_deref(),
+                Some(output.as_bytes()),
+                "{decision:?}"
+            );
+        }
     }
 
     #[test]
-    fn codex_answer_delegates() {
-        let answers = std::collections::BTreeMap::new();
-        assert_eq!(
-            approval_output(&ApprovalDecision::Answer { answers }, &json!({})).stdout,
-            None
-        );
+    fn delegate_and_answer_emit_no_output() {
+        for decision in [
+            ApprovalDecision::Delegate,
+            ApprovalDecision::Answer {
+                answers: std::collections::BTreeMap::from([(
+                    "Which license?".to_owned(),
+                    "MIT".to_owned(),
+                )]),
+            },
+        ] {
+            assert_eq!(
+                approval_output(&decision, &json!({})).stdout,
+                None,
+                "{decision:?}"
+            );
+        }
     }
 }

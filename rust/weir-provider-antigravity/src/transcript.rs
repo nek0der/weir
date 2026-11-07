@@ -278,10 +278,12 @@ mod tests {
         assert_eq!(runs.len(), 2);
         assert_eq!(runs[0].command, "make test");
         assert_eq!(runs[0].exit_code, Some(2));
+        assert_eq!(runs[1].command, "sleep 9");
         assert_eq!(runs[1].exit_code, None);
         let usage = reading.usage.expect("usage");
         assert_eq!(usage.input_tokens, 10);
         assert_eq!(usage.cache_read_tokens, 4);
+        assert_eq!(usage.output_tokens, 2);
     }
 
     #[test]
@@ -292,11 +294,14 @@ mod tests {
             r#"{"step_index":1,"type":"PLANNER_RESPONSE","input_tokens":10,"output_tokens":2,"tool_calls":[{"name":"invoke_subagent","args":{}}]}"#,
             "\n",
         );
-        assert!(
-            turn_reading(turn.as_bytes(), None)
-                .usage
-                .expect("usage")
-                .is_partial
+        assert_eq!(
+            turn_reading(turn.as_bytes(), None).usage,
+            Some(TurnUsage {
+                input_tokens: 10,
+                output_tokens: 2,
+                is_partial: true,
+                ..TurnUsage::default()
+            })
         );
         let usage = turn_reading(TURN.as_bytes(), None).usage.expect("usage");
         assert!(!usage.is_partial);
@@ -318,6 +323,8 @@ mod tests {
     fn a_turn_with_a_marker_counts_from_its_step_and_not_the_turn_before() {
         let reading = turn_reading(TURN.as_bytes(), Some("conversation#2"));
         assert_eq!(reading.usage, None);
+        assert_eq!(reading.commands, Some(Vec::new()));
+        assert_eq!(reading.marker.as_deref(), Some("conversation#2"));
     }
 
     #[test]
@@ -338,8 +345,26 @@ mod tests {
 
     #[test]
     fn a_turn_with_no_marker_is_what_follows_the_latest_input() {
-        let usage = turn_reading(TURN.as_bytes(), None).usage.expect("usage");
-        assert_eq!(usage.output_tokens, 2);
+        let transcript = concat!(
+            r#"{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT"}"#,
+            "\n",
+            r#"{"step_index":1,"type":"PLANNER_RESPONSE","input_tokens":50,"output_tokens":30}"#,
+            "\n",
+            r#"{"step_index":2,"source":"USER_EXPLICIT","type":"USER_INPUT"}"#,
+            "\n",
+            r#"{"step_index":3,"type":"PLANNER_RESPONSE","input_tokens":4,"output_tokens":2}"#,
+            "\n",
+        );
+        let reading = turn_reading(transcript.as_bytes(), None);
+        assert_eq!(
+            reading.usage,
+            Some(TurnUsage {
+                input_tokens: 4,
+                output_tokens: 2,
+                ..TurnUsage::default()
+            })
+        );
+        assert_eq!(reading.marker, None);
     }
 
     /// Steps 6 to 13 of a recorded session of `agy` 1.4.12: a command stopped

@@ -760,9 +760,13 @@ mod tests {
             "go test -run TestTurn ./...",
             "npm test -- --testNamePattern=turn",
         ] {
-            assert!(
-                check(narrowed).is_some_and(|run| run.is_filtered),
-                "{narrowed} is a filtered check"
+            assert_eq!(
+                check(narrowed),
+                Some(CheckRun {
+                    command: narrowed.to_owned(),
+                    is_filtered: true,
+                    is_exit_its_own: true
+                })
             );
         }
         for other in [
@@ -826,7 +830,7 @@ mod tests {
             "echo `make test`",
         ] {
             assert!(
-                check(another).is_none_or(|run| !run.is_exit_its_own),
+                check(another).is_some_and(|run| !run.is_exit_its_own),
                 "{another:?} ends with something else"
             );
         }
@@ -1020,6 +1024,7 @@ mod tests {
     #[test]
     fn quotes_and_escapes_stay_in_one_word() {
         assert!(check(r#"swift test --filter "Turn Tests""#).is_some_and(|run| run.is_filtered));
+        assert!(check(r"cargo te\st").is_some_and(|run| run.is_exit_its_own && !run.is_filtered));
         assert_eq!(check(r#"echo "make test""#), None);
         assert_eq!(check(r#"echo "a | make test""#), None);
         assert_eq!(check("echo 'make test # not a comment'"), None);

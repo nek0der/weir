@@ -166,6 +166,7 @@ lint: rust-lint
 	scripts/check-localization.sh
 	scripts/test-check-localization.sh
 	scripts/test-check-module-strings.sh
+	scripts/test-check-automation.sh
 	scripts/test-screenshot-app.sh
 	scripts/test-derive-expected-events.sh
 	scripts/test-shell-integration-pwd.sh

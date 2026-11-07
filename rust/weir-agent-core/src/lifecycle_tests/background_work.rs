@@ -42,7 +42,7 @@ fn replay_case(
         .join(case);
     let mut names: Vec<_> = std::fs::read_dir(&case)
         .expect("case")
-        .flatten()
+        .map(|entry| entry.expect("fixture entry"))
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| {
             name.starts_with('0') && name.ends_with("json") && !name.contains(".transcript")
@@ -166,19 +166,20 @@ fn a_codex_subagents_wait_after_the_stop_ends_finished() {
     };
     let (waiting, ..) = run(
         &codex(),
-        &[started(None), prompt("go"), stop(None), approval.clone()],
+        &[started(None), prompt("go"), stop(None), approval],
     );
     assert_eq!(waiting.state, RunState::NeedsInput);
-    let (record, ..) = run(
+    assert_eq!(waiting.caller, Some(subagent()));
+    assert_eq!(waiting.outside_turn_rest, Some(RunState::Finished));
+    let record = apply(
+        Some(&waiting),
+        &subagents_tool_end(),
+        &context(),
         &codex(),
-        &[
-            started(None),
-            prompt("go"),
-            stop(None),
-            approval,
-            subagents_tool_end(),
-        ],
-    );
+        NOW,
+    )
+    .run
+    .expect("the child tool closes its wait");
     assert_eq!(record.state, RunState::Finished);
     assert_eq!(record.run_started_at, None);
     assert_eq!(record.wait_kind, None);
@@ -235,6 +236,8 @@ fn the_agents_own_tool_after_the_stop_is_still_work() {
     );
     assert_eq!(record.state, RunState::Running);
     assert_eq!(record.background_work, Some(SHELL));
+    assert_eq!(record.run_started_at, None);
+    assert_eq!(record.outside_turn_rest, Some(RunState::Finished));
 }
 
 const SUBAGENT: BackgroundWork = BackgroundWork {
@@ -303,18 +306,23 @@ fn a_subagents_tool_end_still_ends_its_wait() {
         detail: Some("Claude needs your permission".into()),
         caller: Caller::Unnamed,
     };
-    let (record, ..) = run(
+    let (waiting, ..) = run(
         &claude(),
-        &[
-            started(None),
-            prompt("go"),
-            stop(Some(SUBAGENT)),
-            approval,
-            question_end(true),
-        ],
+        &[started(None), prompt("go"), stop(Some(SUBAGENT)), approval],
     );
+    assert_eq!(waiting.state, RunState::NeedsInput);
+    let record = apply(
+        Some(&waiting),
+        &question_end(true),
+        &context(),
+        &claude(),
+        NOW,
+    )
+    .run
+    .expect("tool closes the wait");
     assert_eq!(record.state, RunState::Running);
     assert_eq!(record.wait_kind, None);
+    assert_eq!(record.background_work, Some(SUBAGENT));
 }
 
 /// At `idle` no stop counted the subagent, so its tools are the one sign of

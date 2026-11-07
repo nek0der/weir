@@ -120,20 +120,27 @@ mod tests {
             timeout_ms: 570_000,
             questions: Vec::new(),
         };
-        let json = serde_json::to_string(&request).expect("ok");
-        assert!(!json.contains("summary"));
-        let back: ApprovalRequest = serde_json::from_str(&json).expect("ok");
+        let value = serde_json::to_value(&request).expect("encode");
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "provider": "codex", "session_id": "s", "operation_id": "t",
+                "tool_name": "Bash", "input": {"command": "ls"}, "timeout_ms": 570_000,
+            })
+        );
+        let back: ApprovalRequest = serde_json::from_value(value).expect("decode");
         assert_eq!(back, request);
     }
 
     #[test]
     fn answer_decision_serializes_with_sorted_answers() {
         let mut answers = BTreeMap::new();
+        answers.insert("Which size?".to_owned(), "Small".to_owned());
         answers.insert("Which color?".to_owned(), "Red".to_owned());
         let answer = serde_json::to_string(&ApprovalDecision::Answer { answers }).expect("ok");
         assert_eq!(
             answer,
-            "{\"decision\":\"answer\",\"answers\":{\"Which color?\":\"Red\"}}"
+            r#"{"decision":"answer","answers":{"Which color?":"Red","Which size?":"Small"}}"#
         );
         let parsed: ApprovalDecision =
             serde_json::from_str("{\"decision\":\"answer\",\"answers\":{}}").expect("ok");
@@ -171,8 +178,15 @@ mod tests {
             }],
             multi_select: true,
         });
-        let json = serde_json::to_string(&request).expect("ok");
-        let back: ApprovalRequest = serde_json::from_str(&json).expect("ok");
+        let value = serde_json::to_value(&request).expect("encode");
+        assert_eq!(
+            value["questions"],
+            serde_json::json!([{
+                "header": "Color", "prompt": "Which color?", "options": [{"label": "Red"}],
+                "multi_select": true,
+            }])
+        );
+        let back: ApprovalRequest = serde_json::from_value(value).expect("decode");
         assert_eq!(back, request);
     }
 }

@@ -10,7 +10,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 use support::{RUN, Repo, SESSION_START, only_turn, prompt, recorded_turn, turn_env, turn_ref};
-use weir_agent_hook::worktree_lock::{ExclusiveLock, Interruption, Limits, WorktreeLockPaths};
+use weir_agent_hook::worktree_lock::{
+    ExclusiveError, ExclusiveLock, Interruption, Limits, WorktreeLockPaths,
+};
 use weir_agent_hook::{
     GitSnapshots, HookOutcome, HookRuntime, NoSnapshots, SnapshotRunner, TURNS_DIRECTORY,
     TurnDeletion, TurnSide, delete_turns, delete_turns_waiting, format_utc_seconds, run_hook,
@@ -31,8 +33,10 @@ impl SnapshotRunner for ProbingLock {
     fn capture(&self, cwd: &Path, pane_id: &str, side: TurnSide) -> weir_agent_core::SnapshotTaken {
         if side == TurnSide::Begin {
             let paths = WorktreeLockPaths::new(&self.git_dir);
-            let is_held =
-                ExclusiveLock::acquire(&paths, Duration::ZERO, Duration::from_millis(1)).is_err();
+            let is_held = matches!(
+                ExclusiveLock::acquire(&paths, Duration::ZERO, Duration::from_millis(1)),
+                Err(ExclusiveError::Busy)
+            );
             self.seen
                 .borrow_mut()
                 .push(format!("held while the snapshot is taken: {is_held}"));
@@ -133,9 +137,14 @@ fn a_prompt_during_a_restore_waits_for_it_and_skips_its_snapshot() {
     // Its snapshot given up, the hook still waited for the restore, so the
     // turn starts after it as well.
     assert!(
-        parse_utc_seconds(&turn.started_at) >= parse_utc_seconds(&released),
+        parse_utc_seconds(&turn.started_at).expect("turn time")
+            >= parse_utc_seconds(&released).expect("release time"),
         "started {} before the restore let go at {released}",
         turn.started_at
+    );
+    assert_eq!(
+        run_started_at(&states).as_deref(),
+        Some(turn.started_at.as_str())
     );
 }
 
@@ -213,7 +222,8 @@ fn a_prompt_kept_waiting_by_a_restore_starts_once_the_restore_lets_go() {
         "the snapshot is still taken"
     );
     assert!(
-        parse_utc_seconds(&turn.started_at) >= parse_utc_seconds(&released),
+        parse_utc_seconds(&turn.started_at).expect("turn time")
+            >= parse_utc_seconds(&released).expect("comparison time"),
         "started {} before the restore let go at {released}",
         turn.started_at
     );
@@ -254,7 +264,10 @@ fn a_prompt_with_the_lock_free_is_stamped_once_it_holds_it() {
     let states = repo.root.join("support/states");
     let before = prompt_called_long_ago(&states, &repo.path, None);
     let turn = only_turn(&states);
-    assert!(parse_utc_seconds(&turn.started_at) >= parse_utc_seconds(&before));
+    assert!(
+        parse_utc_seconds(&turn.started_at).expect("turn time")
+            >= parse_utc_seconds(&before).expect("comparison time")
+    );
     assert_eq!(
         run_started_at(&states).as_deref(),
         Some(turn.started_at.as_str())
@@ -269,7 +282,9 @@ fn a_prompt_with_no_lock_keeps_its_call_time() {
     let outside = repo.root.join("outside");
     fs::create_dir_all(&outside).expect("outside");
     let _ = prompt_called_long_ago(&states, &outside, None);
-    assert_eq!(only_turn(&states).started_at, CALLED_AT);
+    let turn = only_turn(&states);
+    assert_eq!(turn.started_at, CALLED_AT);
+    assert_eq!(turn.begin, SnapshotStatus::NotGit);
     assert_eq!(run_started_at(&states).as_deref(), Some(CALLED_AT));
 }
 
@@ -300,7 +315,14 @@ fn a_prompt_a_restore_never_lets_go_starts_when_the_hook_gives_up() {
             reason: "restoreNotResponding".to_owned()
         }
     );
-    assert!(parse_utc_seconds(&turn.started_at) >= parse_utc_seconds(&before));
+    assert!(
+        parse_utc_seconds(&turn.started_at).expect("turn time")
+            >= parse_utc_seconds(&before).expect("comparison time")
+    );
+    assert_eq!(
+        run_started_at(&states).as_deref(),
+        Some(turn.started_at.as_str())
+    );
 }
 
 #[test]
@@ -342,8 +364,11 @@ fn deleting_a_turn_leaves_it_to_the_next_sweep_while_a_restore_runs() {
         None,
         "a sweep does not stop a restore"
     );
-    assert!(turn_ref(&repo, &turn.turn_id, "begin").is_some());
-    assert!(turns.join(format!("{}.turn.json", turn.turn_id)).exists());
+    for side in ["begin", "end"] {
+        assert!(turn_ref(&repo, &turn.turn_id, side).is_some(), "{side}");
+    }
+    let path = turns.join(format!("{}.turn.json", turn.turn_id));
+    assert!(path.exists());
     drop(restore);
     assert_eq!(
         delete_turns(&turns, std::slice::from_ref(&turn.turn_id), &GitSnapshots),
@@ -351,4 +376,8 @@ fn deleting_a_turn_leaves_it_to_the_next_sweep_while_a_restore_runs() {
             turn_id: turn.turn_id.clone()
         }]
     );
+    assert!(!path.exists());
+    for side in ["begin", "end"] {
+        assert!(turn_ref(&repo, &turn.turn_id, side).is_none(), "{side}");
+    }
 }

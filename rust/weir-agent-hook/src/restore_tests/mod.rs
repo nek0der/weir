@@ -90,12 +90,7 @@ impl Repo {
 
     fn git_with_input(&self, args: &[&str], input: &[u8]) {
         use std::io::Write;
-        let mut child = Command::new("git")
-            .env("GIT_CONFIG_GLOBAL", "/dev/null")
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .arg("-C")
-            .arg(&self.path)
-            .args(args)
+        let mut child = git_runner::command(&self.path, args)
             .stdin(std::process::Stdio::piped())
             .spawn()
             .unwrap();

@@ -187,15 +187,20 @@ mod tests {
     }
 
     #[test]
-    fn a_declined_call_has_ended() {
-        assert!(ended(&[
-            call("m1", "t1"),
-            result("t1"),
-            INTERRUPT.to_owned()
-        ]));
-        // Either line alone says so.
-        assert!(ended(&[call("m1", "t1"), result("t1")]));
-        assert!(ended(&[call("m1", "t1"), INTERRUPT.to_owned()]));
+    fn a_result_ends_the_call_and_only_an_interrupt_ends_the_turn() {
+        for (following, is_interrupted) in [
+            (vec![result("t1"), INTERRUPT.to_owned()], true),
+            (vec![result("t1")], false),
+            (vec![INTERRUPT.to_owned()], true),
+        ] {
+            let bytes = [vec![call("m1", "t1")], following].concat().join("\n");
+            assert!(transcript_awaited_call_ended(bytes.as_bytes()), "{bytes}");
+            assert_eq!(
+                transcript_awaited_call_interrupted(bytes.as_bytes()),
+                is_interrupted,
+                "{bytes}"
+            );
+        }
     }
 
     #[test]
@@ -255,16 +260,7 @@ mod tests {
     }
 
     #[test]
-    fn only_an_interrupt_after_the_call_says_the_person_declined_it() {
-        assert!(interrupted(&[
-            call("m1", "t1"),
-            result("t1"),
-            INTERRUPT.to_owned()
-        ]));
-        assert!(interrupted(&[call("m1", "t1"), INTERRUPT.to_owned()]));
-        // A result alone is also an answer or an approval, which its own
-        // hook follows.
-        assert!(!interrupted(&[call("m1", "t1"), result("t1")]));
+    fn an_interrupt_without_a_preceding_call_does_not_end_a_wait() {
         assert!(!interrupted(&[call("m1", "t1")]));
         // An interrupt before the call ended something else.
         assert!(!interrupted(&[
@@ -286,9 +282,9 @@ mod tests {
 
     #[test]
     fn a_real_declined_question_reads_as_interrupted_and_an_open_one_as_open() {
-        assert_eq!(awaited_call(DECLINED), AwaitedCall::Interrupted);
         assert!(transcript_awaited_call_ended(DECLINED));
-        assert_eq!(awaited_call(OPEN), AwaitedCall::Open);
+        assert!(transcript_awaited_call_interrupted(DECLINED));
         assert!(!transcript_awaited_call_ended(OPEN));
+        assert!(!transcript_awaited_call_interrupted(OPEN));
     }
 }

@@ -131,16 +131,16 @@ mod tests {
 
     #[test]
     fn every_word_parses_back_to_the_mode_it_is_written_as() {
-        for mode in [
-            PermissionMode::Default,
-            PermissionMode::AcceptEdits,
-            PermissionMode::Plan,
-            PermissionMode::Auto,
-            PermissionMode::DontAsk,
-            PermissionMode::BypassPermissions,
+        for (word, mode) in [
+            ("default", PermissionMode::Default),
+            ("acceptEdits", PermissionMode::AcceptEdits),
+            ("plan", PermissionMode::Plan),
+            ("auto", PermissionMode::Auto),
+            ("dontAsk", PermissionMode::DontAsk),
+            ("bypassPermissions", PermissionMode::BypassPermissions),
         ] {
-            let word = serde_json::to_value(mode).unwrap();
-            assert_eq!(PermissionMode::parse(word.as_str().unwrap()), Some(mode));
+            assert_eq!(serde_json::to_value(mode).unwrap(), serde_json::json!(word));
+            assert_eq!(PermissionMode::parse(word), Some(mode));
         }
     }
 

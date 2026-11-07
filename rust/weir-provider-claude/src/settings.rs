@@ -171,9 +171,9 @@ mod tests {
     #[test]
     fn a_stop_reads_the_model_of_the_turns_answer() {
         let stop = br#"{"hook_event_name":"Stop"}"#;
-        let answered = |transcript: &str| {
+        let read = |transcript: &str| {
             let object = parse_object(stop, 1 << 20).expect("object");
-            session_settings(&object, Some(transcript.as_bytes())).answered_model
+            session_settings(&object, Some(transcript.as_bytes()))
         };
         let answer = |model: &str, sidechain: bool| {
             format!(
@@ -182,13 +182,14 @@ mod tests {
         };
         let user = r#"{"type":"user","isSidechain":false,"message":{}}"#;
         assert_eq!(
-            answered(&format!(
+            read(&format!(
                 "{}\n{}\n{}\n{}\n",
                 user,
                 answer("claude-opus-5-5", false),
                 answer("claude-haiku-5-5", true),
                 answer("<synthetic>", false)
             ))
+            .answered_model
             .as_deref(),
             Some("Opus 5.5")
         );
@@ -196,12 +197,13 @@ mod tests {
         // it do not hide the answer.
         let meta = r#"{"type":"user","isSidechain":false,"isMeta":true,"message":{}}"#;
         assert_eq!(
-            answered(&format!(
+            read(&format!(
                 "{}\n{}\n{}\n",
                 user,
                 answer("claude-opus-5-5", false),
                 meta
             ))
+            .answered_model
             .as_deref(),
             Some("Opus 5.5")
         );
@@ -213,16 +215,16 @@ mod tests {
             user,
             answer("<synthetic>", false)
         );
-        assert_eq!(answered(&waiting), None);
-        let object = parse_object(stop, 1 << 20).expect("object");
-        assert!(session_settings(&object, Some(waiting.as_bytes())).is_awaiting_answer);
+        let waiting = read(&waiting);
+        assert_eq!(waiting.answered_model, None);
+        assert!(waiting.is_awaiting_answer);
 
         let prompt =
             parse_object(br#"{"hook_event_name":"UserPromptSubmit"}"#, 1 << 20).expect("object");
         let transcript = answer("claude-opus-5-5", false);
         assert_eq!(
-            session_settings(&prompt, Some(transcript.as_bytes())).answered_model,
-            None
+            session_settings(&prompt, Some(transcript.as_bytes())),
+            SessionSettings::default()
         );
     }
 
@@ -237,10 +239,6 @@ mod tests {
         assert_eq!(
             settings(r#"{"hook_event_name":"UserPromptSubmit"}"#).effort,
             None
-        );
-        assert!(
-            settings(r#"{"hook_event_name":"PreToolUse","agent_id":"a","effort":{"level":"low"}}"#)
-                .is_empty()
         );
     }
 
@@ -314,11 +312,11 @@ mod tests {
 
     #[test]
     fn a_subagents_call_says_nothing_of_the_session() {
-        assert!(
+        assert_eq!(
             settings(
-                r#"{"hook_event_name":"PreToolUse","agent_id":"a1","agent_type":"Explore","permission_mode":"acceptEdits"}"#
-            )
-            .is_empty()
+                r#"{"hook_event_name":"PreToolUse","agent_id":"a1","agent_type":"Explore","permission_mode":"acceptEdits","effort":{"level":"low"}}"#
+            ),
+            SessionSettings::default()
         );
     }
 

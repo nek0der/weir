@@ -111,6 +111,10 @@ fn each_session_keeps_its_own_record_under_the_run_the_call_names() {
     scratch.call(A, None, &session("ses_a"));
     scratch.call(B, None, &session("ses_b"));
     let (a, b) = (scratch.record(A), scratch.record(B));
+    assert_eq!(a.run_id.as_deref(), Some(A));
+    assert_eq!(b.run_id.as_deref(), Some(B));
+    assert_eq!(a.session_id.as_deref(), Some("ses_a"));
+    assert_eq!(b.session_id.as_deref(), Some("ses_b"));
     assert_eq!(a.pane_family_run_id.as_deref(), Some(A));
     assert_eq!(b.pane_family_run_id.as_deref(), Some(A));
     // A tab is no nested launch: the tmux family rules go by this.
@@ -132,6 +136,10 @@ fn a_wait_in_the_session_behind_leaves_the_shown_sessions_record_alone() {
     scratch.call(B, None, &session("ses_b"));
     scratch.call(A, None, &started("ses_a"));
     scratch.call(B, None, &started("ses_b"));
+    scratch.call(A, None, &shown(B, "ses_b"));
+    assert_eq!(scratch.record(A).pane_shown_run_id.as_deref(), Some(B));
+    let shown_before = scratch.record(B);
+    assert_eq!(shown_before.state, RunState::Running);
     scratch.call(
         A,
         None,
@@ -141,7 +149,7 @@ fn a_wait_in_the_session_behind_leaves_the_shown_sessions_record_alone() {
         }),
     );
     assert_eq!(scratch.record(A).state, RunState::NeedsInput);
-    assert_eq!(scratch.record(B).state, RunState::Running);
+    assert_eq!(scratch.record(B), shown_before);
 }
 
 #[test]
@@ -161,6 +169,8 @@ fn being_shown_and_getting_a_name_write_only_what_they_say() {
     assert_eq!(after.pane_shown_run_id.as_deref(), Some(B));
     assert_eq!(after.provider_session_title.as_deref(), Some("Fix login"));
     assert_eq!(after.state_episode_token, before.state_episode_token);
+    assert_eq!(after.run_started_at, before.run_started_at);
+    assert_eq!(after.session_id, before.session_id);
 }
 
 #[test]
@@ -237,6 +247,8 @@ fn what_is_on_screen_says_when_its_save_failed() {
         try_call(&scratch, A, &shown(A, "ses_a")),
         HookOutcome::Applied
     );
+    let before_record = scratch.record(A);
+    let before_hint = scratch.hint();
     let protect = |directory: &str, mode: u32| {
         fs::set_permissions(scratch.0.join(directory), fs::Permissions::from_mode(mode))
             .expect("mode");
@@ -245,14 +257,20 @@ fn what_is_on_screen_says_when_its_save_failed() {
     let record = try_call(&scratch, A, &shown(B, "ses_b"));
     protect("states", 0o700);
     assert!(matches!(record, HookOutcome::NotRecorded(_)), "{record:?}");
+    assert_eq!(scratch.record(A), before_record);
+    assert_eq!(scratch.hint(), before_hint);
     protect("sessions", 0o500);
     let hint = try_call(&scratch, A, &shown(B, "ses_b"));
     protect("sessions", 0o700);
     assert!(matches!(hint, HookOutcome::NotRecorded(_)), "{hint:?}");
+    assert_eq!(scratch.record(A).pane_shown_run_id.as_deref(), Some(B));
+    assert_eq!(scratch.hint(), before_hint);
     assert_eq!(
         try_call(&scratch, A, &shown(B, "ses_b")),
         HookOutcome::Applied
     );
+    assert_eq!(scratch.hint()["runId"], B);
+    assert_eq!(scratch.hint()["sessionId"], "ses_b");
 }
 
 /// Longer than an ordinary event's wait: a short hold is no loss.
@@ -360,9 +378,27 @@ fn two_open_turns_in_one_tree_each_count_the_others_edits() {
     }
     let turns = scratch.turns();
     assert_eq!(turns.len(), 2);
+    assert!(
+        turns
+            .iter()
+            .any(|turn| turn.run_id == A && turn.conversation.conversation_id == "ses_a")
+    );
+    assert!(
+        turns
+            .iter()
+            .any(|turn| turn.run_id == B && turn.conversation.conversation_id == "ses_b")
+    );
     for turn in &turns {
         assert!(
-            matches!(turn.changes, ChangeSummary::Changed { files: 2, .. }),
+            matches!(
+                turn.changes,
+                ChangeSummary::Changed {
+                    files: 2,
+                    added: 2,
+                    removed: 0,
+                    ..
+                }
+            ),
             "{:?}",
             turn.changes
         );
@@ -374,10 +410,9 @@ const CHILD_REPO: &str = "WEIR_TEST_CAPTURE_REPO";
 /// Not a test of its own: what `two_processes_capture_one_pane_at_once` starts, as a
 /// capture's scratch index is named for its process.
 #[test]
+#[ignore = "child entry point run by two_processes_capture_one_pane_at_once"]
 fn capture_as_a_child_process() {
-    let Ok(repo) = std::env::var(CHILD_REPO) else {
-        return;
-    };
+    let repo = std::env::var(CHILD_REPO).expect("parent passes its scratch repository");
     for _ in 0..12 {
         let taken = GitSnapshots.capture(Path::new(&repo), PANE, TurnSide::End);
         assert!(
@@ -386,6 +421,7 @@ fn capture_as_a_child_process() {
             taken.status
         );
     }
+    println!("child completed its captures");
 }
 
 /// Git fails on an index another process holds the lock of, so one scratch index per
@@ -399,18 +435,25 @@ fn two_processes_capture_one_pane_at_once() {
     let children: Vec<_> = (0..3)
         .map(|_| {
             Command::new(std::env::current_exe().expect("test binary"))
-                .args(["--exact", "capture_as_a_child_process", "--nocapture"])
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "capture_as_a_child_process",
+                    "--nocapture",
+                ])
                 .env(CHILD_REPO, &repo.path)
                 .output_in_background()
         })
         .collect();
     for child in children {
         let output = child.wait_with_output().expect("child");
+        let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stdout)
+            "{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
         );
+        assert!(stdout.contains("child completed its captures"), "{stdout}");
     }
     let left: Vec<_> = fs::read_dir(repo.git_dir().join("weir"))
         .expect("directory")

@@ -442,10 +442,25 @@ mod tests {
                 payload: serde_json::json!({"notification_type": "auth_success"}),
             },
         ];
-        let json = serde_json::to_string(&events).expect("serialize");
-        assert!(json.contains("\"type\":\"session_started\""));
-        assert!(json.contains("\"type\":\"compacting\""));
-        let back: Vec<AgentEvent> = serde_json::from_str(&json).expect("deserialize");
+        let json = serde_json::to_value(&events).expect("serialize");
+        let types: Vec<_> = json
+            .as_array()
+            .expect("event array")
+            .iter()
+            .map(|event| event["type"].as_str().expect("type tag"))
+            .collect();
+        assert_eq!(
+            types,
+            [
+                "session_started",
+                "compacting",
+                "turn_finished",
+                "awaiting_prompt",
+                "awaiting_prompt",
+                "extension"
+            ]
+        );
+        let back: Vec<AgentEvent> = serde_json::from_value(json).expect("deserialize");
         assert_eq!(back, events);
     }
 
@@ -498,7 +513,7 @@ mod tests {
     fn added_titles_fill_only_what_the_payload_left_empty() {
         let added = Titles {
             session_title: Some("Indexed".into()),
-            generated_title: None,
+            generated_title: Some("Generated".into()),
         };
         let mut finished = AgentEvent::TurnFinished {
             continues_after_stop_hook: false,
@@ -513,8 +528,9 @@ mod tests {
         finished.add_titles(&added);
         assert!(matches!(
             finished,
-            AgentEvent::TurnFinished { titles: Some(Titles { ref session_title, .. }), .. }
+            AgentEvent::TurnFinished { titles: Some(Titles { ref session_title, ref generated_title }), .. }
                 if session_title.as_deref() == Some("From the payload")
+                    && generated_title.as_deref() == Some("Generated")
         ));
 
         let mut prompt = AgentEvent::PromptSubmitted {

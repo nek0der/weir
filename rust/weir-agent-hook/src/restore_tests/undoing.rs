@@ -40,6 +40,12 @@ fn undo_refuses_after_further_edits() {
         }
     );
     assert_eq!(repo.read("a.txt").as_deref(), Some("later\n"));
+    assert_eq!(repo.read("keep.txt").as_deref(), Some("keep\n"));
+    assert_eq!(repo.read("new/made.txt"), None);
+    assert_eq!(
+        repo.worktree().journal(&restored.op_id).unwrap(),
+        Some(restored)
+    );
 }
 
 #[test]
@@ -86,6 +92,12 @@ fn undo_refuses_after_a_commit() {
     repo.commit("later");
 
     assert_eq!(refused(repo.undo(&restored.op_id)), Refusal::HeadMoved);
+    assert_eq!(repo.read("a.txt").as_deref(), Some("a\n"));
+    assert_eq!(repo.read("new/made.txt"), None);
+    assert_eq!(
+        repo.worktree().journal(&restored.op_id).unwrap(),
+        Some(restored)
+    );
 }
 
 /// A file made where the undo puts a directory back, plain or ignored, is

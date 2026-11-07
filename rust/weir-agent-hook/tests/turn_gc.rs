@@ -46,7 +46,12 @@ fn delete_turn_is_idempotent() {
     let (states, turn) = recorded_turn(&repo);
     let turns = states.join(TURNS_DIRECTORY);
     let ids = [turn.turn_id.clone()];
-    let _ = delete_turns(&turns, &ids, &GitSnapshots);
+    assert_eq!(
+        delete_turns(&turns, &ids, &GitSnapshots),
+        vec![TurnDeletion::Deleted {
+            turn_id: turn.turn_id.clone()
+        }]
+    );
 
     assert_eq!(
         delete_turns(&turns, &ids, &GitSnapshots),
@@ -62,25 +67,29 @@ fn delete_turn_is_idempotent() {
 
 #[test]
 fn a_deletion_cut_short_is_finished_by_the_next_call() {
-    let repo = Repo::new("gc-resume");
-    let (states, turn) = recorded_turn(&repo);
-    let turns = states.join(TURNS_DIRECTORY);
-    // As if a call moved the record aside and stopped there.
-    let record = turns.join(format!("{}.turn.json", turn.turn_id));
-    let aside = turns.join(format!(".{}.turn.json.deleting", turn.turn_id));
-    fs::rename(&record, &aside).expect("aside");
-
-    let deletions = delete_turns(&turns, &[], &GitSnapshots);
-
-    assert!(!aside.exists());
-    assert_eq!(turn_ref(&repo, &turn.turn_id, "end"), None);
-    // Reported though nobody asked for it, so the host forgets it.
-    assert_eq!(
-        deletions,
-        vec![TurnDeletion::Deleted {
-            turn_id: turn.turn_id.clone()
-        }]
-    );
+    for requested in [false, true] {
+        let repo = Repo::new("gc-resume");
+        let (states, turn) = recorded_turn(&repo);
+        let turns = states.join(TURNS_DIRECTORY);
+        let record = record_path(&turns, &turn.turn_id);
+        let aside = aside_path(&turns, &turn.turn_id);
+        fs::rename(&record, &aside).expect("aside");
+        let ids = if requested {
+            std::slice::from_ref(&turn.turn_id)
+        } else {
+            &[]
+        };
+        assert_eq!(
+            delete_turns(&turns, ids, &GitSnapshots),
+            vec![TurnDeletion::Deleted {
+                turn_id: turn.turn_id.clone()
+            }],
+            "requested: {requested}"
+        );
+        assert!(!record.exists() && !aside.exists());
+        assert_eq!(turn_ref(&repo, &turn.turn_id, "begin"), None);
+        assert_eq!(turn_ref(&repo, &turn.turn_id, "end"), None);
+    }
 }
 
 /// Git refusing every ref deletion.
@@ -123,11 +132,18 @@ fn a_ref_git_refuses_puts_the_record_back_and_an_unreadable_record_stays() {
     let (states, turn) = recorded_turn(&repo);
     let turns = states.join(TURNS_DIRECTORY);
     let record = turns.join(format!("{}.turn.json", turn.turn_id));
+    let original = fs::read(&record).expect("record before deletion");
 
     let outcome = delete_turns(&turns, std::slice::from_ref(&turn.turn_id), &RefusingRefs);
 
-    assert!(matches!(outcome[..], [TurnDeletion::Failed { .. }]));
-    assert!(record.exists(), "the next sweep asks again");
+    assert!(
+        matches!(&outcome[..], [TurnDeletion::Failed { turn_id, .. }] if turn_id == &turn.turn_id)
+    );
+    assert_eq!(
+        fs::read(&record).expect("put back for the next sweep"),
+        original
+    );
+    assert!(!aside_path(&turns, &turn.turn_id).exists());
     assert!(turn_ref(&repo, &turn.turn_id, "begin").is_some());
 
     // A newer build's record: its refs may be named where this one cannot
@@ -139,7 +155,10 @@ fn a_ref_git_refuses_puts_the_record_back_and_an_unreadable_record_stays() {
             turn_id: turn.turn_id.clone()
         }]
     );
-    assert!(record.exists());
+    assert_eq!(
+        fs::read(&record).expect("unreadable record"),
+        br#"{"schemaVersion":99}"#
+    );
     assert!(turn_ref(&repo, &turn.turn_id, "begin").is_some());
 }
 
@@ -212,6 +231,8 @@ fn a_removed_worktree_with_no_common_directory_recorded_leaves_its_refs() {
     let repo = Repo::new("gc-gone-root-old");
     let gone = repo.root.join("removed");
     let (turns, turn) = turn_naming(&repo, &gone, false);
+    let before =
+        ["begin", "end"].map(|side| turn_ref(&repo, &turn.turn_id, side).expect("pinned tree"));
 
     assert_eq!(
         delete_turns(&turns, std::slice::from_ref(&turn.turn_id), &GitSnapshots),
@@ -221,6 +242,12 @@ fn a_removed_worktree_with_no_common_directory_recorded_leaves_its_refs() {
         }]
     );
     assert!(!record_path(&turns, &turn.turn_id).exists());
+    assert_eq!(
+        ["begin", "end"]
+            .map(|side| turn_ref(&repo, &turn.turn_id, side)
+                .expect("ref without a recorded location")),
+        before
+    );
 }
 
 #[test]
@@ -309,31 +336,13 @@ fn an_unreadable_record_left_aside_is_put_back() {
     let record = record_path(&turns, &turn.turn_id);
     let aside = aside_path(&turns, &turn.turn_id);
     rewrite(&record, |value| value["schemaVersion"] = 2.into());
+    let original = fs::read(&record).expect("newer record");
     fs::rename(&record, &aside).expect("aside");
 
     let _ = delete_turns(&turns, &[], &GitSnapshots);
 
-    assert!(record.exists(), "readers find it again");
+    assert_eq!(fs::read(&record).expect("readers find it again"), original);
     assert!(!aside.exists());
-}
-
-#[test]
-fn a_turn_asked_for_and_left_aside_is_reported_as_deleted() {
-    let repo = Repo::new("gc-asked-aside");
-    let (states, turn) = recorded_turn(&repo);
-    let turns = states.join(TURNS_DIRECTORY);
-    fs::rename(
-        record_path(&turns, &turn.turn_id),
-        aside_path(&turns, &turn.turn_id),
-    )
-    .expect("aside");
-
-    assert_eq!(
-        delete_turns(&turns, std::slice::from_ref(&turn.turn_id), &GitSnapshots),
-        vec![TurnDeletion::Deleted {
-            turn_id: turn.turn_id.clone()
-        }]
-    );
 }
 
 /// A recorded turn whose snapshots name `root` instead of the repository;

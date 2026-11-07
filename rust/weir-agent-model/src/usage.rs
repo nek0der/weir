@@ -192,8 +192,8 @@ mod tests {
             ..UsageLimit::default()
         };
         assert_eq!(
-            serde_json::to_string(&limit).unwrap(),
-            r#"{"resetsAt":"2026-10-13T06:40:00Z","window":"five_hour"}"#
+            serde_json::to_value(&limit).unwrap(),
+            serde_json::json!({"resetsAt": "2026-10-13T06:40:00Z", "window": "five_hour"})
         );
         assert_eq!(serde_json::to_string(&UsageLimit::default()).unwrap(), "{}");
         assert_eq!(
@@ -204,22 +204,36 @@ mod tests {
 
     #[test]
     fn a_limit_that_holds_less_than_the_account_says_so() {
-        let limit = UsageLimit {
-            scope: UsageLimitScope::Upstream,
-            label: Some("Free usage".to_owned()),
-            ..UsageLimit::default()
-        };
-        let text = serde_json::to_string(&limit).unwrap();
-        assert_eq!(text, r#"{"scope":"upstream","label":"Free usage"}"#);
-        assert_eq!(serde_json::from_str::<UsageLimit>(&text).unwrap(), limit);
+        for (scope, word) in [
+            (UsageLimitScope::Upstream, "upstream"),
+            (UsageLimitScope::Model, "model"),
+        ] {
+            let limit = UsageLimit {
+                scope,
+                label: Some("Free usage".to_owned()),
+                ..UsageLimit::default()
+            };
+            let value = serde_json::to_value(&limit).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({"scope": word, "label": "Free usage"})
+            );
+            assert_eq!(serde_json::from_value::<UsageLimit>(value).unwrap(), limit);
+        }
     }
 
     #[test]
-    fn a_scope_this_build_does_not_know_keeps_the_limit_and_marks_no_other_agent() {
-        let limit: UsageLimit =
-            serde_json::from_str(r#"{"window":"w","scope":"from-a-newer-build"}"#).unwrap();
-        assert_eq!(limit.scope, UsageLimitScope::Upstream);
-        assert_eq!(limit.window.as_deref(), Some("w"));
+    fn an_unknown_or_unreadable_scope_preserves_the_limit_as_upstream() {
+        for scope in [
+            serde_json::json!("from-a-newer-build"),
+            serde_json::json!(7),
+            serde_json::Value::Null,
+        ] {
+            let limit: UsageLimit =
+                serde_json::from_value(serde_json::json!({"window": "w", "scope": scope})).unwrap();
+            assert_eq!(limit.scope, UsageLimitScope::Upstream);
+            assert_eq!(limit.window.as_deref(), Some("w"));
+        }
     }
 
     #[test]
@@ -233,9 +247,38 @@ mod tests {
             reset_credits: None,
             observed_at: "2026-10-29T03:00:00Z".to_owned(),
         };
-        assert_eq!(
-            serde_json::to_string(&usage).unwrap(),
-            r#"{"windows":[{"kind":"five_hour","usedPercent":42.0}],"observedAt":"2026-10-29T03:00:00Z"}"#
-        );
+        let wire = serde_json::json!({
+            "windows": [{"kind": "five_hour", "usedPercent": 42.0}],
+            "observedAt": "2026-10-29T03:00:00Z"
+        });
+        assert_eq!(serde_json::to_value(&usage).unwrap(), wire);
+        assert_eq!(serde_json::from_value::<PlanUsage>(wire).unwrap(), usage);
+    }
+
+    #[test]
+    fn plan_usage_round_trips_reported_resets_and_credits() {
+        let usage = PlanUsage {
+            windows: vec![PlanUsageWindow {
+                kind: PlanUsageWindow::SEVEN_DAY.to_owned(),
+                used_percent: 83.5,
+                resets_at: Some("2026-11-04T05:00:00Z".to_owned()),
+            }],
+            reset_credits: Some(PlanResetCredits {
+                available: 2,
+                expires_at: Some("2026-11-03T06:00:00Z".to_owned()),
+            }),
+            observed_at: "2026-10-29T03:00:00Z".to_owned(),
+        };
+        let wire = serde_json::json!({
+            "windows": [{
+                "kind": "seven_day",
+                "usedPercent": 83.5,
+                "resetsAt": "2026-11-04T05:00:00Z"
+            }],
+            "resetCredits": {"available": 2, "expiresAt": "2026-11-03T06:00:00Z"},
+            "observedAt": "2026-10-29T03:00:00Z"
+        });
+        assert_eq!(serde_json::to_value(&usage).unwrap(), wire);
+        assert_eq!(serde_json::from_value::<PlanUsage>(wire).unwrap(), usage);
     }
 }

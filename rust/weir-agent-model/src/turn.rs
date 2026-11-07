@@ -926,15 +926,17 @@ mod tests {
     #[test]
     fn a_turn_keeps_its_first_refused_actions_and_counts_them_all() {
         let mut record = record();
-        for index in 0..MAX_DENIED_ACTIONS + 2 {
-            record.push_denied_action(DeniedAction {
+        let actions = (0..10)
+            .map(|index| DeniedAction {
                 action: format!("action {index}"),
-                reason: String::new(),
-            });
+                reason: format!("reason {index}"),
+            })
+            .collect::<Vec<_>>();
+        for action in &actions {
+            record.push_denied_action(action.clone());
         }
-        assert_eq!(record.denied_actions.len(), MAX_DENIED_ACTIONS);
-        assert_eq!(record.denied_actions[0].action, "action 0");
-        assert_eq!(record.denied_count as usize, MAX_DENIED_ACTIONS + 2);
+        assert_eq!(record.denied_actions, actions[..8]);
+        assert_eq!(record.denied_count, 10);
     }
 
     #[test]
@@ -953,20 +955,35 @@ mod tests {
 
     #[test]
     fn unknown_enum_values_decode_as_unknown() {
-        let mut value = serde_json::to_value(record()).expect("serialize");
-        value["phase"] = serde_json::json!("paused");
-        value["begin"] = serde_json::json!({"kind": "mirrored", "where": "s3"});
-        // A known kind in a shape this version does not know.
-        value["end"] = serde_json::json!({"kind": "captured", "tree": 3});
-        value["changes"] = serde_json::json!({"kind": "estimated", "files": 2});
-        let back = TurnRecord::decode(value.to_string().as_bytes()).expect("decode");
-        assert_eq!(back.phase, TurnPhase::Unknown);
-        assert_eq!(back.begin, SnapshotStatus::Unknown);
-        assert_eq!(back.end, SnapshotStatus::Unknown);
-        assert_eq!(back.changes, ChangeSummary::Unknown);
-        // Writing it back would turn "paused" into "unknown".
-        assert!(back.was_decoded_lossily);
-        assert!(!back.is_writable());
+        for (field, unknown) in [
+            ("phase", serde_json::json!("paused")),
+            (
+                "begin",
+                serde_json::json!({"kind": "mirrored", "where": "s3"}),
+            ),
+            ("end", serde_json::json!({"kind": "captured", "tree": 3})),
+            (
+                "changes",
+                serde_json::json!({"kind": "estimated", "files": 2}),
+            ),
+        ] {
+            let original = record();
+            let mut value = serde_json::to_value(&original).expect("serialize");
+            value[field] = unknown;
+            let back = TurnRecord::decode(value.to_string().as_bytes()).expect(field);
+
+            let mut expected = original;
+            expected.was_decoded_lossily = true;
+            match field {
+                "phase" => expected.phase = TurnPhase::Unknown,
+                "begin" => expected.begin = SnapshotStatus::Unknown,
+                "end" => expected.end = SnapshotStatus::Unknown,
+                "changes" => expected.changes = ChangeSummary::Unknown,
+                _ => unreachable!("{field}"),
+            }
+            assert_eq!(back, expected, "{field}");
+            assert!(!back.is_writable(), "{field}");
+        }
 
         // A missing phase, a key inside a known value, and a key on a
         // skipped file would each be lost by a rewrite.
@@ -1036,14 +1053,25 @@ mod tests {
         assert_eq!(judge(&[], &[], Some(empty)), ChangeSummary::Unchanged);
         let big = [skipped("data.bin", 6_000_000)];
         assert_eq!(judge(&big, &big, Some(empty)), ChangeSummary::Unchanged);
-        let grown = [skipped("data.bin", 7_000_000)];
-        assert_eq!(
-            judge(&big, &grown, Some(empty)),
-            ChangeSummary::Unavailable {
-                reason: "skippedFilesDiffer".into()
-            },
-            "a skipped file that changed may be the whole change"
-        );
+        for (field, changed) in [
+            ("size", skipped("data.bin", 7_000_000)),
+            ("path", skipped("renamed.bin", 6_000_000)),
+            (
+                "mtime",
+                SkippedFile {
+                    mtime: "2026-10-12T00:00:01Z".into(),
+                    ..big[0].clone()
+                },
+            ),
+        ] {
+            assert_eq!(
+                judge(&big, &[changed], Some(empty)),
+                ChangeSummary::Unavailable {
+                    reason: "skippedFilesDiffer".into()
+                },
+                "{field}: a skipped file that changed may be the whole change"
+            );
+        }
         let both = [skipped("b.bin", 6_000_000), skipped("a.bin", 6_000_000)];
         let reordered = [skipped("a.bin", 6_000_000), skipped("b.bin", 6_000_000)];
         assert_eq!(
@@ -1204,21 +1232,27 @@ mod tests {
 
     /// An event applies once per invocation: the same invocation sent again
     /// is a duplicate, a new invocation of the same payload applies again,
-    /// and an event with no id is rejected. Each case is the invocations in
-    /// order, what each one comes to, and how many the record keeps.
+    /// and an event with no id is rejected. The record keeps the applied
+    /// invocation IDs in order.
     #[test]
     fn an_event_applies_once_per_invocation() {
         /// An invocation id, or none, and what applying it comes to.
         type Call = (Option<u128>, EventApplication);
         use EventApplication::{Applied, Duplicate, Rejected};
-        let cases: [(&str, &[Call], usize); 3] = [
-            ("resent", &[(Some(1), Applied), (Some(1), Duplicate)], 1),
+        let first = "claude:invocation:00000000-0000-0000-0000-000000000001";
+        let second = "claude:invocation:00000000-0000-0000-0000-000000000002";
+        let cases: [(&str, &[Call], &[&str]); 3] = [
+            (
+                "resent",
+                &[(Some(1), Applied), (Some(1), Duplicate)],
+                &[first],
+            ),
             (
                 "a new invocation",
                 &[(Some(1), Applied), (Some(2), Applied)],
-                2,
+                &[first, second],
             ),
-            ("no id", &[(None, Rejected)], 0),
+            ("no id", &[(None, Rejected)], &[]),
         ];
         for (case, calls, kept) in cases {
             let mut record = record();
@@ -1227,7 +1261,7 @@ mod tests {
                     invocation.map(|id| EventId::invocation(&claude(), Uuid::from_u128(id)));
                 assert_eq!(record.apply_event(event.as_ref()), expected, "{case}");
             }
-            assert_eq!(record.applied_events.len(), kept, "{case}");
+            assert_eq!(record.applied_events, kept, "{case}");
         }
     }
 
@@ -1248,19 +1282,17 @@ mod tests {
 
     #[test]
     fn a_summary_takes_the_kind_the_record_kept() {
-        let mut record = record();
-        record.prompt_kind = Some(RecordedPromptKind::Known(PromptKind::Injected));
-        record.prompt_head = Some("<system-reminder> a reminder cut short".into());
-        let summary = TurnSummary::of(&record);
-        assert_eq!(summary.prompt_kind, PromptKind::Injected);
-        // A head the writer already took the person's words for is kept as
-        // it is, even if it opens like a tag.
-        record.prompt_kind = Some(RecordedPromptKind::Known(PromptKind::Text));
-        record.prompt_head = Some("<system-reminder> is the tag we add".into());
-        assert_eq!(
-            TurnSummary::of(&record).prompt_head.as_deref(),
-            Some("<system-reminder> is the tag we add")
-        );
+        for (kind, head) in [
+            (PromptKind::Injected, "Ordinary words"),
+            (PromptKind::Text, "<system-reminder> is the tag we add"),
+        ] {
+            let mut record = record();
+            record.prompt_kind = Some(RecordedPromptKind::Known(kind));
+            record.prompt_head = Some(head.into());
+            let summary = TurnSummary::of(&record);
+            assert_eq!(summary.prompt_kind, kind);
+            assert_eq!(summary.prompt_head.as_deref(), Some(head));
+        }
     }
 
     #[test]
@@ -1271,6 +1303,8 @@ mod tests {
         ] {
             let mut value = serde_json::to_value(record()).expect("record");
             value["promptKind"] = unknown.clone();
+            let head = "<system-reminder> a reminder cut short";
+            value["promptHead"] = Value::from(head);
             let read =
                 TurnRecord::decode(&serde_json::to_vec(&value).expect("bytes")).expect("decode");
             assert_eq!(
@@ -1284,34 +1318,39 @@ mod tests {
             let written: Value =
                 serde_json::from_slice(&read.encode().expect("encode")).expect("json");
             assert_eq!(written, value, "written back as it came");
-            assert_eq!(TurnSummary::of(&read).prompt_kind, PromptKind::Text);
+            let summary = TurnSummary::of(&read);
+            assert_eq!(summary.prompt_kind, PromptKind::Text);
+            assert_eq!(summary.prompt_head.as_deref(), Some(head));
         }
     }
 
     #[test]
     fn a_summary_of_an_older_record_judges_the_kind_from_its_head() {
-        let mut record = record();
-        record.prompt_kind = None;
-        assert_eq!(TurnSummary::of(&record).prompt_kind, PromptKind::Text);
         let notification = "<task-notification> <task-id>bmtysm2i6</task-id>";
-        record.prompt_head = Some(notification.into());
-        let summary = TurnSummary::of(&record);
-        assert_eq!(summary.prompt_kind, PromptKind::BackgroundTask);
-        // The record keeps the head as it came; so does the summary, for a
-        // kind whose own wording replaces it.
-        assert_eq!(summary.prompt_head.as_deref(), Some(notification));
-        assert_eq!(record.prompt_head.as_deref(), Some(notification));
-        assert!(summary.has_prompt);
-    }
-
-    #[test]
-    fn a_summary_of_an_older_record_shows_the_persons_words_after_a_reminder() {
-        let mut record = record();
-        record.prompt_kind = None;
-        record.prompt_head = Some("<system-reminder>x</system-reminder> add tests".into());
-        let summary = TurnSummary::of(&record);
-        assert_eq!(summary.prompt_kind, PromptKind::Text);
-        assert_eq!(summary.prompt_head.as_deref(), Some("add tests"));
+        for (input, kind, shown) in [
+            (Some("add tests"), PromptKind::Text, Some("add tests")),
+            (
+                Some(notification),
+                PromptKind::BackgroundTask,
+                Some(notification),
+            ),
+            (
+                Some("<system-reminder>x</system-reminder> add tests"),
+                PromptKind::Text,
+                Some("add tests"),
+            ),
+        ] {
+            let record = TurnRecord {
+                prompt_kind: None,
+                prompt_head: input.map(str::to_owned),
+                ..record()
+            };
+            let summary = TurnSummary::of(&record);
+            assert_eq!(summary.prompt_kind, kind, "{input:?}");
+            assert_eq!(summary.prompt_head.as_deref(), shown, "{input:?}");
+            assert_eq!(record.prompt_head.as_deref(), input);
+            assert!(summary.has_prompt, "{input:?}");
+        }
     }
 
     #[test]
@@ -1343,8 +1382,13 @@ mod tests {
         assert_eq!(turn.check_count, 20);
         // Every run but the one that exited 0 failed, the dropped ones too.
         assert_eq!(turn.failure_count, 19);
-        assert_eq!(turn.checks.len(), MAX_CHECK_MARKS);
-        assert_eq!(turn.checks.first().and_then(|mark| mark.exit_code), Some(4));
+        let recent = (4..20)
+            .map(|exit_code| CheckMark {
+                exit_code: Some(exit_code),
+                is_filtered: false,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(turn.checks, recent);
         assert_eq!(turn.last_check, Some(check(Some(19))));
 
         turn.set_checks(vec![check(Some(1)), check(None)]);
@@ -1367,6 +1411,7 @@ mod tests {
             (turn.check_count, turn.failure_count, turn.last_check),
             (0, 0, None)
         );
+        assert!(turn.checks.is_empty());
     }
 
     #[test]
@@ -1395,31 +1440,37 @@ mod tests {
         assert_eq!(read, turn);
         assert!(read.is_writable());
 
-        let older = record().encode().expect("older");
-        let value: Value = serde_json::from_slice(&older).expect("json");
+        let value: Value =
+            serde_json::from_slice(&record().encode().expect("encode empty fields")).expect("json");
         for key in [
             "usage",
             "checks",
             "checkCount",
             "failureCount",
             "providerTurnId",
+            "conversationTitle",
         ] {
             assert!(value.get(key).is_none(), "{key} is left out when empty");
         }
-        assert!(TurnRecord::decode(&older).expect("decode").is_writable());
-    }
-
-    #[test]
-    fn turn_record_without_conversation_title_decodes_as_none() {
-        let mut value = serde_json::to_value(record()).expect("serialize");
-        assert!(value.get("conversationTitle").is_none());
-        value
-            .as_object_mut()
-            .expect("object")
-            .remove("conversationTitle");
-        let back = TurnRecord::decode(value.to_string().as_bytes()).expect("decode");
-        assert_eq!(back.conversation_title, None);
-        assert!(!back.was_decoded_lossily);
+        let older = br#"{
+            "schemaVersion": 1, "turnId": "old", "provider": "claude",
+            "conversation": {
+                "provider": "claude", "conversationId": "old-session", "isFallback": false
+            },
+            "runId": "R1", "paneId": "P1", "displayNumber": 7,
+            "startedAt": "2026-10-12T00:00:00Z", "phase": "started",
+            "begin": {"kind": "pending"}, "end": {"kind": "pending"},
+            "changes": {"kind": "pending"},
+            "skippedBegin": [], "skippedEnd": [], "appliedEvents": []
+        }"#;
+        let older = TurnRecord::decode(older).expect("decode old schema 1 record");
+        assert!(older.is_writable());
+        assert!(!older.was_decoded_lossily);
+        assert_eq!(older.usage, None);
+        assert!(older.checks.is_empty());
+        assert_eq!((older.check_count, older.failure_count), (0, 0));
+        assert_eq!(older.provider_turn_id, None);
+        assert_eq!(older.conversation_title, None);
     }
 
     #[test]

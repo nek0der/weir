@@ -146,54 +146,81 @@ mod tests {
 
     #[test]
     fn reads_partial_stream_and_multiple_frames() {
+        let mut reader = OneByteReader {
+            inner: Cursor::new(b"\0\0\0\x0f{\"value\":\"one\"}\0\0\0\x12{\"value\":\"second\"}"),
+        };
+        assert_eq!(
+            read_frame::<_, Example>(&mut reader, 18).unwrap(),
+            Some(Example {
+                value: "one".into()
+            })
+        );
+        assert_eq!(
+            read_frame::<_, Example>(&mut reader, 18).unwrap(),
+            Some(Example {
+                value: "second".into()
+            })
+        );
+        assert_eq!(read_frame::<_, Example>(&mut reader, 18).unwrap(), None);
+
         let mut bytes = Vec::new();
         write_frame(
             &mut bytes,
             &Example {
                 value: "one".into(),
             },
-            1024,
+            15,
         )
         .unwrap();
-        write_frame(
-            &mut bytes,
-            &Example {
-                value: "two".into(),
-            },
-            1024,
-        )
-        .unwrap();
-        let mut reader = OneByteReader {
-            inner: Cursor::new(bytes),
-        };
-
-        assert_eq!(
-            read_frame::<_, Example>(&mut reader, 1024).unwrap(),
-            Some(Example {
-                value: "one".into()
+        assert_eq!(bytes, b"\0\0\0\x0f{\"value\":\"one\"}");
+        let mut rejected = Vec::new();
+        assert!(matches!(
+            write_frame(
+                &mut rejected,
+                &Example {
+                    value: "one".into()
+                },
+                14
+            ),
+            Err(FrameError::TooLarge {
+                length: 15,
+                maximum: 14
             })
-        );
-        assert_eq!(
-            read_frame::<_, Example>(&mut reader, 1024).unwrap(),
-            Some(Example {
-                value: "two".into()
-            })
-        );
-        assert_eq!(read_frame::<_, Example>(&mut reader, 1024).unwrap(), None);
+        ));
+        assert!(rejected.is_empty(), "no header was written");
     }
 
     #[test]
-    fn rejects_oversized_and_truncated_frames_before_json_decode() {
-        let mut oversized = Cursor::new(9_u32.to_be_bytes());
+    fn rejects_invalid_frame_boundaries_and_json() {
+        let mut oversized = Cursor::new([0, 0, 0, 9, b'{']);
         assert!(matches!(
             read_frame::<_, Example>(&mut oversized, 8),
-            Err(FrameError::TooLarge { .. })
+            Err(FrameError::TooLarge {
+                length: 9,
+                maximum: 8
+            })
         ));
+        assert_eq!(oversized.position(), 4, "payload was not read");
 
-        let mut truncated = Cursor::new([0, 0, 0, 4, b'{']);
+        for (label, bytes) in [
+            ("partial header", &[0, 0, 0][..]),
+            ("partial payload", &[0, 0, 0, 4, b'{'][..]),
+        ] {
+            assert!(
+                matches!(
+                    read_frame::<_, Example>(&mut Cursor::new(bytes), 8),
+                    Err(FrameError::Truncated)
+                ),
+                "{label}"
+            );
+        }
         assert!(matches!(
-            read_frame::<_, Example>(&mut truncated, 8),
-            Err(FrameError::Truncated)
+            read_frame::<_, Example>(&mut Cursor::new([0, 0, 0, 0]), 8),
+            Err(FrameError::Empty)
+        ));
+        assert!(matches!(
+            read_frame::<_, Example>(&mut Cursor::new([0, 0, 0, 1, b'{']), 8),
+            Err(FrameError::InvalidJson(_))
         ));
     }
 }

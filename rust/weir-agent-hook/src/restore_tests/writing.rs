@@ -110,7 +110,7 @@ fn a_write_to_the_file_that_came_out_is_kept_aside() {
 
     assert_eq!(kept.len(), 1);
     assert_eq!(kept[0].path, "a.txt");
-    assert!(kept[0].kept_at().is_some(), "{kept:?}");
+    assert_eq!(kept[0].kept_at(), Some(".weir-LATE/target/ready-1/a.txt"));
     assert_eq!(
         fs::read_to_string(&came_out).unwrap(),
         "written late through an old descriptor\n"
@@ -146,6 +146,8 @@ fn a_save_on_top_of_the_swap_keeps_the_earlier_save_aside() {
     let aside = ".weir-TWICE/target/ready-1/a.txt";
     assert_eq!(results[0].1, Err(Unwritten::KeptAside(aside.to_owned())));
     assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].path, "a.txt");
+    assert_eq!(kept[0].kept_at(), Some(aside));
     assert_eq!(repo.read("a.txt").as_deref(), Some("second save, longer\n"));
     assert_eq!(repo.read(aside).as_deref(), Some("first save\n"));
     // Git does not see what the staging area keeps.
@@ -164,7 +166,6 @@ fn a_save_kept_aside_in_the_rollback_leaves_the_restore_partial() {
         repo.write("a.txt", "a\nchanged\n");
         repo.write("keep.txt", "keep\nchanged\n");
     });
-    let parked = repo.path.join(".weir-ASIDE");
     let late = |moment| {
         if moment == Moment::AtFinish {
             // The file the rollback took out of keep.txt, wherever its
@@ -198,13 +199,13 @@ fn a_save_kept_aside_in_the_rollback_leaves_the_restore_partial() {
         panic!("{:?}", journal.stage);
     };
     assert_eq!(kept, &["a.txt"]);
-    assert!(
-        failed
-            .iter()
-            .any(|failed| failed.path == "keep.txt" && failed.kept_at().is_some()),
-        "{failed:?}"
-    );
-    assert!(!parked.exists());
+    let aside = failed
+        .iter()
+        .find(|failed| failed.path == "keep.txt")
+        .and_then(FailedPath::kept_at)
+        .unwrap_or_else(|| panic!("{failed:?}"));
+    assert_eq!(repo.read(aside).as_deref(), Some("written late\n"));
+    assert_eq!(repo.read("a.txt").as_deref(), Some("editor\n"));
     assert_eq!(repo.read("keep.txt").as_deref(), Some("keep\nchanged\n"));
 }
 
@@ -366,6 +367,8 @@ fn a_save_kept_aside_is_named_by_the_undo_too() {
     };
     assert_eq!(*reason, StageReason::KeptAside);
     let place = failed[0].kept_at().unwrap().to_owned();
+    assert_eq!(failed[0].path, "a.txt");
+    assert_eq!(repo.read(&place).as_deref(), Some("written late\n"));
 
     let undo = finished(repo.undo(&restored.op_id));
 
@@ -405,10 +408,12 @@ fn a_save_kept_aside_is_named_by_the_undo_too() {
             .count(),
         1
     );
-    assert!(matches!(
+    assert_eq!(
         worktree.journal(&restored.op_id).unwrap().unwrap().stage,
-        RestoreStage::Undone { .. }
-    ));
+        RestoreStage::Undone { by: undo.op_id }
+    );
+    assert_eq!(repo.read(&place).as_deref(), Some("written late\n"));
+    assert_eq!(repo.read("a.txt").as_deref(), Some("a\nchanged\n"));
 }
 
 /// The stage is what the planned paths hold: a write that failed where the
@@ -450,13 +455,28 @@ fn a_failed_write_is_said_beside_the_stage_the_paths_decide() {
         })
     );
 
-    let half = reading(&[("a", PathState::Target), ("b", PathState::Before)]);
-    let Some(RestoreStage::PartiallyApplied { failed, .. }) = settled_stage(
-        &half,
-        StageReason::WriteFailed,
-        vec![failure("a"), failure("b")],
-    ) else {
-        panic!("not partial");
-    };
-    assert_eq!(failed, vec![failure("b")]);
+    let written = reading(&[("a", PathState::Target), ("b", PathState::Target)]);
+    assert_eq!(
+        settled_stage(&written, StageReason::WriteFailed, vec![failure("b")]),
+        None
+    );
+
+    let half = reading(&[
+        ("a", PathState::Target),
+        ("b", PathState::Before),
+        ("c", PathState::Other),
+    ]);
+    assert_eq!(
+        settled_stage(
+            &half,
+            StageReason::WriteFailed,
+            vec![failure("a"), failure("b")]
+        ),
+        Some(RestoreStage::PartiallyApplied {
+            reason: StageReason::WriteFailed,
+            current_tree: "c".repeat(40),
+            kept: vec!["c".into()],
+            failed: vec![failure("b")],
+        })
+    );
 }

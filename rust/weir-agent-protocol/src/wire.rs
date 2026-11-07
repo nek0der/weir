@@ -411,21 +411,34 @@ mod tests {
         }))
         .unwrap();
         assert!(plain.questions.is_empty());
+        assert!(
+            serde_json::to_value(&plain)
+                .unwrap()
+                .get("questions")
+                .is_none()
+        );
+        assert!(plain.into_domain().unwrap().questions.is_empty());
+        let expected = json!([{
+            "header": "Colors",
+            "prompt": "Which colors?",
+            "options": [{"label": "Red", "description": "Warm"}, {"label": "Blue"}],
+            "multi_select": true
+        }]);
         let question: ApprovalRequestWire = serde_json::from_value(json!({
             "run_id": run_id, "request_id": request_id, "provider": "claude",
             "tool_name": "AskUserQuestion", "input": {}, "timeout_ms": 1,
-            "questions": [{"prompt": "Which color?", "options": [{"label": "Red"}], "multi_select": false}]
+            "questions": expected
         }))
         .unwrap();
         let domain = question.into_domain().unwrap();
-        assert_eq!(domain.questions[0].prompt, "Which color?");
+        assert_eq!(serde_json::to_value(&domain.questions).unwrap(), expected);
     }
 
     #[test]
-    fn the_asking_agent_run_is_optional_on_the_wire_and_round_trips() {
+    fn an_optional_agent_run_id_is_validated_on_submit() {
         let run_id = Uuid::from_u128(3);
         let request_id = Uuid::from_u128(4);
-        let agent_run = Uuid::from_u128(5);
+        let agent_run = Uuid::from_u128(0xabcd);
         let plain: ApprovalRequestWire = serde_json::from_value(json!({
             "run_id": run_id, "request_id": request_id, "provider": "claude",
             "tool_name": "Bash", "input": {}, "timeout_ms": 1
@@ -442,7 +455,7 @@ mod tests {
         let named: ApprovalRequestWire = serde_json::from_value(json!({
             "run_id": run_id, "request_id": request_id, "provider": "claude",
             "tool_name": "Bash", "input": {}, "timeout_ms": 1,
-            "agent_run_id": agent_run.to_string().to_uppercase()
+            "agent_run_id": "00000000-0000-0000-0000-00000000ABCD"
         }))
         .unwrap();
         let domain = named.into_domain().unwrap();
@@ -456,5 +469,50 @@ mod tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn responses_without_the_optional_service_clock_decode() {
+        let epoch = Uuid::from_u128(7);
+        let snapshot: WireResponse = serde_json::from_value(json!({
+            "version": 1, "message_id": Uuid::from_u128(8), "in_reply_to": Uuid::from_u128(9),
+            "service_epoch": epoch, "type": "approval.snapshot.result",
+            "body": {"sequence": 3, "requests": []}
+        }))
+        .unwrap();
+        let ResponseBody::ApprovalSnapshotResult {
+            sequence,
+            requests,
+            now_ms,
+            ..
+        } = snapshot.body
+        else {
+            panic!("expected approval snapshot");
+        };
+        assert_eq!(sequence, 3);
+        assert!(requests.is_empty());
+        assert_eq!(now_ms, None);
+
+        let run_id = Uuid::from_u128(3);
+        let request_id = Uuid::from_u128(4);
+        let get: WireResponse = serde_json::from_value(json!({
+            "version": 1, "message_id": Uuid::from_u128(8), "in_reply_to": Uuid::from_u128(9),
+            "service_epoch": epoch, "type": "approval.result",
+            "body": {
+                "request": {
+                    "run_id": run_id, "request_id": request_id, "provider": "claude",
+                    "tool_name": "Bash", "input": {}, "timeout_ms": 5_000
+                },
+                "state": {"status": "pending"}, "created_at_ms": 10, "deadline_ms": 5_010, "sequence": 1
+            }
+        })).unwrap();
+        let ResponseBody::ApprovalResult(snapshot) = get.body else {
+            panic!("expected approval result");
+        };
+        assert_eq!(snapshot.request.run_id, run_id);
+        assert_eq!(snapshot.request.request_id, request_id);
+        assert!(matches!(snapshot.state, ApprovalStateWire::Pending));
+        assert_eq!(snapshot.deadline_ms, 5_010);
+        assert_eq!(snapshot.now_ms, None);
     }
 }

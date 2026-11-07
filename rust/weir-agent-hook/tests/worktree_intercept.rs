@@ -55,6 +55,14 @@ fn rerouted(repo: &Repo, states: &std::path::Path, command: &str) -> (PathBuf, S
     }
 }
 
+fn awaited_marks(states: &std::path::Path) -> Vec<PathBuf> {
+    let support = states.parent().expect("support");
+    fs::read_dir(support.join("worktrees-awaited"))
+        .expect("awaited directory")
+        .map(|entry| entry.expect("awaited mark").path())
+        .collect()
+}
+
 fn events(states: &std::path::Path) -> Vec<PathBuf> {
     fs::read_dir(states.join(WORKTREE_EVENTS_DIRECTORY))
         .map(|entries| entries.flatten().map(|entry| entry.path()).collect())
@@ -62,12 +70,20 @@ fn events(states: &std::path::Path) -> Vec<PathBuf> {
 }
 
 fn runtime_env(repo: &Repo, states: &std::path::Path) -> HookEnv {
+    runtime_env_with_codex_states(repo, states, states)
+}
+
+fn runtime_env_with_codex_states(
+    repo: &Repo,
+    states: &std::path::Path,
+    codex_states: &std::path::Path,
+) -> HookEnv {
     HookEnv::from_pairs([
         ("WEIR_PANE_ID", PANE),
         ("WEIR_AGENT_STATES_DIR", states.to_str().expect("path")),
         (
             "WEIR_CODEX_AGENT_STATES_DIR",
-            states.to_str().expect("path"),
+            codex_states.to_str().expect("path"),
         ),
         (
             "WEIR_SESSIONS_DIR",
@@ -147,7 +163,23 @@ fn planning_a_route_makes_no_worktree_and_no_branch() {
 fn a_route_keeps_the_start_point_the_agent_named() {
     let repo = Repo::new("start-point");
     let states = routing(&repo, "");
-    git(&repo.path, &["branch", "base"]);
+    git(&repo.path, &["branch", "base"]).expect("base branch");
+    let base = git(&repo.path, &["rev-parse", "base"]).expect("base commit");
+    git(
+        &repo.path,
+        &[
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.com",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "advance HEAD",
+        ],
+    )
+    .expect("advance HEAD");
+    assert_ne!(git(&repo.path, &["rev-parse", "HEAD"]).expect("HEAD"), base);
     let (path, command) = rerouted(&repo, &states, "git worktree add -b demo ../demo base");
 
     assert!(
@@ -155,6 +187,10 @@ fn a_route_keeps_the_start_point_the_agent_named() {
         "{command}"
     );
     assert!(shell(&repo, &command));
+    assert_eq!(
+        git(&path, &["rev-parse", "HEAD"]).expect("worktree HEAD"),
+        base
+    );
     assert!(path.join("README.md").exists());
 }
 
@@ -195,13 +231,19 @@ fn a_command_that_failed_runs_no_bootstrap() {
     fs::create_dir_all(&path).expect("folder");
     fs::write(path.join("in-the-way"), "x").expect("file");
 
-    // Codex sends `PostToolUse` for a failed command too.
     assert!(!shell(&repo, &command), "git refuses a folder in use");
+    let env = runtime_env(&repo, &states);
+    let post = payload("PostToolUse", &repo, &command).to_string();
     assert_eq!(
-        finish_worktree(&intent(&repo, &command), "claude", &states, false),
-        None
+        run_worktree_hook(
+            "codex",
+            post.as_bytes(),
+            &HookRuntime::new(&env, &NoSnapshots)
+        ),
+        HookOutcome::Applied
     );
     assert!(!path.join("sub").exists());
+    assert!(events(&states).is_empty());
 }
 
 #[test]
@@ -241,7 +283,9 @@ fn a_worktree_made_elsewhere_is_not_set_up() {
             "demo",
             path.to_str().expect("path"),
         ],
-    );
+    )
+    .expect("create the already registered worktree");
+    assert!(path.join("README.md").is_file());
     let command = format!("git worktree add -b demo {}", path.display());
 
     assert_eq!(
@@ -260,12 +304,17 @@ fn a_command_that_went_elsewhere_is_not_set_up() {
     let repo = Repo::new("went-elsewhere");
     let states = routing(&repo, "");
     let command = "git worktree add -b demo ../repo-demo2";
-    assert!(!repo.root.join("repo-demo").exists());
+    let (expected, _) = rerouted(&repo, &states, command);
+    assert!(!expected.exists());
+    assert_eq!(awaited_marks(&states).len(), 1);
     assert!(shell(&repo, command));
     assert_eq!(
         finish_worktree(&intent(&repo, command), "claude", &states, false),
         None
     );
+    assert!(!expected.exists());
+    assert!(!repo.root.join("repo-demo2/sub").exists());
+    assert_eq!(awaited_marks(&states).len(), 1);
 }
 
 #[test]
@@ -287,18 +336,27 @@ fn a_command_with_more_after_it_runs_as_written() {
 /// command's `PostToolUse`, must not take the setup away from it.
 #[test]
 fn an_overlapping_call_leaves_the_setup_to_the_call_that_made_the_worktree() {
-    let repo = Repo::new("overlapping");
-    let states = routing(&repo, "");
-    let (path, command) = rerouted(&repo, &states, "git worktree add -b demo ../demo");
-    assert!(shell(&repo, &command));
+    for provider in ["claude", "codex"] {
+        let repo = Repo::new("overlapping");
+        let states = routing(&repo, "");
+        let (path, command) = rerouted(&repo, &states, "git worktree add -b demo ../demo");
+        assert!(shell(&repo, &command));
 
-    assert_eq!(
-        plan_worktree(&intent(&repo, &command), "claude", &states),
-        InterceptResult::Passthrough
-    );
+        let other_states = if provider == "claude" {
+            states.clone()
+        } else {
+            let directory = repo.root.join("support/codex-agent-states");
+            fs::create_dir_all(&directory).expect("states");
+            directory
+        };
+        assert_eq!(
+            plan_worktree(&intent(&repo, &command), provider, &other_states),
+            InterceptResult::Passthrough
+        );
 
-    assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
-    assert!(path.join("sub").exists());
+        assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
+        assert!(path.join("sub").exists());
+    }
 }
 
 /// A turn stopped between the command and its `PostToolUse` is the likelier
@@ -312,14 +370,38 @@ fn a_retry_after_a_lost_post_tool_use_runs_the_setup() {
     let (path, command) = rerouted(&repo, &states, "git worktree add -b demo ../demo");
     assert!(shell(&repo, &command));
 
+    let codex_states = repo.root.join("support/codex-agent-states");
+    fs::create_dir_all(&codex_states).expect("Codex states");
+    let env = runtime_env_with_codex_states(&repo, &states, &codex_states);
+    let runtime = HookRuntime::new(&env, &NoSnapshots);
+    let pre = payload("PreToolUse", &repo, &command).to_string();
     assert_eq!(
-        plan_worktree(&intent(&repo, &command), "codex", &states),
-        InterceptResult::Passthrough
+        run_worktree_hook("codex", pre.as_bytes(), &runtime),
+        HookOutcome::Applied
     );
     assert!(!shell(&repo, &command), "git refuses a folder in use");
 
-    assert!(finish_worktree(&intent(&repo, &command), "codex", &states, false).is_some());
-    assert!(path.join("sub").exists());
+    let post = payload("PostToolUse", &repo, &command).to_string();
+    let outcome = run_worktree_hook("codex", post.as_bytes(), &runtime);
+    assert!(
+        matches!(outcome, HookOutcome::Intercepted { code: 0, .. }),
+        "{outcome:?}"
+    );
+    let file = path.join("sub/nested.txt");
+    assert!(file.is_file());
+    assert!(events(&states).is_empty());
+    let published = events(&codex_states);
+    assert_eq!(published.len(), 1);
+    let event: Value =
+        serde_json::from_slice(&fs::read(&published[0]).expect("event file")).expect("event");
+    assert_eq!(event["worktreePath"].as_str(), path.to_str());
+    fs::remove_file(&file).expect("simulate the person's edit");
+    assert_eq!(
+        run_worktree_hook("codex", post.as_bytes(), &runtime),
+        HookOutcome::Applied
+    );
+    assert!(!file.exists());
+    assert_eq!(events(&codex_states), published);
 }
 
 /// The old intercept ran Git in the project itself. A command keeps its own
@@ -358,13 +440,20 @@ fn a_command_from_a_repository_inside_the_project_runs_as_written() {
     let repo = Repo::new("nested-repository");
     let inner = repo.path.join("inner");
     fs::create_dir_all(&inner).expect("inner");
-    git(&inner, &["init", "-q"]);
     let states = routing(&repo, "");
-    let asked = WorktreeIntent::parse(
-        "git worktree add -b demo ../demo",
-        Some(inner.to_str().expect("path")),
-    )
-    .expect("intent");
+    let ask_from_inner = || {
+        WorktreeIntent::parse(
+            "git worktree add -b demo ../demo",
+            Some(inner.to_str().expect("path")),
+        )
+        .expect("intent")
+    };
+    assert!(matches!(
+        plan_worktree(&ask_from_inner(), "claude", &states),
+        InterceptResult::Reroute { .. }
+    ));
+    git(&inner, &["init", "-q"]).expect("nested repository");
+    let asked = ask_from_inner();
     assert_eq!(
         plan_worktree(&asked, "claude", &states),
         InterceptResult::Passthrough
@@ -378,16 +467,15 @@ fn a_command_from_a_repository_inside_the_project_runs_as_written() {
 fn nothing_the_command_says_runs_before_its_permission_check() {
     let repo = Repo::new("alias");
     let states = routing(&repo, "");
-    let sentinel = repo.root.join("ran");
-    let command = format!(
-        "git -c alias.x=!touch${{IFS}}{} x worktree add -b demo ../demo",
-        sentinel.display()
-    );
+    let sentinel = repo.path.join("ran");
+    let command = "git -c 'alias.x=!touch ran #' x worktree add -b demo ../demo";
     assert_eq!(
-        plan_worktree(&intent(&repo, &command), "claude", &states),
+        plan_worktree(&intent(&repo, command), "claude", &states),
         InterceptResult::Passthrough
     );
     assert!(!sentinel.exists(), "the command's alias ran in the hook");
+    assert!(shell(&repo, command), "the same alias can run");
+    assert!(sentinel.is_file(), "the alias really creates the sentinel");
 }
 
 /// Removing one file from two threads on APFS can succeed in both, which ran the
@@ -397,7 +485,13 @@ fn of_calls_that_finish_together_one_runs_the_setup() {
     for round in 0..20 {
         let repo = Repo::new(&format!("together-{round}"));
         let states = routing(&repo, "");
-        let (_, command) = rerouted(&repo, &states, "git worktree add -b demo ../demo");
+        let routing = repo.root.join("support/worktree-routing.json");
+        let mut config: Value =
+            serde_json::from_slice(&fs::read(&routing).expect("routing")).expect("JSON");
+        config["projects"][0]["bootstrap"] =
+            serde_json::json!([{"command":"echo ran >> setup-runs"}]);
+        fs::write(&routing, config.to_string()).expect("bootstrap routing");
+        let (path, command) = rerouted(&repo, &states, "git worktree add -b demo ../demo");
         assert!(shell(&repo, &command));
         let asked = intent(&repo, &command);
         let barrier = std::sync::Barrier::new(4);
@@ -417,26 +511,12 @@ fn of_calls_that_finish_together_one_runs_the_setup() {
                 .count()
         });
         assert_eq!(finished, 1, "round {round}");
+        assert_eq!(
+            fs::read_to_string(path.join("setup-runs")).expect("bootstrap log"),
+            "ran\n",
+            "round {round}"
+        );
     }
-}
-
-/// Two providers can reach one worktree, and each has its own state folder.
-#[test]
-fn a_call_from_another_provider_leaves_the_setup_to_the_one_that_made_it() {
-    let repo = Repo::new("two-providers");
-    let states = routing(&repo, "");
-    let codex_states = repo.root.join("support").join("codex-agent-states");
-    fs::create_dir_all(&codex_states).expect("states");
-    let (path, command) = rerouted(&repo, &states, "git worktree add -b demo ../demo");
-    assert!(shell(&repo, &command));
-
-    assert_eq!(
-        plan_worktree(&intent(&repo, &command), "codex", &codex_states),
-        InterceptResult::Passthrough
-    );
-
-    assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
-    assert!(path.join("sub").exists());
 }
 
 /// A person who refused has gone on to other things. A worktree the sheet makes
@@ -503,6 +583,18 @@ fn a_worktree_in_the_right_folder_is_set_up_however_the_command_spelled_it() {
     assert!(folder.join("sub").exists());
 }
 
+struct HeldCheckout {
+    child: std::process::Child,
+    gate: PathBuf,
+}
+
+impl Drop for HeldCheckout {
+    fn drop(&mut self) {
+        let _ = fs::write(&self.gate, "");
+        let _ = self.child.wait();
+    }
+}
+
 /// `git worktree add` lists a worktree before it has checked its files out, and
 /// `--lock` holds it under its own reason, which stays once the checkout is done.
 /// A filter holds the checkout open until we let it go, with a limit of its own so
@@ -513,12 +605,14 @@ fn the_bootstrap_waits_for_the_checkout() {
         let repo = Repo::new(&format!("checkout-{name}"));
         let states = routing(&repo, "");
         let gate = repo.root.join("gate");
+        let entered = repo.root.join("smudge-entered");
         let filter = format!(
-            "i=0; while [ ! -e '{}' ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done; cat",
+            "touch '{}'; i=0; while [ ! -e '{}' ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done; cat",
+            entered.display(),
             gate.display()
         );
-        git(&repo.path, &["config", "filter.held.smudge", &filter]);
-        git(&repo.path, &["config", "filter.held.clean", "cat"]);
+        git(&repo.path, &["config", "filter.held.smudge", &filter]).expect("smudge filter");
+        git(&repo.path, &["config", "filter.held.clean", "cat"]).expect("clean filter");
         fs::write(repo.path.join(".gitattributes"), "*.held filter=held\n").expect("attributes");
         fs::write(repo.path.join("a.held"), "a").expect("file");
         git(&repo.path, &["add", "."]).expect("add");
@@ -541,39 +635,75 @@ fn the_bootstrap_waits_for_the_checkout() {
             &format!("git worktree add {option}-b demo ../demo"),
         );
         let asked = intent(&repo, &command);
+        let marks = awaited_marks(&states);
+        assert_eq!(marks.len(), 1);
+        let mark = &marks[0];
 
         // Started here and not on a thread beside our polling: on macOS a child
         // forked during another's `output()` can inherit its pipe, and that call
         // then blocks until this command ends.
-        let mut adding = std::process::Command::new("/bin/sh")
+        let child = std::process::Command::new("/bin/sh")
             .args(["-c", &command])
             .current_dir(&repo.path)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
             .expect("sh");
-        std::thread::scope(|scope| {
+        let adding = HeldCheckout { child, gate };
+        std::thread::scope(move |scope| {
+            let mut adding = adding;
             let started = std::time::Instant::now();
-            while !git(&repo.path, &["worktree", "list", "--porcelain"])
-                .is_some_and(|listing| listing.contains("refs/heads/demo"))
-            {
-                assert!(started.elapsed().as_secs() < 25, "{name}: never listed");
+            while !entered.exists() {
+                assert!(
+                    adding.child.try_wait().expect("Git status").is_none(),
+                    "{name}: Git ended before the filter"
+                );
+                assert!(
+                    started.elapsed().as_secs() < 25,
+                    "{name}: filter was not entered"
+                );
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
-            let finishing = scope.spawn(|| finish_worktree(&asked, "claude", &states, false));
-            std::thread::sleep(std::time::Duration::from_millis(600));
-            assert!(!finishing.is_finished(), "{name}: did not wait");
+            let listing = git(&repo.path, &["worktree", "list", "--porcelain"]).expect("worktrees");
+            assert!(listing.contains("refs/heads/demo"), "{name}: {listing}");
+            assert!(
+                !path.join("a.held").exists(),
+                "{name}: checkout already finished"
+            );
+            let (sent, received) = std::sync::mpsc::channel();
+            scope.spawn(move || {
+                let _ = sent.send(finish_worktree(&asked, "claude", &states, false));
+            });
+            let started = std::time::Instant::now();
+            while mark.exists() {
+                assert!(
+                    started.elapsed().as_secs() < 5,
+                    "{name}: finish did not claim the awaited mark"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            assert_eq!(
+                received.recv_timeout(std::time::Duration::from_millis(600)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout),
+                "{name}: finish returned while the filter held checkout",
+            );
             assert!(
                 !path.join("sub").exists(),
                 "{name}: the bootstrap ran early"
             );
 
-            fs::write(&gate, "").expect("gate");
+            fs::write(&adding.gate, "").expect("gate");
 
-            assert!(finishing.join().expect("finish").is_some(), "{name}");
+            assert!(
+                received
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .expect("finish")
+                    .is_some(),
+                "{name}"
+            );
             assert!(path.join("a.held").exists(), "{name}");
             assert!(path.join("sub").exists(), "{name}");
-            assert!(adding.wait().expect("add").success(), "{name}");
+            assert!(adding.child.wait().expect("add").success(), "{name}");
         });
     }
 }
@@ -584,12 +714,24 @@ fn the_bootstrap_waits_for_the_checkout() {
 fn a_locked_worktree_without_a_checkout_is_not_waited_for() {
     let repo = Repo::new("locked-no-checkout");
     let states = routing(&repo, "");
-    let (_, command) = rerouted(
+    let (path, command) = rerouted(
         &repo,
         &states,
         "git worktree add --lock --no-checkout -b demo ../demo",
     );
     assert!(shell(&repo, &command));
+    let listing = git(&repo.path, &["worktree", "list", "--porcelain"]).expect("worktrees");
+    let demo = listing
+        .split("\n\n")
+        .find(|entry| entry.lines().any(|line| line == "branch refs/heads/demo"))
+        .expect("demo worktree listed");
+    assert!(
+        demo.lines()
+            .any(|line| line == "locked" || line.starts_with("locked ")),
+        "{listing}"
+    );
+    let index = git(&path, &["rev-parse", "--git-path", "index"]).expect("index path");
+    assert!(!path.join(index).exists());
     let started = std::time::Instant::now();
 
     assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
@@ -608,7 +750,15 @@ fn a_lock_a_person_called_initializing_does_not_hold_the_setup() {
     git(
         &repo.path,
         &[lock.as_slice(), &[path.to_str().expect("path")]].concat(),
+    )
+    .expect("lock the completed checkout");
+    let listing = git(&repo.path, &["worktree", "list", "--porcelain"]).expect("worktrees");
+    assert!(
+        listing.ends_with("branch refs/heads/demo\nlocked initializing"),
+        "{listing}"
     );
+    let index = git(&path, &["rev-parse", "--git-path", "index"]).expect("index path");
+    assert!(path.join(index).is_file());
     let started = std::time::Instant::now();
 
     assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
@@ -616,8 +766,8 @@ fn a_lock_a_person_called_initializing_does_not_hold_the_setup() {
     assert!(started.elapsed().as_secs() < 30);
 }
 
-/// `feature/alpha` and `feature-alpha` share a folder. The second is rerouted
-/// too, and Git's refusal tells the agent, rather than it landing elsewhere.
+/// `feature/alpha` and `feature-alpha` share a placement. The second command
+/// keeps its requested folder when that placement is occupied.
 #[test]
 fn a_branch_that_shares_another_branchs_folder_runs_as_written() {
     let repo = Repo::new("shared-folder");
@@ -693,14 +843,23 @@ fn route_passes_through_when_routing_is_off_or_the_project_is_unknown() {
         InterceptResult::Reroute { .. }
     ));
     let elsewhere = repo.root.join("elsewhere");
-    fs::create_dir_all(&elsewhere).expect("dir");
+    git(
+        &repo.path,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            elsewhere.to_str().expect("path"),
+        ],
+    )
+    .expect("a linked worktree of the same repository");
     let outside = WorktreeIntent::parse(
         "git worktree add -b other ../x",
         Some(elsewhere.to_str().expect("path")),
     )
     .expect("intent");
     assert_eq!(
-        plan_worktree(&outside, "claude", &states),
+        plan_worktree(&outside, "codex", &states),
         InterceptResult::Passthrough
     );
 }
@@ -718,7 +877,8 @@ fn the_pre_tool_use_reply_is_the_one_each_provider_needs() {
         "git worktree add -b demo {}",
         repo.root.join("repo-demo").display()
     );
-    for (provider, decision) in [("claude", Value::Null), ("codex", Value::from("allow"))] {
+    let allow = Value::from("allow");
+    for (provider, decision) in [("claude", None), ("codex", Some(&allow))] {
         let outcome = run_worktree_hook(provider, asked.to_string().as_bytes(), &runtime);
         assert_eq!(outcome.exit_code(), 0, "{provider}");
         let HookOutcome::Intercepted {
@@ -733,7 +893,7 @@ fn the_pre_tool_use_reply_is_the_one_each_provider_needs() {
         assert_eq!(inner["hookEventName"], "PreToolUse");
         assert_eq!(inner["updatedInput"]["command"], expected.as_str());
         assert_eq!(inner["updatedInput"]["description"], "add a worktree");
-        assert_eq!(inner["permissionDecision"], decision, "{provider}");
+        assert_eq!(inner.get("permissionDecision"), decision, "{provider}");
     }
     assert!(!repo.root.join("repo-demo").exists());
     let other =
@@ -745,7 +905,7 @@ fn the_pre_tool_use_reply_is_the_one_each_provider_needs() {
 }
 
 #[test]
-fn the_post_tool_use_reply_tells_the_model_the_folder_and_the_host_hears() {
+fn the_post_tool_use_reply_tells_the_model_the_folder_and_publishes_the_event() {
     let repo = Repo::new("post-hook");
     let states = routing(&repo, "");
     let env = runtime_env(&repo, &states);
@@ -776,7 +936,7 @@ fn the_post_tool_use_reply_tells_the_model_the_folder_and_the_host_hears() {
         reply["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .expect("context")
-            .contains("repo-feature-demo")
+            .contains(path.to_str().expect("worktree path"))
     );
     let events = events(&states);
     assert_eq!(events.len(), 1);
@@ -789,6 +949,7 @@ fn the_post_tool_use_reply_tells_the_model_the_folder_and_the_host_hears() {
     );
     let event: Value = serde_json::from_slice(&fs::read(&events[0]).expect("event")).expect("json");
     assert_eq!(event["event"], "WorktreeCreate");
+    assert_eq!(event["repoRoot"], repo.path.to_string_lossy().as_ref());
     assert_eq!(event["branch"], "feature/demo");
     assert_eq!(event["worktreePath"], path.to_string_lossy().as_ref());
 }
@@ -800,11 +961,14 @@ fn route_skips_an_unreadable_entry_and_keeps_routing_the_rest() {
     let repo = Repo::new("mixed-routing");
     let states = repo.root.join("support").join("agent-states");
     fs::create_dir_all(&states).expect("states");
+    let nested = repo.path.join("nested");
+    fs::create_dir(&nested).expect("nested folder");
     fs::write(
         repo.root.join("support").join("worktree-routing.json"),
         format!(
-            r#"{{"schemaVersion":1,"projects":[{{"root":"{root}","placement":{{"kind":"fromTheFuture"}},"bootstrap":[],"routing":{{}}}},{{"placement":{{"kind":"siblingPrefixed"}},"bootstrap":[],"routing":{{}}}},{{"root":"{root}","placement":{{"kind":"siblingPrefixed"}},"bootstrap":[],"routing":{{}}}}]}}"#,
-            root = repo.path.display()
+            r#"{{"schemaVersion":1,"projects":[{{"root":"{root}","placement":{{"kind":"fromTheFuture"}},"bootstrap":[],"routing":{{}}}},{{"worktrees":["{nested}"],"placement":{{"kind":"siblingPrefixed"}},"bootstrap":[],"routing":{{}}}},{{"root":"{root}","placement":{{"kind":"siblingPrefixed"}},"bootstrap":[],"routing":{{}}}}]}}"#,
+            root = repo.path.display(),
+            nested = nested.display(),
         ),
     )
     .expect("worktree-routing.json");
@@ -812,7 +976,8 @@ fn route_skips_an_unreadable_entry_and_keeps_routing_the_rest() {
     // turn every other project's routing off.
     assert!(matches!(
         plan_worktree(
-            &intent(&repo, "git worktree add -b demo ../demo"),
+            &WorktreeIntent::parse("git worktree add -b demo ../demo", nested.to_str())
+                .expect("intent"),
             "claude",
             &states
         ),
@@ -921,9 +1086,9 @@ fn a_command_for_another_repository_does_not_set_up_this_one() {
     let states = routing(&repo, "");
     let (path, command) = rerouted(&repo, &states, "git worktree add -b demo ../demo");
     assert!(shell(&repo, &command));
-    let other = repo.root.join("other");
+    let other = repo.path.join("other");
     fs::create_dir(&other).expect("other");
-    git(&other, &["init", "-q"]);
+    git(&other, &["init", "-q"]).expect("nested repository");
     git(
         &other,
         &[
@@ -937,7 +1102,8 @@ fn a_command_for_another_repository_does_not_set_up_this_one() {
             "-m",
             "i",
         ],
-    );
+    )
+    .expect("commit in the nested repository");
     let elsewhere = format!(
         "git -C {} worktree add -b demo {}",
         other.display(),
@@ -949,6 +1115,9 @@ fn a_command_for_another_repository_does_not_set_up_this_one() {
         None
     );
     assert!(!path.join("sub").exists());
+    assert_eq!(awaited_marks(&states).len(), 1);
+    assert!(finish_worktree(&intent(&repo, &command), "claude", &states, false).is_some());
+    assert!(path.join("sub/nested.txt").is_file());
 }
 
 /// A worktree beside the project has the project's rules, as it has its checks.

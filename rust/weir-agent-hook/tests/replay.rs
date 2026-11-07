@@ -332,7 +332,15 @@ fn an_mcp_elicitation_waits_in_its_words_until_its_result() {
         );
         assert_eq!(waiting.detail.as_deref(), Some(message.as_str()));
 
-        replay(&scratch, "claude", &payloads[asked + 1..=answered]);
+        for payload in &payloads[asked + 1..answered] {
+            replay(&scratch, "claude", std::slice::from_ref(payload));
+            assert_eq!(
+                scratch.record(),
+                Some(waiting.clone()),
+                "{case}: result has not arrived"
+            );
+        }
+        replay(&scratch, "claude", &payloads[answered..=answered]);
         let answered = scratch.record().expect("answered record");
         assert_eq!(answered.state, RunState::Running, "{case}");
         assert_eq!(answered.wait_kind, None);
@@ -355,6 +363,9 @@ fn a_background_subagents_mcp_elicitation_waits_after_the_stop() {
         RunState::Finished,
         "the subagent's own tool leaves the run at its rest"
     );
+    let finished = scratch.turns();
+    assert_eq!(finished.len(), 1);
+    assert_eq!(finished[0].phase, TurnPhase::Finished);
     replay(&scratch, "claude", &payloads[5..6]);
     let waiting = scratch.record().expect("waiting record");
     assert_eq!(waiting.state, RunState::NeedsInput);
@@ -362,7 +373,13 @@ fn a_background_subagents_mcp_elicitation_waits_after_the_stop() {
         waiting.detail.as_deref(),
         Some("Pick a color for the probe")
     );
-    replay(&scratch, "claude", &payloads[6..]);
+    replay(&scratch, "claude", &payloads[6..7]);
+    let answered = scratch.record().expect("result record");
+    assert_ne!(answered.state, RunState::NeedsInput);
+    assert_eq!(answered.wait_kind, None);
+    assert_eq!(answered.run_started_at, None);
+    assert_eq!(scratch.turns(), finished);
+    replay(&scratch, "claude", &payloads[7..]);
     assert_eq!(scratch.record().expect("record").state, RunState::Finished);
 }
 
@@ -476,7 +493,18 @@ fn claude_session_basic_writes_a_version_three_record_and_drops_the_hint() {
 fn claude_cwd_change_writes_the_cwd_event_and_no_record() {
     let scratch = Scratch::new("claude-cwd");
     let payloads = fixture_case("claude", "cwd-changed");
-    replay(&scratch, "claude", &payloads);
+    replay(&scratch, "claude", &payloads[..3]);
+    let record_path = scratch.root.join("states").join(run_record_file_name(RUN));
+    let before = fs::read(&record_path).expect("run before CwdChanged");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&payloads[3]).expect("payload")["hook_event_name"],
+        "CwdChanged"
+    );
+    replay(&scratch, "claude", &payloads[3..4]);
+    assert_eq!(
+        fs::read(&record_path).expect("run after CwdChanged"),
+        before
+    );
     let event: Value = serde_json::from_slice(
         &fs::read(scratch.root.join("cwd").join(cwd_event_file_name(PANE))).expect("cwd event"),
     )
@@ -484,6 +512,7 @@ fn claude_cwd_change_writes_the_cwd_event_and_no_record() {
     assert_eq!(event["schemaVersion"], 1);
     assert_eq!(event["paneId"], PANE);
     assert_eq!(event["newCwd"], "/tmp/example");
+    replay(&scratch, "claude", &payloads[4..]);
     let record = scratch.record().expect("record");
     // Session start, prompt, tool, stop, session end write; the cwd event
     // and the idle notification do not.
@@ -508,7 +537,14 @@ fn a_signal_keeps_the_hint_for_resume() {
 fn codex_session_keeps_its_hint_and_finishes_tools() {
     let scratch = Scratch::new("codex-basic");
     let payloads = fixture_case("codex", "session-basic");
-    replay(&scratch, "codex", &payloads);
+    replay(&scratch, "codex", &payloads[..3]);
+    let started = scratch.record().expect("tool started");
+    assert_eq!(started.last_hook_event.as_deref(), Some("tool_started"));
+    replay(&scratch, "codex", &payloads[3..4]);
+    let finished = scratch.record().expect("tool finished");
+    assert_eq!(finished.last_hook_event.as_deref(), Some("tool_finished"));
+    assert_eq!(finished.current_turn_id, started.current_turn_id);
+    replay(&scratch, "codex", &payloads[4..]);
     let record = scratch.record().expect("record");
     assert_eq!(record.state, RunState::Unknown);
     assert_eq!(record.revision, Some(6));
@@ -584,9 +620,12 @@ fn codex_takes_its_session_name_from_its_title_index() {
     // `index_at`, or with no index at all.
     let call_with = |payload: &[u8], index_at: Option<&str>| {
         let index = home.join("session_index.jsonl");
-        match index_at.map(|stem| fs::read(case.join(format!("{stem}.title-index.jsonl")))) {
-            Some(Ok(bytes)) => fs::write(&index, bytes).expect("index"),
-            _ => drop(fs::remove_file(&index)),
+        if let Some(stem) = index_at {
+            let bytes = fs::read(case.join(format!("{stem}.title-index.jsonl")))
+                .unwrap_or_else(|error| panic!("title index for {stem}: {error}"));
+            fs::write(&index, bytes).expect("index");
+        } else if index.exists() {
+            fs::remove_file(&index).expect("remove index");
         }
         let mut pairs = scratch.pairs("codex");
         pairs.push(("CODEX_HOME".to_owned(), home.display().to_string()));
@@ -695,36 +734,36 @@ fn a_version_two_record_is_continued_with_a_higher_revision() {
 
 #[test]
 fn missing_shim_environment_writes_nothing() {
-    let scratch = Scratch::new("not-in-weir");
-    let env = HookEnv::from_pairs([
-        ("WEIR_PANE_ID", PANE),
-        (
-            "WEIR_HOOK_LOG",
-            scratch.root.join("hook.log").to_str().expect("path"),
-        ),
-    ]);
-    let runtime = HookRuntime::new(&env, &NoSnapshots);
     let payloads = fixture_case("claude", "session-basic");
-    assert_eq!(
-        run_hook("claude", &payloads[0], &runtime),
-        HookOutcome::NotInWeir
-    );
-    assert!(!scratch.root.join("states").exists());
-    assert!(scratch.log().contains("not launched through the Weir shim"));
-
-    let env = HookEnv::from_pairs([(
-        "WEIR_AGENT_STATES_DIR",
-        scratch.root.to_str().expect("path"),
-    )]);
-    let runtime = HookRuntime::new(&env, &NoSnapshots);
-    assert_eq!(
-        run_hook("claude", &payloads[0], &runtime),
-        HookOutcome::NotInWeir
-    );
-    assert_eq!(
-        run_hook("gemini", &payloads[0], &runtime),
-        HookOutcome::UnknownProvider
-    );
+    for (missing, message) in [
+        ("WEIR_PANE_ID", "not a Weir pane"),
+        (
+            "WEIR_AGENT_STATES_DIR",
+            "not launched through the Weir shim",
+        ),
+    ] {
+        let scratch = Scratch::new("not-in-weir");
+        let mut pairs = scratch.pairs("claude");
+        pairs.retain(|(name, _)| name != missing);
+        let env = HookEnv::from_pairs(pairs);
+        let runtime = HookRuntime::new(&env, &NoSnapshots);
+        assert_eq!(
+            run_hook("claude", &payloads[0], &runtime),
+            HookOutcome::NotInWeir,
+            "{missing}"
+        );
+        for directory in ["states", "sessions", "cwd"] {
+            assert!(
+                !scratch.root.join(directory).exists(),
+                "{missing}: {directory}"
+            );
+        }
+        assert!(scratch.log().contains(message), "{missing}");
+        assert_eq!(
+            run_hook("gemini", &payloads[0], &runtime),
+            HookOutcome::UnknownProvider
+        );
+    }
 }
 
 #[test]
@@ -858,11 +897,29 @@ fn a_codex_usage_limit_applies_only_to_the_session_it_watched() {
     // conversation.
     codex(r#"{"hook_event_name":"SessionStart","session_id":"b","source":"startup"}"#);
     codex(r#"{"hook_event_name":"UserPromptSubmit","session_id":"b","prompt":"second"}"#);
+    let active = scratch.record().expect("new conversation");
+    let turns = scratch.turns();
+    assert_eq!(turns.len(), 2);
+    let current = turns
+        .iter()
+        .find(|turn| turn.conversation.conversation_id == "b")
+        .expect("the new conversation's turn");
+    assert_eq!(current.phase, TurnPhase::Started);
+    assert_eq!(
+        active.current_turn_id.as_deref(),
+        Some(current.turn_id.as_str())
+    );
     codex(&report);
     let record = scratch.record().expect("record");
     assert_eq!(record.state, RunState::Running, "b goes on");
     assert_eq!(record.usage_limit, None);
     assert!(record.run_started_at.is_some());
+    assert_eq!(record.current_turn_id, active.current_turn_id);
+    let preserved = scratch.turns();
+    assert_eq!(preserved.len(), turns.len());
+    for turn in &turns {
+        assert!(preserved.contains(turn), "a conversation's turn changed");
+    }
 
     // Reported for the session the run is in, it ends that turn.
     let scratch = Scratch::new("codex-limit-same-session");
@@ -871,10 +928,17 @@ fn a_codex_usage_limit_applies_only_to_the_session_it_watched() {
     };
     codex(r#"{"hook_event_name":"SessionStart","session_id":"a","source":"startup"}"#);
     codex(r#"{"hook_event_name":"UserPromptSubmit","session_id":"a","prompt":"first"}"#);
+    let active = scratch.record().expect("active run");
+    assert!(active.current_turn_id.is_some());
     codex(&report);
     let record = scratch.record().expect("record");
     assert_eq!(record.state, RunState::Error);
     assert!(record.usage_limit.is_some());
+    assert_eq!(record.current_turn_id, active.current_turn_id);
+    let turns = scratch.turns();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(Some(&turns[0].turn_id), active.current_turn_id.as_ref());
+    assert_eq!(turns[0].phase, TurnPhase::Failed);
 }
 
 /// Codex runs no hook when a turn fails for any reason, not only at its
@@ -940,16 +1004,33 @@ fn a_turn_keeps_the_first_paragraph_of_its_reply() {
         Some("Lighthouses have guided sailors safely through dark and stormy nights.")
     );
 
-    // The idle prompt after the stop takes the end again, with no reply.
+    scratch.call(RUN, Some(&new_call()), &bash("PreToolUse", "ls", ""));
+    let working = scratch.record().expect("late tool");
+    assert_eq!(working.state, RunState::Running);
+    assert_eq!(working.run_started_at, None);
     scratch.call(
         RUN,
         Some(&new_call()),
         br#"{"hook_event_name":"Notification","session_id":"s1","notification_type":"idle_prompt"}"#,
     );
+    let retaken = scratch.turns();
+    assert_eq!(retaken.len(), 1);
+    assert_eq!(retaken[0].turn_id, turns[0].turn_id);
     assert_eq!(
-        scratch.turns()[0].reply_head.as_deref(),
-        Some("Lighthouses have guided sailors safely through dark and stormy nights.")
+        retaken[0].applied_events.len(),
+        turns[0].applied_events.len() + 1
     );
+    assert_eq!(retaken[0].reply_head, turns[0].reply_head);
+
+    scratch.call(
+        RUN,
+        Some(&new_call()),
+        br#"{"hook_event_name":"Stop","session_id":"s1","stop_hook_active":true}"#,
+    );
+    let continued = scratch.turns();
+    assert_eq!(continued.len(), 1);
+    assert_eq!(continued[0].turn_id, turns[0].turn_id);
+    assert_eq!(continued[0].reply_head, None);
 
     // A stop that sends no reply records none.
     scratch.call(RUN, Some(&new_call()), PROMPT);
@@ -1074,12 +1155,20 @@ fn a_failed_begin_leaves_no_turn_for_the_next_end_to_close() {
         .join(TURNS_DIRECTORY)
         .join(first.conversation.counter_file_name());
     let intact = fs::read(&counter).expect("counter");
+    let first_path = counter.with_file_name(format!("{}.turn.json", first.turn_id));
+    let first_bytes = fs::read(&first_path).expect("finished turn");
     fs::write(&counter, b"not a counter").expect("break the counter");
     scratch.call(RUN, Some(&new_call()), PROMPT);
+    let run = scratch.record().expect("new prompt's run");
+    assert_eq!(run.state, RunState::Running);
+    assert_eq!(run.current_turn_id, None);
+    assert_eq!(scratch.turns(), std::slice::from_ref(&first));
+    assert_eq!(fs::read(&first_path).expect("finished turn"), first_bytes);
     fs::write(&counter, intact).expect("mend the counter");
     scratch.call(RUN, Some(&new_call()), STOP);
 
     let turns = scratch.turns();
+    assert_eq!(turns.len(), 2);
     assert_eq!(turns[0].turn_id, first.turn_id);
     assert_eq!(
         turns[0].applied_events, first.applied_events,
@@ -1094,29 +1183,6 @@ fn a_failed_begin_leaves_no_turn_for_the_next_end_to_close() {
     assert!(scratch.log().contains("read counter"));
 }
 
-#[test]
-fn a_turn_a_newer_build_wrote_is_left_as_it_is() {
-    let scratch = Scratch::new("turn-newer");
-    scratch.call(RUN, Some(&new_call()), SESSION_START);
-    scratch.call(RUN, Some(&new_call()), PROMPT);
-    let turn = scratch.turns().remove(0);
-    let path = scratch
-        .root
-        .join("states")
-        .join(TURNS_DIRECTORY)
-        .join(format!("{}.turn.json", turn.turn_id));
-    let mut value: Value = serde_json::from_slice(&fs::read(&path).expect("read")).expect("json");
-    value["schemaVersion"] = Value::from(2);
-    value["fromTheFuture"] = Value::from(true);
-    let newer = serde_json::to_vec(&value).expect("encode");
-    fs::write(&path, &newer).expect("write");
-
-    scratch.call(RUN, Some(&new_call()), STOP);
-
-    assert_eq!(fs::read(&path).expect("read"), newer, "not a byte changed");
-    assert!(scratch.log().contains("a newer build wrote"));
-}
-
 // Numbers are handed out under the run record's lock, and off Unix the
 // hook opens no lock file (`records::open_lock_file`).
 #[cfg(unix)]
@@ -1125,11 +1191,14 @@ fn concurrent_prompts_of_one_conversation_get_distinct_numbers() {
     let scratch = std::sync::Arc::new(Scratch::new("turn-concurrent"));
     scratch.call(RUN, Some(&new_call()), SESSION_START);
     scratch.call(OTHER_RUN, Some(&new_call()), SESSION_START);
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     let threads: Vec<_> = [RUN, OTHER_RUN]
         .into_iter()
         .map(|run| {
             let scratch = std::sync::Arc::clone(&scratch);
+            let barrier = std::sync::Arc::clone(&barrier);
             std::thread::spawn(move || {
+                barrier.wait();
                 for _ in 0..5 {
                     scratch.call(run, Some(&new_call()), PROMPT);
                 }
@@ -1170,21 +1239,21 @@ fn rewrite_current_turn(scratch: &Scratch, edit: impl FnOnce(&mut Value)) -> (St
 
 #[test]
 fn an_unreadable_current_turn_is_neither_ended_nor_replaced() {
-    for (name, edit) in [
-        (
-            "newer shape",
-            Box::new(|value: &mut Value| {
-                value["schemaVersion"] = Value::from(9);
-                value["phase"] = Value::from(42);
-            }) as Box<dyn FnOnce(&mut Value)>,
-        ),
-        (
-            "another turn's id",
-            Box::new(|value: &mut Value| {
-                value["turnId"] = Value::from("00000000-0000-4000-8000-000000000000");
-            }),
-        ),
-    ] {
+    type Edit = fn(&mut Value);
+    let cases: [(&str, Edit); 3] = [
+        ("newer schema", |value| {
+            value["schemaVersion"] = Value::from(2);
+            value["fromTheFuture"] = Value::from(true);
+        }),
+        ("newer shape", |value| {
+            value["schemaVersion"] = Value::from(9);
+            value["phase"] = Value::from(42);
+        }),
+        ("another turn's id", |value| {
+            value["turnId"] = Value::from("00000000-0000-4000-8000-000000000000");
+        }),
+    ];
+    for (name, edit) in cases {
         let scratch = Scratch::new("turn-unreadable");
         scratch.call(RUN, Some(&new_call()), SESSION_START);
         scratch.call(RUN, Some(&new_call()), PROMPT);
@@ -1192,6 +1261,9 @@ fn an_unreadable_current_turn_is_neither_ended_nor_replaced() {
 
         scratch.call(RUN, Some(&new_call()), STOP);
 
+        if name == "newer schema" {
+            assert!(scratch.log().contains("a newer build wrote"));
+        }
         let directory = scratch.root.join("states").join(TURNS_DIRECTORY);
         let records = fs::read_dir(&directory)
             .expect("turns")
@@ -1210,34 +1282,6 @@ fn an_unreadable_current_turn_is_neither_ended_nor_replaced() {
             "{name}: the run still names it"
         );
     }
-}
-
-#[test]
-fn an_end_only_turn_ended_again_still_has_no_duration() {
-    // A stop hook held the stop that wrote the end-only record; the time
-    // until the real stop is not how long a turn took.
-    let scratch = Scratch::new("turn-end-only-again");
-    scratch.call(RUN, Some(&new_call()), SESSION_START);
-    scratch.call(RUN, Some(&new_call()), PROMPT);
-    scratch.call(RUN, Some(&new_call()), STOP);
-    scratch.call(RUN, Some(&new_call()), STOP);
-    scratch.call(
-        RUN,
-        Some(&new_call()),
-        br#"{"hook_event_name":"Stop","session_id":"s1","stop_hook_active":true}"#,
-    );
-
-    let turns = scratch.turns();
-    assert_eq!(turns.len(), 2);
-    let end_only = &turns[1];
-    assert_eq!(end_only.applied_events.len(), 2, "ended, then ended again");
-    assert_eq!(end_only.duration_seconds, None);
-    assert_eq!(
-        end_only.changes,
-        ChangeSummary::Unavailable {
-            reason: "beginMissing".into()
-        }
-    );
 }
 
 fn bash(hook: &str, command: &str, tail: &str) -> Vec<u8> {
@@ -1355,36 +1399,21 @@ fn a_project_names_its_own_checks() {
 }
 
 #[test]
-fn a_check_piped_on_has_no_exit_of_its_own() {
-    let scratch = Scratch::new("turn-check-piped");
-    scratch.call(RUN, Some(&new_call()), SESSION_START);
-    scratch.call(RUN, Some(&new_call()), PROMPT);
-    // The call succeeded because `tail` did; the tests may have failed.
-    scratch.call(
-        RUN,
-        Some(&new_call()),
-        &bash("PostToolUse", "cargo test 2>&1 | tail -20", ""),
-    );
-
-    let check = scratch.turns().remove(0).last_check.expect("a check");
-    assert_eq!(check.exit_code, None);
-    assert!(!check.is_filtered, "the redirection is not an argument");
-}
-
-#[test]
-fn a_check_that_may_not_have_run_has_no_exit_of_its_own() {
+fn a_composite_command_does_not_report_its_checks_exit_status() {
     for command in [
+        "cargo test 2>&1 | tail -20",
         "if false; then make test; fi",
         "while false; do make test; done",
     ] {
         let scratch = Scratch::new("turn-check-conditional");
         scratch.call(RUN, Some(&new_call()), SESSION_START);
         scratch.call(RUN, Some(&new_call()), PROMPT);
-        // The call exited 0 without running the tests.
+        // The shell's success cannot be attributed to the tests.
         scratch.call(RUN, Some(&new_call()), &bash("PostToolUse", command, ""));
 
         let check = scratch.turns().remove(0).last_check.expect("a check");
         assert_eq!(check.exit_code, None, "{command}");
+        assert!(!check.is_filtered, "{command}");
     }
 }
 
@@ -1409,7 +1438,12 @@ fn the_defaults_apply_where_no_project_names_checks() {
             Some(&new_call()),
             &bash("PostToolUse", "cargo test", r#","cwd":"/tmp""#),
         );
-        assert!(scratch.turns().remove(0).last_check.is_some(), "{routing}");
+        let check = scratch
+            .turns()
+            .remove(0)
+            .last_check
+            .expect("the default cargo test check");
+        assert_eq!(check.command, "cargo test", "{routing}");
     }
 }
 
@@ -1657,6 +1691,8 @@ fn an_interrupted_codex_turn_reads_what_it_used_from_the_rollout() {
 /// each was an end with no beginning, and showed nothing it changed.
 #[test]
 fn a_codex_goal_begins_each_of_its_turns_at_the_turns_first_hook() {
+    let objective = "Create a.txt containing \"a\", then b.txt containing \"b\". Create only a.txt in your first turn and end that turn; create b.txt in the next turn, then mark the goal complete.";
+    let objective_head: String = objective.chars().take(80).collect();
     let scratch = Scratch::new("codex-goal");
     let rollout = scratch.root.join("rollout.jsonl");
     fs::write(
@@ -1680,30 +1716,51 @@ fn a_codex_goal_begins_each_of_its_turns_at_the_turns_first_hook() {
         );
         // The first tool of each turn finds the run at work in a turn.
         if index == 1 || index == 4 {
+            let record = scratch.record().expect("active run");
             assert!(
-                scratch
-                    .record()
-                    .is_some_and(|record| record.run_started_at.is_some()),
+                record.run_started_at.is_some(),
                 "payload {index} began a turn"
             );
-            // The shim retries a call with the id it minted for it; the turn
-            // the call began is not begun again.
-            scratch.call_as("codex", RUN, Some(call), payload);
+            let turns = scratch.turns();
+            assert_eq!(turns.len(), if index == 1 { 1 } else { 2 });
+            let turn = turns.last().expect("started turn");
+            assert_eq!(
+                record.current_turn_id.as_deref(),
+                Some(turn.turn_id.as_str())
+            );
+            assert_eq!(turn.phase, TurnPhase::Started);
+            assert_eq!(turn.begin, SnapshotStatus::Disabled);
+            assert_eq!(
+                turn.prompt_kind.as_ref().map(RecordedPromptKind::kind),
+                Some(PromptKind::Goal)
+            );
+            assert_eq!(turn.prompt_head.as_deref(), Some(objective_head.as_str()));
+            let payload_value: Value = serde_json::from_slice(payload).expect("tool payload");
+            assert_eq!(
+                turn.provider_turn_id.as_deref(),
+                payload_value["turn_id"].as_str()
+            );
+            // The shim retries a call with the id it minted for it.
+            assert_eq!(
+                scratch.call_as("codex", RUN, Some(call), payload),
+                HookOutcome::Applied
+            );
+            assert_eq!(scratch.turns(), turns, "retry changed a persisted turn");
+            assert_eq!(
+                scratch.record().expect("retried run").current_turn_id,
+                record.current_turn_id
+            );
         }
     }
     let turns = scratch.turns();
     assert_eq!(turns.len(), 2);
-    let objective = "Create a.txt containing \"a\", then b.txt containing \"b\". Create only a.txt in your first turn and end that turn; create b.txt in the next turn, then mark the goal complete.";
     for turn in &turns {
         assert_eq!(turn.phase, TurnPhase::Finished);
         assert_eq!(
             turn.prompt_kind.as_ref().map(RecordedPromptKind::kind),
             Some(PromptKind::Goal)
         );
-        assert_eq!(
-            turn.prompt_head.as_deref(),
-            Some(objective.chars().take(80).collect::<String>().as_str())
-        );
+        assert_eq!(turn.prompt_head.as_deref(), Some(objective_head.as_str()));
         // A begin was taken (the runtime takes none here), not missed.
         assert_eq!(turn.begin, SnapshotStatus::Disabled);
         assert!(turn.usage.is_some(), "what the turn used is read");
@@ -1916,28 +1973,26 @@ fn a_codex_turn_counts_its_subagents_from_their_own_rollouts() {
         turns[0].usage.expect("usage")
     };
 
-    // The parent's three requests, then the subagent's two.
-    let parent = TurnUsage {
-        input_tokens: 76_369 - 57_472,
-        cache_write_tokens: 0,
-        cache_read_tokens: 57_472,
-        output_tokens: 429,
-        is_partial: false,
-    };
-    let child = TurnUsage {
-        input_tokens: 24_878 + (24_972 - 24_704),
-        cache_write_tokens: 0,
-        cache_read_tokens: 24_704,
-        output_tokens: 68 + 18,
-        is_partial: false,
-    };
-    assert_eq!(replay_with_child(true), parent.plus(child));
+    // Independent totals from the parent's three requests and the child's two.
+    assert_eq!(
+        replay_with_child(true),
+        TurnUsage {
+            input_tokens: 44_043,
+            cache_write_tokens: 0,
+            cache_read_tokens: 82_176,
+            output_tokens: 515,
+            is_partial: false,
+        }
+    );
     // A subagent whose rollout is not found leaves the count short.
     assert_eq!(
         replay_with_child(false),
         TurnUsage {
+            input_tokens: 18_897,
+            cache_write_tokens: 0,
+            cache_read_tokens: 57_472,
+            output_tokens: 429,
             is_partial: true,
-            ..parent
         }
     );
 }
@@ -1988,7 +2043,11 @@ fn a_codex_turn_reads_its_usage_and_checks_from_the_rollout_at_its_stop() {
     let exits: Vec<_> = turn.checks.iter().map(|mark| mark.exit_code).collect();
     assert_eq!(exits, vec![Some(101), Some(0)]);
     assert_eq!((turn.check_count, turn.failure_count), (2, 1));
-    assert_eq!(turn.last_check.expect("a check").command, "cargo test");
+    assert!(turn.are_checks_partial, "the rollout lacks the task start");
+    let last = turn.last_check.expect("a check");
+    assert_eq!(last.command, "cargo test");
+    assert_eq!(last.exit_code, Some(0));
+    assert!(!last.is_filtered);
 }
 
 #[test]
@@ -2071,42 +2130,6 @@ fn a_stop_nobody_prompted_reads_the_turn_from_the_last_prompt() {
             is_partial: false,
         })
     );
-}
-
-#[test]
-fn a_second_stop_of_an_ended_turn_does_not_count_it_again() {
-    let scratch = Scratch::new("turn-usage-second-stop");
-    let session = scratch.root.join("session.jsonl");
-    let lines = [
-        r#"{"type":"user","isSidechain":false,"promptId":"p1","message":{"content":"go"}}"#,
-        r#"{"type":"assistant","isSidechain":false,"requestId":"r1","message":{"usage":{"input_tokens":2,"output_tokens":5}}}"#,
-    ];
-    fs::write(&session, lines.map(transcript_line).concat()).expect("transcript");
-    let path = json_text(&session);
-    let stop =
-        format!(r#"{{"hook_event_name":"Stop","session_id":"s1","transcript_path":"{path}"}}"#);
-    scratch.call(RUN, Some(&new_call()), SESSION_START);
-    scratch.call(
-        RUN,
-        Some(&new_call()),
-        format!(
-            r#"{{"hook_event_name":"UserPromptSubmit","session_id":"s1","prompt":"go","prompt_id":"p1","transcript_path":"{path}"}}"#
-        )
-        .as_bytes(),
-    );
-    scratch.call(RUN, Some(&new_call()), stop.as_bytes());
-    // Background work ends with a stop nobody prompted; the transcript's
-    // last prompt is still the ended turn's.
-    scratch.call(RUN, Some(&new_call()), stop.as_bytes());
-
-    let turns = scratch.turns();
-    assert_eq!(turns.len(), 2, "the second stop is an end-only record");
-    let usages: Vec<_> = turns.iter().map(|turn| turn.usage).collect();
-    assert!(
-        usages.contains(&None),
-        "the end-only record counts nothing: {usages:?}"
-    );
-    assert_eq!(usages.iter().flatten().count(), 1);
 }
 
 #[test]
@@ -2249,12 +2272,48 @@ fn a_continued_stop_of_an_end_only_record_does_not_count_the_turn_before() {
         .as_bytes(),
     );
     scratch.call(RUN, Some(&new_call()), stop(false).as_bytes());
-    // A stop nobody prompted, then the stop a hook's feedback continued.
-    scratch.call(RUN, Some(&new_call()), stop(false).as_bytes());
-    scratch.call(RUN, Some(&new_call()), stop(true).as_bytes());
+    let first = scratch.turns().remove(0);
+    assert_eq!(first.phase, TurnPhase::Finished);
+    assert_eq!(
+        first.usage,
+        Some(TurnUsage {
+            input_tokens: 2,
+            output_tokens: 5,
+            ..TurnUsage::default()
+        })
+    );
 
-    let usages: Vec<_> = scratch.turns().iter().map(|turn| turn.usage).collect();
-    assert_eq!(usages.iter().flatten().count(), 1, "{usages:?}");
+    scratch.call(RUN, Some(&new_call()), stop(false).as_bytes());
+    let ordinary = scratch.turns();
+    assert_eq!(ordinary.len(), 2);
+    assert_eq!(ordinary[0], first);
+    let end_only = &ordinary[1];
+    assert_ne!(end_only.turn_id, first.turn_id);
+    assert_eq!(end_only.phase, TurnPhase::Finished);
+    assert_eq!(end_only.usage, None);
+    assert_eq!(end_only.applied_events.len(), 1);
+
+    scratch.call(RUN, Some(&new_call()), stop(true).as_bytes());
+    let continued = scratch.turns();
+    assert_eq!(continued.len(), 2);
+    assert_eq!(continued[0], first);
+    let continued_end = &continued[1];
+    assert_eq!(continued_end.turn_id, end_only.turn_id);
+    assert_eq!(continued_end.phase, TurnPhase::Finished);
+    assert_eq!(continued_end.usage, None);
+    assert_eq!(continued_end.applied_events.len(), 2);
+    assert!(
+        continued_end
+            .applied_events
+            .starts_with(&end_only.applied_events)
+    );
+    assert_eq!(continued_end.duration_seconds, None);
+    assert_eq!(
+        continued_end.changes,
+        ChangeSummary::Unavailable {
+            reason: "beginMissing".into()
+        }
+    );
 }
 
 #[test]
@@ -2284,5 +2343,13 @@ fn a_response_that_never_comes_leaves_the_turn_without_usage() {
         format!(r#"{{"hook_event_name":"Stop","session_id":"s1","transcript_path":"{path}"}}"#)
             .as_bytes(),
     );
-    assert_eq!(scratch.turns().remove(0).usage, None);
+    let turns = scratch.turns();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].phase, TurnPhase::Finished);
+    assert_eq!(turns[0].usage, None);
+    let run = scratch.record().expect("finished run");
+    assert_eq!(
+        run.current_turn_id.as_deref(),
+        Some(turns[0].turn_id.as_str())
+    );
 }

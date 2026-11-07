@@ -260,7 +260,10 @@ mod tests {
     #[test]
     fn pane_ids_must_look_like_uuids() {
         let env = HookEnv::from_pairs([("WEIR_PANE_ID", "6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F10")]);
-        assert!(env.pane_id().is_some());
+        assert_eq!(
+            env.pane_id().as_deref(),
+            Some("6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F10")
+        );
         for bad in [
             "",
             "../x",
@@ -345,6 +348,12 @@ mod tests {
             env.provider_home(None, descriptor("claude")).as_deref(),
             Some(Path::new("/Users/me/.claude"))
         );
+        let env = HookEnv::from_pairs([("CODEX_HOME", ""), ("HOME", "/Users/me")]);
+        assert_eq!(
+            env.provider_home(Some("CODEX_HOME"), descriptor("codex"))
+                .as_deref(),
+            Some(Path::new("/Users/me/.codex"))
+        );
         let env = HookEnv::from_pairs([("CODEX_HOME", "")]);
         assert_eq!(
             env.provider_home(Some("CODEX_HOME"), descriptor("codex")),
@@ -354,9 +363,14 @@ mod tests {
 
     #[test]
     fn exported_pid_follows_the_provider_name() {
-        let env = HookEnv::from_pairs([("WEIR_CODEX_PID", "42"), ("WEIR_CLAUDE_PID", "x")]);
+        let env = HookEnv::from_pairs([
+            ("WEIR_CODEX_PID", "42"),
+            ("WEIR_CLAUDE_PID", "x"),
+            ("WEIR_GEMINI_CLI_PID", "73"),
+        ]);
         assert_eq!(env.exported_pid("codex"), Some(42));
         assert_eq!(env.exported_pid("claude"), None);
-        assert_eq!(env.exported_pid("gemini-cli"), None);
+        assert_eq!(env.exported_pid("gemini-cli"), Some(73));
+        assert_eq!(env.exported_pid("opencode"), None);
     }
 }

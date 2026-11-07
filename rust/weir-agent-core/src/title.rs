@@ -178,18 +178,51 @@ mod tests {
         .unwrap();
 
         assert_eq!(resolved.as_deref(), Some("Generated title"));
+        assert_eq!(
+            resolve_title(TitleCandidates {
+                provider_session: Some(" \n "),
+                provider_generated: Some("\t"),
+                first_prompt: Some("Opening prompt"),
+            }),
+            Ok(Some("Opening prompt".to_owned()))
+        );
     }
 
     #[test]
     fn oversized_candidate_is_rejected_instead_of_falling_through() {
-        let oversized = "x".repeat(MAX_TITLE_BYTES + 1);
-        let result = resolve_title(TitleCandidates {
-            provider_session: Some(&oversized),
-            provider_generated: Some("Generated title"),
-            first_prompt: None,
-        });
-
-        assert_eq!(result, Err(TitleError::TooLong));
+        let title_at_limit = "x".repeat(MAX_TITLE_BYTES);
+        let prompt_at_limit = "y".repeat(MAX_FIRST_PROMPT_BYTES);
+        let oversized = format!("{title_at_limit}x");
+        let oversized_prompt = format!("{prompt_at_limit}y");
+        for candidates in [
+            TitleCandidates {
+                provider_session: Some(&oversized),
+                provider_generated: Some("Generated title"),
+                first_prompt: None,
+            },
+            TitleCandidates {
+                provider_session: None,
+                provider_generated: Some(&oversized),
+                first_prompt: Some("Opening prompt"),
+            },
+            TitleCandidates {
+                first_prompt: Some(&oversized_prompt),
+                ..TitleCandidates::default()
+            },
+        ] {
+            assert_eq!(resolve_title(candidates), Err(TitleError::TooLong));
+        }
+        assert_eq!(
+            conversation_title(Some(&title_at_limit), None),
+            Ok(Some(title_at_limit))
+        );
+        assert_eq!(
+            resolve_title(TitleCandidates {
+                first_prompt: Some(&prompt_at_limit),
+                ..TitleCandidates::default()
+            }),
+            Ok(Some("y".repeat(MAX_TITLE_BYTES)))
+        );
     }
 
     #[test]

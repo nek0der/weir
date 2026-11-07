@@ -145,10 +145,18 @@ mod tests {
         })
         .to_string();
         let usage = usage(&response);
-        assert_eq!(usage.windows.len(), 1);
-        assert_eq!(usage.windows[0].kind, "seven_day");
-        assert!((usage.windows[0].used_percent - 12.0).abs() < f64::EPSILON);
-        assert!(usage.windows[0].resets_at.is_some());
+        assert_eq!(
+            usage,
+            PlanUsage {
+                windows: vec![PlanUsageWindow {
+                    kind: "seven_day".to_owned(),
+                    used_percent: 12.0,
+                    resets_at: Some("2026-11-04T07:08:36Z".to_owned()),
+                }],
+                reset_credits: None,
+                observed_at: "1970-01-01T00:00:00Z".to_owned(),
+            }
+        );
     }
 
     #[test]
@@ -161,8 +169,21 @@ mod tests {
         })
         .to_string();
         let usage = usage(&result);
-        let kinds: Vec<&str> = usage.windows.iter().map(|w| w.kind.as_str()).collect();
-        assert_eq!(kinds, ["five_hour", "seven_day"]);
+        assert_eq!(
+            usage.windows,
+            vec![
+                PlanUsageWindow {
+                    kind: "five_hour".to_owned(),
+                    used_percent: 80.0,
+                    resets_at: None
+                },
+                PlanUsageWindow {
+                    kind: "seven_day".to_owned(),
+                    used_percent: 30.5,
+                    resets_at: None
+                },
+            ]
+        );
     }
 
     #[test]
@@ -193,33 +214,58 @@ mod tests {
             }
         })
         .to_string();
-        let kinds: Vec<String> = usage(&result).windows.into_iter().map(|w| w.kind).collect();
-        assert_eq!(kinds, ["five_hour", "five_hour_secondary"]);
+        assert_eq!(
+            usage(&result).windows,
+            vec![
+                PlanUsageWindow {
+                    kind: "five_hour".to_owned(),
+                    used_percent: 1.0,
+                    resets_at: None
+                },
+                PlanUsageWindow {
+                    kind: "five_hour_secondary".to_owned(),
+                    used_percent: 2.0,
+                    resets_at: None
+                },
+            ]
+        );
     }
 
     #[test]
     fn reset_credits_count_and_the_first_to_lapse() {
-        let result = json!({
+        let mut result = json!({
             "rateLimits": { "primary": { "usedPercent": 1, "windowDurationMins": 10080 } },
             "rateLimitResetCredits": {
-                "availableCount": 2,
                 "credits": [
                     { "status": "available", "expiresAt": 1_794_007_137_u64 },
                     { "status": "used", "expiresAt": 1_700_000_000_u64 },
                     { "status": "available", "expiresAt": 1_793_299_653_u64 }
                 ]
             }
-        })
-        .to_string();
-        let credits = usage(&result).reset_credits.expect("credits");
-        assert_eq!(credits.available, 2);
-        assert_eq!(credits.expires_at.as_deref(), Some("2026-10-29T18:47:33Z"));
+        });
+        let expected = PlanResetCredits {
+            available: 2,
+            expires_at: Some("2026-10-29T18:47:33Z".to_owned()),
+        };
+        assert_eq!(
+            usage(&result.to_string()).reset_credits,
+            Some(expected.clone())
+        );
+
+        result["rateLimitResetCredits"]["availableCount"] = json!(3);
+        assert_eq!(
+            usage(&result.to_string()).reset_credits,
+            Some(PlanResetCredits {
+                available: 3,
+                ..expected
+            })
+        );
     }
 
     #[test]
     fn no_credits_left_says_nothing() {
         for credits in [
-            json!({ "availableCount": 0, "credits": [] }),
+            json!({ "availableCount": 0, "credits": [{ "status": "available", "expiresAt": 1 }] }),
             json!({ "credits": [{ "status": "used", "expiresAt": 1 }] }),
         ] {
             let result = json!({
