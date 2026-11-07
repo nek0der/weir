@@ -51,7 +51,7 @@ extension TabActions {
             title: paneName ?? sourceTab.title,
             titleOverride: paneName,
             workingDirectory: sourceTab.workingDirectory,
-            pwd: sourceTab.pwd,
+            pwd: session.workingDirectory(paneID: paneID) ?? sourceTab.pwd,
             splitTree: SplitTree(leafID: paneID),
             container: sourceTab.container
         )

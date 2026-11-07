@@ -53,8 +53,10 @@ struct SplitTreeTests {
         let a = UUID()
         let bogus = UUID()
         let new = UUID()
-        let result = SplitTree(leafID: a).insert(at: bogus, direction: .horizontal, newID: new)
-        #expect(result.tree.allLeafIDs() == [a])
+        let original = SplitTree(leafID: a)
+        let result = original.insert(at: bogus, direction: .horizontal, newID: new)
+        #expect(result.tree == original)
+        #expect(result.newLeafID == new)
     }
 
     // MARK: - Removal

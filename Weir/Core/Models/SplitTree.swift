@@ -169,7 +169,9 @@ struct SplitTree: Codable, Equatable {
     // MARK: - Insert
 
     /// Insert a new leaf next to an existing one, splitting it in the
-    /// given direction. Returns the resulting tree and the new leaf's id.
+    /// given direction. An empty tree takes the new leaf as its root. If
+    /// the target is missing from a nonempty tree, the tree stays unchanged.
+    /// The returned ID is the requested new ID in either case.
     func insert(
         at leafID: UUID,
         direction: SplitDirection,
@@ -182,6 +184,7 @@ struct SplitTree: Codable, Equatable {
                 newID
             )
         }
+        guard Self.containsLeaf(root, id: leafID) else { return (self, newID) }
         let newRoot = Self.replaceLeaf(in: root, id: leafID) { existing in
             .split(PaneSplit(
                 direction: direction,
