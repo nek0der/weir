@@ -89,7 +89,8 @@ fn reset_credits(value: &Map<String, Value>) -> Option<PlanResetCredits> {
         .iter()
         .filter_map(|credit| credit.get("expiresAt").and_then(Value::as_u64))
         .min()
-        .map(|seconds| format_utc_seconds(UNIX_EPOCH + Duration::from_secs(seconds)));
+        .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
+        .map(format_utc_seconds);
     Some(PlanResetCredits {
         available: count,
         expires_at,
@@ -111,7 +112,8 @@ fn window(slot: &str, value: &Map<String, Value>) -> Option<(u64, PlanUsageWindo
     let resets_at = value
         .get("resetsAt")
         .and_then(Value::as_u64)
-        .map(|seconds| format_utc_seconds(UNIX_EPOCH + Duration::from_secs(seconds)));
+        .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
+        .map(format_utc_seconds);
     Some((
         minutes.unwrap_or(u64::MAX),
         PlanUsageWindow {
@@ -256,6 +258,48 @@ mod tests {
                 "{response}"
             );
         }
+    }
+
+    #[test]
+    fn an_unrepresentable_window_reset_keeps_usage_and_other_windows() {
+        let result = json!({
+            "rateLimits": {
+                "primary": { "usedPercent": 30.5, "windowDurationMins": 10080, "resetsAt": u64::MAX },
+                "secondary": { "usedPercent": 80, "windowDurationMins": 300, "resetsAt": 1_793_776_116_u64 }
+            }
+        });
+        assert_eq!(
+            usage(&result.to_string()).windows,
+            vec![
+                PlanUsageWindow {
+                    kind: "five_hour".to_owned(),
+                    used_percent: 80.0,
+                    resets_at: Some("2026-11-04T07:08:36Z".to_owned()),
+                },
+                PlanUsageWindow {
+                    kind: "seven_day".to_owned(),
+                    used_percent: 30.5,
+                    resets_at: None,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unrepresentable_credit_expiry_keeps_the_available_count() {
+        let result = json!({
+            "rateLimits": { "primary": { "usedPercent": 1 } },
+            "rateLimitResetCredits": {
+                "credits": [{ "status": "available", "expiresAt": u64::MAX }]
+            }
+        });
+        assert_eq!(
+            usage(&result.to_string()).reset_credits,
+            Some(PlanResetCredits {
+                available: 1,
+                expires_at: None
+            })
+        );
     }
 
     fn usage(response: &str) -> PlanUsage {

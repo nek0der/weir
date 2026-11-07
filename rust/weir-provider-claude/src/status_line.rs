@@ -266,7 +266,8 @@ fn window(kind: &str, value: &Value) -> Option<PlanUsageWindow> {
     let resets_at = value
         .get("resets_at")
         .and_then(Value::as_u64)
-        .map(|seconds| format_utc_seconds(UNIX_EPOCH + Duration::from_secs(seconds)));
+        .and_then(|seconds| UNIX_EPOCH.checked_add(Duration::from_secs(seconds)))
+        .map(format_utc_seconds);
     Some(PlanUsageWindow {
         kind: kind.to_owned(),
         used_percent,
@@ -330,6 +331,34 @@ mod tests {
         assert_eq!(usage.windows.len(), 1);
         assert_eq!(usage.windows[0].kind, "seven_day");
         assert_eq!(usage.windows[0].resets_at, None);
+    }
+
+    #[test]
+    fn an_unrepresentable_reset_keeps_usage_and_the_other_window() {
+        let input = json!({
+            "rate_limits": {
+                "seven_day": { "used_percentage": 83, "resets_at": u64::MAX },
+                "five_hour": { "used_percentage": 42.5, "resets_at": 1_793_247_600_u64 }
+            }
+        });
+        let usage = ClaudeStatusLine
+            .plan_usage(input.to_string().as_bytes(), at(1_793_240_000))
+            .expect("usage");
+        assert_eq!(
+            usage.windows,
+            vec![
+                PlanUsageWindow {
+                    kind: "five_hour".into(),
+                    used_percent: 42.5,
+                    resets_at: Some("2026-10-29T04:20:00Z".into()),
+                },
+                PlanUsageWindow {
+                    kind: "seven_day".into(),
+                    used_percent: 83.0,
+                    resets_at: None,
+                },
+            ]
+        );
     }
 
     #[test]

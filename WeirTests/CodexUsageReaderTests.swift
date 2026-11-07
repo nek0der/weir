@@ -35,6 +35,13 @@ struct CodexUsageReaderTests {
     func isAnswer_matchesOnlyTheUsageRequest() {
         #expect(CodexUsageReader.isAnswer(Data(#"{"id":2,"result":{}}"#.utf8)))
         #expect(CodexUsageReader.isAnswer(Data(#"{"id":2,"error":{"code":1}}"#.utf8)))
+        #expect(CodexUsageReader.isAnswer(Data(#"{"id":2,"result":null}"#.utf8)))
+        #expect(CodexUsageReader.isAnswer(Data(#"{"id":2,"result":"value"}"#.utf8)))
+        #expect(!CodexUsageReader.isAnswer(Data(#"{"id":2,"method":"probe","params":{}}"#.utf8)))
+        #expect(!CodexUsageReader.isAnswer(Data(#"{"id":2}"#.utf8)))
+        #expect(!CodexUsageReader.isAnswer(Data(#"{"id":2,"method":"probe","result":{}}"#.utf8)))
+        #expect(!CodexUsageReader.isAnswer(Data(#"{"id":2,"result":{},"error":{"code":1}}"#.utf8)))
+        #expect(!CodexUsageReader.isAnswer(Data(#"{"id":null,"result":{}}"#.utf8)))
         #expect(!CodexUsageReader.isAnswer(Data(#"{"id":1,"result":{}}"#.utf8)))
         #expect(!CodexUsageReader.isAnswer(Data(#"{"method":"configWarning"}"#.utf8)))
         #expect(!CodexUsageReader.isAnswer(Data("not json".utf8)))

@@ -33,13 +33,14 @@ impl StatusLineAdapter for AntigravityStatusLine {
         let object = parse_object(input, MAX_STATUS_LINE_INPUT_BYTES).ok()?;
         let bucket = object.get("quota")?.get(GEMINI_BUCKET)?.as_object()?;
         let remaining = bucket.get("remaining_fraction")?.as_f64()?;
-        if !remaining.is_finite() {
+        let used_percent = (1.0 - remaining) * 100.0;
+        if !used_percent.is_finite() {
             return None;
         }
         Some(PlanUsage {
             windows: vec![PlanUsageWindow {
                 kind: PlanUsageWindow::SEVEN_DAY.to_owned(),
-                used_percent: (1.0 - remaining) * 100.0,
+                used_percent,
                 resets_at: bucket
                     .get("reset_time")
                     .and_then(Value::as_str)
@@ -144,6 +145,27 @@ mod tests {
             AntigravityStatusLine
                 .plan_usage(br#"{"model":null}"#, UNIX_EPOCH)
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn a_nonfinite_converted_gemini_percent_reports_no_usage() {
+        for fraction in [1e308, -1e308] {
+            let input = serde_json::json!({
+                "quota": {"gemini-weekly": {"remaining_fraction": fraction}},
+            });
+            assert_eq!(
+                AntigravityStatusLine.plan_usage(input.to_string().as_bytes(), UNIX_EPOCH),
+                None,
+                "{fraction}"
+            );
+        }
+        assert_eq!(
+            AntigravityStatusLine.plan_usage(
+                br#"{"quota":{"gemini-weekly":{"remaining_fraction":NaN}}}"#,
+                UNIX_EPOCH
+            ),
+            None
         );
     }
 

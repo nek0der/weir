@@ -103,8 +103,10 @@ struct CodexUsageReader: CodexUsageReading {
     /// Whether `line` is the answer to the usage request, a result or an
     /// error.
     static func isAnswer(_ line: Data) -> Bool {
-        guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { return false }
-        return (object["id"] as? Int) == requestID
+        guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              (object["id"] as? Int) == requestID, object["method"] == nil
+        else { return false }
+        return (object["result"] != nil) != (object["error"] != nil)
     }
 
     /// Runs the server, sends the requests, and returns the answer's line.
