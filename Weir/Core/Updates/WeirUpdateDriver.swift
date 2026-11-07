@@ -238,6 +238,7 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
         let ackOnce = OneShot(acknowledgement)
         if !showsInStandardUI() {
             consumePendingCallback()
+            let id = ensureSession()
             show(.notFound(acknowledgement: ackOnce))
             // Auto-dismiss after a moment so the update control doesn't
             // keep a "no update" badge around forever. The OneShot ensures
@@ -246,7 +247,7 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
             // state — Sparkle stalls otherwise. The timer acts only on
             // this session's result: a later check's own "no update"
             // keeps its acknowledgment until its own timer or OK.
-            dismissAfter(.seconds(3)) { state in
+            dismissAfter(.seconds(3), for: id) { state in
                 guard case .notFound = state else { return false }
                 ackOnce.call()
                 return true
@@ -427,26 +428,18 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
         acknowledgement: @escaping () -> Void
     ) {
         consumePendingCallback()
-        // The relaunched app reports the install of a session the earlier
-        // process ran; it shows inline as a session of its own.
-        beginSession()
+        // Sparkle reports completion while the updater is still alive.
+        // Give the completion badge its own identity.
+        let id = beginSession()
         let ackOnce = OneShot(acknowledgement)
         show(.installed(acknowledgement: ackOnce))
-        // No Sparkle session of this process belongs to the report, and
-        // none will end it, so we close ours now; its dismiss timer still
-        // matches the state's session.
+        // The completion badge can outlive the driver's session.
         session = nil
         // Acknowledge immediately so Sparkle frees its resources; the
         // OneShot keeps any view-side `acknowledgment.call()` safe.
         ackOnce.call()
-        // Auto-dismiss the inline state regardless of whether the
-        // popover is ever opened. Without this the green ✓ badge
-        // persists indefinitely after a real-Sparkle relaunch (the
-        // popover view's own onAppear timer only fires while the
-        // popover is open, which it isn't in a freshly-relaunched
-        // process). 5 s is a touch longer than `.notFound`'s 3 s so
-        // the success message has time to land.
-        dismissAfter(.seconds(5)) { state in
+        // Let the badge clear even if the popover never opens.
+        dismissAfter(.seconds(5), for: id) { state in
             if case .installed = state {
                 true
             } else {
@@ -458,8 +451,7 @@ final class WeirUpdateDriver: NSObject, SPUUserDriver {
     /// Clears the inline state after `delay` if it still shows this
     /// session's result. `settles` checks the state, settles its callback,
     /// and says whether to clear it.
-    private func dismissAfter(_ delay: Duration, settles: @escaping @MainActor (UpdateState) -> Bool) {
-        let id = ensureSession()
+    private func dismissAfter(_ delay: Duration, for id: UpdateSessionID, settles: @escaping @MainActor (UpdateState) -> Bool) {
         let stateRef = stateModel
         _ = timer.schedule(delay) {
             guard stateRef.sessionID == id, settles(stateRef.state) else { return }
