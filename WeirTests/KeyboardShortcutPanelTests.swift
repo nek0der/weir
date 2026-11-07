@@ -31,9 +31,11 @@ struct KeyboardShortcutPanelTests {
         KeyboardShortcutPanelActions.toggle(window, session: session, registry: RecordingSurfaceRegistry())
         #expect(!window.keyboardShortcuts.isPresented)
         let other = WindowID()
-        session.commandPaletteState = CommandPaletteState(locale: Locale(identifier: "en"), windowID: other)
+        let otherPalette = CommandPaletteState(locale: Locale(identifier: "en"), windowID: other)
+        session.commandPaletteState = otherPalette
         KeyboardShortcutPanelActions.open(window, session: session)
-        #expect(session.commandPaletteState?.windowID == other)
+        #expect(window.keyboardShortcuts.isPresented)
+        #expect(session.commandPaletteState === otherPalette)
         #expect(!window.isAnotherLayerOpen(than: .keyboardShortcuts, session: session))
     }
 
@@ -122,6 +124,7 @@ struct KeyboardShortcutPanelTests {
         #expect(Control.close.next(backward: false) == .search)
         #expect(Control.search.next(backward: true) == .close)
         #expect(Control.close.next(backward: true) == .customize)
+        #expect(Control.customize.next(backward: true) == .search)
     }
 
     @Test func thePanel_fitsItsWindow_betweenItsLeastAndPreferredHeights() {

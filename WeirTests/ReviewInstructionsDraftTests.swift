@@ -16,7 +16,7 @@ struct ReviewInstructionsDraftTests {
         #expect(ReviewInstructionsDraft.text(saved: "Mine", locale: japanese) == "Mine")
     }
 
-    @Test func textEqualToADefault_savesEmpty_inEitherLanguage() {
+    @Test func savingInstructions_omitsDefaults_andKeepsCustomTextVerbatim() {
         let defaults = ReviewInstructionsDraft.defaults
         let englishDefault = ReviewPromptBuilder.defaultInstructions.resolved(in: english)
         let japaneseDefault = ReviewPromptBuilder.defaultInstructions.resolved(in: japanese)
@@ -25,6 +25,8 @@ struct ReviewInstructionsDraftTests {
         #expect(ReviewInstructionsDraft.saved(text: japaneseDefault, defaults: defaults) == "")
         // A newline left at the end is still the default.
         #expect(ReviewInstructionsDraft.saved(text: englishDefault + "\n", defaults: defaults) == "")
+        let edited = "  " + englishDefault + "\nKeep the diff small.  \n"
+        #expect(ReviewInstructionsDraft.saved(text: edited, defaults: defaults).utf8.elementsEqual(edited.utf8))
     }
 
     @Test func opening_showsWhatIsStoredAsIs_evenWhereSavingItWouldChangeIt() {
@@ -36,9 +38,4 @@ struct ReviewInstructionsDraftTests {
         #expect(ReviewInstructionsDraft.saved(text: stored, defaults: ReviewInstructionsDraft.defaults) == "")
     }
 
-    @Test func anEditedDefault_isSavedAsWritten() {
-        let edited = ReviewPromptBuilder.defaultInstructions.resolved(in: english) + "\nKeep the diff small."
-
-        #expect(ReviewInstructionsDraft.saved(text: edited, defaults: ReviewInstructionsDraft.defaults) == edited)
-    }
 }

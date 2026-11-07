@@ -57,20 +57,12 @@ struct MenuBarLabelModelTests {
 
 @MainActor
 struct MenuBarLampImageTests {
-    /// Every lamp is drawn in the menu bar's own ink, as the icons beside
-    /// it are; none keeps a color of its own.
-    @Test func everyLamp_isATemplate() {
-        for lamp in MenuBarLabelModel.Lamp.allCases {
-            #expect(MenuBarLampImage.image(lamp).isTemplate)
-        }
-    }
-
-    /// One size for every lamp, so the item does not move its neighbors
-    /// as the state changes.
-    @Test func everyLamp_takesTheSameSize() {
-        for lamp in [MenuBarLabelModel.Lamp.off, .unread, .blocking] {
-            #expect(MenuBarLampImage.image(lamp).size == WeirLayout.Supervision.menuBarLampImageSize)
-        }
+    @Test(arguments: MenuBarLabelModel.Lamp.allCases)
+    func eachLampImage_hasTemplateInkAndTheSharedSize(lamp: MenuBarLabelModel.Lamp) {
+        let image = MenuBarLampImage.image(lamp)
+        #expect(image.isTemplate)
+        #expect(image.size == WeirLayout.Supervision.menuBarLampImageSize)
+        #expect(image.size.width > 0 && image.size.height > 0)
     }
 
     /// The lamp drawn into a bitmap at `scale`.
@@ -92,12 +84,15 @@ struct MenuBarLampImageTests {
 
     /// The shape alone carries the meaning: every lamp keeps the mark, the
     /// corner is clear with nothing to say, a dot fills it for unread turns,
-    /// and the badge is cut through by its "!" and solid beside it. Checked
-    /// at 1x and 2x, since the image is drawn per screen.
+    /// and the blocking badge has a cutout surrounded by opaque pixels.
+    /// Sample these features in an offscreen bitmap at 1x and 2x.
     @Test(arguments: [CGFloat(1), 2])
     func theBadges_differAtTheCorner_andShareTheMark(_ scale: CGFloat) throws {
+        let images = try Dictionary(uniqueKeysWithValues: MenuBarLabelModel.Lamp.allCases.map { lamp in
+            try (lamp, Self.bitmap(lamp, scale: scale))
+        })
         func alpha(_ lamp: MenuBarLabelModel.Lamp, at point: CGPoint) throws -> CGFloat {
-            let bitmap = try Self.bitmap(lamp, scale: scale)
+            let bitmap = try #require(images[lamp])
             let pixel = try #require(bitmap.colorAt(x: Int(point.x * scale), y: Int(point.y * scale)))
             return pixel.alphaComponent
         }

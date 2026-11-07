@@ -23,62 +23,74 @@ struct GitFactsStoreTests {
         #expect(store.facts(for: gone) == nil)
     }
 
-    @Test func comingToTheFront_readsEveryFolder_onlyAsTheAppBecomesActive() async {
-        let reads = Recorded(0)
-        let store = GitFactsStore(fetch: { _ in
-            reads.update { $0 += 1 }
-            return .facts(Self.facts)
+    @Test func inactiveLaunchDefersTheReadUntilActivation() async throws {
+        let reads = Recorded<[URL]>([])
+        let readsByFolder = Recorded<[URL: Int]>([:])
+        let store = GitFactsStore(fetch: { folder in
+            reads.update { $0.append(folder) }
+            readsByFolder.update { $0[folder, default: 0] += 1 }
+            let branch = readsByFolder.value[folder] == 1 ? "first" : "second"
+            return .facts(GitFactsFixture.make(branch: branch, commits: nil, unpushed: nil, base: nil))
         })
         let (session, project) = WorkspaceSessionFixture.withProject()
+        let other = session.addOrActivateProject(
+            rootURL: WorkspaceSessionFixture.projectRootURL("other-facts"),
+            suggestedName: "other"
+        )
         let front = Recorded(false)
-        // Not in front yet, as at launch: the clock reads nothing.
         store.start(session: session) { front.value }
-        // Nothing marks a reading that did not happen: the shortest wait
-        // that would let one start.
-        await pollUntil(timeout: .milliseconds(200)) { reads.value > 0 }
-        #expect(reads.value == 0)
-        #expect(store.facts(for: .project(project.id)) == nil)
+        // Observe the launch window. The periodic clock's first tick is later.
+        await pollUntil(timeout: .milliseconds(200)) { !reads.value.isEmpty }
+        #expect(reads.value.isEmpty)
+        #expect(store.facts.isEmpty)
 
-        // The first coming to the front reads, as every later one does.
         front.value = true
         store.appActivityChanged(isActive: true)
-        await pollUntil { store.facts(for: .project(project.id)) != nil }
-        #expect(store.facts(for: .project(project.id)) == Self.facts)
-        #expect(reads.value == 1)
+        await pollUntil {
+            store.facts(for: .project(project.id))?.branch == "first" && store.facts(for: .project(other.id))?.branch == "first"
+        }
+        try #require(reads.value.count == 2)
+        #expect(Set(reads.value) == [project.rootURL, other.rootURL])
+        #expect(store.facts(for: .project(project.id))?.branch == "first")
+        #expect(store.facts(for: .project(other.id))?.branch == "first")
 
-        // Going to the back and coming to the front again reads again; a
-        // report while already in front is no coming back
-        // (`startingWhileWeirIsInFront_readsEveryFolderAtOnce_andOnce`).
         front.value = false
         store.appActivityChanged(isActive: false)
         front.value = true
         store.appActivityChanged(isActive: true)
-        await pollUntil { reads.value == 2 }
-        #expect(reads.value == 2)
+        await pollUntil {
+            store.facts(for: .project(project.id))?.branch == "second" && store.facts(for: .project(other.id))?.branch == "second"
+        }
+        #expect(store.facts(for: .project(project.id))?.branch == "second")
+        #expect(store.facts(for: .project(other.id))?.branch == "second")
+        #expect(readsByFolder.value == [project.rootURL: 2, other.rootURL: 2])
     }
 
-    /// Launched in front, the store reads at once, and the report of being
-    /// in front that follows is no coming to the front.
-    @Test func startingWhileWeirIsInFront_readsEveryFolderAtOnce_andOnce() async {
-        let reads = Recorded(0)
-        let store = GitFactsStore(fetch: { _ in
-            reads.update { $0 += 1 }
+    /// Launch in front triggers a read. The next same-state report is no
+    /// new activation during the window observed here.
+    @Test func activeLaunchReadsWithoutAnActivityNotification() async throws {
+        let reads = Recorded<[URL]>([])
+        let store = GitFactsStore(fetch: { folder in
+            reads.update { $0.append(folder) }
             return .facts(Self.facts)
         })
         let (session, project) = WorkspaceSessionFixture.withProject()
+        let other = session.addOrActivateProject(
+            rootURL: WorkspaceSessionFixture.projectRootURL("other-facts"),
+            suggestedName: "other"
+        )
         store.start(session: session) { true }
-        // `start` reads by itself: launched from Finder, no report follows.
-        await pollUntil { store.facts(for: .project(project.id)) != nil }
-        #expect(store.facts(for: .project(project.id)) == Self.facts)
-        #expect(reads.value == 1)
+        await pollUntil { store.facts.count == 2 }
+        try #require(store.facts == [.project(project.id): Self.facts, .project(other.id): Self.facts])
+        #expect(reads.value.count == 2)
+        #expect(Set(reads.value) == [project.rootURL, other.rootURL])
+
         store.appActivityChanged(isActive: true)
-        // Nothing marks a reading that did not happen: the shortest wait
-        // that would let a second one start.
-        await pollUntil(timeout: .milliseconds(200)) { reads.value > 1 }
-        #expect(reads.value == 1)
+        await pollUntil(timeout: .milliseconds(200)) { reads.value.count > 2 }
+        #expect(reads.value.count == 2)
     }
 
-    @Test func aReadingAfterThePersonsRead_waitsForIt() async {
+    @Test func aReadingAfterThePersonsRead_waitsForIt() async throws {
         let gate = Gate<Void>()
         let log = Recorded<[String]>([])
         let store = GitFactsStore(fetch: { folder in
@@ -87,12 +99,14 @@ struct GitFactsStoreTests {
         })
         let container = ContainerID.project(UUID())
         async let asked = store.read(container, at: URL(fileURLWithPath: "/asked"))
-        await pollUntil { log.value == ["start asked"] }
-        async let clock: Void = store.refresh(container, at: URL(fileURLWithPath: "/clock"))
-        await pollUntil(timeout: .milliseconds(200)) { log.value.count > 1 }
+        defer { gate.open() }
+        try await gate.waitUntilRequested()
+        // The MainActor task reaches refresh's registration before returning at its await.
+        let clock = Task.immediate { await store.refresh(container, at: URL(fileURLWithPath: "/clock")) }
         #expect(log.value == ["start asked"])
         gate.open()
-        _ = await (asked, clock)
+        #expect(await asked == .facts(Self.facts))
+        await clock.value
         #expect(log.value == ["start asked", "end asked", "start clock", "end clock"])
     }
 
@@ -107,25 +121,40 @@ struct GitFactsStoreTests {
         #expect(store.facts(for: container) == Self.facts)
     }
 
-    @Test func readingsOfAll_askedForWhileOneRuns_runOnceAfterIt() async {
+    @Test func readingsOfAll_askedForWhileOneRuns_runOnceAfterIt() async throws {
         let gate = Gate<Void>()
         let log = Recorded<[String]>([])
         let store = GitFactsStore(fetch: { folder in
-            await gate.pass(folder.lastPathComponent, loggingTo: log)
+            await gate.pass(folder.path, loggingTo: log)
             return .facts(Self.facts)
         })
-        let target = PRStatusSyncer.Target(container: .project(UUID()), workingDirectory: URL(fileURLWithPath: "/a"))
-        async let first: Void = store.refresh([target], isAll: true)
-        await pollUntil { log.value == ["start a"] }
-        // Two more while it runs: they return at once, and one more
-        // reading follows the running one, for what it already passed.
-        async let second: Void = store.refresh([target], isAll: true)
-        async let third: Void = store.refresh([target], isAll: true)
-        _ = await (second, third)
-        #expect(log.value == ["start a"])
+        let (session, project) = WorkspaceSessionFixture.withProject()
+        let front = Recorded(false)
+        store.start(session: session) { front.value }
+        front.value = true
+        let target = PRStatusSyncer.Target(container: .project(project.id), workingDirectory: project.rootURL)
+        async let first: Void = store.refresh([target], isAll: true, first: [target.container])
+        defer { gate.open() }
+        try await gate.waitUntilRequested()
+        let added = session.addOrActivateProject(
+            rootURL: WorkspaceSessionFixture.projectRootURL("new-facts"),
+            suggestedName: "new"
+        )
+
+        await store.refresh([target], isAll: true)
+        await store.refresh([target], isAll: true)
+        #expect(log.value == ["start \(project.rootURL.path)"])
         gate.open()
         await first
-        #expect(log.value == ["start a", "end a", "start a", "end a"])
+
+        let entries = log.value
+        #expect(entries.count == 6)
+        #expect(Array(entries.prefix(2)) == ["start \(project.rootURL.path)", "end \(project.rootURL.path)"])
+        #expect(Set(entries.dropFirst(2)) == [
+            "start \(project.rootURL.path)", "end \(project.rootURL.path)",
+            "start \(added.rootURL.path)", "end \(added.rootURL.path)"
+        ])
+        #expect(store.facts == [.project(project.id): Self.facts, .project(added.id): Self.facts])
     }
 
     @Test func aReadingGitLeavesUnanswered_keepsTheFactsBefore_andWaitsLongerEachTime() async {
@@ -158,7 +187,7 @@ struct GitFactsStoreTests {
         #expect(store.facts(for: container) == nil)
     }
 
-    @Test func aReadingQueuedBehindOneGitLeftUnanswered_waitsToo() async {
+    @Test func aReadingQueuedBehindOneGitLeftUnanswered_waitsToo() async throws {
         let gate = Gate<Void>()
         let log = Recorded<[String]>([])
         let store = GitFactsStore(fetch: { folder in
@@ -167,16 +196,21 @@ struct GitFactsStoreTests {
         })
         let container = ContainerID.project(UUID())
         async let first: Void = store.refresh(container, at: URL(fileURLWithPath: "/first"))
-        await pollUntil { log.value == ["start first"] }
-        async let second: Void = store.refresh(container, at: URL(fileURLWithPath: "/second"))
+        defer { gate.open() }
+        try await gate.waitUntilRequested()
+        let second = Task.immediate { await store.refresh(container, at: URL(fileURLWithPath: "/second")) }
+        #expect(log.value == ["start first"])
         gate.open()
-        _ = await (first, second)
+        await first
+        await second.value
         #expect(log.value == ["start first", "end first"])
     }
 
     @Test func aReadingOfAll_stopsWhenWeirGoesToTheBack() async {
         let front = Recorded(false)
-        let store = GitFactsStore(fetch: { _ in
+        let reads = Recorded<[URL]>([])
+        let store = GitFactsStore(fetch: { folder in
+            reads.update { $0.append(folder) }
             front.value = false
             return .facts(Self.facts)
         })
@@ -195,9 +229,10 @@ struct GitFactsStoreTests {
         #expect(store.facts(for: .project(project.id)) == Self.facts)
         #expect(store.facts(for: targets[1].container) == nil)
         #expect(store.facts(for: known) == nil)
+        #expect(reads.value == [URL(fileURLWithPath: "/known"), project.rootURL])
     }
 
-    @Test func everyWindowsSession_isReadBeforeTheOthers() async {
+    @Test func aReadVisitsPreferredContainersBeforeOtherTargets() async {
         let order = Recorded<[String]>([])
         let store = GitFactsStore(fetch: { folder in
             order.update { $0.append(folder.lastPathComponent) }
@@ -209,11 +244,12 @@ struct GitFactsStoreTests {
 
         await store.refresh(targets, isAll: true, first: [targets[1].container, targets[3].container])
 
+        #expect(order.value.count == 4)
         #expect(Set(order.value.prefix(2)) == ["front-a", "front-b"])
         #expect(Set(order.value.suffix(2)) == ["other", "later"])
     }
 
-    @Test func aFolderIsReadOnceAtATime_andTheLaterReadingWins() async {
+    @Test func aContainersReadsAreSerializedAndTheLaterReadingWins() async throws {
         let gate = Gate<Void>()
         let log = Recorded<[String]>([])
         let store = GitFactsStore(fetch: { folder in
@@ -222,13 +258,13 @@ struct GitFactsStoreTests {
         })
         let container = ContainerID.project(UUID())
         async let first: Void = store.refresh(container, at: URL(fileURLWithPath: "/first"))
-        await pollUntil { log.value == ["start first"] }
-        async let second: Void = store.refresh(container, at: URL(fileURLWithPath: "/second"))
-        // Given the time to start beside the first, the second does not.
-        await pollUntil(timeout: .milliseconds(200)) { log.value.count > 1 }
+        defer { gate.open() }
+        try await gate.waitUntilRequested()
+        let second = Task.immediate { await store.refresh(container, at: URL(fileURLWithPath: "/second")) }
         #expect(log.value == ["start first"])
         gate.open()
-        _ = await (first, second)
+        await first
+        await second.value
         #expect(log.value == ["start first", "end first", "start second", "end second"])
         #expect(store.facts(for: container)?.branch == "second")
     }

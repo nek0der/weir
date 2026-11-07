@@ -42,26 +42,33 @@ struct KeyboardShortcutTests {
         #expect(shortcut.ghosttyTrigger == trigger)
     }
 
-    @Test("Display string maps named keys to glyphs")
-    func displayString_namedKeys() {
-        #expect(StoredShortcut(key: "left", modifiers: [.command]).displayString == "⌘←")
-        #expect(StoredShortcut(key: "return", modifiers: [.command, .shift]).displayString == "⇧⌘⏎")
-        #expect(StoredShortcut(key: "t", modifiers: [.command]).displayString == "⌘T")
+    @Test("Display string maps stored keys to inline glyphs", arguments: [
+        (StoredShortcut(key: "left", modifiers: [.command]), "⌘←"),
+        (StoredShortcut(key: "return", modifiers: [.command, .shift]), "⇧⌘⏎"),
+        (StoredShortcut(key: "t", modifiers: [.command]), "⌘T")
+    ])
+    func displayString_mapsKeysToInlineGlyphs(shortcut: StoredShortcut, expected: String) {
+        #expect(shortcut.displayString == expected)
     }
 
-    @Test("Display tokens split modifiers and key into chips")
-    func displayTokens_splitsChips() {
-        #expect(StoredShortcut(key: "t", modifiers: [.command, .shift]).displayTokens == ["⇧", "⌘", "T"])
-        #expect(StoredShortcut(key: "left", modifiers: [.command]).displayTokens == ["⌘", "←"])
-        #expect(StoredShortcut(key: "k", modifiers: []).displayTokens == ["K"])
+    @Test("Display tokens split modifiers and key into chips", arguments: [
+        (StoredShortcut(key: "t", modifiers: [.command, .shift, .control, .option]), ["⌃", "⌥", "⇧", "⌘", "T"]),
+        (StoredShortcut(key: "left", modifiers: [.command]), ["⌘", "←"]),
+        (StoredShortcut(key: "k", modifiers: []), ["K"])
+    ])
+    func displayTokens_splitsChips(shortcut: StoredShortcut, expected: [String]) {
+        #expect(shortcut.displayTokens == expected)
     }
 
-    @Test("Codable round-trip preserves key and modifiers")
-    func codable_roundTrip() throws {
-        let original = StoredShortcut(key: "d", modifiers: [.command, .shift])
-        let data = try JSONEncoder().encode(original)
-        let decoded = try JSONDecoder().decode(StoredShortcut.self, from: data)
-        #expect(decoded == original)
+    @Test("Stored shortcuts read and write the numeric modifier mask")
+    func codable_preservesTheStoredShortcutShape() throws {
+        let stored = Data(#"{"key":"d","modifiers":3}"#.utf8)
+        let decoded = try JSONDecoder().decode(StoredShortcut.self, from: stored)
+        #expect(decoded == StoredShortcut(key: "d", modifiers: [.command, .shift]))
+
+        let data = try JSONEncoder().encode(decoded)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? NSDictionary)
+        #expect(object == ["key": "d", "modifiers": 3])
     }
 
     // MARK: - KeyboardSettings
@@ -69,13 +76,13 @@ struct KeyboardShortcutTests {
     @Test("Effective shortcut falls back to the action's default")
     func shortcut_defaultFallback() {
         let kb = KeyboardSettings()
-        #expect(kb.shortcut(for: .newTab) == WeirShortcutAction.newTab.defaultShortcut)
+        #expect(kb.shortcut(for: .newTab) == StoredShortcut(key: "t", modifiers: [.command]))
     }
 
-    @Test("Review Latest Turn is a View action on option-command-J")
+    @Test("Review Latest Turn is a View action on option-command-L")
     func reviewLatestTurn_isAViewActionOnOptionCommandL() {
         #expect(WeirShortcutAction.reviewLatestTurn.category == .view)
-        #expect(WeirShortcutAction.reviewLatestTurn.localizedTitle == "Review Latest Turn")
+        #expect(WeirShortcutAction.reviewLatestTurn.localizedTitle.resolved(in: Locale(identifier: "en")) == "Review Latest Turn")
         #expect(WeirShortcutAction.reviewLatestTurn.iconName == ReviewPresentation.symbol)
         #expect(
             WeirShortcutAction.reviewLatestTurn.defaultShortcut
@@ -83,7 +90,6 @@ struct KeyboardShortcutTests {
         )
     }
 
-    /// ⌥⌘M, the key first thought of, is the Window menu's Minimize All.
     @Test func showDecisionBarMenu_isANavigationAction_onOptionCommandPeriod_thatNoOtherDefaultHolds() {
         let key = StoredShortcut(key: ".", modifiers: [.command, .option])
         #expect(WeirShortcutAction.showDecisionBarMenu.category == .navigation)
@@ -105,23 +111,25 @@ struct KeyboardShortcutTests {
     @Test("Reset restores the default")
     func shortcut_resetRestoresDefault() {
         var kb = KeyboardSettings()
-        kb.setOverride(.init(key: "k", modifiers: [.command]), for: .newTab)
+        let override = StoredShortcut(key: "k", modifiers: [.command])
+        kb.setOverride(override, for: .newTab)
+        #expect(kb.shortcut(for: .newTab) == override)
+
         kb.resetOverride(for: .newTab)
-        #expect(kb.shortcut(for: .newTab) == WeirShortcutAction.newTab.defaultShortcut)
+
+        #expect(kb.overrides[WeirShortcutAction.newTab.rawValue] == nil)
+        #expect(kb.shortcut(for: .newTab) == StoredShortcut(key: "t", modifiers: [.command]))
     }
 
     // MARK: - Validation
 
     @Test("Validate rejects a trigger already used by another action")
-    func validate_conflictDetected() throws {
+    func validate_conflictDetected() {
         let kb = KeyboardSettings()
-        // newTab default is ⌘T. Try to bind closeSurface to ⌘T.
-        let stolen = try #require(WeirShortcutAction.newTab.defaultShortcut)
-        let result = kb.validate(stolen, for: .closeSurface)
-        #expect(result == .conflict(.newTab))
-        // No actual mutation happens — the recorder is responsible
-        // for skipping setOverride on a non-.ok result.
-        #expect(kb.overrides.isEmpty)
+        let occupied = StoredShortcut(key: "t", modifiers: [.command])
+        let unused = StoredShortcut(key: "k", modifiers: [.command, .control, .shift])
+        #expect(kb.validate(occupied, for: .closeSurface) == .conflict(.newTab))
+        #expect(kb.validate(unused, for: .closeSurface) == .ok)
     }
 
     @Test func validate_rejectsTheQuickTerminalHotKey() {
@@ -137,11 +145,8 @@ struct KeyboardShortcutTests {
 
     // MARK: - Encoding shape
 
-    /// Punctuation keys must be stored as their literal character
-    /// (not Ghostty's physical-key name like `equal` / `bracket_left`).
-    /// This is the JIS-fix invariant: literal triggers route through
-    /// libghostty's `utf8` / `unshifted_codepoint` match cascade,
-    /// which works regardless of keyboard layout.
+    /// Keep the stored characters that feed Ghostty's codepoint matching
+    /// for layout-dependent keys such as `=` and `]`.
     @Test("Punctuation defaults are stored as literal characters")
     func encoding_punctuationDefaultsAreLiteral() throws {
         let increase = try #require(WeirShortcutAction.increaseFontSize.defaultShortcut)
@@ -171,13 +176,13 @@ struct KeyboardShortcutTests {
     /// save), which a binding would race. A bare letter would hijack every
     /// plain keypress of that character and break the terminal, so the
     /// recorder rejects it.
-    @Test("Validate frees an unused trigger, and rejects a reserved or modifierless one", arguments: [
+    @Test("validation accepts unused triggers and rejects reserved triggers or triggers without modifiers", arguments: [
         (StoredShortcut(key: "k", modifiers: [.command, .control, .shift]), ShortcutValidation.ok),
         (StoredShortcut(key: "1", modifiers: [.command]), .reserved),
         (StoredShortcut(key: "q", modifiers: [.command]), .reserved),
         (StoredShortcut(key: "k", modifiers: []), .missingModifier)
     ])
-    func validate_freesAnUnusedTrigger_andRejectsReservedOrBareOnes(
+    func validate_distinguishesUnusedReservedAndBareTriggers(
         shortcut: StoredShortcut,
         result: ShortcutValidation
     ) {
@@ -194,32 +199,30 @@ struct KeyboardShortcutTests {
     func decoder_keyboardMissingFallsBack() throws {
         let legacy = #"""
         {"schemaVersion":1,
-         "appearance":{"accentColor":"default","backgroundOpacity":0.92,"transparency":"on"},
-         "font":{"size":13,"ligatures":false,"lineHeight":0},
+         "appearance":{"accentColor":"default","backgroundOpacity":0.73,"transparency":"on"},
+         "font":{"size":19,"ligatures":true,"lineHeight":0},
          "terminal":{},
-         "advanced":{"ghosttyConfig":"off"}}
+         "advanced":{"ghosttyConfig":"on"}}
         """#
         let decoded = try JSONDecoder().decode(WeirSettings.self, from: Data(legacy.utf8))
         #expect(decoded.keyboard.overrides.isEmpty)
-        #expect(decoded.keyboard.shortcut(for: .newTab) == WeirShortcutAction.newTab.defaultShortcut)
+        #expect(decoded.keyboard.shortcut(for: .newTab) == StoredShortcut(key: "t", modifiers: [.command]))
+        #expect(decoded.appearance.backgroundOpacity == 0.73)
+        #expect(decoded.font.size == 19)
+        #expect(decoded.font.ligatures)
+        #expect(decoded.advanced.ghosttyConfig == .on)
     }
 
-    /// `ShortcutModifiers` is an `OptionSet` backed by a `UInt8`
-    /// raw value. Bits we don't define are simply ignored — round-
-    /// tripping a value with future bits set must not crash. Note
-    /// that Swift's default `Codable` synth wraps `OptionSet` values
-    /// as a single-key keyed container (`{"rawValue":N}`) — match
-    /// that shape so the regression test exercises real on-disk
-    /// behavior.
-    @Test("ShortcutModifiers decodes future bits without crashing")
+    @Test("ShortcutModifiers preserves unknown bits without displaying them")
     func decoder_modifiersTolerateUnknownBits() throws {
-        let original = ShortcutModifiers(rawValue: 0xFF)
-        let data = try JSONEncoder().encode(original)
-        let decoded = try JSONDecoder().decode(ShortcutModifiers.self, from: data)
-        #expect(decoded.contains(.command))
-        #expect(decoded.contains(.shift))
-        #expect(decoded.contains(.option))
-        #expect(decoded.contains(.control))
-        #expect(decoded.rawValue == 0xFF)
+        let stored = Data("255".utf8)
+        let decoded = try JSONDecoder().decode(ShortcutModifiers.self, from: stored)
+        #expect(decoded.rawValue == 255)
+        #expect(decoded.displaySymbols == "⌃⌥⇧⌘")
+        #expect(decoded.ghosttyTokens == ["super", "ctrl", "alt", "shift"])
+
+        let data = try JSONEncoder().encode(decoded)
+        let mask = try #require(JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed) as? Int)
+        #expect(mask == 255)
     }
 }

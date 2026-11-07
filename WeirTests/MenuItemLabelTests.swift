@@ -14,7 +14,8 @@ struct MenuItemLabelTests {
     /// The rows the palette offers in the session's primary window.
     private static func paletteItems(
         _ session: WorkspaceSession,
-        supervision: SupervisionPaletteFacts = .empty
+        supervision: SupervisionPaletteFacts = .empty,
+        locale: Locale = english
     ) throws -> [CommandPaletteItem] {
         try withTempDir { dir in
             CommandPaletteCatalog.buildItems(
@@ -23,32 +24,34 @@ struct MenuItemLabelTests {
                 attention: AttentionState(),
                 supervision: supervision,
                 window: session.primaryWindowID,
-                locale: english
+                locale: locale
             )
         }
     }
 
     // MARK: - Shortcut actions
 
-    @Test("an action's menu label model holds its shortcut list title and icon", arguments: WeirShortcutAction.allCases)
-    func menuLabelModel_holdsTheActionsTitleAndIcon(action: WeirShortcutAction) {
-        #expect(action.menuLabel.title.key == action.localizedTitle.key)
-        #expect(action.menuLabel.symbol == action.iconName)
-    }
-
-    /// The palette's shortcut rows and `menuLabel` read the same model
-    /// values. The menu's stateful items (Zoom Pane, Show Changes) pass a
-    /// label of their own instead, so this does not say the menu and every
-    /// row agree word for word.
-    @Test("each palette shortcut row reads the action's menu label model")
-    func paletteShortcutRows_readTheMenuLabelModel() throws {
+    @Test("The palette lists each shortcut action once with its menu label", arguments: [
+        ("en", "New Tab"),
+        ("ja", "新規タブ")
+    ])
+    func paletteShortcutRows_readTheMenuLabelModel(localeID: String, newTabTitle: String) throws {
+        let locale = Locale(identifier: localeID)
         let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
-        let items = try Self.paletteItems(session)
+        let items = try Self.paletteItems(session, locale: locale)
         for action in WeirShortcutAction.allCases {
-            let row = try #require(items.first { $0.action == .shortcutAction(action) }, "\(action)")
-            #expect(row.title == action.menuLabel.title.resolved(in: Self.english), "\(action)")
-            #expect(row.icon == action.menuLabel.symbol, "\(action)")
+            let label = action.menuLabel
+            #expect(label.title.key == action.localizedTitle.key, "\(action)")
+            #expect(label.symbol == action.iconName, "\(action)")
+            let rows = items.filter { $0.action == .shortcutAction(action) }
+            #expect(rows.count == 1, "\(action)")
+            let row = try #require(rows.first, "\(action)")
+            #expect(row.title == label.title.resolved(in: locale), "\(action)")
+            #expect(row.icon == label.symbol, "\(action)")
         }
+        let newTab = try #require(items.first { $0.action == .shortcutAction(.newTab) })
+        #expect(newTab.title == newTabTitle)
+        #expect(newTab.icon == "plus")
     }
 
     /// The menu items that drew a symbol of their own now draw the action's,
@@ -86,7 +89,11 @@ struct MenuItemLabelTests {
             ) {}
             #expect(zoom.label.title.key == "Unzoom Pane")
             #expect(zoom.label.symbol == "arrow.down.right.and.arrow.up.left")
-            #expect(zoom.shortcut == WeirShortcutAction.toggleSplitZoom.defaultShortcut)
+            #expect(zoom.shortcut == StoredShortcut(key: "return", modifiers: [.command, .shift]))
+
+            store.settings.keyboard.unassign(.newTab)
+            #expect(newTab.label.title.key == "New Tab")
+            #expect(newTab.shortcut == nil)
         }
     }
 
@@ -111,21 +118,48 @@ struct MenuItemLabelTests {
         #expect(MenuItemLabel.iconBars(areHidden: false).title.key == "Hide Icon Bars")
     }
 
-    @Test("the palette's Hide Icon Bars and Move Pane to New Tab rows are the menus' items")
-    func paletteWindowRows_matchTheMenuItems() throws {
+    @Test("The palette has one row per window action with its menu label", arguments: [
+        (false, "Hide Icon Bars"),
+        (true, "Show Icon Bars")
+    ])
+    func paletteWindowRows_matchTheMenuItems(areHidden: Bool, barsTitle: String) throws {
         let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
         var facts = SupervisionPaletteFacts.empty
-        for areHidden in [false, true] {
-            facts.areRailsHidden = areHidden
-            let items = try Self.paletteItems(session, supervision: facts)
-            let bars = try #require(items.first { $0.action == .toggleIconBars })
-            let label = MenuItemLabel.iconBars(areHidden: areHidden)
-            #expect(bars.title == label.title.resolved(in: Self.english))
-            #expect(bars.icon == label.symbol)
-            let move = try #require(items.first { $0.action == .movePaneToNewTab })
-            #expect(move.title == MenuItemLabel.movePaneToNewTab.title.resolved(in: Self.english))
-            #expect(move.icon == MenuItemLabel.movePaneToNewTab.symbol)
-        }
+        facts.areRailsHidden = areHidden
+        let items = try Self.paletteItems(session, supervision: facts)
+        let windowRows = items.filter { $0.action == .movePaneToNewTab || $0.action == .toggleIconBars }
+        #expect(windowRows.map(\.id) == ["pane.moveToNewTab", "view.toggleIconBars"])
+
+        let bars = try #require(windowRows.first { $0.action == .toggleIconBars })
+        let barsLabel = MenuItemLabel.iconBars(areHidden: areHidden)
+        #expect(bars.title == barsTitle)
+        #expect(bars.icon == "rectangle.lefthalf.inset.filled")
+        #expect(bars.title == barsLabel.title.resolved(in: Self.english))
+        #expect(bars.icon == barsLabel.symbol)
+        #expect(bars.isEnabled)
+
+        let move = try #require(windowRows.first { $0.action == .movePaneToNewTab })
+        #expect(move.title == "Move Pane to New Tab")
+        #expect(move.icon == "rectangle.split.2x1")
+        #expect(move.title == MenuItemLabel.movePaneToNewTab.title.resolved(in: Self.english))
+        #expect(move.icon == MenuItemLabel.movePaneToNewTab.symbol)
+    }
+
+    @Test func paletteMovePane_requiresAnotherVisiblePane() throws {
+        let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
+        let single = try #require(Self.paletteItems(session).first { $0.action == .movePaneToNewTab })
+        #expect(!single.isEnabled)
+
+        PaneActions.split(session, direction: .horizontal)
+        let split = try #require(session.tab(tab.id))
+        try #require(split.splitTree.allLeafIDs().count == 2)
+        let visible = try #require(Self.paletteItems(session).first { $0.action == .movePaneToNewTab })
+        #expect(visible.isEnabled)
+
+        var facts = SupervisionPaletteFacts.empty
+        facts.arePanesHidden = true
+        let hidden = try #require(Self.paletteItems(session, supervision: facts).first { $0.action == .movePaneToNewTab })
+        #expect(!hidden.isEnabled)
     }
 
     // MARK: - Move Pane to New Tab
@@ -149,14 +183,6 @@ struct MenuItemLabelTests {
     }
 
     // MARK: - Project items
-
-    @Test func projectItems_haveOneNameAndSymbolEach() {
-        #expect(ProjectMenuModel.ProjectItem.settings.label.title.key == "Project Settings…")
-        #expect(ProjectMenuModel.ProjectItem.settings.label.symbol == "gearshape")
-        #expect(ProjectMenuModel.ProjectItem.revealInFinder.label.title.key == "Show in Finder")
-        #expect(ProjectMenuModel.ProjectItem.close.label.title.key == "Close Project…")
-        #expect(ProjectMenuModel.ProjectItem.close.label.symbol == "xmark")
-    }
 
     /// The project's item, the shell command's row, the notice that saving
     /// is suspended, and a reviewed file's path menu all take "Show in
@@ -186,23 +212,43 @@ struct MenuItemLabelTests {
         }
     }
 
-    @Test("the palette offers the project's items where the project ▾ does, named as it names them")
+    @Test("The project palette rows match the project menu and name the project")
     func paletteProjectRows_followTheProjectItems() throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
         let facts = SupervisionPaletteFacts(projectID: project.id, sessionRowCount: 0, hasReviewTab: false)
         let items = try Self.paletteItems(session, supervision: facts)
-        #expect(!ProjectMenuModel.projectItems(for: project.id, in: session.projects).isEmpty)
-        let settings = try #require(items.first { $0.action == .openProjectSettings })
-        #expect(settings.title == ProjectMenuModel.ProjectItem.settings.label.title.resolved(in: Self.english))
-        #expect(settings.icon == ProjectMenuModel.ProjectItem.settings.label.symbol)
-        let close = try #require(items.first { $0.action == .closeProject })
-        #expect(close.title == ProjectMenuModel.ProjectItem.close.label.title.resolved(in: Self.english))
-        #expect(close.icon == ProjectMenuModel.ProjectItem.close.label.symbol)
+        let menuItems = ProjectMenuModel.projectItems(for: project.id, in: session.projects)
+        #expect(menuItems == [.settings, .revealInFinder, .close])
 
-        let gone = SupervisionPaletteFacts(projectID: UUID(), sessionRowCount: 0, hasReviewTab: false)
-        #expect(ProjectMenuModel.projectItems(for: gone.projectID, in: session.projects).isEmpty)
-        let none = try Self.paletteItems(session, supervision: gone)
-        #expect(!none.contains { $0.action == .openProjectSettings || $0.action == .closeProject })
+        let projectRows = items.filter { $0.action == .openProjectSettings || $0.action == .closeProject }
+        #expect(projectRows.map(\.id) == ["settings.project", "project.close"])
+        #expect(projectRows.map(\.subtitle) == ["weir", "weir"])
+
+        let settings = try #require(projectRows.first { $0.action == .openProjectSettings })
+        let settingsLabel = ProjectMenuModel.ProjectItem.settings.label
+        #expect(settingsLabel.title.key == "Project Settings…")
+        #expect(settingsLabel.symbol == "gearshape")
+        #expect(settings.title == settingsLabel.title.resolved(in: Self.english))
+        #expect(settings.icon == settingsLabel.symbol)
+
+        let close = try #require(projectRows.first { $0.action == .closeProject })
+        let closeLabel = ProjectMenuModel.ProjectItem.close.label
+        #expect(closeLabel.title.key == "Close Project…")
+        #expect(closeLabel.symbol == "xmark")
+        #expect(close.title == closeLabel.title.resolved(in: Self.english))
+        #expect(close.icon == closeLabel.symbol)
+
+        #expect(ProjectMenuModel.ProjectItem.revealInFinder.label.title.key == "Show in Finder")
+        #expect(!items.contains { $0.title == "Show in Finder" })
+    }
+
+    @Test("The project menu and palette omit project actions without a current project", arguments: [false, true])
+    func paletteProjectRows_requireAnExistingProject(hasStaleID: Bool) throws {
+        let (session, _) = WorkspaceSessionFixture.withProject(name: "weir")
+        let facts = SupervisionPaletteFacts(projectID: hasStaleID ? UUID() : nil, sessionRowCount: 0, hasReviewTab: false)
+        #expect(ProjectMenuModel.projectItems(for: facts.projectID, in: session.projects).isEmpty)
+        let items = try Self.paletteItems(session, supervision: facts)
+        #expect(!items.contains { $0.action == .openProjectSettings || $0.action == .closeProject })
     }
 
     // MARK: - Weir's own menus
@@ -216,12 +262,12 @@ struct MenuItemLabelTests {
             .find: ("Find…", nil),
             .splitRight: ("Split Right", "rectangle.split.2x1"),
             .splitDown: ("Split Down", "rectangle.split.1x2"),
-            .togglePaneZoom: ("Toggle Split Zoom", WeirShortcutAction.toggleSplitZoom.iconName),
+            .togglePaneZoom: ("Toggle Split Zoom", "arrow.up.left.and.arrow.down.right"),
             .closePane: ("Close Pane", "xmark.square"),
             .close: ("Close", "xmark"),
             .renameTab: ("Rename…", "pencil"),
             .closeTab: ("Close Tab", "xmark"),
-            .newWorktree: ("New Worktree…", WeirShortcutAction.newWorktree.iconName),
+            .newWorktree: ("New Worktree…", "arrow.triangle.branch"),
             .keyboardShortcuts: ("Keyboard Shortcuts", "keyboard"),
             .reviewChanges: ("Review Unviewed", nil)
         ]
@@ -230,11 +276,7 @@ struct MenuItemLabelTests {
             #expect(command.title.key == expected[command]?.title, "\(command)")
             #expect(command.icon == expected[command]?.icon, "\(command)")
         }
-    }
 
-    /// A tab's menu names ⌥⌘W as the menu bar does, and the review tab's
-    /// names ⌘W as the menu bar does.
-    @Test func menuCommand_namesTheKeyItShows() {
         #expect(MenuCommand.closeTab.title.key == WeirShortcutAction.closeTab.localizedTitle.key)
         #expect(MenuCommand.closeTab.shortcutSource == .action(.closeTab))
         #expect(MenuCommand.close.title.key == WeirShortcutAction.closeSurface.localizedTitle.key)
@@ -243,11 +285,24 @@ struct MenuItemLabelTests {
 
     // MARK: - Hints and keys
 
-    @Test func emptyAreaHint_isNamedByItsAction() {
-        let keyboard = KeyboardSettings()
-        let hint = EmptySessionHints.Hint(.reopenClosedTab, keyboard: keyboard, isEnabled: true) {}
-        #expect(hint.title.key == WeirShortcutAction.reopenClosedTab.localizedTitle.key)
-        #expect(hint.keys == keyboard.shortcut(for: .reopenClosedTab)?.displayString)
+    @Test func emptyAreaHint_namesTheActionAndShowsItsEffectiveKey() {
+        var keyboard = KeyboardSettings()
+        let defaultHint = EmptySessionHints.Hint(.reopenClosedTab, keyboard: keyboard, isEnabled: true) {}
+        #expect(defaultHint.title.key == "Reopen Closed Tab")
+        #expect(defaultHint.title.key == WeirShortcutAction.reopenClosedTab.localizedTitle.key)
+        #expect(defaultHint.keys == "⇧⌘T")
+        #expect(defaultHint.isEnabled)
+
+        keyboard.setOverride(StoredShortcut(key: "e", modifiers: [.control, .option]), for: .reopenClosedTab)
+        let rebound = EmptySessionHints.Hint(.reopenClosedTab, keyboard: keyboard, isEnabled: true) {}
+        #expect(rebound.title.key == "Reopen Closed Tab")
+        #expect(rebound.keys == "⌃⌥E")
+
+        keyboard.unassign(.reopenClosedTab)
+        let unbound = EmptySessionHints.Hint(.reopenClosedTab, keyboard: keyboard, isEnabled: false) {}
+        #expect(unbound.title.key == "Reopen Closed Tab")
+        #expect(unbound.keys == nil)
+        #expect(!unbound.isEnabled)
     }
 
     @Test func primaryActionKey_isWrittenAndReservedFromOnePlace() {

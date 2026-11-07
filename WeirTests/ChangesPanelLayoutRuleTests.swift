@@ -20,7 +20,8 @@ struct ChangesPanelLayoutRuleTests {
         isSidebarKept: Bool = false,
         fraction: CGFloat? = 1,
         cell: CGFloat? = 8,
-        gap: CGFloat = 0
+        gap: CGFloat = 0,
+        paneInset: CGFloat = 0
     ) -> ChangesPanelLayoutRule.Input {
         ChangesPanelLayoutRule.Input(
             sharedWidth: shared,
@@ -32,7 +33,7 @@ struct ChangesPanelLayoutRuleTests {
             surfaceGap: gap,
             paneFraction: fraction,
             cellWidth: cell,
-            paneInset: 0
+            paneInset: paneInset
         )
     }
 
@@ -96,6 +97,9 @@ struct ChangesPanelLayoutRuleTests {
         // A pane at half the width needs twice the area for its 100 columns.
         #expect(ChangesPanelLayoutRule.layout(Self.input(shared: 2260, fraction: 0.5)) == .beside)
         #expect(ChangesPanelLayoutRule.layout(Self.input(shared: 2259, fraction: 0.5)) == .besideHidingSidebar)
+        // The pane's own 20pt of padding takes another 40pt of shared width.
+        #expect(ChangesPanelLayoutRule.layout(Self.input(shared: 2300, fraction: 0.5, paneInset: 20)) == .beside)
+        #expect(ChangesPanelLayoutRule.layout(Self.input(shared: 2299, fraction: 0.5, paneInset: 20)) == .besideHidingSidebar)
     }
 
     @Test func beforeTheCellsAreKnown_theLayoutStays() {
@@ -159,6 +163,9 @@ struct ChangesPanelLayoutRuleTests {
         #expect(Self.redecides(old, Self.basis(tab: tab, cell: 9)), "the font's size")
         tab.splitTree = tab.splitTree.insert(at: tab.splitTree.allLeafIDs()[0], direction: .horizontal).tree
         #expect(Self.redecides(old, Self.basis(tab: tab)), "the pane split")
+        var focusedElsewhere = tab
+        focusedElsewhere.splitTree.focusedLeafID = tab.splitTree.allLeafIDs().first
+        #expect(!Self.redecides(Self.basis(tab: tab), Self.basis(tab: focusedElsewhere)), "focus alone keeps the layout")
         var zoomed = tab
         zoomed.zoomedLeafID = tab.splitTree.allLeafIDs().first
         #expect(Self.redecides(Self.basis(tab: tab), Self.basis(tab: zoomed)), "a pane zoomed")

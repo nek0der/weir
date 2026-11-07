@@ -17,12 +17,12 @@ struct RestoreCoordinatorTests {
         let turn: TurnSummary
         let coordinator: RestoreCoordinator
 
-        var file: URL {
-            URL(fileURLWithPath: root).appendingPathComponent("a.txt")
+        var index: URL {
+            URL(fileURLWithPath: root).appendingPathComponent(".git/index")
         }
 
-        func contents() throws -> String {
-            try String(contentsOf: file, encoding: .utf8)
+        func contents(_ name: String = "a.txt") throws -> String {
+            try String(contentsOf: URL(fileURLWithPath: root).appendingPathComponent(name), encoding: .utf8)
         }
 
         func cleanup() {
@@ -33,6 +33,12 @@ struct RestoreCoordinatorTests {
     /// The scene, with the agent's state directory at `states`.
     private static func scene(states: URL) async throws -> Scene {
         let repo = try await TempGitRepo.make()
+        var didBuildScene = false
+        defer {
+            if !didBuildScene {
+                repo.cleanup()
+            }
+        }
         try repo.write("a\n", to: "a.txt")
         try repo.write("b\n", to: "b.txt")
         try await repo.git(["add", "a.txt", "b.txt"])
@@ -60,6 +66,7 @@ struct RestoreCoordinatorTests {
         extras.beginTree = SnapshotTree(tree: tree, root: root)
         let turn = try TurnSummaryFixture.turn(turnID, number: 7, extras: extras)
         let coordinator = RestoreCoordinator(stateDirectories: [RestoreStateDirectory(provider: .claude, directory: states)])
+        didBuildScene = true
         return Scene(repo: repo, root: root, states: states, turn: turn, coordinator: coordinator)
     }
 
@@ -76,6 +83,10 @@ struct RestoreCoordinatorTests {
             let scene = try await Self.scene(states: states)
             defer { scene.cleanup() }
             let coordinator = scene.coordinator
+            try scene.repo.write("a\nstaged\n", to: "a.txt")
+            try await scene.repo.git(["add", "a.txt"])
+            try scene.repo.write("a\nchanged\n", to: "a.txt")
+            let originalIndex = try Data(contentsOf: scene.index)
             let running = scene.states.appendingPathComponent("R2.state.json")
             try """
             {"schemaVersion":3,"paneId":"P2","runId":"R2","revision":1,"state":"running",
@@ -84,12 +95,16 @@ struct RestoreCoordinatorTests {
 
             #expect(await coordinator.restore(scene.turn) == .refused(.agentActive(.claude)))
             #expect(try scene.contents() == "a\nchanged\n")
+            #expect(try scene.contents("b.txt") == "b\nchanged\n")
+            #expect(try Data(contentsOf: scene.index) == originalIndex)
             #expect(coordinator.latestUndoable(in: scene.root) == nil)
             try FileManager.default.removeItem(at: running)
 
             let restored = try await Self.journal(coordinator.restore(scene.turn))
             #expect(restored.stage == .applied)
             #expect(try scene.contents() == "a\n")
+            #expect(try scene.contents("b.txt") == "b\n")
+            #expect(try Data(contentsOf: scene.index) == originalIndex)
             #expect(coordinator.latestUndoable(in: scene.root) == restored)
             #expect(restored.turnNumber == 7, "the record names the turn by its own copy of the number")
             #expect(!coordinator.isBusy(scene.root))
@@ -98,6 +113,8 @@ struct RestoreCoordinatorTests {
             #expect(undo.stage == .applied)
             #expect(undo.undoes == restored.opID)
             #expect(try scene.contents() == "a\nchanged\n")
+            #expect(try scene.contents("b.txt") == "b\nchanged\n")
+            #expect(try Data(contentsOf: scene.index) == originalIndex)
             #expect(coordinator.latestUndoable(in: scene.root) == nil)
             #expect(coordinator.journals[scene.root]?.first { $0.opID == restored.opID }?.stage == .undone(by: undo.opID))
         }
@@ -121,15 +138,23 @@ struct RestoreCoordinatorTests {
             let other = URL(fileURLWithPath: scene.root).appendingPathComponent("b.txt")
             try "b\nchanged\n".write(to: other, atomically: true, encoding: .utf8)
 
+            #expect(try scene.contents() == "a\n")
+            #expect(try scene.contents("b.txt") == "b\nchanged\n")
             let coordinator = RestoreCoordinator(stateDirectories: [])
             let report = await coordinator.recover(roots: [scene.repo.url.path])
 
-            #expect(report.interrupted.map(\.opID) == [restored.opID])
+            let settled = try #require(coordinator.latestUndoable(in: scene.root))
+            #expect(settled.opID == restored.opID)
+            #expect(settled.stage == .partiallyApplied(reason: .interrupted, kept: [], failed: []))
+            #expect(report.stops == [RestoreCoordinator.RecoveredStop(settled: settled, undoable: settled)])
             #expect(report.unsettledRoots.isEmpty)
-            #expect(coordinator.latestUndoable(in: scene.root)?.opID == restored.opID)
-            // Told once: the next reading finds it settled already.
+            #expect(try scene.contents() == "a\n")
+            #expect(try scene.contents("b.txt") == "b\nchanged\n")
+
             let again = await coordinator.recover(roots: [scene.repo.url.path])
-            #expect(again.interrupted.isEmpty)
+            #expect(again == RestoreCoordinator.RecoveryReport())
+            #expect(coordinator.latestUndoable(in: scene.root) == settled)
+            #expect(try WeirRestoreBridge.recover(root: scene.root) == RestoreRecovery(journals: [settled], settled: []))
         }
     }
 
@@ -137,7 +162,8 @@ struct RestoreCoordinatorTests {
     /// Rust through the bridge to the coordinator: the reading says it is
     /// incomplete, the restore known stays undoable, the worktree stays
     /// marked, and it is read again, as one a hook kept locked is.
-    @Test(.tags(.slow)) func journalsThatCannotBeRead_areAnIncompleteReading_notNone() async throws {
+    @Test(.tags(.slow), .enabled(if: geteuid() != 0))
+    func journalsThatCannotBeRead_areAnIncompleteReading_notNone() async throws {
         try await withTempDir { states in
             let scene = try await Self.scene(states: states)
             defer { scene.cleanup() }
@@ -146,13 +172,22 @@ struct RestoreCoordinatorTests {
             try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: journals.path)
             defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: journals.path) }
 
+            try #require(throws: (any Error).self) {
+                try FileManager.default.contentsOfDirectory(atPath: journals.path)
+            }
             let reading = try WeirRestoreBridge.recover(root: scene.root)
             #expect(reading == RestoreRecovery(journals: [], settled: [], isIncomplete: true))
             let report = await scene.coordinator.recover(roots: [scene.root])
 
             #expect(report.unsettledRoots == [scene.root])
             #expect(scene.coordinator.incompleteRoots == [scene.root])
-            #expect(scene.coordinator.latestUndoable(in: scene.root)?.opID == restored.opID)
+            #expect(scene.coordinator.latestUndoable(in: scene.root) == restored)
+
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: journals.path)
+            let complete = await scene.coordinator.recover(roots: [scene.root])
+            #expect(complete.unsettledRoots.isEmpty)
+            #expect(scene.coordinator.incompleteRoots.isEmpty)
+            #expect(scene.coordinator.latestUndoable(in: scene.root) == restored)
         }
     }
 
@@ -163,11 +198,13 @@ struct RestoreCoordinatorTests {
     /// whole one stands for every journal there is, and clears the mark.
     @Test func anIncompleteReading_takesInWhatItRead_andKeepsTheRest() async throws {
         let restore = try Self.decodedJournal(root: "/repo", opID: "R")
-        let discard = try Self.decodedJournal(root: "/repo", opID: "D", stage: Self.cutShort, operation: "discard")
+        let later = "2026-10-13T00:01:00Z"
+        let discard = try Self.decodedJournal(root: "/repo", opID: "D", stage: Self.cutShort, operation: "discard", ranAt: later)
+        let updated = try Self.decodedJournal(root: "/repo", opID: "D", operation: "discard", ranAt: later)
         let readings = Recorded([
-            RestoreRecovery(journals: [restore, discard], settled: ["D"], isIncomplete: true),
-            RestoreRecovery(journals: [discard], settled: [], isIncomplete: true),
-            RestoreRecovery(journals: [discard], settled: [], isIncomplete: false)
+            RestoreRecovery(journals: [discard, restore], settled: ["D"], isIncomplete: true),
+            RestoreRecovery(journals: [updated], settled: [], isIncomplete: true),
+            RestoreRecovery(journals: [updated], settled: [], isIncomplete: false)
         ])
         let coordinator = RestoreCoordinator(stateDirectories: [], bridge: .init(
             restore: { _, _, _, _ in .refused(.unknown) },
@@ -187,70 +224,94 @@ struct RestoreCoordinatorTests {
         }
 
         let first = await coordinator.recover(roots: ["/repo"])
-        #expect(first.interrupted.map(\.opID) == ["D"])
+        #expect(first.stops == [RestoreCoordinator.RecoveredStop(settled: discard, undoable: discard)])
         #expect(first.unsettledRoots == ["/repo"])
+        #expect(coordinator.journals["/repo"] == [restore, discard])
         #expect(coordinator.incompleteRoots == ["/repo"])
         #expect(coordinator.latestUndoable(in: "/repo")?.opID == "R")
 
         let second = await coordinator.recover(roots: ["/repo"])
         #expect(second.interrupted.isEmpty)
         #expect(second.unsettledRoots == ["/repo"])
-        #expect(coordinator.journals["/repo"]?.map(\.opID).sorted() == ["D", "R"])
+        #expect(coordinator.journals["/repo"] == [restore, updated])
         #expect(coordinator.latestUndoable(in: "/repo")?.opID == "R")
 
         let whole = await coordinator.recover(roots: ["/repo"])
         #expect(whole.unsettledRoots.isEmpty)
         #expect(coordinator.incompleteRoots.isEmpty)
-        #expect(coordinator.journals["/repo"]?.map(\.opID) == ["D"])
+        #expect(coordinator.journals["/repo"] == [updated])
         #expect(coordinator.latestUndoable(in: "/repo") == nil)
         #expect(heard.value == [["/repo", "D"]])
     }
 
-    /// One operation at a time in a worktree: a second restore, or an undo,
-    /// while one runs is not started. The second calls run as tasks the test
-    /// polls, and only the first bridge call blocks: were the guard gone, they
-    /// would queue on the runner behind the first, and an awaited call would
-    /// never reach the line that releases it.
-    @Test(.timeLimit(.minutes(1))) func anOperationUnderWay_keepsAnotherFromStarting() async throws {
+    enum Contender: CaseIterable, Sendable {
+        case restore, undo, discard
+    }
+
+    /// Hold the first bridge call until the contender returns, or release
+    /// it on the test deadline so a broken guard cannot hang the runner.
+    @Test(arguments: Contender.allCases)
+    func anOperationUnderWay_keepsAnotherFromStarting(contender: Contender) async throws {
         let release = DispatchSemaphore(value: 0)
-        let calls = Recorded(0)
+        defer { release.signal() }
+        let calls = Recorded<[String]>([])
+        let released = Recorded(false)
         let coordinator = RestoreCoordinator(stateDirectories: [], bridge: .init(
             restore: { _, _, _, _ in
-                calls.update { $0 += 1 }
-                if calls.value == 1 {
-                    release.wait()
+                calls.update { $0.append("restore") }
+                if calls.value == ["restore"] {
+                    released.value = release.wait(timeout: .now() + 10) == .success
                 }
                 return .refused(.agentRecording)
             },
-            undo: { _, _, _ in .refused(.unknown) },
-            recover: { _ in RestoreRecovery(journals: [], settled: []) }
+            undo: { _, _, _ in
+                calls.update { $0.append("undo") }
+                return .refused(.unknown)
+            },
+            recover: { _ in
+                calls.update { $0.append("recover") }
+                return RestoreRecovery(journals: [], settled: [])
+            },
+            discard: { _, _ in
+                calls.update { $0.append("discard") }
+                return .finished(nil, [])
+            }
         ))
-        var extras = TurnSummaryFixture.Extras()
-        extras.beginTree = SnapshotTree(tree: TurnSummaryFixture.tree("a", 1), root: "/repo")
-        let turn = try TurnSummaryFixture.turn("T1", extras: extras)
+        let turn = try TurnSummaryFixture.restorable(1)
         let journal = try Self.decodedJournal(root: "/repo")
+        let range = try TurnSummaryFixture.range()
+        let call = RestoreCoordinator.DiscardCall(range: range, lastTurnNumber: 1, paneID: "P", files: [])
+        try #require(range.root == journal.root && turn.beginTree?.root == journal.root)
 
         let first = Task { await coordinator.restore(turn) }
-        await pollUntil(timeout: .seconds(5)) { coordinator.isBusy("/repo") }
-        #expect(coordinator.isBusy("/repo"))
-        let second = Recorded<[RestoreOutcome?]?>(nil)
-        Task {
-            let restored = await coordinator.restore(turn)
-            let undone = await coordinator.undo(journal)
-            second.value = [restored, undone]
+        await pollUntil(timeout: .seconds(5)) { calls.value == ["restore"] }
+        try #require(calls.value == ["restore"] && coordinator.isBusy("/repo"))
+        let refused = Recorded<Bool?>(nil)
+        let second = Task {
+            switch contender {
+            case .restore: refused.value = await coordinator.restore(turn) == nil
+            case .undo: refused.value = await coordinator.undo(journal) == nil
+            case .discard: refused.value = await coordinator.discard(call) == nil
+            }
         }
-        await pollUntil(timeout: .seconds(5)) { second.value != nil }
-        #expect(second.value == [nil, nil])
-        release.signal()
+        await pollUntil(timeout: .seconds(5)) { refused.value != nil }
+        #expect(refused.value == true)
+        #expect(calls.value == ["restore"])
 
+        release.signal()
         #expect(await first.value == .refused(.agentRecording))
+        await second.value
+        #expect(released.value)
         #expect(!coordinator.isBusy("/repo"))
-        #expect(calls.value == 1)
+        #expect(calls.value == ["restore", "recover"])
+        if contender == .discard {
+            #expect(await coordinator.discard(call) == .finished(nil, []))
+            #expect(calls.value == ["restore", "recover", "discard", "recover"])
+        }
     }
 
-    /// The record says how the last undo fell short until the next
-    /// operation in the worktree.
-    @Test func anUndoThatFellShort_isKept_untilTheNextOperation() async throws {
+    /// A later restore clears the previous Undo Restore result.
+    @Test func anUndoThatFellShort_isKept_untilTheNextRestore() async throws {
         let coordinator = RestoreCoordinator(stateDirectories: [], bridge: .init(
             restore: { _, _, _, _ in .refused(.mergeInProgress) },
             undo: { _, _, _ in .refused(.changedSinceRestore(paths: ["a.txt"])) },
@@ -272,19 +333,25 @@ struct RestoreCoordinatorTests {
     /// short is its hunk's to say, not the record's.
     @Test func aDiscard_isLeftOutOfTheRestoreRecord_andItsUndoResult() async throws {
         let restore = try Self.decodedJournal(root: "/repo", opID: "R")
-        let discard = try Self.decodedJournal(root: "/repo", opID: "D", operation: "discard")
+        let discard = try Self.decodedJournal(root: "/repo", opID: "D", operation: "discard", ranAt: "2026-10-13T00:01:00Z")
+        let undone = Recorded<[String]>([])
+        let refusal = RestoreRefusal.changedSinceRestore(paths: ["a.txt"])
         let coordinator = RestoreCoordinator(stateDirectories: [], bridge: .init(
             restore: { _, _, _, _ in .refused(.unknown) },
-            undo: { _, _, _ in .refused(.changedSinceRestore(paths: ["a.txt"])) },
+            undo: { _, op, _ in
+                undone.update { $0.append(op) }
+                return .refused(refusal)
+            },
             recover: { _ in RestoreRecovery(journals: [restore, discard], settled: []) }
         ))
         _ = await coordinator.recover(roots: ["/repo"])
 
-        #expect(coordinator.latestUndoable(in: "/repo")?.opID == "R")
-        _ = await coordinator.undo(discard)
+        #expect(coordinator.latestUndoable(in: "/repo") == restore)
+        #expect(await coordinator.undo(discard) == .refused(refusal))
         #expect(coordinator.undoResults["/repo"] == nil)
-        _ = await coordinator.undo(restore)
-        #expect(coordinator.undoResults["/repo"] == .refused(.changedSinceRestore(paths: ["a.txt"])))
+        #expect(await coordinator.undo(restore) == .refused(refusal))
+        #expect(coordinator.undoResults["/repo"] == .refused(refusal))
+        #expect(undone.value == ["D", "R"])
     }
 
     /// A discard a crash cut short is told at launch, as a restore is: no
@@ -299,7 +366,9 @@ struct RestoreCoordinatorTests {
 
         let report = await coordinator.recover(roots: ["/repo"])
 
-        #expect(report.interrupted.map(\.operation) == [.discard])
+        #expect(report.stops == [RestoreCoordinator.RecoveredStop(settled: discard, undoable: discard)])
+        #expect(report.unsettledRoots.isEmpty)
+        #expect(RecoveryNews.kind(report.stops) == .discardInterrupted)
     }
 
     /// A restore a crash cut short that an undo settled before it began is
@@ -328,7 +397,10 @@ struct RestoreCoordinatorTests {
         _ = await coordinator.undo(restore)
         _ = await coordinator.undo(restore)
 
-        #expect(told.map { $0.interrupted.map(\.opID) } == [["C"]])
+        #expect(told == [RestoreCoordinator.RecoveryReport(
+            stops: [RestoreCoordinator.RecoveredStop(settled: cutShort, undoable: cutShort)]
+        )])
+        #expect(readings.value.isEmpty)
     }
 
     /// A discard that ended as the app quit is told too, with the saves
@@ -347,14 +419,14 @@ struct RestoreCoordinatorTests {
 
         let report = await coordinator.recover(roots: ["/repo"])
 
-        #expect(report.interrupted.map(\.opID) == ["D"])
+        #expect(report.stops == [RestoreCoordinator.RecoveredStop(settled: discard, undoable: discard)])
         #expect(report.keptAside == [RestoreKeptAside(path: "f.txt", location: ".weir-D/target/ready-1/f.txt")])
         #expect(RecoveryNews.kind(report.stops) == .discardSettled)
     }
 
-    /// An undo cut short is told as an undo, though its Undo takes back
-    /// the operation it was undoing; several are told by their count.
-    @Test func eachStopAtLaunch_isToldAsWhatItWas() async throws {
+    /// The interrupted Undo determines the notice kind. Its original
+    /// discard remains the operation the user can undo.
+    @Test func anInterruptedUndoNotice_describesTheUndo() async throws {
         let discard = try Self.decodedJournal(root: "/repo", opID: "D", stage: #"{"kind":"applied"}"#, operation: "discard")
         let undo = try Self.decodedJournal(root: "/repo", opID: "U", undoes: "D", stage: Self.cutShort, operation: "discard")
         let coordinator = RestoreCoordinator(stateDirectories: [], bridge: .init(
@@ -365,95 +437,63 @@ struct RestoreCoordinatorTests {
 
         let report = await coordinator.recover(roots: ["/repo"])
 
-        #expect(report.interrupted.map(\.opID) == ["D"])
+        #expect(report.stops == [RestoreCoordinator.RecoveredStop(settled: undo, undoable: discard)])
         #expect(RecoveryNews.kind(report.stops) == .undoInterrupted)
-        #expect(RecoveryNews.kind(report.stops + report.stops) == .operationsInterrupted(count: 2))
+    }
+
+    @Test func recoveryReports_mergeDistinctOperationsAndSavedPathsKeepingTheLatestRoots() throws {
+        let firstJournal = try Self.decodedJournal(root: "/repo", opID: "D", stage: Self.cutShort, operation: "discard")
+        let firstStop = RestoreCoordinator.RecoveredStop(settled: firstJournal, undoable: firstJournal)
+        let laterJournal = try Self.decodedJournal(root: "/other", opID: "later", stage: Self.cutShort)
+        let laterStop = RestoreCoordinator.RecoveredStop(settled: laterJournal, undoable: laterJournal)
+        let firstSave = RestoreKeptAside(path: "a.txt", location: ".weir-D/a.txt")
+        let laterSave = RestoreKeptAside(path: "b.txt", location: ".weir-later/b.txt")
+        let first = RestoreCoordinator.RecoveryReport(stops: [firstStop], keptAside: [firstSave], unsettledRoots: ["/repo"])
+        let later = RestoreCoordinator.RecoveryReport(
+            stops: [firstStop, laterStop],
+            keptAside: [firstSave, laterSave],
+            unsettledRoots: ["/other"]
+        )
+        let merged = first.adding(later)
+        #expect(merged.stops == [firstStop, laterStop])
+        #expect(RecoveryNews.kind(merged.stops) == .operationsInterrupted(count: 2))
         #expect(RecoveryNews.kind([]) == nil)
-        // A later reading of the same launch adds to the first, once.
-        let merged = report.adding(report)
-        #expect(merged.stops == report.stops)
+        #expect(merged.keptAside == [firstSave, laterSave])
+        #expect(merged.unsettledRoots == ["/other"])
     }
 
-    /// Polled the same way as the restore above, so a broken guard fails the
-    /// test instead of holding it on the runner.
-    @Test(.timeLimit(.minutes(1))) func aDiscard_waitsForNoOtherOperation() async throws {
-        let release = DispatchSemaphore(value: 0)
-        let calls = Recorded(0)
-        let coordinator = RestoreCoordinator(stateDirectories: [], bridge: .init(
-            restore: { _, _, _, _ in
-                calls.update { $0 += 1 }
-                if calls.value == 1 {
-                    release.wait()
-                }
-                return .refused(.agentRecording)
-            },
-            undo: { _, _, _ in .refused(.unknown) },
-            recover: { _ in RestoreRecovery(journals: [], settled: []) },
-            discard: { _, _ in .finished(nil, []) }
-        ))
-        var extras = TurnSummaryFixture.Extras()
-        extras.beginTree = SnapshotTree(tree: TurnSummaryFixture.tree("a", 1), root: "/repo")
-        let turn = try TurnSummaryFixture.turn("T1", extras: extras)
-        let range = try JSONDecoder().decode(ReviewTurnRange.self, from: Data("""
-        {"conversation":{"provider":"claude","conversationId":"s1","isFallback":false},"firstTurnID":"T1","restTurnIDs":[],
-         "firstNumber":1,"lastNumber":1,"beginTree":"\(TurnSummaryFixture.tree("a", 1))",
-         "endTree":"\(TurnSummaryFixture.tree("b", 1))","root":"/repo"}
-        """.utf8))
-        let call = RestoreCoordinator.DiscardCall(range: range, lastTurnNumber: 1, paneID: "P", files: [])
+}
 
-        let first = Task { await coordinator.restore(turn) }
-        await pollUntil(timeout: .seconds(5)) { coordinator.isBusy("/repo") }
-        let refused = Recorded<DiscardOutcome??>(nil)
-        Task { refused.value = await coordinator.discard(call) }
-        await pollUntil(timeout: .seconds(5)) { refused.value != nil }
-        #expect(refused.value == .some(nil))
-        release.signal()
-        _ = await first.value
-        #expect(await coordinator.discard(call) == .finished(nil, []))
-    }
-
+extension RestoreCoordinatorTests {
     private static func decodedJournal(
         root: String,
         opID: String = "OP",
         undoes: String? = nil,
         stage: String = #"{"kind":"applied"}"#,
-        operation: String? = nil
+        operation: String? = nil,
+        ranAt: String? = nil
     ) throws -> RestoreJournal {
         try RestoreJournalFixture.make(
             stageJSON: stage,
-            fields: .init(opID: opID, operation: operation, root: root, turnID: "T1", undoes: undoes, at: "2026-10-13T00:00:00Z")
+            fields: .init(opID: opID, operation: operation, root: root, turnID: "T1", undoes: undoes, ranAt: ranAt)
         )
     }
 
     private static let cutShort = #"{"kind":"partiallyApplied","reason":"interrupted","currentTree":"c"}"#
-
-    /// An undo cut short offers its restore, which still has what the undo
-    /// did not take back; an undo is not undone in turn.
-    @Test func anUndoCutShort_offersItsRestore() async throws {
-        let restore = try Self.decodedJournal(root: "/repo", opID: "R")
-        let undo = try Self.decodedJournal(root: "/repo", opID: "U", undoes: "R", stage: Self.cutShort)
-        let coordinator = RestoreCoordinator(stateDirectories: [], bridge: .init(
-            restore: { _, _, _, _ in .refused(.unknown) },
-            undo: { _, _, _ in .refused(.unknown) },
-            recover: { _ in RestoreRecovery(journals: [restore, undo], settled: ["U"]) }
-        ))
-
-        let report = await coordinator.recover(roots: ["/repo"])
-
-        #expect(report.interrupted.map(\.opID) == ["R"])
-    }
 
     /// A coordinator whose readings are `readings`, one per call, and that
     /// keeps its pending notices at `pending`.
     private static func readingInTurn(
         _ readings: Recorded<[RestoreRecovery]>,
         pending: URL? = nil,
+        requests: Recorded<[String]>? = nil,
         now: @escaping () -> Date = Date.init
     ) -> RestoreCoordinator {
         RestoreCoordinator(stateDirectories: [], bridge: .init(
             restore: { _, _, _, _ in .refused(.unknown) },
             undo: { _, _, _ in .refused(.unknown) },
-            recover: { _ in
+            recover: { root in
+                requests?.update { $0.append(root) }
                 var next: RestoreRecovery?
                 readings.update { next = $0.isEmpty ? nil : $0.removeFirst() }
                 guard let next else { throw WeirRestoreBridgeError.rust(-1) }
@@ -482,80 +522,122 @@ struct RestoreCoordinatorTests {
         #expect(first.unsettledRoots == ["/repo"])
         #expect(coordinator.pendingStopRoots == ["/repo"])
         // Still incomplete: it keeps waiting.
-        #expect(await coordinator.recover(roots: ["/repo"]).stops.isEmpty)
+        let second = await coordinator.recover(roots: ["/repo"])
+        #expect(second.stops.isEmpty)
+        #expect(second.unsettledRoots == ["/repo"])
+        #expect(coordinator.pendingStopRoots == ["/repo"])
 
         let whole = await coordinator.recover(roots: ["/repo"])
         #expect(whole.stops == [RestoreCoordinator.RecoveredStop(settled: undo, undoable: discard)])
         #expect(RecoveryNews.kind(whole.stops) == .undoInterrupted)
         #expect(coordinator.pendingStopRoots.isEmpty)
-        #expect(await coordinator.recover(roots: ["/repo"]).stops.isEmpty)
-        #expect(await coordinator.recover(roots: ["/repo"]).stops.isEmpty)
+        #expect(await coordinator.recover(roots: ["/repo"]) == RestoreCoordinator.RecoveryReport())
+        #expect(await coordinator.recover(roots: ["/repo"]) == RestoreCoordinator.RecoveryReport())
+        #expect(readings.value.isEmpty)
     }
 
-    /// The same, when the reading that settles the undo lists its discard:
-    /// told at once, and once.
-    @Test func anUndoCutShort_whoseOperationIsRead_isToldOnceAtOnce() async throws {
-        let discard = try Self.decodedJournal(root: "/repo", opID: "D", operation: "discard")
-        let undo = try Self.decodedJournal(root: "/repo", opID: "U", undoes: "D", stage: Self.cutShort, operation: "discard")
-        let coordinator = Self.readingInTurn(Recorded([
-            RestoreRecovery(journals: [discard, undo], settled: ["U"], isIncomplete: false),
-            RestoreRecovery(journals: [], settled: [], isIncomplete: false)
-        ]))
+    /// If the settled undo's original operation is already readable, tell
+    /// it at once for both restore and discard.
+    @Test(arguments: ["restore", "discard"])
+    func anUndoCutShort_whoseOperationIsAlreadyRead_isToldOnce(operation: String) async throws {
+        let original = try Self.decodedJournal(root: "/repo", opID: "O", operation: operation)
+        let undo = try Self.decodedJournal(root: "/repo", opID: "U", undoes: "O", stage: Self.cutShort, operation: operation)
+        let readings = Recorded([
+            RestoreRecovery(journals: [original, undo], settled: ["U"]),
+            RestoreRecovery(journals: [original, undo], settled: [])
+        ])
+        let coordinator = Self.readingInTurn(readings)
 
         let report = await coordinator.recover(roots: ["/repo"])
-        #expect(report.stops == [RestoreCoordinator.RecoveredStop(settled: undo, undoable: discard)])
+        #expect(report.stops == [RestoreCoordinator.RecoveredStop(settled: undo, undoable: original)])
+        #expect(report.unsettledRoots.isEmpty)
         #expect(coordinator.pendingStopRoots.isEmpty)
-        #expect(await coordinator.recover(roots: ["/repo"]).stops.isEmpty)
+        #expect(await coordinator.recover(roots: ["/repo"]) == RestoreCoordinator.RecoveryReport())
+        #expect(readings.value.isEmpty)
     }
 
     /// A worktree asked by another spelling than its journals' root: its
     /// notice waits under the journals' root, an empty reading by the other
-    /// spelling cannot say the operation is gone, and the launch reads the
-    /// journals' root too.
+    /// spelling cannot say the operation is gone.
     @Test func aPendingNotice_waitsUnderItsJournalsRoot() async throws {
         let restore = try Self.decodedJournal(root: "/repo", opID: "R")
         let undo = try Self.decodedJournal(root: "/repo", opID: "U", undoes: "R", stage: Self.cutShort)
+        let requests = Recorded<[String]>([])
         let coordinator = Self.readingInTurn(Recorded([
             RestoreRecovery(journals: [undo], settled: ["U"], isIncomplete: true),
             RestoreRecovery(journals: [], settled: [], isIncomplete: false),
             RestoreRecovery(journals: [restore, undo], settled: [], isIncomplete: false),
             RestoreRecovery(journals: [restore, undo], settled: [], isIncomplete: false)
-        ]))
+        ]), requests: requests)
 
-        #expect(await coordinator.recover(roots: ["/link/repo"]).stops.isEmpty)
+        let first = await coordinator.recover(roots: ["/link/repo"])
+        #expect(first.stops.isEmpty)
+        #expect(first.unsettledRoots == ["/link/repo"])
         #expect(coordinator.pendingStopRoots == ["/repo"])
-        #expect(await coordinator.recover(roots: ["/link/repo"]).stops.isEmpty)
+        #expect(await coordinator.recover(roots: ["/link/repo"]) == RestoreCoordinator.RecoveryReport())
         #expect(coordinator.pendingStopRoots == ["/repo"])
-        #expect(await coordinator.recover(roots: ["/link/repo"]).interrupted.map(\.opID) == ["R"])
-        #expect(await coordinator.recover(roots: ["/repo"]).stops.isEmpty)
-        #expect(AppState.launchRestoreRoots(projects: ["/link/repo", "/b"], pending: ["/repo", "/b"])
-            == ["/b", "/link/repo", "/repo"])
-        #expect(AppState.laterRestoreRoots(history: ["/repo", "/c"], readAtOnce: ["/b", "/repo"]) == ["/c"])
+        let found = await coordinator.recover(roots: ["/link/repo"])
+        #expect(found.stops == [RestoreCoordinator.RecoveredStop(settled: undo, undoable: restore)])
+        #expect(coordinator.pendingStopRoots.isEmpty)
+        #expect(await coordinator.recover(roots: ["/repo"]) == RestoreCoordinator.RecoveryReport())
+        #expect(requests.value == ["/link/repo", "/link/repo", "/link/repo", "/repo"])
     }
 
-    /// A whole reading without the operation (pruned or expired) drops the
-    /// waiting notice; so does a journal's lifetime passing.
-    @Test func aPendingNotice_isDropped_whenItsOperationIsGone() async throws {
+    @Test func launchRecoveryRoots_unionProjectsAndPending_thenExcludeReadRoots() {
+        #expect(AppState.launchRestoreRoots(projects: ["/link/repo", "/b"], pending: ["/repo", "/b"])
+            == ["/b", "/link/repo", "/repo"])
+        #expect(AppState.laterRestoreRoots(history: ["/z", "/repo", "/c"], readAtOnce: ["/b", "/repo"]) == ["/z", "/c"])
+    }
+
+    /// A complete reading can say the operation is gone. An incomplete
+    /// reading can also settle the notice when it lists a final operation.
+    @Test(arguments: [false, true])
+    func aPendingNotice_isDropped_whenItsOperationCannotBeUndone(isFinal: Bool) async throws {
         let undo = try Self.decodedJournal(root: "/repo", opID: "U", undoes: "D", stage: Self.cutShort, operation: "discard")
+        let final = try Self.decodedJournal(
+            root: "/repo",
+            opID: "D",
+            stage: #"{"kind":"aborted","reason":"interrupted"}"#,
+            operation: "discard"
+        )
         let readings = Recorded([
             RestoreRecovery(journals: [undo], settled: ["U"], isIncomplete: true),
-            RestoreRecovery(journals: [undo], settled: [], isIncomplete: false),
-            RestoreRecovery(journals: [undo], settled: ["U"], isIncomplete: true),
-            RestoreRecovery(journals: [undo], settled: [], isIncomplete: true)
+            RestoreRecovery(journals: isFinal ? [undo, final] : [undo], settled: [], isIncomplete: isFinal)
         ])
-        let clock = Recorded(Date(timeIntervalSince1970: 1_800_000_000))
+        let coordinator = Self.readingInTurn(readings)
+
+        let first = await coordinator.recover(roots: ["/repo"])
+        #expect(first.stops.isEmpty)
+        #expect(first.unsettledRoots == ["/repo"])
+        #expect(coordinator.pendingStopRoots == ["/repo"])
+        let second = await coordinator.recover(roots: ["/repo"])
+        #expect(second.stops.isEmpty)
+        #expect(second.unsettledRoots == (isFinal ? ["/repo"] : []))
+        #expect(coordinator.pendingStopRoots.isEmpty)
+        #expect(readings.value.isEmpty)
+    }
+
+    @Test func aPendingNotice_expiresOnlyAfterItsLifetime() async throws {
+        let undo = try Self.decodedJournal(root: "/repo", opID: "U", undoes: "D", stage: Self.cutShort, operation: "discard")
+        let unreadable = RestoreRecovery(journals: [undo], settled: [], isIncomplete: true)
+        let readings = Recorded([
+            RestoreRecovery(journals: [undo], settled: ["U"], isIncomplete: true),
+            unreadable, unreadable, unreadable
+        ])
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let clock = Recorded(start)
         let coordinator = Self.readingInTurn(readings) { clock.value }
 
         _ = await coordinator.recover(roots: ["/repo"])
-        #expect(coordinator.pendingStopRoots == ["/repo"])
-        #expect(await coordinator.recover(roots: ["/repo"]).stops.isEmpty)
-        #expect(coordinator.pendingStopRoots.isEmpty)
-
-        _ = await coordinator.recover(roots: ["/repo"])
-        #expect(coordinator.pendingStopRoots == ["/repo"])
-        clock.value += RestorePendingStopFile.lifetime + 1
-        #expect(await coordinator.recover(roots: ["/repo"]).stops.isEmpty)
-        #expect(coordinator.pendingStopRoots.isEmpty)
+        try #require(coordinator.pendingStopRoots == ["/repo"])
+        for offset in [-1.0, 0.0, 1.0] {
+            clock.value = start.addingTimeInterval(RestorePendingStopFile.lifetime + offset)
+            let report = await coordinator.recover(roots: ["/repo"])
+            #expect(report.stops.isEmpty)
+            #expect(report.unsettledRoots == ["/repo"])
+            #expect(coordinator.pendingStopRoots == (offset > 0 ? [] : ["/repo"]))
+        }
+        #expect(readings.value.isEmpty)
     }
 
     /// A notice whose operation stays unreadable until the app quits waits
@@ -568,29 +650,38 @@ struct RestoreCoordinatorTests {
             let undo = try Self.decodedJournal(root: "/repo", opID: "U", undoes: "R", stage: Self.cutShort)
             let unreadable = RestoreRecovery(journals: [undo], settled: [], isIncomplete: true)
 
+            let date = Date(timeIntervalSince1970: 1_800_000_000)
+            let notice = RestorePendingStop(root: "/repo", settledID: "U", undoableID: "R", since: date)
             let first = Self.readingInTurn(Recorded([
                 RestoreRecovery(journals: [undo], settled: ["U"], isIncomplete: true),
                 unreadable,
                 unreadable
-            ]), pending: file)
+            ]), pending: file, now: { date })
             for _ in 0..<3 {
-                #expect(await first.recover(roots: ["/repo"]).stops.isEmpty)
+                let report = await first.recover(roots: ["/repo"])
+                #expect(report.stops.isEmpty)
+                #expect(report.unsettledRoots == ["/repo"])
             }
-            #expect(RestorePendingStopFile.read(file).elements.map(\.settledID) == ["U"])
+            #expect(RestorePendingStopFile.read(file).elements == [notice])
 
             // Never readable this launch either: kept, and never told.
-            let second = Self.readingInTurn(Recorded([unreadable, unreadable]), pending: file)
+            let second = Self.readingInTurn(Recorded([unreadable, unreadable]), pending: file, now: { date })
             #expect(second.pendingStopRoots == ["/repo"])
-            #expect(await second.recover(roots: ["/repo"]).stops.isEmpty)
-            #expect(await second.recover(roots: ["/repo"]).stops.isEmpty)
+            for _ in 0..<2 {
+                let report = await second.recover(roots: ["/repo"])
+                #expect(report.stops.isEmpty)
+                #expect(report.unsettledRoots == ["/repo"])
+            }
+            #expect(RestorePendingStopFile.read(file).elements == [notice])
 
             let third = Self.readingInTurn(Recorded([
                 RestoreRecovery(journals: [restore, undo], settled: [], isIncomplete: false),
                 RestoreRecovery(journals: [restore, undo], settled: [], isIncomplete: false)
-            ]), pending: file)
+            ]), pending: file, now: { date })
             let told = await third.recover(roots: ["/repo"])
-            #expect(told.interrupted.map(\.opID) == ["R"])
-            #expect(await third.recover(roots: ["/repo"]).stops.isEmpty)
+            #expect(told.stops == [RestoreCoordinator.RecoveredStop(settled: undo, undoable: restore)])
+            #expect(told.unsettledRoots.isEmpty)
+            #expect(await third.recover(roots: ["/repo"]) == RestoreCoordinator.RecoveryReport())
             #expect(!FileManager.default.fileExists(atPath: file.path))
 
             let fourth = Self.readingInTurn(Recorded([
@@ -604,7 +695,8 @@ struct RestoreCoordinatorTests {
     /// A folder that cannot be searched hides the pending notices' file,
     /// which may hold a discard's only way back: it is kept as it is, not
     /// written over by this launch's notices, and reported.
-    @Test func pendingNoticesInAFolderThatCannotBeSearched_areNeverSavedOver() async throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func pendingNoticesInAFolderThatCannotBeSearched_areNeverSavedOver() async throws {
         try await withTempDir { root in
             let directory = root.appendingPathComponent("support")
             let manager = FileManager.default
@@ -617,6 +709,7 @@ struct RestoreCoordinatorTests {
             try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: directory.path)
             defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
 
+            try #require(throws: (any Error).self) { try Data(contentsOf: file) }
             let coordinator = Self.readingInTurn(Recorded([
                 RestoreRecovery(journals: [undo], settled: ["U"], isIncomplete: true)
             ]), pending: file)
@@ -637,29 +730,37 @@ struct RestoreCoordinatorTests {
         let stopped = try Self.decodedJournal(root: "/a", opID: "A", stage: Self.cutShort)
         let locked = try Self.decodedJournal(root: "/b", opID: "B", stage: #"{"kind":"writing","done":[]}"#)
         let settledLater = try Self.decodedJournal(root: "/b", opID: "B", stage: Self.cutShort)
-        let readings = Recorded<[String]>([])
+        let trace = Recorded<[String]>([])
         let coordinator = RestoreCoordinator(stateDirectories: [], bridge: .init(
             restore: { _, _, _, _ in .refused(.unknown) },
             undo: { _, _, _ in .refused(.unknown) },
             recover: { root in
-                readings.update { $0.append(root) }
+                trace.update { $0.append("read \(root)") }
                 if root == "/a" {
                     return RestoreRecovery(journals: [stopped], settled: ["A"])
                 }
-                let isFirst = readings.value.filter { $0 == "/b" }.count == 1
+                let isFirst = trace.value.filter { $0 == "read /b" }.count == 1
                 return isFirst
                     ? RestoreRecovery(journals: [locked], settled: [])
                     : RestoreRecovery(journals: [settledLater], settled: ["B"])
             }
         ))
-        var told: [[String]] = []
+        var told: [RestoreCoordinator.RecoveryReport] = []
 
         await coordinator.recoverAtLaunch(roots: ["/a", "/b"], attempts: 3, retry: .milliseconds(1)) { found in
-            told.append(found.interrupted.map(\.opID))
+            trace.update { $0.append("reported " + found.interrupted.map(\.opID).joined()) }
+            told.append(found)
         }
 
-        #expect(told == [["A"], ["B"]])
-        #expect(readings.value == ["/a", "/b", "/b"])
+        #expect(told == [
+            RestoreCoordinator.RecoveryReport(
+                stops: [RestoreCoordinator.RecoveredStop(settled: stopped, undoable: stopped)], unsettledRoots: ["/b"]
+            ),
+            RestoreCoordinator.RecoveryReport(
+                stops: [RestoreCoordinator.RecoveredStop(settled: settledLater, undoable: settledLater)]
+            )
+        ])
+        #expect(trace.value == ["read /a", "read /b", "reported A", "read /b", "reported B"])
     }
 
     /// A reading of the journals that fails after a restore is not an
@@ -667,7 +768,11 @@ struct RestoreCoordinatorTests {
     /// read again.
     @Test(.timeLimit(.minutes(1))) func aFailedReadingAfterARestore_keepsItsUndo_andReadsAgain() async throws {
         let restored = try Self.decodedJournal(root: "/repo", opID: "R")
+        let later = try Self.decodedJournal(root: "/repo", opID: "later")
         let readings = Recorded(0)
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let wasReleased = Recorded(false)
         let coordinator = RestoreCoordinator(
             stateDirectories: [],
             bridge: .init(
@@ -676,11 +781,16 @@ struct RestoreCoordinatorTests {
                 recover: { _ in
                     readings.update { $0 += 1 }
                     guard readings.value > 1 else { throw WeirRestoreBridgeError.rust(-1) }
-                    return RestoreRecovery(journals: [restored], settled: [])
+                    wasReleased.value = release.wait(timeout: .now() + 10) == .success
+                    return RestoreRecovery(journals: [later], settled: [])
                 }
             ),
             rereadDelay: .milliseconds(10)
         )
+        var wholeReadings: [[String]] = []
+        coordinator.onWholeReading = { root, journals in
+            wholeReadings.append([root] + journals.map(\.opID))
+        }
         var extras = TurnSummaryFixture.Extras()
         extras.beginTree = SnapshotTree(tree: TurnSummaryFixture.tree("a", 1), root: "/repo")
         let turn = try TurnSummaryFixture.turn("T1", extras: extras)
@@ -689,22 +799,42 @@ struct RestoreCoordinatorTests {
 
         #expect(coordinator.latestUndoable(in: "/repo")?.opID == "R")
         await pollUntil(timeout: .seconds(5)) { readings.value > 1 }
-        #expect(readings.value == 2)
+        try #require(readings.value == 2)
         #expect(coordinator.latestUndoable(in: "/repo")?.opID == "R")
+        #expect(wholeReadings.isEmpty)
+        release.signal()
+        await pollUntil(timeout: .seconds(5)) { coordinator.latestUndoable(in: "/repo")?.opID == "later" }
+        #expect(coordinator.latestUndoable(in: "/repo")?.opID == "later")
+        #expect(wholeReadings == [["/repo", "later"]])
+        #expect(wasReleased.value)
     }
 
     /// A worktree whose journals could not be read at launch is read again,
     /// as one a hook kept locked is.
-    @Test func aFailedReadingAtLaunch_isReadAgain() async {
+    @Test func aFailedReadingAtLaunch_isReadAgain() async throws {
+        let recovered = try Self.decodedJournal(root: "/repo", opID: "recovered", stage: Self.cutShort)
+        let readings = Recorded(0)
         let coordinator = RestoreCoordinator(stateDirectories: [], bridge: .init(
             restore: { _, _, _, _ in .refused(.unknown) },
             undo: { _, _, _ in .refused(.unknown) },
-            recover: { _ in throw WeirRestoreBridgeError.rust(-1) }
+            recover: { _ in
+                readings.update { $0 += 1 }
+                guard readings.value > 1 else { throw WeirRestoreBridgeError.rust(-1) }
+                return RestoreRecovery(journals: [recovered], settled: ["recovered"])
+            }
         ))
 
-        let report = await coordinator.recover(roots: ["/repo"])
+        var reports: [RestoreCoordinator.RecoveryReport] = []
+        await coordinator.recoverAtLaunch(roots: ["/repo"], attempts: 2, retry: .zero) {
+            reports.append($0)
+        }
 
-        #expect(report.unsettledRoots == ["/repo"])
+        #expect(readings.value == 2)
+        let report = try #require(reports.first)
+        #expect(reports.count == 1)
+        #expect(report.interrupted == [recovered])
+        #expect(report.unsettledRoots.isEmpty)
+        #expect(coordinator.latestUndoable(in: "/repo") == recovered)
     }
 
     @Test func aTurnWithoutItsStart_isNotSentToRust() async throws {

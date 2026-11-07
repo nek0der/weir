@@ -30,6 +30,7 @@ struct AgentIntegrationListenerTests {
 
         let dropped = try submittedRequest(on: listener, epoch: epoch)
         let kept = try submittedRequest(on: listener, epoch: epoch)
+        defer { kept.client.invalidate() }
         #expect(try status(of: dropped.key, on: controller, epoch: epoch) == "pending")
         let sequence = try sequence(on: controller, epoch: epoch)
 
@@ -45,7 +46,8 @@ struct AgentIntegrationListenerTests {
             )
         ))
         let body = try #require(changed["body"] as? [String: Any])
-        #expect(body["sequence"] as? Int != sequence)
+        let nextSequence = try #require(body["sequence"] as? Int)
+        #expect(nextSequence > sequence)
         #expect(try status(of: dropped.key, on: controller, epoch: epoch) == "canceled")
         #expect(try status(of: kept.key, on: controller, epoch: epoch) == "pending")
         withExtendedLifetime(kept.client) {}

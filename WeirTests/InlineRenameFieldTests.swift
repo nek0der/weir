@@ -58,6 +58,7 @@ struct InlineRenameFieldTests {
         // its owner) losing the keyboard as it goes away commits nothing.
         #expect(!InlineRenameField.commitsOnFocusLoss(isFocused: false, didFinalize: true))
         #expect(!InlineRenameField.commitsOnFocusLoss(isFocused: true, didFinalize: false))
+        #expect(!InlineRenameField.commitsOnFocusLoss(isFocused: true, didFinalize: true))
     }
 
     @Test func closedByItsOwner_abandonsTheEdit() {
@@ -69,6 +70,7 @@ struct InlineRenameFieldTests {
         // one still open is not closed.
         #expect(!InlineRenameField.abandonsWhenClosedByOwner(isEditing: false, didFinalize: true))
         #expect(!InlineRenameField.abandonsWhenClosedByOwner(isEditing: true, didFinalize: false))
+        #expect(!InlineRenameField.abandonsWhenClosedByOwner(isEditing: true, didFinalize: true))
     }
 
     @Test func aSubmit_handsOnOnlyAChange_fromTheNameTheEditStartedFrom() {
@@ -152,7 +154,9 @@ struct InlineRenameFieldTests {
         #expect(InlineRenameEditorAlignment.alignedOriginX(0, slack: 3) == -3)
         #expect(InlineRenameEditorAlignment.alignedOriginX(-1, slack: 3) == -3)
         #expect(InlineRenameEditorAlignment.alignedOriginX(-3, slack: 3) == nil)
+        #expect(InlineRenameEditorAlignment.alignedOriginX(-4, slack: 3) == nil)
         #expect(InlineRenameEditorAlignment.alignedOriginX(0.5, slack: 3) == nil)
         #expect(InlineRenameEditorAlignment.alignedOriginX(140, slack: 3) == nil)
+        #expect(InlineRenameEditorAlignment.alignedOriginX(0, slack: 0) == nil)
     }
 }

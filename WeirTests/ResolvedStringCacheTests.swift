@@ -17,13 +17,14 @@ struct ResolvedStringCacheTests {
         #expect(LocalizedStringResource("Unread").resolved(in: ja) == "未読")
         let one = 1
         let two = 2
-        #expect(LocalizedStringResource("\(one) unread").resolved(in: en) != LocalizedStringResource("\(two) unread").resolved(in: en))
+        #expect(LocalizedStringResource("\(one) unread").resolved(in: en) == "1 unread")
+        #expect(LocalizedStringResource("\(two) unread").resolved(in: en) == "2 unread")
+        #expect(LocalizedStringResource("\(one) unread").resolved(in: en) == "1 unread")
     }
 
-    /// One key given thousands of values keeps only its latest few, so a
-    /// lookup for it stays as quick as for a key with one value, and what
-    /// another key remembers is untouched by them.
-    @Test func manyValuesOfOneKey_keepOnlyTheLatest_andTheLookupStaysShort() {
+    /// One key stays within its own entry limit when given thousands of
+    /// values, while another key retains its entry.
+    @Test func manyValuesOfOneKey_keepTheCacheBounded() {
         let cache = ResolvedStringCache()
         let en = Locale(identifier: "en")
         func unread(_ count: Int) -> LocalizedStringResource {
@@ -39,9 +40,8 @@ struct ResolvedStringCacheTests {
         }
         #expect(cache.count(ofKeyOf: unread(0)) == ResolvedStringCache.perKeyLimit)
         #expect(cache.count(ofKeyOf: other) == 1)
-        // The latest value is found where it was put, the first long gone
-        // is looked up again and put first.
-        #expect(cache.string(for: unread(2999)).hasSuffix("999 unread"))
+        // Recent and older values still resolve correctly at capacity.
+        #expect(cache.string(for: unread(2999)) == "2,999 unread")
         #expect(cache.string(for: unread(0)) == "0 unread")
         #expect(cache.count(ofKeyOf: unread(0)) == ResolvedStringCache.perKeyLimit)
     }

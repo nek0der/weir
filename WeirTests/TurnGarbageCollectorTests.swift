@@ -13,10 +13,12 @@ struct TurnGarbageCollectorTests {
     @Test func theBridgesAnswer_isReadTurnByTurn() throws {
         try withTempDir { directory in
             let missing = UUID().uuidString
-            let deletions = try WeirTurnBridge.deleteTurns([missing], in: directory)
+            let invalid = "not a turn"
+            let deletions = try WeirTurnBridge.deleteTurns([missing, invalid], in: directory)
 
-            #expect(deletions.map(\.turnID) == [missing])
-            #expect(deletions.map(\.outcome) == [.alreadyGone])
+            #expect(deletions.map(\.turnID) == [missing, invalid])
+            #expect(deletions.map(\.outcome) == [.alreadyGone, .failed])
+            #expect(deletions.map(\.reason) == [nil, .other("not a turn id")])
         }
     }
 
@@ -31,6 +33,8 @@ struct TurnGarbageCollectorTests {
             let swept = try WeirTurnBridge.sweepLeftovers(in: [directory])
 
             #expect(swept == LeftoverSweep(sidecars: 1, temporaries: 0, counters: 0))
+            #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("gone.json.flock").path))
+            #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("kept.json").path))
             #expect(FileManager.default.fileExists(atPath: directory.appendingPathComponent("kept.json.flock").path))
         }
     }
@@ -53,13 +57,18 @@ struct TurnGarbageCollectorTests {
         #expect(swept.count == expected.count, "each directory once")
     }
 
-    @Test func aBatchTheBridgeRefuses_isOnlyLogged() async {
+    @Test func aBatchTheBridgeRefuses_reportsNoDeletions() async {
         struct Refused: Error {}
-        let collector = TurnGarbageCollector(priority: .userInitiated) { _, _ in throw Refused() }
+        let attempts = Recorded(0)
+        let collector = TurnGarbageCollector(priority: .userInitiated) { _, _ in
+            attempts.update { $0 += 1 }
+            throw Refused()
+        }
 
         let deletions = await collector.delete(["A"], in: URL(fileURLWithPath: "/nonexistent"))
 
-        #expect(deletions.isEmpty, "the records stay, and the next sweep chooses them again")
+        #expect(attempts.value == 1)
+        #expect(deletions.isEmpty)
     }
 
     @Test func aBatch_reachesTheBridgeWithItsDirectory() async {
@@ -72,6 +81,7 @@ struct TurnGarbageCollectorTests {
 
         let deletions = await collector.delete(["A", "B"], in: directory)
 
+        #expect(deletions.map(\.turnID) == ["A", "B"])
         #expect(deletions.map(\.outcome) == [.deleted, .deleted])
         #expect(asked.value.map(\.ids) == [["A", "B"]])
         #expect(asked.value.map(\.directory) == [directory])
@@ -85,16 +95,21 @@ struct TurnGarbageCollectorTests {
         }
 
         // An empty batch finishes the deletions a quit cut short.
-        collector.enqueue([], in: URL(fileURLWithPath: "/states/claude/turns"))
-        collector.enqueue(["A"], in: URL(fileURLWithPath: "/states/claude/turns"))
+        let claude = URL(fileURLWithPath: "/states/claude/turns")
+        let codex = URL(fileURLWithPath: "/states/codex/turns")
+        collector.enqueue([], in: claude)
+        collector.enqueue(["A"], in: codex)
 
         await pollUntilTurnsDeleted { asked.value.count == 2 }
-        #expect(Set(asked.value.map(\.ids)) == [[], ["A"]])
+        #expect(asked.value.count == 2)
+        #expect(asked.value.first { $0.directory == claude }?.ids == [])
+        #expect(asked.value.first { $0.directory == codex }?.ids == ["A"])
     }
 
     @Test func anOutcomeANewerBridgeAdded_doesNotFailTheBatch() throws {
         let data = Data(#"[{"outcome":"somethingNewer","turnId":"A"},{"outcome":"deleted","turnId":"B"}]"#.utf8)
         let deletions = try JSONDecoder().decode([TurnDeletion].self, from: data)
+        #expect(deletions.map(\.turnID) == ["A", "B"])
         #expect(deletions.map(\.outcome) == [.unknown, .deleted])
     }
 

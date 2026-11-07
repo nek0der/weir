@@ -17,6 +17,8 @@ struct WeirSettingsShortcutValidationTests {
         StoredShortcut(key: "space", modifiers: [.shift]),
         StoredShortcut(key: "tab", modifiers: [.shift]),
         StoredShortcut(key: "backspace", modifiers: [.option]),
+        StoredShortcut(key: "return", modifiers: [.option]),
+        StoredShortcut(key: "delete", modifiers: [.shift]),
         StoredShortcut(key: "escape", modifiers: [.shift])
     ])
     func validate_refusesShiftOrOptionAlone_onAKeyThatTypes(shortcut: StoredShortcut) {
@@ -35,14 +37,6 @@ struct WeirSettingsShortcutValidationTests {
     ])
     func validate_takesKeys_thatTypeNothing(shortcut: StoredShortcut) {
         #expect(KeyboardSettings().validate(shortcut, for: .newTab) == .ok)
-    }
-
-    /// ⌥← and ⌥→ are the sidebar's, which says so rather than the rule
-    /// for keys that type.
-    @Test func validate_optionArrow_staysTheSidebars() {
-        let optionLeft = StoredShortcut(key: "left", modifiers: [.option])
-        #expect(KeyboardSettings().validate(optionLeft, for: .moveProjectUp) == .keptBySidebar)
-        #expect(KeyboardSettings().validate(optionLeft, for: .newTab) == .ok)
     }
 
     /// Settings… and the Edit menu answer these keys before any binding of
@@ -71,23 +65,24 @@ struct WeirSettingsShortcutValidationTests {
         }
     }
 
-    /// Every refusal has words to show under the row, and the words for a
-    /// key that types speak of input, not only of characters: ⌥⌫ and ⇧⎋
-    /// type none.
+    /// Input includes keys such as ⌥⌫ and ⇧⎋ that type no characters.
     @Test(arguments: [
         (ShortcutValidation.typesText, "With only ⇧ or ⌥, this key is input to the terminal. Add ⌃ or ⌘"),
         (.standardMenuItem, "A standard macOS menu item uses these keys"),
-        (.unwritableKey, "This key can’t be used in a shortcut")
-    ])
-    func refusal_hasItsMessage(result: ShortcutValidation, english: String) throws {
-        let message = try #require(result.message)
-        #expect(message.key == english)
+        (.unwritableKey, "This key can’t be used in a shortcut"),
+        (.keptBySidebar, "The sidebar uses these keys while it has keyboard focus"),
+        (.reserved, "Reserved by Weir (⌘⏎, ⌘1–9, ⌃⌘1–9)"),
+        (.missingModifier, "Shortcut must include ⌃, ⌥, ⇧, or ⌘"),
+        (.quickTerminalConflict, "Already used by the Quick Terminal hotkey"),
+        (.ok, nil)
+    ] as [(ShortcutValidation, String?)])
+    func nonActionSpecificValidation_hasExpectedMessage(result: ShortcutValidation, english: String?) {
+        #expect(result.message?.resolved(in: Locale(identifier: "en")) == english)
     }
 
-    /// libghostty splits a trigger at every `>`, so the recorder refuses
-    /// it rather than store a binding that never fires.
-    @Test func validate_refusesAKey_thatCannotBeWritten() {
-        let shortcut = StoredShortcut(key: ">", modifiers: [.command])
+    @Test(arguments: [">", "e\u{301}", "numpad_add", "x\ny"])
+    func validate_reportsUnwritableKeys(key: String) {
+        let shortcut = StoredShortcut(key: key, modifiers: [.command])
         #expect(KeyboardSettings().validate(shortcut, for: .newTab) == .unwritableKey)
     }
 
@@ -106,35 +101,33 @@ struct WeirSettingsShortcutValidationTests {
         keyboard.overrides[WeirShortcutAction.toggleSidebar.rawValue] = shortcut
         let (normalized, _) = keyboard.normalizedForTest()
         #expect(normalized.overrides.isEmpty)
-        #expect(normalized.retired[WeirShortcutAction.toggleSidebar.rawValue] == shortcut)
-        #expect(normalized.shortcut(for: .toggleSidebar) == WeirShortcutAction.toggleSidebar.defaultShortcut)
+        #expect(normalized.retired == ["toggleSidebar": shortcut])
+        #expect(normalized.shortcut(for: .toggleSidebar) == StoredShortcut(key: "b", modifiers: [.command]))
     }
 
-    /// A key with a line break in it can only come from a hand edit, and
-    /// would start a config key of its own in the file libghostty reads. A
-    /// load drops it outright: the notice would print it as it is.
+    /// A key with a line break or a control character could inject a config
+    /// line or be printed in the update notice. A load drops just that entry.
     @Test(arguments: [
         "t=ignore\nclipboard-paste-protection = false",
         "t\r",
         " ",
         "",
-        "\u{7}"
+        "\u{7}",
+        "a\nb"
     ])
-    func normalize_dropsAStoredKey_thatCannotBeWritten(key: String) {
+    func normalize_dropsNonPrintableKeysAndKeepsOtherStoredBindings(key: String) {
+        let invalid = StoredShortcut(key: key, modifiers: [.command])
+        let binding = StoredShortcut(key: "f12", modifiers: [.control])
+        let retired = StoredShortcut(key: "c", modifiers: [.command])
         var keyboard = KeyboardSettings()
-        keyboard.overrides[WeirShortcutAction.toggleSidebar.rawValue] = StoredShortcut(key: key, modifiers: [.command])
-        let (normalized, _) = keyboard.normalizedForTest()
-        #expect(normalized.overrides.isEmpty)
-        #expect(normalized.retired.isEmpty)
-    }
+        keyboard.overrides = ["toggleSidebar": invalid, "newTab": binding]
+        keyboard.retired = ["newWorktree": invalid, "find": retired]
 
-    /// A retired binding is shown in the update notice, so one with a key
-    /// that cannot be written is dropped there too.
-    @Test func normalize_dropsARetiredKey_thatCannotBeWritten() {
-        var keyboard = KeyboardSettings()
-        keyboard.retired[WeirShortcutAction.toggleSidebar.rawValue] = StoredShortcut(key: "a\nb", modifiers: [.command])
-        let (normalized, _) = keyboard.normalizedForTest()
-        #expect(normalized.retired.isEmpty)
+        let normalized = keyboard.normalizedForTest().keyboard
+        #expect(normalized.overrides == ["newTab": binding])
+        #expect(normalized.retired == ["find": retired])
+        #expect(normalized.shortcut(for: .newTab) == binding)
+        #expect(normalized.shortcut(for: .toggleSidebar) == StoredShortcut(key: "b", modifiers: [.command]))
     }
 
     @Test(arguments: ["t", "=", "+", ",", "é", "return", "enter", "page_up", "f12"])

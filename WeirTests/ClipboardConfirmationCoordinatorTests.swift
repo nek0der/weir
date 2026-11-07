@@ -47,14 +47,26 @@ private final class FakeRequestStates {
 
 @MainActor
 private final class AnswerLog {
+    struct Completion {
+        let surface: ghostty_surface_t
+        let text: String
+        let state: ClipboardRequestState
+    }
+
     var denied: [(surface: ghostty_surface_t, state: ClipboardRequestState)] = []
-    var completed: [ClipboardRequestState] = []
+    var completions: [Completion] = []
+    var completed: [ClipboardRequestState] {
+        completions.map(\.state)
+    }
+
     var pasteboardWrites: [String] = []
 
     var answerer: ClipboardRequestAnswerer {
         ClipboardRequestAnswerer(
             deny: { [unowned self] surface, state in denied.append((surface, state)) },
-            complete: { [unowned self] _, _, state in completed.append(state) },
+            complete: { [unowned self] surface, text, state in
+                completions.append(Completion(surface: surface, text: text, state: state))
+            },
             writePasteboard: { [unowned self] text in pasteboardWrites.append(text) }
         )
     }
@@ -110,6 +122,11 @@ struct ClipboardConfirmationCoordinatorTests {
         coordinator.enqueue(.libghostty(.unsafePaste, read), contents: "", target: target)
 
         #expect(log.denied.map(\.state) == [read])
+        #expect(log.denied.first?.surface == target.liveSurface)
+        #expect(!target.clipboardRequests.isTracking(read))
+        #expect(coordinator.pending?.contents == "text")
+        #expect(log.pasteboardWrites.isEmpty)
+        #expect(log.completed.isEmpty)
     }
 
     @Test func answeredRequest_isNotDeniedAgainAtTeardown() {
@@ -233,7 +250,12 @@ struct ClipboardConfirmationCoordinatorTests {
         coordinator.deny()
 
         #expect(log.completed == [state])
+        #expect(log.completions.first?.surface == target.liveSurface)
+        #expect(log.completions.first?.text == "paste")
+        #expect(!target.clipboardRequests.isTracking(state))
+        #expect(coordinator.pending == nil)
         #expect(log.denied.isEmpty)
+        #expect(log.pasteboardWrites.isEmpty)
     }
 
     @Test func cancelPending_answersOnlyTheClosingPane() {
@@ -252,6 +274,8 @@ struct ClipboardConfirmationCoordinatorTests {
 
         coordinator.cancelPending(for: target)
         #expect(log.denied.map(\.state) == [state])
+        #expect(log.denied.first?.surface == target.liveSurface)
+        #expect(!target.clipboardRequests.isTracking(state))
         #expect(coordinator.pending == nil)
     }
 

@@ -77,7 +77,7 @@ struct WorktreeCreationStageTests {
         // A file where the worktree's parent folder should be: git makes the
         // branch, then cannot add the worktree.
         let blocker = repo.url.appendingPathComponent("blocker")
-        FileManager.default.createFile(atPath: blocker.path, contents: Data("x".utf8))
+        try #require(FileManager.default.createFile(atPath: blocker.path, contents: Data("x".utf8)))
         let error = await Self.failure {
             try await session.createGitWorktree(
                 projectID: project.id,
@@ -91,22 +91,37 @@ struct WorktreeCreationStageTests {
             Issue.record("expected the branch left behind, got \(String(describing: error))")
             return
         }
+        #expect(branch == "feat/real")
+        let mainTip = try await repo.git(["rev-parse", "main"])
+        #expect(try await repo.git(["rev-parse", "--verify", "refs/heads/feat/real"]) == mainTip)
+        #expect(session.project(project.id)?.worktrees.isEmpty == true)
+        let linked = repo.url.appendingPathComponent("wt")
         let worktree = try await session.createGitWorktree(
             projectID: project.id,
-            path: repo.url.appendingPathComponent("wt"),
+            path: linked,
             baseBranch: branch,
             newBranchName: nil,
             openTab: false
         )
         #expect(worktree.gitRef?.branchName == "feat/real")
+        #expect(try await TempGitRepo.git(["symbolic-ref", "--short", "HEAD"], in: linked) == "feat/real")
+        let topLevel = try await TempGitRepo.git(["rev-parse", "--show-toplevel"], in: linked)
+        #expect(URL(fileURLWithPath: topLevel).resolvingSymlinksInPath().path == linked.resolvingSymlinksInPath().path)
+        #expect(worktree.workingDirectory.resolvingSymlinksInPath().path == linked.resolvingSymlinksInPath().path)
+        #expect(session.project(project.id)?.worktrees.map(\.id) == [worktree.id])
     }
 
     @Test func retryAfterSetupFailure_doesNotCreateSecondWorktree() async throws {
         try await withTempDir { dir in
             let marker = dir.appendingPathComponent("marker")
+            let trace = dir.appendingPathComponent("trace")
             let (session, project) = Self.session(bootstrap: [
-                .shorthand("echo first"),
-                .shorthand("test -f '\(marker.path)' || { echo 'missing marker' >&2; exit 3; }")
+                .shorthand("echo first >> '\(trace.path)'"),
+                .shorthand("""
+                echo attempt >> '\(trace.path)'
+                test -f '\(marker.path)' || { echo 'missing marker' >&2; exit 3; }
+                """),
+                .shorthand("echo last >> '\(trace.path)'")
             ])
             let git = FakeGit()
             git.createsDirectoryOnSuccess = true
@@ -121,14 +136,19 @@ struct WorktreeCreationStageTests {
             }
             #expect(error?.stage == .setup(stepIndex: 1))
             #expect(error?.logTail == "missing marker")
+            #expect(try String(contentsOf: trace, encoding: .utf8) == "first\nattempt\n")
             #expect(session.project(project.id)?.worktrees.map(\.id) == [worktree.id])
 
-            FileManager.default.createFile(atPath: marker.path, contents: nil)
+            try #require(FileManager.default.createFile(atPath: marker.path, contents: nil))
             try await session.runSetup(projectID: project.id, worktreeID: worktree.id, from: 1, path: { Self.path })
+            let expectedTrace = "first\nattempt\nattempt\nlast\n"
+            #expect(try String(contentsOf: trace, encoding: .utf8) == expectedTrace)
+            #expect(git.branchCalls.count == 1)
             #expect(git.createCalls.count == 1)
-            #expect(session.project(project.id)?.worktrees.count == 1)
+            #expect(session.project(project.id)?.worktrees.map(\.id) == [worktree.id])
             // Past the last command there is nothing to run.
             try await session.runSetup(projectID: project.id, worktreeID: worktree.id, from: 5, path: { Self.path })
+            #expect(try String(contentsOf: trace, encoding: .utf8) == expectedTrace)
         }
     }
 
@@ -147,6 +167,8 @@ struct WorktreeCreationStageTests {
             return
         }
         #expect(git.branchCalls.isEmpty)
+        #expect(git.createCalls.isEmpty)
+        #expect(session.project(project.id)?.worktrees.isEmpty == true)
     }
 
     @Test func gitsWords_keepTheirEnd_asALogDoes() {

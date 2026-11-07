@@ -17,9 +17,14 @@ struct SidebarProjectRoutingTests {
 
     // MARK: - A header's ＋
 
-    @Test func thePlus_ofAProjectAnotherWindowShows_opensTheSheetThere_andBringsItForward() throws {
+    @Test(arguments: [true, false])
+    func thePlus_ofAProjectAnotherWindowShows_opensTheSheetThere_andBringsItForward(windowStartsHidden: Bool) throws {
         let fixture = Fixture()
         let other = try fixture.window(showing: fixture.b)
+        if windowStartsHidden {
+            fixture.registry.hide(other.id)
+        }
+        try #require(other.isHidden == windowStartsHidden)
 
         SupervisionWindowActions.newWorktree(
             inProject: fixture.b.id,
@@ -32,25 +37,6 @@ struct SidebarProjectRoutingTests {
         #expect(fixture.primary.newSession == nil)
         #expect(fixture.presenter.shown == [other.id])
         #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
-        fixture.expectInvariants()
-    }
-
-    /// Hidden with ⇧⌘W, the window that shows the project still takes its
-    /// sheet, shown again.
-    @Test func thePlus_ofAProjectAHiddenWindowShows_bringsThatWindowBack() throws {
-        let fixture = Fixture()
-        let other = try fixture.window(showing: fixture.b)
-        fixture.registry.hide(other.id)
-
-        SupervisionWindowActions.newWorktree(
-            inProject: fixture.b.id,
-            from: fixture.primary,
-            session: fixture.session,
-            registry: fixture.registry
-        )
-
-        #expect(other.newSession?.projectID == fixture.b.id)
-        #expect(fixture.presenter.shown == [other.id])
         #expect(!other.isHidden)
         fixture.expectInvariants()
     }
@@ -93,10 +79,11 @@ struct SidebarProjectRoutingTests {
 
     /// A ＋ whose sheet never came up (the window could not show it) stands
     /// in the way of no later ＋, and a later one is the sheet shown.
-    @Test func aPlusWhoseSheetNeverCameUp_doesNotRefuseTheNext() {
+    @Test func aPlusWhoseSheetNeverCameUp_doesNotRefuseTheNext() throws {
         let fixture = Fixture()
         let empty = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
         SupervisionWindowActions.newWorktree(inProject: fixture.c.id, from: empty, session: fixture.session, registry: fixture.registry)
+        try #require(empty.newSession?.projectID == fixture.c.id)
 
         SupervisionWindowActions.newWorktree(inProject: fixture.b.id, from: empty, session: fixture.session, registry: fixture.registry)
 
@@ -133,13 +120,16 @@ struct SidebarProjectRoutingTests {
     @Test func openChangesPanel_onARowAnotherWindowShows_opensThatWindowsPanel() throws {
         let fixture = Fixture()
         let other = try fixture.window(showing: fixture.b)
-        let row = ContainerID.project(fixture.b.id)
+        let worktree = try WorkspaceSessionFixture.appendWorktree(to: fixture.b.id, in: fixture.session, admission: .created)
+        let row = ContainerID.worktree(projectID: fixture.b.id, worktreeID: worktree.id)
+        try #require(other.selection.activeContainerID == .project(fixture.b.id))
 
         SupervisionWindowActions.openChangesPanel(row, from: fixture.primary, session: fixture.session, registry: fixture.registry)
 
         #expect(other.selection.isChangesPanelPresented)
         #expect(other.selection.activeContainerID == row)
         #expect(!fixture.primary.selection.isChangesPanelPresented)
+        #expect(fixture.primary.selection.activeContainerID == .project(fixture.a.id))
         #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
         #expect(fixture.presenter.shown.contains(other.id))
         fixture.expectInvariants()
@@ -152,6 +142,7 @@ struct SidebarProjectRoutingTests {
         SupervisionWindowActions.openChangesPanel(row, from: fixture.primary, session: fixture.session, registry: fixture.registry)
 
         #expect(fixture.primary.selection.shownProjectID == fixture.c.id)
+        #expect(fixture.primary.selection.activeContainerID == row)
         #expect(fixture.primary.selection.isChangesPanelPresented)
         fixture.expectInvariants()
     }

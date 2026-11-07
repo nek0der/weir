@@ -71,23 +71,142 @@ extension UncommittedChangesCarrierTests {
         }
     }
 
-    /// After `git mv a.txt A.txt`, the old name finds the renamed file.
-    /// That file is not one Git ignores, so the rename moves like any other.
-    @Test(.enabled(if: runsCaseFoldingTests, "The temporary folder is on a case-sensitive volume"))
-    func aRenameThatChangesOnlyCase_moves_andTheSourceIsBackAtTheOldName() async throws {
+    enum CaseOnlyRename: Sendable, CaseIterable {
+        case file, folder, besideSibling
+
+        var oldPath: String {
+            switch self {
+            case .file: "a.txt"
+            case .folder: "Docs/readme.txt"
+            case .besideSibling: "dir/a"
+            }
+        }
+
+        var newPath: String {
+            switch self {
+            case .file: "A.txt"
+            case .folder: "docs/readme.txt"
+            case .besideSibling: "DIR/a"
+            }
+        }
+
+        var contents: String {
+            switch self {
+            case .file: "a\nb\nc\n"
+            case .folder: "read me\n"
+            case .besideSibling: "a\n"
+            }
+        }
+
+        var physicalOldEntry: String {
+            switch self {
+            case .file: "a.txt"
+            case .folder: "Docs"
+            case .besideSibling: "dir"
+            }
+        }
+
+        var physicalNewEntry: String {
+            switch self {
+            case .file: "A.txt"
+            case .folder: "docs"
+            case .besideSibling: "dir"
+            }
+        }
+
+        var renameStatus: String {
+            "R  \(oldPath) -> \(newPath)"
+        }
+
+        func stage(in repo: TempGitRepo) async throws {
+            switch self {
+            case .file:
+                try await repo.git(["mv", oldPath, newPath])
+            case .folder:
+                try repo.write(contents, to: oldPath)
+                try await repo.commit("docs", paths: [oldPath])
+                try UncommittedChangesCarrierTests.renameOnDisk(physicalOldEntry, to: physicalNewEntry, in: repo.url)
+                try await repo.git(["rm", "-q", "--cached", oldPath])
+                try await repo.git(["add", newPath])
+            case .besideSibling:
+                try repo.write(contents, to: oldPath)
+                try repo.write("b\n", to: "dir/b")
+                try await repo.commit("dir", paths: ["dir"])
+                try await repo.git(["mv", oldPath, newPath])
+            }
+        }
+
+        func expectTree(at root: URL, hasRename: Bool) async throws {
+            let wanted = hasRename ? newPath : oldPath
+            let unwanted = hasRename ? oldPath : newPath
+            let listed = try await UncommittedChangesCarrierTests.indexPaths(at: root)
+            #expect(listed.contains(Array(wanted.utf8)))
+            #expect(!listed.contains(Array(unwanted.utf8)))
+
+            let physical = hasRename ? physicalNewEntry : physicalOldEntry
+            let alternate = hasRename ? physicalOldEntry : physicalNewEntry
+            let entries = try FileManager.default.contentsOfDirectory(atPath: root.path)
+            #expect(entries.contains(physical))
+            if physical != alternate {
+                #expect(!entries.contains(alternate))
+            }
+            #expect(try ScratchFile.read(wanted, in: root) == contents)
+            if self == .besideSibling {
+                #expect(listed.contains(Array("dir/b".utf8)))
+                #expect(try ScratchFile.read("dir/b", in: root) == "b\n")
+            }
+        }
+
+    }
+
+    private static func indexPaths(at root: URL) async throws -> Set<[UInt8]> {
+        let output = try await TempGitRepo.git(["ls-files", "-z"], in: root)
+        return Set(output.utf8.split(separator: 0).map(Array.init))
+    }
+
+    @Test(.enabled(if: runsCaseFoldingTests, "The temporary folder is on a case-sensitive volume"), arguments: CaseOnlyRename.allCases)
+    func aCaseOnlyRename_movesAndRestoresTheSourcesOriginalSpelling(shape: CaseOnlyRename) async throws {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
-        try await repo.git(["mv", "a.txt", "A.txt"])
+        try await shape.stage(in: repo)
+        try #require(try await Self.status(repo.url) == shape.renameStatus)
         let target = try await Self.addTarget(repo, branch: "carried")
 
         let (_, outcome) = try await Self.carry(repo, target: target)
 
         #expect(outcome == .moved(files: 1))
-        #expect(try await Self.status(target) == "R  a.txt -> A.txt")
-        #expect(UncommittedChangesCarrier.spellingOnDisk("A.txt", in: target) == "A.txt")
-        #expect(try ScratchFile.read("A.txt", in: target) == "a\nb\nc\n")
+        #expect(try await Self.status(target) == shape.renameStatus)
+        try await shape.expectTree(at: target, hasRename: true)
         #expect(try await Self.status(repo.url).isEmpty)
-        #expect(UncommittedChangesCarrier.spellingOnDisk("a.txt", in: repo.url) == "a.txt")
+        try await shape.expectTree(at: repo.url, hasRename: false)
+    }
+
+    @Test(.enabled(if: runsCaseFoldingTests, "The temporary folder is on a case-sensitive volume"), arguments: CaseOnlyRename.allCases)
+    func aCaseOnlyRename_rollsBackWhenTheTargetCheckFails(shape: CaseOnlyRename) async throws {
+        let repo = try await Self.makeRepository()
+        defer { repo.cleanup() }
+        try await shape.stage(in: repo)
+        try #require(try await Self.status(repo.url) == shape.renameStatus)
+        let target = try await Self.addTarget(repo, branch: "carried")
+        let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
+        let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
+
+        let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, placed: {
+            do {
+                try #require(try await Self.status(target) == shape.renameStatus)
+                try await shape.expectTree(at: target, hasRename: true)
+                try ScratchFile.write("changed by a hook\n", to: "x.txt", in: target)
+            } catch {
+                Issue.record(error)
+            }
+        })
+
+        #expect(outcome == .notApplied)
+        #expect(try await Self.status(target) == "M x.txt")
+        #expect(try ScratchFile.read("x.txt", in: target) == "changed by a hook\n")
+        try await shape.expectTree(at: target, hasRename: false)
+        #expect(try await Self.status(repo.url) == shape.renameStatus)
+        try await shape.expectTree(at: repo.url, hasRename: true)
     }
 
     /// A tracked file renamed on disk only in case and then edited, with
@@ -111,113 +230,18 @@ extension UncommittedChangesCarrierTests {
         #expect(try repo.read("a.txt") == "a\nb\nc\n")
     }
 
-    /// A folder renamed to a name that differs only in case, with its file
-    /// staged under the new name, moves too.
-    @Test(.enabled(if: runsCaseFoldingTests, "The temporary folder is on a case-sensitive volume"))
-    func aFolderRenameThatChangesOnlyCase_moves() async throws {
-        let repo = try await Self.makeRepository()
-        defer { repo.cleanup() }
-        try repo.write("read me\n", to: "Docs/readme.txt")
-        try await repo.git(["add", "Docs/readme.txt"])
-        try await repo.git(["commit", "-q", "-m", "docs"])
-        try Self.renameOnDisk("Docs", to: "docs", in: repo.url)
-        try await repo.git(["rm", "-q", "--cached", "Docs/readme.txt"])
-        try await repo.git(["add", "docs/readme.txt"])
-        let target = try await Self.addTarget(repo, branch: "carried")
-
-        let (_, outcome) = try await Self.carry(repo, target: target)
-
-        #expect(outcome == .moved(files: 1))
-        #expect(try await Self.status(target) == "R  Docs/readme.txt -> docs/readme.txt")
-        #expect(UncommittedChangesCarrier.spellingOnDisk("docs/readme.txt", in: target) == "docs/readme.txt")
-        #expect(try await Self.status(repo.url).isEmpty)
-        #expect(UncommittedChangesCarrier.spellingOnDisk("Docs/readme.txt", in: repo.url) == "Docs/readme.txt")
-    }
-
-    /// The same folder rename, when the new worktree's check fails after
-    /// Git wrote it: the file goes back under the folder's old spelling.
-    @Test(.enabled(if: runsCaseFoldingTests, "The temporary folder is on a case-sensitive volume"))
-    func aFolderRenameThatChangesOnlyCase_isPutBack_underTheOldSpelling_whenTheNewWorktreeFailsItsCheck() async throws {
-        let repo = try await Self.makeRepository()
-        defer { repo.cleanup() }
-        try repo.write("read me\n", to: "Docs/readme.txt")
-        try await repo.git(["add", "Docs/readme.txt"])
-        try await repo.git(["commit", "-q", "-m", "docs"])
-        try Self.renameOnDisk("Docs", to: "docs", in: repo.url)
-        try await repo.git(["rm", "-q", "--cached", "Docs/readme.txt"])
-        try await repo.git(["add", "docs/readme.txt"])
-        let before = try await Self.status(repo.url)
-        let target = try await Self.addTarget(repo, branch: "carried")
-        let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
-        let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
-
-        let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, placed: {
-            try? ScratchFile.write("changed by a hook\n", to: "x.txt", in: target)
-        })
-
-        #expect(outcome == .notApplied)
-        #expect(try await Self.status(target) == "M x.txt")
-        #expect(UncommittedChangesCarrier.spellingOnDisk("docs/readme.txt", in: target) == "Docs/readme.txt")
-        #expect(try ScratchFile.read("Docs/readme.txt", in: target) == "read me\n")
-        #expect(try await Self.status(repo.url) == before)
-    }
-
-    /// `git mv dir/a DIR/a` beside `dir/b`: the folder keeps its name on
-    /// disk, so the old and new paths have the same spelling there and name
-    /// one entry, which Git moves like any other rename.
-    @Test(.enabled(if: runsCaseFoldingTests, "The temporary folder is on a case-sensitive volume"))
-    func aFileMovedToAFolderNameInAnotherCase_besideAFileThatStays_moves() async throws {
-        let repo = try await Self.makeRepository()
-        defer { repo.cleanup() }
-        try repo.write("a\n", to: "dir/a")
-        try repo.write("b\n", to: "dir/b")
-        try await repo.git(["add", "dir"])
-        try await repo.git(["commit", "-q", "-m", "dir"])
-        try await repo.git(["mv", "dir/a", "DIR/a"])
-        let target = try await Self.addTarget(repo, branch: "carried")
-
-        let (_, outcome) = try await Self.carry(repo, target: target)
-
-        #expect(outcome == .moved(files: 1))
-        #expect(try await Self.status(target) == "R  dir/a -> DIR/a")
-        #expect(try ScratchFile.read("dir/a", in: target) == "a\n")
-        #expect(try await Self.status(repo.url).isEmpty)
-        #expect(try repo.read("dir/a") == "a\n")
-    }
-
-    /// The same move, when the new worktree's check fails after Git wrote
-    /// it: the file goes back to its old path there, and the source keeps
-    /// the change.
-    @Test(.enabled(if: runsCaseFoldingTests, "The temporary folder is on a case-sensitive volume"))
-    func aFileMovedToAFolderNameInAnotherCase_isPutBack_whenTheNewWorktreeFailsItsCheck() async throws {
-        let repo = try await Self.makeRepository()
-        defer { repo.cleanup() }
-        try repo.write("a\n", to: "dir/a")
-        try repo.write("b\n", to: "dir/b")
-        try await repo.git(["add", "dir"])
-        try await repo.git(["commit", "-q", "-m", "dir"])
-        try await repo.git(["mv", "dir/a", "DIR/a"])
-        let before = try await Self.status(repo.url)
-        let target = try await Self.addTarget(repo, branch: "carried")
-        let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
-        let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
-
-        let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, placed: {
-            try? ScratchFile.write("changed by a hook\n", to: "x.txt", in: target)
-        })
-
-        #expect(outcome == .notApplied)
-        #expect(try await Self.status(target) == "M x.txt")
-        #expect(try ScratchFile.read("dir/a", in: target) == "a\n")
-        #expect(try await Self.status(repo.url) == before)
-    }
+    private static let foldsNormalization = (try? withTempDir { root in
+        try writeExactly("accent", to: "caf\u{E9}.txt", in: root)
+        var identity = stat()
+        return stat("\(root.path)/cafe\u{301}.txt", &identity) == 0
+    }) == true
 
     /// A rename that changes only a name's Unicode normalization, with
     /// `core.precomposeunicode` off: the volume takes both names for one
     /// entry, and Git, which does not, refuses to write the new name over
     /// it. Nothing is moved, nothing is lost, and the reason is not a file
     /// Git ignores.
-    @Test(.enabled(if: runsCaseFoldingTests, "The temporary folder is on a case-sensitive volume"))
+    @Test(.enabled(if: foldsNormalization, "The temporary volume distinguishes NFC and NFD names"))
     func aRenameThatChangesOnlyNormalization_isNotApplied_andTheSourceKeepsIt() async throws {
         let repo = try await Self.makeRepository()
         defer { repo.cleanup() }
@@ -231,38 +255,41 @@ extension UncommittedChangesCarrierTests {
         try Self.renameOnDisk(composed, to: decomposed, in: repo.url)
         try await repo.git(["add", "--", decomposed])
         let before = try await Self.status(repo.url)
+        let sourceIndex = try await Self.indexPaths(at: repo.url)
+        try #require(sourceIndex.contains(Array(decomposed.utf8)))
+        try #require(!sourceIndex.contains(Array(composed.utf8)))
         let target = try await Self.addTarget(repo, branch: "carried")
+        let targetIndex = try await Self.indexPaths(at: target)
+        try #require(targetIndex.contains(Array(composed.utf8)))
+        try #require(!targetIndex.contains(Array(decomposed.utf8)))
+        try #require(try Self.hasSameEntry(composed, decomposed, in: target))
+        let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
+        let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
+        let checked = Recorded(false)
+        let placed = Recorded(false)
 
-        let (_, outcome) = try await Self.carry(repo, target: target)
+        let outcome = await UncommittedChangesCarrier.move(
+            snapshot, placement: placement, into: target,
+            checked: { checked.value = true }, placed: { placed.value = true }
+        )
 
+        #expect(checked.value)
+        #expect(!placed.value)
         #expect(outcome == .notApplied)
         #expect(try await Self.status(target).isEmpty)
+        #expect(try await Self.indexPaths(at: target) == targetIndex)
+        #expect(try ScratchFile.read(composed, in: target) == "accent\n")
         #expect(try await Self.status(repo.url) == before)
+        #expect(try await Self.indexPaths(at: repo.url) == sourceIndex)
         #expect(try ScratchFile.read(decomposed, in: repo.url) == "accent\n")
     }
 
-    /// When the new worktree's check fails after Git wrote the rename (a
-    /// hook changed a tracked file there), the renamed file is removed and
-    /// the file under the old name is put back.
-    @Test(.enabled(if: runsCaseFoldingTests, "The temporary folder is on a case-sensitive volume"))
-    func aRenameThatChangesOnlyCase_isPutBack_whenTheNewWorktreeFailsItsCheck() async throws {
-        let repo = try await Self.makeRepository()
-        defer { repo.cleanup() }
-        try await repo.git(["mv", "a.txt", "A.txt"])
-        let before = try await Self.status(repo.url)
-        let target = try await Self.addTarget(repo, branch: "carried")
-        let snapshot = try #require(try await UncommittedChangesCarrier.snapshot(of: repo.url))
-        let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
-
-        let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, placed: {
-            try? ScratchFile.write("changed by a hook\n", to: "x.txt", in: target)
-        })
-
-        #expect(outcome == .notApplied)
-        #expect(try await Self.status(target) == "M x.txt")
-        #expect(UncommittedChangesCarrier.spellingOnDisk("a.txt", in: target) == "a.txt")
-        #expect(try ScratchFile.read("a.txt", in: target) == "a\nb\nc\n")
-        #expect(try await Self.status(repo.url) == before)
+    private static func hasSameEntry(_ first: String, _ second: String, in root: URL) throws -> Bool {
+        var firstIdentity = stat()
+        var secondIdentity = stat()
+        try #require(stat("\(root.path)/\(first)", &firstIdentity) == 0)
+        try #require(stat("\(root.path)/\(second)", &secondIdentity) == 0)
+        return firstIdentity.st_dev == secondIdentity.st_dev && firstIdentity.st_ino == secondIdentity.st_ino
     }
 
     /// When a file in the source changes while the source is cleared, Git
@@ -280,12 +307,20 @@ extension UncommittedChangesCarrierTests {
         let placement = try await UncommittedChangesCarrier.place(snapshot, onto: "HEAD", repoRoot: repo.url)
 
         let outcome = await UncommittedChangesCarrier.move(snapshot, placement: placement, into: target, clearing: {
-            try? repo.write("keep\nmore\nlater\n", to: "x.txt")
+            do {
+                try repo.write("keep\nmore\nlater\n", to: "x.txt")
+            } catch {
+                Issue.record(error)
+            }
         })
 
         #expect(outcome == .leftInSource)
         #expect(try await Self.status(repo.url) == "R  a.txt -> A.txt\n M x.txt")
-        #expect(UncommittedChangesCarrier.spellingOnDisk("A.txt", in: repo.url) == "A.txt")
+        try await CaseOnlyRename.file.expectTree(at: repo.url, hasRename: true)
+        #expect(try repo.read("x.txt") == "keep\nmore\nlater\n")
+        #expect(try await Self.status(target) == "R  a.txt -> A.txt\n M x.txt")
+        try await CaseOnlyRename.file.expectTree(at: target, hasRename: true)
+        #expect(try ScratchFile.read("x.txt", in: target) == "keep\nmore\n")
         #expect(try await repo.git(["stash", "list"]).isEmpty)
     }
 

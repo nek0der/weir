@@ -12,30 +12,24 @@ struct SupervisionSegmentedPickerTests {
     typealias Picker = SupervisionSegmentedPicker<Int>
     private static let now = Date(timeIntervalSinceReferenceDate: 1000)
 
-    @Test func thePill_movesOnlyWhenTheSelectionChanges() {
+    @Test(arguments: [false, true])
+    func pillSlide_changesOnlyForANewSelection(reduceMotion: Bool) {
         let resting = SegmentPillSlide.resting(at: 1)
-        // The same segment again (a redraw, the sheet growing around the
-        // control) leaves the pill as it is.
-        #expect(SegmentPillSlide.after(selecting: 1, previously: 1, current: resting, now: Self.now, reduceMotion: false) == resting)
-        #expect(SegmentPillSlide.after(selecting: nil, previously: 1, current: resting, now: Self.now, reduceMotion: false) == resting)
-        let slide = SegmentPillSlide.after(selecting: 0, previously: 1, current: resting, now: Self.now, reduceMotion: false)
-        #expect(slide.from == 1)
-        #expect(slide.to == 0)
-        #expect(slide.start == Self.now)
-        #expect(slide.duration == WeirMotion.segmentSlideDuration)
-    }
-
-    @Test func withReduceMotion_thePillStillSlides_shorter() {
-        let slide = SegmentPillSlide.after(
-            selecting: 1,
-            previously: 0,
-            current: .resting(at: 0),
-            now: Self.now,
-            reduceMotion: true
-        )
-        #expect(slide.duration == WeirMotion.reducedSegmentSlideDuration)
+        let inFlight = SegmentPillSlide(from: 0, to: 1, start: Self.now.addingTimeInterval(-0.12), duration: 0.24)
+        for slide in [resting, inFlight] {
+            for selection in [1, nil] {
+                #expect(SegmentPillSlide.after(
+                    selecting: selection, previously: 1, current: slide, now: Self.now, reduceMotion: reduceMotion
+                ) == slide)
+            }
+        }
+        let slide = SegmentPillSlide.after(selecting: 0, previously: 1, current: resting, now: Self.now, reduceMotion: reduceMotion)
+        let duration = (reduceMotion ? 0.18 : 0.24) * WeirMotion.pace
+        #expect(slide == SegmentPillSlide(from: 1, to: 0, start: Self.now, duration: duration))
         #expect(slide.duration > 0)
-        #expect(slide.duration < WeirMotion.segmentSlideDuration)
+        if reduceMotion {
+            #expect(slide.duration < 0.24 * WeirMotion.pace)
+        }
     }
 
     @Test func aSlide_easesFromItsSegmentToTheNext_withoutPassingEither() {
@@ -60,8 +54,12 @@ struct SupervisionSegmentedPickerTests {
         let first = SegmentPillSlide(from: 0, to: 1, start: Self.now, duration: 0.24)
         let midway = Self.now.addingTimeInterval(0.12)
         let second = SegmentPillSlide.after(selecting: 0, previously: 1, current: first, now: midway, reduceMotion: false)
-        #expect(second.from == first.position(at: midway))
+        #expect(abs(first.position(at: midway) - 0.5) < 1e-6)
+        #expect(abs(second.from - 0.5) < 1e-6)
         #expect(second.to == 0)
+        #expect(second.start == midway)
+        #expect(abs(second.position(at: midway) - 0.5) < 1e-6)
+        #expect(abs(second.position(at: midway.addingTimeInterval(second.duration))) < 1e-6)
     }
 
     @Test func thePill_isOneSegmentWide_whateverItsPosition() {
@@ -79,52 +77,73 @@ struct SupervisionSegmentedPickerTests {
         #expect(SegmentPillSlide.easeInOut(0.95) > 0.95)
     }
 
-    /// An arrow moves one segment and keeps the key; at an end it moves
-    /// nowhere but still keeps the key, so the arrow does not carry the
-    /// focus out of the control; while disabled, or with no segment chosen,
-    /// the arrow goes on.
+    private struct ArrowCase: Sendable {
+        let from: Int?
+        let offset: Int
+        let count: Int
+        var isEnabled = true
+        var unavailable: Set<Int> = []
+        let next: Int?
+        let isHandled: Bool
+    }
+
     @Test(arguments: [
-        (Int?(0), 1, 3, true, Picker.KeyStep(next: 1, isHandled: true)),
-        (2, -1, 3, true, .init(next: 1, isHandled: true)),
-        (0, -1, 2, true, .init(next: nil, isHandled: true)),
-        (1, 1, 2, true, .init(next: nil, isHandled: true)),
-        (1, 1, 3, false, .init(next: nil, isHandled: false)),
-        (nil, 1, 3, true, .init(next: nil, isHandled: false))
+        ArrowCase(from: 0, offset: 1, count: 3, next: 1, isHandled: true),
+        ArrowCase(from: 2, offset: -1, count: 3, next: 1, isHandled: true),
+        ArrowCase(from: 0, offset: -1, count: 2, next: nil, isHandled: true),
+        ArrowCase(from: 1, offset: 1, count: 2, next: nil, isHandled: true),
+        ArrowCase(from: 1, offset: 1, count: 3, isEnabled: false, next: nil, isHandled: false),
+        ArrowCase(from: nil, offset: 1, count: 3, next: nil, isHandled: false),
+        ArrowCase(from: 1, offset: 1, count: 4, unavailable: [2], next: 3, isHandled: true),
+        ArrowCase(from: 3, offset: -1, count: 4, unavailable: [2], next: 1, isHandled: true),
+        ArrowCase(from: 1, offset: 1, count: 3, unavailable: [2], next: nil, isHandled: true),
+        ArrowCase(from: 0, offset: 1, count: 4, unavailable: [1, 2], next: 3, isHandled: true)
     ])
-    func anArrow_movesOneSegmentInside_andKeepsTheKeyWhileEnabledAndChosen(
-        from: Int?,
-        by step: Int,
-        count: Int,
-        isEnabled: Bool,
-        expected: Picker.KeyStep
-    ) {
-        #expect(Picker.keyStep(from: from, by: step, count: count, isEnabled: isEnabled) == expected)
+    private func arrowStep_skipsUnavailableSegments_andReportsHandling(_ input: ArrowCase) {
+        let step = Picker.keyStep(from: input.from, by: input.offset, count: input.count, isEnabled: input.isEnabled) {
+            !input.unavailable.contains($0)
+        }
+        #expect(step.next == input.next)
+        #expect(step.isHandled == input.isHandled)
     }
 
-    /// A segment that takes no choice is passed over, to the next one that
-    /// does; with none left that way, the arrow stays, keeping the key.
-    @Test func anArrow_passesOverASegmentThatTakesNoChoice() {
-        let isThirdOff = { (index: Int) in index != 2 }
-        #expect(Picker.keyStep(from: 1, by: 1, count: 4, isEnabled: true, isSegmentEnabled: isThirdOff) == .init(next: 3, isHandled: true))
-        #expect(Picker.keyStep(from: 3, by: -1, count: 4, isEnabled: true, isSegmentEnabled: isThirdOff) == .init(next: 1, isHandled: true))
-        #expect(Picker.keyStep(from: 1, by: 1, count: 3, isEnabled: true, isSegmentEnabled: isThirdOff) == .init(
-            next: nil,
-            isHandled: true
-        ))
-    }
-
-    /// At its ideal size each segment is as wide as the widest segment's
-    /// words, so a long label is never cut under the pill beside it; given
-    /// a width, the segments share it evenly, as the pill does.
-    @Test func theSegments_atTheirIdealSize_areEachAsWideAsTheWidest() {
-        let short = Text(verbatim: "Timeline")
-        let long = Text(verbatim: "By Conversation")
+    @Test func segments_shareIdealAndConstrainedWidthsEqually() throws {
+        let short = Text(verbatim: "Timeline").lineLimit(1)
+        let long = Text(verbatim: "By Conversation").lineLimit(1)
+        let shortWidth = NSHostingView(rootView: short.fixedSize()).fittingSize.width
         let longWidth = NSHostingView(rootView: long.fixedSize()).fittingSize.width
-        let row = NSHostingView(rootView: EqualSegmentsLayout {
-            short.frame(maxWidth: .infinity)
-            long.frame(maxWidth: .infinity)
-        }.fixedSize())
+        #expect(shortWidth < longWidth)
+        let row = EqualSegmentsLayout {
+            short.frame(maxWidth: .infinity).padding(.vertical, 8).background(.red)
+            long.frame(maxWidth: .infinity).padding(.vertical, 8).background(.blue)
+        }
+        let ideal = row.fixedSize()
+        let measured = NSHostingView(rootView: ideal).fittingSize.width
+        #expect(abs(measured - 2 * longWidth) < 0.5, "\(measured) against \(longWidth)")
 
-        #expect(abs(row.fittingSize.width - 2 * longWidth) < 0.5, "\(row.fittingSize.width) against \(longWidth)")
+        try Self.expectEqualSegmentSpans(in: ideal, segmentWidth: longWidth)
+        try Self.expectEqualSegmentSpans(in: row.frame(width: 60), segmentWidth: 30)
+    }
+
+    private static func expectEqualSegmentSpans(in row: some View, segmentWidth: CGFloat) throws {
+        let renderer = ImageRenderer(content: row)
+        renderer.scale = 1
+        let image = try #require(renderer.cgImage)
+        let bitmap = NSBitmapImageRep(cgImage: image)
+        // Two rows inside the vertical padding establish each background's
+        // full horizontal span without sampling glyphs.
+        for y in [2, bitmap.pixelsHigh - 3] {
+            let colors = (0..<bitmap.pixelsWide).compactMap { bitmap.colorAt(x: $0, y: y)?.usingColorSpace(.deviceRGB) }
+            try #require(colors.count == bitmap.pixelsWide)
+            let red = colors.indices.filter { colors[$0].redComponent > 0.7 && colors[$0].blueComponent < 0.3 }
+            let blue = colors.indices.filter { colors[$0].blueComponent > 0.7 && colors[$0].redComponent < 0.3 }
+            #expect(abs(CGFloat(red.count) - segmentWidth) <= 1)
+            #expect(abs(CGFloat(blue.count) - segmentWidth) <= 1)
+            #expect(red.first == 0)
+            #expect(blue.last == colors.count - 1)
+            let redEnd = try #require(red.last)
+            let blueStart = try #require(blue.first)
+            #expect((1...2).contains(blueStart - redEnd))
+        }
     }
 }

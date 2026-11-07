@@ -8,8 +8,15 @@ import Testing
 struct TerminalScrollbarStateTests {
     @Test("normalization keeps the viewport inside the reported history")
     func normalization_clampsMalformedMetrics() {
-        #expect(TerminalScrollbarState(total: 10, offset: 20, length: 4) == .init(total: 10, offset: 6, length: 4))
-        #expect(TerminalScrollbarState(total: 10, offset: 5, length: 20) == .init(total: 10, offset: 0, length: 10))
+        let pastEnd = TerminalScrollbarState(total: 10, offset: 20, length: 4)
+        #expect(pastEnd.total == 10)
+        #expect(pastEnd.offset == 6)
+        #expect(pastEnd.length == 4)
+
+        let oversizedViewport = TerminalScrollbarState(total: 10, offset: 5, length: 20)
+        #expect(oversizedViewport.total == 10)
+        #expect(oversizedViewport.offset == 0)
+        #expect(oversizedViewport.length == 10)
     }
 
     @Test("a history viewport produces proportional native scroll geometry")
@@ -31,6 +38,10 @@ struct TerminalScrollbarStateTests {
         #expect(state.rowOffset(forDocumentOriginY: 800, viewportHeight: 200) == 0)
         #expect(state.rowOffset(forDocumentOriginY: 400, viewportHeight: 200) == 40)
         #expect(state.rowOffset(forDocumentOriginY: 0, viewportHeight: 200) == 80)
+        #expect(state.rowOffset(forDocumentOriginY: 900, viewportHeight: 200) == 0)
+        #expect(state.rowOffset(forDocumentOriginY: -10, viewportHeight: 200) == 80)
+        #expect(state.rowOffset(forDocumentOriginY: 396, viewportHeight: 200) == 40)
+        #expect(state.rowOffset(forDocumentOriginY: 394, viewportHeight: 200) == 41)
     }
 
     @Test("a terminal without scrollback stays at one viewport")

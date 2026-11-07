@@ -6,57 +6,33 @@ import Testing
 @testable import Weir
 @testable import WeirDomain
 
-/// From the record a hook writes to the tab's badge, through the real rules:
-/// the path a tab takes from the shell glyph to Cl or Cx, whether the agent
-/// was started from "+" or typed into a shell (both reach the tab only
-/// through the record), or typed again by a restore at launch.
+/// The badge and pane state from staged launches and records read by
+/// the real Swift/Rust projection adapter.
 @MainActor
 @Suite("PaneStripAgentBadge")
 struct PaneStripAgentBadgeTests {
-    /// What one projection pass made of the records, and the strip it shows.
-    private struct Pass {
-        let strip: PaneStripModel
-        let attention: AttentionState
-    }
+    @MainActor
+    private struct Projection {
+        let state: URL
+        let session: WorkspaceSession
+        let container: ContainerID
+        let adapter: AgentProjectionAdapter
+        let attention = AttentionState()
 
-    /// The strip of `container`'s tabs after one projection pass over
-    /// `records` (file stem to content), in `provider`'s state directory.
-    /// `isAlive` answers for every pid the pass asks about; `passes` more
-    /// than one runs the next passes in place, as the sweep would.
-    private func pass(
-        provider: String,
-        records: [String: String],
-        session: WorkspaceSession,
-        container: ContainerID = .loose,
-        isAlive: Bool = true,
-        passes: Int = 1,
-        programStatus: [String: AgentProjectionProgramStatus] = [:],
-        panesBackAtShell: Set<UUID> = []
-    ) throws -> Pass {
-        try withTempDir { root in
-            let state = root.appendingPathComponent("agent-states", isDirectory: true)
-            let sessions = root.appendingPathComponent("sessions", isDirectory: true)
-            for directory in [state, sessions] {
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            }
-            for (stem, content) in records {
-                try Data(content.utf8).write(to: state.appendingPathComponent(AgentRecordFixtures.recordFileName(stem)))
-            }
-            let adapter = ProjectionFixture.adapter(
-                provider: provider,
-                state: state,
-                sessions: sessions,
-                processStatus: { _ in isAlive ? .alive : .dead }
-            )
-            adapter.programStatus = { programStatus }
-            adapter.panesBackAtShell = { panesBackAtShell }
-            let attention = AttentionState()
+        @discardableResult
+        func write(_ record: String, stem: String) throws -> URL {
+            let file = try state.appendingPathComponent(AgentRecordFixtures.recordFileName(stem))
+            try Data(record.utf8).write(to: file)
+            return file
+        }
+
+        func bootstrap() {
             adapter.bootstrap(into: session, attention: attention)
-            for _ in 1..<passes {
-                adapter.refresh()
-            }
+        }
+
+        func strip() -> PaneStripModel {
             #expect(adapter.lastFailure == nil)
-            let strip = PaneStripModel(
+            return PaneStripModel(
                 container: container,
                 session: session,
                 window: session.primaryWindowID,
@@ -65,7 +41,29 @@ struct PaneStripAgentBadgeTests {
                 mountedTmuxPaneIDs: [],
                 reviewTab: .none
             )
-            return Pass(strip: strip, attention: attention)
+        }
+    }
+
+    private func withProjection(
+        provider: String,
+        session: WorkspaceSession,
+        container: ContainerID = .loose,
+        isAlive: Bool = true,
+        _ test: (Projection) throws -> Void
+    ) throws {
+        try withTempDir { root in
+            let state = root.appendingPathComponent("agent-states", isDirectory: true)
+            let sessions = root.appendingPathComponent("sessions", isDirectory: true)
+            for directory in [state, sessions] {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            }
+            let adapter = ProjectionFixture.adapter(
+                provider: provider,
+                state: state,
+                sessions: sessions,
+                processStatus: { _ in isAlive ? .alive : .dead }
+            )
+            try test(Projection(state: state, session: session, container: container, adapter: adapter))
         }
     }
 
@@ -77,8 +75,12 @@ struct PaneStripAgentBadgeTests {
         let url = root.appendingPathComponent("rust/fixtures/projection/\(scenario)/\(directory)/\(stem).state.json")
         let content = try String(contentsOf: url, encoding: .utf8)
         let corpusPane = "11111111-1111-4111-8111-111111111111"
-        #expect(content.contains(corpusPane))
-        return content.replacingOccurrences(of: corpusPane, with: pane.uuidString)
+        try #require(content.contains(corpusPane))
+        let moved = content.replacingOccurrences(of: corpusPane, with: pane.uuidString)
+        let record = try #require(JSONSerialization.jsonObject(with: Data(moved.utf8)) as? [String: Any])
+        #expect(record["paneId"] as? String == pane.uuidString)
+        #expect(record["runId"] as? String == stem)
+        return moved
     }
 
     /// A record as a restore at launch leaves it for the resume it types
@@ -99,17 +101,29 @@ struct PaneStripAgentBadgeTests {
         (AgentKind.claude, "claude-turn", "agent-states", "AAAAAAAA-1111-4111-8111-AAAAAAAAAAA1"),
         (.codex, "codex-turn", "codex-agent-states", "BBBBBBBB-2222-4222-8222-BBBBBBBBBBB2")
     ])
-    func aRun_typedIntoAShell_wearsItsAgentsBadge(agent: AgentKind, scenario: String, directory: String, stem: String) throws {
+    func aCorpusRunInAShell_projectsItsProviderBadge(agent: AgentKind, scenario: String, directory: String, stem: String) throws {
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
         let record = try corpusRecord(scenario, directory: directory, stem: stem, pane: pane)
-        let item = try pass(provider: agent.rawValue, records: [stem: record], session: session).strip.item(for: tab)
-        #expect(item?.agents.first?.kind == agent)
+        try withProjection(provider: agent.rawValue, session: session) { projection in
+            try projection.write(record, stem: stem)
+            projection.bootstrap()
+
+            let strip = projection.strip()
+            #expect(strip.items.map(\.id) == [tab.id])
+            let item = try #require(strip.item(for: tab))
+            #expect(item.agents.map(\.kind) == [agent])
+            #expect(item.agents.first?.state == nil)
+            #expect(item.stateGlyph == nil)
+            let header = try #require(projection.attention.headerRuntime(inPane: pane))
+            #expect(header.kind == agent)
+            #expect(header.badge.state == .finished)
+        }
     }
 
     // MARK: - An agent started from "+"
 
     @Test(arguments: [AgentKind.claude, .codex])
-    func anAgentTab_fromThePlusMenu_wearsItsAgentsBadge_onceItsRecordComes(agent: AgentKind) throws {
+    func anAgentTab_keepsItsStagedBadge_afterAnIdleRecordArrives(agent: AgentKind) throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "beta")
         let container = ContainerID.project(project.id)
         TabActions.newTab(session, in: container, running: agent)
@@ -123,8 +137,25 @@ struct PaneStripAgentBadgeTests {
         "lastHookEvent":"session_started","hasPrompt":false,"pid":"4242",\
         "sessionId":"0aa15490-ade7-7223-a767-7eb22b5c69e1","sessionStartedAt":"2026-10-20T06:32:38Z"}
         """
-        let strip = try pass(provider: agent.rawValue, records: [run: record], session: session, container: container).strip
-        #expect(strip.item(for: tab)?.agents.first?.kind == agent)
+        try withProjection(provider: agent.rawValue, session: session, container: container) { projection in
+            projection.bootstrap()
+            let starting = try #require(projection.strip().item(for: tab))
+            #expect(starting.agents.map(\.kind) == [agent])
+            #expect(starting.stateGlyph == nil)
+            #expect(projection.attention.headerRuntime(inPane: pane) == nil)
+
+            try projection.write(record, stem: run)
+            projection.adapter.refresh()
+
+            let strip = projection.strip()
+            #expect(strip.items.map(\.id) == [tab.id])
+            let reported = try #require(strip.item(for: tab))
+            #expect(reported.agents.map(\.kind) == [agent])
+            #expect(reported.stateGlyph == nil)
+            let header = try #require(projection.attention.headerRuntime(inPane: pane))
+            #expect(header.kind == agent)
+            #expect(header.badge.state == .idle)
+        }
     }
 
     // MARK: - An agent a restore typed again
@@ -137,65 +168,111 @@ struct PaneStripAgentBadgeTests {
     func aRestoredRun_wearsItsAgentsBadge_beforeItsFirstHook(agent: AgentKind, run: String, lastHookEvent: String) throws {
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
         let record = Self.restoredRecord(run: run, pane: pane, lastHookEvent: lastHookEvent)
-        let result = try pass(provider: agent.rawValue, records: [run: record], session: session)
-        let item = try #require(result.strip.item(for: tab))
-        // The sidebar's row has said Cl or Cx for this run all along.
-        #expect(result.attention.allRuntimes.contains { $0.paneIDs.contains(pane) && $0.kind == agent })
-        #expect(item.agents.first?.kind == agent)
-        #expect(item.stateGlyph == nil, "an unknown state shows no glyph on the badge")
+        try withProjection(provider: agent.rawValue, session: session) { projection in
+            try projection.write(record, stem: run)
+            projection.bootstrap()
+            let item = try #require(projection.strip().item(for: tab))
+            #expect(projection.attention.allRuntimes.contains { $0.paneIDs.contains(pane) && $0.kind == agent })
+            #expect(item.agents.map(\.kind) == [agent])
+            #expect(item.stateGlyph == nil, "an unknown state shows no glyph on the badge")
+        }
     }
 
     /// What Codex reports as it comes back at its prompt, after `restoredRecord`'s attempt.
-    private static func codexIdle(in pane: UUID) -> [String: AgentProjectionProgramStatus] {
-        let at = "2026-10-20T06:30:05Z"
-        return [pane.uuidString: AgentProjectionProgramStatus(app: "codex", state: "idle", kind: nil, observedAt: at, stateSince: at)]
+    private static func codexIdle(in pane: UUID, at: String = "2026-10-20T06:30:05Z") -> [String: AgentProjectionProgramStatus] {
+        [pane.uuidString: AgentProjectionProgramStatus(app: "codex", state: "idle", kind: nil, observedAt: at, stateSince: at)]
     }
 
-    /// `codex resume` runs no hook before its first prompt, and its status
-    /// report is what says it is back: the pane then speaks for its
-    /// conversation, which the tab's colors, its hover, and "Show Tab" read.
-    @Test func aRestoredRun_whoseAgentReports_isThePanesConversation() throws {
+    private static let restoredConversation = ConversationKey(
+        provider: .codex, conversationID: "01a15490-ade7-7223-a767-7eb22b5c69e1", isFallback: false
+    )
+
+    private static func conversations(in projection: Projection) -> ConversationTabs {
+        ConversationTabs(tabs: projection.session.tabs, runtimes: projection.attention.allRuntimes)
+    }
+
+    @Test func aFreshReportPlacesTheRestoredConversationInItsPane() throws {
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
         let run = "1E9FFA50-B32F-46C4-BCED-C789AFACE803"
         let record = Self.restoredRecord(run: run, pane: pane, lastHookEvent: "turn_finished")
+        try withProjection(provider: "codex", session: session) { projection in
+            try projection.write(record, stem: run)
+            projection.bootstrap()
+            #expect(projection.adapter.lastFailure == nil)
 
-        let silent = try pass(provider: "codex", records: [run: record], session: session)
-        #expect(silent.attention.headerRuntime(inPane: pane) == nil, "a resume that failed reports nothing")
+            #expect(projection.attention.headerRuntime(inPane: pane) == nil)
+            #expect(Self.conversations(in: projection).place(of: Self.restoredConversation) == nil)
 
-        let reporting = try pass(provider: "codex", records: [run: record], session: session, programStatus: Self.codexIdle(in: pane))
-        let header = try #require(reporting.attention.headerRuntime(inPane: pane))
-        #expect(header.badge.state == .idle)
-        let conversation = try #require(header.conversation)
-        let tabs = ConversationTabs(tabs: session.tabs, runtimes: reporting.attention.allRuntimes)
-        #expect(tabs.place(of: conversation)?.paneID == pane)
-        #expect(tabs.conversations(of: tab.id)?.titled == conversation)
+            projection.adapter.programStatus = { Self.codexIdle(in: pane, at: "2026-10-20T06:29:59Z") }
+            projection.adapter.refresh()
+            #expect(projection.adapter.lastFailure == nil)
+            #expect(projection.attention.headerRuntime(inPane: pane) == nil)
+            #expect(Self.conversations(in: projection).place(of: Self.restoredConversation) == nil)
+
+            projection.adapter.programStatus = { Self.codexIdle(in: pane) }
+            projection.adapter.refresh()
+            #expect(projection.adapter.lastFailure == nil)
+            let header = try #require(projection.attention.headerRuntime(inPane: pane))
+            #expect(header.badge.state == .idle)
+            #expect(header.conversation == Self.restoredConversation)
+            let tabs = Self.conversations(in: projection)
+            #expect(tabs.place(of: Self.restoredConversation) == .init(tabID: tab.id, position: 1, paneID: pane))
+            #expect(tabs.conversations(of: tab.id)?.titled == Self.restoredConversation)
+        }
     }
 
-    /// A `SessionEnd` written after the restore's mark makes the pane a shell
-    /// again, even with the agent's report still standing.
-    @Test func aRestoredRun_whoseSessionEnded_isNoConversation() throws {
-        let (session, _, pane) = WorkspaceSessionFixture.withLooseTab()
-        let run = "1E9FFA50-B32F-46C4-BCED-C789AFACE803"
-        let record = Self.restoredRecord(run: run, pane: pane, lastHookEvent: "session_ended")
-            .replacingOccurrences(
-                of: "\"updatedAt\":\"2026-10-19T14:29:36Z\"",
-                with: "\"updatedAt\":\"2026-10-20T06:30:04Z\",\"pid\":\"4242\""
-            )
-        let result = try pass(provider: "codex", records: [run: record], session: session, programStatus: Self.codexIdle(in: pane))
-        #expect(result.attention.headerRuntime(inPane: pane) == nil)
-    }
-
-    /// Quit or killed before its first prompt, an agent leaves its record
-    /// unwritten, with no pid to sweep: the shell's prompt coming back is
-    /// what turns the tab into a plain terminal again.
-    @Test func aRestoredRun_whosePaneIsBackAtTheShell_leavesTheTab() throws {
+    /// A SessionEnd after the restore attempt invalidates the conversation
+    /// even with the agent's idle report still standing.
+    @Test func sessionEndClearsTheRestoredConversationDespiteTheIdleReport() throws {
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
         let run = "1E9FFA50-B32F-46C4-BCED-C789AFACE803"
         let record = Self.restoredRecord(run: run, pane: pane, lastHookEvent: "turn_finished")
-        let result = try pass(provider: "codex", records: [run: record], session: session, panesBackAtShell: [pane])
-        let item = try #require(result.strip.item(for: tab))
-        #expect(item.agents.isEmpty)
-        #expect(result.attention.headerRuntime(inPane: pane) == nil)
+        let ended = AgentStateRecordFixture(
+            runId: run, revision: 9, stateEpisodeToken: "9", paneId: pane.uuidString,
+            state: "unknown", updatedAt: "2026-10-20T06:30:06Z", lastHookEvent: "session_ended",
+            pid: "4242", sessionId: "01a15490-ade7-7223-a767-7eb22b5c69e1",
+            resumeAttemptedAt: "2026-10-20T06:30:01Z"
+        )
+        let payload = try JSONEncoder().encode(ended)
+        try withProjection(provider: "codex", session: session) { projection in
+            let path = try projection.write(record, stem: run)
+            projection.adapter.programStatus = { Self.codexIdle(in: pane) }
+            projection.bootstrap()
+
+            let before = try #require(projection.attention.headerRuntime(inPane: pane))
+            #expect(before.conversation == Self.restoredConversation)
+            #expect(Self.conversations(in: projection).place(of: Self.restoredConversation)?.tabID == tab.id)
+
+            try payload.write(to: path)
+            projection.adapter.refresh()
+            #expect(projection.adapter.lastFailure == nil)
+            #expect(projection.attention.headerRuntime(inPane: pane) == nil)
+            let tabs = Self.conversations(in: projection)
+            #expect(tabs.place(of: Self.restoredConversation) == nil)
+            #expect(tabs.conversations(of: tab.id) == .init(titled: nil, all: []))
+        }
+    }
+
+    @Test func shellReturnClearsTheRestoredBadgeAndKeepsTheRecord() throws {
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        let run = "1E9FFA50-B32F-46C4-BCED-C789AFACE803"
+        let record = Self.restoredRecord(run: run, pane: pane, lastHookEvent: "turn_finished")
+        try withProjection(provider: "codex", session: session) { projection in
+            let path = try projection.write(record, stem: run)
+            projection.bootstrap()
+            let before = try #require(projection.strip().item(for: tab))
+            #expect(before.agents.map(\.kind) == [.codex])
+            #expect(before.stateGlyph == nil)
+            #expect(projection.attention.headerRuntime(inPane: pane) == nil)
+
+            projection.adapter.panesBackAtShell = { [pane] }
+            projection.adapter.refresh()
+            let after = try #require(projection.strip().item(for: tab))
+            #expect(after.agents.isEmpty)
+            #expect(after.stateGlyph == nil)
+            #expect(projection.attention.headerRuntime(inPane: pane) == nil)
+            #expect(try Data(contentsOf: path) == Data(record.utf8))
+        }
     }
 
     // MARK: - A tab reopened
@@ -314,46 +391,73 @@ struct PaneStripAgentBadgeTests {
         }
     }
 
-    /// A pane with no resume to type, or a session with no record, gets nothing.
-    @Test func aReopenedTab_revivesOnlyWhatItResumes() throws {
+    /// Either the missing resume intent or the missing matching record
+    /// independently prevents revival.
+    @Test(arguments: [false, true])
+    func reopeningRequiresBothAResumeCandidateAndAMatchingRecord(hasCandidate: Bool) throws {
         let (_, tab, pane) = WorkspaceSessionFixture.withLooseTab()
         let oldPane = UUID()
+        let conversation = "01a15490-ade7-7223-a767-7eb22b5c69e1"
         var closed = tab
-        closed.agentSessions[.codex] = [oldPane: AgentSessionInfo(sessionId: "s", cwd: nil)]
+        closed.agentSessions[.codex] = [oldPane: AgentSessionInfo(sessionId: conversation, cwd: nil)]
+        if hasCandidate {
+            closed.agentResumeCandidates[oldPane] = [.codex]
+        }
         try withTempDir { root in
             let state = root.appendingPathComponent("agent-states", isDirectory: true)
             let sessions = root.appendingPathComponent("sessions", isDirectory: true)
             for directory in [state, sessions] {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             }
+            let nearby = AgentStateRecordFixture(
+                runId: UUID().uuidString, paneId: oldPane.uuidString, state: "finished",
+                updatedAt: "2026-10-20T06:40:00Z", sessionId: hasCandidate ? "other" : conversation
+            )
+            let file = try state.appendingPathComponent(AgentRecordFixtures.recordFileName(nearby.storageID))
+            let bytes = try JSONEncoder().encode(nearby)
+            try bytes.write(to: file)
+
             let adapter = ProjectionFixture.adapter(provider: "codex", state: state, sessions: sessions)
             adapter.reviveRuns(of: closed, paneIDs: [oldPane: pane])
-            closed.agentResumeCandidates[oldPane] = [.codex]
-            adapter.reviveRuns(of: closed, paneIDs: [oldPane: pane])
-            #expect(AgentRecordFixtures.records(in: state).isEmpty)
-            #expect(try FileManager.default.contentsOfDirectory(atPath: sessions.path).allSatisfy { !$0.hasSuffix(".json") })
+
+            #expect(AgentRecordFixtures.records(in: state) == [nearby])
+            let names = try FileManager.default.contentsOfDirectory(atPath: state.path)
+            #expect(names.filter { $0.hasSuffix(".state.json") } == [file.lastPathComponent])
+            #expect(try Data(contentsOf: file) == bytes)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: sessions.path).isEmpty)
         }
     }
 
     // MARK: - An agent that is gone
 
-    @Test func aRunWhoseProcessDied_isRetired_andTheTabIsAShellAgain() throws {
-        /// The agents on the tab after `passes` passes over the record.
-        func agents(after passes: Int) throws -> [AgentKind] {
-            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
-            let run = "CCCCCCCC-3333-4333-8333-CCCCCCCCCCC3"
-            // As the hook helper writes it on SessionEnd, with the agent's pid.
-            let record = """
-            {"schemaVersion":3,"paneId":"\(pane.uuidString)","runId":"\(run)","revision":3,\
-            "stateEpisodeToken":"3","state":"unknown","runStartedAt":null,"updatedAt":"2026-10-20T06:40:00Z",\
-            "lastHookEvent":"session_ended","hasPrompt":true,"pid":"4242",\
-            "sessionId":"0aa15490-ade7-7223-a767-7eb22b5c69e1","sessionStartedAt":"2026-10-20T06:32:38Z"}
-            """
-            let strip = try pass(provider: "codex", records: [run: record], session: session, isAlive: false, passes: passes).strip
-            return try #require(strip.item(for: tab)).agents.map(\.kind)
+    @Test func aDeadRunIsArchived_andItsBadgeClearsOnTheNextPass() throws {
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        let run = "CCCCCCCC-3333-4333-8333-CCCCCCCCCCC3"
+        let record = """
+        {"schemaVersion":3,"paneId":"\(pane.uuidString)","runId":"\(run)","revision":3,\
+        "stateEpisodeToken":"3","state":"unknown","runStartedAt":null,"updatedAt":"2026-10-20T06:40:00Z",\
+        "lastHookEvent":"session_ended","hasPrompt":true,"pid":"4242",\
+        "sessionId":"0aa15490-ade7-7223-a767-7eb22b5c69e1","sessionStartedAt":"2026-10-20T06:32:38Z"}
+        """
+        try withProjection(provider: "codex", session: session, isAlive: false) { projection in
+            let path = try projection.write(record, stem: run)
+            projection.bootstrap()
+
+            let retiring = try #require(projection.strip().item(for: tab))
+            #expect(retiring.agents.map(\.kind) == [.codex])
+            #expect(!FileManager.default.fileExists(atPath: path.path))
+            let retired = projection.state.appendingPathComponent("retired", isDirectory: true)
+            let files = try FileManager.default.contentsOfDirectory(at: retired, includingPropertiesForKeys: nil)
+            #expect(files.count == 1)
+            let archived = try #require(files.first)
+            #expect(archived.lastPathComponent.hasPrefix(run + "."))
+            #expect(try Data(contentsOf: archived) == Data(record.utf8))
+
+            projection.adapter.refresh()
+            let shell = try #require(projection.strip().item(for: tab))
+            #expect(shell.agents.isEmpty)
+            #expect(shell.stateGlyph == nil)
+            #expect(projection.attention.headerRuntime(inPane: pane) == nil)
         }
-        // The pass that retires the run shows it once; the next has none.
-        #expect(try agents(after: 1) == [.codex])
-        #expect(try agents(after: 2) == [])
     }
 }

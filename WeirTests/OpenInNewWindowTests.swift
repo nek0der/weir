@@ -94,17 +94,23 @@ struct OpenInNewWindowTests {
         #expect(fixture.session.recentProjectPaths.first?.standardizedFileURL == fixture.b.rootURL.standardizedFileURL)
     }
 
-    @Test func aProjectAnotherWindowShows_bringsThatWindowForward_hiddenOrNot() throws {
+    @Test(arguments: [false, true])
+    func aProjectAnotherWindowShows_bringsThatWindowForward_hiddenOrNot(isHidden: Bool) throws {
         let fixture = Fixture()
         let other = try fixture.window(showing: fixture.b)
-        fixture.registry.hide(other.id)
+        if isHidden {
+            fixture.registry.hide(other.id)
+        }
+        #expect(other.isHidden == isHidden)
+        #expect(fixture.presenter.isOnScreen(other.id) != isHidden)
 
         let shown = fixture.registry.openInNewWindow(project: fixture.b.id, in: fixture.session, from: fixture.primary)
 
         #expect(shown === other)
         #expect(!other.isHidden)
         #expect(fixture.presenter.shown == [other.id])
-        #expect(fixture.registry.windows.count == 2)
+        #expect(fixture.presenter.closed.isEmpty)
+        #expect(fixture.registry.windows.map(\.id) == [fixture.primary.id, other.id])
         #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
         fixture.expectInvariants()
     }
@@ -155,21 +161,30 @@ struct OpenInNewWindowTests {
         #expect(opened !== hidden)
         #expect(opened.selection.shownProjectID == fixture.b.id)
         #expect(fixture.registry.windows.map(\.id) == [opened.id])
-        #expect(fixture.session.projectViews[fixture.a.id] != nil)
+        #expect(fixture.session.projectViews[fixture.a.id]?.activeTabID == fixture.aTab.id)
+        #expect(fixture.presenter.closed == [hidden.id])
         #expect(fixture.session.hiddenWindowIDs.isEmpty)
         fixture.expectInvariants()
     }
 
     @Test func aRowOpenedInANewWindow_isChosenThere_andThisWindowStays() throws {
         let fixture = Fixture()
-        let row = fixture.bTab.container
+        let worktree = try WorkspaceSessionFixture.appendWorktree(to: fixture.b.id, in: fixture.session)
+        let row = ContainerID.worktree(projectID: fixture.b.id, worktreeID: worktree.id)
+        let checkout = fixture.session.openTab(container: row, in: fixture.primary.id, intent: .person, selects: false)
+        fixture.session.projectViews[fixture.b.id] = ProjectView(
+            projectID: fixture.b.id, activeContainerID: fixture.bTab.container, activeTabID: fixture.bTab.id
+        )
 
         let opened = try #require(fixture.registry.openInNewWindow(row: row, in: fixture.session, from: fixture.primary))
 
         #expect(opened !== fixture.primary)
         #expect(opened.selection.shownProjectID == fixture.b.id)
         #expect(opened.selection.activeContainerID == row)
+        #expect(opened.selection.activeTabID == checkout.id)
+        #expect(fixture.session.projectViews[fixture.b.id] == nil)
         #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
+        #expect(fixture.primary.selection.activeTabID == fixture.aTab.id)
         // The scratch tabs are no project's row, and open in no new window.
         #expect(fixture.registry.openInNewWindow(row: .loose, in: fixture.session, from: fixture.primary) == nil)
         #expect(fixture.registry.windows.count == 2)
@@ -206,22 +221,22 @@ struct OpenInNewWindowTests {
     @Test func aRemovedProjectsHeir_isTheMostRecentNoWindowShows_whileAnEmptyWindowListsThemInItsSidebarsOrder() throws {
         let fixture = Fixture()
         let d = fixture.session.addOrActivateProject(rootURL: WorkspaceSessionFixture.projectRootURL("d"), suggestedName: "d")
-        fixture.session.recentProjectPaths = [fixture.b.rootURL, fixture.a.rootURL]
+        fixture.session.recentProjectPaths = [d.rootURL, fixture.a.rootURL]
 
-        // Those no window shows: the recent ones first, then the session's
-        // order (`d` is not in the recent list).
         let free = fixture.session.projectsNoWindowShows(besides: nil).map(\.id)
-        #expect(free == [fixture.b.id, fixture.c.id, d.id])
+        #expect(free == [d.id, fixture.b.id, fixture.c.id])
         // An empty window lists every project in its sidebar's order instead.
-        fixture.primary.selection.sidebarArrangement = SidebarArrangement(projectOrder: [d.id, fixture.c.id])
-        #expect(EmptyWindowModel(session: fixture.session, window: fixture.primary.selection).rows.map(\.id) == [
+        let chooser = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
+        #expect(chooser.selection.isChoosingProject)
+        chooser.selection.sidebarArrangement = SidebarArrangement(projectOrder: [d.id, fixture.c.id])
+        #expect(EmptyWindowModel(session: fixture.session, window: chooser.selection).rows.map(\.id) == [
             d.id, fixture.c.id, fixture.a.id, fixture.b.id
         ])
 
         // A window whose project is removed takes the first of them.
         let other = try fixture.window(showing: fixture.c)
         fixture.session.removeProject(fixture.c.id)
-        #expect(other.selection.shownProjectID == fixture.b.id)
+        #expect(other.selection.shownProjectID == d.id)
     }
 
     @Test func newWindow_withEveryWindowHidden_opensANewOne_andTheHiddenOneCloses() {
@@ -240,12 +255,16 @@ struct OpenInNewWindowTests {
         // keeps what it showed.
         #expect(fixture.registry.windows.map(\.id) == [opened.id])
         #expect(fixture.registry.primary === opened)
-        #expect(fixture.session.projectViews[fixture.a.id] != nil)
+        #expect(fixture.session.projectViews[fixture.a.id]?.activeTabID == fixture.aTab.id)
+        #expect(fixture.presenter.closed == [hidden.id])
         #expect(fixture.session.hiddenWindowIDs.isEmpty)
         // The project the hidden window showed is no window's now, so the
         // new window's sidebar does not fold it as another window's.
         #expect(!opened.selection.sidebarArrangement.collapsedProjects.contains(fixture.a.id))
-        #expect(EmptyWindowModel(session: fixture.session, window: opened.selection).rows.allSatisfy { !$0.isInOtherWindow })
+        let rows = EmptyWindowModel(session: fixture.session, window: opened.selection).rows
+        #expect(rows.map(\.id) == [fixture.a.id, fixture.b.id, fixture.c.id])
+        #expect(rows.map(\.isInOtherWindow) == [false, false, false])
+        #expect(rows.map(\.mark) == [nil, nil, nil])
     }
 
     @Test func newWindow_besideAShownWindow_foldsThatWindowsProject() {
@@ -269,27 +288,26 @@ struct OpenInNewWindowTests {
 
     @Test func anEmptyWindowsRow_saysOneThingAtItsEnd_itsWindowFirst() {
         let fixture = Fixture()
-        let rows = EmptyWindowModel(
-            projects: [fixture.a, fixture.b, fixture.c],
-            shownElsewhere: [fixture.a.id],
-            running: { $0 == fixture.a.id || $0 == fixture.b.id ? 2 : 0 }
-        ).rows
-
-        // Another window's project says only that, whatever runs in it.
-        #expect(rows.map(\.mark) == [.otherWindow, .running, nil])
-
-        // What waits on the person comes before what runs.
+        let d = fixture.session.addOrActivateProject(rootURL: WorkspaceSessionFixture.projectRootURL("d"), suggestedName: "d")
         let store = AttentionQueueStore()
-        store.apply(.init(runtimes: [RuntimeFact.stopped("b", in: fixture.bTab, of: fixture.b)]), announces: false)
-        let waiting = EmptyWindowModel(
-            projects: [fixture.b],
+        store.apply(.init(runtimes: [
+            RuntimeFact.stopped("a", in: fixture.aTab, of: fixture.a),
+            RuntimeFact.stopped("b", in: fixture.bTab, of: fixture.b)
+        ]), announces: false)
+        let projects = [fixture.a, fixture.b, fixture.c, d]
+        let rows = EmptyWindowModel(
+            projects: projects,
+            shownElsewhere: [fixture.a.id],
             attentionQueue: store.queue,
-            running: { _ in 2 }
+            running: { $0 == d.id ? 0 : 2 }
         ).rows
-        #expect(waiting.map(\.mark) == [.attention])
-        #expect(waiting.first?.attention.style == .blocking)
-        // The folder is the tooltip's, kept for each row.
-        #expect(rows.allSatisfy { !$0.folder.isEmpty })
+
+        #expect(rows.map(\.id) == projects.map(\.id))
+        #expect(rows.map(\.attention.count) == [1, 1, 0, 0])
+        #expect(rows.map(\.attention.style) == [.blocking, .blocking, .empty, .empty])
+        #expect(rows.map(\.running) == [2, 2, 2, 0])
+        #expect(rows.map(\.mark) == [.otherWindow, .attention, .running, nil])
+        #expect(rows.map(\.folder) == projects.map(\.rootURL.path))
     }
 
     @Test func anEmptyWindow_drawsNoChangesPanel_andKeepsThePersonsChoiceForTheProjectChosen() {
@@ -363,7 +381,9 @@ struct OpenInNewWindowTests {
         let empty = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
         empty.selection.sidebarWidth = 277
 
-        let snapshot = fixture.session.makeSnapshot()
+        let saved = fixture.session.makeSnapshot()
+        let data = try JSONEncoder().encode(saved)
+        let snapshot = try JSONDecoder().decode(SessionSnapshot.self, from: data)
 
         #expect(snapshot.windows.map(\.isChoosingProject) == [false, true])
         #expect(snapshot.windows.first?.projectID == fixture.a.id)
@@ -463,14 +483,27 @@ struct OpenInNewWindowTests {
 
     @Test func twoWindowsThatShowedNothing_bothComeBack() {
         let fixture = Fixture()
-        _ = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
-        _ = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
+        let first = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
+        let second = fixture.registry.openEmptyWindow(in: fixture.session, from: fixture.primary)
+        first.selection.sidebarWidth = 277
+        first.selection.sidebarHidden = true
+        second.selection.sidebarWidth = 399
+        second.selection.isChangesPanelPresented = true
 
         let restored = WorkspaceSession()
         restored.restore(from: fixture.session.makeSnapshot())
 
         let selections = restored.windowIDs.compactMap { restored.selection($0) }
+        #expect(selections.count == 3)
         #expect(selections.map(\.isChoosingProject) == [false, true, true])
+        #expect(selections.map(\.shownProjectID) == [fixture.a.id, nil, nil])
+        #expect(selections.map(\.activeTabID) == [fixture.aTab.id, nil, nil])
+        // Restored secondary window IDs are new, so their enumeration is
+        // by those IDs rather than by the order the windows were opened.
+        let choosers = selections.dropFirst().sorted { $0.sidebarWidth < $1.sidebarWidth }
+        #expect(choosers.map(\.sidebarWidth) == [277, 399])
+        #expect(choosers.map(\.sidebarHidden) == [true, false])
+        #expect(choosers.map(\.isChangesPanelPresented) == [false, true])
     }
 
     @Test func theLastWindow_closedWhileItShowedNothing_comesBackHiddenAndShowingNothing() {
@@ -535,9 +568,13 @@ struct OpenInNewWindowTests {
         #expect(restored.tabs.map(\.id) == [scene.projectTab.id])
     }
 
+}
+
+extension OpenInNewWindowTests {
+
     // MARK: - The palette and the lists
 
-    @Test func thePalettesCommandReturn_opensAnotherProjectsRowInANewWindow() throws {
+    @Test func paletteNewWindowRoutingSelectsTheRequestedProjectsTab() throws {
         let fixture = Fixture()
         func run(_ action: CommandPaletteAction) -> PaletteRowHandling {
             SupervisionWindowActions.runProjectRow(
@@ -554,10 +591,17 @@ struct OpenInNewWindowTests {
         #expect(run(.activateProject(fixture.b.id)) == .handled)
         let forB = try #require(fixture.registry.window(showingProject: fixture.b.id, in: fixture.session))
         #expect(forB !== fixture.primary)
-        // "@": a tab of another project, selected in its new window.
-        #expect(run(.jumpToTab(fixture.cTab.id)) == .handled)
+        // The requested tab is different from the one C remembers.
+        let alternate = fixture.session.openTab(
+            container: .project(fixture.c.id), in: fixture.primary.id, intent: .person, selects: false
+        )
+        fixture.session.projectViews[fixture.c.id] = ProjectView(
+            projectID: fixture.c.id, activeContainerID: fixture.cTab.container, activeTabID: fixture.cTab.id
+        )
+        #expect(run(.jumpToTab(alternate.id)) == .handled)
         let forC = try #require(fixture.registry.window(showingProject: fixture.c.id, in: fixture.session))
-        #expect(forC.selection.activeTabID == fixture.cTab.id)
+        #expect(forC.selection.activeTabID == alternate.id)
+        #expect(fixture.session.projectViews[fixture.c.id] == nil)
         // This window's own: as without ⌘.
         #expect(run(.activateProject(fixture.a.id)) == .handledReturningKeyboard)
         #expect(run(.jumpToTab(fixture.aOther.id)) == .notHandled)
@@ -566,11 +610,12 @@ struct OpenInNewWindowTests {
         fixture.expectInvariants()
     }
 
-    @Test func theNeedsAttentionList_opensANewWindowOnlyForACommandClick() throws {
+    @Test func attentionRowNavigationUsesItsExplicitNewWindowFlag() throws {
         let fixture = Fixture()
         let store = AttentionQueueStore()
         let navigator = SessionAttentionNavigator(session: fixture.session, registry: fixture.registry)
         store.navigator = navigator
+        defer { withExtendedLifetime(navigator) {} }
         store.apply(
             .init(runtimes: [
                 RuntimeFact.stopped("b", in: fixture.bTab, of: fixture.b),
@@ -581,12 +626,12 @@ struct OpenInNewWindowTests {
         let itemB = try #require(store.queue.items.first { $0.subject.projectID == fixture.b.id })
         let itemC = try #require(store.queue.items.first { $0.subject.projectID == fixture.c.id })
 
-        // Return, with ⌘ or without, opens the row as a click does: here.
+        // The default route keeps navigation in the requesting window.
         store.focus(itemB, from: fixture.primary)
         #expect(fixture.registry.windows.count == 1)
         #expect(fixture.primary.selection.shownProjectID == fixture.b.id)
 
-        // ⌘-click: a window of its own, on the item.
+        // The explicit new-window route puts the item in its project's window.
         store.focus(itemC, from: fixture.primary, opensInNewWindow: true)
         let forC = try #require(fixture.registry.window(showingProject: fixture.c.id, in: fixture.session))
         #expect(forC !== fixture.primary)
@@ -630,7 +675,11 @@ struct OpenInNewWindowTests {
             windowProjectID: nil,
             locale: Locale(identifier: "en")
         )
-        #expect(outside.rows.allSatisfy { !$0.opensInNewWindow })
+        let ids = Set(store.queue.items.map(\.id))
+        #expect(ids.count == 3)
+        #expect(outside.rows.count == 3)
+        #expect(Set(outside.rows.map(\.id)) == ids)
+        #expect(outside.rows.map(\.opensInNewWindow) == [false, false, false])
 
         // The menu bar, told which projects the windows show, says it of an
         // item of a project none shows.
@@ -648,6 +697,7 @@ struct OpenInNewWindowTests {
         #expect(opensFromMenuBar(fixture.a) == false)
         #expect(opensFromMenuBar(fixture.b) == true)
         #expect(opensFromMenuBar(fixture.c) == false)
+        #expect(menuBar.rows.map(\.id) == outside.rows.map(\.id))
         #expect(menuBar.rows.map(\.placeLead) == outside.rows.map(\.placeLead))
     }
 

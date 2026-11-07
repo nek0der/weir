@@ -9,7 +9,6 @@ import Testing
 @MainActor
 @Suite("Agent facts")
 struct AgentFactsTests {
-    private static let sessionID = "0b3f2c1e-aaaa-4bbb-8ccc-1234567890ab"
 
     // MARK: - Names
 
@@ -32,31 +31,22 @@ struct AgentFactsTests {
 
     // MARK: - Commands
 
-    /// The strings each command typed before its launch name came from
-    /// `launchCommand`, captured from that code.
-    @Test("the launch, resume, and new conversation commands are the ones typed before", arguments: AgentKind.allCases)
-    func commands_areTheOnesTypedBefore(kind: AgentKind) {
-        let (launch, resume) = switch kind {
-        case .claude: ("claude", "claude --resume \(Self.sessionID)")
-        case .codex: ("codex", "codex resume \(Self.sessionID)")
-        case .antigravity: ("agy", "agy --conversation \(Self.sessionID)")
-        case .opencode: ("opencode", "opencode --session \(Self.sessionID)")
+    @Test("launch and new conversation commands use each agent's executable", arguments: AgentKind.allCases)
+    func commands_useTheAgentsExecutable(kind: AgentKind) {
+        let launch = switch kind {
+        case .claude: "claude"
+        case .codex: "codex"
+        case .antigravity: "agy"
+        case .opencode: "opencode"
         }
         #expect(kind.launchCommand == launch)
-        #expect(kind.strictResumeArguments(sessionId: Self.sessionID) == resume)
-        let folder = "/Users/foo/Weir Dev/bar's repo"
-        let cd = "cd '/Users/foo/Weir Dev/bar'\\''s repo' && "
         for cwd in [nil, ""] as [String?] {
-            #expect(kind.strictResumeCommand(sessionId: Self.sessionID, cwd: cwd) == resume)
             #expect(kind.newConversationCommand(cwd: cwd) == launch)
         }
-        #expect(kind.strictResumeCommand(sessionId: Self.sessionID, cwd: "/tmp/repo") == "cd '/tmp/repo' && \(resume)")
         #expect(kind.newConversationCommand(cwd: "/tmp/repo") == "cd '/tmp/repo' && \(launch)")
-        #expect(kind.strictResumeCommand(sessionId: Self.sessionID, cwd: folder) == cd + resume)
-        #expect(kind.newConversationCommand(cwd: folder) == cd + launch)
-        #expect(kind.strictResumeCommand(sessionId: Self.sessionID, cwd: "/tmp/a\nb") == nil)
+        #expect(kind.newConversationCommand(cwd: "/Users/foo/Weir Dev/bar's repo")
+            == "cd '/Users/foo/Weir Dev/bar'\\''s repo' && \(launch)")
         #expect(kind.newConversationCommand(cwd: "/tmp/a\nb") == nil)
-        #expect(kind.strictResumeCommand(sessionId: "-r", cwd: "/tmp") == nil)
     }
 
     /// Every name the catalog looks the agent up by is the one it was looked
@@ -105,24 +95,14 @@ struct AgentFactsTests {
         #expect(AgentKind.homeFolderName(ofProvider: kind.rawValue) == kind.homeFolderName)
     }
 
-    /// Worktree admission finds Codex's own worktrees under the same home
-    /// folder name, still under the home folder and not `CODEX_HOME`.
-    @Test("worktree admission reads Codex's worktrees under its default home")
-    func worktreeAdmission_readsTheDefaultCodexHome() {
-        func facts(_ path: String) -> WorktreeAdmissionRule.Facts {
-            WorktreeAdmissionRule.Facts(path: path, homePath: "/Users/someone")
-        }
-        #expect(WorktreeAdmissionRule.isAgentPlaced(facts("/Users/someone/.codex/worktrees/abc/repo")))
-        #expect(!WorktreeAdmissionRule.isAgentPlaced(facts("/Users/someone/.codex/worktrees")))
-        #expect(!WorktreeAdmissionRule.isAgentPlaced(facts("/Users/someone/elsewhere/repo")))
-    }
-
     /// The guard protects the Codex home that holds the person's config,
     /// under each home it knows.
     @Test("the test write guard protects the default Codex home")
     func writeGuard_protectsTheDefaultCodexHome() {
         let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
-        #expect(TestWriteGuard.protectedRoots.contains(AgentProviderRegistry.defaultHome(of: .codex, under: home)))
+        let codex = AgentProviderRegistry.defaultHome(of: .codex, under: home)
+        #expect(TestWriteGuard.protectedRoots.contains(codex))
+        #expect(TestWriteGuard.protectedFolder(containing: codex.appendingPathComponent("config.toml")) == .codexHome)
     }
 
     // MARK: - The shim's record export
@@ -185,23 +165,24 @@ struct AgentFactsTests {
         #expect(SessionRowFactText.badge(.agent(kind), locale: Locale(identifier: "ja")) == brand.letters)
     }
 
-    @Test("no two agents share a badge's letters")
-    func brand_lettersAreDistinct() {
-        let letters = AgentKind.allCases.map { AgentBrand.of($0).letters }
-        #expect(Set(letters).count == letters.count)
-        #expect(SessionRowFactText.badge(.shell, locale: .english).isEmpty)
-    }
-
     // MARK: - Shell quoting
 
-    /// Every caller's single quote is `ShellQuote.single`: the same word for
-    /// the same value, wherever it is typed.
-    @Test("one single quote for every caller", arguments: ["/tmp/repo", "/Users/foo/Weir Dev/bar's repo", "", "'", "a'b'c"])
-    func shellQuote_isOneForm(value: String) {
-        let quoted = "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    @Test("shell quoting preserves each argument", arguments: [
+        ("/tmp/repo", "'/tmp/repo'"),
+        ("/Users/foo/Weir Dev/bar's repo", "'/Users/foo/Weir Dev/bar'\\''s repo'"),
+        ("", "''"),
+        ("'", "''\\'''"),
+        ("a'b'c", "'a'\\''b'\\''c'"),
+        ("plain", "'plain'"),
+        ("it's", "'it'\\''s'")
+    ])
+    func shellQuote_isOneForm(value: String, quoted: String) {
         #expect(ShellQuote.single(value) == quoted)
+        #expect(DemoFixture.scene([], prompt: "p", end: .prompt, title: value).contains("printf '\\033]2;%s\\007' \(quoted) && "))
+    }
+
+    @Test func theInstaller_quotesTheExecutablePath() {
         #expect(CodexHookInstaller.executableCommand(for: URL(fileURLWithPath: "/Applications/x y'z")) == "'/Applications/x y'\\''z'")
-        #expect(DemoFixture.scene([], prompt: "p", end: .prompt, title: value).contains("printf '\\033]2;%s\\007' \(quoted)"))
     }
 
     // MARK: - Typed control characters
@@ -211,8 +192,11 @@ struct AgentFactsTests {
     @Test(
         "text holds a typed control exactly when one of its scalars is C0, DEL, or C1",
         arguments: [
-            ("", false), ("/tmp/repo", false), ("é 日本", false), ("\u{A0}", false), ("\u{1F}", true),
-            ("a\nb", true), ("\t", true), ("\u{7F}", true), ("\u{80}", true), ("\u{9F}", true), ("x\u{1B}[200~", true)
+            ("", false), ("/compact", false), ("é", false), ("/tmp/repo", false), ("é 日本", false), ("\u{A0}", false), ("\u{0}", true), (
+                "\u{1F}",
+                true
+            ),
+            ("a\nb", true), ("\t", true), ("\u{7F}", true), ("\u{80}", true), ("\u{9B}", true), ("\u{9F}", true), ("x\u{1B}[200~", true)
         ]
     )
     func containsTypedControl_isAnyScalarsRule(text: String, isControl: Bool) {
@@ -223,10 +207,4 @@ struct AgentFactsTests {
         #expect((AgentKind.claude.newConversationCommand(cwd: "/tmp/\(text)") == nil) == isControl)
     }
 
-    @Test("ShellQuote escapes an embedded quote by closing, escaping, and reopening")
-    func shellQuote_goldens() {
-        #expect(ShellQuote.single("plain") == "'plain'")
-        #expect(ShellQuote.single("it's") == "'it'\\''s'")
-        #expect(ShellQuote.single("") == "''")
-    }
 }

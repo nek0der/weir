@@ -36,6 +36,7 @@ struct SecureInputManagerTests {
 
         manager.set(.on, scope: id, isFocused: false)
         #expect(!manager.isEnabled)
+        #expect(calls.enableCount == 0)
 
         manager.focusDidChange(scope: id, isFocused: true)
         #expect(manager.isEnabled)
@@ -103,6 +104,7 @@ struct SecureInputManagerTests {
     @Test func failedTransitionDoesNotCorruptAppliedStateAndRetries() {
         let calls = RecordingSecureInputCalls()
         calls.enableStatuses = [-1, noErr]
+        calls.disableStatuses = [-1, noErr]
         let manager = makeManager(calls: calls)
         let scope = NSObject()
         let id = ObjectIdentifier(scope)
@@ -113,6 +115,13 @@ struct SecureInputManagerTests {
 
         #expect(manager.isEnabled)
         #expect(calls.enableCount == 2)
+
+        manager.set(.off, scope: id, isFocused: true)
+        #expect(manager.isEnabled)
+        #expect(calls.disableCount == 1)
+        manager.set(.off, scope: id, isFocused: true)
+        #expect(!manager.isEnabled)
+        #expect(calls.disableCount == 2)
     }
 
     @Test func automaticOptOutYieldsWithoutDiscardingPromptState() {
@@ -136,6 +145,8 @@ struct SecureInputManagerTests {
         let scope = NSObject()
 
         manager.set(.on, scope: ObjectIdentifier(scope), isFocused: true)
+        manager.removeAll()
+        manager.focusDidChange(scope: ObjectIdentifier(scope), isFocused: true)
         manager.removeAll()
 
         #expect(!manager.isEnabled)

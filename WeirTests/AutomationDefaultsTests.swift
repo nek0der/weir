@@ -31,7 +31,7 @@
         @Test func aHomeAlreadyMarked_keepsItsDefaults() throws {
             try withTempDir { home in
                 let defaults = try #require(InMemoryDefaults())
-                AutomationDefaults.startOver(dataFolder: home, bundleID: bundleID, defaults: defaults)
+                try #require(AutomationDefaults.startOver(dataFolder: home, bundleID: bundleID, defaults: defaults))
                 defaults.set("english", forKey: "appLanguage")
 
                 let emptied = AutomationDefaults.startOver(dataFolder: home, bundleID: bundleID, defaults: defaults)

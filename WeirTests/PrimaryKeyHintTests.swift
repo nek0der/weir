@@ -11,14 +11,17 @@ struct PrimaryKeyHintTests {
     @Test func theHint_goesAfterThreeUsesOfTheKey_andStaysGone() throws {
         let defaults = try #require(InMemoryDefaults())
         let hint = PrimaryKeyHint(defaults: defaults)
-        for _ in 1..<PrimaryKeyHint.usesBeforeHidden {
-            hint.noteKeyUse()
-        }
-        #expect(hint.isShown)
-
+        hint.noteKeyUse()
         hint.noteKeyUse()
 
-        #expect(!hint.isShown)
+        let relaunched = PrimaryKeyHint(defaults: defaults)
+        #expect(relaunched.uses == 2)
+        #expect(relaunched.isShown)
+
+        relaunched.noteKeyUse()
+        #expect(!relaunched.isShown)
+        relaunched.noteKeyUse()
+        #expect(relaunched.uses == 3)
         #expect(!PrimaryKeyHint(defaults: defaults).isShown, "counted across launches")
     }
 

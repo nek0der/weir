@@ -18,7 +18,8 @@ struct QuitGateTests {
         session.setActiveContainer(.loose)
         registry.hide(other)
         #expect(registry.window(other)?.isHidden == true)
-        let pane = tab.splitTree.allLeafIDs()[0]
+        let pane = try #require(tab.splitTree.allLeafIDs().first)
+        #expect(!session.hasLiveAgentAnywhere())
         session.update(tab.id) { $0.agentBadges[.claude] = [pane: AgentBadge(state: .running, updatedAt: Date())] }
 
         #expect(session.hasLiveAgentAnywhere())
@@ -76,19 +77,22 @@ struct QuitGateTests {
         try withTempDir { directory in
             let (session, _) = WorkspaceSessionFixture.withProject()
             let surfaces = try Self.paneAndQuickTerminal(settingsDirectory: directory)
-            var reads = 0
+            var reads: [ObjectIdentifier] = []
+            let quick = try #require(surfaces.controller.surfaceView)
 
             let asks = AppState.hasAgentAQuitWouldEnd(
                 session: session,
                 registry: surfaces.registry,
                 quickTerminal: surfaces.controller
-            ) { _ in
-                reads += 1
+            ) { surface in
+                reads.append(ObjectIdentifier(surface))
                 return ["zsh"]
             }
 
             #expect(!asks)
-            #expect(reads == 2, "the pane's terminal and the quick terminal's are both read")
+            #expect(reads.count == 2, "the pane's terminal and the quick terminal's are both read")
+            #expect(Set(reads).count == 2)
+            #expect(reads.contains(ObjectIdentifier(quick)))
         }
     }
 

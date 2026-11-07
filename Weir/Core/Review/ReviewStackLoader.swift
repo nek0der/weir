@@ -307,8 +307,11 @@ final class ReviewStackLoader {
 
     /// Follows a new list. Reads under way are dropped whatever the list:
     /// they read the previous one. Find asks again for the new list itself.
-    func retire(_ retirement: Retirement, listed: [ReviewFile]) {
-        task?.cancel()
+    /// Returns the canceled drain so a caller can wait for its reads to finish.
+    @discardableResult
+    func retire(_ retirement: Retirement, listed: [ReviewFile]) -> Task<Void, Never>? {
+        let retired = task
+        retired?.cancel()
         task = nil
         flush?.cancel()
         flush = nil
@@ -338,6 +341,7 @@ final class ReviewStackLoader {
         scopes = scopes.filter { entries[$0.key] != nil }
         serials = serials.filter { entries[$0.key] != nil }
         revision += 1
+        return retired
     }
 
     /// Lets go of everything read and every read under way, Find's

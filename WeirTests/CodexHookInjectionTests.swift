@@ -52,7 +52,7 @@ struct CodexHookInjectionTests {
     }
 
     @Test("emits one -c flag per subscribed event, plus trust and the title suppression")
-    func arguments_coverEverySubscribedEvent() {
+    func arguments_coverEverySubscribedEvent() throws {
         let args = CodexHookInjection.arguments(
             lifecycleCommand: lifecycle, worktreeCommand: nil
         )
@@ -67,7 +67,13 @@ struct CodexHookInjectionTests {
         // Codex's own notifications would double Weir's.
         #expect(args.contains("tui.notifications=false"))
         // Every value is preceded by its own `-c`.
-        #expect(args.count(where: { $0 == "-c" }) == args.count / 2)
+        try #require(args.count == 2 * (CodexHookInjection.subscribedEvents.count + 3))
+        let flags = stride(from: 0, to: args.count, by: 2).map { args[$0] }
+        let keys = stride(from: 1, to: args.count, by: 2).map { args[$0].prefix { $0 != "=" } }
+        #expect(flags.allSatisfy { $0 == "-c" })
+        let expected = CodexHookInjection.subscribedEvents.map { "hooks.\($0.jsonKey)" }
+            + ["hooks.state", "tui.terminal_title", "tui.notifications"]
+        #expect(keys.map(String.init).sorted() == expected.sorted())
     }
 
     @Test("gives PreToolUse and PostToolUse a second, matched group when the worktree hook exists")
@@ -77,8 +83,9 @@ struct CodexHookInjectionTests {
         )
         for event in ["PreToolUse", "PostToolUse"] {
             let flag = try #require(args.first { $0.hasPrefix("hooks.\(event)=") })
-            #expect(flag.contains(CodexHookInjection.worktreeMatcher))
-            #expect(flag.contains(worktree))
+            let expected = #"hooks.\#(event)=[{hooks=[{type="command",command="\#(lifecycle)",timeout=600}]},"#
+                + #"{matcher="^Bash$",hooks=[{type="command",command="\#(worktree)",timeout=600}]}]"#
+            #expect(flag == expected)
         }
     }
 
@@ -87,8 +94,10 @@ struct CodexHookInjectionTests {
         let args = CodexHookInjection.arguments(
             lifecycleCommand: lifecycle, worktreeCommand: nil
         )
-        let preToolUse = args.first { $0.hasPrefix("hooks.PreToolUse=") }
-        #expect(preToolUse?.contains(CodexHookInjection.worktreeMatcher) == false)
+        for event in ["PreToolUse", "PostToolUse"] {
+            let flag = args.first { $0.hasPrefix("hooks.\(event)=") }
+            #expect(flag == #"hooks.\#(event)=[{hooks=[{type="command",command="\#(lifecycle)",timeout=600}]}]"#)
+        }
     }
 
     /// The invariant the whole design rests on: every hash in the flags is
@@ -114,14 +123,16 @@ struct CodexHookInjectionTests {
                 "no trust for \(event.label)"
             )
         }
-        let worktreeHash = CodexTrustHash.compute(
-            eventLabel: "pre_tool_use",
-            command: worktree,
-            timeoutSec: 600,
-            matcher: CodexHookInjection.worktreeMatcher
-        )
-        let worktreeKey = CodexHookInjection.trustKey(eventLabel: "pre_tool_use", group: 1)
-        #expect(state.contains("\"\(worktreeKey)\"={enabled=true,trusted_hash=\"\(worktreeHash)\"}"))
+        for event in ["pre_tool_use", "post_tool_use"] {
+            let worktreeHash = CodexTrustHash.compute(
+                eventLabel: event,
+                command: worktree,
+                timeoutSec: 600,
+                matcher: "^Bash$"
+            )
+            let worktreeKey = "/<session-flags>/config.toml:\(event):1:0"
+            #expect(state.contains("\"\(worktreeKey)\"={enabled=true,trusted_hash=\"\(worktreeHash)\"}"))
+        }
     }
 
     /// Codex splits a flag's key at each dot, and a trust key holds one, so

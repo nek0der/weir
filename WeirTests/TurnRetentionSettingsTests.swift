@@ -26,9 +26,13 @@ struct TurnRetentionSettingsTests {
         var retention = TurnRetentionSettings()
         retention.days = 0
         retention.turns = 9999
-
         #expect(retention.days == 1)
         #expect(retention.turns == 500)
+
+        retention.days = 9999
+        retention.turns = 0
+        #expect(retention.days == 90)
+        #expect(retention.turns == 20)
     }
 
     @Test func theLimits_changeOnlyTheDaysAndTurns() {

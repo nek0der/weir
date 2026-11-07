@@ -17,7 +17,7 @@ struct ProjectMarkRuleTests {
             let appearance = try #require(NSAppearance(named: name))
             let resolved = try #require(SRGB(fill, in: appearance))
             let ratio = ContrastRatio.between(resolved, ProjectMarkRule.label)
-            #expect(ratio >= ContrastRatio.text, "palette \(index) in \(name.rawValue): \(ratio)")
+            #expect(ratio >= 4.5, "palette \(index) in \(name.rawValue): \(ratio)")
         }
     }
 
@@ -29,7 +29,7 @@ struct ProjectMarkRuleTests {
         for resolved in try accent.resolvedInBothAppearances() {
             let fill = ProjectMarkRule.fill(resolved.color, paletteIndex: nil)
             let ratio = ContrastRatio.between(fill, ProjectMarkRule.label)
-            #expect(ratio >= ContrastRatio.text, "\(accent) in \(resolved.appearance.rawValue): \(ratio)")
+            #expect(ratio >= 4.5, "\(accent) in \(resolved.appearance.rawValue): \(ratio)")
         }
     }
 
@@ -38,7 +38,8 @@ struct ProjectMarkRuleTests {
         #expect(ProjectMarkRule.fill(SRGB(0x3B4FC4), paletteIndex: 0) == SRGB(0x3B4FC4))
         let coral = ProjectMarkRule.fill(SRGB(0xEA584F), paletteIndex: 2)
         #expect(coral != SRGB(0xEA584F))
-        #expect(ContrastRatio.between(coral, ProjectMarkRule.label) >= ContrastRatio.text)
+        #expect(ProjectMarkRule.label == SRGB(0xFFFFFF))
+        #expect(ContrastRatio.between(coral, ProjectMarkRule.label) >= 4.5)
     }
 
     /// Amber, mint, and saffron take a hand-picked fill that keeps their

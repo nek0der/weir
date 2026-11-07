@@ -22,6 +22,7 @@ extension WindowProjectSwitchTests {
     @Test func choosingAnotherProjectFromTheMenu_switchesThisWindow_andOpensNone() {
         let fixture = Fixture()
         let primary = fixture.primary
+        fixture.choose(fixture.aOther, in: primary)
         fixture.session.primarySelection.sidebarWidth = 300
         fixture.session.primarySelection.isChangesPanelPresented = true
 
@@ -35,13 +36,15 @@ extension WindowProjectSwitchTests {
         #expect(primary.selection.isChangesPanelPresented)
         #expect(fixture.registry.windows.count == 1)
         #expect(fixture.presenter.shown.isEmpty)
+        #expect(fixture.session.projectViews[fixture.a.id]?.activeTabID == fixture.aOther.id)
         fixture.session.primarySelection.sidebarWidth = 260
 
         // B → A: A comes back on the tab it was left on, in the window's
         // chrome as it is now.
         fixture.registry.show(project: fixture.a.id, in: fixture.session, from: primary, intent: .person)
 
-        #expect(primary.selection.activeTabID == fixture.aTab.id)
+        #expect(primary.selection.activeTabID == fixture.aOther.id)
+        #expect(fixture.session.projectViews[fixture.a.id] == nil)
         #expect(primary.selection.sidebarWidth == 260)
         #expect(primary.selection.isChangesPanelPresented)
         #expect(fixture.registry.windows.count == 1)
@@ -54,13 +57,14 @@ extension WindowProjectSwitchTests {
 
     @Test func aProjectSwitchedTo_comesFirstAmongTheRecentOnes() throws {
         let fixture = Fixture()
-        #expect(fixture.session.recentProjectPaths.first == fixture.c.rootURL)
+        let initial = [fixture.c.rootURL, fixture.b.rootURL, fixture.a.rootURL]
+        #expect(fixture.session.recentProjectPaths == initial)
 
         fixture.registry.show(project: fixture.a.id, in: fixture.session, from: fixture.primary, intent: .person)
-        #expect(fixture.session.recentProjectPaths.first == fixture.c.rootURL)
+        #expect(fixture.session.recentProjectPaths == initial)
 
         fixture.registry.show(project: fixture.b.id, in: fixture.session, from: fixture.primary, intent: .person)
-        #expect(fixture.session.recentProjectPaths.first == fixture.b.rootURL)
+        #expect(fixture.session.recentProjectPaths == [fixture.b.rootURL, fixture.c.rootURL, fixture.a.rootURL])
 
         // A window that shows a project, brought forward, counts as using it.
         let other = try fixture.window(showing: fixture.c)
@@ -80,6 +84,8 @@ extension WindowProjectSwitchTests {
 
         // `c` was opened last; `b` was used since.
         #expect(fixture.primary.selection.shownProjectID == fixture.b.id)
+        #expect(fixture.primary.selection.activeTabID == fixture.bTab.id)
+        #expect(fixture.presenter.shown.isEmpty)
         // Moving on from a removed project is not the person using the
         // project moved to, and the removed one's folder stays to reopen.
         #expect(fixture.session.recentProjectPaths == recent)
@@ -123,7 +129,7 @@ extension WindowProjectSwitchTests {
 
     // MARK: - From outside a window
 
-    @Test func notificationForAProjectNotShown_switchesTheWindowLastUsed() throws {
+    @Test func backgroundPresentation_usesTheLastKeyWindow_forAnUnshownProject() throws {
         let fixture = Fixture()
         let other = try fixture.window(showing: fixture.c)
         fixture.registry.windowBecameKey(fixture.primary.id)
@@ -139,6 +145,7 @@ extension WindowProjectSwitchTests {
         #expect(other.selection.shownProjectID == fixture.b.id)
         #expect(other.selection.activeTabID == fixture.bTab.id)
         #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
+        #expect(fixture.primary.selection.activeTabID == fixture.aTab.id)
         #expect(fixture.registry.windows.count == 2)
         fixture.expectInvariants()
     }
@@ -149,7 +156,7 @@ extension WindowProjectSwitchTests {
         let item = try #require(store.queue.items.first)
         // Every window closed: the last one is hidden.
         fixture.registry.close(fixture.primary.id, in: fixture.session)
-        #expect(fixture.primary.isHidden)
+        try #require(fixture.primary.isHidden && fixture.session.hiddenWindowIDs == [fixture.primary.id])
 
         store.focus(item, from: nil)
 
@@ -157,7 +164,8 @@ extension WindowProjectSwitchTests {
         #expect(fixture.session.hiddenWindowIDs.isEmpty)
         #expect(fixture.primary.selection.shownProjectID == fixture.b.id)
         #expect(fixture.primary.selection.activeTabID == fixture.bTab.id)
-        #expect(fixture.registry.windows.count == 1)
+        #expect(fixture.registry.windows.map(\.id) == [fixture.primary.id])
+        #expect(fixture.presenter.shown == [fixture.primary.id])
         withExtendedLifetime(navigator) {}
     }
 
@@ -165,14 +173,14 @@ extension WindowProjectSwitchTests {
         let fixture = Fixture()
         let other = try fixture.window(showing: fixture.c)
         fixture.registry.windowBecameKey(other.id)
-        let cPane = fixture.cTab.splitTree.allLeafIDs()[0]
-        let bPane = fixture.bTab.splitTree.allLeafIDs()[0]
+        let aPane = try #require(fixture.aTab.splitTree.allLeafIDs().first)
+        let bPane = try #require(fixture.bTab.splitTree.allLeafIDs().first)
 
         // "Resume Same Conversation": kept against the window that shows
         // the pane, else the one commands act on; nothing is shown.
         let resumedShown = MenuBarActions.resumeWindow(
-            paneID: cPane,
-            projectID: fixture.c.id,
+            paneID: aPane,
+            projectID: nil,
             session: fixture.session,
             registry: fixture.registry
         )
@@ -182,8 +190,16 @@ extension WindowProjectSwitchTests {
             session: fixture.session,
             registry: fixture.registry
         )
-        #expect(resumedShown === other)
+        let resumedByProject = MenuBarActions.resumeWindow(
+            paneID: UUID(),
+            projectID: fixture.a.id,
+            session: fixture.session,
+            registry: fixture.registry
+        )
+        #expect(resumedShown === fixture.primary)
+        #expect(resumedByProject === fixture.primary)
         #expect(resumedElsewhere === other)
+        #expect(fixture.presenter.shown.isEmpty)
         #expect(other.selection.shownProjectID == fixture.c.id)
 
         // The menu bar's "Answer…" for a request of `b`: the card opens over the
@@ -246,21 +262,27 @@ extension WindowProjectSwitchTests {
         let fixture = Fixture()
         let folder = WorkspaceSessionFixture.projectRootURL("opened")
 
-        await SupervisionWindowActions.openProject(
+        let resolved = WorkspaceSessionFixture.projectRootURL("repository")
+        let shown = await SupervisionWindowActions.openProject(
             at: folder,
             from: fixture.primary,
             session: fixture.session,
             registry: fixture.registry,
             frecency: nil
-        ) { $0 }
+        ) { candidate in
+            #expect(candidate == folder)
+            return resolved
+        }
 
         let opened = try #require(fixture.session.projects.last)
-        #expect(opened.rootURL == folder.standardizedFileURL)
+        #expect(shown === fixture.primary)
+        #expect(opened.rootURL == resolved.standardizedFileURL)
         #expect(fixture.primary.selection.shownProjectID == opened.id)
         #expect(fixture.primary.selection.activeContainerID == .project(opened.id))
         #expect(fixture.registry.windows.count == 1)
         #expect(fixture.session.projectViews[fixture.a.id]?.activeTabID == fixture.aTab.id)
-        #expect(fixture.session.recentProjectPaths.first == folder.standardizedFileURL)
+        #expect(fixture.session.recentProjectPaths.first == resolved.standardizedFileURL)
+        #expect(fixture.presenter.shown.isEmpty)
     }
 
     @Test func openFolder_afterThePersonMovedAway_doesNotSwitchBack() async throws {
@@ -269,7 +291,7 @@ extension WindowProjectSwitchTests {
 
         // A notification takes the window to `b` while the folder is
         // resolved.
-        await SupervisionWindowActions.openProject(
+        let result = await SupervisionWindowActions.openProject(
             at: folder,
             from: fixture.primary,
             session: fixture.session,
@@ -281,8 +303,10 @@ extension WindowProjectSwitchTests {
         }
 
         let opened = try #require(fixture.session.projects.last)
+        #expect(result == nil)
         #expect(opened.rootURL == folder.standardizedFileURL)
         #expect(fixture.primary.selection.shownProjectID == fixture.b.id)
+        #expect(fixture.presenter.shown.isEmpty)
         #expect(fixture.primary.selection.activeTabID == fixture.bTab.id)
         #expect(fixture.registry.window(showingProject: opened.id, in: fixture.session) == nil)
         #expect(fixture.registry.windows.count == 1)
@@ -293,7 +317,7 @@ extension WindowProjectSwitchTests {
         let other = try fixture.window(showing: fixture.c)
         let folder = WorkspaceSessionFixture.projectRootURL("opened")
 
-        await SupervisionWindowActions.openProject(
+        let result = await SupervisionWindowActions.openProject(
             at: folder,
             from: other,
             session: fixture.session,
@@ -305,54 +329,63 @@ extension WindowProjectSwitchTests {
         }
 
         let opened = try #require(fixture.session.projects.last)
+        #expect(result == nil)
+        #expect(opened.rootURL == folder.standardizedFileURL)
         #expect(fixture.registry.window(showingProject: opened.id, in: fixture.session) == nil)
         #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
+        #expect(fixture.primary.selection.activeTabID == fixture.aTab.id)
+        #expect(fixture.session.selection(other.id) == nil)
         #expect(fixture.registry.windows.map(\.id) == [fixture.primary.id])
         #expect(fixture.presenter.shown.isEmpty)
     }
 
-    // MARK: - A folder from outside
+}
 
-    /// Finder's Open With, `open -a`, a drop on the Dock icon: as ⌘O, in the
-    /// window the person was last in, brought to the front.
-    @Test func anOpenedFolder_withEveryWindowHiddenOnAnotherProject_switchesThatWindowAndShowsIt() async throws {
-        let (session, registry) = SelectionIntentTests.registered()
-        let shown = session.addOrActivateProject(rootURL: URL(fileURLWithPath: "/weir-shown-\(UUID().uuidString)"))
-        session.setActiveContainer(.project(shown.id))
-        let primary = registry.primary
-        registry.hide(primary.id)
-        let folder = URL(fileURLWithPath: "/weir-opened-\(UUID().uuidString)")
+extension WindowProjectSwitchTests {
 
-        await SupervisionWindowActions.openProject(at: folder, from: primary, session: session, registry: registry, frecency: nil) { $0 }
+    // MARK: - Folders
 
-        // The window the File menu asked of switches in place and comes
-        // back; no window is made beside it.
-        let project = try #require(session.projects.first { $0.id != shown.id })
-        #expect(registry.window(showingProject: project.id, in: session) === primary)
+    /// The in-app Open command brings its hidden asking window back in place.
+    @Test func inAppOpen_switchesTheHiddenAskingWindowInPlace() async throws {
+        let fixture = Fixture()
+        let primary = fixture.primary
+        fixture.registry.hide(primary.id)
+        let folder = WorkspaceSessionFixture.projectRootURL("opened")
+
+        let shown = await SupervisionWindowActions.openProject(
+            at: folder, from: primary, session: fixture.session, registry: fixture.registry, frecency: nil
+        ) { $0 }
+
+        let project = try #require(fixture.session.projects.first { $0.rootURL == folder.standardizedFileURL })
+        #expect(shown === primary)
+        #expect(fixture.registry.window(showingProject: project.id, in: fixture.session) === primary)
         #expect(!primary.isHidden)
-        #expect(session.hiddenWindowIDs.isEmpty)
-        #expect(registry.windows.count == 1)
-        #expect(session.projectViews[shown.id] != nil)
+        #expect(fixture.session.hiddenWindowIDs.isEmpty)
+        #expect(fixture.registry.windows.map(\.id) == [primary.id])
+        #expect(fixture.presenter.shown == [primary.id])
+        #expect(fixture.session.projectViews[fixture.a.id]?.activeTabID == fixture.aTab.id)
     }
 
     @Test func anOpenedFolder_whoseProjectAHiddenWindowShows_bringsThatWindowBack() async throws {
-        let (session, registry) = SelectionIntentTests.registered()
-        let shown = session.addOrActivateProject(rootURL: URL(fileURLWithPath: "/weir-shown-\(UUID().uuidString)"))
-        session.setActiveContainer(.project(shown.id))
-        let folder = URL(fileURLWithPath: "/weir-opened-\(UUID().uuidString)")
-        let opened = session.addOrActivateProject(rootURL: folder)
-        let primary = registry.primary
-        let window = try #require(registry.openInNewWindow(project: opened.id, in: session, from: nil))
-        #expect(window.id != primary.id)
-        registry.hide(window.id)
-        registry.hide(primary.id)
+        let fixture = Fixture()
+        let primary = fixture.primary
+        let target = try fixture.window(showing: fixture.b)
+        fixture.registry.hide(target.id)
+        fixture.registry.hide(primary.id)
 
-        await SupervisionWindowActions.openProject(at: folder, from: primary, session: session, registry: registry, frecency: nil) { $0 }
+        let shown = await SupervisionWindowActions.openProject(
+            at: fixture.b.rootURL, from: primary, session: fixture.session, registry: fixture.registry, frecency: nil
+        ) { $0 }
 
-        #expect(!window.isHidden)
-        #expect(!session.hiddenWindowIDs.contains(window.id))
-        #expect(registry.window(showingProject: opened.id, in: session)?.id == window.id)
-        #expect(session.windowIDs.count == 2)
+        #expect(shown === target)
+        #expect(!target.isHidden)
+        #expect(primary.isHidden)
+        #expect(fixture.session.hiddenWindowIDs == [primary.id])
+        #expect(fixture.registry.window(showingProject: fixture.b.id, in: fixture.session) === target)
+        #expect(target.selection.activeTabID == fixture.bTab.id)
+        #expect(primary.selection.activeTabID == fixture.aTab.id)
+        #expect(fixture.session.windowIDs.count == 2)
+        #expect(fixture.presenter.shown == [target.id])
     }
 
     /// A file is no project, nor is a package, which ⌘O cannot choose. A
@@ -368,13 +401,22 @@ extension WindowProjectSwitchTests {
             let package = dir.appending(path: "Tool.app", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
             let projectCount = fixture.session.projects.count
+            let classification: Set<URLResourceKey> = [.isDirectoryKey, .isPackageKey]
+            try #require(file.resourceValues(forKeys: classification).isDirectory == false)
+            try #require(package.resourceValues(forKeys: classification).isPackage == true)
+            try #require(folder.resourceValues(forKeys: classification).isDirectory == true)
+            var resolved: [URL] = []
 
             await SupervisionWindowActions.openFolders(
                 [file, package],
                 session: fixture.session,
                 registry: fixture.registry,
                 frecency: nil
-            ) { $0 }
+            ) {
+                resolved.append($0)
+                return $0
+            }
+            #expect(resolved.isEmpty)
             #expect(fixture.session.projects.count == projectCount)
             #expect(fixture.registry.windows.count == 1)
 
@@ -383,8 +425,12 @@ extension WindowProjectSwitchTests {
                 session: fixture.session,
                 registry: fixture.registry,
                 frecency: nil
-            ) { $0 }
+            ) {
+                resolved.append($0)
+                return $0
+            }
 
+            #expect(resolved == [folder])
             let opened = try #require(fixture.session.projects.last)
             #expect(fixture.session.projects.count == projectCount + 1)
             #expect(opened.rootURL == folder.standardizedFileURL)
@@ -393,7 +439,7 @@ extension WindowProjectSwitchTests {
             #expect(window !== fixture.primary)
             #expect(fixture.registry.windows.count == 2)
             // It comes in front of the app the folder came from.
-            #expect(fixture.presenter.shown.last == window.id)
+            #expect(fixture.presenter.shown == [window.id])
         }
     }
 
@@ -418,7 +464,8 @@ extension WindowProjectSwitchTests {
             let opened = try #require(fixture.session.projects.first { $0.rootURL == folder.standardizedFileURL })
             #expect(empty.selection.shownProjectID == opened.id)
             #expect(!empty.selection.isChoosingProject)
-            #expect(fixture.registry.windows.count == 2)
+            #expect(fixture.primary.selection.activeTabID == fixture.aTab.id)
+            #expect(Set(fixture.registry.windows.map(\.id)) == [fixture.primary.id, empty.id])
             #expect(fixture.presenter.shown == [empty.id])
         }
     }
@@ -447,6 +494,7 @@ extension WindowProjectSwitchTests {
             #expect(!hidden.isHidden)
             #expect(fixture.registry.windows.map(\.id) == [hidden.id])
             #expect(hidden.selection.shownProjectID == fixture.a.id)
+            #expect(hidden.selection.activeTabID == fixture.aTab.id)
 
             fixture.registry.close(hidden.id, in: fixture.session)
             await SupervisionWindowActions.openFolders(
@@ -460,7 +508,10 @@ extension WindowProjectSwitchTests {
             let window = try #require(fixture.registry.window(showingProject: opened.id, in: fixture.session))
             #expect(window !== hidden)
             #expect(fixture.registry.windows.map(\.id) == [window.id])
-            #expect(fixture.session.projectViews[fixture.a.id] != nil)
+            #expect(fixture.session.projectViews[fixture.a.id]?.activeTabID == fixture.aTab.id)
+            #expect(fixture.registry.primary === window)
+            #expect(fixture.session.primaryWindowID == window.id)
+            #expect(fixture.session.selection(hidden.id) == nil)
             #expect(fixture.session.hiddenWindowIDs.isEmpty)
         }
     }
@@ -473,7 +524,7 @@ extension WindowProjectSwitchTests {
         let front = try fixture.window(showing: fixture.c)
         fixture.session.frontWindowID = front.id
         fixture.registry.showRestoredWindows(of: fixture.session)
-        #expect(fixture.presenter.shown.last == front.id)
+        #expect(fixture.presenter.shown == [fixture.primary.id, front.id])
         fixture.presenter.shown = []
         try await withTempDir { dir in
             let folder = dir.appending(path: "opened", directoryHint: .isDirectory)
@@ -490,7 +541,10 @@ extension WindowProjectSwitchTests {
             let window = try #require(fixture.registry.window(showingProject: opened.id, in: fixture.session))
             #expect(front.selection.shownProjectID == fixture.c.id)
             #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
+            #expect(front.selection.activeTabID == fixture.cTab.id)
+            #expect(fixture.primary.selection.activeTabID == fixture.aTab.id)
             #expect(fixture.presenter.openedFrom[window.id] == front.id)
+            #expect(fixture.presenter.shown == [window.id])
             #expect(fixture.registry.windows.count == 3)
         }
     }
@@ -511,13 +565,18 @@ extension WindowProjectSwitchTests {
             try FileManager.default.createDirectory(at: shown, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: shown) }
 
+            var resolved: [URL] = []
             await SupervisionWindowActions.openFolders(
                 [first, second, shown],
                 session: fixture.session,
                 registry: fixture.registry,
                 frecency: nil
-            ) { $0 }
+            ) {
+                resolved.append($0)
+                return $0
+            }
 
+            #expect(resolved == [first, second, shown])
             let firstProject = try #require(fixture.session.projects.first { $0.rootURL == first.standardizedFileURL })
             let secondProject = try #require(fixture.session.projects.first { $0.rootURL == second.standardizedFileURL })
             let windowOfFirst = try #require(fixture.registry.window(showingProject: firstProject.id, in: fixture.session))
@@ -527,7 +586,9 @@ extension WindowProjectSwitchTests {
             #expect(Set([windowOfFirst.id, windowOfSecond.id, fixture.primary.id, other.id]).count == 4)
             // A folder a window shows already brings that window forward.
             #expect(fixture.registry.window(showingProject: fixture.c.id, in: fixture.session) === other)
-            #expect(fixture.presenter.shown.last == other.id)
+            #expect(fixture.presenter.shown == [windowOfFirst.id, windowOfSecond.id, other.id])
+            #expect(fixture.primary.selection.activeTabID == fixture.aTab.id)
+            #expect(other.selection.activeTabID == fixture.cTab.id)
             #expect(fixture.registry.windows.count == 4)
         }
     }
@@ -536,7 +597,8 @@ extension WindowProjectSwitchTests {
 
     @Test func allProjectsCard_ofAProjectInAnotherWindow_saysOtherWindow() throws {
         let fixture = Fixture()
-        try fixture.window(showing: fixture.c)
+        let other = try fixture.window(showing: fixture.c)
+        fixture.registry.hide(other.id)
 
         let cards = AllProjectsModel.cards(AllProjectsModel.Sources(
             session: fixture.session,
@@ -550,10 +612,12 @@ extension WindowProjectSwitchTests {
             locale: Locale(identifier: "en")
         ))
 
-        let note = { (project: Project) in cards.first { $0.projectID == project.id }?.windowNote }
-        #expect(note(fixture.a) == .current)
-        #expect(note(fixture.b) == nil)
-        #expect(note(fixture.c) == .otherWindow)
+        let current = try #require(cards.first { $0.projectID == fixture.a.id })
+        let unshown = try #require(cards.first { $0.projectID == fixture.b.id })
+        let elsewhere = try #require(cards.first { $0.projectID == fixture.c.id })
+        #expect(current.windowNote == .current)
+        #expect(unshown.windowNote == nil)
+        #expect(elsewhere.windowNote == .otherWindow)
     }
 
     @Test func projectMenuRows_ofAProjectInAnotherWindow_sayOtherWindow() throws {
@@ -569,10 +633,10 @@ extension WindowProjectSwitchTests {
             attention: AttentionState()
         ).rows
 
-        let isInOtherWindow = { (project: Project) in rows.first { $0.id == project.id }?.isInOtherWindow }
-        #expect(isInOtherWindow(fixture.a) == false)
-        #expect(isInOtherWindow(fixture.b) == false)
-        #expect(isInOtherWindow(fixture.c) == true)
+        #expect(rows.count == 3)
+        #expect(Set(rows.map(\.id)) == [fixture.a.id, fixture.b.id, fixture.c.id])
+        #expect(rows.filter(\.isCurrent).map(\.id) == [fixture.a.id])
+        #expect(rows.filter(\.isInOtherWindow).map(\.id) == [fixture.c.id])
     }
 
     @Test func theProjectsInOtherWindows_countHiddenOnes_andNeverThisWindows() throws {
@@ -581,6 +645,7 @@ extension WindowProjectSwitchTests {
 
         #expect(fixture.registry.projectsShown(besides: fixture.primary.id, in: fixture.session) == [fixture.c.id])
         #expect(fixture.registry.projectsShown(besides: other.id, in: fixture.session) == [fixture.a.id])
+        #expect(fixture.registry.projectsShown(besides: nil, in: fixture.session) == [fixture.a.id, fixture.c.id])
 
         // Hidden, it still shows `c`: going there brings it back.
         fixture.registry.hide(other.id)
@@ -590,6 +655,7 @@ extension WindowProjectSwitchTests {
         fixture.registry.show(other.id)
         fixture.registry.close(other.id, in: fixture.session)
         #expect(fixture.registry.projectsShown(besides: fixture.primary.id, in: fixture.session).isEmpty)
+        #expect(fixture.registry.projectsShown(besides: nil, in: fixture.session) == [fixture.a.id])
     }
 
     // MARK: - The window that shows the project
@@ -622,16 +688,18 @@ extension WindowProjectSwitchTests {
         fixture.registry.windowBecameKey(fixture.primary.id)
         if isOtherWindowHidden {
             fixture.registry.hide(other.id)
-            fixture.presenter.shown = []
         }
+        fixture.presenter.shown = []
         let (store, navigator) = Self.attentionList(stopIn: fixture.bTab, of: fixture.b, fixture: fixture)
         let item = try #require(store.queue.items.first)
 
         try await Self.go(to: fixture.b, by: entry, fixture: fixture, store: store, item: item)
 
-        #expect(fixture.presenter.shown.contains(other.id))
+        #expect(fixture.presenter.shown == [other.id])
         #expect(!other.isHidden)
+        #expect(!fixture.session.hiddenWindowIDs.contains(other.id))
         #expect(other.selection.shownProjectID == fixture.b.id)
+        #expect(other.selection.activeTabID == fixture.bTab.id)
         #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
         #expect(fixture.primary.selection.activeTabID == fixture.aTab.id)
         #expect(fixture.registry.windows.count == 2)

@@ -45,6 +45,7 @@ struct EditableRowListLayoutTests {
 
         #expect(empty > 0)
         #expect(empty == single, "\(empty) empty, \(single) with one row")
+        #expect(emptyFiles > 0)
         #expect(emptyFiles == singleFile, "\(emptyFiles) empty, \(singleFile) with one row")
     }
 
@@ -66,8 +67,9 @@ struct EditableRowListLayoutTests {
             descendants(of: host).compactMap { $0 as? NSTextField }.filter { texts.contains($0.stringValue) }
         }
         await settle(host) { fields().count == texts.count }
-        #expect(fields().count == texts.count, "every row has its field")
-        for field in fields() {
+        let measured = fields()
+        #expect(measured.map(\.stringValue).sorted() == texts.sorted(), "every row has its field")
+        for field in measured {
             let frame = field.convert(field.bounds, to: host)
             #expect(frame.minX < width / 4, "\(field.stringValue) starts at \(frame.minX)")
             #expect(frame.width > width * 3 / 4, "\(field.stringValue) is \(frame.width) wide")

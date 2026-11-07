@@ -7,34 +7,25 @@ import Testing
 @Suite("NotificationSanitizer")
 struct NotificationSanitizerTests {
 
-    @Test("trims surrounding whitespace and newlines")
-    func sanitize_trimsLeadingAndTrailingNewlines() {
-        #expect(NotificationSanitizer.sanitize("\n\nhello\n\n") == "hello")
-    }
-
-    @Test("collapses consecutive newlines to a single newline")
-    func sanitize_collapsesConsecutiveNewlines() {
-        #expect(NotificationSanitizer.sanitize("a\n\n\n\nb") == "a\nb")
+    @Test("normalizes newlines and preserves empty input", arguments: [
+        ("\n\nhello\n\n", "hello"),
+        ("a\n\n\n\nb", "a\nb"),
+        ("line1\nline2", "line1\nline2"),
+        ("line1\r\nline2", "line1\nline2"),
+        ("", "")
+    ])
+    func sanitize_newlines(input: String, expected: String) {
+        #expect(NotificationSanitizer.sanitize(input) == expected)
     }
 
     @Test(
-        "strips control characters but keeps tab and newline",
+        "filters control and invisible characters while preserving tab and joiners",
         arguments: [
             ("a\u{0001}b", "ab"), // C0 (SOH)
             ("a\u{001F}b", "ab"), // C0 (US)
             ("a\u{007F}b", "ab"), // DEL
             ("a\u{0085}b", "ab"), // C1 (NEL)
             ("a\tb", "a\tb"), // tab preserved
-            ("line1\nline2", "line1\nline2"),
-        ]
-    )
-    func sanitize_controlCharacters(input: String, expected: String) {
-        #expect(NotificationSanitizer.sanitize(input) == expected)
-    }
-
-    @Test(
-        "strips invisible-spacing and bidi-override characters",
-        arguments: [
             ("a\u{200B}b", "ab"), // ZWSP
             ("a\u{200E}b", "ab"), // LRM
             ("a\u{200F}b", "ab"), // RLM
@@ -42,34 +33,26 @@ struct NotificationSanitizerTests {
             ("a\u{202A}b", "ab"), // LRE
             ("a\u{202E}b", "ab"), // RLO (bidi override)
             ("a\u{2066}b\u{2069}", "ab"), // LRI / PDI
+            // Joiners preserve emoji sequences and Persian / Arabic ligature suppression.
+            ("a\u{200C}b", "a\u{200C}b"),
+            ("a\u{200D}b", "a\u{200D}b"),
         ]
     )
-    func sanitize_invisibleSpacingAndBidi(input: String, expected: String) {
+    func sanitize_scalarFilter(input: String, expected: String) {
         #expect(NotificationSanitizer.sanitize(input) == expected)
     }
 
-    /// ZWNJ (U+200C) and ZWJ (U+200D) are intentionally preserved so
-    /// emoji sequences and Persian / Arabic ligature suppression aren't
-    /// mangled in notification text.
-    @Test("preserves ZWJ / ZWNJ so emoji sequences and ligatures survive")
-    func sanitize_preservesZWNJandZWJ() {
-        #expect(NotificationSanitizer.sanitize("a\u{200C}b") == "a\u{200C}b")
-        #expect(NotificationSanitizer.sanitize("a\u{200D}b") == "a\u{200D}b")
-    }
+    @Test("caps text by whole grapheme clusters", arguments: [
+        ("a", 1000, 256),
+        ("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}", 255, 255),
+        ("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}", 256, 256),
+        ("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}\u{200D}\u{1F466}", 257, 256)
+    ])
+    func sanitize_lengthLimit_preservesWholeGraphemes(grapheme: String, count: Int, expectedCount: Int) {
+        let input = String(repeating: grapheme, count: count)
+        let expected = String(repeating: grapheme, count: expectedCount)
 
-    @Test("caps result at 256 grapheme clusters")
-    func sanitize_overSizedInput_truncatesTo256Graphemes() {
-        let long = String(repeating: "a", count: 1000)
-        let sanitized = NotificationSanitizer.sanitize(long)
-        #expect(sanitized.count == 256)
-    }
-
-    @Test("emoji counted as one grapheme stays under the cap")
-    func sanitize_emojiHeavyInput_truncatesByGraphemeNotByteCount() {
-        // 100 family emoji ≈ each is one grapheme but many bytes.
-        let emoji = String(repeating: "👨‍👩‍👧‍👦", count: 100)
-        let sanitized = NotificationSanitizer.sanitize(emoji)
-        #expect(sanitized.count == 100)
+        #expect(NotificationSanitizer.sanitize(input) == expected)
     }
 
     @Test("NFC normalizes decomposed forms")
@@ -78,11 +61,7 @@ struct NotificationSanitizerTests {
         let decomposed = "e\u{0301}"
         let sanitized = NotificationSanitizer.sanitize(decomposed)
         // NFC composed form is a single scalar U+00E9.
-        #expect(sanitized == "\u{00E9}")
+        #expect(sanitized.unicodeScalars.map(\.value) == [0x00E9])
     }
 
-    @Test("empty input stays empty")
-    func sanitize_emptyInput_returnsEmpty() {
-        #expect(NotificationSanitizer.sanitize("") == "")
-    }
 }

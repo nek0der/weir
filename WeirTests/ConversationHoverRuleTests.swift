@@ -20,9 +20,11 @@ struct ConversationHoverRuleTests {
         #expect(ConversationHoverRule.cardEmphasis(of: first, hover: hover, hasIdentity: true) == .lit)
     }
 
-    @Test func cardEmphasis_tabHoverOtherConversation_isDimmed() {
-        let hover = ConversationHover(conversations: [second], source: .tab)
-        #expect(ConversationHoverRule.cardEmphasis(of: first, hover: hover, hasIdentity: true) == .dimmed)
+    @Test(arguments: [true, false])
+    func cardEmphasis_tabHoverOtherConversation_isDimmed(hasIdentity: Bool) {
+        let other = ConversationKey(provider: .codex, conversationID: "c1", isFallback: false)
+        let hover = ConversationHover(conversations: [other], source: .tab)
+        #expect(ConversationHoverRule.cardEmphasis(of: first, hover: hover, hasIdentity: hasIdentity) == .dimmed)
     }
 
     @Test func cardEmphasis_cardHover_neverDims() {
@@ -41,13 +43,7 @@ struct ConversationHoverRuleTests {
     @Test func cardEmphasis_noConversation_isNone() {
         let other = ConversationHover(conversations: [second], source: .tab)
         #expect(ConversationHoverRule.cardEmphasis(of: nil, hover: other, hasIdentity: false) == .none)
-    }
-
-    /// A card whose conversation gave its color back (it ended with every
-    /// turn viewed) still steps back behind another conversation's tab.
-    @Test func cardEmphasis_tabHoverOtherUncoloredConversation_isDimmed() {
-        let other = ConversationHover(conversations: [second], source: .tab)
-        #expect(ConversationHoverRule.cardEmphasis(of: first, hover: other, hasIdentity: false) == .dimmed)
+        #expect(ConversationHoverRule.cardEmphasis(of: nil, hover: other, hasIdentity: true) == .none)
     }
 
     /// A split tab answers for every conversation it runs: neither of its
@@ -70,8 +66,10 @@ struct ConversationHoverRuleTests {
     @Test func framesPane_onlyUnderACardOfItsConversation() {
         let card = ConversationHover(conversations: [first], source: .card)
         let tab = ConversationHover(conversations: [first], source: .tab)
+        let otherProvider = ConversationKey(provider: .codex, conversationID: "c1", isFallback: false)
         #expect(ConversationHoverRule.framesPane(of: first, hover: card))
         #expect(!ConversationHoverRule.framesPane(of: second, hover: card))
+        #expect(!ConversationHoverRule.framesPane(of: otherProvider, hover: card))
         #expect(!ConversationHoverRule.framesPane(of: first, hover: tab))
         #expect(!ConversationHoverRule.framesPane(of: nil, hover: card))
     }

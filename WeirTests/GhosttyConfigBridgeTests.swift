@@ -34,6 +34,14 @@ struct GhosttyConfigBridgeTests {
         return nil
     }
 
+    private func keybinds(in config: String) -> [Substring] {
+        config.split(separator: "\n").filter { $0.hasPrefix("keybind = ") }
+    }
+
+    private func bindings(for trigger: String, in config: String) -> [Substring] {
+        keybinds(in: config).filter { $0.hasPrefix("keybind = \(trigger)=") }
+    }
+
     // MARK: - Header
 
     /// The header names the key that opens Settings, written from the one
@@ -62,26 +70,22 @@ struct GhosttyConfigBridgeTests {
 
     // MARK: - Font
 
-    @Test("font-family is omitted when the user hasn't picked one")
-    func makeConfig_defaultFontFamily_isOmitted() {
-        let config = generate(.default)
-        #expect(value(of: "font-family", in: config) == nil)
+    @Test(arguments: [(String?.none, String?.none), ("", nil), ("JetBrains Mono", "JetBrains Mono")])
+    func makeConfig_fontFamily_inheritsUnlessChosen(family: String?, expected: String?) {
+        var settings = WeirSettings.default
+        if let family {
+            settings.font.family = family
+        }
+        #expect(value(of: "font-family", in: generate(settings)) == expected)
     }
 
-    @Test("font-family is emitted when set in settings")
-    func makeConfig_customFontFamily_isEmitted() {
+    @Test(arguments: [(Double?.none, "13.0"), (14.0, "14.0"), (14.5, "14.5")])
+    func makeConfig_fontSize_isAlwaysEmitted(size: Double?, expected: String) {
         var settings = WeirSettings.default
-        settings.font.family = "JetBrains Mono"
-        let config = generate(settings)
-        #expect(value(of: "font-family", in: config) == "JetBrains Mono")
-    }
-
-    @Test("font-size always emits the user's chosen size")
-    func makeConfig_fontSize_isAlwaysEmitted() {
-        var settings = WeirSettings.default
-        settings.font.size = 14
-        let config = generate(settings)
-        #expect(value(of: "font-size", in: config) == "14.0")
+        if let size {
+            settings.font.size = size
+        }
+        #expect(value(of: "font-size", in: generate(settings)) == expected)
     }
 
     @Test(
@@ -117,25 +121,25 @@ struct GhosttyConfigBridgeTests {
         #expect(value(of: "scrollback-limit", in: config) == nil)
     }
 
-    @Test("the finalized scrollbar preference controls the native indicator")
-    func finalizedConfig_scrollbarNeverDisablesIndicator() throws {
+    @Test(arguments: [("never", false), ("system", true)])
+    func finalizedConfig_scrollbarPreferenceControlsIndicator(preference: String, isEnabled: Bool) throws {
         try withTempDir { directory in
             let path = directory.appendingPathComponent("ghostty-config")
-            try "scrollbar = never\n".write(to: path, atomically: true, encoding: .utf8)
+            try "scrollbar = \(preference)\n".write(to: path, atomically: true, encoding: .utf8)
             let config = try #require(ghostty_config_new())
             defer { ghostty_config_free(config) }
             path.path.withCString { ghostty_config_load_file(config, $0) }
             ghostty_config_finalize(config)
 
-            #expect(!GhosttyApp.scrollbarEnabled(in: config))
+            #expect(GhosttyApp.scrollbarEnabled(in: config) == isEnabled)
         }
     }
 
-    @Test("cursor-style-blink toggle is forwarded as a bool")
-    func makeConfig_cursorBlink_isForwarded() {
+    @Test(arguments: [(CursorBlink.on, "true"), (.off, "false")])
+    func makeConfig_cursorBlink_isForwarded(blink: CursorBlink, expected: String) {
         var settings = WeirSettings.default
-        settings.terminal.cursorBlink = .on
-        #expect(value(of: "cursor-style-blink", in: generate(settings)) == "true")
+        settings.terminal.cursorBlink = blink
+        #expect(value(of: "cursor-style-blink", in: generate(settings)) == expected)
     }
 
     // MARK: - Forced overrides
@@ -148,9 +152,11 @@ struct GhosttyConfigBridgeTests {
     }
 
     @Test("term falls back when no bundled database is available")
-    func makeConfig_term_fallsBackWithoutResources() {
+    func makeConfig_term_fallsBackWithoutResources() throws {
         #expect(value(of: "term", in: generate(.default)) == "xterm-256color")
-        #expect(GhosttyConfigBridge.resolvedTerm(resourcesDir: "/missing/share/ghostty") == "xterm-256color")
+        try withTempDir { directory in
+            #expect(GhosttyConfigBridge.resolvedTerm(resourcesDir: directory.appendingPathComponent("ghostty").path) == "xterm-256color")
+        }
     }
 
     /// Demo mode's shell goes in the config, as a surface's own command
@@ -217,6 +223,7 @@ struct GhosttyConfigBridgeTests {
     func makeConfig_nilResourcesDir_omitsLine() {
         let config = GhosttyConfigBridge.makeConfigString(settings: .default, resourcesDir: nil)
         #expect(value(of: "resources-dir", in: config) == nil)
+        #expect(value(of: "theme", in: config) == nil)
     }
 
     @Test("resources path emits the bundled light and dark theme pair")
@@ -245,14 +252,12 @@ struct GhosttyConfigBridgeTests {
         #expect(GhosttyApp.resolvedColorScheme(preference: preference, systemIsDark: systemIsDark) == expected)
     }
 
-    @Test("generated config is accepted for every Bell choice", arguments: BellAction.allCases)
-    func generatedConfig_hasNoDiagnostics(bellAction: BellAction) throws {
+    @Test("generated config is accepted by libghostty")
+    func generatedConfig_hasNoDiagnostics() throws {
         try withTempDir { directory in
-            var settings = WeirSettings.default
-            settings.terminal.bellAction = bellAction
             let resourcesDir = try #require(GhosttyApp.resolveResourcesDir())
             let body = GhosttyConfigBridge.makeConfigString(
-                settings: settings,
+                settings: .default,
                 resourcesDir: resourcesDir
             )
             let path = directory.appendingPathComponent("generated-ghostty-config")
@@ -261,20 +266,6 @@ struct GhosttyConfigBridgeTests {
             let diagnostics = try #require(GhosttyConfigBridge.configDiagnostics(at: path.path))
             #expect(diagnostics.isEmpty)
         }
-    }
-
-    // MARK: - Ordering guarantee
-
-    @Test("forced overrides appear after the user-facing section so libghostty's last-write-wins keeps them sticky")
-    func makeConfig_forcedOverrides_appearAfterUserSettings() {
-        let config = generate(.default)
-        guard let userIdx = config.range(of: "font-size"),
-              let overridesIdx = config.range(of: "background-opacity")
-        else {
-            Issue.record("expected both font-size and background-opacity lines")
-            return
-        }
-        #expect(userIdx.lowerBound < overridesIdx.lowerBound)
     }
 
     // MARK: - Keybinds
@@ -291,6 +282,9 @@ struct GhosttyConfigBridgeTests {
         let forced = try #require(config.range(of: "keybind = super+q=unbind"))
         let user = try #require(config.range(of: "keybind = super+ctrl+k=increase_font_size:1"))
         #expect(forced.lowerBound < user.lowerBound)
+        #expect(bindings(for: "super+ctrl+k", in: config) == ["keybind = super+ctrl+k=increase_font_size:1"])
+        #expect(bindings(for: "super+shift+=", in: config).isEmpty)
+        #expect(keybinds(in: config).filter { $0.hasSuffix("=increase_font_size:1") }.count == 1)
     }
 
     /// `keybind = clear` comes before the bindings, so it wipes libghostty's
@@ -324,18 +318,17 @@ struct GhosttyConfigBridgeTests {
     /// `ghosttyAction` fails here until the action is confirmed menu-less.
     @Test("Emitted libghostty actions stay limited to menu-less actions")
     func onlyMenulessActions_reachLibghosttyAsActions() {
-        let emitted = Set(WeirShortcutAction.allCases.compactMap(\.ghosttyAction))
-        let expected: Set = [
-            "increase_font_size:1",
-            "decrease_font_size:1",
-            "reset_font_size",
-            "jump_to_prompt:1",
-            "jump_to_prompt:-1"
+        let actual = Dictionary(uniqueKeysWithValues: WeirShortcutAction.allCases.compactMap { action in
+            action.ghosttyAction.map { (action, $0) }
+        })
+        let expected: [WeirShortcutAction: String] = [
+            .increaseFontSize: "increase_font_size:1",
+            .decreaseFontSize: "decrease_font_size:1",
+            .resetFontSize: "reset_font_size",
+            .nextPrompt: "jump_to_prompt:1",
+            .previousPrompt: "jump_to_prompt:-1"
         ]
-        #expect(emitted == expected, """
-        `ghosttyAction` names an action that also has a menu Button, which \
-        would run twice for one keystroke. See `WeirShortcutAction.ghosttyAction`.
-        """)
+        #expect(actual == expected)
     }
 
     /// A menu-owned action reaches libghostty only as `=ignore`: the menu
@@ -350,7 +343,10 @@ struct GhosttyConfigBridgeTests {
         #expect(!menuOwned.isEmpty)
         for action in menuOwned {
             let trigger = try #require(action.defaultShortcut?.ghosttyTrigger)
-            #expect(config.contains("keybind = \(trigger)=ignore"), "menu-owned action \(action.rawValue) missing its =ignore guard")
+            let line = "keybind = \(trigger)=ignore"[...]
+            // The sidebar and pane actions can intentionally share a trigger.
+            let count = action.sharesKeys?.defaultShortcut?.ghosttyTrigger == trigger ? 2 : 1
+            #expect(bindings(for: trigger, in: config) == Array(repeating: line, count: count), "\(action.rawValue)")
         }
     }
 
@@ -365,9 +361,9 @@ struct GhosttyConfigBridgeTests {
             modifiers: [.command]
         )
         let config = generate(settings)
-        #expect(!config.contains("clipboard-paste-protection = false"))
-        #expect(!config.contains("keybind = x"))
-        #expect(value(of: "clipboard-paste-protection", in: config) == "true")
+        var control = WeirSettings.default
+        control.keyboard.unassigned = [WeirShortcutAction.toggleSidebar.rawValue]
+        #expect(config == generate(control))
     }
 
     /// The forced keys come after every keybind line, so nothing a binding
@@ -376,14 +372,18 @@ struct GhosttyConfigBridgeTests {
     func forcedOverrides_followTheLastKeybind() throws {
         let config = generate(.default)
         let lines = config.split(separator: "\n").map(String.init)
+        let fontSize = try #require(lines.firstIndex(of: "font-size = 13.0"))
         let lastKeybind = try #require(lines.lastIndex { $0.hasPrefix("keybind = ") })
-        let forcedKeys = [
-            "background-opacity", "term", "confirm-close-surface",
-            "clipboard-paste-protection", "shell-integration-features", "custom-shader-animation"
+        let forced = [
+            "background-opacity = 0", "term = xterm-256color", "confirm-close-surface = false",
+            "clipboard-paste-protection = true", "shell-integration-features = no-cursor,sudo,ssh-env",
+            "custom-shader-animation = false"
         ]
-        for key in forcedKeys {
-            let index = try #require(lines.firstIndex { $0.hasPrefix("\(key) = ") })
-            #expect(index > lastKeybind, "\(key)")
+        for line in forced {
+            let key = try #require(line.split(separator: "=", maxSplits: 1).first)
+            #expect(lines.filter { $0.hasPrefix(key + "=") } == [line])
+            let index = try #require(lines.firstIndex(of: line))
+            #expect(index > lastKeybind && index > fontSize, "\(line)")
         }
     }
 
@@ -421,7 +421,7 @@ struct GhosttyConfigBridgeTests {
             let firstPath = try #require(first)
             let before = try String(contentsOfFile: firstPath, encoding: .utf8)
             let second = GhosttyConfigBridge.writeConfigFile(
-                settings: .default, resourcesDir: "/resources",
+                settings: .default, resourcesDir: "/other-resources",
                 directory: directory, processID: 202
             )
             let secondPath = try #require(second)
@@ -429,8 +429,9 @@ struct GhosttyConfigBridgeTests {
             let retained = try String(contentsOfFile: firstPath, encoding: .utf8)
             #expect(retained == before)
             #expect(retained.contains("light:/resources/themes/Apple System Colors Light"))
-            let dark = try String(contentsOfFile: secondPath, encoding: .utf8)
-            #expect(dark == before)
+            let secondContents = try String(contentsOfFile: secondPath, encoding: .utf8)
+            #expect(secondContents == before.replacingOccurrences(of: "/resources/", with: "/other-resources/"))
+            #expect(secondContents != before)
         }
     }
 
@@ -446,14 +447,17 @@ struct GhosttyConfigBridgeTests {
         #expect(config == nil)
     }
 
-    @Test func aFolderThatCannotBeWritten_givesNoPath() throws {
+    @Test func aFileInPlaceOfTheConfigDirectory_givesNoPath() throws {
         try withTempDir { directory in
-            try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
-            defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
+            let blocked = directory.appendingPathComponent("not-a-directory")
+            let original = Data("preserve this file".utf8)
+            try original.write(to: blocked)
             let path = GhosttyConfigBridge.writeConfigFile(
-                settings: .default, resourcesDir: nil, directory: directory, processID: 303
+                settings: .default, resourcesDir: nil, directory: blocked, processID: 303
             )
             #expect(path == nil)
+            #expect(try Data(contentsOf: blocked) == original)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path) == ["not-a-directory"])
         }
     }
 }

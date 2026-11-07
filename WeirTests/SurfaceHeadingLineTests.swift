@@ -230,17 +230,20 @@ struct SurfaceHeadingLineTests {
     /// over the label and adds nothing to it, so a row's name starts where
     /// its second line does and a tab's title sits its spacing from its
     /// badge (`InlineRenameGeometryTests` pins the editing side).
-    @Test func renameLabel_atRest_isAsWideAsItsText() {
+    @Test(arguments: ["feature-login", "fix"])
+    func renameLabel_atRest_isAsWideAsItsText(name: String) {
         let font = Font.system(size: 13, weight: .medium)
         let label = InlineRenameField(
-            name: "feature-login",
+            name: name,
             isEditing: .constant(false),
             font: font,
             foregroundColor: .primary,
             fillsWidth: false
         )
-        let text = Text(verbatim: "feature-login").font(font).lineLimit(1)
-        #expect(Self.fittingWidth(of: label) == Self.fittingWidth(of: text))
+        let text = Text(verbatim: name).font(font).lineLimit(1)
+        let textWidth = Self.fittingWidth(of: text)
+        #expect(textWidth > 0)
+        #expect(Self.fittingWidth(of: label) == textWidth)
     }
 
     // MARK: - Helpers

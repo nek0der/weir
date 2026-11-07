@@ -38,9 +38,7 @@ enum AgentDateParsing {
     ///
     /// We keep the class over the Sendable `Date.ISO8601FormatStyle`
     /// because the style does not read and write the same: it accepts
-    /// fractional seconds, which this boundary has always rejected, and it
-    /// truncates a fraction where the formatter rounds it to the nearest
-    /// second.
+    /// fractional seconds, which this boundary has always rejected.
     private static let formatter: OSAllocatedUnfairLock<ISO8601DateFormatter> = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]

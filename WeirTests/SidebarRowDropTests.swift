@@ -28,14 +28,20 @@ struct SidebarRowDropTests {
     /// stays on its project.
     @Test func aPaneBesideAnother_movesInATabOfItsOwn_andTheWindowStays() throws {
         let fixture = Fixture()
+        let original = try #require(fixture.aTab.splitTree.allLeafIDs().first)
         let pane = Self.split(fixture.aTab, in: fixture)
+        let drag = WeirDragState()
+        let destination = ContainerID.project(fixture.b.id)
 
-        Self.rowDrop(fixture).drop(prefix: DragPrefix.pane, pane, on: .project(fixture.b.id))
+        Self.rowDrop(fixture, dragState: drag).drop(prefix: DragPrefix.pane, pane, on: destination)
 
         let moved = try #require(fixture.session.tab(containing: pane))
         #expect(moved.id != fixture.aTab.id)
-        #expect(moved.container == .project(fixture.b.id))
-        #expect(fixture.session.tab(fixture.aTab.id)?.splitTree.allLeafIDs().count == 1)
+        #expect(moved.container == destination)
+        #expect(moved.splitTree.allLeafIDs() == [pane])
+        #expect(fixture.session.tab(fixture.aTab.id)?.splitTree.allLeafIDs() == [original])
+        #expect(drag.landing?.window == fixture.primary.id)
+        #expect(drag.landing?.container == destination)
         #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
     }
 
@@ -100,6 +106,10 @@ struct SidebarRowDropTests {
 
         rowDrop.drop(prefix: DragPrefix.tab, fixture.aOther.id, on: liveRow)
         #expect(fixture.session.tab(fixture.aOther.id)?.container == liveRow)
+        rowDrop.drop(prefix: DragPrefix.pane, pane, on: liveRow)
+        let moved = try #require(fixture.session.tab(containing: pane))
+        #expect(moved.container == liveRow)
+        #expect(moved.splitTree.allLeafIDs() == [pane])
     }
 
     /// A pane alone in a tab of its row would stay as it is; one beside
@@ -180,6 +190,8 @@ struct SidebarRowDropTests {
 
         Self.rowDrop(fixture).drop(prefix: DragPrefix.tab, fixture.aOther.id, on: .loose)
 
+        #expect(fixture.session.tab(fixture.aOther.id)?.container == .loose)
+        #expect(fixture.primary.selection.isChoosingProject)
         #expect(fixture.primary.selection.activeTabID == nil)
     }
 

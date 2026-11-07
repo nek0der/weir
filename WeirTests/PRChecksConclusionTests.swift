@@ -91,5 +91,6 @@ struct PRChecksConclusionTests {
         #expect(PRChecksConclusion(rawStatus: "Success") == .success)
         #expect(PRChecksConclusion(rawStatus: "failure") == .failure)
         #expect(PRChecksConclusion(rawStatus: "TiMeD_OuT") == .failure)
+        #expect(PRChecksConclusion(rawStatus: "In_PrOgReSs") == .pending)
     }
 }

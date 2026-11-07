@@ -75,14 +75,22 @@ struct ReviewTabModelTests {
     }
 
     @Test func aStopsPartialChanges_areItsTurn_orElseWhatIsUncommitted() throws {
-        let context = try Self.context([Self.turn(5), Self.turn(6, hasEnd: false), Self.turn(7, phase: "started")])
+        let context = try Self.context([
+            Self.turn(5), Self.turn(6, hasEnd: false), Self.turn(7, phase: "started"),
+            Self.turn(8, phase: "failed"), Self.turn(9, phase: "interrupted"),
+            Self.turn(10, changes: #"{"kind":"unavailable","reason":"endMissing"}"#, phase: "interrupted", hasEnd: false)
+        ])
         #expect(Self.range(Self.open(.partialChanges(TurnID("T5")), context)) == 5...5)
+        #expect(Self.range(Self.open(.partialChanges(TurnID("T8")), context)) == 8...8)
+        #expect(Self.range(Self.open(.partialChanges(TurnID("T9")), context)) == 9...9)
         let uncommitted = ReviewScopeOption.uncommitted(includesChangesOutsideTurns: false)
         // Cut short with no end snapshot, still running, unknown, or none.
         #expect(Self.open(.partialChanges(TurnID("T6")), context)?.selection == uncommitted)
         #expect(Self.open(.partialChanges(TurnID("T7")), context)?.selection == uncommitted)
-        #expect(Self.open(.partialChanges(TurnID("T9")), context)?.selection == uncommitted)
+        #expect(Self.open(.partialChanges(TurnID("T10")), context)?.selection == uncommitted)
+        #expect(Self.open(.partialChanges(TurnID("T99")), context)?.selection == uncommitted)
         #expect(Self.open(.partialChanges(nil), context)?.selection == uncommitted)
+        #expect(Self.open(.partialChanges(TurnID("T10")), context)?.scope == .uncommitted)
     }
 
     @Test func aTurnWithNothingToRead_saysWhy_andARecordThatLostASnapshotOpensToSayItIsIncomplete() throws {
@@ -112,18 +120,16 @@ struct ReviewTabModelTests {
 
     @Test func aTurnWhoseChangesCouldNotBeJudged_isNotReadAsADiff_evenWithBothTrees() throws {
         // One snapshot left out a large file the other kept.
-        let context = try Self.context([Self.turn(6, changes: #"{"kind":"unavailable","reason":"skippedFilesDiffer"}"#)])
+        let context = try Self.context([Self.turn(5), Self.turn(6, changes: #"{"kind":"unavailable","reason":"skippedFilesDiffer"}"#)])
 
         #expect(Self.failure(.turn(TurnID("T6")), context) == .changesUnavailable)
         #expect(Self.failure(.latestTurn, context) == .changesUnavailable, "not an older turn in its place")
         let tab = try #require(Self.open(.uncommitted, context))
-        #expect(!ReviewTabModel.menu(tab, context).contains {
-            if case .turn = $0 {
-                true
-            } else {
-                false
-            }
-        }, "not listed")
+        let listed = ReviewTabModel.menu(tab, context).compactMap { option -> [TurnID]? in
+            guard case let .turn(range, _) = option else { return nil }
+            return range.turnIDs
+        }
+        #expect(listed == [[TurnID("T5")]], "only the older readable turn is listed")
     }
 
     @Test func aRecordNobodyPrompted_isNoTurnToReview() throws {
@@ -140,7 +146,14 @@ struct ReviewTabModelTests {
             Self.turn(8)
         ])
 
-        #expect(Self.range(Self.open(.unviewedTurns, context)) == 6...8)
+        let tab = try #require(Self.open(.unviewedTurns, context))
+        guard case let .turns(range)? = tab.scope else {
+            Issue.record("Expected the range across the missing middle snapshot")
+            return
+        }
+        #expect(range.turnIDs == [TurnID("T6"), TurnID("T7"), TurnID("T8")])
+        #expect(range.beginTree == Fixture.tree("b", 6))
+        #expect(range.endTree == Fixture.tree("e", 8))
     }
 
     @Test func noUnviewedTurns_stillOpens_toSaySo() throws {
@@ -166,7 +179,7 @@ struct ReviewTabModelTests {
         #expect(again.isShown, "brought back in front")
     }
 
-    @Test func somethingThatCannotBeRead_leavesTheOpenTabAsItWas() throws {
+    @Test func anUnreadableRequestedTurn_returnsTheRunningFailure() throws {
         let context = try Self.context([Self.turn(6), Self.turn(7, phase: "started", hasEnd: false)])
         let tab = try #require(Self.open(.unviewedTurns, context))
 
@@ -312,19 +325,11 @@ struct ReviewTabModelTests {
 
         #expect(status(others) == .noTerminal(hasOtherPanes: true))
         #expect(ReviewTabText.insertHelp(status(others), locale: en) == "Choose a destination to insert into")
+        let currentOnly = ReviewTabModel.destinationChoices([ReviewDestination(paneID: Self.agent, title: "starting")])
+        #expect(status(currentOnly) == .noTerminal(hasOtherPanes: false))
         #expect(status([]) == .noTerminal(hasOtherPanes: false))
         #expect(ReviewTabText.insertHelp(status([]), locale: en) == nil)
         #expect(!status(others).offersChoice, "the band names the pane, with no terminal, as before")
-    }
-
-    @Test func openingFromNoPane_keepsTheAgentTheTabFollows() throws {
-        let context = try Self.context([Self.turn(6)])
-        let tab = try #require(Self.open(.unviewedTurns, context))
-
-        let again = try #require(Self.open(.uncommitted, context, from: nil, current: tab))
-
-        #expect(again.agentPaneID == Self.agent)
-        #expect(again.destinationPaneID == Self.agent)
     }
 
     @Test func aCommentBeingWritten_keepsTheTabOnWhatItReads() throws {
@@ -381,7 +386,7 @@ struct ReviewTabModelTests {
     }
 
     @Test func aTurnEndingAfterTheTabOpened_isOffered_andOnesThatHadEndedAreNot() throws {
-        let before = try Self.context([Self.turn(5), Self.turn(6), Self.turn(7)])
+        let before = try Self.context([Self.turn(5), Self.turn(6), Self.turn(7), Self.turn(8, phase: "started", hasEnd: false)])
         let past = try #require(Self.open(.turn(TurnID("T5")), before))
         let latest = try #require(Self.open(.unviewedTurns, before))
         let after = try Self.context([Self.turn(5), Self.turn(6), Self.turn(7), Self.turn(8), Self.turn(9)])
@@ -389,7 +394,7 @@ struct ReviewTabModelTests {
         #expect(ReviewTabModel.followingTurns(past, before).isEmpty, "T6 and T7 had ended")
         #expect(ReviewTabModel.followingTurns(past, after).isEmpty, "a past turn is not carried over the turns after it")
         #expect(ReviewTabModel.followingTurns(latest, before).isEmpty)
-        #expect(ReviewTabModel.followingTurns(latest, after).map(\.displayNumber) == [8, 9])
+        #expect(ReviewTabModel.followingTurns(latest, after).map(\.turnID) == [TurnID("T8"), TurnID("T9")])
     }
 
     @Test func anAnswerAfterTheRange_doesNotStopLaterTurnsBeingOffered() throws {
@@ -411,11 +416,14 @@ struct ReviewTabModelTests {
         let added = carried.tab
 
         #expect(Self.range(added) == 6...7)
-        guard case let .turns(original) = tab.scope else {
+        guard case let .turns(range) = added.scope else {
             Issue.record("a range")
             return
         }
-        #expect(original.extended(with: carried.turns).map(ReviewScope.turns) == added.scope, "the session arrives at the same range")
+        #expect(carried.turns.map(\.turnID) == [TurnID("T7")])
+        #expect(range.turnIDs == [TurnID("T6"), TurnID("T7")])
+        #expect(range.beginTree == Fixture.tree("b", 6))
+        #expect(range.endTree == Fixture.tree("e", 7))
         guard case .turn(_, TurnPrompt(head: "Fix it")) = added.selection else {
             Issue.record("still the turn picked, carried on")
             return
@@ -438,21 +446,6 @@ struct ReviewTabModelTests {
         #expect(menu.count == ReviewScopeCatalog.options(
             turns: after.turns, isViewed: after.isViewed, branchBase: "main", hasChangesOutsideTurns: false
         ).count)
-    }
-
-    @Test func theDropdown_alwaysShowsWhatTheTabReads() throws {
-        let before = try Self.context([Self.turn(6)])
-        let uncommitted = try #require(Self.open(.uncommitted, before))
-        let incomplete = ReviewTabModel.select(.incompleteTurn(6), in: uncommitted, before)
-        // Changes outside turns appeared after the tab was fixed.
-        let after = try Self.context([Self.turn(6)], outside: true)
-
-        let menu = ReviewTabModel.menu(uncommitted, after)
-
-        // The uncommitted changes, as they are now; one choice, not two.
-        #expect(menu.contains(.uncommitted(includesChangesOutsideTurns: true)))
-        #expect(!menu.contains(uncommitted.selection))
-        #expect(ReviewTabModel.menu(incomplete, after).contains(.incompleteTurn(6)))
     }
 
     @Test func choosingAnotherScope_keepsTheTab_andFixesItAsOfNow() throws {
@@ -478,12 +471,18 @@ struct ReviewTabModelTests {
     @Test func markAsViewed_followsTheTurnsTheReviewReads_notTheConversationItOpenedWith() throws {
         // Opened from a shell pane, whose agent started afterwards: the tab
         // knows no conversation, and the turns it reads now are that agent's.
-        let tab = try #require(try Self.open(.unviewedTurns, Self.context([Self.turn(6)])))
-        #expect(tab.conversation == nil)
-        #expect(try ReviewTabModel.markViewed(tab, Self.context([Self.turn(6)])) == .throughTurn(ReviewTabTurn(
-            id: TurnID("T6"),
-            number: 6
-        )))
+        let opened = try #require(Self.open(.unviewedTurns, Self.context([])))
+        #expect(opened.conversation == nil)
+        #expect(opened.selection == .unviewedTurns(.none))
+        let turn = try Self.turn(6)
+        var resolved = Self.context([turn])
+        resolved.conversation = turn.conversation
+        let range = try #require(ReviewTurnRange(turns: [turn]))
+        let chosen = ReviewTabModel.select(.unviewedTurns(.range(range)), in: opened, resolved)
+
+        #expect(chosen.opening == opened.opening)
+        #expect(chosen.conversation == nil)
+        #expect(ReviewTabModel.markViewed(chosen, resolved) == .throughTurn(ReviewTabTurn(id: turn.turnID, number: 6)))
     }
 
     @Test func markAsViewed_onAPartlyViewedRange_stillMovesToItsEnd() throws {
@@ -520,27 +519,37 @@ struct ReviewTabModelTests {
 
         #expect(ReviewTabModel.markViewed(range, viewed) == nil, "already viewed")
         #expect(ReviewTabModel.markViewed(unviewed, viewed) == nil, "none unviewed")
-        #expect(ReviewTabModel.markViewed(ReviewTabModel.select(.branch(base: "main"), in: range, viewed), viewed) == nil)
-        #expect(ReviewTabModel.markViewed(ReviewTabModel.select(.incompleteTurn(7), in: range, viewed), viewed) == nil)
+        let unviewedHistory = Self.context(turns)
+        #expect(ReviewTabModel.markViewed(ReviewTabModel.select(.branch(base: "main"), in: range, unviewedHistory), unviewedHistory) == nil)
+        #expect(ReviewTabModel.markViewed(ReviewTabModel.select(.incompleteTurn(7), in: range, unviewedHistory), unviewedHistory) == nil)
     }
 
     @Test func theTurnsRead_areTheConversationsInThisWorktree() throws {
-        // The conversation resumed in another worktree for T2.
-        let turns = try [Self.turn(3), Self.turn(2, root: "/elsewhere"), Self.turn(1)]
+        let elsewhereBegin = try Fixture.turn(
+            "T2", number: 2, endTree: SnapshotTree(tree: Fixture.tree("e", 2), root: Self.root),
+            extras: .init(beginTree: SnapshotTree(tree: Fixture.tree("b", 2), root: "/elsewhere"))
+        )
+        let elsewhereEnd = try Fixture.turn(
+            "T4", number: 4, endTree: SnapshotTree(tree: Fixture.tree("e", 4), root: "/elsewhere"),
+            extras: .init(beginTree: SnapshotTree(tree: Fixture.tree("b", 4), root: Self.root))
+        )
+        let noSnapshots = try Fixture.turn("T5", number: 5)
+        let turns = try [Self.turn(3), elsewhereBegin, elsewhereEnd, Self.turn(1), noSnapshots]
         let other = ConversationKey(provider: .codex, conversationID: "x", isFallback: false)
 
         let kept = ReviewTabModel.turns(turns, root: Self.root, conversation: Fixture.conversation)
 
-        #expect(kept.map(\.displayNumber) == [1, 3], "oldest first, without the turn of another worktree")
+        #expect(kept.map(\.displayNumber) == [1, 3, 5], "oldest first, without either foreign snapshot")
         #expect(ReviewTabModel.turns(turns, root: Self.root, conversation: other).isEmpty)
     }
 
-    @Test func commandReturn_marksViewedOnlyOnceTheButtonHasBeenOnScreen_andOnce() {
+    @Test func commandReturn_marksViewedOnlyOnceTheButtonHasBeenOnScreen_andOnce() throws {
         var gate = ReviewBandGate()
         let start = SuspendingClock().now
         let opening = UUID()
         let action = ReviewTabModel.MarkViewed.throughTurn(ReviewTabTurn(id: TurnID("T7"), number: 7))
-        let shown = ReviewBandGate.Shown(opening: opening, selection: .uncommitted(includesChangesOutsideTurns: false), action: action)
+        let range = try #require(ReviewTurnRange(turns: [Self.turn(7)]))
+        let shown = ReviewBandGate.Shown(opening: opening, selection: .turn(range, prompt: TurnPrompt(head: nil)), action: action)
 
         gate.noteShown(shown, at: start)
         #expect(gate.decide(at: start.advanced(by: .milliseconds(100))) == nil, "a press meant for the screen before")
@@ -548,33 +557,38 @@ struct ReviewTabModelTests {
         #expect(gate.decide(at: start.advanced(by: .seconds(2))) == nil, "a held key marks once")
 
         // Another range ending at the same turn is a new showing, which waits again.
-        let other = ReviewBandGate.Shown(opening: opening, selection: .unviewedTurns(.none), action: action)
+        let other = ReviewBandGate.Shown(opening: opening, selection: .unviewedTurns(.range(range)), action: action)
         gate.noteShown(other, at: start.advanced(by: .seconds(3)))
         #expect(gate.decide(at: start.advanced(by: .seconds(3))) == nil)
         #expect(gate.decide(at: start.advanced(by: .seconds(4))) == action)
     }
 
-    @Test func commandReturn_waitsAgain_afterTheTabClosesAndOpens_orTheWindowComesBack() {
+    @Test func commandReturn_waitsAgain_afterTheTabClosesAndOpens_orTheWindowComesBack() throws {
         var gate = ReviewBandGate()
         let start = SuspendingClock().now
         let action = ReviewTabModel.MarkViewed.throughTurn(ReviewTabTurn(id: TurnID("T7"), number: 7))
-        let first = ReviewBandGate.Shown(opening: UUID(), selection: .unviewedTurns(.none), action: action)
+        let range = try #require(ReviewTurnRange(turns: [Self.turn(7)]))
+        let first = ReviewBandGate.Shown(opening: UUID(), selection: .unviewedTurns(.range(range)), action: action)
         gate.noteShown(first, at: start)
         #expect(gate.decide(at: start.advanced(by: .seconds(1))) == action)
 
-        // Marked, then the tab closed and opened again: a new opening,
-        // pressable after its wait.
+        // The tab was hidden; showing the same opening settles again.
         gate.noteShown(nil, at: start.advanced(by: .seconds(2)))
-        let reopened = ReviewBandGate.Shown(opening: UUID(), selection: .unviewedTurns(.none), action: action)
-        gate.noteShown(reopened, at: start.advanced(by: .seconds(3)))
+        gate.noteShown(first, at: start.advanced(by: .seconds(3)))
         #expect(gate.decide(at: start.advanced(by: .seconds(3))) == nil)
         #expect(gate.decide(at: start.advanced(by: .seconds(4))) == action)
 
-        let sameAgain = ReviewBandGate.Shown(opening: UUID(), selection: .unviewedTurns(.none), action: action)
+        let sameAgain = ReviewBandGate.Shown(opening: UUID(), selection: .unviewedTurns(.range(range)), action: action)
         gate.noteShown(sameAgain, at: start.advanced(by: .seconds(5)))
         gate.restartSettling(at: start.advanced(by: .seconds(6)))
         #expect(gate.decide(at: start.advanced(by: .milliseconds(6100))) == nil, "the window came back in front")
         #expect(gate.decide(at: start.advanced(by: .seconds(7))) == action)
+
+        gate.noteShown(nil, at: start.advanced(by: .seconds(8)))
+        let reopened = ReviewBandGate.Shown(opening: UUID(), selection: .unviewedTurns(.range(range)), action: action)
+        gate.noteShown(reopened, at: start.advanced(by: .seconds(9)))
+        #expect(gate.decide(at: start.advanced(by: .seconds(9))) == nil)
+        #expect(gate.decide(at: start.advanced(by: .seconds(10))) == action)
     }
 
     @Test func includingOutsideTurns_describesTheUncommittedChangesAsTheyAreNow() throws {
@@ -588,6 +602,13 @@ struct ReviewTabModelTests {
         #expect(!ReviewTabModel.menu(tab, now).contains(.uncommitted(includesChangesOutsideTurns: false)))
         #expect(ReviewTabModel.isSameChoice(.uncommitted(includesChangesOutsideTurns: true), tab.selection), "the same comparison")
         #expect(!ReviewTabModel.isSameChoice(.branch(base: "main"), tab.selection))
+
+        let missing = try Self.context([
+            Self.turn(6, changes: #"{"kind":"unavailable","reason":"endMissing"}"#, hasEnd: false)
+        ])
+        let incomplete = try #require(Self.open(.turn(TurnID("T6")), missing))
+        #expect(incomplete.selection == .incompleteTurn(6))
+        #expect(ReviewTabModel.menu(incomplete, missing).contains(.incompleteTurn(6)))
     }
 
     @Test func theBandAndAddToScope_waitForTheReviewToShowTheTabsRange() throws {
@@ -596,19 +617,21 @@ struct ReviewTabModelTests {
 
         #expect(ReviewTabModel.isShowingItsScope(tab, loadedScope: scope, hasLoaded: true, isLoading: false))
         #expect(!ReviewTabModel.isShowingItsScope(tab, loadedScope: scope, hasLoaded: true, isLoading: true), "still loading")
-        #expect(!ReviewTabModel.isShowingItsScope(tab, loadedScope: .uncommitted, hasLoaded: true, isLoading: false), "another range")
+        #expect(!ReviewTabModel.isShowingItsScope(tab, loadedScope: .uncommitted, hasLoaded: true, isLoading: false))
+        let otherRange = try #require(ReviewTurnRange(turns: [Self.turn(6)]))
+        #expect(!ReviewTabModel.isShowingItsScope(tab, loadedScope: .turns(otherRange), hasLoaded: true, isLoading: false), "another range")
         #expect(!ReviewTabModel.isShowingItsScope(tab, loadedScope: scope, hasLoaded: false, isLoading: false))
         let none = ReviewTabModel.select(.unviewedTurns(.none), in: tab, Self.context([]))
         #expect(!ReviewTabModel.isShowingItsScope(none, loadedScope: nil, hasLoaded: true, isLoading: false))
     }
 
     @Test func aTreeRecordedThroughALink_isInThisWorktree() throws {
-        let turns = try [Self.turn(1, root: "/link/repo")]
+        let turns = try [Self.turn(1, root: "/link/repo"), Self.turn(2, root: "/elsewhere")]
 
         let kept = ReviewTabModel
             .turns(turns, root: Self.root, conversation: Fixture.conversation) { $0 == "/link/repo" || $0 == Self.root }
 
-        #expect(kept.count == 1)
+        #expect(kept.map(\.turnID) == [TurnID("T1")])
         #expect(ReviewTabModel.turns(turns, root: Self.root, conversation: Fixture.conversation).isEmpty, "by name, it is elsewhere")
     }
 
@@ -621,10 +644,11 @@ struct ReviewTabModelTests {
         noAgent.conversation = nil
 
         #expect(tab.conversation == Fixture.conversation)
-        #expect(
-            Self.open(.uncommitted, noAgent, from: nil, current: tab)?.conversation == Fixture.conversation,
-            "a pane with no agent keeps it"
-        )
+        let panelless = try #require(Self.open(.uncommitted, noAgent, from: nil, current: tab))
+        #expect(panelless.conversation == Fixture.conversation, "a pane with no agent keeps it")
+        #expect(panelless.agentPaneID == Self.agent)
+        #expect(panelless.destinationPaneID == Self.agent)
+        #expect(panelless.opening == tab.opening)
         context.conversation = other
         #expect(Self.open(.unviewedTurns, context, current: tab)?.conversation == other)
     }
@@ -674,17 +698,13 @@ extension ReviewTabModelTests {
     /// Claude's as one comparison, the tab's conversation the one the
     /// panel chose to open it from.
     @Test func theWorktreesUnviewedTurns_readEveryConversation_asOneComparison() throws {
-        var codexExtras = Fixture.Extras()
-        codexExtras.conversationID = "codex"
-        codexExtras.startedAt = "2026-10-12T00:00:10Z"
-        codexExtras.beginTree = SnapshotTree(tree: Fixture.tree("b", 9), root: Self.root)
-        let codex = try Fixture.turn(
-            "X1",
-            changes: Fixture.changedFiles,
-            number: 1,
-            endTree: SnapshotTree(tree: Fixture.tree("e", 9), root: Self.root),
-            extras: codexExtras
-        )
+        let codex = try JSONDecoder().decode(TurnSummary.self, from: Data("""
+        {"turnId":"X1","conversation":{"provider":"codex","conversationId":"codex","isFallback":false},
+         "runId":"R","paneId":"P","displayNumber":1,"startedAt":"2026-10-12T00:00:10Z",
+         "phase":"finished","changes":\(Fixture.changedFiles),"hasPrompt":true,
+         "begin":{"kind":"captured","tree":"\(Fixture.tree("b", 9))","root":"/repo"},
+         "end":{"kind":"captured","tree":"\(Fixture.tree("e", 9))","root":"/repo"}}
+        """.utf8))
         // Codex's turn started ten seconds after Claude's T7.
         let claude = try Self.turn(7)
         var context = try Self.context([Self.turn(6), claude])
@@ -702,6 +722,7 @@ extension ReviewTabModelTests {
         #expect(range.beginTree == Fixture.tree("b", 7))
         #expect(range.endTree == Fixture.tree("e", 9))
         #expect(range.isAcrossConversations)
+        #expect(range.conversations == [Fixture.conversation, Fixture.conversation("codex", provider: .codex)])
         #expect(tab.conversation == Fixture.conversation)
         #expect(Self.range(Self.open(.unviewedTurns, context)) == 7...7, "the conversation's own entry reads its turns alone")
         let en = Locale(identifier: "en")

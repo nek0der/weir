@@ -154,6 +154,7 @@ struct ReviewTabMoveTests {
         let kept = toAnotherProject ? fixture.registry.parkedReviews[fixture.b.id] : fixture.registry.parkedScratchReview
         #expect(kept?.tab?.review.opening == tab.opening)
         #expect(kept?.tab?.session?.holdsComment == true)
+        #expect(kept?.tab?.session?.composer.text == "Why this?")
     }
 
     /// A window switching to the very project its scratch tab under review
@@ -415,6 +416,9 @@ struct ReviewTabMoveTests {
         case .anOpen:
             onC.reviewOpenRequest = ReviewOpenRequest(containerID: otherRow, tabID: onC.selection.activeTabID)
         }
+        let ownOpening = onC.review?.opening
+        let ownRequest = onC.reviewOpenRequest
+        let ownComment = onC.reviewSession?.composer.text
 
         fixture.session.setActiveTab(fixture.cTab.id, in: onC.id, intent: .person)
         ReviewTabActions.rowChanged(
@@ -425,7 +429,9 @@ struct ReviewTabMoveTests {
             paneVisibility: PaneVisibilityReporter(windowID: onC.id, registry: fixture.registry)
         )
 
-        #expect(onC.review?.opening != tab.opening)
+        #expect(onC.review?.opening == ownOpening)
+        #expect(onC.reviewOpenRequest == ownRequest)
+        #expect(onC.reviewSession?.composer.text == ownComment)
         #expect(fixture.registry.parkedReviews[fixture.c.id]?.tab?.review.opening == tab.opening)
     }
 

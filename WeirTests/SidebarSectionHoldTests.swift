@@ -52,8 +52,7 @@ struct SidebarSectionHoldTests {
     @Test(arguments: [true, false])
     func theSelectedRow_isAlwaysWorking(isHeld: Bool) {
         let shown = Self.next(presented: ["a": .other], computed: ["a": .other, "b": .cleanable], isHeld: isHeld, selected: "a")
-        #expect(shown["a"] == .working)
-        #expect(shown["b"] == .cleanable)
+        #expect(shown == ["a": .working, "b": .cleanable])
     }
 
     /// A selected row the project does not list (the scratch row) is not
@@ -87,7 +86,7 @@ struct ProjectWindowSectionHoldTests {
         window.isSidebarKeyboardActive = hold == "keyboard"
 
         let shown = window.presentedSections(computed: Self.sections(row, .cleanable), isDragging: hold == "drag")
-        #expect(shown.section(of: row) == .working)
+        #expect(shown.sections == [row: .working])
 
         window.isPointerInSidebar = false
         window.isSidebarKeyboardActive = false

@@ -16,8 +16,13 @@ struct ReviewFileActionTests {
             )
             try Data().write(to: source)
 
-            #expect(ReviewFileAction.fileURL(for: "Sources/Main.swift", in: root) == source)
-            #expect(ReviewFileAction.fileURL(for: source.path, in: root) == source)
+            let canonical = source.resolvingSymlinksInPath()
+            let link = root.appendingPathComponent("main-link.swift")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: source)
+
+            #expect(ReviewFileAction.fileURL(for: "Sources/Main.swift", in: root) == canonical)
+            #expect(ReviewFileAction.fileURL(for: source.path, in: root) == canonical)
+            #expect(ReviewFileAction.fileURL(for: "main-link.swift", in: root) == canonical)
         }
     }
 
@@ -28,13 +33,15 @@ struct ReviewFileActionTests {
         try withTempDir { scratch in
             let root = scratch.appendingPathComponent("repository")
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            let outside = scratch.appendingPathComponent("outside.swift")
+            let sibling = scratch.appendingPathComponent("repository-other")
+            try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
+            let outside = sibling.appendingPathComponent("outside.swift")
             try Data("outside".utf8).write(to: outside)
 
             let link = root.appendingPathComponent("escape.swift")
             try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
 
-            #expect(ReviewFileAction.fileURL(for: "../\(outside.lastPathComponent)", in: root) == nil)
+            #expect(ReviewFileAction.fileURL(for: "../repository-other/outside.swift", in: root) == nil)
             #expect(ReviewFileAction.fileURL(for: outside.path, in: root) == nil)
             #expect(ReviewFileAction.fileURL(for: "escape.swift", in: root) == nil)
         }

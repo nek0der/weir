@@ -16,9 +16,10 @@ struct PlanUsageTests {
          "observedAt":"2026-10-29T02:13:20Z"}
         """#.utf8)
         let usage = try PlanUsage.decode(record)
-        #expect(usage.windows.map(\.kind) == ["five_hour", "seven_day"])
-        #expect(usage.windows[0].resetsAt == Date(timeIntervalSince1970: 1_793_247_600))
-        #expect(usage.windows[1].resetsAt == nil)
+        #expect(usage.windows == [
+            PlanUsageWindow(kind: "five_hour", usedPercent: 42.5, resetsAt: Date(timeIntervalSince1970: 1_793_247_600)),
+            PlanUsageWindow(kind: "seven_day", usedPercent: 83, resetsAt: nil)
+        ])
         #expect(usage.observedAt == Date(timeIntervalSince1970: 1_793_240_000))
     }
 
@@ -32,8 +33,10 @@ struct PlanUsageTests {
             ],
             observedAt: now
         )
-        #expect(usage.level(at: now) == .nearLimit)
         #expect(usage.level(at: now.addingTimeInterval(-10)) == .atLimit)
+        #expect(usage.level(at: now.addingTimeInterval(-1)) == .nearLimit)
+        #expect(usage.level(at: now) == .nearLimit)
+        #expect(usage.level(at: now.addingTimeInterval(60)) == .normal)
     }
 
     @Test("levels follow the share used", arguments: [

@@ -54,6 +54,9 @@ struct SupervisionFocusRingTests {
         hold.update(isFocused: true, isSurfaceInTransition: false)
         hold.update(isFocused: false, isSurfaceInTransition: true)
         #expect(hold.isDrawn(isFocused: false, isSurfaceInTransition: true))
+        hold.update(isFocused: false, isSurfaceInTransition: false)
+        #expect(!hold.isDrawn(isFocused: false, isSurfaceInTransition: false))
+        #expect(!hold.isDrawn(isFocused: false, isSurfaceInTransition: true))
     }
 
     /// A field that never had the keyboard gets no ring from the fade.

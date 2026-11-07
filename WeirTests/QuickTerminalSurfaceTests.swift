@@ -35,9 +35,8 @@ struct QuickTerminalSurfaceTests {
         }
     }
 
-    /// Mounts the quick terminal's surface, ends its shell, and checks the
-    /// view is freed. Needs the host app's `GhosttyApp`, which only exists
-    /// when libghostty started.
+    /// Mounts a quick terminal with a real shell, delivers the exit callback,
+    /// and checks the view is freed. The host app supplies `GhosttyApp`.
     private static func exerciseSurfaceExit(settingsDirectory directory: URL) async throws {
         let ghosttyApp = try #require(GhosttyApp.placeholder.target)
         let controller = QuickTerminalController(
@@ -58,15 +57,15 @@ struct QuickTerminalSurfaceTests {
             controller.prepareSurface()
             probe = controller.surfaceView
         }
-        #expect(probe != nil)
+        try #require(probe != nil)
 
-        // Let SwiftUI mount the representable so the hierarchy holds the
-        // view the way it does on screen.
-        await Self.waitUntil { probe?.window != nil }
+        // Wait for both the mounted representable and its deferred
+        // libghostty surface creation before delivering the exit.
+        await Self.waitUntil { probe?.window === controller.panel && probe?.surface != nil }
         try autoreleasepool {
             let view = try #require(probe)
-            #expect(view.window === controller.panel, "the surface was never mounted in the panel")
-            #expect(view.surface != nil, "libghostty never created the surface")
+            try #require(view.window === controller.panel, "the surface was never mounted in the panel")
+            try #require(view.surface != nil, "libghostty never created the surface")
             #expect(controller.handleSurfaceExit(view))
             #expect(controller.surfaceView == nil)
             #expect(!controller.handleSurfaceExit(view), "a second exit for the same view is not ours")

@@ -117,12 +117,14 @@ struct NavActionsTests {
     @Test func theNthTab_isOfTheContainerThatWindowShows() {
         let (session, project) = WorkspaceSessionFixture.withProject()
         let projectTab = session.openTab(container: .project(project.id))
+        let selected = session.openTab(container: .project(project.id))
         let loose = session.openTab(container: .loose)
         // The primary stays on its scratch tab, showing no project.
         session.showProject(nil, in: session.primaryWindowID, intent: .person, reason: .person)
 
         let other = WorkspaceSessionFixture.addWindow(to: session)
-        session.setActiveContainer(.project(project.id), in: other)
+        session.setActiveTab(selected.id, in: other)
+        #expect(session.selection(other)?.activeTabID == selected.id)
 
         NavActions.activateTabInActiveContainer(at: 0, in: session, window: other)
 

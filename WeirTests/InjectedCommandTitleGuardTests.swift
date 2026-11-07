@@ -40,6 +40,7 @@ struct InjectedCommandTitleGuardTests {
         #expect(guardState.matches("/compact"))
         guardState.clear()
         #expect(!guardState.matches("/compact"))
+        #expect(!guardState.matches("cd '/work' && claude --resume session"))
     }
 
     @Test("the shell's control filtering still matches a multiline injected command")
@@ -59,6 +60,9 @@ struct InjectedCommandTitleGuardTests {
         let laterTitle = guardState.matches("codex resume session")
 
         #expect(!laterTitle)
+        guardState.arm("codex resume another")
+        #expect(guardState.matches("codex resume another"))
+        #expect(!guardState.matches("codex resume session"))
     }
 
     @Test("router sanitization is shared by the command and received title")

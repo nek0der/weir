@@ -18,7 +18,10 @@ struct StopLedgerStoreTests: StopLedgerFixture {
     @Test func aStop_staysAcrossALaunch_withItsSessionAndFolder() throws {
         try withTempDir { dir in
             let store = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
-            let exited = Self.run("a", .error, at: 0, turn: "t1")
+            let (session, project) = WorkspaceSessionFixture.withProject()
+            let tab = session.openTab(container: .project(project.id))
+            let pane = try #require(tab.splitTree.allLeafIDs().first)
+            let exited = Self.run("a", .error, at: 0, pane: pane, turn: "t1")
             _ = store.update(runtimes: [exited], paneExists: Self.always, cwd: { _ in "/tmp/repo" })
             let id = StopLedger.itemID(of: exited)
             // The run's record is retired: the stop is the ledger's alone.
@@ -28,7 +31,8 @@ struct StopLedgerStoreTests: StopLedgerFixture {
             let relaunched = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
             let record = try #require(relaunched.ledger.record(id))
             #expect(record.runtimeID == "a")
-            #expect(record.paneID == Self.pane)
+            #expect(record.paneID == pane)
+            #expect(record.provider == .claude)
             #expect(record.sessionID == Self.sessionID)
             #expect(record.cwd == "/tmp/repo")
             #expect(record.conversation == Self.conversation)
@@ -38,7 +42,10 @@ struct StopLedgerStoreTests: StopLedgerFixture {
             #expect(record.resume == StopLedger.Resume.none)
             // Listed from the file, with nothing reporting it.
             _ = relaunched.update(runtimes: [], paneExists: Self.always)
-            #expect(relaunched.ledger.retained(besides: []).map(\.itemID) == [id])
+            #expect(relaunched.retained(besides: [], session: session) == [.init(
+                itemID: id, runtimeID: "a", provider: .claude, paneID: pane, tabID: tab.id, projectID: project.id,
+                reason: .error("overloaded"), stoppedAt: Self.start
+            )])
             #expect(StopResumeRules.offer(record: record, job: .shell, hasDraft: false) == .available)
             #expect(StopResumeRules.command(for: record) == "cd '/tmp/repo' && claude --resume \(Self.sessionID)")
             #expect(StopResumeRules.newConversationCommand(for: record) == "cd '/tmp/repo' && claude")
@@ -85,7 +92,10 @@ struct StopLedgerStoreTests: StopLedgerFixture {
             #expect(relaunched.ledger.retained(besides: [dismissedRun]).map(\.itemID) == [failed])
             // The ends are saved too; written before the folder goes.
             relaunched.flushSynchronously()
-            #expect(StopLedgerStore(directory: dir, resumeTimeout: .seconds(30)).ledger.records.keys.contains(failed))
+            let reopened = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
+            #expect(Set(reopened.ledger.records.keys) == [failed])
+            #expect(reopened.ledger.record(failed)?.resume == .failed)
+            #expect(reopened.ledger.dismissed == [dismissed])
         }
     }
 
@@ -94,106 +104,163 @@ struct StopLedgerStoreTests: StopLedgerFixture {
     @Test func aStopThatEnded_leavesTheFile() async throws {
         try await withTempDir { dir in
             let store = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
-            _ = store.update(runtimes: [Self.run("a", .error)], paneExists: Self.always)
-            let id = StopLedger.itemID(of: Self.run("a", .error))
+            let first = Self.run("a", .error)
+            let other = Self.otherStop
+            let id = StopLedger.itemID(of: first)
+            let otherID = StopLedger.itemID(of: other)
+            _ = store.update(runtimes: [first, other], paneExists: Self.always)
             // The file itself is the signal. The deadline is only for a save
             // that never comes: the save waits on the main queue, which a
             // parallel run can stall.
             await pollUntil(timeout: .seconds(30), interval: .milliseconds(20)) {
                 StopLedgerStore(directory: dir, resumeTimeout: .seconds(30)).ledger.record(id) != nil
             }
-            #expect(StopLedgerStore(directory: dir, resumeTimeout: .seconds(30)).ledger.record(id) != nil)
+            let written = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
+            try #require(Set(written.ledger.records.keys) == [id, otherID])
 
             // The conversation came back: the stop ends, on disk too.
             _ = store.update(runtimes: [Self.run("b", .running, at: 30)], paneExists: Self.always)
             store.flushSynchronously()
             let relaunched = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
-            #expect(relaunched.ledger.records.isEmpty)
+            #expect(Set(relaunched.ledger.records.keys) == [otherID])
         }
     }
 
-    /// A stop that began and ended while its write was under way is not
-    /// left on disk by the flush at quit: the file held no stops before,
-    /// and holds none after, but the write under way carries the stop, so
-    /// the flush writes the ledger after it whatever the file held.
+    private static var otherStop: RuntimeFact {
+        run(
+            "other",
+            .error,
+            pane: UUID(),
+            conversation: .init(provider: .claude, conversationID: "other", isFallback: false),
+            sessionID: "other-session"
+        )
+    }
+
+    /// Quit must supersede an older queued snapshot even when the current
+    /// ledger has returned to its previously persisted contents.
     @Test func aStopThatEndedWhileItsWriteWasUnderWay_isNotLeftByTheFlush() async throws {
         try await withTempDir { dir in
             let queue = DispatchQueue(label: "com.nekoder.weir.stop-ledger.test")
-            let gate = DispatchSemaphore(value: 0)
-            // Holds the store's write behind ours until the flush.
-            queue.async { gate.wait() }
             let store = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30), saveQueue: queue)
+            let other = Self.otherStop
+            let otherID = StopLedger.itemID(of: other)
+            _ = store.update(runtimes: [other], paneExists: Self.always)
+            store.flushSynchronously()
+            let oldBytes = try Data(contentsOf: dir.appendingPathComponent("stops.json"))
+
+            let gate = DispatchSemaphore(value: 0)
+            defer { gate.signal() }
+            let blocked = Recorded(false)
+            queue.async {
+                blocked.value = true
+                _ = gate.wait(timeout: .now() + 10)
+            }
+            await pollUntil { blocked.value }
+            try #require(blocked.value)
+
             let stopped = Self.run("a", .error)
             _ = store.update(runtimes: [stopped], paneExists: Self.always)
-            await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) { store.hasWriteUnderWay }
-            #expect(store.hasWriteUnderWay)
+            await pollUntil(timeout: .seconds(5)) { store.hasWriteUnderWay }
+            try #require(store.hasWriteUnderWay)
+            #expect(try Data(contentsOf: dir.appendingPathComponent("stops.json")) == oldBytes)
 
-            // The conversation came back: the ledger is as the file was.
             _ = store.update(runtimes: [Self.run("b", .running, at: 30)], paneExists: Self.always)
-            #expect(store.ledger.records.isEmpty)
+            try #require(Set(store.ledger.records.keys) == [otherID])
             gate.signal()
             store.flushSynchronously()
 
             let relaunched = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
-            #expect(relaunched.ledger.record(StopLedger.itemID(of: stopped)) == nil)
+            #expect(Set(relaunched.ledger.records.keys) == [otherID])
         }
     }
 
-    /// A file from a newer build is read for the stops it can give and
-    /// left as it is; a record this build cannot read costs that record,
-    /// not the file.
-    @Test func aNewerOrPartlyUnreadableFile_costsOnlyWhatCannotBeRead() throws {
+    @Test(arguments: [false, true])
+    func aPartlyUnreadableFile_readsValidEntries_andRespectsItsVersion(isFuture: Bool) throws {
         try withTempDir { dir in
-            let store = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
-            _ = store.update(runtimes: [Self.run("a", .error)], paneExists: Self.always)
-            let id = StopLedger.itemID(of: Self.run("a", .error))
+            let store = StopLedgerStore(directory: dir)
+            let readable = Self.run("readable", .error)
+            let dismissedRun = Self.otherStop
+            let kept = StopLedger.itemID(of: readable)
+            let dismissed = StopLedger.itemID(of: dismissedRun)
+            _ = store.update(runtimes: [readable, dismissedRun], paneExists: Self.always)
+            store.dismiss(dismissed)
             store.flushSynchronously()
+
             let file = dir.appendingPathComponent("stops.json")
-            let written = try String(contentsOf: file, encoding: .utf8)
-            // One record this build cannot read, beside the known one. The
-            // edits match the encoder's spacing: one that matched nothing
-            // would leave a file with nothing unreadable or newer in it.
-            let text = written.replacingOccurrences(of: "\"records\" : [", with: "\"records\" : [{\"kind\":\"later\"},")
-            #expect(text != written)
-            try text.data(using: .utf8).map { try $0.write(to: file) }
-            #expect(StopLedgerStore(directory: dir, resumeTimeout: .seconds(30)).ledger.record(id) != nil)
+            var object = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+            var records = try #require(object["records"] as? [[String: Any]])
+            try #require(records.count == 1)
+            var unknown = records[0]
+            unknown["reason"] = ["kind": "unrecognized"]
+            records.insert(unknown, at: 0)
+            object["records"] = records
+            let dismissals = try #require(object["dismissed"] as? [Any])
+            try #require(dismissals.count == 1)
+            object["dismissed"] = [NSNull()] + dismissals
+            object["schemaVersion"] = isFuture ? 2 : 1
+            let original = try JSONSerialization.data(withJSONObject: object, options: .sortedKeys)
+            try original.write(to: file)
 
-            let newer = text.replacingOccurrences(of: "\"schemaVersion\" : 1", with: "\"schemaVersion\" : 2")
-            #expect(newer != text)
-            try newer.data(using: .utf8).map { try $0.write(to: file) }
-            let later = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
-            #expect(later.ledger.record(id) != nil)
-            later.dismiss(id)
-            later.flushSynchronously()
-            #expect(try String(contentsOf: file, encoding: .utf8) == newer)
+            let reopened = StopLedgerStore(directory: dir)
+            try #require(Set(reopened.ledger.records.keys) == [kept])
+            #expect(reopened.ledger.dismissed == [dismissed])
+            reopened.dismiss(kept)
+            #expect(reopened.ledger.dismissed == [dismissed, kept])
+            reopened.flushSynchronously()
+            if isFuture {
+                #expect(try Data(contentsOf: file) == original)
+            } else {
+                let repaired = StopLedgerStore(directory: dir)
+                #expect(repaired.ledger.records.isEmpty)
+                #expect(repaired.ledger.dismissed == [dismissed, kept])
+            }
         }
     }
 
-    /// Demo mode, and the ledger's own tests, keep the stops in memory:
-    /// nothing is read from or written to the person's folder.
-    @Test func aStoreThatWritesNoFiles_touchesNone() throws {
+    @Test(arguments: [false, true])
+    func aStoreThatWritesNoFiles_usesOnlyItsInMemoryLedger(hasExistingFile: Bool) throws {
         try withTempDir { dir in
-            let store = StopLedgerStore(directory: dir, writesFiles: false, resumeTimeout: .seconds(30))
-            _ = store.update(runtimes: [Self.run("a", .error)], paneExists: Self.always)
+            let file = dir.appendingPathComponent("stops.json")
+            var original: Data?
+            if hasExistingFile {
+                let seed = StopLedgerStore(directory: dir)
+                _ = seed.update(runtimes: [Self.otherStop], paneExists: Self.always)
+                seed.flushSynchronously()
+                try #require(StopLedgerStore(directory: dir).ledger.records.count == 1)
+                original = try Data(contentsOf: file)
+            }
+            let store = StopLedgerStore(directory: dir, writesFiles: false)
+            #expect(store.ledger.records.isEmpty)
+            let run = Self.run("local", .error)
+            _ = store.update(runtimes: [run], paneExists: Self.always)
+            #expect(Set(store.ledger.records.keys) == [StopLedger.itemID(of: run)])
             store.flushSynchronously()
-            #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("stops.json").path))
+            if let original {
+                #expect(try Data(contentsOf: file) == original)
+            } else {
+                #expect(!FileManager.default.fileExists(atPath: file.path))
+            }
         }
     }
 
-    /// A run alive in error at quit (a usage limit) is killed by Weir
-    /// and resumed at launch, while its stop comes back from the
-    /// file: one stop of the conversation, which says it is resuming
-    /// rather than offering a second resume, and which the launch's own
-    /// stop replaces if that resume fails. Back, it ends as any does.
-    @Test func aStopKeptFromTheLastLaunch_isTheLaunchResumesToResume_notASecondOne() throws {
+    /// A restored stop is reused while launch resumes it. Either outcome
+    /// is observed from the same persisted setup.
+    @Test(arguments: [false, true])
+    func aStopKeptFromTheLastLaunch_isTheLaunchResumesToResume_notASecondOne(comesBack: Bool) throws {
         try withTempDir { dir in
-            let store = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
+            let store = StopLedgerStore(directory: dir)
             let limited = Self.run("a", .error)
-            _ = store.update(runtimes: [limited], paneExists: Self.always, cwd: { _ in "/tmp/repo" })
+            let independent = Self.run(
+                "other", .error, pane: Self.pane,
+                conversation: .init(provider: .claude, conversationID: "other", isFallback: false), sessionID: "other-session"
+            )
+            let otherID = StopLedger.itemID(of: independent)
+            _ = store.update(runtimes: [limited, independent], paneExists: Self.always, cwd: { _ in "/tmp/repo" })
             let kept = StopLedger.itemID(of: limited)
             store.flushSynchronously()
 
-            let relaunched = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
+            let relaunched = StopLedgerStore(directory: dir)
+            try #require(Set(relaunched.ledger.records.keys) == [kept, otherID])
             let typedAt = Self.start.addingTimeInterval(100)
             relaunched.markResumingAtLaunch(
                 paneID: Self.pane, provider: .claude, sessionID: Self.sessionID, cwd: "/tmp/repo", now: typedAt
@@ -201,34 +268,30 @@ struct StopLedgerStoreTests: StopLedgerFixture {
             let taken = try #require(relaunched.ledger.record(kept))
             #expect(taken.resume == .resuming(since: typedAt, window: nil))
             #expect(StopResumeRules.offer(record: taken, job: .shell, hasDraft: false) == .resuming)
-            // Another session's stop in the pane is not the launch's.
-            var other = relaunched.ledger
-            let otherRun = Self.run("b", .error, at: 1, sessionID: "other")
-            _ = other.update(runtimes: [otherRun], paneExists: Self.always)
-            #expect(other.record(StopLedger.itemID(of: otherRun))?.resume == StopLedger.Resume.none)
+            #expect(Set(relaunched.ledger.records.keys) == [kept, otherID])
+            #expect(relaunched.ledger.record(otherID)?.resume == StopLedger.Resume.none)
 
-            // The resume returned to the shell: one stop in the pane, the
-            // launch's, offering the resume and a new conversation again.
             let launchStop = StopLedger.launchResumeItemID(paneID: Self.pane, sessionID: Self.sessionID)
-            let failed = relaunched.resumeCommandFinished(
-                inPane: Self.pane, exitCode: 1, durationNs: 1, now: typedAt.addingTimeInterval(2)
-            )
-            #expect(failed == .failed(launchStop))
-            #expect(relaunched.ledger.record(kept) == nil)
-            let stops = relaunched.ledger.records.values.filter { $0.paneID == Self.pane }
-            #expect(stops.map(\.itemID) == [launchStop])
-            #expect(stops.first?.reason == .notResumedAtLaunch)
-            #expect(stops.first?.cwd == "/tmp/repo")
+            if comesBack {
+                let returning = Self.run("returning", .running, at: 200)
+                _ = relaunched.update(runtimes: [returning, independent], paneExists: Self.always)
+                #expect(Set(relaunched.ledger.records.keys) == [otherID])
+            } else {
+                let failed = relaunched.resumeCommandFinished(
+                    inPane: Self.pane, exitCode: 1, durationNs: 1, now: typedAt.addingTimeInterval(2)
+                )
+                #expect(failed == .failed(launchStop))
+                #expect(Set(relaunched.ledger.records.keys) == [launchStop, otherID])
+                #expect(relaunched.ledger.record(launchStop)?.reason == .notResumedAtLaunch)
+                #expect(relaunched.ledger.record(launchStop)?.cwd == "/tmp/repo")
+            }
+            #expect(relaunched.ledger.launchResumes.isEmpty)
+            #expect(!relaunched.hasResumeClock)
             relaunched.flushSynchronously()
-            #expect(StopLedgerStore(directory: dir, resumeTimeout: .seconds(30)).ledger.record(launchStop) != nil)
-
-            // Or the conversation came back: the kept stop ends with it.
-            let again = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
-            again.markResumingAtLaunch(paneID: Self.pane, provider: .claude, sessionID: Self.sessionID, cwd: nil, now: typedAt)
-            _ = again.update(runtimes: [Self.run("c", .running, at: 200)], paneExists: Self.always)
-            #expect(again.ledger.records.isEmpty)
-            #expect(again.ledger.launchResumes.isEmpty)
-            again.flushSynchronously()
+            let reopened = StopLedgerStore(directory: dir)
+            let expected: Set<AttentionItemID> = comesBack ? [otherID] : [launchStop, otherID]
+            #expect(Set(reopened.ledger.records.keys) == expected)
+            #expect(reopened.ledger.launchResumes.isEmpty)
         }
     }
 
@@ -255,6 +318,7 @@ struct StopLedgerStoreTests: StopLedgerFixture {
             _ = restored.update(runtimes: [], paneExists: { _ in false })
             #expect(restored.ledger.record(id) == nil)
             restored.flushSynchronously()
+            #expect(StopLedgerStore(directory: dir).ledger.record(id) == nil)
         }
     }
 
@@ -266,7 +330,8 @@ struct StopLedgerStoreTests: StopLedgerFixture {
 
     /// A write that failed is not taken for written: the flush at quit
     /// writes the same stops once the file can be written.
-    @Test func aFailedWrite_isWrittenByTheFlushAtQuit() throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aFailedWrite_isWrittenByTheFlushAtQuit() throws {
         try withTempDir { dir in
             let store = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30), retryDelay: .seconds(60))
             try Self.setWritable(dir, false)
@@ -284,48 +349,68 @@ struct StopLedgerStoreTests: StopLedgerFixture {
 
     /// A write that failed on its own (no quit to flush it) is tried
     /// again, and lands once the file can be written.
-    @Test func aFailedWrite_isTriedAgain() async throws {
+    @Test(.enabled(if: geteuid() != 0), arguments: [false, true])
+    func aFailedWrite_isTriedAgain(changesWhileQueued: Bool) async throws {
         try await withTempDir { dir in
             let queue = DispatchQueue(label: "com.nekoder.weir.stop-ledger.retry-test")
             let gate = DispatchSemaphore(value: 0)
-            // Holds the first write on the save queue until we let it land.
-            queue.async { gate.wait() }
+            try Self.setWritable(dir, false)
+            defer { try? Self.setWritable(dir, true) }
+            defer { gate.signal() }
+            let blocked = Recorded(false)
+            queue.async {
+                blocked.value = true
+                _ = gate.wait(timeout: .now() + 10)
+            }
+            await pollUntil { blocked.value }
+            try #require(blocked.value)
             let store = StopLedgerStore(
                 directory: dir, resumeTimeout: .seconds(30), retryDelay: .milliseconds(100), saveQueue: queue
             )
-            try Self.setWritable(dir, false)
-            defer { try? Self.setWritable(dir, true) }
             let stopped = Self.run("a", .error)
             _ = store.update(runtimes: [stopped], paneExists: Self.always)
             // Past the coalescing delay the first write goes to the queue;
             // let it land, and fail.
             await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) { store.hasWriteUnderWay }
-            #expect(store.hasWriteUnderWay)
+            try #require(store.hasWriteUnderWay)
+            let other = Self.otherStop
+            if changesWhileQueued {
+                store.dismiss(StopLedger.itemID(of: stopped))
+                _ = store.update(runtimes: [other], paneExists: Self.always)
+            }
             gate.signal()
             await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) { !store.hasWriteUnderWay }
+            try #require(!store.hasWriteUnderWay)
             let file = dir.appendingPathComponent("stops.json")
-            #expect(!FileManager.default.fileExists(atPath: file.path))
+            try #require(!FileManager.default.fileExists(atPath: file.path))
             try Self.setWritable(dir, true)
+            let expected = StopLedger.itemID(of: changesWhileQueued ? other : stopped)
             await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) {
-                FileManager.default.fileExists(atPath: file.path)
+                StopLedgerStore(directory: dir).ledger.record(expected) != nil
             }
-            let relaunched = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
-            #expect(relaunched.ledger.record(StopLedger.itemID(of: stopped)) != nil)
+            let relaunched = StopLedgerStore(directory: dir)
+            #expect(Set(relaunched.ledger.records.keys) == [expected])
         }
     }
+
+}
+
+extension StopLedgerStoreTests {
 
     // MARK: - The resume clock
 
     /// The resume brought the conversation back: its run reported, the stop
     /// ended as before, and the command's later return to the shell (the
     /// person quit the agent) finds no resume to fail.
-    @Test func aResumeWhoseConversationCameBack_endsTheStop_andItsLaterExitTouchesNothing() {
+    @Test(arguments: [false, true])
+    func aResumeWhoseConversationCameBack_endsTheStop_andItsLaterExitTouchesNothing(sameRun: Bool) {
         let store = StopLedgerStore(resumeTimeout: .seconds(30))
         _ = store.update(runtimes: [Self.run("a", .error)], paneExists: Self.always)
         let id = StopLedger.itemID(of: Self.run("a", .error))
         let window = WindowID()
         store.markResuming(id, window: window, now: Self.start.addingTimeInterval(10))
-        let resumed = store.update(runtimes: [Self.run("d", .idle, at: 30)], paneExists: Self.always).resumed
+        let returning = Self.run(sameRun ? "a" : "d", .idle, at: 30, episode: sameRun ? "2" : "1")
+        let resumed = store.update(runtimes: [returning], paneExists: Self.always).resumed
         #expect(resumed == [.init(paneID: Self.pane, window: window)])
         #expect(store.ledger.records.isEmpty)
         #expect(!store.hasResumeClock)
@@ -338,7 +423,8 @@ struct StopLedgerStoreTests: StopLedgerFixture {
     /// The command's start is its end less how long it ran: a command that
     /// returned at once began after the resume was typed, and fails it,
     /// taking its deadline along.
-    @Test func theStore_failsTheResume_fromTheCommandsExitAndDuration() {
+    @Test(arguments: [0, 1])
+    func aShortResumeCommandFailsRegardlessOfExitCode(exitCode: Int) {
         let store = StopLedgerStore(resumeTimeout: .seconds(30))
         _ = store.update(runtimes: [Self.run("a", .error)], paneExists: Self.always)
         let id = StopLedger.itemID(of: Self.run("a", .error))
@@ -353,62 +439,113 @@ struct StopLedgerStoreTests: StopLedgerFixture {
         #expect(earlier == nil)
         #expect(store.hasResumeClock)
         let quick = store.resumeCommandFinished(
-            inPane: Self.pane, exitCode: 1, durationNs: 400_000_000, now: since.addingTimeInterval(1)
+            inPane: Self.pane, exitCode: exitCode, durationNs: 400_000_000, now: since.addingTimeInterval(1)
         )
         #expect(quick == .failed(id))
         #expect(store.ledger.record(id)?.resume == .failed)
         #expect(!store.hasResumeClock)
     }
 
-    @Test func dismissingAStop_stopsItsResumeClock_andTheOffersSayWhoStartsNew() {
+    @Test func dismissingAStop_stopsItsResumeClock() {
         let store = StopLedgerStore(resumeTimeout: .seconds(30))
         let run = Self.run("a", .error)
         let id = StopLedger.itemID(of: run)
         _ = store.update(runtimes: [run], paneExists: Self.always)
-        store.refreshOffers { _ in (.available, nil) }
-        #expect(store.startsNew == [id])
-        store.refreshOffers { _ in (.available, .draft) }
-        #expect(store.startsNew.isEmpty)
-        #expect(store.newConversationBlockers == [id: .draft])
-        store.refreshOffers { _ in (.available, nil) }
-        #expect(store.offers[id] == .available)
         store.markResuming(id, window: nil)
         #expect(store.hasResumeClock)
+
         store.dismiss(id)
+
         #expect(!store.hasResumeClock)
         #expect(store.ledger.records.isEmpty)
-        store.refreshOffers { _ in (.available, nil) }
-        #expect(store.startsNew.isEmpty)
-        #expect(store.newConversationBlockers.isEmpty)
     }
 
-    @Test func aStopThatEnds_takesItsResumeClockAlong() {
-        let store = StopLedgerStore(resumeTimeout: .milliseconds(50))
-        _ = store.update(runtimes: [Self.run("a", .error)], paneExists: Self.always)
-        let id = StopLedger.itemID(of: Self.run("a", .error))
-        store.markResuming(id, window: nil)
-        #expect(store.hasResumeClock)
-        _ = store.update(runtimes: [Self.run("a", .running, episode: "2")], paneExists: Self.always)
-        #expect(store.ledger.records.isEmpty)
-        #expect(!store.hasResumeClock)
+    @Test func refreshingOffers_replacesBlockersAndDropsDismissedStops() {
+        let store = StopLedgerStore()
+        let run = Self.run("a", .error)
+        let other = Self.otherStop
+        let id = StopLedger.itemID(of: run)
+        let otherID = StopLedger.itemID(of: other)
+        _ = store.update(runtimes: [run, other], paneExists: Self.always)
+
+        store.refreshOffers { $0.itemID == id ? (.available, .draft) : (.available, nil) }
+        #expect(store.offers == [id: .available, otherID: .available])
+        #expect(store.startsNew == [otherID])
+        #expect(store.newConversationBlockers == [id: .draft])
+        store.refreshOffers { _ in (.available, nil) }
+        #expect(store.startsNew == [id, otherID])
+        #expect(store.newConversationBlockers.isEmpty)
+        store.dismiss(id)
+
+        store.refreshOffers { _ in (.available, nil) }
+
+        #expect(store.offers == [otherID: .available])
+        #expect(store.startsNew == [otherID])
+        #expect(store.newConversationBlockers.isEmpty)
     }
 
     @Test func aResumeThatNeverComesBack_failsAfterItsTime() async {
         let store = StopLedgerStore(resumeTimeout: .milliseconds(50))
-        _ = store.update(runtimes: [Self.run("a", .error)], paneExists: Self.always)
-        let id = StopLedger.itemID(of: Self.run("a", .error))
-        var toldOfTimeout = false
-        store.onResumeTimedOut = { toldOfTimeout = true }
+        let run = Self.run("a", .error)
+        _ = store.update(runtimes: [run], paneExists: Self.always)
+        let id = StopLedger.itemID(of: run)
+        var callbacks: [StopLedger.Resume?] = []
+        var clocks: [Bool] = []
+        store.onResumeTimedOut = { [weak store] in
+            callbacks.append(store?.ledger.record(id)?.resume)
+            clocks.append(store?.hasResumeClock == true)
+        }
         store.markResuming(id, window: nil)
-        await pollUntil(timeout: .seconds(5), interval: .milliseconds(10)) { store.ledger.record(id)?.resume == .failed }
+        #expect(store.hasResumeClock)
+
+        await pollUntil(timeout: .seconds(5)) { !callbacks.isEmpty }
+
         #expect(store.ledger.record(id)?.resume == .failed)
-        #expect(toldOfTimeout)
+        #expect(callbacks == [.failed])
+        #expect(clocks == [false])
+    }
+
+    @Test func aResumeCommandThatFinishes_discardsTheLateForegroundReply() async throws {
+        let store = StopLedgerStore(resumeTimeout: .milliseconds(50))
+        let run = Self.run("a", .error)
+        _ = store.update(runtimes: [run], paneExists: Self.always)
+        let id = StopLedger.itemID(of: run)
+        let reply = Gate<Bool>()
+        defer { reply.open(with: false) }
+        let canceled = Recorded(false)
+        store.isAgentInFront = { pane, provider in
+            #expect(pane == Self.pane)
+            #expect(provider == .claude)
+            return await withTaskCancellationHandler {
+                await reply.wait()
+            } onCancel: {
+                canceled.value = true
+            }
+        }
+        let since = Self.start.addingTimeInterval(10)
+        var timeoutNotices = 0
+        store.onResumeTimedOut = { timeoutNotices += 1 }
+        let clock = store.markResuming(id, window: nil, now: since)
+        try await reply.waitUntilRequested()
+
+        #expect(store.resumeCommandFinished(
+            inPane: Self.pane, exitCode: 0, durationNs: 10, now: since.addingTimeInterval(1)
+        ) == .failed(id))
+        #expect(canceled.value)
+        #expect(!store.hasResumeClock)
+        #expect(store.ledger.record(id)?.resume == .failed)
+        reply.open(with: false)
+        await clock.value
+        #expect(timeoutNotices == 0)
+        #expect(!store.hasResumeClock)
+        #expect(store.ledger.record(id)?.resume == .failed)
     }
 
     /// A folder that cannot be searched hides stops.json, which is not a
     /// launch with no stops: the file is kept as it is, nothing is written
     /// over it this launch, and the person is told.
-    @Test func stopsInAFolderThatCannotBeSearched_areNeverSavedOver() throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func stopsInAFolderThatCannotBeSearched_areNeverSavedOver() throws {
         try withTempDir { root in
             let dir = root.appendingPathComponent("support")
             let manager = FileManager.default
@@ -421,6 +558,7 @@ struct StopLedgerStoreTests: StopLedgerFixture {
             try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dir.path)
             defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
 
+            try #require(throws: (any Error).self) { try Data(contentsOf: file) }
             let store = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
             try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
             _ = store.update(runtimes: [Self.run("b", .error, at: 1)], paneExists: Self.always)
@@ -428,6 +566,7 @@ struct StopLedgerStoreTests: StopLedgerFixture {
 
             #expect(try Data(contentsOf: file) == original)
             #expect(store.suspendedFile == file)
+            #expect(try manager.contentsOfDirectory(atPath: dir.path) == ["stops.json"])
         }
     }
 
@@ -440,14 +579,15 @@ struct StopLedgerStoreTests: StopLedgerFixture {
             try garbled.write(to: file)
 
             let store = StopLedgerStore(directory: dir, resumeTimeout: .seconds(30))
-            _ = store.update(runtimes: [Self.run("b", .error, at: 1)], paneExists: Self.always)
+            let replacement = Self.run("b", .error, at: 1)
+            _ = store.update(runtimes: [replacement], paneExists: Self.always)
             store.flushSynchronously()
 
             let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
             let aside = try #require(names.first { $0.hasPrefix("stops.json.bak-decode-failed-") })
             #expect(try Data(contentsOf: dir.appendingPathComponent(aside)) == garbled)
             #expect(store.suspendedFile == nil)
-            #expect(FileManager.default.fileExists(atPath: file.path))
+            #expect(Set(StopLedgerStore(directory: dir).ledger.records.keys) == [StopLedger.itemID(of: replacement)])
         }
     }
 }

@@ -11,31 +11,11 @@ struct DomainRuleOwnerTests {
 
     // MARK: - Agent states
 
-    @Test func anAgentWorks_onlyWhileRunningOrCompacting() {
-        for state in AgentState.allCases {
-            let expected = state == .running || state == .compacting
-            #expect(state.isWorking == expected, "\(state)")
-        }
-    }
-
-    @Test func anAgentIsAtItsPrompt_onlyFreshOrFinished() {
-        for state in AgentState.allCases {
-            let expected = state == .idle || state == .finished
-            #expect(state.isAtPrompt == expected, "\(state)")
-        }
-    }
-
-    /// A working run is mid-turn, and a run at its prompt is not: the
-    /// three readings never contradict one another.
-    @Test func theStatePredicates_agreeWithMidTurn() {
-        for state in AgentState.allCases {
-            if state.isWorking {
-                #expect(state.isMidTurn, "\(state)")
-            }
-            if state.isAtPrompt {
-                #expect(!state.isMidTurn, "\(state)")
-            }
-        }
+    @Test func theStatePredicates_coverTheExactLifecycleStates() {
+        let states = AgentState.allCases
+        #expect(Set(states.filter(\.isWorking)) == [.running, .compacting])
+        #expect(Set(states.filter(\.isAtPrompt)) == [.idle, .finished])
+        #expect(Set(states.filter(\.isMidTurn)) == [.running, .compacting, .needsInput])
     }
 
     // MARK: - Attention kinds
@@ -126,6 +106,8 @@ struct DomainRuleOwnerTests {
         #expect(PanePriority.dominant(items)?.kind.category == .question)
         #expect(PanePriority.dominant(Array(items.prefix(3)))?.kind.category == .signIn)
         #expect(PanePriority.dominant(Array(items.prefix(2)))?.kind.category == .stop)
+        #expect(PanePriority.dominant(Array(items.prefix(1)))?.kind.category == .unread)
+        #expect(PanePriority.dominant([]) == nil)
     }
 
     /// An approval, a wait we cannot name, and a sign-in share one rank, so

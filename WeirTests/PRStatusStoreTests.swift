@@ -66,9 +66,9 @@ struct PRStatusStoreTests {
         let store = PRStatusStore()
         let id = ContainerID.worktree(projectID: UUID(), worktreeID: UUID())
         store.update(container: id, info: PRInfoFixture.make(number: 1, state: .open))
-        let merged = PRInfoFixture.make(number: 1, state: .merged)
+        let merged = PRInfoFixture.make(number: 1, state: .merged, checks: .success, title: "Merged request")
         store.update(container: id, info: merged)
-        #expect(store.info(for: id)?.state == .merged)
+        #expect(store.info(for: id) == merged)
     }
 
     @Test("update with nil removes a present entry")
@@ -115,10 +115,11 @@ struct PRStatusStoreTests {
         let store = PRStatusStore()
         let live = ContainerID.project(UUID())
         let gone = ContainerID.worktree(projectID: UUID(), worktreeID: UUID())
-        store.update(container: live, info: PRInfoFixture.make(number: 1, state: .open))
+        let info = PRInfoFixture.make(number: 1, state: .open)
+        store.update(container: live, info: info)
         store.update(container: gone, info: PRInfoFixture.make(number: 2, state: .open, checks: .pending))
         store.prune(keeping: [live])
-        #expect(store.info(for: live) != nil)
+        #expect(store.perContainer == [live: info])
         #expect(store.info(for: gone) == nil)
     }
 
@@ -149,8 +150,9 @@ struct PRStatusStoreTests {
         let gone = ContainerID.project(UUID())
         store.update(container: kept, info: nil, forge: .gitHub)
         store.update(container: gone, info: nil, forge: .gitLab)
-        #expect(store.forge(for: kept) == .gitHub)
+        #expect(store.forges == [kept: .gitHub, gone: .gitLab])
         store.prune(keeping: [kept])
+        #expect(store.forges == [kept: .gitHub])
         #expect(store.forge(for: gone) == nil)
         store.update(container: kept, info: nil, forge: nil)
         #expect(store.forge(for: kept) == nil)

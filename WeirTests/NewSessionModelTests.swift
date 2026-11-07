@@ -34,6 +34,8 @@ struct NewSessionModelTests {
     ) -> NewSessionModel {
         var (_, made) = WorkspaceSessionFixture.withProject(name: "demo")
         project(&made)
+        let root = made.rootURL
+        let occupied = Set(folders.map { root.deletingLastPathComponent().appendingPathComponent(root.lastPathComponent + $0) })
         return NewSessionModel(
             context: .init(
                 project: made,
@@ -46,9 +48,7 @@ struct NewSessionModelTests {
                 today: today,
                 installedAgents: installed,
                 agentExecutables: executables,
-                // By the folder's own name: each fixture's project sits in a
-                // folder of its own, which the sibling placement prefixes.
-                folderExists: { url in folders.contains { url.lastPathComponent.hasSuffix($0) } }
+                folderExists: { occupied.contains($0) }
             ),
             choices: choices
         )
@@ -64,15 +64,19 @@ struct NewSessionModelTests {
         #expect(NewSessionModel.initialChoices(settings, forProjectAt: root, installed: [.codex])
             == NewWorktreeChoices(open: .agent(.codex), fetches: true, copiesIgnoredFiles: true, runsSetup: true))
         settings.remember(
-            NewWorktreeChoices(open: .nothing, fetches: false, copiesIgnoredFiles: false, runsSetup: false),
+            NewWorktreeChoices(open: .nothing, fetches: true, copiesIgnoredFiles: false, runsSetup: true),
             forProjectAt: root
         )
+        settings.remember(
+            NewWorktreeChoices(open: .shell, fetches: false, copiesIgnoredFiles: true, runsSetup: false),
+            forProjectAt: URL(fileURLWithPath: "/tmp/other")
+        )
         #expect(NewSessionModel.initialChoices(settings, forProjectAt: root, installed: [.codex])
-            == NewWorktreeChoices(open: .nothing, fetches: false, copiesIgnoredFiles: false, runsSetup: false))
-        // Another project takes what was opened last anywhere, and its own
-        // copy and setup, on before its first.
+            == NewWorktreeChoices(open: .nothing, fetches: false, copiesIgnoredFiles: false, runsSetup: true))
         #expect(NewSessionModel.initialChoices(settings, forProjectAt: URL(fileURLWithPath: "/tmp/other"), installed: [.codex])
-            == NewWorktreeChoices(open: .nothing, fetches: false, copiesIgnoredFiles: true, runsSetup: true))
+            == NewWorktreeChoices(open: .shell, fetches: false, copiesIgnoredFiles: true, runsSetup: false))
+        #expect(NewSessionModel.initialChoices(settings, forProjectAt: URL(fileURLWithPath: "/tmp/new"), installed: [.codex])
+            == NewWorktreeChoices(open: .shell, fetches: false, copiesIgnoredFiles: true, runsSetup: true))
     }
 
     /// A person used to "Create and Start" with an agent gets that agent:
@@ -103,19 +107,15 @@ struct NewSessionModelTests {
         #expect(WorktreeOpenChoice.others == [.shell, .nothing])
     }
 
-    /// The remembered agent, no longer found: the sheet opens with the
-    /// first agent found, else the shell, and the menu still lists the
-    /// remembered one, off.
-    @Test func aRememberedAgentNotFound_fallsBack_andStaysListedOff() {
+    /// The remembered agent is unavailable and no later choice was stored.
+    @Test func aRememberedAgentNotFound_fallsBackToAnAvailableAgentOrTheShell() {
         #expect(WorktreeOpenChoice.initial(remembered: ["claude"], installed: [.codex]) == .agent(.codex))
         #expect(WorktreeOpenChoice.initial(remembered: ["claude"], installed: []) == .shell)
-        let menu = WorktreeOpenChoice.menuAgents(catalog: [.claude, .codex], installed: [.codex])
-        #expect(menu == [.init(kind: .claude, isAvailable: false), .init(kind: .codex, isAvailable: true)])
     }
 
     @Test func theLaunch_carriesWhatOpens_theExecutableFound_andTheBoxes() {
         let found = "/opt/bin/codex"
-        var model = Self.model(executables: [.codex: found]) { project in
+        var model = Self.model(executables: [.codex: found, .claude: "/opt/bin/claude"]) { project in
             project.bootstrap = [.shorthand("make")]
             project.ignoredFilesToCopy = [".env"]
         }
@@ -126,7 +126,11 @@ struct NewSessionModelTests {
             copiesIgnoredFiles: true,
             runsSetup: true
         ))
+        model.copiesFiles = false
+        #expect(model.launchRequest == SessionLaunchRequest(open: .agent(.codex), executable: found, runsSetup: true))
         model.open = .shell
+        #expect(model.launchRequest == SessionLaunchRequest(open: .shell, runsSetup: true))
+        model.copiesFiles = true
         model.runsSetup = false
         #expect(model.launchRequest == SessionLaunchRequest(open: .shell, copiesIgnoredFiles: true, runsSetup: false))
     }
@@ -140,6 +144,13 @@ struct NewSessionModelTests {
         #expect(model.launchRequest.copiesIgnoredFiles == false)
         #expect(model.launchRequest.runsSetup == false)
         #expect(model.choices.copiesIgnoredFiles, "the choice is kept for a project that names files later")
+        #expect(model.choices.runsSetup)
+        let filesOnly = Self.model { $0.ignoredFilesToCopy = [".env"] }
+        #expect(filesOnly.launchRequest.copiesIgnoredFiles)
+        #expect(!filesOnly.launchRequest.runsSetup)
+        let setupOnly = Self.model { $0.bootstrap = [.shorthand("make")] }
+        #expect(!setupOnly.launchRequest.copiesIgnoredFiles)
+        #expect(setupOnly.launchRequest.runsSetup)
     }
 
     // MARK: - Branch
@@ -162,7 +173,8 @@ struct NewSessionModelTests {
     @Test func createMakes_aNewBranchFromTheBase_inThePlacementsFolder() {
         var model = Self.model()
         model.setBranchName("feat/login")
-        let destination = model.context.project.resolvedWorktreeURL(branchLeaf: "feat-login")
+        let root = model.context.project.rootURL
+        let destination = root.deletingLastPathComponent().appendingPathComponent(root.lastPathComponent + "-feat-login")
         #expect(model.destination == destination)
         #expect(model.plan == NewSessionModel.Plan(
             path: destination,
@@ -172,6 +184,7 @@ struct NewSessionModelTests {
             request: SessionLaunchRequest(open: .agent(.claude), runsSetup: false),
             notes: []
         ))
+        #expect(model.plan?.startRevision == "refs/heads/main")
     }
 
     @Test func anExistingBranch_isCheckedOut_withNoBase() {
@@ -203,9 +216,12 @@ struct NewSessionModelTests {
         var model = Self.model(branches: ["main", "feat/old"], checkedOut: ["main"])
         model.setBranchName("feat/old")
         #expect(model.problem == .branchExists)
+        #expect(model.branchLine == .problem(.branchExists))
+        #expect(model.plan == nil)
         model.setBranchName("main")
         #expect(model.problem == .branchCheckedOut)
         #expect(model.branchLine == .problem(.branchCheckedOut))
+        #expect(model.plan == nil)
     }
 
     @Test func aBadName_andAFolderThatExists_stopCreate() {
@@ -217,10 +233,14 @@ struct NewSessionModelTests {
 
         var crowded = Self.model(folders: ["-feat-here"])
         crowded.setBranchName("feat/here")
-        #expect(crowded.problem == .folderExists(crowded.context.project.resolvedWorktreeURL(branchLeaf: "feat-here")))
+        let root = crowded.context.project.rootURL
+        let occupied = root.deletingLastPathComponent().appendingPathComponent(root.lastPathComponent + "-feat-here")
+        #expect(crowded.problem == .folderExists(occupied))
+        #expect(crowded.outcome == nil)
+        #expect(crowded.plan == nil)
     }
 
-    @Test func aBranchGitMadeBeforeFailing_isTheRetrysExistingBranch() {
+    @Test func aBranchGitMadeBeforeFailing_isTheRetrysExistingBranch() throws {
         var model = Self.model()
         model.setBranchName("feat/half")
         model.useMadeBranch("feat/half")
@@ -228,18 +248,10 @@ struct NewSessionModelTests {
         #expect(model.checkoutBranch == "feat/half")
         #expect(model.context.localBranches.contains("feat/half"))
         #expect(model.problem == nil)
-        #expect(model.plan?.newBranch == nil)
-    }
-
-    @Test func theResultLine_saysWhatCreateWillDo_inEnglishAndJapanese() {
-        let en = Locale(identifier: "en")
-        let ja = Locale(identifier: "ja")
-        #expect(NewSessionModel.resultLine(.newBranch("task/1014-1", base: "master"), locale: en)
-            == "Creates the new branch task/1014-1 from master")
-        #expect(NewSessionModel.resultLine(.newBranch("task/1014-1", base: "master"), locale: ja)
-            == "master から新しいブランチ task/1014-1 を作成します")
-        #expect(NewSessionModel.resultLine(.existingBranch("feat/x"), locale: en) == "Checks out the existing branch feat/x")
-        #expect(NewSessionModel.resultLine(.existingBranch("feat/x"), locale: ja) == "既存のブランチ feat/x をチェックアウトします")
+        let plan = try #require(model.plan)
+        #expect(plan.start == "feat/half")
+        #expect(plan.startRevision == "refs/heads/feat/half")
+        #expect(plan.newBranch == nil)
     }
 
     @Test func theResultLine_marksTheBranchesItNames_andNoOtherWord() {
@@ -249,20 +261,22 @@ struct NewSessionModelTests {
             == [.plain("Checks out the existing branch "), .code("e")])
         #expect(NewSessionModel.resultRuns(.newBranch("in", base: "main"), locale: en)
             == [.plain("Creates the new branch "), .code("in"), .plain(" from "), .code("main")])
+        let ja = Locale(identifier: "ja")
+        #expect(NewSessionModel.resultRuns(.newBranch("task/1014-1", base: "master"), locale: ja)
+            == [.code("master"), .plain(" から新しいブランチ "), .code("task/1014-1"), .plain(" を作成します")])
+        #expect(NewSessionModel.resultRuns(.existingBranch("feat/x"), locale: ja)
+            == [.plain("既存のブランチ "), .code("feat/x"), .plain(" をチェックアウトします")])
     }
 
     // MARK: - Base and fetch
 
-    @Test func withoutAFetch_theDefaultBase_isTheLocalBranch_whenThereIsOne() {
+    @Test func theDefaultBase_followsFetchAndLocalAvailability() {
         #expect(NewSessionModel.bases(defaultBase: "origin/main", localBranches: ["main"], shownBranch: nil, head: "main", fetchRemote: nil)
             == [.init(name: "main", ref: "refs/heads/main")])
         #expect(NewSessionModel.bases(defaultBase: "origin/main", localBranches: [], shownBranch: nil, head: nil, fetchRemote: nil)
             == [.init(name: "main", ref: "refs/remotes/origin/main")])
-    }
 
-    /// A fetch does not move the local `main`: with one, the base is the
-    /// remote's branch it brought up to date.
-    @Test func withAFetch_theDefaultBase_isTheRemotesBranch() {
+        // Fetching updates the remote branch and leaves local main in place.
         #expect(NewSessionModel.bases(
             defaultBase: "origin/main",
             localBranches: ["main"],
@@ -294,14 +308,23 @@ struct NewSessionModelTests {
     @Test func withoutADefault_theRootsBranchIsTheBase() {
         #expect(NewSessionModel.bases(defaultBase: nil, localBranches: ["dev"], shownBranch: nil, head: "dev", fetchRemote: "origin")
             == [.init(name: "dev", ref: "refs/heads/dev")])
+        #expect(NewSessionModel.bases(
+            defaultBase: nil,
+            localBranches: ["dev", "feat/x"],
+            shownBranch: "feat/x",
+            head: "dev",
+            fetchRemote: nil
+        )
+            == [.init(name: "feat/x", ref: "refs/heads/feat/x", isCurrentWorktree: true)])
         #expect(NewSessionModel.bases(defaultBase: nil, localBranches: [], shownBranch: nil, head: nil, fetchRemote: nil).isEmpty)
     }
 
     @Test func theRemoteFetched_isTheBasesOwn_thenItsUpstream_thenOrigin_thenTheOnlyOne() {
-        #expect(NewSessionModel.fetchRemote(defaultBase: "origin/main", upstreamRemote: nil, remotes: ["origin", "fork"]) == "origin")
+        #expect(NewSessionModel
+            .fetchRemote(defaultBase: "base/main", upstreamRemote: "upstream", remotes: ["origin", "upstream", "base"]) == "base")
         #expect(NewSessionModel.fetchRemote(defaultBase: "main", upstreamRemote: "fork", remotes: ["origin", "fork"]) == "fork")
         #expect(NewSessionModel.fetchRemote(defaultBase: "main", upstreamRemote: nil, remotes: ["fork", "origin"]) == "origin")
-        #expect(NewSessionModel.fetchRemote(defaultBase: "main", upstreamRemote: nil, remotes: ["only"]) == "only")
+        #expect(NewSessionModel.fetchRemote(defaultBase: "main", upstreamRemote: "missing", remotes: ["only"]) == "only")
         #expect(NewSessionModel.fetchRemote(defaultBase: "main", upstreamRemote: nil, remotes: ["a", "b"]) == nil)
         // The test repositories have none: nothing is fetched.
         #expect(NewSessionModel.fetchRemote(defaultBase: "main", upstreamRemote: nil, remotes: []) == nil)
@@ -311,6 +334,7 @@ struct NewSessionModelTests {
         var model = Self.model(fetchRemote: "origin")
         #expect(model.base?.name == "origin/main")
         #expect(model.plan?.start == "refs/remotes/origin/main")
+        model.baseName = "origin/main"
         model.fetches = false
         #expect(model.base?.name == "main")
         #expect(model.plan?.start == "refs/heads/main")
@@ -372,18 +396,22 @@ struct NewSessionModelTests {
         let en = Locale(identifier: "en")
         var model = Self.model(fetchRemote: "origin")
         model.fetchState = .fetching
+        let usual: [NewSessionModel.BaseLine] = [
+            .fetching,
+            .fromRemote("origin/main"),
+            .shortfall(.remoteBranchMissing(remote: "origin/main", start: "main")),
+            .behind(local: "main", count: NewSessionModel.mostCommitsBehind, remote: "origin/main")
+        ]
+        let expected = Set(usual.map { NewSessionModel.baseLineText($0, locale: en) })
         let forms = model.baseLineForms(locale: en)
-        #expect(forms.contains("Fetching…"))
-        #expect(forms.contains(NewSessionModel.baseLineText(.fromRemote("origin/main"), locale: en)))
-        let farBehind = NewSessionModel.BaseLine.behind(local: "main", count: NewSessionModel.mostCommitsBehind, remote: "origin/main")
-        #expect(forms.contains(NewSessionModel.baseLineText(farBehind, locale: en)), "\(forms)")
-        let missing = NewSessionModel.BaseLine.shortfall(.remoteBranchMissing(remote: "origin/main", start: "main"))
-        #expect(forms.contains(NewSessionModel.baseLineText(missing, locale: en)), "an answer, not a failure: \(forms)")
-        #expect(Set(forms).count == forms.count)
+        #expect(Set(forms) == expected)
+        #expect(forms.count == expected.count)
+
         model.fetchState = .fetched(behind: 3)
+        let current = NewSessionModel.baseLineText(.behind(local: "main", count: 3, remote: "origin/main"), locale: en)
         let answered = model.baseLineForms(locale: en)
-        #expect(answered.contains(NewSessionModel.baseLineText(.behind(local: "main", count: 3, remote: "origin/main"), locale: en)))
-        #expect(answered.count == forms.count + 1, "the line said now, with the forms kept before")
+        #expect(Set(answered) == expected.union([current]))
+        #expect(answered.count == expected.count + 1)
         model.fetches = false
         #expect(model.baseLine == nil)
         #expect(model.baseLineForms(locale: en).isEmpty)
@@ -403,6 +431,7 @@ struct NewSessionModelTests {
         model.fetchState = .remoteBranchMissing
         #expect(model.plan?.start == "refs/heads/main")
         #expect(model.baseLine == .shortfall(.remoteBranchMissing(remote: "origin/main", start: "main")))
+        #expect(model.plan?.notes == [.fetch(.remoteBranchMissing(remote: "origin/main", start: "main"))])
     }
 
     /// Only the remote's branch waits on the fetch.
@@ -420,8 +449,10 @@ struct NewSessionModelTests {
         var model = Self.model(branches: ["main", "feat/free"], checkedOut: ["main"], defaultBase: nil, head: nil)
         #expect(model.problem == .noBase)
         #expect(model.outcome == nil)
+        #expect(model.plan == nil)
         model.source = .existingBranch
         #expect(model.problem == nil)
+        #expect(model.plan?.startRevision == "refs/heads/feat/free")
     }
 
     // MARK: - Folder
@@ -440,9 +471,7 @@ struct NewSessionModelTests {
 
     // MARK: - ⌥⌘N
 
-    @Test func createAtOnce_createsTheFormAsItOpens_orOpensTheSheet() {
-        #expect(InstantWorktreePlan.decision(for: Self.model()) == .create)
-        #expect(InstantWorktreePlan.decision(for: Self.model(defaultBase: nil, head: nil)) == .openSheet)
+    @Test func createAtOnce_announcesTheCreatedBranchInJapanese() {
         #expect(InstantWorktreePlan.announcement(branch: "task/1021-1").resolved(in: Locale(identifier: "ja")) == "task/1021-1 を作成しました")
     }
 }

@@ -107,7 +107,14 @@ struct SidebarKeyRouteTests {
     /// Two actions on one set of keys both reach libghostty as `ignore`;
     /// if either became a libghostty action, the later line would win.
     @Test func thePairsThatShareKeys_areBothTheMenusOrTheSidebars() {
+        let pairs: [WeirShortcutAction: WeirShortcutAction] = [
+            .moveProjectUp: .focusPaneUp,
+            .focusPaneUp: .moveProjectUp,
+            .moveProjectDown: .focusPaneDown,
+            .focusPaneDown: .moveProjectDown
+        ]
         for action in WeirShortcutAction.allCases {
+            #expect(action.sharesKeys == pairs[action], "\(action)")
             guard let partner = action.sharesKeys else { continue }
             #expect(action.ghosttyAction == nil && partner.ghosttyAction == nil, "\(action)")
             #expect(partner.sharesKeys == action, "sharing goes both ways")
@@ -145,9 +152,10 @@ struct SidebarKeyRouteTests {
     /// Settings → Keyboard and the ⌘/ sheet list the two with the other
     /// navigation keys, under their own names.
     @MainActor
-    @Test func theMoves_areListedWithTheirNames() {
+    @Test func theMoves_areListedWithTheirNames() throws {
         let japanese = Locale(identifier: "ja")
         #expect(WeirShortcutAction.moveProjectUp.category == .navigation)
+        #expect(WeirShortcutAction.moveProjectDown.category == .navigation)
         #expect(WeirShortcutAction.moveProjectUp.localizedTitle.resolved(in: japanese) == "プロジェクトを上へ移動")
         #expect(WeirShortcutAction.moveProjectDown.localizedTitle.resolved(in: japanese) == "プロジェクトを下へ移動")
         let sections = KeyboardShortcutCatalog.sections(
@@ -155,10 +163,13 @@ struct SidebarKeyRouteTests {
             quickTerminalHotKey: nil,
             locale: Locale(identifier: "en")
         )
-        let navigation = sections.first { $0.id == "category.\(WeirShortcutCategory.navigation.rawValue)" }
-        let titles = navigation?.entries.map(\.title) ?? []
-        #expect(titles.contains("Move Project Up"))
-        #expect(titles.contains("Move Project Down"))
+        let navigation = try #require(sections.first { $0.id == "category.\(WeirShortcutCategory.navigation.rawValue)" })
+        let up = try #require(navigation.entries.first { $0.id == "action.\(WeirShortcutAction.moveProjectUp.rawValue)" })
+        let down = try #require(navigation.entries.first { $0.id == "action.\(WeirShortcutAction.moveProjectDown.rawValue)" })
+        #expect(up.title == "Move Project Up")
+        #expect(down.title == "Move Project Down")
+        #expect(up.tokens == ["⌥", "⌘", "↑"])
+        #expect(down.tokens == ["⌥", "⌘", "↓"])
     }
 
     /// ⌘⌫ goes to the sidebar while it has the keyboard, unless an action

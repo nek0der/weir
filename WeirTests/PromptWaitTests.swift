@@ -61,6 +61,8 @@ struct PromptWaitTests {
         #expect(approval.action == .command)
         #expect(approval.tool == shape.tool)
         #expect(approval.subject == shape.subject)
+        #expect(approval.fact == shape.subject ?? shape.tool)
+        #expect(approval.detail == shape.detail)
     }
 
     @Test(arguments: [
@@ -155,16 +157,16 @@ struct PromptWaitTests {
         #expect(bare.fact == nil)
     }
 
-    @Test func aRecordWithNoKind_isReadFromItsWords() {
-        // A record from before `waitKind`: a question that starts like a
-        // tool's request reads as an approval. Kept as it is: such records
-        // go once their run ends.
-        guard case .approval = PromptWait(detail: "Read: which file first?", kind: nil, tool: nil) else {
-            Issue.record("a record with no kind reads a tool's words as an approval")
-            return
-        }
-        #expect(PromptWait(detail: "Read: which file first?", kind: nil, tool: nil)
-            == PromptWait(detail: "Read: which file first?"))
+    @Test func aRecordWithNoKind_isReadFromItsWords() throws {
+        // A legacy record does not say that these words were a question.
+        let detail = "Read: which file first?"
+        let legacy = PromptWait(detail: detail, kind: nil, tool: nil)
+        let approval = try #require(Self.approval(detail))
+        #expect(legacy == .approval(approval))
+        #expect(approval.tool == "Read")
+        #expect(approval.action == .other)
+        #expect(approval.subject == "which file first?")
+        #expect(approval.detail == detail)
     }
 
     @Test func theQuestionToolsBareName_isNoWords() {
@@ -224,8 +226,10 @@ struct PromptWaitTests {
         #expect(AppState.waitOf(badge) == .unclassified(detail: "Allow network access?"))
 
         // A run that moved on describes something else.
-        badge.state = .running
         badge.waitKind = "approval"
-        #expect(AppState.waitOf(badge) == nil)
+        for state in AgentState.allCases where state != .needsInput {
+            badge.state = state
+            #expect(AppState.waitOf(badge) == nil, "\(state)")
+        }
     }
 }

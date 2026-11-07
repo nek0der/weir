@@ -15,17 +15,37 @@ private final class RecordingRefs: ViewedLineRefWriting, @unchecked Sendable {
     }
 
     private let lock = NSLock()
-    private var recorded: [Move] = []
+    enum Event: Equatable {
+        case move(Move)
+        case flush
+    }
 
-    var moves: [Move] {
+    private var recorded: [Event] = []
+    private let onFlush: @Sendable () -> Void
+
+    init(onFlush: @escaping @Sendable () -> Void = {}) {
+        self.onFlush = onFlush
+    }
+
+    var events: [Event] {
         lock.withLock { recorded }
     }
 
-    func move(_ conversation: ConversationKey, from: SnapshotTree?, to: SnapshotTree?) {
-        lock.withLock { recorded.append(Move(conversation: conversation, from: from, to: to)) }
+    var moves: [Move] {
+        events.compactMap {
+            guard case let .move(move) = $0 else { return nil }
+            return move
+        }
     }
 
-    func waitForPendingMoves() {}
+    func move(_ conversation: ConversationKey, from: SnapshotTree?, to: SnapshotTree?) {
+        lock.withLock { recorded.append(.move(Move(conversation: conversation, from: from, to: to))) }
+    }
+
+    func waitForPendingMoves() {
+        lock.withLock { recorded.append(.flush) }
+        onFlush()
+    }
 }
 
 @MainActor
@@ -118,10 +138,13 @@ struct ViewedLineStoreTests {
             let store = ViewedLineStore(directory: dir)
             let a1 = try Self.turn("a", 1)
             let b1 = try Self.turn("b", 1)
-            let moves = store.markViewed(through: [a1, b1], source: .restore).map(\.undo)
+            let a2 = try Self.turn("a", 2)
+            let b2 = try Self.turn("b", 2)
+            store.markViewed(through: [a1, b1], source: .turnRow)
+            let moves = store.markViewed(through: [a2, b2], source: .restore).map(\.undo)
             store.noteRestoreMoves(moves, of: "OP", in: "/repo")
             let count = ViewedLine.historyLimit + 5
-            for number in 2...count {
+            for number in 3...count {
                 try store.markViewed(through: Self.turn("a", number), source: .turnRow)
                 try store.markViewed(through: Self.turn("c", number), source: .turnRow)
             }
@@ -132,7 +155,10 @@ struct ViewedLineStoreTests {
             #expect(aLine.history.count == ViewedLine.historyLimit + 1)
             let restoreMove = try #require(moves.first { $0.conversation == a1.conversation })
             // Under later moves the restore's does not take the line back.
+            let later = try Self.turn("a", count)
+            try #require(aLine.position == ViewedLinePosition(later))
             #expect(!relaunched.undo(restoreMove.changeID, in: a1.conversation))
+            #expect(relaunched.line(of: a1.conversation)?.position == ViewedLinePosition(later))
             for change in aLine.history.reversed() where change.id != restoreMove.changeID {
                 #expect(relaunched.undo(change.id, in: a1.conversation))
             }
@@ -141,9 +167,12 @@ struct ViewedLineStoreTests {
             for move in taken {
                 #expect(relaunched.undo(move.changeID, in: move.conversation))
             }
-            #expect(!relaunched.isViewed(a1))
-            #expect(!relaunched.isViewed(b1))
-            #expect(try relaunched.isViewed(Self.turn("c", count)))
+            #expect(relaunched.line(of: a1.conversation)?.position == ViewedLinePosition(a1))
+            #expect(relaunched.line(of: b1.conversation)?.position == ViewedLinePosition(b1))
+            #expect(!relaunched.isViewed(a2))
+            #expect(!relaunched.isViewed(b2))
+            let unrelated = try Self.turn("c", count)
+            #expect(relaunched.line(of: unrelated.conversation)?.position == ViewedLinePosition(unrelated))
         }
     }
 
@@ -157,91 +186,114 @@ struct ViewedLineStoreTests {
         try withTempDir { dir in
             let repo = dir.appendingPathComponent("repo")
             try FileManager.default.createDirectory(at: repo.appendingPathComponent(".git"), withIntermediateDirectories: true)
+            let otherRepo = dir.appendingPathComponent("other")
+            try FileManager.default.createDirectory(at: otherRepo.appendingPathComponent(".git"), withIntermediateDirectories: true)
             let unmounted = dir.appendingPathComponent("unmounted").path
             let store = ViewedLineStore(directory: dir)
             var turns: [String: TurnSummary] = [:]
+            var expectedMoves: [String: [ViewedLineUndo]] = [:]
             let restores = [
                 ("aborted", "OP-ABORTED", repo.path),
                 ("pruned", "OP-PRUNED", repo.path),
                 ("undone", "OP-UNDONE", repo.path),
+                ("stale", "OP-STALE", repo.path),
                 ("unmounted", "OP-UNMOUNTED", unmounted),
                 ("applied", "OP-APPLIED", repo.path),
                 ("writing", "OP-WRITING", repo.path),
                 ("newer", "OP-NEWER", repo.path),
-                ("other", "OP-OTHER", "/other")
+                ("other", "OP-OTHER", otherRepo.path)
             ]
             for (conversation, opID, root) in restores {
                 let turn = try Self.turn(conversation, 1)
                 turns[conversation] = turn
-                store.noteRestoreMoves(store.markViewed(through: [turn], source: .restore).map(\.undo), of: opID, in: root)
+                let moves = store.markViewed(through: [turn], source: .restore).map(\.undo)
+                expectedMoves[opID] = moves
+                store.noteRestoreMoves(moves, of: opID, in: root)
             }
             for number in 2...(ViewedLine.historyLimit + 3) {
                 try store.markViewed(through: Self.turn("aborted", number), source: .turnRow)
             }
+            let staleLater = try Self.turn("stale", 2)
+            store.markViewed(through: staleLater, source: .turnRow)
+            let abortedLater = try Self.turn("aborted", ViewedLine.historyLimit + 3)
             let aborted = try #require(turns["aborted"]).conversation
             #expect(store.line(of: aborted)?.history.count == ViewedLine.historyLimit + 1)
 
-            try store.settleRestoreMoves(readOf: { $0 == repo.path || $0 == unmounted }, listing: [
-                RestoreJournalFixture.restore(
-                    #"{"kind":"aborted","reason":"externalChangeDetected"}"#,
-                    opID: "OP-ABORTED",
-                    turnID: "s1-T1",
-                    number: 1
-                ),
-                RestoreJournalFixture.restore(#"{"kind":"undone","by":"U"}"#, opID: "OP-UNDONE", turnID: "s1-T1", number: 1),
-                RestoreJournalFixture.restore(#"{"kind":"applied"}"#, opID: "OP-APPLIED", turnID: "s1-T1", number: 1),
-                RestoreJournalFixture.restore(#"{"kind":"writing"}"#, opID: "OP-WRITING", turnID: "s1-T1", number: 1),
-                RestoreJournalFixture.restore(#"{"kind":"somethingNew"}"#, opID: "OP-NEWER", turnID: "s1-T1", number: 1)
-            ])
+            let journals = [
+                ("aborted", "OP-ABORTED", #"{"kind":"aborted","reason":"externalChangeDetected"}"#),
+                ("undone", "OP-UNDONE", #"{"kind":"undone","by":"U"}"#),
+                ("stale", "OP-STALE", #"{"kind":"undone","by":"U2"}"#),
+                ("applied", "OP-APPLIED", #"{"kind":"applied"}"#),
+                ("writing", "OP-WRITING", #"{"kind":"writing"}"#),
+                ("newer", "OP-NEWER", #"{"kind":"somethingNew"}"#)
+            ]
+            let listing = try journals.map { conversation, opID, stage in
+                let turn = try #require(turns[conversation])
+                return try RestoreJournalFixture.make(
+                    stageJSON: stage,
+                    fields: .init(opID: opID, root: repo.path, turnID: turn.turnID.rawValue, turnNumber: turn.displayNumber)
+                )
+            }
+            store.settleRestoreMoves(readOf: { $0 == repo.path || $0 == unmounted }, listing: listing)
 
             // Undone from elsewhere: its line goes back.
             #expect(try !store.isViewed(#require(turns["undone"])))
             // Ended or pruned: dropped, and the lines stay as they are.
             #expect(try store.isViewed(#require(turns["pruned"])))
             #expect(store.line(of: aborted)?.history.count == ViewedLine.historyLimit)
+            #expect(store.line(of: aborted)?.position == ViewedLinePosition(abortedLater))
+            #expect(store.line(of: staleLater.conversation)?.position == ViewedLinePosition(staleLater))
             store.flushSynchronously()
 
             let relaunched = ViewedLineStore(directory: dir)
-            for opID in ["OP-ABORTED", "OP-PRUNED", "OP-UNDONE"] {
+            for opID in ["OP-ABORTED", "OP-PRUNED", "OP-UNDONE", "OP-STALE"] {
                 #expect(relaunched.takeRestoreMoves(of: opID).isEmpty)
             }
             // Still to be undone, still settling, at a stage this build
             // cannot read, in a worktree not there now, or another's.
             for opID in ["OP-UNMOUNTED", "OP-APPLIED", "OP-WRITING", "OP-NEWER", "OP-OTHER"] {
-                #expect(relaunched.takeRestoreMoves(of: opID).count == 1)
+                let kept = try #require(expectedMoves[opID])
+                try #require(kept.count == 1)
+                #expect(relaunched.takeRestoreMoves(of: opID) == kept)
             }
         }
     }
 
     /// A mark is its `markID`, and the latest mark is told by
     /// its place among the store's marks, which the file keeps. Two marks
-    /// a moment apart, whose times the file rounds to the same second,
-    /// take back one at a time before a relaunch and after it; one mark
+    /// a moment apart, even when the clock goes backward and the file
+    /// keeps both at the same second, offer only the later one; one mark
     /// over two conversations takes back both, whatever the filter shows.
     @Test func theMarks_areTheSameBeforeAndAfterALaunch_andWhateverTheFilter() throws {
         try withTempDir { dir in
-            var clock = Date(timeIntervalSince1970: 1_800_000_000.1)
+            var clock = Date(timeIntervalSince1970: 1_800_000_000.8)
             let store = ViewedLineStore(directory: dir, now: { clock })
             let a1 = try Self.turn("a", 1)
             let b1 = try Self.turn("b", 1)
             let a2 = try Self.turn("a", 2)
             let b2 = try Self.turn("b", 2)
 
-            store.markViewed(through: [a1], source: .turnRow)
-            clock = Date(timeIntervalSince1970: 1_800_000_000.8)
+            let aMove = try #require(store.markViewed(through: [a1], source: .turnRow).first)
+            clock = Date(timeIntervalSince1970: 1_800_000_000.1)
             let bMove = try #require(store.markViewed(through: [b1], source: .turnRow).first)
+            let sequence = try #require(bMove.change.sequence)
+            #expect(aMove.change.at > bMove.change.at, "the wall clock moved backward")
+            #expect(aMove.change.sequence == sequence - 1)
             let alone = [bMove.undo]
             #expect(try Self.unmark(store, turns: [a1, b1]) == alone, "the later of two marks in one second")
             store.flushSynchronously()
             let relaunched = ViewedLineStore(directory: dir, now: { clock })
-            #expect(
-                relaunched.line(of: a1.conversation)?.history.last?.at == relaunched.line(of: b1.conversation)?.history.last?.at,
-                "the file keeps whole seconds"
-            )
+            let aReloaded = try #require(relaunched.line(of: a1.conversation)?.history.last)
+            let bReloaded = try #require(relaunched.line(of: b1.conversation)?.history.last)
+            #expect(aReloaded.at == Date(timeIntervalSince1970: 1_800_000_000))
+            #expect(bReloaded.at == aReloaded.at)
+            #expect(bReloaded.sequence == sequence)
             #expect(try Self.unmark(relaunched, turns: [a1, b1]) == alone, "the same after a relaunch")
 
             clock = Date(timeIntervalSince1970: 1_800_000_001.2)
-            let together = relaunched.markViewed(through: [a2, b2], source: .turnRow).map(\.undo)
+            let moves = relaunched.markViewed(through: [a2, b2], source: .turnRow)
+            #expect(moves.map(\.change.sequence) == [sequence + 1, sequence + 1])
+            let together = moves.map(\.undo)
             #expect(together.count == 2)
             #expect(try Set(Self.unmark(relaunched, turns: [a1, b1, a2, b2])) == Set(together))
             #expect(
@@ -285,17 +337,31 @@ struct ViewedLineStoreTests {
         let store = ViewedLineStore(directory: URL(fileURLWithPath: "/nonexistent"), writesFiles: false)
         let viewed = try Fixture.turn("before", changes: Fixture.changedFiles, number: 4)
         store.markViewed(through: viewed, source: .decisionBar)
-        let resumed = try Fixture.turn("after", changes: Fixture.changedFiles, number: 5)
+        var extras = Fixture.Extras()
+        extras.runID = "new-run"
+        let resumed = try Fixture.turn("after", changes: Fixture.changedFiles, number: 5, extras: extras)
+        let independent = try Self.turn("other", 1)
+        #expect(viewed.runID != resumed.runID)
+        #expect(store.isViewed(viewed))
+        #expect(!store.isViewed(resumed))
+        #expect(!store.isViewed(independent))
         let history = [Fixture.conversation: [viewed]]
         let newRun = TurnReadRuntime(
-            runID: "new-run",
+            runID: resumed.runID,
+            activeAttachmentPaneIDs: [UUID()],
+            conversation: Fixture.conversation,
+            currentTurnID: resumed.turnID,
+            isFinished: true
+        )
+
+        let priorRun = TurnReadRuntime(
+            runID: viewed.runID,
             activeAttachmentPaneIDs: [UUID()],
             conversation: Fixture.conversation,
             currentTurnID: viewed.turnID,
             isFinished: true
         )
-
-        #expect(TurnReadRules.isEpisodeRead(newRun, history: history, isRead: store.isViewed) == true)
+        #expect(TurnReadRules.isEpisodeRead(priorRun, history: history, isRead: store.isViewed) == true)
         #expect(TurnReadRules.isEpisodeRead(
             newRun,
             history: [Fixture.conversation: [viewed, resumed]],
@@ -321,6 +387,9 @@ struct ViewedLineStoreTests {
         }
     }
 
+}
+
+extension ViewedLineStoreTests {
     @Test func changesOutsideTurnsMarkedViewed_stayAcrossALaunch_andUndoWithTheLine() throws {
         try withTempDir { dir in
             let store = ViewedLineStore(directory: dir)
@@ -328,7 +397,9 @@ struct ViewedLineStoreTests {
             let change = try #require(store.markViewed(through: turn, source: .review))
             // A worktree that exists: one that is gone is dropped on reading.
             store.markOutsideTurnsViewed(["notes.md": "blob:1"], in: dir.path, with: change.id)
-            store.markOutsideTurnsViewed(["old.md": "blob:1"], in: "/gone-\(UUID().uuidString)", with: UUID())
+            let missing = dir.appendingPathComponent("gone").path
+            store.markOutsideTurnsViewed(["old.md": "blob:1"], in: missing, with: UUID())
+            #expect(store.outsideTurns == [dir.path: ["notes.md": "blob:1"], missing: ["old.md": "blob:1"]])
             store.flushSynchronously()
             #expect(ViewedLineStore(directory: dir).outsideTurns == [dir.path: ["notes.md": "blob:1"]])
 
@@ -336,22 +407,27 @@ struct ViewedLineStoreTests {
             #expect(store.outsideTurns[dir.path] == nil, "one Undo takes back both")
             #expect(!store.isViewed(turn))
             store.flushSynchronously()
-            #expect(ViewedLineStore(directory: dir).outsideTurns.isEmpty)
+            let reopened = ViewedLineStore(directory: dir)
+            #expect(reopened.outsideTurns.isEmpty)
+            #expect(!reopened.isViewed(turn))
+            #expect(reopened.line(of: turn.conversation)?.position == nil)
         }
     }
 
     @Test func aFileFromBeforeChangesOutsideTurnsWereKept_isRead() throws {
         try withTempDir { dir in
-            let turn = try Fixture.turn("a", changes: Fixture.changedFiles, number: 1)
-            let store = ViewedLineStore(directory: dir)
-            store.markViewed(through: turn, source: .decisionBar)
-            store.flushSynchronously()
-            let written = try String(contentsOf: file(in: dir), encoding: .utf8)
-            #expect(!written.contains("outsideTurns"), "nothing marked, nothing written")
+            let historical = Data(#"""
+            {"schemaVersion":1,"lines":[{"conversation":{"provider":"claude","conversationId":"s1","isFallback":false},
+            "position":{"turnID":"old","displayNumber":2},"history":[]}]}
+            """#.utf8)
+            try historical.write(to: file(in: dir))
 
-            let relaunched = ViewedLineStore(directory: dir)
-            #expect(relaunched.isViewed(turn))
-            #expect(relaunched.outsideTurns.isEmpty)
+            let store = ViewedLineStore(directory: dir)
+
+            #expect(try store.isViewed(Fixture.turn("old", number: 2)))
+            #expect(try !store.isViewed(Fixture.turn("next", number: 3)))
+            #expect(store.outsideTurns.isEmpty)
+            #expect(try Data(contentsOf: file(in: dir)) == historical)
         }
     }
 
@@ -394,15 +470,22 @@ struct ViewedLineStoreTests {
         }
     }
 
-    @Test func theDeletedTurnsSpans_thatCannotBeSaved_areSaidSo() async throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func theDeletedTurnsSpans_thatCannotBeSaved_areSaidSo() async throws {
         try await withTempDir { dir in
             let store = ViewedLineStore(directory: dir)
             // In a folder that cannot be written in, the write fails.
             try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
             defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
             let span = DateInterval(start: Date(timeIntervalSince1970: 1000), duration: 100)
-            #expect(await store.noteDeletedTurns([dir.path: [span]]) == false)
-            #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("viewed-lines.json").path))
+            let spans = [dir.path: [span]]
+            #expect(await store.noteDeletedTurns(spans) == false)
+            #expect(store.deletedTurns == spans)
+            #expect(!FileManager.default.fileExists(atPath: file(in: dir).path))
+
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+            #expect(await store.noteDeletedTurns(spans))
+            #expect(ViewedLineStore(directory: dir).deletedTurns == spans)
         }
     }
 
@@ -416,6 +499,7 @@ struct ViewedLineStoreTests {
         #expect(AppState.isRemovedRoot("/code/app-wt/nested", removed: removed, kept: kept))
         #expect(!AppState.isRemovedRoot("/code/app", removed: removed, kept: kept))
         #expect(!AppState.isRemovedRoot("/code/lib", removed: removed, kept: kept), "it holds a project still kept")
+        #expect(AppState.isRemovedRoot("/code/lib", removed: removed, kept: ["/code/app"]))
         #expect(AppState.isRemovedRoot(
             "/code/app/.worktrees/x",
             removed: ["/code/app/.worktrees/x"],
@@ -428,9 +512,8 @@ struct ViewedLineStoreTests {
             DateInterval(start: Date(timeIntervalSince1970: Double($0) * 100), duration: 10)
         }
         let merged = ViewedLineStore.merge(spans)
-        #expect(merged.count == ViewedLineStore.deletedSpanLimit)
-        #expect(merged.first == DateInterval(start: spans[0].start, end: spans[2].end), "more left out, never less")
-        #expect(merged.last == spans.last)
+        let joined = DateInterval(start: spans[0].start, end: spans[2].end)
+        #expect(merged == [joined] + spans.dropFirst(3))
     }
 
     @Test func aMarkWithNoConversation_isTakenBackAlone() {
@@ -473,30 +556,40 @@ struct ViewedLineStoreTests {
     /// left out.
     @Test func markingSeveralConversations_isOneMark_withOneTime() throws {
         var clock = Date(timeIntervalSince1970: 1000)
-        let store = ViewedLineStore(directory: URL(fileURLWithPath: "/nonexistent"), writesFiles: false, now: { clock })
-        var codexExtras = Fixture.Extras()
-        codexExtras.conversationID = "codex"
-        let claude = try Fixture.turn("c4", changes: Fixture.changedFiles, number: 4)
-        let codex = try Fixture.turn("x1", changes: Fixture.changedFiles, number: 1, extras: codexExtras)
-        let viewed = try Fixture.turn("x0", changes: Fixture.changedFiles, number: 0, extras: codexExtras)
-        store.markViewed(through: viewed, source: .decisionBar)
-        clock = Date(timeIntervalSince1970: 2000)
+        let store = ViewedLineStore(directory: URL(fileURLWithPath: "/nonexistent"), writesFiles: false, now: {
+            let at = clock
+            clock = clock.addingTimeInterval(1)
+            return at
+        })
+        var otherExtras = Fixture.Extras()
+        otherExtras.conversationID = "other"
+        let first = try Fixture.turn("c4", changes: Fixture.changedFiles, number: 4)
+        let second = try Fixture.turn("x1", changes: Fixture.changedFiles, number: 1, extras: otherExtras)
+        let viewed = try Fixture.turn("x0", changes: Fixture.changedFiles, number: 0, extras: otherExtras)
+        let prior = try #require(store.markViewed(through: viewed, source: .decisionBar))
+        let priorSequence = try #require(prior.sequence)
+        let markTime = clock
 
-        let moves = store.markViewed(through: [claude, codex, viewed], source: .turnRow)
+        let moves = store.markViewed(through: [first, second, viewed], source: .turnRow)
 
-        #expect(moves.map(\.conversation) == [claude.conversation, codex.conversation], "the viewed turn moved nothing")
-        #expect(moves.map(\.change.at) == [clock, clock])
+        #expect(moves.map(\.conversation) == [first.conversation, second.conversation], "the viewed turn moved nothing")
+        #expect(moves.map(\.change.at) == [markTime, markTime])
+        #expect(clock == markTime.addingTimeInterval(1))
+        #expect(moves.map(\.change.sequence) == [priorSequence + 1, priorSequence + 1])
         #expect(moves.first?.change.markID != nil)
         #expect(Set(moves.map(\.change.markID)).count == 1)
         #expect(moves.map(\.undo.changeID) == moves.map(\.change.id))
-        #expect(store.isViewed(claude) && store.isViewed(codex))
+        #expect(store.isViewed(first) && store.isViewed(second))
         for move in moves {
             #expect(store.undo(move.undo.changeID, in: move.undo.conversation))
         }
-        #expect(!store.isViewed(claude) && !store.isViewed(codex))
+        #expect(!store.isViewed(first) && !store.isViewed(second))
         #expect(store.isViewed(viewed), "the earlier mark stands")
     }
 
+}
+
+extension ViewedLineStoreTests {
     @Test func markingNotViewed_movesTheLineAboveTheTurn() throws {
         let store = ViewedLineStore(directory: URL(fileURLWithPath: "/nonexistent"), writesFiles: false)
         let turns = try (1...3).map { try Fixture.turn("t\($0)", number: $0) }
@@ -515,33 +608,52 @@ struct ViewedLineStoreTests {
             let taken = try Fixture.turn("a", changes: Fixture.changedFiles, number: 1, endTree: Self.tree)
             let untaken = try Fixture.turn("b", changes: Fixture.changedFiles, number: 2)
 
-            store.markViewed(through: taken, source: .decisionBar)
+            let first = try #require(store.markViewed(through: taken, source: .decisionBar))
+            #expect(first.to == ViewedLinePosition(taken))
             let change = try #require(store.markViewed(through: untaken, source: .decisionBar))
-            store.undo(change.id, in: Fixture.conversation)
+            #expect(change.from == ViewedLinePosition(taken))
+            #expect(change.to == ViewedLinePosition(untaken))
+            #expect(store.undo(change.id, in: Fixture.conversation))
+            #expect(store.line(of: Fixture.conversation)?.position == ViewedLinePosition(taken))
             store.forget([Fixture.conversation])
             store.flushSynchronously()
 
             let conversation = Fixture.conversation
-            #expect(refs.moves == [
-                .init(conversation: conversation, from: nil, to: Self.tree),
-                .init(conversation: conversation, from: Self.tree, to: nil),
-                .init(conversation: conversation, from: nil, to: Self.tree),
-                .init(conversation: conversation, from: Self.tree, to: nil)
+            #expect(refs.events == [
+                .move(.init(conversation: conversation, from: nil, to: Self.tree)),
+                .move(.init(conversation: conversation, from: Self.tree, to: nil)),
+                .move(.init(conversation: conversation, from: nil, to: Self.tree)),
+                .move(.init(conversation: conversation, from: Self.tree, to: nil)),
+                .flush
             ])
             #expect(store.line(of: conversation) == nil)
         }
     }
 
-    @Test func aRunThatMayNotWrite_keepsLinesInMemoryOnly() throws {
+    @Test(arguments: [false, true])
+    func aRunThatMayNotWrite_keepsLinesInMemoryOnly(hasExistingFile: Bool) throws {
         try withTempDir { dir in
+            let original = Data(#"""
+            {"schemaVersion":1,"lines":[{"conversation":{"provider":"claude","conversationId":"s1","isFallback":false},
+            "position":{"turnID":"t3","displayNumber":3},"history":[]}]}
+            """#.utf8)
+            if hasExistingFile {
+                try original.write(to: file(in: dir))
+                #expect(try ViewedLineStore(directory: dir).isViewed(Fixture.turn("t3", number: 3)), "the fixture can be loaded")
+            }
             let refs = RecordingRefs()
             let store = ViewedLineStore(directory: dir, writesFiles: false, refs: refs)
+            #expect(try !store.isViewed(Fixture.turn("t3", number: 3)))
             let turn = try Fixture.turn("a", number: 1, endTree: Self.tree)
             store.markViewed(through: turn, source: .decisionBar)
             store.flushSynchronously()
 
             #expect(store.isViewed(turn))
-            #expect(!FileManager.default.fileExists(atPath: file(in: dir).path))
+            if hasExistingFile {
+                #expect(try Data(contentsOf: file(in: dir)) == original)
+            } else {
+                #expect(!FileManager.default.fileExists(atPath: file(in: dir).path))
+            }
             #expect(refs.moves.isEmpty, "nor the person's repositories")
         }
     }
@@ -555,24 +667,14 @@ struct ViewedLineStoreTests {
             try newer.write(to: file(in: dir))
             let store = ViewedLineStore(directory: dir)
 
+            #expect(try store.isViewed(Fixture.turn("t2", number: 2)))
+            #expect(try store.isViewed(Fixture.turn("t3", number: 3)))
+            #expect(try !store.isViewed(Fixture.turn("t4", number: 4)))
             try store.markViewed(through: Fixture.turn("t4", number: 4), source: .decisionBar)
             store.flushSynchronously()
 
-            #expect(try store.isViewed(Fixture.turn("t2", number: 2)), "its lines count")
+            #expect(try store.isViewed(Fixture.turn("t4", number: 4)), "updated in memory")
             #expect(try Data(contentsOf: file(in: dir)) == newer)
-        }
-    }
-
-    @Test func aDamagedFile_costsItsLinesOnly() throws {
-        try withTempDir { dir in
-            try Data("{".utf8).write(to: file(in: dir))
-            let store = ViewedLineStore(directory: dir)
-            let turn = try Fixture.turn("a", number: 1)
-
-            store.markViewed(through: turn, source: .decisionBar)
-            store.flushSynchronously()
-
-            #expect(ViewedLineStore(directory: dir).isViewed(turn), "written afresh")
         }
     }
 
@@ -598,23 +700,26 @@ struct ViewedLineStoreTests {
 
     @Test(.tags(.smoke)) func aLineMovingToAnotherRepository_takesItsRefAlong() async throws {
         let first = try await TempGitRepo.make()
+        defer { first.cleanup() }
         let second = try await TempGitRepo.make()
-        defer {
-            first.cleanup()
-            second.cleanup()
-        }
+        defer { second.cleanup() }
         let refs = ViewedLineRefs()
         let ref = ViewedLineRefs.refName(of: Fixture.conversation)
+        try second.write("destination", to: "destination.txt")
+        try await second.git(["add", "destination.txt"])
         let firstTree = try await first.git(["write-tree"])
         let secondTree = try await second.git(["write-tree"])
+        try #require(firstTree != secondTree)
         let from = SnapshotTree(tree: firstTree, root: first.url.path)
 
         refs.move(Fixture.conversation, from: nil, to: from)
+        refs.waitForPendingMoves()
+        #expect(try await first.git(["rev-parse", ref]) == firstTree)
         refs.move(Fixture.conversation, from: from, to: SnapshotTree(tree: secondTree, root: second.url.path))
         refs.waitForPendingMoves()
 
         #expect(try await !GitProcess.run(["rev-parse", "--verify", "--quiet", ref], cwd: first.url).succeeded)
-        #expect(try await GitProcess.run(["rev-parse", "--verify", "--quiet", ref], cwd: second.url).succeeded)
+        #expect(try await second.git(["rev-parse", ref]) == secondTree)
     }
 
     // MARK: - A file that cannot be read
@@ -628,17 +733,23 @@ struct ViewedLineStoreTests {
             try garbled.write(to: file(in: dir))
 
             let store = ViewedLineStore(directory: dir)
-            try store.markViewed(through: Fixture.turn("b", number: 2), source: .decisionBar)
+            let turn = try Fixture.turn("b", number: 2)
+            #expect(!store.isViewed(turn))
+            #expect(!FileManager.default.fileExists(atPath: file(in: dir).path))
+            let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+            try #require(names.count == 1)
+            let kept = try #require(names.first { $0.hasPrefix("viewed-lines.json.bak-decode-failed-") })
+            try #require(Data(contentsOf: dir.appendingPathComponent(kept)) == garbled)
+            store.markViewed(through: turn, source: .decisionBar)
             store.flushSynchronously()
 
-            let names = try FileManager.default.contentsOfDirectory(atPath: dir.path)
-            let kept = try #require(names.first { $0.hasPrefix("viewed-lines.json.bak-decode-failed-") })
             #expect(try Data(contentsOf: dir.appendingPathComponent(kept)) == garbled)
-            #expect(try ViewedLineStore(directory: dir).isViewed(Fixture.turn("b", number: 2)))
+            #expect(ViewedLineStore(directory: dir).line(of: turn.conversation)?.position == ViewedLinePosition(turn))
         }
     }
 
-    @Test func anUnreadableFile_thatCannotBeMovedAside_isNeverSavedOver() throws {
+    @Test(.disabled(if: geteuid() == 0, "root writes into a read-only folder"))
+    func aMalformedFile_thatCannotBeMovedAside_isNeverSavedOver() throws {
         try withTempDir { dir in
             let garbled = Data(#"{ "schemaVersion": 1, "lines": "#.utf8)
             try garbled.write(to: file(in: dir))
@@ -646,6 +757,10 @@ struct ViewedLineStoreTests {
             defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
 
             let store = ViewedLineStore(directory: dir)
+            try #require(store.suspendedFile == file(in: dir))
+            #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == [file(in: dir).lastPathComponent])
+            // A rejected write must not hide a missing saving suspension.
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
             try store.markViewed(through: Fixture.turn("b", number: 2), source: .decisionBar)
             store.flushSynchronously()
 
@@ -657,18 +772,21 @@ struct ViewedLineStoreTests {
     /// a first launch: the check that a file exists answers no there too.
     /// Saving stops, and says so, so a save once the folder opens up again
     /// cannot replace the file with what this launch recorded.
-    @Test func aFileInAFolderThatCannotBeSearched_isNeverSavedOver() async throws {
+    @Test(.enabled(if: geteuid() != 0))
+    func aFileInAFolderThatCannotBeSearched_isNeverSavedOver() async throws {
         try await withTempDir { root in
             let dir = root.appendingPathComponent("support")
             let manager = FileManager.default
             try manager.createDirectory(at: dir, withIntermediateDirectories: false)
             let span = DateInterval(start: Date(timeIntervalSince1970: 1000), duration: 100)
-            #expect(await ViewedLineStore(directory: dir).noteDeletedTurns([dir.path: [span]]))
+            try #require(await ViewedLineStore(directory: dir).noteDeletedTurns([dir.path: [span]]))
             let original = try Data(contentsOf: file(in: dir))
             try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dir.path)
             defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
 
+            try #require(throws: (any Error).self) { try Data(contentsOf: file(in: dir)) }
             let store = ViewedLineStore(directory: dir)
+            try #require(store.suspendedFile == file(in: dir))
             try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
             try store.markViewed(through: Fixture.turn("b", number: 2), source: .decisionBar)
             store.flushSynchronously()
@@ -684,25 +802,35 @@ struct ViewedLineStoreTests {
     @Test func flush_waitsForTheDeletedTurnsSpansWriteOnItsWay() async throws {
         try await withTempDir { dir in
             let queue = DispatchQueue(label: "viewed-lines-test")
-            let store = ViewedLineStore(directory: dir, saveQueue: queue)
-            let span = DateInterval(start: Date(timeIntervalSince1970: 1000), duration: 100)
-            // Holds the queue, so the spans' write waits behind it until the
-            // flush below has started.
             let release = DispatchSemaphore(value: 0)
-            queue.async { release.wait() }
-            let noting = Task { await store.noteDeletedTurns([dir.path: [span]]) }
-            // The spans are taken in, and their write queued, in one step
-            // on the main actor once the task runs.
-            let deadline = ContinuousClock.now + .seconds(10)
-            while store.deletedTurns.isEmpty, ContinuousClock.now < deadline {
-                try await Task.sleep(for: .milliseconds(10))
+            defer { release.signal() }
+            let queueEntered = Recorded(false)
+            let queueReleased = Recorded(false)
+            queue.async {
+                queueEntered.value = true
+                queueReleased.value = release.wait(timeout: .now() + 10) == .success
             }
-            #expect(store.deletedTurns == [dir.path: [span]])
-            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(200)) { release.signal() }
+            await pollUntil { queueEntered.value }
+            try #require(queueEntered.value)
+
+            let refs = RecordingRefs {
+                // The flush calls the ref writer before waiting on the
+                // persistence queue. Release only once that call is reached.
+                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(200)) { release.signal() }
+            }
+            let store = ViewedLineStore(directory: dir, refs: refs, saveQueue: queue)
+            let span = DateInterval(start: Date(timeIntervalSince1970: 1000), duration: 100)
+            let spans = [dir.path: [span]]
+            let noting = Task { await store.noteDeletedTurns(spans) }
+            await pollUntil { store.deletedTurns == spans }
+            #expect(store.deletedTurns == spans)
+            #expect(!FileManager.default.fileExists(atPath: file(in: dir).path))
 
             store.flushSynchronously()
 
-            #expect(ViewedLineStore(directory: dir).deletedTurns == [dir.path: [span]])
+            #expect(refs.events == [.flush])
+            #expect(queueReleased.value)
+            #expect(ViewedLineStore(directory: dir).deletedTurns == spans)
             #expect(await noting.value)
         }
     }

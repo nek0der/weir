@@ -79,9 +79,12 @@ struct TmuxPanePresenceTests {
         let frames = [UUID(), UUID()].map {
             TmuxSurfaceSnapshot(paneID: $0, tty: "/dev/tty1", foregroundPID: 10, foregroundName: "tmux")
         }
-        #expect(TmuxPanePresence.resolveClients(frames: frames, clients: ["/dev/tty1": TmuxBinding(
+        let binding = TmuxBinding(
             socketPath: "/tmp/s", sessionID: "$1", sessionName: "work", serverPID: "42", serverStartedAt: "100", isProvisional: false
-        )]).isEmpty)
+        )
+        let clients = ["/dev/tty1": binding]
+        #expect(TmuxPanePresence.resolveClients(frames: Array(frames.prefix(1)), clients: clients) == [frames[0].paneID: binding])
+        #expect(TmuxPanePresence.resolveClients(frames: frames, clients: clients).isEmpty)
     }
 
     /// Two servers, the person's outer one and an inner one started from a
@@ -254,7 +257,7 @@ struct TmuxPanePresenceTests {
     /// projection pass; the next one that sees something new does.
     @MainActor
     @Test(.timeLimit(.minutes(1)))
-    func probe_thatSeesNothingNew_reportsNoChange() async {
+    func probe_thatSeesNothingNew_reportsNoChange() async throws {
         let paneID = UUID()
         let outer = TmuxBinding(
             socketPath: Self.outerSocket, sessionID: "$1", sessionName: "outer",
@@ -278,11 +281,18 @@ struct TmuxPanePresenceTests {
         )
         defer { presence.stop() }
 
+        await pollUntil(timeout: .seconds(10), interval: .milliseconds(10)) { !reportedAtProbe.isEmpty }
+        try #require(reportedAtProbe.first == 1)
+
+        presence.refresh()
         await pollUntil(timeout: .seconds(10), interval: .milliseconds(10)) {
-            if reportedAtProbe.count < 2 {
-                presence.refresh()
-            }
-            return reportedAtProbe.count >= 2
+            (presence.topology.observedAt[Self.outerSocket] ?? 0) >= 2
+        }
+        try #require((presence.topology.observedAt[Self.outerSocket] ?? 0) >= 2)
+
+        presence.refresh()
+        await pollUntil(timeout: .seconds(10), interval: .milliseconds(10)) {
+            presence.bindingsByPaneID[paneID] == renamed
         }
         #expect(reportedAtProbe == [1, 3])
         #expect(presence.bindingsByPaneID[paneID] == renamed)

@@ -46,7 +46,8 @@ struct ReviewSessionTests {
         repository.nextFilesGate = gate
 
         async let slowResult = slow.reload(scope: .uncommitted, selectedFileID: nil)
-        await gate.waitUntilRequested()
+        defer { gate.open(with: []) }
+        try await gate.waitUntilRequested()
         // A shared store gave both one generation, so this load threw the
         // other window's away.
         let quickResult = await quick.reload(scope: .branch(base: "main"), selectedFileID: nil)
@@ -64,7 +65,8 @@ struct ReviewSessionTests {
         repository.nextFilesGate = gate
 
         async let older = session.reload(scope: .uncommitted, selectedFileID: nil)
-        await gate.waitUntilRequested()
+        defer { gate.open(with: []) }
+        try await gate.waitUntilRequested()
         let newer = await session.reload(scope: .branch(base: "main"), selectedFileID: nil)
         gate.open(with: [])
 
@@ -76,18 +78,24 @@ struct ReviewSessionTests {
 
     @Test func aCommentOneSessionFindsStale_isHeldBackFromTheOther() async throws {
         let repository = try repository()
-        let writer = ReviewDraftWriter(root: root, drafts: RecordingReviewDraftStore())
+        let drafts = RecordingReviewDraftStore()
+        let writer = ReviewDraftWriter(root: root, drafts: drafts)
         let writing = ReviewSession(writer: writer, git: repository)
         let other = ReviewSession(writer: writer, git: repository)
         _ = await writing.reload(scope: .uncommitted, selectedFileID: nil)
         let line = try #require(writing.diff?.lines.first { $0.isCommentable && $0.kind == .added })
         writing.add(line: line, body: "Why?")
-        #expect(other.insertableComments.count == 1, "the writer's comments are both sessions'")
+        let comment = try #require(writing.comments.first)
+        #expect(comment.body == "Why?")
+        #expect(other.insertableComments == [comment])
 
         repository.diffs[Self.file.id] = try ReviewDiffFixture.diff(of: Self.file, fingerprint: "f2")
         await writing.load(Self.file)
 
+        #expect(writing.staleCommentIDs == [comment.id])
+        #expect(other.staleCommentIDs == [comment.id])
         #expect(other.insertableComments.isEmpty)
+        #expect(try drafts.load(root: root)?.comments == [comment])
     }
 
     @Test func aCommentOfAnotherViewsRange_isNeitherClearedNorFoundStaleHere() async throws {
@@ -233,7 +241,8 @@ struct ReviewSessionTests {
 
     @Test func carryingARangeOn_bringsItsCommentsAndMarks_withoutReadingIt() async throws {
         let repository = try FakeReviewRepository.oneFile(Self.rangeFile, fingerprint: "r1")
-        let session = ReviewSession(writer: ReviewDraftWriter(root: root, drafts: RecordingReviewDraftStore()), git: repository)
+        let drafts = RecordingReviewDraftStore()
+        let session = ReviewSession(writer: ReviewDraftWriter(root: root, drafts: drafts), git: repository)
         let range = try TurnSummaryFixture.range()
         _ = await session.reload(scope: .turns(range), selectedFileID: nil)
         let line = try #require(session.diff?.lines.first { $0.isCommentable && $0.kind == .added })
@@ -248,14 +257,26 @@ struct ReviewSessionTests {
         )
         let extended = try #require(range.extended(with: [next]))
         let calls = repository.fileCalls
+        let diffScopes = repository.diffScopes
+        let originalMark = try #require(session.viewedByScope[range.scopeID]?[Self.rangeFile.id])
+        var carriedComment = try #require(session.comments.first)
+        carriedComment.scopeIDs.insert(extended.scopeID)
 
         #expect(session.carryRange(to: extended))
-        #expect(session.comments.first?.scopeIDs == [range.scopeID, extended.scopeID])
-        #expect(session.viewedByScope[extended.scopeID] != nil)
+        #expect(session.comments == [carriedComment])
+        #expect(session.viewedByScope[extended.scopeID] == [Self.rangeFile.id: originalMark])
         #expect(session.turnRanges[extended.scopeID] == extended)
-        #expect(repository.fileCalls == calls, "nothing read; the review tab loads it as any change of scope")
+        #expect(repository.fileCalls == calls)
+        #expect(repository.diffScopes == diffScopes)
         #expect(session.scope == .turns(range))
         #expect(!session.carryRange(to: range), "not a carrying on of the range on screen")
+
+        session.rememberOpenFile(Self.rangeFile.id)
+        await session.flushNavigationSave()
+        let saved = try #require(try drafts.load(root: root))
+        #expect(saved.comments == [carriedComment])
+        #expect(saved.viewed[extended.scopeID] == [Self.rangeFile.id: originalMark])
+        #expect(saved.ranges?.contains(extended) == true)
     }
 
     /// A range whose comments could not be saved into the longer one stays
@@ -288,7 +309,7 @@ struct ReviewSessionTests {
         #expect(session.errorMessage != nil)
     }
 
-    @Test func editingACommentDeletedInAnotherWindow_keepsTheTextAndSaysSo() async throws {
+    @Test func savingAnEditDeletedInAnotherWindow_isRefusedWithAnExplanation() async throws {
         let repository = try repository()
         let writer = ReviewDraftWriter(root: root, drafts: RecordingReviewDraftStore())
         let editing = ReviewSession(writer: writer, git: repository)
@@ -296,12 +317,18 @@ struct ReviewSessionTests {
         _ = await editing.reload(scope: .uncommitted, selectedFileID: nil)
         let line = try #require(editing.diff?.lines.first { $0.isCommentable && $0.kind == .added })
         editing.add(line: line, body: "First")
-        let id = try #require(editing.comments.first?.id)
+        let comment = try #require(editing.comments.first)
+        editing.composer.edit(comment)
+        editing.composer.text = "Rewritten"
+        let unsaved = editing.composer
+        #expect(other.comments == [comment])
 
-        other.remove(id)
+        other.remove(comment.id)
 
-        #expect(!editing.edit(id, body: "Rewritten"), "the composer stays open with the text")
+        #expect(!editing.edit(comment.id, body: unsaved.text))
         #expect(editing.errorMessage == DisplayText(error: ReviewError.commentDeletedElsewhere))
+        #expect(editing.comments.isEmpty)
+        #expect(editing.composer == unsaved)
     }
 
     @Test func thePool_sharesOneWriterPerRoot_andHandsOutNewSessions() {

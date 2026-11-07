@@ -52,6 +52,14 @@ struct ConversationNameTests {
         // The title the CLI gave it later follows, as the pane header does.
         #expect(titled?.name == "Testing the store")
         #expect(titled?.conversationID == "c")
+
+        let renamed = Self.remembered(titled, [.claude: [Self.claudePane: Self.badge(
+            conversationID: "c",
+            sessionTitle: "Review the store",
+            generatedTitle: "Testing the store",
+            firstPrompt: "Add tests"
+        )]])
+        #expect(renamed?.name == "Review the store")
     }
 
     @Test func aRunBeforeItsSessionIsKnown_namesNothingYet() {
@@ -92,24 +100,29 @@ struct ConversationNameTests {
         #expect(Self.remembered(named, [:]) == named)
     }
 
-    @Test func aLaterConversation_doesNotRenameTheTab() {
-        let first = Self.remembered(nil, [.claude: [Self.claudePane: Self.badge(conversationID: "a", firstPrompt: "First task")]])
+    @Test func aLaterConversation_doesNotRenameTheTab() throws {
+        let first = try #require(Self.remembered(
+            nil,
+            [.claude: [Self.claudePane: Self.badge(conversationID: "a", firstPrompt: "First task")]]
+        ))
+        #expect(first.name == "First task")
         // A new conversation in the same pane, after the first ended.
         let next = Self.remembered(first, [.claude: [Self.claudePane: Self.badge(
             conversationID: "b",
             firstPrompt: "Second task",
             startedAt: 60
         )]])
-        #expect(next?.name == "First task")
+        #expect(next == first)
 
         // A name saved without an id is told from the next session in its
         // pane by the start.
-        let again = Self.remembered(Self.savedWithoutID("Codex task"), [.codex: [Self.codexPane: Self.badge(
+        let legacy = Self.savedWithoutID("Codex task")
+        let again = Self.remembered(legacy, [.codex: [Self.codexPane: Self.badge(
             conversationID: "n",
             firstPrompt: "Another",
             startedAt: 60
         )]])
-        #expect(again?.name == "Codex task")
+        #expect(again == legacy)
     }
 
     @Test func aNameSavedWithNeitherIDNorStart_isNeverTakenForTheNext() {
@@ -119,7 +132,7 @@ struct ConversationNameTests {
             firstPrompt: "Second",
             startedAt: nil
         )]])
-        #expect(next?.name == "First")
+        #expect(next == first)
     }
 
     @Test func onlyTheRememberedConversation_isAskedForATitle_inOrder() {
@@ -214,13 +227,17 @@ struct ConversationNameTests {
     @Test func aResumedConversation_keepsFollowingItsTitle() {
         let first = Self.remembered(nil, [.claude: [Self.claudePane: Self.badge(conversationID: "a", firstPrompt: "First task")]])
         // `claude --continue` starts a new session of the same conversation.
-        let resumed = Self.remembered(first, [.claude: [UUID(): Self.badge(
+        let resumedPane = UUID()
+        let resumed = Self.remembered(first, [.claude: [resumedPane: Self.badge(
             conversationID: "a",
             sessionTitle: "Renamed by /rename",
             firstPrompt: "First task",
             startedAt: 90
         )]])
         #expect(resumed?.name == "Renamed by /rename")
+        #expect(resumed?.provider == .claude)
+        #expect(resumed?.paneID == resumedPane)
+        #expect(resumed?.conversationID == "a")
         // Still ordered by when the conversation first started.
         #expect(resumed?.startedAt == Date(timeIntervalSince1970: 0))
     }
@@ -233,18 +250,27 @@ struct ConversationNameTests {
         #expect(named?.name == "Earlier")
     }
 
-    @Test func aTab_keepsItsName_throughTheSnapshot() throws {
+    @Test(arguments: [nil as String?, "thread"])
+    func aTab_keepsItsName_throughTheSnapshot(conversationID: String?) throws {
         var tab = Tab.newWithSinglePane(title: "zsh", container: .loose).tab
         tab.conversationName = ConversationName(
             name: "Add tests",
             provider: .codex,
             paneID: Self.codexPane,
-            conversationID: nil,
+            conversationID: conversationID,
             startedAt: Date(timeIntervalSince1970: 0)
         )
 
-        let decoded = try JSONDecoder().decode(Tab.self, from: JSONEncoder().encode(tab))
+        let data = try JSONEncoder().encode(tab)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let name = try #require(object["conversationName"] as? [String: Any])
+        #expect(name["name"] as? String == "Add tests")
+        #expect(name["provider"] as? String == "codex")
+        #expect(name["paneID"] as? String == Self.codexPane.uuidString)
+        #expect(name["conversationID"] as? String == conversationID)
 
+        let decoded = try JSONDecoder().decode(Tab.self, from: data)
+        #expect(decoded.id == tab.id)
         #expect(decoded.conversationName == tab.conversationName)
     }
 

@@ -27,7 +27,9 @@ struct AgentBadgeMenuImageTests {
     @Test func aConversationsBadge_isTheRowsSize_drawnForEachAppearance() {
         let light = AgentBadgeMenuImage.image(for: .claude, size: .row, in: .init(colorScheme: .light, scale: 2))
         let dark = AgentBadgeMenuImage.image(for: .claude, size: .row, in: .init(colorScheme: .dark, scale: 2))
-        #expect(light.size.height == WeirLayout.Supervision.agentBadgeSize)
+        let side = WeirLayout.Supervision.agentBadgeSize
+        #expect(light.size == NSSize(width: side, height: side))
+        #expect(dark.size == light.size)
         #expect(AgentBadgeMenuImage.image(for: .claude, size: .row, in: .init(colorScheme: .light, scale: 2)) === light)
         #expect(light !== dark)
     }
@@ -46,9 +48,11 @@ struct AgentBadgeMenuImageTests {
 
     /// The mark's quiet color follows the appearance it is drawn for, as
     /// the field's does.
-    @Test func terminalsMark_isDrawnInEachAppearancesColor() {
+    @Test func terminalsMark_isDrawnInEachAppearancesColor() throws {
         let light = AgentBadgeMenuImage.shellImage(in: .init(colorScheme: .light, scale: 2))
         let dark = AgentBadgeMenuImage.shellImage(in: .init(colorScheme: .dark, scale: 2))
-        #expect(light.tiffRepresentation != dark.tiffRepresentation)
+        let lightBitmap = try #require(light.tiffRepresentation)
+        let darkBitmap = try #require(dark.tiffRepresentation)
+        #expect(lightBitmap != darkBitmap)
     }
 }

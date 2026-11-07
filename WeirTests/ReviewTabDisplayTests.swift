@@ -6,26 +6,19 @@ import Observation
 import Testing
 @testable import Weir
 
-/// Set once an observed read is told of a change; written from the
-/// observation's change handler, which runs synchronously in the write.
-private final class Told: @unchecked Sendable {
-    var value = false
-}
-
 @MainActor
 struct ReviewTabDisplayTests {
     /// Whether reading `read` is told of a change made by `change`.
     private static func isTold(reading read: @escaping () -> Void, after change: () -> Void) -> Bool {
-        let told = Told()
+        let told = Recorded(false)
         withObservationTracking(read) { told.value = true }
         change()
         return told.value
     }
 
-    /// The file list's filter lives with the window's review tab, not with
-    /// the list: a filter that matches nothing takes the list's rows away,
-    /// and what is typed then still reaches the tab a project keeps.
-    @Test func theFilter_isTheWindows_whateverTheListShows() {
+    /// The file rail's filter and folds are held in the tab state until
+    /// the window lets the review go.
+    @Test func theFileRailsFilterAndFolds_areKeptWithTheReviewTab() {
         let window = ProjectWindowsFixture().primary
         window.reviewTabDisplay.fileFilter = "no-such-file"
         window.reviewTabDisplay.collapsedSections = ["dir:src"]
@@ -43,6 +36,11 @@ struct ReviewTabDisplayTests {
         var state = ReviewTabViewState()
         state.fileFilter = "src"
         state.isTreeLayout = true
+        state.hidesViewedFiles = true
+        state.collapsedSections = ["dir:src"]
+        state.areEarlierCommentsExpanded = true
+        let mark = ReviewViewMark(added: 1, removed: 0, fingerprint: "checked", markedAt: nil)
+        state.openedViewedFiles.toggle("src/app.swift", isFolded: true, viewed: ["src/app.swift": mark])
         state.search = ReviewSearch(query: "TODO", isPresented: true, index: 1)
 
         display.state = state
@@ -53,7 +51,9 @@ struct ReviewTabDisplayTests {
         #expect(!Self.isTold(reading: { _ = display.fileFilter }, after: {
             display.assign(\.search, ReviewSearch(query: "TODO!", isPresented: true, index: 0))
         }))
-        #expect(!Self.isTold(reading: { _ = display.fileFilter }, after: { display.state = display.state }))
+        #expect(display.search.query == "TODO!")
+        #expect(!Self.isTold(reading: { _ = display.state }, after: { display.state = display.state }))
         #expect(Self.isTold(reading: { _ = display.fileFilter }, after: { display.assign(\.fileFilter, "lib") }))
+        #expect(display.fileFilter == "lib")
     }
 }

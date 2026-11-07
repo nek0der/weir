@@ -91,6 +91,6 @@ struct TextBalanceTests {
         #expect(Self.widths(of: pieces, at: width).count == 3)
         // 210, 210, 190 rather than 300, 300, 10.
         let lines = Self.widths(of: pieces, at: width)
-        #expect((lines.max() ?? 0) - (lines.min() ?? 0) <= 20, "\(lines)")
+        #expect(lines == [210, 210, 190])
     }
 }

@@ -10,7 +10,7 @@ import Testing
 extension SupervisionFootBarTests {
     /// The decision bar's own row, from its model: a stop with its resume,
     /// its count and its ⋯; unread turns with their buttons; the bar at rest.
-    @Test func decisionBarRow_fitsInsideTheFootBar() throws {
+    @Test func englishDecisionBarRows_fitTheFootBarAtLargeAndAccessibility5() throws {
         try withTempDir { directory in
             let settings = SettingsStore(directory: directory)
             let hint = PrimaryKeyHint(defaults: nil)
@@ -45,9 +45,13 @@ extension SupervisionFootBarTests {
             for wait in waits {
                 let item = AttentionItem.testPrompt(wait, pane: Self.pane)
                 let model = DecisionBarModel(content: .make(.init(items: [item])), locale: locale)
+                let instruction = try #require(model.instruction)
+                #expect(!instruction.isEmpty)
+                #expect(!model.text.isEmpty)
                 let row = DecisionBarRow(model: model, paneID: Self.pane, receiptHelp: nil, canStartNew: true, onShow: { _ in })
                     .environment(\.primaryActionHandler, Self.actions)
                 let size = Self.size(of: row, proposing: width, language: language, settings: settings)
+                #expect(size.width > 0 && size.height > 0, "\(language) at \(width): \(model.text)")
                 #expect(size.width <= width, "\(language) at \(width): \(model.text)")
             }
         }
@@ -77,6 +81,7 @@ extension SupervisionFootBarTests {
         let hi = ideal("Hi")
         let fullWidth = ideal(full)
         let shortWidth = ideal(short)
+        #expect(fullWidth > shortWidth + 10)
         #expect(abs(words("Hi", hi + 4 + fullWidth + 1) - (hi + 4 + fullWidth)) < 1.5, "room for the whole one")
         #expect(abs(words("Hi", hi + 4 + shortWidth + 10) - (hi + 4 + shortWidth)) < 1.5, "room for the short one only")
         // A long sentence: its floor of 80 decides. With the floor and the
@@ -104,6 +109,9 @@ extension SupervisionFootBarTests {
             let models = Self.decisionBarsWithButtons(locale: locale)
             for model in models {
                 let fits = model.fits(locale: locale)
+                #expect(fits.first == .full)
+                #expect(fits.contains(.minimal))
+                #expect(fits.last == .wordsOnly)
                 let widths = Self.fitWidths(model, fits: fits, language: language, settings: settings)
                 for (wider, narrower) in zip(widths, widths.dropFirst()) {
                     #expect(narrower < wider, "\(language) \(fits): \(widths)")
@@ -112,6 +120,7 @@ extension SupervisionFootBarTests {
                 #expect(minimal[0] <= Self.halfOfTheNarrowestReview, "\(language): \(model.text)")
             }
             let unread = try #require(models.first)
+            #expect(unread.fits(locale: locale) == [.full, .folded, .minimal, .wordsOnly])
             let full = Self.fitWidths(unread, fits: [.full], language: language, settings: settings)
             #expect(full[0] <= 580, "\(language): \(full)")
         }
@@ -149,6 +158,7 @@ extension SupervisionFootBarTests {
             let room = width - Layout.footBarLeadingInset - Layout.footBarTrailingInset
             for model in Self.decisionBarsWithButtons(locale: Locale(identifier: language)) {
                 let size = Self.size(of: Self.decisionBarRow(model), proposing: room, language: language, settings: settings)
+                #expect(size.width > 0 && size.height > 0, "\(language) at \(width): \(model.text)")
                 #expect(size.width <= room, "\(language) at \(width): \(model.text)")
             }
         }
@@ -157,8 +167,7 @@ extension SupervisionFootBarTests {
     /// In a pane too narrow for any button, as narrow as a split allows
     /// (60 to 80pt), the row takes the fit with its words alone: the least
     /// fit with buttons asks for more than the room, and the row laid out
-    /// asks for no more. A button past the pane's edge would be cut from
-    /// sight but still take clicks.
+    /// asks for no more. The model's final fit has no buttons.
     @Test(arguments: ["en", "ja"], [TerminalSettings.minPaneSizeRange.lowerBound, TerminalSettings.defaultMinPaneSize])
     func decisionBarRow_tooNarrowForAnyButton_keepsOnlyItsWords(language: String, paneWidth: Double) throws {
         try withTempDir { directory in
@@ -168,6 +177,8 @@ extension SupervisionFootBarTests {
             let room = width - Layout.footBarLeadingInset - Layout.footBarTrailingInset
             for model in Self.decisionBarsWithButtons(locale: locale) {
                 #expect(model.fits(locale: locale).last == .wordsOnly)
+                #expect(model.shape(.minimal, locale: locale).showsButtons)
+                #expect(!model.shape(.wordsOnly, locale: locale).showsButtons)
                 let minimal = Self.size(
                     of: Self.decisionBarRow(model, fits: [.minimal]),
                     proposing: room,
@@ -176,6 +187,7 @@ extension SupervisionFootBarTests {
                 )
                 #expect(minimal.width > room, "\(language) at \(width): \(model.text)")
                 let size = Self.size(of: Self.decisionBarRow(model), proposing: room, language: language, settings: settings)
+                #expect(size.width > 0 && size.height > 0, "\(language) at \(width): \(model.text)")
                 #expect(size.width <= room, "\(language) at \(width): \(model.text)")
             }
         }
@@ -200,32 +212,62 @@ extension SupervisionFootBarTests {
                     settings: settings
                 )
                 #expect(unclipped.width > width, "\(language): \(model.text)")
-                let view = ZStack(alignment: .leading) {
-                    Color.white
-                    SupervisionFootBar(fill: DecisionBarRow.fill(model.tone), rule: DecisionBarRow.rule(model.tone)) {
-                        row
-                    }
-                    .frame(width: width)
+                let view = SupervisionFootBar(fill: DecisionBarRow.fill(model.tone), rule: DecisionBarRow.rule(model.tone)) {
+                    row
                 }
-                .frame(width: canvas, height: Layout.footBarHeight)
-                .environment(settings)
-                .environment(PrimaryKeyHint(defaults: nil))
-                .environment(\.locale, Locale(identifier: language))
-                .environment(\.colorScheme, .light)
-                let renderer = ImageRenderer(content: view)
-                renderer.scale = 1
-                let image = try #require(renderer.cgImage)
-                let bitmap = NSBitmapImageRep(cgImage: image)
-                // Past the pane's edge, only the white behind the bar.
-                let drawn = stride(from: Int(width) + 1, to: Int(canvas), by: 1).flatMap { x in
-                    stride(from: 2, to: image.height - 2, by: 2).compactMap { y in
-                        bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB).map { (x, $0) }
-                    }
-                }
-                let marked = drawn.filter { _, color in
+                .frame(width: width)
+                let control = row.fixedSize(horizontal: true, vertical: false)
+                    .padding(.leading, Layout.footBarLeadingInset)
+
+                let clipped = try Self.renderOnWhite(view, canvas: canvas, settings: settings, language: language)
+                let overflow = try Self.renderOnWhite(control, canvas: canvas, settings: settings, language: language)
+                let inside = 0..<Int(width)
+                let outside = (Int(width) + 1)..<Int(canvas)
+                let rows = Array(stride(from: 2, to: clipped.pixelsHigh - 2, by: 2))
+                try #require(!rows.isEmpty)
+                let clippedInside = Self.markedPixels(clipped, columns: inside, rows: rows)
+                let clippedOutside = Self.markedPixels(clipped, columns: outside, rows: rows)
+                let controlOutside = Self.markedPixels(overflow, columns: outside, rows: rows)
+                #expect(clippedInside.count == inside.count * rows.count)
+                #expect(clippedOutside.count == outside.count * rows.count)
+                #expect(controlOutside.count == outside.count * rows.count)
+                #expect(clippedInside.contains(true), "\(language): \(model.text) left the pane blank")
+                #expect(controlOutside.contains(true), "\(language): \(model.text) did not reach beyond the pane")
+                #expect(!clippedOutside.contains(true), "\(language): \(model.text) drew beyond the pane")
+            }
+        }
+    }
+
+    private static func renderOnWhite(
+        _ row: some View,
+        canvas: CGFloat,
+        settings: SettingsStore,
+        language: String
+    ) throws -> NSBitmapImageRep {
+        let view = ZStack(alignment: .leading) {
+            Color.white
+            row
+        }
+        .frame(width: canvas, height: Layout.footBarHeight)
+        .environment(settings)
+        .environment(PrimaryKeyHint(defaults: nil))
+        .environment(\.locale, Locale(identifier: language))
+        .environment(\.colorScheme, .light)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 1
+        return try NSBitmapImageRep(cgImage: #require(renderer.cgImage))
+    }
+
+    private static func markedPixels(
+        _ bitmap: NSBitmapImageRep,
+        columns: Range<Int>,
+        rows: [Int]
+    ) -> [Bool] {
+        columns.flatMap { x in
+            rows.compactMap { y in
+                bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB).map { color in
                     min(color.redComponent, color.greenComponent, color.blueComponent) < 0.9
                 }
-                #expect(marked.isEmpty, "\(language): \(model.text) drawn at x \(marked.first?.0 ?? -1)")
             }
         }
     }

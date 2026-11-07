@@ -7,33 +7,40 @@ import Testing
 @testable import WeirDomain
 
 struct RestoreJournalFixtureTests {
-    /// An optional key the fixture is not given (`operation`, `turnNumber`,
-    /// `undoes`, `ranAt`) is not written, so the journal decodes as one from
-    /// a build before that key: a restore, unnumbered, undoing nothing, run
-    /// when it was last written. The required keys take the fixture's
-    /// defaults.
-    @Test func anOptionalFieldLeftOut_decodesAsAnOlderBuildsJournal() throws {
-        let journal = try RestoreJournalFixture.make(stageJSON: #"{"kind":"applied"}"#)
+    @Test func defaultFields_decodeLikeALegacyJournalWithoutOptionalKeys() throws {
+        let legacyJSON = """
+        {
+          "opId": "OP",
+          "root": "/repo",
+          "turnId": "T",
+          "paneId": "P",
+          "plannedPaths": [],
+          "stage": {"kind":"applied"},
+          "at": "2026-10-13T00:00:00Z"
+        }
+        """
+        let legacy = try JSONDecoder().decode(RestoreJournal.self, from: Data(legacyJSON.utf8))
+        #expect(legacy.operation == .restore)
+        #expect(legacy.turnNumber == nil)
+        #expect(legacy.undoes == nil)
+        #expect(legacy.ranAt == "2026-10-13T00:00:00Z")
 
-        #expect(journal.opID == "OP")
-        #expect(journal.operation == .restore)
-        #expect(journal.turnNumber == nil)
-        #expect(journal.undoes == nil)
-        #expect(journal.ranAt == journal.at)
-        #expect(journal.stage == .applied)
+        let journal = try RestoreJournalFixture.make(stageJSON: #"{"kind":"applied"}"#)
+        #expect(journal == legacy)
     }
 
-    @Test func eachFieldGiven_isWritten_anUnknownOperationIncluded() throws {
+    @Test(arguments: [("discard", RestoreJournal.Operation.discard), ("someday", .unknown)])
+    func fixtureFields_areDecodedWithTheGivenStageAndOperation(operation: String, expected: RestoreJournal.Operation) throws {
         let journal = try RestoreJournalFixture.make(
-            stageJSON: #"{"kind":"someday"}"#,
+            stageJSON: #"{"kind":"undone","by":"undo-2"}"#,
             fields: .init(
-                opID: "U", operation: "someday", root: #"/a "quoted" root"#, turnID: "s1-T3", turnNumber: 3,
+                opID: "U", operation: operation, root: #"/a "quoted" root"#, turnID: "s1-T3", turnNumber: 3,
                 paneID: "Q", undoes: "R", at: "2026-10-13T00:00:01Z", ranAt: "2026-10-13T00:00:00Z"
             )
         )
 
         #expect(journal.opID == "U")
-        #expect(journal.operation == .unknown)
+        #expect(journal.operation == expected)
         #expect(journal.root == #"/a "quoted" root"#)
         #expect(journal.turnID == TurnID("s1-T3"))
         #expect(journal.turnNumber == 3)
@@ -41,6 +48,8 @@ struct RestoreJournalFixtureTests {
         #expect(journal.undoes == "R")
         #expect(journal.at == "2026-10-13T00:00:01Z")
         #expect(journal.ranAt == "2026-10-13T00:00:00Z")
+        #expect(journal.stage == .undone(by: "undo-2"))
+        #expect(journal.plannedPaths.isEmpty)
     }
 
     /// The journal the restore suites start from is a restore of turn 5 of

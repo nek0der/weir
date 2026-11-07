@@ -17,6 +17,7 @@ struct FocusedWindowCommandTests {
         let registry = WindowRegistry(primaryID: WindowID())
         let other = registry.addWindow(WindowID())
         registry.windowBecameKey(other.id)
+        #expect(registry.backgroundCommandTarget === other)
 
         registry.hide(other.id)
 
@@ -53,6 +54,9 @@ struct FocusedWindowCommandTests {
         #expect(CloseKeyCommand.decide(isQuickTerminalKey: false, target: registry.primary, canClose: true) == .closeReview)
         // The quick terminal's panel comes first, whatever is behind it.
         #expect(CloseKeyCommand.decide(isQuickTerminalKey: true, target: nil, canClose: false) == .hideQuickTerminal)
+        #expect(CloseKeyCommand.decide(isQuickTerminalKey: true, target: registry.primary, canClose: true) == .hideQuickTerminal)
+        registry.primary.review?.isShown = false
+        #expect(CloseKeyCommand.decide(isQuickTerminalKey: false, target: registry.primary, canClose: true) == .closePaneOrTab)
     }
 
     /// The item's one label has to be true of everything above: it closes
@@ -146,6 +150,7 @@ struct FocusedWindowCommandTests {
 
         registry.windowBecameKey(WindowID())
 
+        #expect(registry.commandTarget === other)
         #expect(registry.backgroundCommandTarget === other)
     }
 }

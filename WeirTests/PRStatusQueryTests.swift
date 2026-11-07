@@ -18,13 +18,14 @@ struct PRStatusQueryTests {
 
     @Test("each branch is asked once, and a query carries at most 100 aliases")
     func queries_dedupeAndSplit() {
-        var selectors = (0..<250).map { PRHeadSelector.branch(name: "b\($0)", owner: "acme") }
-        selectors.append(.branch(name: "b0", owner: "fork"))
-        selectors.append(.number(12))
+        let branches = (0..<250).map { "b\($0)" }
+        var selectors = branches.map { PRHeadSelector.branch(name: $0, owner: "acme") }
+        selectors += [.branch(name: "b0", owner: "fork"), .number(12), .number(12)]
         let queries = PRStatusQuery.queries(for: selectors, forge: .gitHub)
         #expect(queries.map { $0.branches.count + $0.numbers.count } == [100, 100, 51])
-        #expect(queries.last?.numbers == [12])
-        #expect(queries.flatMap(\.branches).count == 250)
+        #expect(queries.flatMap(\.branches) == branches)
+        #expect(queries.flatMap(\.numbers) == [12])
+        #expect(PRStatusQuery.queries(for: [], forge: .gitHub).isEmpty)
     }
 
     @Test("GitLab has no lookup by a GitHub request ref, so a number is not asked")
@@ -35,15 +36,20 @@ struct PRStatusQueryTests {
 
     @Test("the GitHub query names the host and sends each branch as a string variable")
     func gitHubArguments_nameTheHostAndTheBranches() {
-        let query = PRStatusQuery(forge: .gitHub, branches: ["main", "123"], numbers: [7])
+        let query = PRStatusQuery(forge: .gitHub, branches: ["main", "123", "@branch-file"], numbers: [7])
         let arguments = query.arguments(host: "github.acme.com", repository: "acme/app")
         #expect(Array(arguments.prefix(5)) == ["api", "graphql", "--hostname", "github.acme.com", "--include"])
-        for pair in [["-f", "owner=acme"], ["-f", "repo=app"], ["-f", "b0=main"], ["-f", "b1=123"], ["-F", "p0=7"]] {
+        let fields = [
+            ["-f", "owner=acme"], ["-f", "repo=app"],
+            ["-f", "b0=main"], ["-f", "b1=123"], ["-f", "b2=@branch-file"], ["-F", "p0=7"]
+        ]
+        for pair in fields {
             #expect(zip(arguments, arguments.dropFirst()).contains { [$0, $1] == pair })
         }
         let text = query.gitHubQuery
         #expect(text.contains("rateLimit { cost limit remaining resetAt }"))
         #expect(text.contains("b1: pullRequests(headRefName: $b1, first: 5, orderBy: {field: CREATED_AT, direction: DESC})"))
+        #expect(text.contains("b2: pullRequests(headRefName: $b2"))
         #expect(text.contains("p0: pullRequest(number: $p0)"))
         #expect(text.contains("headRepositoryOwner { login }"))
         #expect(text.contains("contexts(first: 100)"))
@@ -53,10 +59,11 @@ struct PRStatusQueryTests {
     @Test("the GitLab query writes the branches as escaped strings")
     func gitLabQuery_escapesTheBranches() {
         let query = PRStatusQuery(forge: .gitLab, branches: ["feat/a", #"odd"name"#], numbers: [])
-        #expect(query.gitLabQuery.contains(#"sourceBranches: ["feat\/a", "odd\"name"]"#))
+        let escaped = query.gitLabQuery.replacingOccurrences(of: #"\/"#, with: "/")
+        #expect(escaped.contains(#"sourceBranches: ["feat/a", "odd\"name"]"#))
         let arguments = query.arguments(host: "gitlab.acme.com", repository: "group/sub/app")
-        #expect(arguments.contains("fullPath=group/sub/app"))
-        #expect(arguments.contains("gitlab.acme.com"))
+        #expect(zip(arguments, arguments.dropFirst()).contains { $0 == "--hostname" && $1 == "gitlab.acme.com" })
+        #expect(zip(arguments, arguments.dropFirst()).contains { $0 == "-f" && $1 == "fullPath=group/sub/app" })
     }
 
     // MARK: - GitHub answers
@@ -89,10 +96,23 @@ struct PRStatusQueryTests {
     }
 
     @Test("a request asked for by number is read from its alias")
-    func gitHub_number_isRead() {
-        let query = PRStatusQuery(forge: .gitHub, branches: [], numbers: [12])
-        let body = Self.gitHubBody(aliases: ["p0": Self.request(number: 12)])
-        #expect(Self.number(query.response(Self.ok(body), for: [.number(12)], baseOwner: "acme", now: now).answers[.number(12)]) == 12)
+    func gitHub_number_isRead() throws {
+        let query = PRStatusQuery(forge: .gitHub, branches: [], numbers: [12, 43])
+        let body = Self.gitHubBody(aliases: [
+            "p0": Self.request(number: 12, state: "OPEN"),
+            "p1": Self.request(number: 43, state: "CLOSED", isDraft: true)
+        ])
+        let response = query.response(Self.ok(body), for: [.number(12), .number(43)], baseOwner: "acme", now: now)
+        let openURL = try #require(URL(string: "https://github.com/acme/app/pull/12"))
+        let closedURL = try #require(URL(string: "https://github.com/acme/app/pull/43"))
+        #expect(response.answers == [
+            .number(12): .found(PRInfo(
+                number: 12, state: .open, isDraft: false, title: "Show PR status", url: openURL, forge: .gitHub, checks: nil
+            )),
+            .number(43): .found(PRInfo(
+                number: 43, state: .closed, isDraft: true, title: "Show PR status", url: closedURL, forge: .gitHub, checks: nil
+            ))
+        ])
     }
 
     @Test("a repository the CLI cannot read, a timeout, and unreadable output are no answer")
@@ -145,7 +165,7 @@ struct PRStatusQueryTests {
     }
 
     @Test("state and draft come through")
-    func gitHub_stateAndDraft() {
+    func gitHub_stateAndDraft() throws {
         let body = Self.gitHubBody(aliases: ["b0": Self.connection([Self.request(number: 5, state: "MERGED", isDraft: true)])])
         let selector = PRHeadSelector.branch(name: "a", owner: nil)
         let response = PRStatusQuery(forge: .gitHub, branches: ["a"], numbers: []).response(
@@ -158,9 +178,8 @@ struct PRStatusQueryTests {
             Issue.record("no request")
             return
         }
-        #expect(info.state == .merged)
-        #expect(info.isDraft)
-        #expect(info.forge == .gitHub)
+        let url = try #require(URL(string: "https://github.com/acme/app/pull/5"))
+        #expect(info == PRInfo(number: 5, state: .merged, isDraft: true, title: "Show PR status", url: url, forge: .gitHub, checks: nil))
     }
 
     // MARK: - Reading as many as gh does
@@ -220,12 +239,18 @@ struct PRStatusQueryTests {
         #expect(response.answers[own] == PRStatusFetcher.Answer.none)
         // A fork's `main` is not the repository's default branch.
         #expect(Self.number(response.answers[fork]) == 7)
+
+        let open = Self.gitHubBody(
+            aliases: ["b0": Self.connection([Self.request(number: 8, state: "MERGED"), Self.request(number: 4, state: "OPEN")])],
+            defaultBranch: "main"
+        )
+        #expect(Self.number(query.response(Self.ok(open), for: [own], baseOwner: "acme", now: now).answers[own]) == 4)
     }
 
     // MARK: - GitLab answers
 
     @Test("GitLab: the number is the iid, an opened request comes first, and a branch with none is none")
-    func gitLab_answers() {
+    func gitLab_answers() throws {
         let a = PRHeadSelector.branch(name: "a", owner: nil)
         let b = PRHeadSelector.branch(name: "b", owner: nil)
         let answers = Self.gitLabAnswers(for: [a, b], pages: [Self.gitLabBody([
@@ -236,10 +261,11 @@ struct PRStatusQueryTests {
             Issue.record("no request")
             return
         }
-        #expect(info.number == 7)
-        #expect(info.isDraft)
-        #expect(info.checks == PRChecks(conclusion: .pending, counts: nil))
-        #expect(info.forge == .gitLab)
+        let url = try #require(URL(string: "https://gitlab.com/acme/app/-/merge_requests/7"))
+        #expect(info == PRInfo(
+            number: 7, state: .open, isDraft: true, title: "Show PR status", url: url, forge: .gitLab,
+            checks: PRChecks(conclusion: .pending, counts: nil)
+        ))
         #expect(answers[b] == PRStatusFetcher.Answer.none)
     }
 

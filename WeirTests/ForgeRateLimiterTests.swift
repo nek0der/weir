@@ -38,8 +38,9 @@ struct ForgeRateLimiterTests {
 
     @Test("a GraphQL RATE_LIMITED error waits for the reset the headers give")
     func graphQLRateLimited_waitsForTheHeaderReset() {
-        let output = "HTTP/2.0 200 OK\nX-Ratelimit-Remaining: 0\nX-Ratelimit-Reset: 1800000900\n\n{}"
-        let read = quota(exitCode: 1, output: output, errorTypes: ["RATE_LIMITED"])
+        let output = "HTTP/2.0 200 OK\nX-Ratelimit-Remaining: 4000\nX-Ratelimit-Reset: 1800000900\n\n{}"
+        let body = GhRateLimit(cost: 1, limit: 5000, remaining: 4000, resetAt: "2028-01-01T00:00:00Z")
+        let read = quota(exitCode: 1, output: output, rateLimit: body, errorTypes: ["RATE_LIMITED"])
         #expect(read.isRateLimited)
         #expect(read.resetAt == Date(timeIntervalSince1970: 1_800_000_900))
     }
@@ -57,6 +58,7 @@ struct ForgeRateLimiterTests {
         #expect(quota(exitCode: 1, output: "HTTP/2.0 403 Forbidden\nX-Ratelimit-Remaining: 0\n\n{}").isRateLimited)
         #expect(quota(exitCode: 1, output: "HTTP/2.0 403 Forbidden\nRetry-After: 60\n\n{}").isRateLimited)
         #expect(!quota(exitCode: 1, output: "HTTP/2.0 403 Forbidden\nX-Ratelimit-Remaining: 4000\n\n{}").isRateLimited)
+        #expect(!quota(exitCode: 1, output: "HTTP/2.0 403 Forbidden\n\n{}").isRateLimited)
     }
 
     @Test("a CLI that failed saying so is a rate limit with no reset; a request titled so is not")
@@ -64,6 +66,7 @@ struct ForgeRateLimiterTests {
         let refused = quota(exitCode: 1, output: "", stderr: "gh: API rate limit exceeded for user ID 1.")
         #expect(refused.isRateLimited)
         #expect(refused.resetAt == nil)
+        #expect(!quota(output: "", stderr: "gh: API rate limit exceeded for user ID 1.").isRateLimited)
         let titled = quota(output: #"HTTP/2.0 200 OK\#n\#n{"title":"react to rate limits"}"#)
         #expect(!titled.isRateLimited)
     }
@@ -74,6 +77,17 @@ struct ForgeRateLimiterTests {
         #expect(quota(output: "{}", rateLimit: body).isLow == true)
         #expect(quota(output: "HTTP/1.1 200 OK\nRateLimit-Limit: 2000\nRateLimit-Remaining: 1500\n\n{}").isLow == false)
         #expect(quota(output: "{}").isLow == nil)
+        #expect(quota(output: "{}", rateLimit: GhRateLimit(cost: 1, limit: 5000, remaining: 500, resetAt: nil)).isLow == false)
+        for limit in [0, -1] {
+            #expect(quota(output: "{}", rateLimit: GhRateLimit(cost: 1, limit: limit, remaining: 0, resetAt: nil)).isLow == nil)
+        }
+        let conflicting = quota(
+            output: "HTTP/2.0 200 OK\nX-Ratelimit-Limit: 5000\nX-Ratelimit-Remaining: 4000\n\n{}",
+            rateLimit: body
+        )
+        #expect(conflicting.remaining == 499)
+        #expect(conflicting.limit == 5000)
+        #expect(conflicting.isLow == true)
     }
 
     // MARK: - Waiting
@@ -84,7 +98,9 @@ struct ForgeRateLimiterTests {
         await limiter.record(ForgeQuota(isRateLimited: true, resetAt: now.addingTimeInterval(120)), host: host, admission: .open)
         #expect(await limiter.admit(host: host) == .held)
         #expect(await limiter.admit(host: "gitlab.com") == .open)
-        clock.advance(by: 120)
+        clock.advance(by: 119)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 1)
         #expect(await limiter.admit(host: host) == .probe)
         #expect(await limiter.admit(host: host) == .held)
         await limiter.record(ForgeQuota(), host: host, admission: .probe)
@@ -102,19 +118,15 @@ struct ForgeRateLimiterTests {
     @Test("with no reset given the wait starts at a minute and doubles up to an hour")
     func backoff_doublesUpToAnHour() async {
         let limiter = limiter()
-        var waits: [TimeInterval] = []
-        for _ in 0..<8 {
-            let start = now
+        for delay: TimeInterval in [60, 120, 240, 480, 960, 1920, 3600, 3600] {
             await limiter.record(ForgeQuota(isRateLimited: true), host: host, admission: .probe)
-            var waited: TimeInterval = 0
-            while await limiter.admit(host: host) == .held {
-                clock.advance(by: 30)
-                waited += 30
-            }
-            waits.append(waited)
-            #expect(now.timeIntervalSince(start) == waited)
+            #expect(await limiter.admit(host: host) == .held)
+            clock.advance(by: delay - 1)
+            #expect(await limiter.admit(host: host) == .held)
+            clock.advance(by: 1)
+            #expect(await limiter.admit(host: host) == .probe)
+            #expect(await limiter.admit(host: host) == .held)
         }
-        #expect(waits == [60, 120, 240, 480, 960, 1920, 3600, 3600])
         // A probe that answers resets the backoff.
         await limiter.record(ForgeQuota(), host: host, admission: .probe)
         await limiter.record(ForgeQuota(isRateLimited: true), host: host, admission: .open)
@@ -126,7 +138,9 @@ struct ForgeRateLimiterTests {
     func backoff_jitterScalesTheStep() async {
         let limiter = ForgeRateLimiter(now: { [clock] in clock.now() }, jitter: { 0.75 })
         await limiter.record(ForgeQuota(isRateLimited: true), host: host, admission: .open)
-        clock.advance(by: 45)
+        clock.advance(by: 44)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 1)
         #expect(await limiter.admit(host: host) == .probe)
     }
 
@@ -169,8 +183,12 @@ struct ForgeRateLimiterTests {
         await limiter.record(ForgeQuota(isRateLimited: true), host: host, admission: .open)
         clock.advance(by: 60)
         #expect(await limiter.admit(host: host) == .probe)
-        clock.advance(by: ForgeRateLimiter.lostProbe)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 119)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 1)
         #expect(await limiter.admit(host: host) == .probe)
+        #expect(await limiter.admit(host: host) == .held)
     }
 
     @Test("a host whose quota runs low is told apart until it recovers")
@@ -178,9 +196,10 @@ struct ForgeRateLimiterTests {
         let limiter = limiter()
         await limiter.record(ForgeQuota(remaining: 100, limit: 5000), host: host, admission: .open)
         #expect(await limiter.isLow(host: host))
+        #expect(await !limiter.isLow(host: "gitlab.com"))
         await limiter.record(ForgeQuota(), host: host, admission: .open)
         #expect(await limiter.isLow(host: host))
-        await limiter.record(ForgeQuota(remaining: 4000, limit: 5000), host: host, admission: .open)
+        await limiter.record(ForgeQuota(remaining: 500, limit: 5000), host: host, admission: .open)
         #expect(await !limiter.isLow(host: host))
     }
 }

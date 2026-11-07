@@ -119,9 +119,13 @@ struct StatusBandModelTests {
     }
 
     @Test func theInput_isThePaneWithTheKeyboard_inTheWindowsSelectedTab() throws {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
-        let window = ProjectWindowState(selection: session.primarySelection)
-        let tab = session.openTab(container: .project(project.id))
+        let fixture = ProjectWindowsFixture()
+        let session = fixture.session
+        let project = fixture.b
+        let window = try fixture.window(showing: project)
+        let tab = fixture.bTab
+        try #require(fixture.primary.selection.activeTabID == fixture.aTab.id)
+        try #require(window.selection.activeTabID == tab.id)
         // Split, with the keyboard in the second leaf: not the first one.
         let first = try #require(tab.splitTree.allLeafIDs().first)
         let split = tab.splitTree.insert(at: first, direction: .horizontal)
@@ -130,41 +134,46 @@ struct StatusBandModelTests {
             tab.splitTree.focusedLeafID = split.newLeafID
         }
         let paneID = split.newLeafID
-        var asked: UUID?
+        var asked: [UUID] = []
         let input = StatusBandModel.input(
             session: session,
             window: window,
             attention: AttentionState(),
             gridSize: { id in
-                asked = id
+                asked.append(id)
                 return Self.grid
             },
             locale: Self.english
         )
-        #expect(input.projectName == "weir")
+        #expect(input.projectName == project.name)
         #expect(input.checkoutName == nil, "a folder with no branch yet")
         // No title of its own yet: the folder it opened in names it.
         #expect(input.paneName == project.rootURL.lastPathComponent)
         #expect(input.agentName == nil)
         #expect(input.isUnnamedShell, "a shell the person has not named")
         #expect(input.gridSize == Self.grid)
-        #expect(asked == paneID)
+        #expect(asked == [paneID])
     }
 
     @Test func aWindowShowingNoTab_namesOnlyThePlace() {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
         let window = ProjectWindowState(selection: session.primarySelection)
         session.selections[window.id]?.projectID = project.id
+        var asked: [UUID] = []
         let input = StatusBandModel.input(
             session: session,
             window: window,
             attention: AttentionState(),
-            gridSize: { _ in Self.grid },
+            gridSize: { id in
+                asked.append(id)
+                return Self.grid
+            },
             locale: Self.english
         )
         #expect(input.projectName == "weir")
         #expect(input.paneName == nil)
         #expect(input.gridSize == nil)
+        #expect(asked.isEmpty)
         // The encoding is a pane's; with none, the right side states only
         // where the project lives.
         let folder = PathFormatting.abbreviateHome(project.rootURL.path)

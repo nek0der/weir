@@ -25,11 +25,18 @@ struct SidebarKeyboardCursorTests {
     @Test func upAndDown_stepThroughEveryLine_andStopAtTheEnds() {
         let lines = Self.lines()
         #expect(Cursor.action(for: .down, isOption: false, at: .header(Self.open), in: lines) == .move(to: .row(Self.row)))
+        #expect(Cursor.action(for: .down, isOption: false, at: .row(Self.row), in: lines) == .move(to: .fold(Self.open, .other)))
+        #expect(Cursor.action(for: .up, isOption: false, at: .fold(Self.open, .other), in: lines) == .move(to: .row(Self.row)))
+        #expect(Cursor.action(for: .up, isOption: false, at: .row(Self.row), in: lines) == .move(to: .header(Self.open)))
         #expect(Cursor.action(for: .down, isOption: false, at: .fold(Self.open, .other), in: lines) == .move(to: .header(Self.folded)))
         #expect(Cursor.action(for: .up, isOption: false, at: .header(Self.folded), in: lines) == .move(to: .fold(Self.open, .other)))
         #expect(Cursor.action(for: .down, isOption: false, at: .header(Self.folded), in: lines) == .move(to: .header(Self.folded)))
         #expect(Cursor.action(for: .up, isOption: false, at: .header(Self.open), in: lines) == .move(to: .header(Self.open)))
         #expect(Cursor.action(for: .down, isOption: false, at: nil, in: lines) == .move(to: .header(Self.open)))
+        #expect(Cursor.action(for: .up, isOption: false, at: .row(.loose), in: lines) == .move(to: .header(Self.folded)))
+
+        let empty = Cursor.Lines(ids: [], isCollapsed: { _ in false }, isFoldOpen: { _, _ in false })
+        #expect(Cursor.action(for: .down, isOption: false, at: nil, in: empty) == Cursor.Action.none)
     }
 
     @Test func initialLine_isTheOpenRow_elseItsHeader_elseTheFirst_andNoneOnAnEmptyList() {
@@ -91,6 +98,12 @@ struct SidebarKeyboardCursorTests {
             Self.open,
             .other,
             true
+        ))
+        let opened = Self.lines(isOtherOpen: true)
+        #expect(Cursor.action(for: .return, isOption: false, at: .fold(Self.open, .other), in: opened) == .setFoldOpen(
+            Self.open,
+            .other,
+            false
         ))
         #expect(Cursor.action(for: .return, isOption: false, at: nil, in: lines) == Cursor.Action.none)
     }

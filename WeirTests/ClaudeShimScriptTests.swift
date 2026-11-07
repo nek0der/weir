@@ -21,6 +21,7 @@ struct ClaudeShimScriptTests {
         prepareTemporaryDirectory: (URL) throws -> Void = { _ in },
         temporaryDirectory: (URL) throws -> URL = { $0 },
         shim: (URL) throws -> URL = { _ in try ShimHarness.shim("claude") },
+        stderr: Recorded<String>? = nil,
         sourceLocation: SourceLocation = #_sourceLocation
     ) throws -> [String] {
         try withTempDir { dir in
@@ -37,10 +38,10 @@ struct ClaudeShimScriptTests {
             environment["WEIR_REAL_CLAUDE"] = stub.path
             environment["WEIR_CLAUDE_HOOK_NAMESPACE"] = hookNamespace
             environment["TMPDIR"] = setsTemporaryDirectory ? try temporaryDirectory(dir).path : nil
-            let process = try ShimHarness.run(shim, args, environment: environment)
-            #expect(process.terminationStatus == 0, sourceLocation: sourceLocation)
-
-            return ShimHarness.recordedArgv(argvFile) ?? []
+            let process = try TestProcess.run(URL(fileURLWithPath: "/bin/sh"), arguments: [shim.path] + args, environment: environment)
+            stderr?.value = process.stderrText
+            try #require(process.ending == .exited && process.status == 0, "\(process.stderrText)", sourceLocation: sourceLocation)
+            return try #require(ShimHarness.recordedArgv(argvFile, keepsEmptyArguments: true), sourceLocation: sourceLocation)
         }
     }
 
@@ -49,16 +50,11 @@ struct ClaudeShimScriptTests {
         in argv: [String],
         sourceLocation: SourceLocation = #_sourceLocation
     ) throws -> [String: Any]? {
-        let flags = argv.indices.filter { argv[$0] == "--settings" }
-        #expect(
-            flags.count == 1,
-            "expected exactly one --settings, got \(flags.count)",
-            sourceLocation: sourceLocation
-        )
-        guard let index = flags.first, index + 1 < argv.count else { return nil }
-        let raw = argv[index + 1]
-        guard let data = raw.data(using: .utf8) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let flags = argv.indices.filter { argv[$0] == "--settings" || argv[$0].hasPrefix("--settings=") }
+        try #require(flags.count == 1, sourceLocation: sourceLocation)
+        let index = try #require(flags.first, sourceLocation: sourceLocation)
+        try #require(argv[index] == "--settings" && argv.indices.contains(index + 1), sourceLocation: sourceLocation)
+        return try JSONSerialization.jsonObject(with: Data(argv[index + 1].utf8)) as? [String: Any]
     }
 
     private func sessionStartGroups(_ payload: [String: Any]?) -> [[String: Any]] {
@@ -69,16 +65,19 @@ struct ClaudeShimScriptTests {
     private func sessionStartCommand(_ argv: [String]) throws -> String {
         let decodedPayload = try settingsPayload(in: argv)
         let payload = try #require(decodedPayload)
-        let group = try #require(sessionStartGroups(payload).first)
-        let hooks = try #require(group["hooks"] as? [[String: Any]])
+        let groups = sessionStartGroups(payload)
+        try #require(groups.count == 1)
+        let hooks = try #require(groups.first?["hooks"] as? [[String: Any]])
+        try #require(hooks.count == 1 && hooks.first?["type"] as? String == "command")
         return try #require(hooks.first?["command"] as? String)
     }
 
     @Test("injects our settings when the user passes none")
     func noUserSettings_injectsOurs() throws {
         let argv = try runShim([])
-        let payload = try settingsPayload(in: argv)
-        #expect(sessionStartGroups(payload).count == 1)
+        #expect(argv.count == 2)
+        let command = try sessionStartCommand(argv)
+        #expect(command.hasSuffix("/weir-claude-shim-default/weir-hook"))
     }
 
     /// The hook path is captured by a running Claude process. Separate stable
@@ -96,14 +95,30 @@ struct ClaudeShimScriptTests {
             bundleID: "com.nekoder.Weir.dev",
             bundlePath: "/DerivedData/Weir-bbbb/Build/Products/Debug/Weir Dev.app"
         )
-        let commands = try [release, firstDebug, secondDebug].map { namespace in
-            try sessionStartCommand(runShim([], hookNamespace: namespace))
-        }
+        try withTempDir { root in
+            let shared = root.appendingPathComponent("shared")
+            try FileManager.default.createDirectory(at: shared, withIntermediateDirectories: true)
+            let source = try ShimHarness.shim("claude").deletingLastPathComponent()
+            var expectedTargets: [String: String] = [:]
+            for namespace in [release, firstDebug, secondDebug] {
+                let copy = root.appendingPathComponent(namespace)
+                try FileManager.default.copyItem(at: source, to: copy)
+                let argv = try runShim(
+                    [], hookNamespace: namespace, temporaryDirectory: { _ in shared },
+                    shim: { _ in copy.appendingPathComponent("claude") }
+                )
+                let link = shared.appendingPathComponent("weir-claude-shim-\(namespace)/weir-hook")
+                #expect(try sessionStartCommand(argv) == link.path)
+                expectedTargets[link.path] = copy.appendingPathComponent("weir-hook").path
+            }
 
-        #expect(commands[0].hasSuffix("/weir-claude-shim-com.nekoder.Weir/weir-hook"))
-        #expect(commands[1].hasSuffix("/weir-claude-shim-\(firstDebug)/weir-hook"))
-        #expect(commands[2].hasSuffix("/weir-claude-shim-\(secondDebug)/weir-hook"))
-        #expect(Set(commands.map { URL(fileURLWithPath: $0).deletingLastPathComponent().lastPathComponent }).count == 3)
+            #expect(expectedTargets.count == 3)
+            for (link, target) in expectedTargets {
+                let resolved = try FileManager.default.destinationOfSymbolicLink(atPath: link)
+                #expect(URL(fileURLWithPath: resolved).resolvingSymlinksInPath().path
+                    == URL(fileURLWithPath: target).resolvingSymlinksInPath().path)
+            }
+        }
     }
 
     /// A link folder someone else put in place (here a link to another
@@ -147,23 +162,26 @@ struct ClaudeShimScriptTests {
         #expect(mode == 0o700)
     }
 
-    @Test("merges with the user's settings instead of losing to them")
-    func userSettings_mergedRatherThanOverwritten() throws {
-        let theirs = #"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/bin/true"}]}]},"env":{"USER_KEY":"1"}}"#
-        let argv = try runShim(["--settings", theirs])
-        let payload = try settingsPayload(in: argv)
-        // Both hook groups survive, and the user's unrelated keys come along.
-        #expect(sessionStartGroups(payload).count == 2)
-        #expect((payload?["env"] as? [String: Any])?["USER_KEY"] as? String == "1")
-    }
-
-    @Test("merges the --settings=value spelling too")
-    func userSettingsEqualsForm_merged() throws {
-        let theirs = #"{"env":{"USER_KEY":"1"}}"#
-        let argv = try runShim(["--settings=\(theirs)"])
-        let payload = try settingsPayload(in: argv)
-        #expect(sessionStartGroups(payload).count == 1)
-        #expect((payload?["env"] as? [String: Any])?["USER_KEY"] as? String == "1")
+    @Test(arguments: [false, true])
+    func userSettings_preservePrecedenceAndAppendWeirHooks(usesEquals: Bool) throws {
+        let theirs = #"""
+        {
+          "hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/bin/true"}]}]},
+          "env":{"USER_KEY":"1"},
+          "preferredNotifChannel":"terminal_bell"
+        }
+        """#
+        let argv = try runShim(usesEquals ? ["--settings=\(theirs)"] : ["--settings", theirs])
+        let decoded = try settingsPayload(in: argv)
+        let payload = try #require(decoded)
+        let groups = sessionStartGroups(payload)
+        let commands = groups.compactMap { ($0["hooks"] as? [[String: Any]])?.first?["command"] as? String }
+        try #require(commands.count == 2)
+        #expect(commands[0] == "/bin/true")
+        #expect(commands[1].hasSuffix("/weir-claude-shim-default/weir-hook"))
+        #expect((payload["env"] as? [String: String]) == ["USER_KEY": "1"])
+        #expect(payload["preferredNotifChannel"] as? String == "terminal_bell")
+        #expect(argv.count == 2)
     }
 
     @Test("merges a user settings file, not just inline JSON")
@@ -263,6 +281,7 @@ struct ClaudeShimScriptTests {
     /// carries into the settings. Claude starts as it would without us,
     /// rather than on a document it would refuse.
     @Test func hookPath_thatCannotBeWritten_startsClaudeWithoutOurSettings() throws {
+        let stderr = Recorded("")
         let argv = try runShim(
             ["--version"],
             prepareTemporaryDirectory: { dir in
@@ -271,37 +290,57 @@ struct ClaudeShimScriptTests {
                     withIntermediateDirectories: true
                 )
             },
-            temporaryDirectory: { $0.appendingPathComponent("a\tb") }
+            temporaryDirectory: { $0.appendingPathComponent("a\tb") },
+            stderr: stderr
         )
         #expect(argv == ["--version"])
+        #expect(stderr.value == "weir: a hook path here cannot be written into the settings, so this claude runs without Weir's hooks\n")
+        let control = try runShim(["--version"])
+        #expect(try sessionStartCommand(control).hasSuffix("/weir-hook"))
+        #expect(control.dropFirst(2) == ["--version"])
     }
 
     @Test("passes an unmergeable user value straight through")
     func unmergeableUserSettings_leftAlone() throws {
-        let argv = try runShim(["--settings", "{bad"])
-        let flags = argv.indices.filter { argv[$0] == "--settings" }
-        #expect(flags.count == 1)
-        #expect(flags.first.map { argv[$0 + 1] } == "{bad")
+        let input = ["--settings", "{bad"]
+        let stderr = Recorded("")
+        #expect(try runShim(input, stderr: stderr) == input)
+        #expect(stderr.value == "weir: could not read --settings as JSON, so this claude runs without Weir's hooks\n")
     }
 
-    @Test("leaves Claude's status reports on: sets no title switch of its own")
-    func terminalTitleSwitch_isLeftUnset() throws {
+    @Test(arguments: [String?.none, "1"])
+    func terminalTitleSwitch_preservesTheUsersChoice(choice: String?) throws {
         try withTempDir { dir in
             let stub = dir.appendingPathComponent("fake-claude")
             // The switch also turns off Claude's OSC 7501 reports, which the
             // projection reads (`PaneProgramStatusStore`).
             try ShimHarness.writeExecutable("""
             #!/bin/sh
-            [ -z "${CLAUDE_CODE_DISABLE_TERMINAL_TITLE+set}" ]
+            printf '%s' "${CLAUDE_CODE_DISABLE_TERMINAL_TITLE-unset}"
             """, at: stub)
 
             var environment = ShimHarness.environment(in: dir)
             environment["WEIR_CLAUDE_SETTINGS_TEMPLATE"] = try ShimHarness.claudeSettingsTemplate()
             environment["WEIR_REAL_CLAUDE"] = stub.path
-            environment.removeValue(forKey: "CLAUDE_CODE_DISABLE_TERMINAL_TITLE")
-            let process = try ShimHarness.run(ShimHarness.shim("claude"), [], environment: environment)
+            environment["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] = choice
+            let shim = try ShimHarness.shim("claude")
+            let process = try TestProcess.run(URL(fileURLWithPath: "/bin/sh"), arguments: [shim.path], environment: environment)
+            try #require(process.ending == .exited && process.status == 0)
+            #expect(process.stdoutText == (choice ?? "unset"))
+        }
+    }
 
-            #expect(process.terminationStatus == 0)
+}
+
+extension ClaudeShimScriptTests {
+    private enum RedirectedStream: CaseIterable, Sendable {
+        case input, output
+
+        var redirection: String {
+            switch self {
+            case .input: "</dev/null"
+            case .output: ">/dev/null"
+            }
         }
     }
 
@@ -331,6 +370,7 @@ struct ClaudeShimScriptTests {
         underPTY: Bool = true,
         othersCanWrite: Bool = false,
         losesSavedEnvironment: Bool = false,
+        redirectedStream: RedirectedStream? = nil,
         prepare: ((URL) throws -> [String: String])? = nil
     ) throws -> HostedRun {
         try withTempDir { dir in
@@ -358,16 +398,20 @@ struct ClaudeShimScriptTests {
             /usr/bin/env -0 > "\(claudeArgv.path).env"
             exit 0
             """), at: claudeStub)
-            let losesFile = losesSavedEnvironment ? """
+            let savedMode = dir.appendingPathComponent("snapshot-mode")
+            let observeSavedFile = """
             previous=""
             for arg in "$@"; do
-              [ "$previous" = weir-env ] && rm -f -- "$arg"
+              if [ "$previous" = weir-env ]; then
+                /usr/bin/stat -f %Lp "$arg" > "\(savedMode.path)"
+                \(losesSavedEnvironment ? "rm -f -- \"$arg\"" : ":")
+              fi
               previous=$arg
             done
-            exec 2>"\(tmuxArgv.path).stderr"
-            """ : ""
+            \(losesSavedEnvironment ? "exec 2>\"\(tmuxArgv.path).stderr\"" : ":")
+            """
             try ShimHarness.writeExecutable(
-                ShimHarness.fakeTmux(into: tmuxArgv, then: seen(tmuxArgv) + "\n" + losesFile),
+                ShimHarness.fakeTmux(into: tmuxArgv, then: seen(tmuxArgv) + "\n" + observeSavedFile),
                 at: tmuxStub
             )
 
@@ -381,16 +425,32 @@ struct ClaudeShimScriptTests {
             ]) { _, new in new }
             shimEnvironment.merge(environment) { _, new in new }
             shimEnvironment.merge(prepared) { _, new in new }
+            let shim = try ShimHarness.shim("claude")
+            let launch: (URL, [String])
+            if let redirectedStream {
+                let wrapper = dir.appendingPathComponent("redirect-one-tty")
+                try ShimHarness.writeExecutable("""
+                #!/bin/sh
+                [ -t 0 ] && [ -t 1 ] || exit 97
+                exec /bin/sh "$@" \(redirectedStream.redirection)
+                """, at: wrapper)
+                launch = (wrapper, [shim.path] + args)
+            } else {
+                launch = (shim, args)
+            }
+            let physical = try #require(realpath(dir.path, nil))
+            defer { free(physical) }
+            let workingDirectory = files.isEmpty ? nil : String(cString: physical)
             let process = try ShimHarness.run(
-                ShimHarness.shim("claude"),
-                args,
+                launch.0,
+                launch.1,
                 environment: shimEnvironment,
                 underPTY: underPTY,
-                currentDirectory: files.isEmpty ? nil : dir
+                currentDirectory: workingDirectory.map { URL(fileURLWithPath: $0) }
             )
 
             func argv(_ url: URL) -> [String] {
-                ShimHarness.recordedArgv(url) ?? []
+                ShimHarness.recordedArgv(url, keepsEmptyArguments: true) ?? []
             }
             let leftEnvironmentFiles = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?
                 .filter { $0.hasPrefix("weir-hosted-env.") } ?? []
@@ -402,6 +462,8 @@ struct ClaudeShimScriptTests {
                 claudeEnvironment: ShimHarness.recordedEnvironment(claudeArgv.appendingPathExtension("env")) ?? [:],
                 leftEnvironmentFiles: leftEnvironmentFiles,
                 temporaryFolder: dir.path,
+                workingDirectory: workingDirectory,
+                snapshotMode: try? String(contentsOf: savedMode, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines),
                 sessionStderr: try? String(contentsOfFile: tmuxArgv.path + ".stderr", encoding: .utf8),
                 exitStatus: process.terminationStatus
             )
@@ -422,6 +484,8 @@ struct ClaudeShimScriptTests {
         let claudeEnvironment: [String: String]
         let leftEnvironmentFiles: [String]
         let temporaryFolder: String
+        let workingDirectory: String?
+        let snapshotMode: String?
         /// What the session wrote to stderr, kept only with
         /// `losesSavedEnvironment`.
         let sessionStderr: String?
@@ -436,7 +500,8 @@ struct ClaudeShimScriptTests {
         /// Claude ran directly, with our settings and then the user's
         /// arguments.
         func ranDirectly(_ args: [String]) -> Bool {
-            tmux.isEmpty && claude.contains("--settings") && claude.suffix(args.count) == args[...]
+            exitStatus == 0 && tmux.isEmpty && claude.count == args.count + 2 &&
+                claude.first == "--settings" && claude.dropFirst(2) == args[...]
         }
     }
 
@@ -447,42 +512,29 @@ struct ClaudeShimScriptTests {
     @Test("keeps our settings flag when the agent is hosted in tmux")
     func hostedInvocation_stillCarriesTheSettingsFlag() throws {
         let handover = try runShimHosted([])
-        #expect(handover.tmux.prefix(4) == ["-L", "weir-test.socket", "-f", "/dev/null"])
-        // The session's command reads the pane's environment back, then
-        // starts the agent with our flag.
-        let session = try #require(handover.tmux.firstIndex(of: "new-session"))
-        #expect(handover.tmux[(session + 3)...].prefix(2) == ["/bin/sh", "-c"])
-        #expect(handover.tmux[session + 6] == "weir-env")
-        #expect(handover.tmux[session + 8].hasSuffix("/fake-claude"))
-        #expect(handover.tmux[session + 9] == "--settings")
-        let payload = try JSONSerialization.jsonObject(
-            with: Data(handover.tmux[session + 10].utf8)
-        ) as? [String: Any]
-        #expect(payload?["hooks"] != nil)
-        #expect(handover.claude.first == "--settings")
+        let prefix = [
+            "-L", "weir-test.socket", "-f", "/dev/null",
+            "set", "-s", "escape-time", "10", ";",
+            "set", "-s", "default-terminal", "tmux-256color", ";",
+            "set", "-sa", "terminal-overrides", ",*:RGB", ";",
+            "set", "-g", "prefix", "None", ";",
+            "new-session", "-s"
+        ]
+        #expect(handover.tmux.prefix(prefix.count) == prefix[...])
+        let tail = Array(handover.tmux.dropFirst(prefix.count))
+        try #require(tail.count == 9)
+        #expect(tail[0].hasPrefix("weir-547D688D-"))
+        #expect(Int(tail[0].dropFirst("weir-547D688D-".count)) != nil)
+        #expect(tail[1...2] == ["/bin/sh", "-c"])
+        #expect(tail[3].contains("the pane environment saved for this agent could not be read"))
+        #expect(tail[4] == "weir-env")
+        #expect(tail[5] == handover.savedEnvironmentFile)
+        #expect(tail[6] == handover.temporaryFolder + "/fake-claude")
+        #expect(Array(tail.dropFirst(7)) == handover.claude)
+        #expect(try sessionStartCommand(handover.claude).hasSuffix("/weir-hook"))
         #expect(handover.claudeEnvironment["WEIR_AGENT_RUN_ID"]?.isEmpty == false)
         #expect(handover.claudeSawMode == "weirHosted")
-    }
-
-    /// `--bg` prints a session id and returns, so hosting it would put
-    /// that id on a screen tmux erases on the way out.
-    @Test(
-        "runs a one-shot invocation directly even when hosting is on",
-        arguments: [["--version"], ["--bg", "do a thing"]]
-    )
-    func hostedInvocation_leavesOneShotsAlone(_ args: [String]) throws {
-        let handover = try runShimHosted(args)
-        #expect(handover.tmux.isEmpty)
-        #expect(handover.claude.contains(args[0]))
-    }
-
-    /// `--resume` is one of the two ways back into an existing session,
-    /// so it is on the allow list even though it carries arguments.
-    @Test("hosts a resume")
-    func hostedInvocation_hostsAResume() throws {
-        let handover = try runShimHosted(["--resume", "abc123"])
-        #expect(handover.tmux.suffix(2) == ["--resume", "abc123"])
-        #expect(handover.claude.suffix(2) == ["--resume", "abc123"])
+        #expect(handover.exitStatus == 0)
     }
 
     /// The bug this guards: a session takes every variable it is not
@@ -507,14 +559,14 @@ struct ClaudeShimScriptTests {
         #expect(env["PANE_ONLY"] == "")
         #expect(env["lhe_file"] == "the person's")
         #expect(env["OTHER_PANE_ONLY"] == nil)
-        #expect(env["HOME"] != ShimHarness.tmuxServerEnvironment["HOME"])
+        #expect(env["HOME"] == handover.temporaryFolder)
         for (name, value) in ShimHarness.tmuxSessionVariables {
             #expect(env[name] == value, "\(name)")
         }
         #expect(env["WEIR_PANE_ID"] == "547D688D-39DF-4A06-BD6F-316C3385532C")
         #expect(handover.leftEnvironmentFiles.isEmpty)
         // Nothing of the environment travels on tmux's command line.
-        #expect(!handover.tmux.contains { $0.contains("PERSON_EXPORT") })
+        #expect(!handover.tmux.contains { $0.contains("PERSON_EXPORT") || $0.contains(export) })
     }
 
     /// Bash refuses to assign `UID`, `EUID`, and `SHELLOPTS`, which it keeps
@@ -534,11 +586,27 @@ struct ClaudeShimScriptTests {
     /// so the file goes to the folder macOS keeps for this user instead.
     @Test("saves the pane's environment outside a TMPDIR others can write to")
     func hostedLaunch_withATemporaryFolderOthersCanWrite_savesInTheUsersOwn() throws {
-        let handover = try runShimHosted([], environment: ["PERSON_EXPORT": "this pane's"], othersCanWrite: true)
-        let saved = try #require(handover.savedEnvironmentFile)
-        #expect(!saved.hasPrefix(handover.temporaryFolder))
-        #expect(!FileManager.default.fileExists(atPath: saved))
-        #expect(handover.claudeEnvironment["PERSON_EXPORT"] == "this pane's")
+        try withTempDir { privateTemporary in
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: privateTemporary.path)
+            let handover = try runShimHosted([], environment: ["PERSON_EXPORT": "this pane's"], othersCanWrite: true) { dir in
+                let bin = dir.appendingPathComponent("bin")
+                try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+                try ShimHarness.writeExecutable(
+                    "#!/bin/sh\nprintf '%s\\n' \"$TEST_PRIVATE_TEMP\"\n",
+                    at: bin.appendingPathComponent("getconf")
+                )
+                return [
+                    "PATH": "\(bin.path):\(ShimHarness.systemPath)",
+                    "TEST_PRIVATE_TEMP": privateTemporary.path
+                ]
+            }
+            let saved = try #require(handover.savedEnvironmentFile)
+            #expect(URL(fileURLWithPath: saved).deletingLastPathComponent().path == privateTemporary.path)
+            #expect(handover.snapshotMode == "600")
+            #expect(!FileManager.default.fileExists(atPath: saved))
+            #expect(handover.claudeEnvironment["PERSON_EXPORT"] == "this pane's")
+            #expect(try FileManager.default.contentsOfDirectory(atPath: privateTemporary.path).isEmpty)
+        }
     }
 
     /// A session that cannot read the saved environment starts nothing,
@@ -593,8 +661,10 @@ struct ClaudeShimScriptTests {
     /// `WEIR_REAL_CLAUDE`, an override that leaves the `PATH` as it was.
     @Test("starts a hosted agent on the pane's PATH")
     func hostedInvocation_passesThePanesPath() throws {
-        let handover = try runShimHosted([])
-        #expect(handover.claudeEnvironment["PATH"] == "/usr/bin:/bin:/usr/sbin:/sbin")
+        let path = "/pane-only/bin:" + ShimHarness.systemPath
+        let handover = try runShimHosted([], environment: ["PATH": path])
+        #expect(handover.claudeSawMode == "weirHosted")
+        #expect(handover.claudeEnvironment["PATH"] == path)
     }
 
     /// What the new workspace sheet found stays with the pane's shell: a
@@ -620,8 +690,8 @@ struct ClaudeShimScriptTests {
             files: ["placeholder": ""]
         )
         let value = try #require(handover.claudeEnvironment["CLAUDE_CONFIG_DIR"])
-        #expect(value.hasPrefix("/"))
-        #expect(value.hasSuffix("/relative/config"))
+        let cwd = try #require(handover.workingDirectory)
+        #expect(value == cwd + "/relative/config")
 
         let unset = try runShimHosted([])
         #expect(!unset.tmux.isEmpty)
@@ -637,18 +707,20 @@ struct ClaudeShimScriptTests {
             files: ["mine.json": #"{"model":"opus"}"#]
         )
         let value = try #require(file.claudeEnvironment["WEIR_CLAUDE_USER_SETTINGS"])
-        #expect(value.hasPrefix("/"))
-        #expect(value.hasSuffix("/mine.json"))
+        let cwd = try #require(file.workingDirectory)
+        #expect(value == cwd + "/mine.json")
+        #expect(file.claude.dropFirst(2) == ["--resume", "abc"])
+        #expect(try settingsPayload(in: file.claude)?["model"] as? String == "opus")
+        #expect(try sessionStartCommand(file.claude).hasSuffix("/weir-hook"))
 
         // Inline JSON is passed as written, blanks before it included, and
         // merged as JSON rather than read as a file of that name.
         let inline = "  \n {\"model\":\"opus\"}"
         let handover = try runShimHosted(["--resume", "abc", "--settings", inline])
         #expect(handover.claudeEnvironment["WEIR_CLAUDE_USER_SETTINGS"] == inline)
-        let settings = try #require(handover.tmux.firstIndex(of: "--settings"))
-        let payload = try JSONSerialization.jsonObject(with: Data(handover.tmux[settings + 1].utf8)) as? [String: Any]
-        #expect(payload?["model"] as? String == "opus")
-        #expect(payload?["hooks"] != nil)
+        #expect(handover.claude.dropFirst(2) == ["--resume", "abc"])
+        #expect(try settingsPayload(in: handover.claude)?["model"] as? String == "opus")
+        #expect(try sessionStartCommand(handover.claude).hasSuffix("/weir-hook"))
     }
 
     /// The status line relay takes the person's status line only from the
@@ -695,11 +767,15 @@ struct ClaudeShimScriptTests {
 
     /// The rest of Claude's allow list: a bare launch, and each spelling
     /// of the two ways back into a session.
-    @Test("hosts each interactive entry point", arguments: [[], ["-r"], ["--resume"], ["-c"], ["--continue"]])
+    @Test("hosts each interactive entry point", arguments: [[], ["-r"], ["--resume"], ["--resume", "abc123"], ["-c"], ["--continue"]])
     func hostedInvocation_hostsTheInteractiveEntryPoints(_ args: [String]) throws {
         let handover = try runShimHosted(args)
-        #expect(handover.tmux.contains("new-session"))
-        #expect(handover.tmux.suffix(args.count) == args[...])
+        let executable = try #require(handover.tmux.firstIndex(of: handover.temporaryFolder + "/fake-claude"))
+        #expect(Array(handover.tmux.dropFirst(executable + 1)) == handover.claude)
+        #expect(handover.claude.dropFirst(2) == args[...])
+        #expect(try sessionStartCommand(handover.claude).hasSuffix("/weir-hook"))
+        #expect(handover.claudeSawMode == "weirHosted")
+        #expect(handover.exitStatus == 0)
     }
 
     /// A prompt and a subcommand look alike, and a flag the list does not
@@ -708,11 +784,12 @@ struct ClaudeShimScriptTests {
     /// after an entry point.
     @Test("runs anything it does not recognize directly", arguments: [
         ["fix the failing test"], ["mcp", "list"], ["--model", "opus"],
-        ["-p", "hi"], ["--resume", "abc123", "--print"], ["-c", "-h"]
+        ["-p", "hi"], ["--resume", "abc123", "--print"], ["-c", "-h"], ["--version"], ["--bg", "do a thing"]
     ])
     func hostedInvocation_runsWhatItDoesNotRecognizeDirectly(_ args: [String]) throws {
         let handover = try runShimHosted(args)
         #expect(handover.ranDirectly(args))
+        #expect(handover.claudeSawMode == "unset")
     }
 
     /// Inside a session our folder is still on the PATH, so wrapping again
@@ -738,11 +815,12 @@ struct ClaudeShimScriptTests {
         #expect(handover.claudeSawMode == "unset")
     }
 
-    /// Output that is not a terminal is output someone means to keep,
-    /// which a tmux client would take to a screen it erases.
-    @Test("runs directly when its output is not a terminal")
-    func withoutATerminal_handsOffDirectly() throws {
-        let handover = try runShimHosted([], underPTY: false)
+    /// Hosting requires both streams to be terminals. Redirecting either
+    /// under a PTY preserves the other as a terminal.
+    @Test(arguments: RedirectedStream.allCases)
+    private func withoutEitherTerminalStream_handsOffDirectly(_ stream: RedirectedStream) throws {
+        let handover = try runShimHosted([], redirectedStream: stream)
         #expect(handover.ranDirectly([]))
+        #expect(handover.claudeSawMode == "unset")
     }
 }

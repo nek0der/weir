@@ -51,18 +51,25 @@ struct ChangesPanelModelTests {
         let unrecorded = try TurnSummaryFixture.turn("d")
         let partial = try TurnSummaryFixture.turn("e", extras: .init(usage: usage(1, isPartial: true)))
 
-        let total = try #require(TurnUsage.total(of: [first, second, running]))
-        #expect(ChangesPanelText.shownTokens(total) == 322)
-        #expect(total.cacheReadTokens == 10)
-        #expect(!total.isPartial, "a running turn has no count to miss")
-        #expect(TurnUsage.total(of: [first, unrecorded])?.isPartial == true)
-        #expect(TurnUsage.total(of: [first, partial])?.isPartial == true)
-        #expect(TurnUsage.total(of: [running]) == nil)
+        func list(_ turns: [TurnSummary]) throws -> ChangesPanelModel.TurnList {
+            try Panel.list(ChangesPanelModel.make(Panel.input([Panel.agent(turns)])))
+        }
 
-        let help = ChangesPanelText.summaryHelp(usage: TurnUsage.total(of: [first, partial]), locale: Self.english)
+        let total = try #require(list([first, second, running]).usage)
+        #expect(total == TurnUsage(inputTokens: 300, cacheWriteTokens: 20, cacheReadTokens: 10, outputTokens: 2))
+        #expect(ChangesPanelText.shownTokens(total) == 322)
+        #expect(try list([first, unrecorded]).usage ==
+            TurnUsage(inputTokens: 100, cacheWriteTokens: 10, cacheReadTokens: 5, outputTokens: 1, isPartial: true))
+        let partialTotal = try list([first, partial]).usage
+        #expect(partialTotal ==
+            TurnUsage(inputTokens: 101, cacheWriteTokens: 20, cacheReadTokens: 10, outputTokens: 2, isPartial: true))
+        let noUsage = try list([running]).usage
+        #expect(noUsage == nil)
+
+        let help = ChangesPanelText.summaryHelp(usage: partialTotal, locale: Self.english)
         #expect(help.contains("Some turns could not be read"))
         #expect(!help.contains("Part of the turn"))
-        #expect(!ChangesPanelText.summaryHelp(usage: nil, locale: Self.english).contains("Tokens add up"))
+        #expect(!ChangesPanelText.summaryHelp(usage: noUsage, locale: Self.english).contains("Tokens add up"))
     }
 
     @Test func theRows_runOldestFirst_eachWithItsOwnViewedState() throws {
@@ -85,15 +92,6 @@ struct ChangesPanelModelTests {
     }
 
     private typealias Fold = ChangesPanelModel.Fold
-
-    @Test func noTurnViewed_drawsNoLine_andFoldsNothing() throws {
-        let turn = try Panel.turn(1)
-        let list = try Panel.list(ChangesPanelModel.make(Panel.input([Panel.agent([turn])])))
-
-        #expect(list.line == nil)
-        #expect(list.fold == nil)
-        #expect(list.rows.first?.action == .markViewedThrough)
-    }
 
     @Test func theLineBelowTheLatestTurn_offersUndo_untilTheNextTurnArrives() throws {
         let first = try Panel.turn(1)
@@ -176,7 +174,7 @@ struct ChangesPanelModelTests {
         #expect(list.rows.allSatisfy { ChangesPanelText.facts($0, locale: Self.english).isStatus })
     }
 
-    @Test func aCardsMoves_areTheSameValuesEverywhere_andAHeldBackRestoreSaysWhy() throws {
+    @Test func aCardsMoves_exposeAnEnabledViewedActionAndABlockedRestore() throws {
         var extras = TurnSummaryFixture.Extras()
         extras.beginTree = SnapshotTree(tree: TurnSummaryFixture.tree("b", 1), root: "/repo")
         let turn = try Panel.turn(1, extras: extras)
@@ -284,10 +282,25 @@ struct ChangesPanelModelTests {
     /// grows with the digits so a long one's numbers still line up.
     @Test(arguments: [false, true])
     @MainActor
-    func theTurnNumberColumn_fitsTheListsDigits(hasConversation: Bool) {
+    func theTurnNumberColumn_fitsTheListsDigits(hasConversation: Bool) throws {
         typealias Layout = WeirLayout.Supervision
-        let one = Layout.turnFirstColumnWidth(hasConversation: hasConversation, digits: 1)
-        let four = Layout.turnFirstColumnWidth(hasConversation: hasConversation, digits: 4)
+        let short = try TurnSummaryFixture.timed(9, conversation: "first", start: 0, end: 10)
+        let long = try TurnSummaryFixture.timed(
+            1000, conversation: hasConversation ? "second" : "first", start: 20, end: 30
+        )
+        let agents = Panel.agents([short, long])
+        let shortOnly = try Panel.list(ChangesPanelModel.make(Panel.input(
+            hasConversation ? agents : [Panel.agent([short])],
+            chosen: short.conversation
+        )))
+        let both = try Panel.list(ChangesPanelModel.make(Panel.input(agents)))
+        #expect(shortOnly.rows.map(\.id) == [short.turnID])
+        #expect(shortOnly.turnNumberDigits == 1)
+        #expect(both.turnNumberDigits == 4)
+        #expect((both.rows.first?.conversation != nil) == hasConversation)
+
+        let one = Layout.turnFirstColumnWidth(hasConversation: hasConversation, digits: shortOnly.turnNumberDigits)
+        let four = Layout.turnFirstColumnWidth(hasConversation: hasConversation, digits: both.turnNumberDigits)
         let width = ("T1000" as NSString).size(withAttributes: [.font: Layout.turnNumberFont]).width
         #expect(ceil(width) + Layout.turnUnviewedPillPadding.width <= four, "a long conversation's numbers still line up")
         #expect(one < four)
@@ -414,14 +427,9 @@ struct ChangesPanelModelTests {
     }
 
     @Test func theTurnsTheReviewTabReads_areMarked_onlyWhileItIsInFront_whateverTheirConversation() throws {
-        let turn = try TurnSummaryFixture.turn(
-            "T7",
-            changes: TurnSummaryFixture.changedFiles,
-            number: 7,
-            endTree: SnapshotTree(tree: TurnSummaryFixture.tree("e", 7), root: "/repo"),
-            extras: .init(beginTree: SnapshotTree(tree: TurnSummaryFixture.tree("b", 7), root: "/repo"))
-        )
-        let range = try #require(ReviewTurnRange(turns: [turn]))
+        let first = try TurnSummaryFixture.timed(1, conversation: "claude", start: 0, end: 10)
+        let second = try TurnSummaryFixture.timed(1, conversation: "codex", start: 20, end: 30)
+        let range = try #require(ReviewTurnRange(turns: [first, second]))
         var review = ReviewTabState(
             root: "/repo",
             selection: .turn(range, prompt: TurnPrompt(head: nil)),
@@ -431,7 +439,7 @@ struct ChangesPanelModelTests {
             opening: UUID()
         )
 
-        #expect(ChangesPanelModel.turnsShownInReview(review) == [turn.turnID])
+        #expect(ChangesPanelModel.turnsShownInReview(review) == [first.turnID, second.turnID])
         review.isShown = false
         #expect(ChangesPanelModel.turnsShownInReview(review).isEmpty, "behind a terminal tab")
         review.isShown = true
@@ -443,11 +451,11 @@ struct ChangesPanelModelTests {
     // MARK: - The totals: one comparison
 
     @Test func theTotals_areOneComparison_fromTheEarliestBeginToTheLatestEnd_neverTheTurnsAddedUp() throws {
-        // T1 and T2 ran over the same file: added up they would count it
-        // twice. T2 started before T1 ended, and ended last.
-        let first = try TurnSummaryFixture.timed(1, start: 0, end: 100)
-        let second = try TurnSummaryFixture.timed(2, start: 50, end: 200)
-        var input = Panel.input([Panel.agent([first, second])])
+        let first = try TurnSummaryFixture.timed(1, conversation: "claude", start: 0, end: 100)
+        let lastEnded = try TurnSummaryFixture.timed(1, conversation: "codex", start: 50, end: 200)
+        let lastStarted = try TurnSummaryFixture.timed(2, conversation: "claude", start: 70, end: 150)
+        let turns = [lastStarted, lastEnded, first]
+        var input = Panel.input(Panel.agents(turns))
         var asked: [WorktreeChanges.Comparison] = []
         input.counts = { comparison in
             asked.append(comparison)
@@ -456,9 +464,9 @@ struct ChangesPanelModelTests {
 
         let list = try Panel.list(ChangesPanelModel.make(input))
 
-        let expected = try WorktreeChanges.Comparison(begin: #require(first.beginTree).tree, end: #require(second.endTree).tree)
+        let expected = try WorktreeChanges.Comparison(begin: #require(first.beginTree).tree, end: #require(lastEnded.endTree).tree)
         #expect(asked == [expected], "asked once, for the one comparison")
-        #expect(Self.totalsComparison(ChangesPanelModel.timeline([first, second])) == expected)
+        #expect(Self.totalsComparison(ChangesPanelModel.timeline(turns)) == expected)
         #expect(list.fileCount == 3 && list.added == 5 && list.removed == 1)
         #expect(Self.totals(list, locale: Self.english) == "Unviewed range: 3 files +5 −1")
         #expect(list.showsTotals)
@@ -577,21 +585,14 @@ struct ChangesPanelModelTests {
         let insets = WeirLayout.Supervision.changesHeadInsets
         let room = WeirLayout.Supervision.changesPanelDefaultWidth - insets.leading - insets.trailing
         for locale in [Self.english, Self.japanese] {
-            for line in ChangesPanelText.totalsLines(list, locale: locale) {
+            let lines = ChangesPanelText.totalsLines(list, locale: locale)
+            #expect(lines.count == 3)
+            for line in lines {
                 let view = ReceiptRunsText(runs: line, size: .row).fixedSize().environment(\.locale, locale)
                 let width = NSHostingController(rootView: view).sizeThatFits(in: CGSize(width: 4000, height: 40)).width
                 #expect(width <= room, "\(line.map(\.text).joined()) is \(width)pt, past \(room)pt")
             }
         }
-    }
-
-    @Test func outsideTurnsAlone_isSaidWithoutTheTurnsZeroes() throws {
-        var input = try Panel.input([Panel.agent([Panel.turn(1, changes: #"{"kind":"unchanged"}"#)])])
-        input.pathsOutsideTurns = 2
-
-        let list = try Panel.list(ChangesPanelModel.make(input))
-
-        #expect(Self.totals(list, locale: Self.japanese) == "ターン外の変更 2 ファイル")
     }
 
     @Test func anIncompleteCountOutsideTurns_saysSo_withItsFilesOrAlone() throws {
@@ -612,17 +613,35 @@ struct ChangesPanelModelTests {
     }
 
     @Test func theTotals_showOnlyOnceSomethingChanged() throws {
-        let answer = try Panel.list(ChangesPanelModel.make(Panel.input([Panel.agent([Panel.turn(1, changes: #"{"kind":"unchanged"}"#)])])))
-        #expect(!answer.showsTotals, "+0 −0 says nothing")
+        let answer = try Panel.turn(1, changes: #"{"kind":"unchanged"}"#)
+        let answerOnly = try Panel.list(ChangesPanelModel.make(Panel.input([Panel.agent([answer])])))
+        #expect(!answerOnly.showsTotals, "+0 −0 says nothing")
 
-        var input = try Panel.input([Panel.agent([Panel.turn(1, changes: #"{"kind":"unchanged"}"#)])])
+        let turn = try TurnSummaryFixture.timed(1, start: 0, end: 10)
+        var input = Panel.input([Panel.agent([turn])])
+        var asked: [WorktreeChanges.Comparison] = []
+        input.counts = { comparison in
+            asked.append(comparison)
+            return .unchanged
+        }
+        let expected = try WorktreeChanges.Comparison(begin: #require(turn.beginTree).tree, end: #require(turn.endTree).tree)
+
+        let unchanged = try Panel.list(ChangesPanelModel.make(input))
+        #expect(asked == [expected])
+        #expect(!unchanged.showsTotals)
+        #expect(Self.totals(unchanged, locale: Self.japanese).isEmpty)
+
         input.pathsOutsideTurns = 2
-        #expect(try Panel.list(ChangesPanelModel.make(input)).showsTotals)
-        var counted = try Panel.input([Panel.agent([TurnSummaryFixture.timed(1, start: 0, end: 10)])])
-        counted.counts = { _ in .unchanged }
-        #expect(try !Panel.list(ChangesPanelModel.make(counted)).showsTotals, "a comparison that changed nothing says nothing")
-        counted.counts = { _ in .changed(files: 2, added: 3, removed: 1) }
-        #expect(try Panel.list(ChangesPanelModel.make(counted)).showsTotals)
+        let outside = try Panel.list(ChangesPanelModel.make(input))
+        #expect(asked == [expected, expected])
+        #expect(outside.showsTotals)
+        #expect(Self.totals(outside, locale: Self.japanese) == "ターン外の変更 2 ファイル")
+
+        input.pathsOutsideTurns = nil
+        input.counts = { _ in .changed(files: 2, added: 3, removed: 1) }
+        let changed = try Panel.list(ChangesPanelModel.make(input))
+        #expect(changed.showsTotals)
+        #expect(Self.totals(changed, locale: Self.english) == "Unviewed range: 2 files +3 −1")
     }
 }
 
@@ -659,17 +678,18 @@ extension ChangesPanelModelTests {
     @Test func twoTurnsStartedInTheSameSecond_keepTheirConversationsOrder_thenTheirNumbers() throws {
         // The record keeps seconds: a tie is broken by which conversation
         // started first, then by number, so two readings never swap rows.
-        let early1 = try TurnSummaryFixture.timed(1, conversation: "early", start: 0, end: 5)
-        let late1 = try TurnSummaryFixture.timed(1, conversation: "late", start: 10, end: 15)
-        let early2 = try TurnSummaryFixture.timed(2, conversation: "early", start: 20, end: 25)
-        let late2 = try TurnSummaryFixture.timed(2, conversation: "late", start: 20, end: 30)
-        let early3 = try TurnSummaryFixture.timed(3, conversation: "early", start: 20, end: 40)
+        let early1 = try TurnSummaryFixture.timed(1, conversation: "z-early", start: 0, end: 5)
+        let late1 = try TurnSummaryFixture.timed(1, conversation: "a-late", start: 10, end: 15)
+        let early2 = try TurnSummaryFixture.timed(2, conversation: "z-early", start: 20, end: 25)
+        let late2 = try TurnSummaryFixture.timed(2, conversation: "a-late", start: 20, end: 30)
+        let early3 = try TurnSummaryFixture.timed(3, conversation: "z-early", start: 20, end: 40)
 
         let timeline = ChangesPanelModel.timeline([late2, early3, late1, early2, early1])
 
         #expect(timeline.map(\.turnID) == [early1, late1, early2, early3, late2].map(\.turnID))
         #expect(
-            ChangesPanelModel.timeline([late2, early3, early2]).map(\.turnID) == [early2, early3, late2].map(\.turnID),
+            ChangesPanelModel.timeline([early1, early2, late1, early3, late2]).map(\.turnID)
+                == [early1, late1, early2, early3, late2].map(\.turnID),
             "stable from any order"
         )
     }
@@ -721,19 +741,20 @@ extension ChangesPanelModelTests {
         let claude2 = try TurnSummaryFixture.timed(2, conversation: "claude", start: 40, end: 50)
         let agents = Panel.agents([claude1, claude2, codex1])
 
-        let all = try Panel.list(ChangesPanelModel.make(Panel.input(agents)))
+        let lines = [Panel.line(through: claude1).line]
+        let all = try Panel.list(ChangesPanelModel.make(Panel.input(agents, lines: lines)))
         #expect(all.filter == nil)
         #expect(all.rows.count == 3)
 
-        let narrowed = try Panel.list(ChangesPanelModel.make(Panel.input(agents, chosen: codex1.conversation)))
+        let narrowed = try Panel.list(ChangesPanelModel.make(Panel.input(agents, lines: lines, chosen: codex1.conversation)))
         #expect(narrowed.filter == codex1.conversation)
         #expect(narrowed.rows.map(\.turn.turnID) == [codex1.turnID])
-        #expect(narrowed.turnCount == 3 && narrowed.unviewedCount == 3, "the head counts the worktree")
-        #expect(narrowed.conversations.count == 2, "the filter lists every conversation whatever it shows")
-        #expect(narrowed.rows.first?.conversation != nil, "the badge stays while narrowed")
+        #expect(narrowed.turnCount == 3 && narrowed.unviewedCount == 2, "the head counts the worktree")
+        #expect(Set(narrowed.conversations.map(\.conversation)) == [claude1.conversation, codex1.conversation])
+        #expect(narrowed.rows.first?.conversation?.conversation == codex1.conversation)
 
         let gone = ConversationKey(provider: .codex, conversationID: "gone", isFallback: false)
-        let stale = try Panel.list(ChangesPanelModel.make(Panel.input(agents, chosen: gone)))
+        let stale = try Panel.list(ChangesPanelModel.make(Panel.input(agents, lines: lines, chosen: gone)))
         #expect(stale.filter == nil, "a filter of a conversation no longer here narrows nothing")
         #expect(stale.rows.count == 3)
     }
@@ -771,9 +792,14 @@ extension ChangesPanelModelTests {
         // Claude viewed through T3, Codex through nothing: T3 is a viewed
         // row between two unviewed ones.
         let lines = [Panel.line(through: claude3).line]
+        let agents = Panel.agents([claude1, claude2, claude3, codex1, codex2])
+        let none = try Panel.list(ChangesPanelModel.make(Panel.input([Panel.agent([claude1])])))
+        #expect(none.fold == nil)
+        #expect(none.line == nil)
+        #expect(none.rows.map(\.action) == [.markViewedThrough])
 
         let list = try Panel.list(ChangesPanelModel.make(Panel.input(
-            Panel.agents([claude1, claude2, claude3, codex1, codex2]),
+            agents,
             lines: lines
         )))
 
@@ -781,11 +807,9 @@ extension ChangesPanelModelTests {
         #expect(list.fold == Fold(count: 2), "only the run at the top")
         #expect(list.line == nil)
 
-        // Everything viewed: all but the last row fold, and the line is
-        // below the latest turn.
         let codexLine = Panel.line(through: codex2).line
         let all = try Panel.list(ChangesPanelModel.make(Panel.input(
-            Panel.agents([claude1, claude2, claude3, codex1, codex2]),
+            agents,
             lines: lines + [codexLine]
         )))
         #expect(all.fold == Fold(count: 4))
@@ -795,16 +819,17 @@ extension ChangesPanelModelTests {
     @Test func thePanelOpens_onTheFocusedConversationsLatestUnviewedTurn() throws {
         let claude1 = try TurnSummaryFixture.timed(1, conversation: "claude", start: 0, end: 10)
         let codex1 = try TurnSummaryFixture.timed(1, conversation: "codex", start: 20, end: 30)
+        let codex2 = try TurnSummaryFixture.timed(2, conversation: "codex", start: 31, end: 39)
         let claude2 = try TurnSummaryFixture.timed(2, conversation: "claude", start: 40, end: 50)
-        let agents = Panel.agents([claude1, claude2, codex1])
+        let agents = Panel.agents([claude1, claude2, codex1, codex2])
 
         let focused = try Panel.list(ChangesPanelModel.make(Panel.input(agents, focused: codex1.conversation)))
-        #expect(focused.scrollTarget == codex1.turnID)
+        #expect(focused.scrollTarget == codex2.turnID)
         let unfocused = try Panel.list(ChangesPanelModel.make(Panel.input(agents)))
         #expect(unfocused.scrollTarget == claude2.turnID, "the latest unviewed")
         let viewedCodex = try Panel.list(ChangesPanelModel.make(Panel.input(
             agents,
-            lines: [Panel.line(through: codex1).line],
+            lines: [Panel.line(through: codex2).line],
             focused: codex1.conversation
         )))
         #expect(viewedCodex.scrollTarget == claude2.turnID, "nothing of the focused one is unviewed")
@@ -850,8 +875,8 @@ extension ChangesPanelModelTests {
     }
 
     @Test func theReviewOpensFrom_theFocusedConversation_elseTheNewestUnviewedTurns() throws {
-        let codex1 = try TurnSummaryFixture.timed(1, conversation: "codex", start: 0, end: 50)
-        let claude1 = try TurnSummaryFixture.timed(1, conversation: "claude", start: 10, end: 60)
+        let codex1 = try TurnSummaryFixture.timed(1, conversation: "codex", start: 10, end: 50)
+        let claude1 = try TurnSummaryFixture.timed(1, conversation: "claude", start: 0, end: 60)
         let timeline = ChangesPanelModel.timeline([codex1, claude1])
 
         #expect(ChangesPanelModel.reviewConversation(timeline, focused: codex1.conversation, isViewed: { _ in
@@ -898,8 +923,7 @@ extension ChangesPanelModelTests {
         // One whose turns were all recorded elsewhere is listed only while
         // it runs here, with none of them.
         #expect(agents.map(\.conversation) == [first.conversation, moved.conversation, waiting])
-        #expect(agents.first?.turns == [first])
-        #expect(agents.last?.turns.isEmpty == true, "running here, nothing recorded yet")
+        #expect(agents.map(\.turns) == [[first], [], []])
     }
 
     @Test func theDecisionBarsReceiptTooltip_namesEachTurnsPromptAndTime_andTheCheck() throws {

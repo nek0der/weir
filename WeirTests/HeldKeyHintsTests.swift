@@ -36,35 +36,23 @@ struct HeldKeyHintsTests {
         #expect(machine.shownChord == [.command, .option])
     }
 
-    @Test func letGo_hides() {
-        var machine = shown()
-        machine.modifiersChanged(to: [])
-        #expect(machine.phase == .idle)
-    }
+    @Test("An action during a hold suppresses hints until Command is released", arguments: [false, true])
+    func actionDuringHold_spendsTheChord(isShown: Bool) throws {
+        var machine = holdingCommand(isShown: isShown)
+        try #require(machine.phase == (isShown ? .shown([.command]) : .waiting([.command])))
 
-    @Test func keyDuringTheWait_cancelsUntilCommandIsLetGo() {
-        var machine = HeldKeyHintMachine()
-        machine.modifiersChanged(to: [.command])
         machine.actionTaken()
         machine.delayElapsed(chord: [.command], isAllowed: true)
-        #expect(machine.shownChord == nil)
-        machine.modifiersChanged(to: [.command, .shift])
-        #expect(machine.phase == .spent)
-        machine.modifiersChanged(to: [])
-        machine.modifiersChanged(to: [.command])
-        #expect(machine.isWaiting)
+        expectSpentUntilRelease(&machine)
     }
 
-    @Test func actionWhileShown_hides() {
-        var machine = shown()
-        machine.actionTaken()
-        #expect(machine.shownChord == nil)
-    }
-
-    @Test func actionWithNothingHeld_staysIdle() {
+    @Test func actionWithNothingHeld_doesNotSpendTheNextHold() {
         var machine = HeldKeyHintMachine()
         machine.actionTaken()
         #expect(machine.phase == .idle)
+
+        machine.modifiersChanged(to: [.command])
+        #expect(machine.phase == .waiting([.command]))
     }
 
     @Test func keyUpLostToAnotherApp_doesNotShow() {
@@ -74,31 +62,69 @@ struct HeldKeyHintsTests {
         #expect(machine.phase == .idle)
     }
 
-    @Test func notAllowed_staysDownUntilLetGo() {
+    @Test func notAllowed_staysDownUntilLetGo() throws {
+        var machine = holdingCommand(isShown: false)
+        try #require(machine.phase == .waiting([.command]))
+        machine.delayElapsed(chord: [.command], isAllowed: false)
+        expectSpentUntilRelease(&machine)
+    }
+
+    @Test(
+        "Releasing Command or resigning the window clears pending and shown hints",
+        arguments: [false, true],
+        [false, true]
+    )
+    func endingHold_clearsHints(isShown: Bool, resignsWindow: Bool) throws {
+        var machine = holdingCommand(isShown: isShown)
+        try #require(machine.phase == (isShown ? .shown([.command]) : .waiting([.command])))
+        if resignsWindow {
+            machine.windowResigned()
+        } else {
+            machine.modifiersChanged(to: [])
+        }
+        #expect(machine.phase == .idle)
+        #expect(machine.shownChord == nil)
+
+        machine.delayElapsed(chord: [.command], isAllowed: true)
+        #expect(machine.phase == .idle)
+        #expect(machine.shownChord == nil)
+    }
+
+    private func holdingCommand(isShown: Bool) -> HeldKeyHintMachine {
+        if isShown {
+            return shown()
+        }
         var machine = HeldKeyHintMachine()
         machine.modifiersChanged(to: [.command])
-        machine.delayElapsed(chord: [.command], isAllowed: false)
+        return machine
+    }
+
+    private func expectSpentUntilRelease(_ machine: inout HeldKeyHintMachine) {
         #expect(machine.phase == .spent)
-    }
+        #expect(machine.shownChord == nil)
+        machine.modifiersChanged(to: [.command, .shift])
+        machine.delayElapsed(chord: [.command, .shift], isAllowed: true)
+        #expect(machine.phase == .spent)
+        #expect(machine.shownChord == nil)
 
-    @Test func windowResigned_clears() {
-        var machine = shown()
-        machine.windowResigned()
+        machine.modifiersChanged(to: [])
         #expect(machine.phase == .idle)
+        machine.modifiersChanged(to: [.command])
+        #expect(machine.phase == .waiting([.command]))
     }
 
-    @Test func capKey_onlyForTheExactChord() {
+    @Test func capKey_onlyForTheExactEffectiveChord() {
         let shortcut = StoredShortcut(key: "o", modifiers: [.command, .option])
         #expect(HeldKeyCapRule.key(of: shortcut, held: [.command]) == nil)
-        #expect(HeldKeyCapRule.key(of: shortcut, held: [.command, .option]) == shortcut.displayTokens.last)
-        #expect(HeldKeyCapRule.key(of: nil, held: [.command]) == nil)
-    }
+        #expect(HeldKeyCapRule.key(of: shortcut, held: [.command, .option, .shift]) == nil)
+        #expect(HeldKeyCapRule.key(of: shortcut, held: [.command, .option]) == "O")
 
-    @Test func capKey_followsARebinding() {
         var keyboard = KeyboardSettings()
         keyboard.setOverride(StoredShortcut(key: "e", modifiers: [.command]), for: .toggleSidebar)
-        let key = HeldKeyCapRule.key(of: keyboard.shortcut(for: .toggleSidebar), held: [.command])
-        #expect(key == StoredShortcut(key: "e", modifiers: [.command]).displayTokens.last)
+        #expect(HeldKeyCapRule.key(of: keyboard.shortcut(for: .toggleSidebar), held: [.command]) == "E")
+
+        keyboard.unassign(.toggleSidebar)
+        #expect(HeldKeyCapRule.key(of: keyboard.shortcut(for: .toggleSidebar), held: [.command]) == nil)
     }
 
     @Test func number_coversTheNineTheKeysReach() {
@@ -109,25 +135,47 @@ struct HeldKeyHintsTests {
     }
 
     @Test func setting_defaultsOnAndRoundTrips() throws {
+        #expect(KeyboardSettings().showsHeldKeyHints)
         var keyboard = try JSONDecoder().decode(KeyboardSettings.self, from: Data("{}".utf8))
         #expect(keyboard.showsHeldKeyHints)
         keyboard.showsHeldKeyHints = false
         let data = try JSONEncoder().encode(keyboard)
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(object["showsHeldKeyHints"] as? Bool == false)
         #expect(try !JSONDecoder().decode(KeyboardSettings.self, from: data).showsHeldKeyHints)
+        let disabled = Data(#"{"showsHeldKeyHints":false}"#.utf8)
+        #expect(try !JSONDecoder().decode(KeyboardSettings.self, from: disabled).showsHeldKeyHints)
     }
 }
 
 @MainActor
 struct HeldKeyHintsStoreTests {
-    /// The setting turned off from outside, with ⌘ held all the while, takes
-    /// the keys down though no modifier key changed.
     @Test(.timeLimit(.minutes(1)))
-    func turnedOff_takesTheKeysDown() async {
+    func turnedOff_takesTheKeysDown() async throws {
         let hints = HeldKeyHints()
         hints.modifiersChanged(to: [.command]) { ([.command], true) }
         await pollUntil(timeout: .seconds(5), interval: .milliseconds(50)) { hints.shownChord != nil }
-        #expect(hints.shownChord == [.command])
+        try #require(hints.shownChord == [.command])
+
         hints.turnedOff()
         #expect(hints.shownChord == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func turnedOff_discardsThePendingHold() async {
+        let hints = HeldKeyHints()
+        var staleChecks = 0
+        hints.modifiersChanged(to: [.command]) {
+            staleChecks += 1
+            return ([.command], true)
+        }
+
+        hints.turnedOff()
+        #expect(hints.shownChord == nil)
+
+        hints.modifiersChanged(to: [.command, .option]) { ([.command, .option], true) }
+        await pollUntil(timeout: .seconds(5), interval: .milliseconds(50)) { hints.shownChord != nil }
+        #expect(hints.shownChord == [.command, .option])
+        #expect(staleChecks == 0)
     }
 }

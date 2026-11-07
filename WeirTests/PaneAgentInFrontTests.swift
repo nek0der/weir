@@ -31,11 +31,15 @@ struct PaneStripAgentInFrontTests {
     /// changes as the job in front would.
     private final class Terminal {
         var reading: AgentInFrontReading = .none
+        var panesRead: [UUID] = []
     }
 
     private static func follower(_ session: WorkspaceSession, _ terminal: Terminal) -> PaneAgentInFrontFollower {
         let follower = PaneAgentInFrontFollower(session: session, titleReadDelays: [.zero])
-        follower.read = { _ in terminal.reading }
+        follower.read = { pane in
+            terminal.panesRead.append(pane)
+            return terminal.reading
+        }
         return follower
     }
 
@@ -61,31 +65,51 @@ struct PaneStripAgentInFrontTests {
         #expect(item.stateGlyph == nil, "the job in front says which agent, not what it is doing")
     }
 
-    @Test func anAgentStillStarting_isFoundByALaterReading() async {
+    @Test(arguments: [1, 3])
+    func titleReadsStopAtTheFirstAgentObservation(agentAppearsAt readNumber: Int) async throws {
         // The title comes before the command's process is in front, and
         // npm's `node …/bin/codex` takes a moment to start Codex itself.
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
-        var readings: [AgentInFrontReading] = [.none, .none, .agent(.codex)]
+        var readings = Array(repeating: AgentInFrontReading.none, count: readNumber - 1) + [.agent(.codex)]
+        var panesRead: [UUID] = []
         let follower = PaneAgentInFrontFollower(session: session, titleReadDelays: [.zero, .zero, .zero])
-        follower.read = { _ in readings.isEmpty ? .none : readings.removeFirst() }
+        follower.read = { pane in
+            panesRead.append(pane)
+            return readings.isEmpty ? .none : readings.removeFirst()
+        }
 
         await Self.commandStarted(follower, inPane: pane)
 
-        #expect(Self.item(tab, in: session)?.agents.first?.kind == .codex)
+        #expect(panesRead == Array(repeating: pane, count: readNumber))
+        #expect(readings.isEmpty)
+        let item = try #require(Self.item(tab, in: session))
+        #expect(item.agents.map(\.kind) == [.codex])
+        #expect(session.tab(tab.id)?.agentsInFront == [pane: PaneAgentInFront(kind: .codex, isStaged: false)])
     }
 
-    @Test func whenTheJobReturnsToTheShell_theTabIsAShellAgain() async {
+    @Test func aFinishedCommandClearsOnlyItsPanesForegroundAgent() async throws {
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        PaneActions.split(session, direction: .horizontal)
+        let sibling = try #require(session.tab(tab.id)?.splitTree.allLeafIDs().first { $0 != pane })
         let terminal = Terminal()
         let follower = Self.follower(session, terminal)
+        terminal.reading = .agent(.claude)
+        await Self.commandStarted(follower, inPane: sibling)
         terminal.reading = .agent(.codex)
         await Self.commandStarted(follower, inPane: pane)
 
+        let before = try #require(session.tab(tab.id))
+        let claude = PaneAgentInFront(kind: .claude, isStaged: false)
+        #expect(before.agentsInFront == [pane: PaneAgentInFront(kind: .codex, isStaged: false), sibling: claude])
         terminal.reading = .none
-        follower.apply(.none, at: .commandFinished, inPane: pane)
+        let finished = try #require(follower.commandFinished(inPane: pane))
+        await finished.value
 
-        #expect(Self.item(tab, in: session)?.agents.first?.kind == nil)
-        #expect(session.tab(tab.id)?.agentsInFront.isEmpty == true)
+        #expect(terminal.panesRead == [sibling, pane, pane])
+        let item = try #require(Self.item(tab, in: session))
+        #expect(item.agents.map(\.kind) == [.claude])
+        #expect(session.tab(tab.id)?.agentsInFront == [sibling: claude])
+        #expect(session.tab(tab.id)?.agentKind(inPane: pane) == nil)
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -104,7 +128,7 @@ struct PaneStripAgentInFrontTests {
             return .agent(.codex)
         }
         let finished = try #require(follower.commandFinished(inPane: pane))
-        await oldReading.waitUntilRequested()
+        try await oldReading.waitUntilRequested()
 
         await Self.commandStarted(follower, inPane: pane)
         try #require(session.tab(tab.id)?.agentsInFront[pane]?.kind == .codex)
@@ -135,7 +159,7 @@ struct PaneStripAgentInFrontTests {
         await Self.commandStarted(follower, inPane: pane)
         try #require(session.tab(tab.id)?.agentsInFront[pane] == PaneAgentInFront(kind: .codex, isStaged: false))
         let finished = try #require(follower.commandFinished(inPane: pane))
-        await oldReading.waitUntilRequested()
+        try await oldReading.waitUntilRequested()
 
         await Self.commandStarted(follower, inPane: pane)
         try #require(session.tab(tab.id)?.agentsInFront[pane] == nil)
@@ -164,7 +188,7 @@ struct PaneStripAgentInFrontTests {
             return .agent(.claude)
         }
         let older = try #require(follower.commandFinished(inPane: pane))
-        await oldReading.waitUntilRequested()
+        try await oldReading.waitUntilRequested()
         let newer = try #require(follower.commandFinished(inPane: pane))
         await newer.value
         let observed = PaneAgentInFront(kind: .claude, isStaged: false)
@@ -199,12 +223,12 @@ struct PaneStripAgentInFrontTests {
         }
         follower.titleChanged(inPane: pane)
         let older = try #require(follower.pendingTitleReads(inPane: pane))
-        await oldReading.waitUntilRequested()
+        try await oldReading.waitUntilRequested()
         let finished = try #require(follower.commandFinished(inPane: pane))
         await finished.value
         follower.titleChanged(inPane: pane)
         let newer = try #require(follower.pendingTitleReads(inPane: pane))
-        await newReading.waitUntilRequested()
+        try await newReading.waitUntilRequested()
 
         oldReading.open(with: .agent(.codex))
         await older.value
@@ -218,18 +242,23 @@ struct PaneStripAgentInFrontTests {
         #expect(follower.pendingTitleReads(inPane: pane) == nil)
     }
 
-    @Test func theShellsPromptTitle_afterTheAgentQuit_alsoTurnsTheTabBack() async {
+    @Test func theShellsPromptTitle_afterTheAgentQuit_alsoTurnsTheTabBack() async throws {
         // A shell whose 133 D marks are off still titles its prompt.
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
         let terminal = Terminal()
         let follower = Self.follower(session, terminal)
         terminal.reading = .agent(.claude)
         await Self.commandStarted(follower, inPane: pane)
+        let before = try #require(Self.item(tab, in: session))
+        #expect(before.agents.map(\.kind) == [.claude])
 
         terminal.reading = .none
         await Self.commandStarted(follower, inPane: pane)
 
-        #expect(Self.item(tab, in: session)?.agents.first?.kind == nil)
+        let after = try #require(Self.item(tab, in: session))
+        #expect(after.agents.isEmpty)
+        #expect(terminal.panesRead == [pane, pane])
+        #expect(session.tab(tab.id)?.agentsInFront.isEmpty == true)
     }
 
     @Test func aRecord_overridesTheAgentInFront() async {
@@ -238,6 +267,8 @@ struct PaneStripAgentInFrontTests {
         let follower = Self.follower(session, terminal)
         terminal.reading = .agent(.codex)
         await Self.commandStarted(follower, inPane: pane)
+        let observed = PaneAgentInFront(kind: .codex, isStaged: false)
+        #expect(session.tab(tab.id)?.agentsInFront[pane] == observed)
 
         // The projection places a Claude run in the pane.
         session.update(tab.id) {
@@ -246,9 +277,10 @@ struct PaneStripAgentInFrontTests {
 
         #expect(Self.item(tab, in: session)?.agents.first?.kind == .claude)
         #expect(session.tab(tab.id)?.agentKind(inPane: pane) == .claude)
+        #expect(session.tab(tab.id)?.agentsInFront[pane] == observed)
     }
 
-    @Test func theRecordsAgent_staysWhenTheJobInFrontCannotBeTold() async {
+    @Test func theObservedAgent_staysWhenTheJobInFrontCannotBeTold() async throws {
         // A tmux client whose pane could not be asked says nothing either
         // way: what was read before stands.
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
@@ -257,31 +289,28 @@ struct PaneStripAgentInFrontTests {
         terminal.reading = .agent(.codex)
         await Self.commandStarted(follower, inPane: pane)
 
-        follower.apply(.undetermined, at: .commandFinished, inPane: pane)
+        terminal.reading = .undetermined
+        let finished = try #require(follower.commandFinished(inPane: pane))
+        await finished.value
 
         #expect(Self.item(tab, in: session)?.agents.first?.kind == .codex)
     }
 
     // MARK: - "+"
 
-    @Test func codexFromThePlusMenu_wearsTheCodexBadge_atOnce() throws {
+    @Test(arguments: [AgentKind.codex, nil] as [AgentKind?])
+    func theStripLaunchProjectsItsInitialBadge(_ agent: AgentKind?) throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "beta")
         let container = ContainerID.project(project.id)
-        let pane = try #require(TabActions.newTab(session, in: container, running: .codex))
+        let pane = try #require(TabActions.newTab(session, in: container, running: agent))
         let tab = try #require(session.tab(containing: pane))
 
         let item = try #require(Self.item(tab, in: session, container: container))
-        #expect(item.agents.first?.kind == .codex)
+        #expect(item.agents.map(\.kind) == (agent.map { [$0] } ?? []))
+        #expect(tab.agentsInFront == (agent.map { [pane: PaneAgentInFront(kind: $0, isStaged: true)] } ?? [:]))
+        #expect(tab.initialCommands == (agent.map { [pane: $0.launchCommand] } ?? [:]))
+        #expect(tab.agentBadges.isEmpty)
         #expect(item.stateGlyph == nil)
-    }
-
-    @Test func aShellFromThePlusMenu_wearsNoBadge() throws {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "beta")
-        let container = ContainerID.project(project.id)
-        let pane = try #require(TabActions.newTab(session, in: container, running: nil))
-        let tab = try #require(session.tab(containing: pane))
-
-        #expect(Self.item(tab, in: session, container: container)?.agents.first?.kind == nil)
     }
 
     @Test func aStagedAgent_outlivesTheShellsFirstPrompt_andGoesWhenItsCommandEnds() async throws {
@@ -294,11 +323,17 @@ struct PaneStripAgentInFrontTests {
 
         // The shell titles its directory before the typed command runs.
         await Self.commandStarted(follower, inPane: pane)
+        #expect(terminal.panesRead == [pane])
+        #expect(session.tab(tab.id)?.agentsInFront == [pane: PaneAgentInFront(kind: .codex, isStaged: true)])
         #expect(Self.item(tab, in: session, container: container)?.agents.first?.kind == .codex)
 
         // `codex` was not found: the command ends, and the shell is back.
-        follower.apply(.none, at: .commandFinished, inPane: pane)
-        #expect(Self.item(tab, in: session, container: container)?.agents.first?.kind == nil)
+        let finished = try #require(follower.commandFinished(inPane: pane))
+        await finished.value
+        #expect(terminal.panesRead == [pane, pane])
+        #expect(session.tab(tab.id)?.agentsInFront.isEmpty == true)
+        let shell = try #require(Self.item(tab, in: session, container: container))
+        #expect(shell.agents.isEmpty)
     }
 
     @Test(.timeLimit(.minutes(1)), arguments: [AgentInFrontReading.none, .undetermined])
@@ -323,7 +358,7 @@ struct PaneStripAgentInFrontTests {
         }
 
         let finished = try #require(follower.commandFinished(inPane: pane))
-        await finishRead.waitUntilRequested()
+        try await finishRead.waitUntilRequested()
         follower.titleChanged(inPane: pane)
         let title = try #require(follower.pendingTitleReads(inPane: pane))
         await title.value
@@ -390,10 +425,13 @@ struct AgentForegroundAgentInFrontTests {
 
         #expect(PaneAgentInFrontRules.next(nil, after: .agent(.claude), at: .titleChanged) == claude)
         #expect(PaneAgentInFrontRules.next(staged, after: .agent(.codex), at: .titleChanged) == seen)
+        #expect(PaneAgentInFrontRules.next(staged, after: .agent(.claude), at: .titleChanged) == claude)
         #expect(PaneAgentInFrontRules.next(staged, after: .none, at: .titleChanged) == staged)
         #expect(PaneAgentInFrontRules.next(staged, after: .none, at: .commandFinished) == nil)
         #expect(PaneAgentInFrontRules.next(seen, after: .none, at: .titleChanged) == nil)
         #expect(PaneAgentInFrontRules.next(seen, after: .undetermined, at: .commandFinished) == seen)
+        #expect(PaneAgentInFrontRules.next(staged, after: .undetermined, at: .titleChanged) == staged)
+        #expect(PaneAgentInFrontRules.next(staged, after: .undetermined, at: .commandFinished) == staged)
         #expect(PaneAgentInFrontRules.next(nil, after: .undetermined, at: .titleChanged) == nil)
     }
 }
@@ -404,12 +442,16 @@ struct AgentForegroundAgentInFrontTests {
 @MainActor
 @Suite("SessionSidebarAgentInFront")
 struct SessionSidebarAgentInFrontTests {
-    private static func row(_ session: WorkspaceSession, _ project: Project) -> SessionSidebarModel.Row? {
+    private static func row(
+        _ session: WorkspaceSession,
+        _ project: Project,
+        runtimes: [AgentRuntimePresentation] = []
+    ) -> SessionSidebarModel.Row? {
         SessionSidebarModel(
             project: project,
             session: session,
             queue: AttentionQueue(),
-            runtimes: [],
+            runtimes: runtimes,
             approvals: ApprovalLedger(),
             pullRequest: { _ in nil },
             gitFacts: { _ in nil },
@@ -457,8 +499,18 @@ struct SessionSidebarAgentInFrontTests {
             $0.agentBadges[.claude, default: [:]][pane] = AgentBadge(state: .idle, updatedAt: Date())
         }
 
-        // No run handed over: the row reads only runs, and the pane's own
-        // record keeps the agent in front off it.
-        #expect(Self.row(session, project)?.fact.badge == .shell)
+        let withoutRuntime = try #require(Self.row(session, project))
+        #expect(withoutRuntime.fact.badge == .shell)
+
+        let run = AgentRuntimePresentation.test(
+            kind: .claude,
+            badge: AgentBadge(state: .idle, updatedAt: Date()),
+            paneIDs: [pane]
+        )
+        let withRuntime = try #require(Self.row(session, project, runtimes: [run]))
+        #expect(withRuntime.fact.badge == .agent(.claude))
+        #expect(withRuntime.fact.glyph == .idle)
+        #expect(withRuntime.fact.fact == .idle)
+        #expect(withRuntime.factText == "Idle")
     }
 }

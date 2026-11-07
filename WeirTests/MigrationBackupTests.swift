@@ -66,28 +66,15 @@ struct MigrationBackupTests {
             #expect(try Data(contentsOf: dir.appendingPathComponent(record.backupFileName)) == changed)
             // The first generation is never overwritten.
             #expect(try Data(contentsOf: dir.appendingPathComponent("state.json.pre-v6")) == Data(#"{"version":5,"a":1}"#.utf8))
-        }
-    }
-
-    @Test func generationsInTheSameSecond_doNotCollide() throws {
-        try withTempDir { dir in
-            let document = dir.appendingPathComponent("state.json")
-            let now = Date(timeIntervalSince1970: 1_800_000_000)
-            for index in 0..<3 {
-                _ = try MigrationBackup.keep(
-                    document,
-                    source: Data("{\"version\":5,\"i\":\(index)}".utf8),
-                    migrated: Self.migrated,
-                    from: 5,
-                    to: 6,
-                    now: now
-                )
-            }
+            let third = Data(#"{"version":5,"a":3}"#.utf8)
+            let latest = try MigrationBackup.keep(document, source: third, migrated: Self.migrated, from: 5, to: 6, now: now)
+            #expect(latest.backupFileName == "state.json.pre-v6.1800000000-1")
             #expect(try Self.backups(in: dir) == [
-                "state.json.pre-v6",
-                "state.json.pre-v6.1800000000",
-                "state.json.pre-v6.1800000000-1"
+                "state.json.pre-v6", "state.json.pre-v6.1800000000", "state.json.pre-v6.1800000000-1"
             ])
+            #expect(try Data(contentsOf: dir.appendingPathComponent("state.json.pre-v6")) == Data(#"{"version":5,"a":1}"#.utf8))
+            #expect(try Data(contentsOf: dir.appendingPathComponent(record.backupFileName)) == changed)
+            #expect(try Data(contentsOf: dir.appendingPathComponent(latest.backupFileName)) == third)
         }
     }
 
@@ -99,7 +86,8 @@ struct MigrationBackupTests {
             try FileManager.default.removeItem(at: dir.appendingPathComponent(first.backupFileName))
             let second = try MigrationBackup.keep(document, source: source, migrated: Self.migrated, from: 5, to: 6)
 
-            #expect(FileManager.default.fileExists(atPath: dir.appendingPathComponent(second.backupFileName).path))
+            #expect(try Data(contentsOf: dir.appendingPathComponent(second.backupFileName)) == source)
+            #expect(MigrationBackup.readLedger(for: document) == second)
         }
     }
 
@@ -112,6 +100,7 @@ struct MigrationBackupTests {
             let record = try MigrationBackup.keep(document, source: source, migrated: Self.migrated, from: 5, to: 6)
 
             #expect(record == first)
+            #expect(MigrationBackup.readLedger(for: document) == record)
             #expect(try Self.backups(in: dir).count == 1)
         }
     }
@@ -131,6 +120,8 @@ struct MigrationBackupTests {
 
             #expect(record.backupFileName == "state.json.pre-v6.1000")
             #expect(try Self.backups(in: dir).count == 2)
+            #expect(try Data(contentsOf: dir.appendingPathComponent("state.json.pre-v6")) == Data(#"{"version":5,"old":true}"#.utf8))
+            #expect(try Data(contentsOf: dir.appendingPathComponent(record.backupFileName)) == Data(#"{"version":5}"#.utf8))
         }
     }
 
@@ -163,14 +154,20 @@ struct MigrationBackupTests {
     @Test func aLedgerAnEarlierBuildMarkedAsTold_stillReads() throws {
         try withTempDir { dir in
             let document = dir.appendingPathComponent("state.json")
-            let source = Data(#"{"version":5}"#.utf8)
-            var record = try MigrationBackup.keep(document, source: source, migrated: Self.migrated, from: 5, to: 6)
-            record.stage = .acknowledged
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.sortedKeys]
-            try encoder.encode(record).write(to: MigrationBackup.ledgerURL(for: document))
+            let legacy = Data(#"""
+            {"sourceSHA256":"7340e8bcc54419e2a1e91c5b427e224167b614525b146e4b2c2f6e4c9563c05e",
+             "migratedSHA256":"1e1901b2658bbbb3512c4e8867974632a030c38adb83ab4b5e3b0b39e6705ac2",
+             "fromVersion":5,"toVersion":6,"backupFileName":"state.json.pre-v6","stage":"acknowledged"}
+            """#.utf8)
+            try legacy.write(to: dir.appendingPathComponent("state.json.migration.json"))
 
-            #expect(MigrationBackup.readLedger(for: document) == record)
+            let record = try #require(MigrationBackup.readLedger(for: document))
+            #expect(record.sourceSHA256 == "7340e8bcc54419e2a1e91c5b427e224167b614525b146e4b2c2f6e4c9563c05e")
+            #expect(record.migratedSHA256 == "1e1901b2658bbbb3512c4e8867974632a030c38adb83ab4b5e3b0b39e6705ac2")
+            #expect(record.fromVersion == 5)
+            #expect(record.toVersion == 6)
+            #expect(record.backupFileName == "state.json.pre-v6")
+            #expect(record.stage == .acknowledged)
         }
     }
 
@@ -206,6 +203,7 @@ struct MigrationBackupTests {
             )
 
             #expect(second.backupFileName != first.backupFileName)
+            #expect(try Data(contentsOf: dir.appendingPathComponent(first.backupFileName)) == Data("damaged".utf8))
             #expect(try Data(contentsOf: dir.appendingPathComponent(second.backupFileName)) == source)
         }
     }
@@ -227,17 +225,21 @@ struct MigrationBackupTests {
                     now: Date(timeIntervalSince1970: 1000)
                 )
             }
-            #expect(try Data(contentsOf: dir.appendingPathComponent("state.json.pre-v6")) == Data("other".utf8))
+            for name in names {
+                #expect(try Data(contentsOf: dir.appendingPathComponent(name)) == Data("other".utf8))
+            }
+            #expect(!FileManager.default.fileExists(atPath: MigrationBackup.ledgerURL(for: document).path))
         }
     }
 
-    @Test func unwritableDirectory_throwsWithoutALedger() throws {
+    @Test func missingParent_throwsWithoutCreatingFiles() throws {
         try withTempDir { dir in
             let document = dir.appendingPathComponent("missing").appendingPathComponent("state.json")
             #expect(throws: MigrationBackup.BackupError.copyFailed) {
                 try MigrationBackup.keep(document, source: Data(#"{"version":5}"#.utf8), migrated: Self.migrated, from: 5, to: 6)
             }
-            #expect(MigrationBackup.readLedger(for: document) == nil)
+            #expect(!FileManager.default.fileExists(atPath: document.deletingLastPathComponent().path))
+            #expect(!FileManager.default.fileExists(atPath: MigrationBackup.ledgerURL(for: document).path))
         }
     }
 }

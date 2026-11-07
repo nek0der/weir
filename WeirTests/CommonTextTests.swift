@@ -43,6 +43,9 @@ struct CommonTextTests {
         #expect(summary.resolved(in: ja) == "3 / 10")
         #expect(summary.resolved(in: en) == CommonText.position(3, of: 10).resolved(in: en))
         #expect(ReviewFindBar.summary(isActive: false, hitCount: 10, position: 2).resolved(in: en).isEmpty)
+        let empty = ReviewFindBar.summary(isActive: true, hitCount: 0, position: 0)
+        #expect(empty.resolved(in: en) == "No matches")
+        #expect(empty.resolved(in: ja) == "一致なし")
     }
 
     /// The new worktree sheet's row and the project settings' menu name one
@@ -50,6 +53,7 @@ struct CommonTextTests {
     @Test func placement_isOneResourceForBothSheets() throws {
         let sheetLabel = try #require(NewSessionSheet.rowLabels.last)
         #expect(sheetLabel.key == ProjectSettingsText.placement.key)
+        #expect(sheetLabel.resolved(in: en) == "Placement")
         #expect(sheetLabel.resolved(in: ja) == "場所")
     }
 

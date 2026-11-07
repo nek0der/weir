@@ -34,20 +34,17 @@ struct ReviewDiffSelectionTests {
         return selection
     }
 
-    @Test func draggedTextReplacesTheLines() {
+    @Test func draggedTextReplacesTheLinesOnlyAfterTheDragBegins() {
         var selection = selecting(0)
+        let press = ReviewTextPosition(rowIndex: 3, lineID: 3, side: nil, utf16Offset: 1)
+        selection.selectText(ReviewTextSelection(anchor: press, head: press))
+        #expect(selection.lines.startLineID == 0)
+        #expect(selection.lines.endLineID == 0)
+        #expect(selection.text.isEmpty)
+
         selection.selectText(draggedText)
         #expect(selection.lines.isEmpty)
         #expect(selection.text == draggedText)
-    }
-
-    /// The press that starts a drag is empty; whether it lets go of the
-    /// lines is for the release to say.
-    @Test func pressThatStartsADragKeepsTheLines() {
-        var selection = selecting(0)
-        let press = ReviewTextPosition(rowIndex: 2, lineID: 2, side: nil, utf16Offset: 0)
-        selection.selectText(ReviewTextSelection(anchor: press, head: press))
-        #expect(selection.lines.startLineID == 0)
     }
 
     @Test func linesReplaceTheText() {
@@ -58,8 +55,12 @@ struct ReviewDiffSelectionTests {
         #expect(selection.text.isEmpty)
     }
 
-    @Test func pressOnCodeLetsGoOfBoth() {
+    @Test func pressOnCodeLetsGoOfBoth() throws {
         var selection = selecting(0)
+        selection.selectText(draggedText, keepsLines: true)
+        try #require(selection.lines.startLineID == 0)
+        try #require(!selection.text.isEmpty)
+
         let didRelease = selection.pressCode()
         #expect(didRelease)
         #expect(selection.lines.isEmpty)
@@ -70,26 +71,28 @@ struct ReviewDiffSelectionTests {
     /// nor dragged text lets go of them, and the text sits beside them.
     @Test func keptLinesStayBesideText() {
         var selection = selecting(0)
+        selection.selectText(draggedText, keepsLines: true)
+        #expect(selection.lines.startLineID == 0)
+        #expect(selection.text == draggedText)
+
         let didRelease = selection.pressCode(keepsLines: true)
         #expect(!didRelease)
-        selection.selectText(draggedText, keepsLines: true)
         #expect(selection.lines.startLineID == 0)
-        #expect(selection.text == draggedText)
+        #expect(selection.text.isEmpty)
     }
 
-    /// Once the composer closes, the text is the newer of the two and stays.
-    @Test func closingTheComposerLeavesOnlyTheText() {
+    @Test("Closing the composer keeps the newer text or the existing line", arguments: [
+        (true, nil as Int?),
+        (false, 0)
+    ])
+    func closingTheComposerKeepsTheCurrentSelection(hasText: Bool, expectedLineID: Int?) {
         var selection = selecting(0)
-        selection.selectText(draggedText, keepsLines: true)
+        let text = hasText ? draggedText : ReviewTextSelection()
+        selection.selectText(text, keepsLines: true)
         selection.composerDidClose()
-        #expect(selection.lines.isEmpty)
-        #expect(selection.text == draggedText)
-    }
-
-    @Test func closingTheComposerWithoutTextKeepsTheLines() {
-        var selection = selecting(0)
-        selection.composerDidClose()
-        #expect(selection.lines.startLineID == 0)
+        #expect(selection.lines.startLineID == expectedLineID)
+        #expect(selection.lines.endLineID == expectedLineID)
+        #expect(selection.text == text)
     }
 
     @Test func textBecomesTheLinesItCovers() {
@@ -98,6 +101,8 @@ struct ReviewDiffSelectionTests {
         selection.takeTextAsLines(rows: rows, diffLines: lines)
         #expect(selection.lines.startLineID == 2)
         #expect(selection.lines.endLineID == 3)
+        #expect(selection.lines.anchorLineID == 3)
+        #expect(selection.lines.headLineID == 2)
         #expect(selection.text.isEmpty)
     }
 
@@ -110,16 +115,6 @@ struct ReviewDiffSelectionTests {
         #expect(selection.lines.startLineID == 0)
         #expect(selection.lines.endLineID == 0)
         #expect(selection.text.isEmpty)
-    }
-
-    /// An upward drag gives an upward run: it starts where the drag started
-    /// and moves on from where it ended.
-    @Test func upwardDragKeepsItsDirection() {
-        var selection = ReviewDiffSelection()
-        selection.selectText(draggedText)
-        selection.takeTextAsLines(rows: rows, diffLines: lines)
-        #expect(selection.lines.anchorLineID == 3)
-        #expect(selection.lines.headLineID == 2)
     }
 
     /// A run stops at the block it starts in, as the keyboard's does.

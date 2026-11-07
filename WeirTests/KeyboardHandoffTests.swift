@@ -26,7 +26,11 @@ struct KeyboardHandoffTests {
 
     @Test func aSurfaceOpening_takesTheKeyboardAfterTwoTurns() async {
         let clock = TurnClock()
-        KeyboardHandoff.afterResponderSettles { clock.turnsWhenTaken = clock.turns }
+        KeyboardHandoff.afterResponderSettles {
+            clock.takeCount += 1
+            clock.turnsWhenTaken = clock.turns
+        }
+        #expect(clock.takeCount == 0)
         DispatchQueue.main.async {
             clock.turns += 1
             DispatchQueue.main.async { clock.turns += 1 }
@@ -36,6 +40,7 @@ struct KeyboardHandoffTests {
         // Queued before the counter's turns, the request runs after the
         // counter's first turn and before its second: two turns in.
         #expect(clock.turnsWhenTaken == 1)
+        #expect(clock.takeCount == 1)
     }
 
     /// A window whose text field holds the keys, as the palette's and the
@@ -92,5 +97,6 @@ struct KeyboardHandoffTests {
 @MainActor
 private final class TurnClock {
     var turns = 0
+    var takeCount = 0
     var turnsWhenTaken: Int?
 }

@@ -24,9 +24,7 @@ struct PaneShellEnvironmentTests {
         let env = PaneShellEnvironment.variables(
             paneID: nil, shimDirectories: [], zdotdir: nil, basePath: base
         )
-        for key in ["PATH", "WEIR_SHIM_DIRS", "WEIR_PANE_ID", "ZDOTDIR", "WEIR_AGENT_TMUX", "WEIR_AGENT_TMUX_SOCKET"] {
-            #expect(env[key] == nil, "\(key)")
-        }
+        #expect(env.isEmpty)
     }
 
     @Test("prepends every shim directory to PATH, in order")
@@ -37,9 +35,7 @@ struct PaneShellEnvironmentTests {
             zdotdir: nil,
             basePath: base
         )
-        #expect(env["PATH"] == "/a:/b:\(base)")
-        // The same directories, in the same order, for `zdotdir/.zshrc`.
-        #expect(env["WEIR_SHIM_DIRS"] == "/a:/b")
+        #expect(env == ["PATH": "/a:/b:/usr/bin:/bin", "WEIR_SHIM_DIRS": "/a:/b"])
     }
 
     @Test("carries the pane id and the startup-file redirect")
@@ -51,8 +47,7 @@ struct PaneShellEnvironmentTests {
             zdotdir: URL(fileURLWithPath: "/z"),
             basePath: base
         )
-        #expect(env["WEIR_PANE_ID"] == id.uuidString)
-        #expect(env["ZDOTDIR"] == "/z")
+        #expect(env == ["WEIR_PANE_ID": id.uuidString, "ZDOTDIR": "/z"])
     }
 
     /// The shims test one variable to decide whether to host the agent
@@ -70,15 +65,14 @@ struct PaneShellEnvironmentTests {
             basePath: base,
             agentTmux: .init(binary: "/opt/homebrew/bin/tmux", socketName: "weir-x")
         )
-        #expect(env["WEIR_AGENT_TMUX"] == "/opt/homebrew/bin/tmux")
-        #expect(env["WEIR_AGENT_TMUX_SOCKET"] == "weir-x")
+        #expect(env == ["WEIR_AGENT_TMUX": "/opt/homebrew/bin/tmux", "WEIR_AGENT_TMUX_SOCKET": "weir-x"])
     }
 
     /// Namespaced so two builds never share a server; see above.
     @Test("names the socket after the running build")
     func defaultAgentSocketName_isNamespaced() {
         let name = PaneShellEnvironment.defaultAgentSocketName()
-        #expect(name.hasPrefix("weir-"))
+        #expect(name == "weir-" + WeirPaths.bundleID)
         #expect(name != "weir-unknown")
     }
 
@@ -91,16 +85,16 @@ struct PaneShellEnvironmentTests {
             basePath: base,
             panePathRecord: record
         )
-        #expect(with[AgentCatalog.panePathRecordVariable] == record.path)
+        #expect(with == ["WEIR_PANE_PATH_RECORD": "/tmp/weir-test/pane-path.txt"])
         let without = PaneShellEnvironment.variables(paneID: nil, shimDirectories: [], zdotdir: nil, basePath: base)
-        #expect(without[AgentCatalog.panePathRecordVariable] == nil)
+        #expect(without["WEIR_PANE_PATH_RECORD"] == nil)
     }
 
     /// A pane's `PATH` can hold its own folders (`$PWD/bin`), so each
     /// project's panes write their own record, the one the sheet reads for
     /// that project alone; a scratch pane, in no project, writes none.
     /// Otherwise one project's `bin/claude` could be started in another.
-    @Test func eachProjectsPanes_recordTheirOwnPath_andAScratchPaneNone() {
+    @Test func pathRecordResolution_isProjectSpecific_andOmitsScratchAndNonwritingPanes() {
         let first = UUID()
         let second = UUID()
         let record = { (project: UUID?) in
@@ -110,6 +104,7 @@ struct PaneShellEnvironmentTests {
         }
         let directory = WeirPaths.applicationSupportDirectory()
         #expect(record(first) == AgentCatalog.panePathRecordURL(in: directory, project: first).path)
+        #expect(record(second) == AgentCatalog.panePathRecordURL(in: directory, project: second).path)
         #expect(record(first) != record(second))
         #expect(record(nil) == nil)
         #expect(PaneShellEnvironment.resolved(forPaneID: nil, recordsPanePath: false, projectID: first)[

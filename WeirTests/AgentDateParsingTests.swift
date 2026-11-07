@@ -15,6 +15,7 @@ struct AgentDateParsingTests {
 
     @Test func parse_wholeSecondsUTC_readsTheInstant() {
         #expect(AgentDateParsing.parseISO8601("2026-10-22T12:34:56Z") == Self.instant)
+        #expect(AgentDateParsing.parseOptional("2026-10-22T12:34:56Z") == Self.instant)
         #expect(AgentDateParsing.parseISO8601("1970-01-01T00:00:00Z") == Date(timeIntervalSince1970: 0))
         #expect(AgentDateParsing.parseISO8601("2000-02-29T00:00:01Z") == Date(timeIntervalSince1970: 951_782_401))
     }
@@ -22,7 +23,7 @@ struct AgentDateParsingTests {
     /// No producer writes an offset, and the Rust reader refuses one. We pin
     /// what `ISO8601DateFormatter` does with one only so that a change of
     /// parser shows up here; it is a record of behavior, not the contract.
-    @Test func parse_anOffset_isAcceptedThoughNoProducerWritesOne() {
+    @Test func parse_anOffset_readsTheSameInstant() {
         #expect(AgentDateParsing.parseISO8601("2026-10-22T21:34:56+09:00") == Self.instant)
     }
 

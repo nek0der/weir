@@ -120,6 +120,7 @@ struct StatusLineRelayTests {
             let project = try projectInput(in: dir)
 
             let everySource = try runHelper(["statusline", "claude"], stdin: project, environment: environment(in: dir), in: dir)
+            #expect(everySource.status == 0)
             #expect(everySource.stdout == Data("project\n".utf8))
 
             let userOnly = try runHelper(
@@ -138,6 +139,7 @@ struct StatusLineRelayTests {
                 environment: environment(in: dir, settingSources: StatusLineContract.everySource + "\nuser"),
                 in: dir
             )
+            #expect(withTheirOwn.status == 0)
             #expect(withTheirOwn.stdout == Data("mine\n".utf8))
         }
     }
@@ -195,8 +197,9 @@ struct StatusLineRelayTests {
             )
             #expect(output.status == 0)
             let settings = try #require(JSONSerialization.jsonObject(with: output.stdout) as? [String: Any])
-            #expect(settings["hooks"] != nil)
+            #expect(settings["hooks"] as? [String: [String]] == ["Stop": []])
             let statusLine = try #require(settings["statusLine"] as? [String: Any])
+            #expect(statusLine["type"] as? String == "command")
             // The command names the sources the launch loads itself, which a
             // settings file's `env` block cannot widen.
             let variable = try StatusLineContract.settingSourcesVariable()

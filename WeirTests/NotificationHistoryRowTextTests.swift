@@ -13,6 +13,7 @@ struct NotificationHistoryRowTextTests {
 
     private func entry(
         kind: NotificationEntry.Kind = .agentNeedsInput,
+        timestamp: Date = Date(),
         paneID: UUID? = nil,
         tabTitleSnapshot: String? = nil,
         containerLabel: String? = nil,
@@ -27,6 +28,7 @@ struct NotificationHistoryRowTextTests {
     ) -> NotificationEntry {
         NotificationEntry.test(
             kind: kind,
+            timestamp: timestamp,
             paneID: paneID,
             tabTitleSnapshot: tabTitleSnapshot,
             containerLabel: containerLabel,
@@ -47,21 +49,7 @@ struct NotificationHistoryRowTextTests {
 
     // MARK: - Place
 
-    @Test func anOpenPane_isPlacedByItsProject() throws {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
-        let tab = session.openTab(container: .project(project.id))
-        let paneID = try #require(tab.splitTree.allLeafIDs().first)
-        let place = NotificationHistoryRowText.place(of: entry(paneID: paneID), in: session, locale: ja)
-        #expect(place == .init(name: "weir", projectID: project.id))
-    }
-
-    @Test func aPaneOutsideAnyProject_isScratch() {
-        let (session, _, paneID) = WorkspaceSessionFixture.withLooseTab()
-        let place = NotificationHistoryRowText.place(of: entry(paneID: paneID), in: session, locale: ja)
-        #expect(place == .init(name: "スクラッチ", projectID: nil))
-    }
-
-    @Test func aWorktreesPane_isPlacedByItsProjectAndWorktree() throws {
+    @Test func livePanePlacementWinsOverTheRecordedContainer() throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
         let worktree = try #require(session.attachGitWorktree(
             projectID: project.id,
@@ -69,10 +57,22 @@ struct NotificationHistoryRowTextTests {
             workingDirectory: URL(fileURLWithPath: "/tmp/weir-feat-x"),
             branchName: "feat-x"
         ))
-        let tab = session.openTab(container: .worktree(projectID: project.id, worktreeID: worktree.id))
-        let paneID = try #require(tab.splitTree.allLeafIDs().first)
-        let place = NotificationHistoryRowText.place(of: entry(paneID: paneID), in: session, locale: ja)
-        #expect(place == .init(name: "weir / feat-x", projectID: project.id))
+        let projectTab = session.openTab(container: .project(project.id))
+        let worktreeTab = session.openTab(container: .worktree(projectID: project.id, worktreeID: worktree.id))
+        let scratchTab = session.openTab(container: .loose)
+        let root = try #require(projectTab.splitTree.allLeafIDs().first)
+        let checkout = try #require(worktreeTab.splitTree.allLeafIDs().first)
+        let scratch = try #require(scratchTab.splitTree.allLeafIDs().first)
+
+        #expect(NotificationHistoryRowText.place(
+            of: entry(paneID: root, containerLabel: "Old scratch", containerID: .loose), in: session, locale: ja
+        ) == .init(name: "weir", projectID: project.id))
+        #expect(NotificationHistoryRowText.place(
+            of: entry(paneID: checkout, containerLabel: "Old root", containerID: .project(project.id)), in: session, locale: ja
+        ) == .init(name: "weir / feat-x", projectID: project.id))
+        #expect(NotificationHistoryRowText.place(
+            of: entry(paneID: scratch, containerLabel: "Old checkout", containerID: worktreeTab.container), in: session, locale: ja
+        ) == .init(name: "スクラッチ", projectID: nil))
     }
 
     @Test func aClosedScratchPane_isScratch_notTheRecordedQuickTabs() {
@@ -92,6 +92,13 @@ struct NotificationHistoryRowTextTests {
         #expect(NotificationHistoryRowText.place(of: entry(paneID: UUID(), containerLabel: "app / main"), in: session, locale: ja)
             == .init(name: "app / main", projectID: nil))
         #expect(NotificationHistoryRowText.place(of: entry(paneID: nil), in: session, locale: ja) == nil)
+        let deleted = ContainerID.project(UUID())
+        #expect(NotificationHistoryRowText.place(
+            of: entry(paneID: UUID(), containerLabel: "old project", containerID: deleted), in: session, locale: ja
+        ) == .init(name: "old project", projectID: nil))
+        #expect(NotificationHistoryRowText.place(
+            of: entry(paneID: UUID(), containerLabel: "", containerID: deleted), in: session, locale: ja
+        ) == nil)
     }
 
     @Test func aPlaceInAnotherWindow_isOnlyAProjectAnotherWindowShows() {
@@ -114,51 +121,64 @@ struct NotificationHistoryRowTextTests {
         ))
         #expect(lines(approval, locale: en).headline == "Needs approval")
         let question = entry(event: .wait(agent: .claude, wait: .question, fact: "Which color?"))
-        #expect(lines(question, locale: ja).subject == "Which color?")
-        #expect(!lines(question, locale: ja).isSubjectAName)
+        #expect(lines(question, locale: ja) == .init(
+            headline: "回答待ち", subject: "Which color?", isSubjectAName: false, outcome: .headline, facts: []
+        ))
         // Nothing named: the wait's name alone.
         let response = entry(event: .wait(agent: .codex, wait: .response, fact: "  "))
         #expect(lines(response, locale: ja) == .init(headline: "応答待ち", subject: "応答待ち", isSubjectAName: false, outcome: nil, facts: []))
-    }
-
-    @Test func aFinishedTurn_leadsWithItsInstruction_andEndsWithItsCounts() throws {
-        let turn = try TurnSummaryFixture.turn("T4", changes: #"{"kind":"changed","files":2,"added":94,"removed":0}"#, number: 4)
-        let finished = entry(kind: .agentFinished, event: .finished(agent: .claude, turn: turn, head: "Unify the login errors"))
-        let row = lines(finished, locale: ja)
-        #expect(row.headline == "ターンが完了しました")
-        #expect(row.subject == "Unify the login errors")
-        #expect(row.outcome == .headline)
-        // The files counted are the Changes panel's; a zero count is quiet.
-        #expect(row.factsText == "T4 +94 −0")
-        #expect(row.facts.contains(ReceiptRun(text: "+94", role: .added(isEmphasized: false))))
-        #expect(row.facts.contains(ReceiptRun(text: "−0", role: .quiet)))
-        // No record: the prompt, and the headline under it.
-        let bare = entry(kind: .agentFinished, event: .finished(agent: .claude, turn: nil, head: "Add the tests"))
-        #expect(lines(bare, locale: en) == .init(
-            headline: "Turn finished",
-            subject: "Add the tests",
-            isSubjectAName: false,
-            outcome: .headline,
-            facts: []
+        let signIn = entry(body: "Waiting for approval: misleading legacy text", event: .waiting(.signIn, agent: .codex))
+        #expect(NotificationHistoryRowText.happening(of: signIn, locale: en) == .wait(.signIn, fact: nil))
+        #expect(lines(signIn, locale: ja) == .init(
+            headline: "サインイン待ち", subject: "サインイン待ち", isSubjectAName: false, outcome: nil, facts: []
         ))
     }
 
-    @Test func aFinishedTurnsReply_isWhatCameOfIt() {
-        let replied = NotificationHistoryRowText.lines(
-            of: .turn(receipt: [], instruction: "Add the tests", reply: "Added two tests."),
-            sourceTabTitle: nil,
-            locale: en
+    @Test func aFinishedTurn_leadsWithItsInstruction_andEndsWithItsCounts() throws {
+        var extras = TurnSummaryFixture.Extras()
+        extras.check = #"{"command":"swift test","exitCode":1,"isFiltered":false}"#
+        let turn = try TurnSummaryFixture.turn(
+            "T4", changes: #"{"kind":"changed","files":2,"added":94,"removed":0}"#, number: 4, extras: extras
         )
-        #expect(replied.subject == "Add the tests")
-        #expect(replied.outcome == .reply("Added two tests."))
-        // No instruction: the headline names the turn, the reply under it.
-        let unprompted = NotificationHistoryRowText.lines(
-            of: .turn(receipt: [], instruction: nil, reply: "Done."),
-            sourceTabTitle: nil,
-            locale: en
-        )
-        #expect(unprompted.subject == "Turn finished")
-        #expect(unprompted.outcome == .reply("Done."))
+        let finished = entry(kind: .agentFinished, event: .finished(agent: .claude, turn: turn, head: "Unify the login errors"))
+        #expect(lines(finished, locale: en) == .init(
+            headline: "Turn finished",
+            subject: "Unify the login errors",
+            isSubjectAName: false,
+            outcome: .headline,
+            facts: [
+                ReceiptRun(text: "T4", role: .plain),
+                ReceiptRun(text: " ", role: .quiet),
+                ReceiptRun(text: "+94", role: .added(isEmphasized: false)),
+                ReceiptRun(text: " ", role: .quiet),
+                ReceiptRun(text: "−0", role: .quiet),
+                ReceiptRun(text: " ", role: .quiet),
+                ReceiptRun(text: "✗ Tests", role: .failed)
+            ]
+        ))
+
+        #expect(lines(finished, locale: ja).headline == "ターンが完了しました")
+
+        let bare = entry(kind: .agentFinished, event: .finished(agent: .claude, turn: nil, head: "Add the tests"))
+        #expect(lines(bare, locale: en) == .init(
+            headline: "Turn finished", subject: "Add the tests", isSubjectAName: false, outcome: .headline, facts: []
+        ))
+    }
+
+    @Test(arguments: [Optional("Add the tests"), nil])
+    func aFinishedTurnsReply_isWhatCameOfIt(instruction: String?) throws {
+        var extras = TurnSummaryFixture.Extras()
+        extras.replyHead = "Added two tests."
+        let turn = try TurnSummaryFixture.turn("T2", number: 2, extras: extras)
+        let entry = entry(kind: .agentFinished, event: .finished(agent: .claude, turn: turn, head: instruction))
+
+        #expect(lines(entry, locale: en) == .init(
+            headline: "Turn finished",
+            subject: instruction ?? "Turn finished",
+            isSubjectAName: false,
+            outcome: .reply("Added two tests."),
+            facts: [ReceiptRun(text: "T2", role: .plain)]
+        ))
     }
 
     @Test func aTurnWithNoChanges_endsWithItsNumberAlone() throws {
@@ -178,6 +198,12 @@ struct NotificationHistoryRowTextTests {
             outcome: .headline,
             facts: []
         ))
+        for reason in [String?.none, " \n "] {
+            let bare = entry(kind: .agentError, event: .stopped(agent: .claude, reason: reason))
+            #expect(lines(bare, locale: ja) == .init(
+                headline: "停止", subject: "停止", isSubjectAName: false, outcome: nil, facts: []
+            ))
+        }
     }
 
     // MARK: - Commands and alerts
@@ -210,6 +236,12 @@ struct NotificationHistoryRowTextTests {
             outcome: .detail("Done. Next step"),
             facts: []
         ))
+        let facts = entry(kind: .desktop, title: "Build", body: "  Passed  \n\n 2 tests")
+        #expect(lines(facts, locale: en) == .init(
+            headline: "Build", subject: "Build", isSubjectAName: false, outcome: .detail("Passed · 2 tests"), facts: []
+        ))
+        let empty = entry(kind: .desktop, title: "Build", body: " \n ")
+        #expect(lines(empty, locale: en) == .init(headline: "Build", subject: "Build", isSubjectAName: false, outcome: nil, facts: []))
         let untitled = entry(kind: .desktop, title: " ", body: "完了しました。\n次へ")
         #expect(lines(untitled, locale: ja)
             == .init(headline: "完了しました。次へ", subject: "完了しました。次へ", isSubjectAName: false, outcome: nil, facts: []))
@@ -217,9 +249,8 @@ struct NotificationHistoryRowTextTests {
 
     // MARK: - Glyph
 
-    @Test func theGlyph_isAmberOrRed_onlyWhileTheAgentStillWaits() {
+    @Test func alarmMarksFollowSourceStateAndReadFallback() {
         let wait = entry(event: .wait(agent: .claude, wait: .approval, fact: nil))
-        let happening = NotificationHistoryRowText.happening(of: wait, locale: en)
         func mark(_ entry: NotificationEntry, _ live: NotificationLiveStatus?, closed: Bool = false) -> NotificationHistoryRowText.Mark {
             NotificationHistoryRowText.mark(
                 of: entry,
@@ -228,8 +259,12 @@ struct NotificationHistoryRowTextTests {
                 isSourceClosed: closed
             )
         }
-        #expect(NotificationHistoryRowText
-            .mark(of: wait, happening: happening, liveStatus: .stillWaiting, isSourceClosed: false) == .approval)
+        #expect(mark(wait, .stillWaiting) == .approval)
+        let readWait = entry(isRead: true, event: .wait(agent: .claude, wait: .approval, fact: nil))
+        #expect(mark(readWait, .stillWaiting) == .approval)
+        #expect(mark(entry(event: .waiting(.signIn, agent: .codex)), .stillWaiting) == .signIn)
+        #expect(mark(entry(event: .waiting(.unclassified(detail: nil), agent: .codex)), .stillWaiting) == .response)
+        #expect(mark(entry(kind: .desktop, title: "Build", body: "Done"), .stillWaiting) == .idle)
         #expect(mark(wait, .resolved) == .idle)
         #expect(mark(wait, .stillWaiting, closed: true) == .idle)
         let stop = entry(kind: .agentError, event: .stopped(agent: .claude, reason: nil))
@@ -375,17 +410,17 @@ struct NotificationHistoryRowTextTests {
         #expect(NotificationHistoryRowText.happening(of: entry, locale: en) == .wait(.approval, fact: "notes.txt"))
     }
 
-    /// The time a row shows is counted from the `now` it is given, which the
-    /// history's timeline moves on every minute while it is open.
-    @Test func aRowsTime_movesWithNow() {
-        let row = entry()
-        let came = row.timestamp
+    @Test func aRowsTimeUsesTheSuppliedNowAndAnAbbreviatedDateForOlderRows() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let came = try #require(calendar.date(from: DateComponents(year: 2026, month: 6, day: 4, hour: 12)))
+        let row = entry(timestamp: came)
         #expect(NotificationHistoryRowText.timeLabel(for: row, now: came.addingTimeInterval(10), locale: en) == "now")
-        // The sidebar's word for the same minute, not a second one.
         #expect(NotificationHistoryRowText.timeLabel(for: row, now: came.addingTimeInterval(10), locale: ja) == "今")
-        #expect(NotificationHistoryRowText.timeLabel(for: row, now: came.addingTimeInterval(10), locale: ja)
-            == CompactTimeText.now(locale: ja))
-        #expect(NotificationHistoryRowText.timeLabel(for: row, now: came.addingTimeInterval(5 * 60), locale: en) == "5 min. ago")
-        #expect(NotificationHistoryRowText.timeLabel(for: row, now: came.addingTimeInterval(5 * 60), locale: ja) == "5 分前")
+        #expect(NotificationHistoryRowText.timeLabel(for: row, now: came.addingTimeInterval(300), locale: en) == "5 min. ago")
+        #expect(NotificationHistoryRowText.timeLabel(for: row, now: came.addingTimeInterval(300), locale: ja) == "5 分前")
+        let old = NotificationHistoryRowText.timeLabel(
+            for: row, now: came.addingTimeInterval(86400), locale: Locale(identifier: "en_US@calendar=gregorian")
+        )
+        #expect(old == "Jun 4, 2026")
     }
 }

@@ -14,6 +14,7 @@ struct WeirProjectionBridgeTests {
         let registry = try AgentProviderDescriptor.registry(from: body)
         #expect(registry["claude"]?.stateDirectory == "agent-states")
         #expect(registry["codex"]?.stateDirectory == "codex-agent-states")
+        #expect(Set(registry.keys) == Set(AgentKind.allCases.map(\.rawValue)))
         // The rules branch on capabilities, so the host must be able to read
         // them rather than holding a list of its own.
         #expect(registry["claude"]?.capabilities.contains("cache_window") == true)
@@ -44,15 +45,12 @@ struct WeirProjectionBridgeTests {
             AgentRecordLayout.self,
             from: WeirProjectionBridge.recordLayout()
         )
-        // An empty suffix would make every file in a directory a record, a
-        // hint, or an event, and an empty lock suffix would lock the file
-        // itself rather than its sidecar.
-        for name in [
-            layout.runRecordSuffix, layout.sessionHintSuffix, layout.cwdEventSuffix,
-            layout.worktreeEventsDirectory, layout.worktreeEventSuffix, layout.lockSuffix
-        ] {
-            #expect(!name.isEmpty)
-        }
+        #expect(layout.runRecordSuffix == ".state.json")
+        #expect(layout.sessionHintSuffix == ".json")
+        #expect(layout.cwdEventSuffix == ".cwd.json")
+        #expect(layout.worktreeEventsDirectory == "worktree-events")
+        #expect(layout.worktreeEventSuffix == ".json")
+        #expect(layout.lockSuffix == ".flock")
         #expect(AgentProviderRegistry.recordLayout == layout)
     }
 
@@ -73,9 +71,10 @@ struct WeirProjectionBridgeTests {
         // Both clocks are required: the rules compare records against wall
         // time and age pending notifications against uptime, and guessing
         // either would make a retention rule depend on the wrong one.
-        let halfAnEnvelope = Data(#"{"wall":"2026-09-14T12:00:00Z"}"#.utf8)
-        #expect(throws: WeirProjectionError.self) {
-            try engine.pass(input: input, now: halfAnEnvelope)
+        for envelope in [#"{"wall":"2026-09-14T12:00:00Z"}"#, #"{"monotonicMs":0}"#] {
+            #expect(throws: WeirProjectionError.self) {
+                try engine.pass(input: input, now: Data(envelope.utf8))
+            }
         }
     }
 
@@ -128,6 +127,11 @@ struct WeirProjectionBridgeTests {
         let finished = try pass("finished", revision: 2, at: 10)
         #expect(notices(finished).isEmpty)
         let delay = try #require(finished.projection.nextPassInMs)
+        try #require(delay > 0)
+        let early = try pass("finished", revision: 2, at: 10 + delay - 1)
+        #expect(notices(early).isEmpty)
+        #expect(early.projection.nextPassInMs == 1)
+
         let settled = try pass("finished", revision: 2, at: 10 + delay)
         #expect(notices(settled) == [.finished])
     }
@@ -324,21 +328,36 @@ struct WeirProjectionBridgeTests {
 
     /// One type carries a resume intent both ways, so the keys a pass is
     /// given are the keys its command is read with.
-    @Test("a resume intent reads back as it was given")
-    func resumeIntent_roundTrips() throws {
+    @Test("A resume intent keeps its exact fields across the wire", arguments: [nil as String?, "owner"])
+    func resumeIntent_roundTrips(ownerRunID: String?) throws {
         let intent = AgentResumeIntentPayload(
             runID: "AAAAAAAA-1111-4111-8111-AAAAAAAAAAA1",
             paneID: UUID(),
             sessionID: "session-1",
-            ownerRunID: nil,
+            ownerRunID: ownerRunID,
             pid: "4242",
             createdAt: "2026-09-14T12:00:00Z"
         )
         let encoded = try JSONEncoder().encode(intent)
         let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        #expect(Set(object.keys) == ["runID", "paneID", "sessionID", "pid", "createdAt"])
+        var expectedKeys: Set = ["runID", "paneID", "sessionID", "pid", "createdAt"]
+        if ownerRunID != nil {
+            expectedKeys.insert("ownerRunID")
+        }
+        #expect(Set(object.keys) == expectedKeys)
+        #expect(object["runID"] as? String == "AAAAAAAA-1111-4111-8111-AAAAAAAAAAA1")
+        #expect(object["paneID"] as? String == intent.paneID.uuidString)
+        #expect(object["sessionID"] as? String == "session-1")
+        #expect(object["ownerRunID"] as? String == ownerRunID)
+        #expect(object["pid"] as? String == "4242")
+        #expect(object["createdAt"] as? String == "2026-09-14T12:00:00Z")
+
         let decoded = try JSONDecoder().decode(AgentResumeIntentPayload.self, from: encoded)
+        #expect(decoded.runID == intent.runID)
         #expect(decoded.paneID == intent.paneID)
+        #expect(decoded.sessionID == intent.sessionID)
+        #expect(decoded.ownerRunID == ownerRunID)
+        #expect(decoded.pid == intent.pid)
         #expect(decoded.createdAt == intent.createdAt)
     }
 }

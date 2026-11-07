@@ -35,8 +35,8 @@ struct SurfaceContextMenuTests {
     /// AppKit gives its standard action, which we leave as it is.
     private static func draws(_ item: NSMenuItem, _ symbol: String?) -> Bool {
         guard let symbol else { return true }
-        return item.image?.tiffRepresentation == NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .tiffRepresentation
+        guard let expected = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.tiffRepresentation else { return false }
+        return item.image?.tiffRepresentation == expected
     }
 
     /// The item the menu sends `command`'s action from.
@@ -92,6 +92,7 @@ struct SurfaceContextMenuTests {
             #expect(item.title == zoom.title.resolved(in: locale))
             #expect(Self.draws(item, zoom.symbol))
             #expect(item.keyEquivalent == rebound.menuKeyEquivalent?.key)
+            #expect(item.keyEquivalentModifierMask == .control)
         }
         #expect(PaneZoomAction.zoom.title.resolved(in: Self.ja) != PaneZoomAction.unzoom.title.resolved(in: Self.ja))
     }

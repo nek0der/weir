@@ -135,9 +135,16 @@ struct SidebarArrangementTests {
         let working = SidebarArrangement.SectionKey(project: Self.a, section: .working)
         #expect(throws: EncodingError.self) { try JSONEncoder().encode(working) }
 
-        let arrangement = SidebarArrangement(openSections: [working, .init(project: Self.a, section: .other)])
+        let valid = SidebarArrangement.SectionKey(project: Self.a, section: .other)
+        let arrangement = SidebarArrangement(openSections: [working, valid])
         let read = try JSONDecoder().decode(SidebarArrangement.self, from: JSONEncoder().encode(arrangement))
-        #expect(read.openSections == [.init(project: Self.a, section: .other)])
+        #expect(read.openSections == [valid])
+
+        let legacy = Data("""
+        {"openSections":[{"project":"\(Self.a.uuidString)","section":"working"},
+        {"project":"\(Self.a.uuidString)","section":"other"}]}
+        """.utf8)
+        #expect(try JSONDecoder().decode(SidebarArrangement.self, from: legacy).openSections == [valid])
     }
 
     /// The same arrangement is written the same way each time, whatever
@@ -149,14 +156,16 @@ struct SidebarArrangementTests {
             collapsedProjects: Set(ids),
             openSections: Set(ids.flatMap { [
                 SidebarArrangement.SectionKey(project: $0, section: .cleanable),
-                .init(project: $0, section: .other)
+                .init(project: $0, section: .other),
+                .init(project: $0, section: .missing)
             ] })
         )
         let rebuilt = SidebarArrangement(
             projectOrder: ids,
             collapsedProjects: Set(ids.reversed()),
             openSections: Set(ids.reversed().flatMap { [
-                SidebarArrangement.SectionKey(project: $0, section: .other),
+                SidebarArrangement.SectionKey(project: $0, section: .missing),
+                .init(project: $0, section: .other),
                 .init(project: $0, section: .cleanable)
             ] })
         )
@@ -166,7 +175,12 @@ struct SidebarArrangementTests {
         #expect(try encoder.encode(arrangement) == encoder.encode(rebuilt))
         let object = try #require(JSONSerialization.jsonObject(with: encoder.encode(arrangement)) as? [String: Any])
         let collapsed = try #require(object["collapsedProjects"] as? [String])
-        #expect(collapsed == collapsed.sorted())
+        let sorted = ids.map(\.uuidString).sorted()
+        #expect(collapsed == sorted)
+        let sections = try #require(object["openSections"] as? [[String: String]])
+        #expect(sections == sorted.flatMap { id in
+            ["cleanable", "other", "missing"].map { ["project": id, "section": $0] }
+        })
     }
 
     @Test func anEmptyObject_readsAsTheDefault() throws {

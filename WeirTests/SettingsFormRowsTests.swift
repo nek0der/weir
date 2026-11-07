@@ -39,6 +39,7 @@ struct SettingsFormRowsTests {
 
     @Test func aTypedNumber_isHeldToTheRangeAndTheStep() {
         #expect(SettingsNumberRow.held(13.3, to: 6...72, step: 0.5) == 13.5)
+        #expect(SettingsNumberRow.held(13.2, to: 6...72, step: 0.5) == 13)
         #expect(SettingsNumberRow.held(200, to: 6...72, step: 0.5) == 72)
         #expect(SettingsNumberRow.held(0, to: 1...90, step: 1) == 1)
     }
@@ -76,7 +77,7 @@ struct SettingsFormRowsTests {
         let mode = isDark ? "dark" : "light"
         for (name, ground) in grounds {
             let ratio = ContrastRatio.between(caption, ground)
-            #expect(ratio >= ContrastRatio.text, "settings caption on \(name) in \(mode): \(ratio)")
+            #expect(ratio >= 4.5, "settings caption on \(name) in \(mode): \(ratio)")
         }
     }
 

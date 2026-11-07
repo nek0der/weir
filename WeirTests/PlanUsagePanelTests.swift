@@ -51,6 +51,7 @@ struct PlanUsageLayerTests {
         #expect(!window.notificationHistory.isPresented)
         #expect(session.commandPaletteState == nil)
         #expect(!window.isAnotherLayerOpen(than: .planUsage, session: session))
+        #expect(window.openLayers(session: session) == [.planUsage])
 
         window.togglePlanUsage(session: session)
         #expect(!window.planUsage.isPresented)
@@ -58,9 +59,18 @@ struct PlanUsageLayerTests {
 
     /// The panel shows every account, not one project's, so moving the
     /// window to another project leaves it open, as the notification history.
-    @Test("a project switch leaves the panel open")
-    func aProjectSwitch_leavesThePanelOpen() {
-        #expect(!WindowProjectSwitch.layersLeft.contains(.planUsage))
-        #expect(!WindowProjectSwitch.layersLeft.contains(.notificationHistory))
+    @Test("a project switch leaves the panel open", arguments: [WindowLayer.planUsage, .notificationHistory])
+    func aProjectSwitch_leavesThePanelOpen(layer: WindowLayer) {
+        let fixture = ProjectWindowsFixture()
+        fixture.tidiesAsTheAppDoes()
+        let window = fixture.primary
+        window.planUsage.isPresented = layer == .planUsage
+        window.notificationHistory.isPresented = layer == .notificationHistory
+
+        #expect(window.selection.shownProjectID == fixture.a.id)
+        #expect(window.openLayers(session: fixture.session) == [layer])
+        fixture.choose(fixture.bTab, in: window)
+        #expect(window.selection.shownProjectID == fixture.b.id)
+        #expect(window.openLayers(session: fixture.session) == [layer])
     }
 }

@@ -19,24 +19,22 @@ struct RestoreStripRowTests {
     /// its buttons down to the same width (`DecisionBarRowFitTests`).
     private nonisolated static let halfOfTheNarrowestReview: CGFloat = 196
 
-    /// Each fit asks for no more than the one before it, and the strip
-    /// keeps its buttons ("Restore Code" and "Cancel", or "Close"), in
-    /// `minimal`, down to `halfOfTheNarrowestReview`. Widths are with the
-    /// foot bar's insets.
+    /// Measure each forced fit independently of which one the row chooses.
     @Test(arguments: ["en", "ja"])
-    func fits_narrowInTurn_andKeepTheirButtons(language: String) throws {
+    func forcedFits_narrowInOrder_andTheMinimalFitFitsTheReviewPane(language: String) throws {
         try withTempDir { directory in
             let settings = SettingsStore(directory: directory)
             let insets = Layout.footBarLeadingInset + Layout.footBarTrailingInset
             for (strip, confirmation) in Self.strips(locale: Locale(identifier: language)) {
-                let widths = RestoreStripRow.Fit.allCases.map { fit in
+                @MainActor func width(_ fit: RestoreStripRow.Fit) -> CGFloat {
                     let row = Self.row(strip, confirmation, fits: [fit]).fixedSize(horizontal: true, vertical: false)
                     return Self.size(of: row, proposing: nil, language: language, settings: settings).width + insets
                 }
-                for (wider, narrower) in zip(widths, widths.dropFirst()) {
-                    #expect(narrower < wider, "\(language) \(strip.phase): \(widths)")
-                }
-                #expect(widths[1] <= Self.halfOfTheNarrowestReview, "\(language) \(strip.phase): \(widths)")
+                let full = width(.full)
+                let minimal = width(.minimal)
+                let words = width(.wordsOnly)
+                #expect(words < minimal && minimal < full, "\(language) \(strip.phase): \([full, minimal, words])")
+                #expect(minimal <= Self.halfOfTheNarrowestReview, "\(language) \(strip.phase): \(minimal)")
             }
         }
     }
@@ -58,14 +56,58 @@ struct RestoreStripRowTests {
         }
     }
 
-    /// "Restore", the short form, is the strip's own word in both
-    /// languages, and shorter than the whole.
-    @Test(arguments: ["en", "ja"])
-    func theShortRestore_isShorterThanTheWhole(language: String) {
+    @Test(arguments: [("en", "Restore", "Restore Code"), ("ja", "復元", "コードを復元")])
+    func restoreButton_hasDistinctCompactAndFullLabels(language: String, compact: String, full: String) {
         let locale = Locale(identifier: language)
-        let short = RestoreText.restoreCodeShort(locale: locale)
-        #expect(!short.isEmpty)
-        #expect(short.count < RestoreText.restoreCode(locale: locale).count)
+        #expect(RestoreText.restoreCodeShort(locale: locale) == compact)
+        #expect(RestoreText.restoreCode(locale: locale) == full)
+    }
+
+    @Test(arguments: ["en", "ja"])
+    func minimalFit_rendersTheConfirmAndCloseButtonFaces(language: String) throws {
+        try withTempDir { directory in
+            let settings = SettingsStore(directory: directory)
+            let locale = Locale(identifier: language)
+            let strips = Self.strips(locale: locale)
+            for ((strip, confirmation), expected) in zip(strips, [2, nil, 1]) {
+                guard let expected else { continue }
+                let minimal = Self.row(strip, confirmation, fits: [.minimal])
+                let words = Self.row(strip, confirmation, fits: [.wordsOnly])
+                let minimalCount = try Self.buttonFaceSpans(in: minimal, locale: locale, settings: settings)
+                let wordsCount = try Self.buttonFaceSpans(in: words, locale: locale, settings: settings)
+                #expect(minimalCount == expected, "\(strip.phase)")
+                #expect(wordsCount == 0)
+            }
+        }
+    }
+
+    private static func buttonFaceSpans(in row: some View, locale: Locale, settings: SettingsStore) throws -> Int {
+        let room = halfOfTheNarrowestReview - Layout.footBarLeadingInset - Layout.footBarTrailingInset
+        let renderer = ImageRenderer(content: row
+            .frame(width: room, height: Layout.footBarHeight)
+            .environment(settings)
+            .environment(\.locale, locale)
+            .environment(\.colorScheme, .light))
+        renderer.scale = 1
+        let bitmap = try NSBitmapImageRep(cgImage: #require(renderer.cgImage))
+        // A scan line through the button faces near their rounded corners,
+        // outside the centered one-line text. Ignore isolated pixels.
+        let y = Int((Layout.footBarHeight - Layout.secondaryButtonHeight) / 2) + 2
+        let pixels = (0..<bitmap.pixelsWide).compactMap { bitmap.colorAt(x: $0, y: y)?.alphaComponent }
+        try #require(pixels.count == Int(room))
+        var count = 0
+        var run = 0
+        for alpha in pixels + [0] {
+            if alpha >= 0.15 {
+                run += 1
+            } else {
+                if run >= 10 {
+                    count += 1
+                }
+                run = 0
+            }
+        }
+        return count
     }
 
     /// The strip asking, running, and ended short of the whole restore,

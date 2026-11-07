@@ -103,31 +103,76 @@ struct NewSessionActionsTests {
                 ],
                 remotes: ["origin"]
             )
+            let remembered = NewWorktreeChoices(open: .agent(.codex), fetches: false, copiesIgnoredFiles: false, runsSetup: false)
+            fixture.settings.settings.newSession.remember(remembered, forProjectAt: fixture.project.rootURL)
             fixture.settings.settings.newSession.remember(
-                NewWorktreeChoices(open: .agent(.codex), fetches: true, copiesIgnoredFiles: false, runsSetup: true),
-                forProjectAt: fixture.project.rootURL
+                NewWorktreeChoices(open: .shell, fetches: true, copiesIgnoredFiles: true, runsSetup: true),
+                forProjectAt: WorkspaceSessionFixture.projectRootURL("other")
             )
 
-            let model = try await fixture.load()
+            var stores = fixture.stores
+            let facts = fixture.facts
+            let root = fixture.project.rootURL
+            let projectID = fixture.project.id
+            let reads = Recorded(0)
+            stores.readFacts = { url, id in
+                #expect(url == root)
+                #expect(id == projectID)
+                reads.update { $0 += 1 }
+                return facts
+            }
+            let model = try #require(await NewSessionActions.load(
+                NewSessionSheetRequest(projectID: projectID), window: fixture.window, stores: stores
+            ))
 
-            #expect(model.open == .agent(.codex))
-            #expect(!model.copiesFiles)
+            #expect(reads.value == 1)
+            // Fetch is remembered globally. Open, copy, and setup are remembered for this project.
+            #expect(model.choices == NewWorktreeChoices(open: .agent(.codex), fetches: true, copiesIgnoredFiles: false, runsSetup: false))
+            #expect(model.context.localBranches == ["main", "feat/x"])
             #expect(model.context.fetchRemote == "origin")
             #expect(model.base?.name == "origin/main")
-            #expect(model.context.checkedOutBranches.contains("main"))
+            #expect(model.context.checkedOutBranches == ["main"])
             #expect(model.context.installedAgents == [.claude, .codex])
-            #expect(model.context.agentExecutables[.codex] == "/opt/bin/codex")
+            #expect(model.context.agentExecutables == [.claude: "/opt/bin/claude", .codex: "/opt/bin/codex"])
         }
     }
 
     @Test func theProjectGone_opensNoForm() async throws {
         try await Self.withFixture { fixture in
-            let gone = await NewSessionActions.load(
+            let gate = Gate<Void>()
+            var stores = fixture.stores
+            let facts = fixture.facts
+            stores.readFacts = { _, _ in
+                await gate.wait()
+                return facts
+            }
+            // An absent project must return without calling the reader.
+            var absentStores = stores
+            absentStores.readFacts = { _, _ in
+                Issue.record("read facts for an absent project")
+                return facts
+            }
+            #expect(await NewSessionActions.load(
                 NewSessionSheetRequest(projectID: UUID()),
                 window: fixture.window,
-                stores: fixture.stores
-            )
-            #expect(gone == nil)
+                stores: absentStores
+            ) == nil)
+
+            let load = Task {
+                await NewSessionActions.load(
+                    NewSessionSheetRequest(projectID: fixture.project.id), window: fixture.window, stores: stores
+                ) == nil
+            }
+            do {
+                try await gate.waitUntilRequested()
+            } catch {
+                gate.open()
+                _ = await load.value
+                throw error
+            }
+            fixture.session.removeProject(fixture.project.id)
+            gate.open()
+            #expect(await load.value)
         }
     }
 
@@ -166,17 +211,18 @@ struct NewSessionActionsTests {
             #expect(await NewSessionActions.create(model, request: request, window: fixture.window, stores: fixture.stores)
                 == .created(branch: "feat/other"))
 
-            #expect(fixture.window.selection.shownProjectID == other.id)
-            let row = fixture.window.selection.activeContainerID
-            #expect(row.projectID == other.id && row.worktreeID != nil)
+            let worktree = try #require(fixture.session.project(other.id)?.worktrees.first)
+            let row = ContainerID.worktree(projectID: other.id, worktreeID: worktree.id)
+            #expect(fixture.window.selection.activeContainerID == row)
             await pollUntil { !fixture.session.tabs(in: row).isEmpty }
-            #expect(fixture.window.selection.activeTabID == fixture.session.tabs(in: row).first?.id)
+            let tab = try #require(fixture.session.tabs(in: row).first)
+            #expect(fixture.window.selection.activeTabID == tab.id)
+            #expect(tab.workingDirectory == worktree.workingDirectory.path)
         }
     }
 
     /// Another window shows the project by the time the worktree is made:
-    /// the selection and the launch go to that window, not the one the
-    /// sheet was in.
+    /// the selection and the launch go to that window.
     @Test func aWorktreeOfAProjectAnotherWindowShows_isSelectedAndLaunchedThere() async throws {
         try await Self.withFixture { fixture in
             let other = fixture.session.addOrActivateProject(
@@ -187,17 +233,34 @@ struct NewSessionActionsTests {
             var model = try #require(await NewSessionActions.load(request, window: fixture.window, stores: fixture.stores))
             model.open = .shell
             model.setBranchName("feat/there")
+            let original = ContainerID.project(fixture.project.id)
+            let originalTab = fixture.session.openTab(container: original, in: fixture.window.id)
+            let gate = Gate<Void>()
+            fixture.git.worktreeAddGate = gate
+            let create = Task {
+                await NewSessionActions.create(model, request: request, window: fixture.window, stores: fixture.stores)
+            }
+            do {
+                try await gate.waitUntilRequested()
+            } catch {
+                gate.open()
+                _ = await create.value
+                throw error
+            }
+            #expect(fixture.session.project(other.id)?.worktrees.isEmpty == true)
             let second = fixture.session.addWindow(showing: other.id, layoutFrom: fixture.window.id)
+            gate.open()
+            #expect(await create.value == .created(branch: "feat/there"))
 
-            #expect(await NewSessionActions.create(model, request: request, window: fixture.window, stores: fixture.stores)
-                == .created(branch: "feat/there"))
-
-            #expect(fixture.window.selection.shownProjectID == fixture.project.id, "this window stays on its project")
-            let row = second.activeContainerID
-            #expect(row.projectID == other.id && row.worktreeID != nil)
+            let worktree = try #require(fixture.session.project(other.id)?.worktrees.first)
+            let row = ContainerID.worktree(projectID: other.id, worktreeID: worktree.id)
+            #expect(second.activeContainerID == row)
             await pollUntil { !fixture.session.tabs(in: row).isEmpty }
-            #expect(second.activeTabID == fixture.session.tabs(in: row).first?.id)
-            #expect(fixture.window.selection.activeTabID != second.activeTabID)
+            let tab = try #require(fixture.session.tabs(in: row).first)
+            #expect(second.activeTabID == tab.id)
+            #expect(tab.workingDirectory == worktree.workingDirectory.path)
+            #expect(fixture.window.selection.activeContainerID == original)
+            #expect(fixture.window.selection.activeTabID == originalTab.id)
         }
     }
 
@@ -224,25 +287,37 @@ struct NewSessionActionsTests {
 
             let outcome = await fixture.create(model)
 
-            guard case let .failed(_, madeBranch) = outcome else {
+            guard case let .failed(message, madeBranch) = outcome else {
                 Issue.record("the create did not fail: \(outcome)")
                 return
             }
-            #expect(madeBranch == "feat/try")
+            let branch = try #require(madeBranch)
+            #expect(branch == "feat/try")
+            #expect(message == CreateWorktreeError.gitFailedLeavingBranch(
+                stderr: "fatal: could not create work tree dir", branch: branch
+            ).message)
             #expect(fixture.settings.settings.newSession.memory(forProjectAt: fixture.project.rootURL) == nil)
             #expect(fixture.settings.settings.newSession.lastOpen == nil)
             #expect(fixture.window.selection.activeContainerID == .project(fixture.project.id))
-            model.useMadeBranch("feat/try")
-            #expect(model.plan?.newBranch == nil, "the retry checks out the branch made")
+            #expect(fixture.session.project(fixture.project.id)?.worktrees.isEmpty == true)
+            #expect(fixture.launches.launches.isEmpty)
+
+            model.useMadeBranch(branch)
+            let retry = try #require(model.plan)
+            #expect(retry.newBranch == nil)
+            #expect(retry.start == branch)
+            fixture.git.nextCreateResult = .success()
+            #expect(await fixture.create(model) == .created(branch: branch))
+            #expect(fixture.git.branchCalls.map(\.name) == [branch])
+            #expect(fixture.git.createCalls.map(\.baseBranch) == [branch, branch])
+            #expect(fixture.session.project(fixture.project.id)?.worktrees.count == 1)
         }
     }
 
     // MARK: - Fetch
 
-    /// The fetch runs before anything is made, takes the base's remote
-    /// only, and the new branch starts from the remote's branch it brought
-    /// up to date.
-    @Test func theFetch_runsFirst_andTheBranchStartsFromTheRemotesBranch() async throws {
+    /// Create uses the same remote ref that Fetch compares with the local branch.
+    @Test func create_usesTheRemoteRefComparedByFetch() async throws {
         try await Self.withFixture { fixture in
             fixture.facts = NewSessionFacts(localBranches: ["main"], defaultBase: "main", head: "main", remotes: ["origin", "fork"])
             fixture.git.behind = 2
@@ -253,9 +328,15 @@ struct NewSessionActionsTests {
             #expect(model.baseLine == .behind(local: "main", count: 2, remote: "origin/main"))
 
             #expect(await fixture.create(model) == .created(branch: "feat/fresh"))
-            #expect(fixture.git.fetchCalls == ["origin"])
-            #expect(Array(fixture.git.operations.prefix(3)) == ["fetch", "branch", "worktree add"])
-            #expect(fixture.git.branchCalls.first?.startPoint == "refs/remotes/origin/main")
+            let root = fixture.project.rootURL
+            let remoteRef = "refs/remotes/origin/main"
+            #expect(fixture.git.branchFetchCalls == [.init(repoRoot: root, remote: "origin", branch: "main")])
+            #expect(fixture.git.comparisonCalls == [
+                .init(repoRoot: root, local: remoteRef, upstream: remoteRef),
+                .init(repoRoot: root, local: "refs/heads/main", upstream: remoteRef)
+            ])
+            #expect(fixture.git.operations == ["fetch", "branch", "worktree add"])
+            #expect(fixture.git.branchCalls.map(\.startPoint) == [remoteRef])
         }
     }
 
@@ -274,71 +355,108 @@ struct NewSessionActionsTests {
         }
     }
 
-    /// A fetch that fails, or does not answer in time, does not stop the
-    /// worktree: it starts from the local branch, and its bar says so.
-    @Test func aFailedFetch_stillMakesTheWorktree_fromTheLocalBranch_withANote() async throws {
-        for failure in [GitProcessError.timedOut(seconds: 20), nil] {
-            try await Self.withFixture { fixture in
-                fixture.facts.remotes = ["origin"]
-                if let failure {
-                    fixture.git.nextFetchError = failure
-                } else {
-                    fixture.git.nextFetchResult = .failure("fatal: could not read from remote repository")
-                }
-                var model = try await fixture.load()
-                model.open = .shell
-                model.setBranchName("feat/offline")
-                model.fetchState = await NewSessionActions.fetch(for: model, stores: fixture.stores)
-                #expect(model.fetchState == .failed)
+    enum FetchFailure: CaseIterable {
+        case timeout
+        case nonzeroExit
+    }
 
-                #expect(await fixture.create(model) == .created(branch: "feat/offline"))
-                #expect(fixture.git.branchCalls.first?.startPoint == "refs/heads/main")
-                let row = try #require(fixture.shownWorktree)
-                #expect(fixture.launches.launch(in: row)?.notes == [.fetch(.failed(start: "main", isLastFetched: false))])
-                #expect(fixture.launches.launch(in: row)?.phase == .done)
+    @Test(arguments: FetchFailure.allCases)
+    func aFailedFetch_stillMakesTheWorktree_fromTheLocalBranch_withANote(_ failure: FetchFailure) async throws {
+        try await Self.withFixture { fixture in
+            fixture.facts.remotes = ["origin"]
+            switch failure {
+            case .timeout:
+                fixture.git.nextFetchError = .timedOut(seconds: 20)
+            case .nonzeroExit:
+                fixture.git.nextFetchResult = .failure("fatal: could not read from remote repository")
             }
+            var model = try await fixture.load()
+            model.open = .shell
+            model.setBranchName("feat/offline")
+            model.fetchState = await NewSessionActions.fetch(for: model, stores: fixture.stores)
+            #expect(model.fetchState == .failed)
+
+            #expect(await fixture.create(model) == .created(branch: "feat/offline"))
+            #expect(fixture.git.branchFetchCalls == [.init(repoRoot: fixture.project.rootURL, remote: "origin", branch: "main")])
+            #expect(fixture.git.comparisonCalls.isEmpty)
+            #expect(fixture.git.branchCalls.map(\.startPoint) == ["refs/heads/main"])
+            let row = try #require(fixture.shownWorktree)
+            let launch = try #require(fixture.launches.launch(in: row))
+            #expect(launch.notes == [.fetch(.failed(start: "main", isLastFetched: false))])
+            #expect(launch.phase == .done)
         }
     }
 
-    /// A remote whose default is another branch has no `origin/main`: the
-    /// fetch ran, so it is not said to have failed, and the worktree
-    /// starts from the local `main`.
-    @Test func aRemoteWithoutTheBranch_startsFromTheLocalOne_andSaysWhy() async throws {
+    enum MissingRemoteBranch: CaseIterable {
+        case noTrackingRefAfterFetch
+        case deletedBranchWithStaleTrackingRef
+    }
+
+    @Test(arguments: MissingRemoteBranch.allCases)
+    func aRemoteWithoutTheBranch_startsFromTheLocalOne_andSaysWhy(_ missing: MissingRemoteBranch) async throws {
         try await Self.withFixture { fixture in
             fixture.facts.remotes = ["origin"]
-            fixture.git.behind = nil
+            let root = fixture.project.rootURL
+            let comparisons: [FakeGit.ComparisonCall]
+            switch missing {
+            case .noTrackingRefAfterFetch:
+                fixture.git.behind = nil
+                comparisons = [.init(repoRoot: root, local: "refs/remotes/origin/main", upstream: "refs/remotes/origin/main")]
+            case .deletedBranchWithStaleTrackingRef:
+                fixture.git.behind = 3
+                fixture.git.nextFetchResult = .failure("fatal: couldn't find remote ref refs/heads/main")
+                comparisons = []
+            }
             var model = try await fixture.load()
+            model.open = .shell
+            model.setBranchName("feat/missing")
             model.fetchState = await NewSessionActions.fetch(for: model, stores: fixture.stores)
             #expect(model.fetchState == .remoteBranchMissing)
-            #expect(model.plan?.start == "refs/heads/main")
-            #expect(model.plan?.notes == [.fetch(.remoteBranchMissing(remote: "origin/main", start: "main"))])
+
+            #expect(await fixture.create(model) == .created(branch: "feat/missing"))
+            #expect(fixture.git.branchFetchCalls == [.init(repoRoot: root, remote: "origin", branch: "main")])
+            #expect(fixture.git.comparisonCalls == comparisons)
+            #expect(fixture.git.branchCalls.map(\.startPoint) == ["refs/heads/main"])
+            let row = try #require(fixture.shownWorktree)
+            let launch = try #require(fixture.launches.launch(in: row))
+            #expect(launch.notes == [.fetch(.remoteBranchMissing(remote: "origin/main", start: "main"))])
+            #expect(launch.phase == .done)
         }
     }
 
-    /// The remote deleted the branch, and the tracking branch an earlier
-    /// fetch left still resolves: the worktree is not said to start from
-    /// the latest on the remote.
-    @Test func aBranchTheRemoteDeleted_isMissing_thoughItsTrackingBranchIsLeft() async throws {
-        try await Self.withFixture { fixture in
-            fixture.facts.remotes = ["origin"]
-            fixture.git.behind = 3
-            fixture.git.nextFetchResult = .failure("fatal: couldn't find remote ref refs/heads/main")
-            var model = try await fixture.load()
-            model.fetchState = await NewSessionActions.fetch(for: model, stores: fixture.stores)
-            #expect(model.fetchState == .remoteBranchMissing)
-            #expect(model.plan?.start == "refs/heads/main")
-        }
+    enum LocalBase: CaseIterable {
+        case rootBranchWithoutDefault
+        case shownWorktreeBranch
     }
 
-    /// A base no fetch changes (the shown worktree's branch) fetches
-    /// nothing and waits on nothing.
-    @Test func aLocalBase_isNotFetchedFor() async throws {
+    @Test(arguments: LocalBase.allCases)
+    func aLocalBase_isNotFetchedFor(_ localBase: LocalBase) async throws {
         try await Self.withFixture { fixture in
-            fixture.facts = NewSessionFacts(localBranches: ["main"], defaultBase: nil, head: "dev", remotes: ["origin"])
-            let model = try await fixture.load()
+            let model: NewSessionModel
+            switch localBase {
+            case .rootBranchWithoutDefault:
+                fixture.facts = NewSessionFacts(localBranches: ["dev"], head: "dev", remotes: ["origin"])
+                model = try await fixture.load()
+                #expect(model.base?.ref == "refs/heads/dev")
+            case .shownWorktreeBranch:
+                var shown = try await fixture.load()
+                shown.open = .nothing
+                shown.setBranchName("feat/current")
+                #expect(await fixture.create(shown) == .created(branch: "feat/current"))
+                _ = try #require(fixture.shownWorktree)
+                fixture.facts.localBranches.append("feat/current")
+                fixture.facts.remotes = ["origin"]
+
+                var loaded = try await fixture.load()
+                #expect(loaded.base?.ref == "refs/remotes/origin/main")
+                loaded.baseName = "feat/current"
+                #expect(loaded.base?.ref == "refs/heads/feat/current")
+                model = loaded
+            }
             #expect(!model.needsFetch)
             #expect(await NewSessionActions.fetch(for: model, stores: fixture.stores) == .none)
             #expect(fixture.git.fetchCalls.isEmpty)
+            #expect(fixture.git.comparisonCalls.isEmpty)
         }
     }
 
@@ -346,27 +464,45 @@ struct NewSessionActionsTests {
     /// both would take the same suggested name.
     @Test func createAtOnce_twice_makesOneWorktree() async throws {
         try await Self.withFixture { fixture in
-            let stores = fixture.stores
-            let window = fixture.window
-            async let first = NewSessionActions.createAtOnce(in: window, stores: stores)
-            async let second = NewSessionActions.createAtOnce(in: window, stores: stores)
-            let outcomes = await [first, second]
-            #expect(outcomes.filter {
-                if case .created = $0 {
-                    true
-                } else {
-                    false
+            let gate = Gate<Void>()
+            let reads = Recorded(0)
+            let facts = fixture.facts
+            var stores = fixture.stores
+            stores.readFacts = { _, _ in
+                reads.update { $0 += 1 }
+                // A second read would expose a regression without waiting on the first.
+                if gate.requests == 0 {
+                    await gate.wait()
                 }
-            }.count == 1)
-            #expect(outcomes.contains(.nothing))
-            #expect(fixture.git.branchCalls.count == 1)
+                return facts
+            }
+            let window = fixture.window
+            let first = Task { await NewSessionActions.createAtOnce(in: window, stores: stores) }
+            do {
+                try await gate.waitUntilRequested()
+            } catch {
+                gate.open()
+                _ = await first.value
+                throw error
+            }
+            #expect(window.isCreatingWorktreeAtOnce)
+            #expect(await NewSessionActions.createAtOnce(in: window, stores: stores) == .nothing)
+            #expect(reads.value == 1)
+            #expect(fixture.git.operations.isEmpty)
+
+            gate.open()
+            let branch = "task/\(fixture.todayInName)-1"
+            #expect(await first.value == .created(branch: branch))
+            #expect(fixture.git.branchCalls.map(\.name) == [branch])
+            #expect(fixture.git.createCalls.map(\.baseBranch) == [branch])
+            #expect(fixture.session.project(fixture.project.id)?.worktrees.count == 1)
             #expect(!window.isCreatingWorktreeAtOnce)
         }
     }
 
     // MARK: - ⌥⌘N
 
-    @Test func createAtOnce_followsTheSameRules_andAnnouncesTheBranch() async throws {
+    @Test func createAtOnce_fetchesBeforeCreating_andReturnsTheBranch() async throws {
         try await Self.withFixture { fixture in
             fixture.facts.remotes = ["origin"]
             fixture.git.behind = 0
@@ -378,10 +514,13 @@ struct NewSessionActionsTests {
             let outcome = await NewSessionActions.createAtOnce(in: fixture.window, stores: fixture.stores)
 
             #expect(outcome == .created(branch: "task/\(fixture.todayInName)-1"))
-            #expect(fixture.git.fetchCalls == ["origin"])
-            #expect(fixture.git.branchCalls.first?.startPoint == "refs/remotes/origin/main")
+            #expect(fixture.git.branchFetchCalls == [.init(repoRoot: fixture.project.rootURL, remote: "origin", branch: "main")])
+            #expect(fixture.git.operations == ["fetch", "branch", "worktree add"])
+            #expect(fixture.git.branchCalls.map(\.startPoint) == ["refs/remotes/origin/main"])
             #expect(fixture.window.newSession == nil)
-            #expect(fixture.shownWorktree != nil)
+            let row = try #require(fixture.shownWorktree)
+            #expect(fixture.session.tabs(in: row).isEmpty)
+            #expect(fixture.launches.launch(in: row) == nil)
         }
     }
 
@@ -417,26 +556,30 @@ struct NewSessionActionsTests {
         try await Self.withFixture { fixture in
             fixture.facts = NewSessionFacts()
             #expect(await NewSessionActions.createAtOnce(in: fixture.window, stores: fixture.stores) == .openedSheet)
-            #expect(fixture.window.newSession?.failure == nil)
+            let request = try #require(fixture.window.newSession)
+            #expect(request.projectID == fixture.project.id)
+            #expect(request.failure == nil)
+            #expect(fixture.git.operations.isEmpty)
         }
+        let stderr = "fatal: not a valid object name"
+        let message = CreateWorktreeError.gitFailed(stderr: stderr).message
         try await Self.withFixture { fixture in
-            fixture.git.nextBranchResult = .failure("fatal: not a valid object name")
+            fixture.git.nextBranchResult = .failure(stderr)
             #expect(await NewSessionActions.createAtOnce(in: fixture.window, stores: fixture.stores) == .openedSheet)
-            #expect(fixture.window.newSession?.failure != nil)
-            // A sheet already up is left as it is.
+            let request = try #require(fixture.window.newSession)
+            #expect(request.projectID == fixture.project.id)
+            #expect(request.failure == message)
             #expect(await NewSessionActions.createAtOnce(in: fixture.window, stores: fixture.stores) == .nothing)
+            #expect(fixture.window.newSession == request)
+            #expect(fixture.git.operations == ["branch"])
         }
-        // Under another sheet, the failure the sheet would show comes back
-        // to be said, not dropped.
         try await Self.withFixture { fixture in
-            fixture.git.nextBranchResult = .failure("fatal: not a valid object name")
+            fixture.git.nextBranchResult = .failure(stderr)
             fixture.window.hasAttachedSheet = true
-            let outcome = await NewSessionActions.createAtOnce(in: fixture.window, stores: fixture.stores)
-            guard case .failedUnshown = outcome else {
-                Issue.record("expected the failure back, got \(outcome)")
-                return
-            }
+            #expect(await NewSessionActions.createAtOnce(in: fixture.window, stores: fixture.stores) == .failedUnshown(message))
             #expect(fixture.window.newSession == nil)
+            #expect(fixture.window.hasAttachedSheet)
+            #expect(fixture.git.operations == ["branch"])
         }
     }
 
@@ -466,55 +609,43 @@ struct NewSessionFetchGitTests {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
         let bare = try await repo.addBareOrigin()
+        let local = try await repo.git(["rev-parse", "refs/heads/main"])
         let pushed = try await repo.advance(bare)
 
-        let facts = await NewSessionFacts.readGit(root: repo.url)
-        #expect(facts.remotes == ["origin"])
-        #expect(facts.upstreamRemote == "origin")
         let session = WorkspaceSession()
         let project = session.addOrActivateProject(rootURL: repo.url, suggestedName: "repo")
-        let model = NewSessionModel(
-            context: .init(
-                project: project,
-                localBranches: facts.localBranches,
-                checkedOutBranches: ["main"],
-                defaultBase: facts.defaultBase,
-                shownBranch: nil,
-                head: facts.head,
-                fetchRemote: NewSessionModel.fetchRemote(
-                    defaultBase: facts.defaultBase,
-                    upstreamRemote: facts.upstreamRemote,
-                    remotes: facts.remotes
-                ),
-                today: Date(),
-                folderExists: { FileManager.default.fileExists(atPath: $0.path) }
-            ),
-            choices: NewWorktreeChoices(open: .nothing, fetches: true, copiesIgnoredFiles: false, runsSetup: false)
+        let window = ProjectWindowState(selection: session.primarySelection)
+        let request = NewSessionSheetRequest(projectID: project.id)
+        var stores = NewSessionStores(
+            session: session,
+            launches: SessionLaunchStore(path: { nil }),
+            settingsStore: SettingsStore(directory: repo.scratch.appendingPathComponent("settings"))
         )
-        var fetched = model
-        let stores = NewSessionStores(session: session, launches: SessionLaunchStore(path: { nil }), settingsStore: SettingsStore(
-            directory: repo.url.deletingLastPathComponent().appendingPathComponent("\(repo.url.lastPathComponent)-settings")
-        ))
-        fetched.fetchState = await NewSessionActions.fetch(for: model, stores: stores)
-        #expect(fetched.fetchState == .fetched(behind: 1))
-        #expect(fetched.base?.name == "origin/main")
+        stores.readFacts = { root, _ in
+            let facts = await NewSessionFacts.readGit(root: root)
+            #expect(facts.remotes == ["origin"])
+            #expect(facts.upstreamRemote == "origin")
+            return facts
+        }
+        var model = try #require(await NewSessionActions.load(request, window: window, stores: stores))
+        model.open = .nothing
+        model.setBranchName("feat/from-remote")
+        #expect(model.fetchRemote == "origin")
+        #expect(model.base?.ref == "refs/remotes/origin/main")
+        #expect(try await repo.git(["rev-parse", "refs/remotes/origin/main"]) == local)
 
-        let plan = try #require(fetched.plan)
-        let worktree = try await session.createGitWorktree(
-            projectID: project.id,
-            path: plan.path,
-            baseBranch: plan.start,
-            newBranchName: plan.newBranch,
-            openTab: false
-        )
+        model.fetchState = await NewSessionActions.fetch(for: model, stores: stores)
+        #expect(model.fetchState == .fetched(behind: 1))
+        #expect(await NewSessionActions.create(model, request: request, window: window, stores: stores)
+            == .created(branch: "feat/from-remote"))
+        let worktree = try #require(session.project(project.id)?.worktrees.first)
         #expect(try await TempGitRepo.git(["rev-parse", "HEAD"], in: worktree.workingDirectory) == pushed)
-        // The local `main` did not move: the fetch moved only `origin/main`.
-        #expect(try await repo.git(["rev-parse", "main"]) != pushed)
+        #expect(try await repo.git(["rev-parse", "refs/heads/feat/from-remote"]) == pushed)
+        #expect(try await repo.git(["rev-parse", "refs/remotes/origin/main"]) == pushed)
+        #expect(try await repo.git(["rev-parse", "refs/heads/main"]) == local)
     }
 
-    /// A tag `main` on an older commit: Git reads a bare `main` as the tag,
-    /// and refused to make a branch from it as ambiguous. The new branch
-    /// starts from the branch `main`.
+    /// A tag `main` on an older commit must not change the new branch's start.
     @Test func aTagNamedLikeTheBase_leavesTheWorktreeOnTheBranch() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
@@ -596,9 +727,7 @@ struct NewSessionFetchGitTests {
         return (session, model)
     }
 
-    /// A remote that cannot be reached fails the fetch, and nothing waits
-    /// on a prompt for it.
-    @Test func anUnreachableRemote_failsTheFetch_withoutAPrompt() async throws {
+    @Test func aMissingRemoteRepository_failsTheFetch_withoutReportingAMissingBranch() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
         try await repo.addBareOrigin()
@@ -608,48 +737,74 @@ struct NewSessionFetchGitTests {
         #expect(!LiveGit.isMissingRemoteBranch(result), "the remote did not answer; it did not say the branch is gone")
     }
 
-    /// A branch is deleted on the remote, and an earlier fetch left its
-    /// tracking branch here: the fetch of that branch says it is gone, where a
-    /// fetch of the whole remote succeeds and leaves the tracking branch.
+    /// A branch-specific fetch reports a deletion even with a local tracking ref.
     @Test func aBranchDeletedOnTheRemote_failsItsFetch_asMissing() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
         let bare = try await repo.addBareOrigin()
         try await repo.git(["push", "-q", "origin", "main:topic"])
         #expect(try await LiveGit().fetch(repoRoot: repo.url, remote: "origin", branch: "topic").succeeded)
-        #expect(try await repo.git(["rev-parse", "--verify", "--quiet", "origin/topic"]).isEmpty == false)
+        let tracked = try await repo.git(["rev-parse", "--verify", "refs/remotes/origin/topic"])
+        #expect(try await repo.git(["rev-parse", "refs/heads/main"]) == tracked)
         try await TempGitRepo.git(["branch", "-q", "-D", "topic"], in: bare)
 
         let result = try await LiveGit().fetch(repoRoot: repo.url, remote: "origin", branch: "topic")
 
         #expect(LiveGit.isMissingRemoteBranch(result))
-        #expect(try await repo.git(["rev-parse", "--verify", "--quiet", "origin/topic"]).isEmpty == false)
+        #expect(try await repo.git(["rev-parse", "--verify", "refs/remotes/origin/topic"]) == tracked)
     }
 
-    /// The person's own ssh command is kept, with batch mode after it, so
-    /// a key or a proxy of theirs still works and nothing is asked.
-    @Test func theFetchesSSH_keepsThePersonsCommand_inBatchMode() {
-        #expect(LiveGit.batchSSHCommand(environment: nil, configured: nil, hasSSHProgram: false) == "ssh -o BatchMode=yes")
-        #expect(LiveGit
-            .batchSSHCommand(environment: " ", configured: "ssh -i other\n", hasSSHProgram: false) == "ssh -i other -o BatchMode=yes")
-        // A program named by GIT_SSH takes no option; it is left as it is.
-        #expect(LiveGit.batchSSHCommand(environment: nil, configured: nil, hasSSHProgram: true) == nil)
+    struct SSHSetting {
+        let label: String
+        var environment: String?
+        var configured: String?
+        var hasSSHProgram = false
+        let expected: String?
+
+        static let cases: [Self] = [
+            .init(label: "default", expected: "ssh -o BatchMode=yes"),
+            .init(
+                label: "blank environment and trimmed config",
+                environment: " ",
+                configured: "ssh -i other\n",
+                expected: "ssh -i other -o BatchMode=yes"
+            ),
+            .init(label: "program alone", hasSSHProgram: true, expected: nil),
+            .init(
+                label: "environment before config",
+                environment: "ssh -i ~/.ssh/work",
+                configured: "ssh -i other",
+                expected: "ssh -i ~/.ssh/work -o BatchMode=yes"
+            ),
+            .init(
+                label: "environment before program",
+                environment: "ssh -i env",
+                hasSSHProgram: true,
+                expected: "ssh -i env -o BatchMode=yes"
+            ),
+            .init(
+                label: "config before program",
+                configured: "ssh -i other",
+                hasSSHProgram: true,
+                expected: "ssh -i other -o BatchMode=yes"
+            ),
+            .init(
+                label: "all three",
+                environment: "ssh -i env",
+                configured: "ssh -i other",
+                hasSSHProgram: true,
+                expected: "ssh -i env -o BatchMode=yes"
+            )
+        ]
     }
 
-    /// Of the person's ssh settings, the one Git itself would use gets batch
-    /// mode. Git takes `GIT_SSH_COMMAND`, then `core.sshCommand`, then
-    /// `GIT_SSH`.
-    @Test func theFetchesSSH_followsGitsOrder_forEachPair() {
-        // GIT_SSH_COMMAND before core.sshCommand.
-        #expect(LiveGit.batchSSHCommand(environment: "ssh -i ~/.ssh/work", configured: "ssh -i other", hasSSHProgram: false)
-            == "ssh -i ~/.ssh/work -o BatchMode=yes")
-        // GIT_SSH_COMMAND before GIT_SSH.
-        #expect(LiveGit.batchSSHCommand(environment: "ssh -i env", configured: nil, hasSSHProgram: true) == "ssh -i env -o BatchMode=yes")
-        // core.sshCommand before GIT_SSH: the configured command gets batch mode.
-        #expect(LiveGit.batchSSHCommand(environment: nil, configured: "ssh -i other", hasSSHProgram: true)
-            == "ssh -i other -o BatchMode=yes")
-        // All three set: the environment's command still comes first.
-        #expect(LiveGit.batchSSHCommand(environment: "ssh -i env", configured: "ssh -i other", hasSSHProgram: true)
-            == "ssh -i env -o BatchMode=yes")
+    @Test(arguments: SSHSetting.cases)
+    func batchSSHCommand_respectsGitPrecedence_andPreservesStandalonePrograms(_ setting: SSHSetting) {
+        let command = LiveGit.batchSSHCommand(
+            environment: setting.environment,
+            configured: setting.configured,
+            hasSSHProgram: setting.hasSSHProgram
+        )
+        #expect(command == setting.expected, "\(setting.label)")
     }
 }

@@ -40,8 +40,8 @@ struct LiveLocaleAndAccentTests {
             })
             host.frame = NSRect(x: 0, y: 0, width: 10, height: 10)
             host.layoutSubtreeIfNeeded()
-            #expect(seen.locale?.language.languageCode == .english)
-            #expect(seen.accent == WeirColor.accent(for: .blue))
+            try #require(seen.locale?.language.languageCode == .english)
+            try #require(seen.accent == WeirColor.accent(for: .blue))
 
             // One at a time, so each is shown to reach the root on its own
             // rather than riding along with the other's redraw.
@@ -50,7 +50,7 @@ struct LiveLocaleAndAccentTests {
                 host.layoutSubtreeIfNeeded()
                 return seen.accent == WeirColor.accent(for: .green)
             }
-            #expect(seen.accent == WeirColor.accent(for: .green))
+            try #require(seen.accent == WeirColor.accent(for: .green))
             #expect(seen.locale?.language.languageCode == .english)
 
             store.appLanguage = .japanese

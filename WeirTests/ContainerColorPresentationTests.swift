@@ -15,6 +15,11 @@ struct ContainerColorPresentationTests {
 
     @Test func open_hangsThePickerFromTheDot() throws {
         let presentation = ContainerColorPresentation()
+        presentation.isOpeningBlocked = true
+        presentation.open(projectID: project, anchor: dot)
+        #expect(presentation.request == nil)
+
+        presentation.isOpeningBlocked = false
         presentation.open(projectID: project, anchor: dot)
         let request = try #require(presentation.request)
         #expect(request.projectID == project)
@@ -28,6 +33,7 @@ struct ContainerColorPresentationTests {
         presentation.open(projectID: other, anchor: dot.offsetBy(dx: 0, dy: 40))
         let second = try #require(presentation.request)
         #expect(second.projectID == other)
+        #expect(second.anchor == dot.offsetBy(dx: 0, dy: 40))
         #expect(second.id != first.id, "a new opening is measured afresh")
     }
 
@@ -41,12 +47,13 @@ struct ContainerColorPresentationTests {
         #expect(presentation.request?.anchor == scrolled)
     }
 
-    @Test func pick_returnsTheChoiceAndCloses() throws {
+    @Test(arguments: [Int?(7), nil])
+    func pick_returnsTheChoiceAndCloses(paletteIndex: Int?) throws {
         let presentation = ContainerColorPresentation()
         presentation.open(projectID: project, anchor: dot)
-        let pick = try #require(presentation.pick(7))
+        let pick = try #require(presentation.pick(paletteIndex))
         #expect(pick.projectID == project)
-        #expect(pick.paletteIndex == 7)
+        #expect(pick.paletteIndex == paletteIndex)
         #expect(presentation.request == nil)
         #expect(presentation.pick(2) == nil, "nothing open, nothing to apply")
     }

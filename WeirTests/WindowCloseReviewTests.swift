@@ -38,16 +38,20 @@ extension WindowCloseTests {
         let fixture = try Fixture()
         let toasts = ToastCenter()
         fixture.tidiesOnClose(into: toasts)
-        var tookBack = false
-        let restore = ToastItem(.codeRestored(turnNumber: 3)) { tookBack = true }
+        var undoCount = 0
+        let restore = ToastItem(.codeRestored(turnNumber: 3)) { undoCount += 1 }
         toasts.show(restore, in: fixture.other.id)
 
         fixture.close(fixture.other)
 
         #expect(toasts.current(in: fixture.other.id) == nil)
         #expect(toasts.current(in: fixture.primary.id)?.id == restore.id)
+        toasts.undo(in: fixture.other.id)
+        #expect(undoCount == 0)
         toasts.undo(in: fixture.primary.id)
-        #expect(tookBack)
+        #expect(undoCount == 1)
+        toasts.undo(in: fixture.primary.id)
+        #expect(undoCount == 1)
     }
 
     @Test func theClosedToast_doesNotCoverAnUndoToastInTheWindowLeft() throws {
@@ -108,14 +112,16 @@ extension WindowCloseTests {
         fixture.close(fixture.other)
 
         #expect(toasts.current(in: fixture.primary.id)?.id == moving.id)
+        #expect(toasts.current(in: fixture.other.id) == nil)
     }
 
     @Test func withAnUndoToastInBothWindows_theOneInTheWindowLeftStays() throws {
         let fixture = try Fixture()
         let toasts = ToastCenter()
         fixture.tidiesOnClose(into: toasts)
-        let kept = ToastItem(.codeRestored(turnNumber: 3)) {}
-        let moving = ToastItem(.codeRestored(turnNumber: 4)) {}
+        var undone: [Int] = []
+        let kept = ToastItem(.codeRestored(turnNumber: 3)) { undone.append(3) }
+        let moving = ToastItem(.codeRestored(turnNumber: 4)) { undone.append(4) }
         toasts.show(kept, in: fixture.primary.id)
         toasts.show(moving, in: fixture.other.id)
 
@@ -123,6 +129,8 @@ extension WindowCloseTests {
 
         #expect(toasts.current(in: fixture.primary.id)?.id == kept.id)
         #expect(toasts.current(in: fixture.other.id) == nil)
+        toasts.undo(in: fixture.primary.id)
+        #expect(undone == [3])
     }
 
     @Test func aClosedWindowsReviewWithoutAComment_closes_butKeepsItsDiscards() throws {

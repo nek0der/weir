@@ -47,6 +47,7 @@ struct WeirPathsBuildIdentityTests {
         let identity = WeirPaths.buildIdentity(bundleID: "com.nekoder.Weir.dev", bundlePath: firstWorktree)
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
 
+        #expect(!identity.isEmpty)
         #expect(identity.unicodeScalars.allSatisfy { allowed.contains($0) })
         #expect(identity.count <= 128)
     }

@@ -483,32 +483,29 @@ struct AgentShimLaunchTests {
         try withTempDir { directory in
             let helper = try AgentCatalogFixture.shimFolder("agent-shim").appendingPathComponent("runtime-common.sh")
             let inherited = "11111111-1111-1111-1111-111111111111"
-            let output = directory.appendingPathComponent("ids")
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = ["-c", """
-            . "$HELPER"
-            weir_ensure_run_id
-            first="$WEIR_AGENT_RUN_ID"
-            [ "$WEIR_AGENT_PARENT_RUN_ID" = "$INHERITED" ] || exit 1
-            printf '%s\\n' "$first" > "$OUT"
-            weir_ensure_run_id
-            [ "$WEIR_AGENT_PARENT_RUN_ID" = "$first" ] || exit 1
-            printf '%s\\n' "$WEIR_AGENT_RUN_ID" >> "$OUT"
-            """]
-            process.environment = IsolatedProcessEnvironment.make([
-                "PATH": ShimHarness.systemPath,
-                "HOME": directory.path,
-                "HELPER": helper.path,
-                "OUT": output.path,
-                "WEIR_AGENT_RUN_ID": inherited,
-                "INHERITED": inherited
-            ])
-            process.standardOutput = FileHandle.nullDevice
-            try process.run()
-            #expect(process.waitUntilExit(within: 10))
-            #expect(process.terminationStatus == 0)
-            let ids = try String(contentsOf: output, encoding: .utf8).split(separator: "\n").map(String.init)
+            let output = try TestProcess.run(
+                URL(fileURLWithPath: "/bin/sh"),
+                arguments: ["-c", """
+                . "$HELPER"
+                weir_ensure_run_id
+                first="$WEIR_AGENT_RUN_ID"
+                [ "$WEIR_AGENT_PARENT_RUN_ID" = "$INHERITED" ] || exit 1
+                printf '%s\\n' "$first"
+                weir_ensure_run_id
+                [ "$WEIR_AGENT_PARENT_RUN_ID" = "$first" ] || exit 1
+                printf '%s\\n' "$WEIR_AGENT_RUN_ID"
+                """],
+                environment: IsolatedProcessEnvironment.make([
+                    "PATH": ShimHarness.systemPath,
+                    "HOME": directory.path,
+                    "HELPER": helper.path,
+                    "WEIR_AGENT_RUN_ID": inherited,
+                    "INHERITED": inherited
+                ])
+            )
+            try #require(output.ending == .exited)
+            try #require(output.status == 0, "\(output.stderrText)")
+            let ids = output.stdoutText.split(separator: "\n").map(String.init)
             #expect(ids.count == 2)
             #expect(ids.allSatisfy { UUID(uuidString: $0) != nil })
             #expect(Set(ids).count == 2)
@@ -521,35 +518,32 @@ struct AgentShimLaunchTests {
         let helper = try #require(HookHelperFixture.helperURL)
         try withTempDir { directory in
             let common = try AgentCatalogFixture.shimFolder("agent-shim").appendingPathComponent("runtime-common.sh")
-            let output = directory.appendingPathComponent("orders")
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = ["-c", """
-            . "$COMMON"
-            weir_ensure_run_id
-            printf '%s\\n' "$WEIR_AGENT_LAUNCH_ORDER" > "$OUT"
-            weir_ensure_run_id
-            printf '%s\\n' "$WEIR_AGENT_LAUNCH_ORDER" >> "$OUT"
-            """]
-            process.environment = IsolatedProcessEnvironment.make([
-                "PATH": ShimHarness.systemPath,
-                "HOME": directory.path,
-                "COMMON": common.path,
-                "OUT": output.path,
-                "WEIR_HOOK_HELPER": helper.path,
-                "WEIR_AGENT_LAUNCH_ORDER": "18446744073709551615"
-            ])
-            process.standardOutput = FileHandle.nullDevice
-            try process.run()
-            #expect(process.waitUntilExit(within: 10))
-            #expect(process.terminationStatus == 0)
-            let orders = try String(contentsOf: output, encoding: .utf8).split(separator: "\n").compactMap { UInt64($0) }
-            #expect(orders.count == 2)
-            if orders.count == 2 {
-                #expect(orders[0] > 0)
-                #expect(orders[1] > orders[0])
-                #expect(orders[1] != UInt64.max)
-            }
+            let output = try TestProcess.run(
+                URL(fileURLWithPath: "/bin/sh"),
+                arguments: ["-c", """
+                . "$COMMON"
+                weir_ensure_run_id
+                printf '%s\\n' "$WEIR_AGENT_LAUNCH_ORDER"
+                weir_ensure_run_id
+                printf '%s\\n' "$WEIR_AGENT_LAUNCH_ORDER"
+                """],
+                environment: IsolatedProcessEnvironment.make([
+                    "PATH": ShimHarness.systemPath,
+                    "HOME": directory.path,
+                    "COMMON": common.path,
+                    "WEIR_HOOK_HELPER": helper.path,
+                    "WEIR_AGENT_LAUNCH_ORDER": "18446744073709551615"
+                ])
+            )
+            try #require(output.ending == .exited)
+            try #require(output.status == 0, "\(output.stderrText)")
+            let lines = output.stdoutText.split(separator: "\n")
+            try #require(lines.count == 2)
+            let first = try #require(UInt64(lines[0]))
+            let second = try #require(UInt64(lines[1]))
+            #expect(first > 0)
+            #expect(second > first)
+            #expect(second != UInt64.max)
         }
     }
 

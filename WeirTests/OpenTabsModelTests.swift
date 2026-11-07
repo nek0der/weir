@@ -70,7 +70,11 @@ struct OpenTabsModelTests {
     }
 
     @Test func noReview_meansNoReviewRow() {
-        #expect(Self.model([Self.input(title: "zsh")]).reviewRow == nil)
+        let tab = UUID()
+        let model = Self.model([Self.input(id: tab, title: "zsh")], active: tab)
+        #expect(model.reviewRow == nil)
+        #expect(model.rows.map(\.id) == [.terminal(tab)])
+        #expect(model.rows.map(\.isCurrent) == [true])
     }
 
     @Test func aRowsLine_saysWhoRunsInIt_itsState_andTheSplitTabsPanes() {
@@ -97,12 +101,11 @@ struct OpenTabsModelTests {
     /// shows; the review's row, its scope and that it is the review.
     @Test func aRowsSpokenLabel_isTheTabs_withTheSplitTabsPanes() throws {
         let model = Self.model([Self.input(title: "Two shells", paneCount: 2)], reviewTab: .behind)
-        let item = try #require(model.terminalRows[0].item)
+        let row = try #require(model.terminalRows.first)
+        let item = try #require(row.item)
         let tabs = item.spokenLabel(locale: Self.english)
-        #expect(model.terminalRows[0].spokenLabel.hasPrefix(tabs))
-        #expect(model.terminalRows[0].spokenLabel.hasSuffix("2 panes"))
-        #expect(model.reviewRow?.spokenLabel.hasPrefix("T12") == true)
-        #expect(model.reviewRow?.spokenLabel.hasSuffix("Review") == true)
+        #expect(row.spokenLabel == AgentStatusText.spokenList([tabs, "2 panes"], locale: Self.english))
+        #expect(model.reviewRow?.spokenLabel == AgentStatusText.spokenList(["T12", "Review"], locale: Self.english))
     }
 
     /// Every word typed must be in the title or the line, in any case: a
@@ -122,6 +125,7 @@ struct OpenTabsModelTests {
         #expect(titles("APPROVAL") == ["Fix the tests"])
         #expect(titles("tests") == ["Fix the tests", "Review the tests"])
         #expect(titles("codex tests") == ["Review the tests"])
+        #expect(titles("  TESTS\tCODEX  ") == ["Review the tests"])
         #expect(titles("review") == ["Review the tests", "T12"])
         #expect(titles("nothing like it") == [])
     }

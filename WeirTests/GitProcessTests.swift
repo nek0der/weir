@@ -23,11 +23,9 @@ struct GitProcessSmokeTests {
     @Test
     func removeWorktree_withInitializedSubmodule_requiresForce() async throws {
         let repository = try await TempGitRepo.make()
+        defer { repository.cleanup() }
         let submodule = try await TempGitRepo.make()
-        defer {
-            repository.cleanup()
-            submodule.cleanup()
-        }
+        defer { submodule.cleanup() }
 
         let addSubmodule = try await GitProcess.run(
             [
@@ -49,12 +47,9 @@ struct GitProcessSmokeTests {
         )
         try #require(initialize.succeeded, "git submodule update failed: \(initialize.stderr)")
         let linkedSubmodule = linkedPath.appendingPathComponent("deps/submodule")
+        try await TempGitRepo.configureForTests(linkedSubmodule)
         let localCommit = try await GitProcess.run(
-            [
-                "-c", "user.name=Weir Tests",
-                "-c", "user.email=tests@weir.invalid",
-                "commit", "--allow-empty", "-m", "Local-only submodule commit"
-            ],
+            ["commit", "--allow-empty", "-m", "Local-only submodule commit"],
             cwd: linkedSubmodule
         )
         try #require(localCommit.succeeded, "local submodule commit failed: \(localCommit.stderr)")
@@ -89,9 +84,16 @@ struct GitProcessSmokeTests {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
         try await repo.git(["branch", "develop"])
-        // Whatever git makes of "-D" as a name, it is not `git branch -D develop`.
-        _ = try await LiveGit().createBranch(repoRoot: repo.url, name: "-D", startPoint: "develop")
-        #expect(try await LiveGit().createBranch(repoRoot: repo.url, name: "kept", startPoint: "develop").succeeded)
+        let tip = try await repo.git(["rev-parse", "--verify", "refs/heads/develop"])
+        let git = LiveGit()
+
+        let invalid = try await git.createBranch(repoRoot: repo.url, name: "-D", startPoint: "develop")
+
+        #expect(!invalid.succeeded)
+        #expect(invalid.stderr.contains("not a valid branch name"))
+        #expect(try await repo.git(["rev-parse", "--verify", "refs/heads/develop"]) == tip)
+        try #require(try await git.createBranch(repoRoot: repo.url, name: "kept", startPoint: "develop").succeeded)
+        #expect(try await repo.git(["rev-parse", "--verify", "refs/heads/kept"]) == tip)
     }
 
     /// A tag of the same name turns git's short name for the branch into
@@ -170,7 +172,7 @@ struct GitProcessDeadlineTests {
             let script = directory.appendingPathComponent("git")
             try """
             #!/bin/sh
-            sh -c 'trap "" TERM; echo $$ > "$1.tmp"; mv "$1.tmp" "$1"; while :; do sleep 1; done' hook '\(pidFile.path)' &
+            sh -c 'trap "" TERM; echo $$ > "$1.tmp"; mv "$1.tmp" "$1"; sleep 30; :' hook '\(pidFile.path)' &
             sleep 30
             """.write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
@@ -193,53 +195,42 @@ struct GitProcessDeadlineTests {
         }
     }
 
-    @Test func aTimeout_saysHowLongGitHad() {
-        let message = GitProcessError.timedOut(seconds: 60).message
-        #expect(message.resolved(in: Locale(identifier: "en")) == "git didn’t finish within 60 seconds.")
-        #expect(message.resolved(in: Locale(identifier: "ja")) == "git が 60 秒以内に完了しませんでした。")
-    }
-
-    @Test func aOneSecondTimeout_saysSecondInTheSingular() {
-        let message = GitProcessError.timedOut(seconds: 1).message
-        #expect(message.resolved(in: Locale(identifier: "en")) == "git didn’t finish within 1 second.")
-        #expect(message.resolved(in: Locale(identifier: "ja")) == "git が 1 秒以内に完了しませんでした。")
+    @Test(arguments: [1, 60])
+    func aTimeout_saysHowLongGitHad(_ seconds: Int) {
+        let message = GitProcessError.timedOut(seconds: seconds).message
+        let unit = seconds == 1 ? "second" : "seconds"
+        #expect(message.resolved(in: Locale(identifier: "en")) == "git didn’t finish within \(seconds) \(unit).")
+        #expect(message.resolved(in: Locale(identifier: "ja")) == "git が \(seconds) 秒以内に完了しませんでした。")
     }
 }
 
 @Suite("GitProcess resolveMainCheckout", .tags(.smoke))
 struct GitProcessResolveMainCheckoutTests {
 
-    @Test
-    func resolveMainCheckout_returnsURLUnchanged_forNonGitDirectory() async throws {
-        try await withTempDir { tmp in
-            let resolved = await GitProcess.resolveMainCheckout(of: tmp)
+    enum Selection: CaseIterable {
+        case nonRepository
+        case mainRoot
+        case mainSubdirectory
+    }
 
-            #expect(resolved.standardizedFileURL == tmp.standardizedFileURL)
+    @Test(arguments: Selection.allCases)
+    func resolveMainCheckout_keepsSelectionsOutsideLinkedWorktreeRoots(_ selection: Selection) async throws {
+        let repo = try await TempGitRepo.make()
+        defer { repo.cleanup() }
+        let selected: URL
+        switch selection {
+        case .nonRepository:
+            selected = repo.scratch.appendingPathComponent("unrelated", isDirectory: true)
+            try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: false)
+        case .mainRoot:
+            selected = repo.url
+        case .mainSubdirectory:
+            selected = repo.url.appendingPathComponent("src", isDirectory: true)
+            try FileManager.default.createDirectory(at: selected, withIntermediateDirectories: false)
         }
-    }
 
-    @Test
-    func resolveMainCheckout_returnsURLUnchanged_forMainCheckoutRoot() async throws {
-        let repo = try await TempGitRepo.make()
-        defer { repo.cleanup() }
-
-        let resolved = await GitProcess.resolveMainCheckout(of: repo.url)
-
-        #expect(resolved.standardizedFileURL == repo.url.standardizedFileURL)
-    }
-
-    @Test
-    func resolveMainCheckout_returnsURLUnchanged_forSubdirectoryOfMainCheckout() async throws {
-        let repo = try await TempGitRepo.make()
-        defer { repo.cleanup() }
-        let subdir = repo.url.appendingPathComponent("src")
-        try FileManager.default.createDirectory(at: subdir, withIntermediateDirectories: true)
-
-        let resolved = await GitProcess.resolveMainCheckout(of: subdir)
-
-        // Subdirectories under a working tree are an intentional
-        // anchor — the resolver must not promote them.
-        #expect(resolved.standardizedFileURL == subdir.standardizedFileURL)
+        let resolved = await GitProcess.resolveMainCheckout(of: selected)
+        #expect(resolved == selected)
     }
 
     @Test
@@ -247,10 +238,13 @@ struct GitProcessResolveMainCheckoutTests {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
         let linkedPath = try await repo.addLinkedWorktree(branch: "feature")
+        let subdirectory = linkedPath.appendingPathComponent("src", isDirectory: true)
+        try FileManager.default.createDirectory(at: subdirectory, withIntermediateDirectories: false)
 
         let resolved = await GitProcess.resolveMainCheckout(of: linkedPath)
 
         #expect(resolved.standardizedFileURL == repo.url.standardizedFileURL)
+        #expect(await GitProcess.resolveMainCheckout(of: subdirectory) == subdirectory)
     }
 }
 
@@ -268,9 +262,8 @@ struct GitProcessEnvironmentTests {
         return GitExecutable(url: script, leadingArguments: [])
     }
 
-    /// A repository's own `core.fsmonitor` program is not started, and
-    /// the variables the caller gives reach git.
-    @Test func aRun_turnsOffFsmonitor_andPassesTheGivenVariables() async throws {
+    /// The invocation places our fsmonitor override before the Git subcommand.
+    @Test func aRun_passesFsmonitorOverride_andGivenVariables() async throws {
         try await withTempDir { directory in
             let record = directory.appendingPathComponent("record")
             let git = try writeRecordingGit(in: directory, record: record)
@@ -327,30 +320,29 @@ struct GitExecutableLocateTests {
         }
     }
 
-    /// Opened from the Dock, the app has launchd's `PATH`: a git in a
-    /// well-known install folder wins over the one in `/usr/bin`.
-    @Test func withLaunchdsPath_aWellKnownFolderWins() throws {
-        try withTempDir { root in
-            let folders = try gitFolders(["homebrew"], in: root)
-            let found = GitExecutable.locate(inheritedPath: "/usr/bin:/bin:/usr/sbin:/sbin", wellKnownDirectories: folders)
-            #expect(found.path == folders[0] + "/git")
-        }
+    enum SearchPath: CaseIterable {
+        case launchd
+        case terminal
+        case noCandidate
     }
 
-    /// Opened from a terminal, the app has that terminal's `PATH`, and its
-    /// order wins.
-    @Test func withATerminalsPath_itsOrderWins() throws {
+    @Test(arguments: SearchPath.allCases)
+    func locate_usesTheSearchOrderForTheInheritedPath(_ searchPath: SearchPath) throws {
         try withTempDir { root in
-            let folders = try gitFolders(["chosen", "homebrew"], in: root)
-            let found = GitExecutable.locate(inheritedPath: folders[0] + ":/usr/bin", wellKnownDirectories: [folders[1]])
-            #expect(found.path == folders[0] + "/git")
-        }
-    }
-
-    @Test func withNoGitAnywhere_itIsTheSystemsGit() throws {
-        try withTempDir { root in
-            let found = GitExecutable.locate(inheritedPath: root.path, wellKnownDirectories: [])
-            #expect(found.path == "/usr/bin/git")
+            switch searchPath {
+            case .launchd:
+                let folders = try gitFolders(["homebrew"], in: root)
+                let found = GitExecutable.locate(inheritedPath: "/usr/bin:/bin:/usr/sbin:/sbin", wellKnownDirectories: folders)
+                #expect(found.path == folders[0] + "/git")
+            case .terminal:
+                let folders = try gitFolders(["homebrew", "a", "z"], in: root)
+                let path = [folders[2], folders[1], "/usr/bin"].joined(separator: ":")
+                let found = GitExecutable.locate(inheritedPath: path, wellKnownDirectories: [folders[0]])
+                #expect(found.path == folders[2] + "/git")
+            case .noCandidate:
+                let found = GitExecutable.locate(inheritedPath: root.path, wellKnownDirectories: [])
+                #expect(found.path == "/usr/bin/git")
+            }
         }
     }
 }

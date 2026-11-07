@@ -41,16 +41,14 @@ struct ChangesPanelTextTests {
         #expect(ConversationText.name(Self.codex, locale: Self.english) == "Codex", "the kind alone names it")
     }
 
-    @Test func eachConversation_saysWhereItRuns() {
+    @Test func conversationState_namesItsTabAndWorkspace() {
         #expect(ConversationText.state(Self.first, locale: Self.english) == "Running in the “claude” tab")
         #expect(ConversationText.state(Self.first, locale: Self.japanese) == "「claude」タブで実行中")
         #expect(ConversationText.state(Self.second, locale: Self.english) == "Ended")
         #expect(ConversationText.state(Self.second, locale: Self.japanese) == "終了", "a label, not a sentence")
         #expect(ConversationText.state(Self.untitled, locale: Self.english) == "Running", "no empty quotes")
         #expect(ConversationText.state(Self.untitled, locale: Self.japanese) == "実行中")
-    }
 
-    @Test func aConversationRunInAnotherWorkspace_saysWhere() {
         func run(in place: CheckoutName.Place?) -> ConversationChoice {
             ConversationChoice(
                 conversation: TurnSummaryFixture.conversation("away"),
@@ -64,6 +62,7 @@ struct ChangesPanelTextTests {
         #expect(ConversationText.state(run(in: .scratch), locale: Self.japanese) == "スクラッチの「claude」タブで実行中")
         #expect(ConversationText.state(run(in: .named("beta")), locale: Self.english) == "Running in the “claude” tab in beta")
         #expect(ConversationText.state(run(in: .named("beta")), locale: Self.japanese) == "beta の「claude」タブで実行中")
+        #expect(ConversationText.state(run(in: nil), locale: Self.english) == "Running in the “claude” tab")
         #expect(
             ConversationText.state(run(in: nil), locale: Self.japanese) == "「claude」タブで実行中",
             "a workspace whose project is gone is not said to be the scratch tabs"
@@ -74,19 +73,26 @@ struct ChangesPanelTextTests {
         )
     }
 
-    /// VoiceOver reads the filter's trigger as its menu item reads: a
-    /// titled conversation with its agent, so a Claude and a Codex
-    /// conversation of one title read apart.
-    @Test func theFilter_spokenLabel_namesATitledConversationWithItsAgent() {
-        var titled = Self.codex
-        titled.title = "Fix tests"
-        let conversations = [Self.first, titled]
+    @Test func filterAccessibilityText_distinguishesProvidersWithTheSameTitle() {
+        let claude = ConversationChoice(
+            conversation: TurnSummaryFixture.conversation("same-title-claude"),
+            title: "Fix tests", ordinal: nil, unviewedCount: 0
+        )
+        var codex = Self.codex
+        codex.title = "Fix tests"
+        let conversations = [claude, codex, Self.first]
 
-        #expect(ChangesPanelText.filterLabel(titled.conversation, among: conversations, locale: Self.english) == "Fix tests")
-        #expect(ChangesPanelText.filterSpokenLabel(titled.conversation, among: conversations, locale: Self.english) == "Codex, Fix tests")
-        #expect(ChangesPanelText.filterSpokenLabel(titled.conversation, among: conversations, locale: Self.japanese) == "Codex、Fix tests")
+        for titled in [claude, codex] {
+            #expect(ChangesPanelText.filterLabel(titled.conversation, among: conversations, locale: Self.english) == "Fix tests")
+            #expect(ChangesPanelText.filterLabel(titled.conversation, among: conversations, locale: Self.japanese) == "Fix tests")
+        }
+        #expect(ChangesPanelText.filterSpokenLabel(claude.conversation, among: conversations, locale: Self.english) == "Claude, Fix tests")
+        #expect(ChangesPanelText.filterSpokenLabel(claude.conversation, among: conversations, locale: Self.japanese) == "Claude、Fix tests")
+        #expect(ChangesPanelText.filterSpokenLabel(codex.conversation, among: conversations, locale: Self.english) == "Codex, Fix tests")
+        #expect(ChangesPanelText.filterSpokenLabel(codex.conversation, among: conversations, locale: Self.japanese) == "Codex、Fix tests")
         #expect(ChangesPanelText.filterSpokenLabel(Self.first.conversation, among: conversations, locale: Self.english) == "Claude #1")
         #expect(ChangesPanelText.filterSpokenLabel(nil, among: conversations, locale: Self.english) == "All")
+        #expect(ChangesPanelText.filterSpokenLabel(nil, among: conversations, locale: Self.japanese) == "すべて")
     }
 
     /// A section heading says whether it is folded and its conversation's
@@ -264,15 +270,30 @@ struct ChangesPanelTextTests {
     @Test func aRowsReply_endsItsTooltipAndItsSentence() throws {
         var extras = TurnSummaryFixture.Extras()
         extras.promptHead = "Add the tests"
-        extras.replyHead = "Added two tests."
         extras.finishedAt = "2026-10-12T00:03:05Z"
-        let turn = try TurnSummaryFixture.turn("T4", number: 4, extras: extras)
-        let row = ChangesPanelModel.Row(turn: turn, status: .viewed, isViewed: true, isSelectable: true, action: .markUnviewedFrom)
+        func row(_ extras: TurnSummaryFixture.Extras) throws -> ChangesPanelModel.Row {
+            let turn = try TurnSummaryFixture.turn("T4", number: 4, extras: extras)
+            return ChangesPanelModel.Row(turn: turn, status: .viewed, isViewed: true, isSelectable: true, action: .markUnviewedFrom)
+        }
+        let withoutReply = try row(extras)
+        extras.replyHead = "Added two tests."
+        let withReply = try row(extras)
         let utc = try #require(TimeZone(identifier: "UTC"))
 
-        #expect(ChangesPanelText.help(row, locale: Self.japanese, timeZone: utc).hasSuffix("終了 0:03\n\n返答：Added two tests."))
-        #expect(ChangesPanelFixture.plainSpaces(ChangesPanelText.rowSpoken(row, locale: Self.english, timeZone: utc))?
-            .hasSuffix("12:00 AM, Reply: Added two tests.") == true)
+        let help = ChangesPanelText.help(withoutReply, locale: Self.japanese, timeZone: utc)
+        #expect(help.hasSuffix("終了 0:03"))
+        #expect(!help.contains("返答"))
+        #expect(ChangesPanelText.help(withReply, locale: Self.japanese, timeZone: utc) == help + "\n\n返答：Added two tests.")
+
+        let spoken = try #require(ChangesPanelFixture.plainSpaces(ChangesPanelText.rowSpoken(
+            withoutReply,
+            locale: Self.english,
+            timeZone: utc
+        )))
+        #expect(spoken.hasSuffix("12:00 AM"))
+        #expect(!spoken.contains("Reply:"))
+        #expect(ChangesPanelFixture.plainSpaces(ChangesPanelText.rowSpoken(withReply, locale: Self.english, timeZone: utc))
+            == spoken + ", Reply: Added two tests.")
     }
 
     /// The card names the first refused action and counts the rest, and the
@@ -326,6 +347,11 @@ struct ChangesPanelTextTests {
         )
         #expect(ChangesPanelText.action(.markViewedThrough, movesOtherLines: true, locale: Self.english)
             == "Mark All Conversations as Viewed up to Here")
+        #expect(ChangesPanelText.action(.markUnviewedFrom, locale: Self.english) == "Mark as Unviewed from Here")
+        #expect(ChangesPanelText.action(.markUnviewedFrom, movesOtherLines: true, locale: Self.english)
+            == "Mark All Conversations as Unviewed from Here")
+        #expect(ChangesPanelText.action(.markUnviewedFrom, locale: Self.japanese) == "ここから未確認にする")
+        #expect(ChangesPanelText.action(.markUnviewedFrom, movesOtherLines: true, locale: Self.japanese) == "すべての会話をここから未確認にする")
         // One conversation: the decision bar's name, as the two read the
         // same turns. Two or more: the panel's says it reads all of them.
         #expect(ChangesPanelText.reviewUnviewed(isAcrossConversations: false, locale: Self.english) == "Review Unviewed")

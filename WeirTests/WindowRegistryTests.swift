@@ -47,6 +47,7 @@ struct WindowRegistryTests {
         #expect(selection.shownProjectID == fixture.second.id)
         #expect(selection.activeContainerID == .project(fixture.second.id))
         #expect(selection.activeTabID == nil)
+        #expect(fixture.session.tabs(in: .project(fixture.second.id)).isEmpty)
         // The project left keeps what the window showed of it.
         #expect(fixture.session.projectViews[fixture.first.id] != nil)
     }
@@ -85,12 +86,16 @@ struct WindowRegistryTests {
     @Test func aProjectShownForTheFirstTime_opensOnTheSessionLastUsed() {
         let fixture = Fixture()
         fixture.registry.connectProjectSwitching(of: fixture.session)
+        let container = ContainerID.project(fixture.second.id)
+        fixture.session.openTab(container: container, in: fixture.registry.primary.id, intent: .person, selects: false)
         let tab = fixture.session.openTab(
-            container: .project(fixture.second.id),
+            container: container,
             in: fixture.registry.primary.id,
             intent: .person,
             selects: false
         )
+        fixture.session.openTab(container: container, in: fixture.registry.primary.id, intent: .person, selects: false)
+        fixture.session.rememberLastActive(tabID: tab.id, container: container)
         fixture.session.openTab(container: .project(fixture.first.id))
 
         fixture.registry.show(project: fixture.second.id, in: fixture.session, from: fixture.registry.primary, intent: .person)
@@ -287,25 +292,30 @@ extension WindowRegistryTests {
         #expect(!registry.perform(.toggleAllProjects, in: WindowID()), "a window that is not open")
     }
 
-    @Test func aCommandOneViewTook_isNotHandedToTheNext() {
+    @Test func aCommandOneViewTook_isHandledOnceInItsOwnWindow() {
         let registry = WindowRegistry(primary: WindowSelection())
-        var takers: [String] = []
-        let first = registry.primary.commands.requests.sink { request in
-            guard !request.isTaken else { return }
-            takers.append("first")
-            request.take()
+        let other = registry.addWindow(WindowID())
+        var handled: [WindowCommand] = []
+        var receivedElsewhere: [WindowCommand] = []
+        let subscriptions = (0..<2).map { _ in
+            registry.primary.commands.requests.sink { request in
+                guard !request.isTaken else { return }
+                handled.append(request.command)
+                request.take()
+            }
         }
-        let second = registry.primary.commands.requests.sink { request in
-            guard !request.isTaken else { return }
-            takers.append("second")
-            request.take()
+        let elsewhere = other.commands.requests.sink { request in
+            receivedElsewhere.append(request.command)
         }
         defer {
-            first.cancel()
-            second.cancel()
+            for subscription in subscriptions {
+                subscription.cancel()
+            }
+            elsewhere.cancel()
         }
 
         #expect(registry.perform(.focusSidebar, in: registry.primary.id))
-        #expect(takers.count == 1)
+        #expect(handled == [.focusSidebar])
+        #expect(receivedElsewhere.isEmpty)
     }
 }

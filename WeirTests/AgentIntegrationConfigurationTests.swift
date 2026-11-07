@@ -44,10 +44,16 @@ struct AgentIntegrationConfigurationTests {
         #expect(CodexHookInstaller.bundledHookHelper()?.lastPathComponent == AgentIntegrationConfiguration.hookHelperExecutableName)
     }
 
-    /// The Hook Helper's signing identifier is the first requester the
-    /// service accepts, as the registrar validated it by before it had a name.
-    @Test func hookHelperIdentifier_isTheFirstRequester() {
-        #expect(AgentIntegrationConfiguration.requesterIdentifiers.first == AgentIntegrationConfiguration.hookHelperIdentifier)
-        #expect(AgentIntegrationConfiguration.hookHelperIdentifier.hasPrefix("com.nekoder.weir.AgentIntegrationHookHelper"))
+    @Test func requesterIdentifiers_matchTheBuildsSigningPolicy() {
+        #if DEBUG
+            #expect(AgentIntegrationConfiguration.hookHelperIdentifier == "com.nekoder.weir.AgentIntegrationHookHelper.dev")
+            #expect(Set(AgentIntegrationConfiguration.requesterIdentifiers) == [
+                "com.nekoder.weir.AgentIntegrationHookHelper.dev",
+                "com.nekoder.weir.AgentIntegrationRequesterProbe.dev"
+            ])
+        #else
+            #expect(AgentIntegrationConfiguration.hookHelperIdentifier == "com.nekoder.weir.AgentIntegrationHookHelper")
+            #expect(Set(AgentIntegrationConfiguration.requesterIdentifiers) == ["com.nekoder.weir.AgentIntegrationHookHelper"])
+        #endif
     }
 }

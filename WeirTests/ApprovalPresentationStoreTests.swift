@@ -18,32 +18,49 @@ struct ApprovalPresentationStoreTests {
             header: "Color", prompt: "Which color?", options: [.init(label: "Red", description: nil)], isMultiSelect: false
         )])
         store.receive([request])
-        store.resolve(request, .answer(["Which color?": "Red"]))
+        let answer = ApprovalResolution.answer(["Which color?": "Red"])
+        store.resolve(request, answer)
         await recorded.waitForCount(1)
         await store.waitUntilResolved(request)
-        #expect(await recorded.entries.map(\.resolution) == [.answer(["Which color?": "Red"])])
-        #expect(!store.resolvingIDs.contains(request.id))
+        let sent = await recorded.entries
+        #expect(sent.map(\.id) == [request.id])
+        #expect(sent.map(\.resolution) == [answer])
+        #expect(store.resolvingIDs.isEmpty)
+        #expect(store.ledger.entry(for: request)?.state == .answered(answer))
+    }
+
+    private struct Offline: Error, CustomStringConvertible {
+        let description = "offline"
     }
 
     @Test func resolve_failure_clearsResolvingState() async {
-        struct Failure: Error {}
-        let store = ApprovalPresentationStore(decisionSender: { _, _ in throw Failure() })
+        let recorded = DecisionRecorder()
+        let store = ApprovalPresentationStore(decisionSender: { request, resolution in
+            await recorded.append(request.id, resolution)
+            throw Offline()
+        })
         let request = approval(epoch: UUID())
         store.receive([request])
         store.resolve(request, .allowOnce)
         await store.waitUntilResolved(request)
-        #expect(!store.resolvingIDs.contains(request.id))
+        let sent = await recorded.entries
+        #expect(sent.map(\.id) == [request.id])
+        #expect(sent.map(\.resolution) == [.allowOnce])
+        #expect(store.resolvingIDs.isEmpty)
         #expect(store.lastFailureID == request.id)
+        #expect(store.ledger.entry(for: request)?.state == .sendFailed(.allowOnce, error: "offline"))
+        #expect(store.opensCard(request.key))
     }
 
     @Test func resolve_keepsTheFailureOfAnotherRequest() async {
-        struct Failure: Error {}
+        let recorded = DecisionRecorder()
         let failing = approval(epoch: UUID())
         let succeeding = approval(epoch: failing.epoch)
         let failingID = failing.id
-        let store = ApprovalPresentationStore(decisionSender: { approval, _ in
+        let store = ApprovalPresentationStore(decisionSender: { approval, resolution in
+            await recorded.append(approval.id, resolution)
             if approval.id == failingID {
-                throw Failure()
+                throw Offline()
             }
         })
         store.receive([failing, succeeding])
@@ -52,8 +69,13 @@ struct ApprovalPresentationStoreTests {
         await store.waitUntilResolved(failing)
         #expect(store.lastFailureID == failing.id)
 
-        store.resolve(succeeding, .allowOnce)
+        store.resolve(succeeding, .deny)
         await store.waitUntilResolved(succeeding)
+        let sent = await recorded.entries
+        #expect(sent.map(\.id) == [failing.id, succeeding.id])
+        #expect(sent.map(\.resolution) == [.allowOnce, .deny])
+        #expect(store.ledger.entry(for: succeeding)?.state == .answered(.deny))
+        #expect(store.ledger.entry(for: failing)?.state == .sendFailed(.allowOnce, error: "offline"))
         #expect(store.lastFailureID == failing.id)
     }
 
@@ -86,16 +108,16 @@ struct ApprovalPresentationStoreTests {
 
     // MARK: - The run and pane a request belongs to, its wait, and its card
 
-    @Test func aTmuxRunsRequest_isPlacedWhereTheRunIsAttachedNow() {
+    @Test func aTmuxRunsRequest_isPlacedWhereTheRunIsAttachedNow() throws {
         // A tmux run writes no session hint; its request goes to the pane its
         // tmux pane is open in, not the one it started in.
         let store = ApprovalPresentationStore(decisionSender: { _, _ in })
         let (session, _, launchPane) = WorkspaceSessionFixture.withLooseTab()
         let attachedTab = session.openTab(container: .loose)
-        let attachedPane = attachedTab.splitTree.allLeafIDs().first
+        let attachedPane = try #require(attachedTab.splitTree.allLeafIDs().first)
         let run = AgentRuntimePresentation.test(
             badge: AgentBadge(state: .needsInput, updatedAt: Date()),
-            paneIDs: Set([attachedPane].compactMap(\.self)),
+            paneIDs: [attachedPane],
             sessionID: "session"
         )
         let epoch = UUID()
@@ -126,9 +148,10 @@ struct ApprovalPresentationStoreTests {
         episode: String = "w1",
         panes: Set<UUID>,
         sessionID: String? = "session",
-        sessionStartedAt: Date? = nil
+        sessionStartedAt: Date? = nil,
+        updatedAt: Date = Date()
     ) -> AgentRuntimePresentation {
-        var badge = AgentBadge(state: state, updatedAt: Date())
+        var badge = AgentBadge(state: state, updatedAt: updatedAt)
         badge.sessionStartedAt = sessionStartedAt
         return AgentRuntimePresentation.test(
             kind: kind,
@@ -180,20 +203,23 @@ struct ApprovalPresentationStoreTests {
         #expect(!store.isWaitOfRequest(runtimeID: waiting.id, episodeToken: "w1", in: session))
     }
 
-    @Test func aRunsWait_belongsToItsOldestListedRequest() {
-        // Two requests of one run at once (parallel tools) share its one wait.
+    @Test func aRunsWait_belongsToItsOldestListedRequest() throws {
         let (session, _, paneID) = WorkspaceSessionFixture.withLooseTab()
-        let (store, first) = Self.storeWithRequest(in: session)
-        let epoch = first.epoch
-        let second = ApprovalPresentation.test(epoch: epoch, sessionID: "session", toolName: "Edit")
-        store.apply(
-            ApprovalControllerConnection.Projection(
-                sequence: 2, requests: [first, second], terminals: [:], missingIDs: [],
-                unevictableCount: 2, deadlines: [:]
-            ),
-            epoch: epoch,
-            now: SuspendingClock.now
-        )
+        let store = ApprovalPresentationStore(decisionSender: { _, _ in })
+        let epoch = UUID()
+        let run = UUID()
+        let high = try #require(UUID(uuidString: "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF"))
+        let low = try #require(UUID(uuidString: "00000000-0000-0000-0000-000000000001"))
+        let first = ApprovalPresentation.test(epoch: epoch, runID: run, requestID: high, sessionID: "session")
+        let second = ApprovalPresentation.test(epoch: epoch, runID: run, requestID: low, sessionID: "session", toolName: "Edit")
+        let earlier = Date(timeIntervalSince1970: 100)
+        let later = Date(timeIntervalSince1970: 200)
+        store.receive([first], epoch: epoch, seenAt: earlier)
+        store.receive([second, first], epoch: epoch, seenAt: later)
+        try #require(store.ledger.entry(for: first)?.firstSeenAt == earlier)
+        try #require(store.ledger.entry(for: second)?.firstSeenAt == later)
+        try #require(first.id > second.id)
+
         store.runtimes = { [Self.run(panes: [paneID])] }
         store.noteWaitEpisodes(in: session)
 
@@ -297,9 +323,28 @@ struct ApprovalPresentationStoreTests {
         )
         store.runtimes = { [detachedIdle, before] }
         #expect(store.run(for: request, in: session)?.id == before.id)
+
+        let older = Self.run(
+            id: "older", panes: [paneID], sessionStartedAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 400)
+        )
+        let newer = Self.run(
+            id: "newer", panes: [paneID], sessionStartedAt: Date(timeIntervalSince1970: 200),
+            updatedAt: Date(timeIntervalSince1970: 300)
+        )
+        store.runtimes = { [newer, older] }
+        #expect(store.run(for: request, in: session)?.id == newer.id)
+        store.runtimes = { [older, newer] }
+        #expect(store.run(for: request, in: session)?.id == newer.id)
+
+        let unknown = Self.run(
+            id: "unknown", state: .unknown, panes: [paneID], sessionStartedAt: Date(timeIntervalSince1970: 500)
+        )
+        store.runtimes = { [before, unknown] }
+        #expect(store.run(for: request, in: session)?.id == before.id)
     }
 
-    @Test func aTmuxRunWhosePaneIsNotKnownYet_keepsItsRequest() {
+    @Test func aTmuxRunWithoutAPane_providesItsOwnTurnState() {
         // The topology probe has not reported: the run has no pane, and its
         // prompt still waits. Its state, not the missing pane, decides.
         let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
@@ -364,36 +409,40 @@ struct ApprovalPresentationStoreTests {
     /// A stop while the observer waits for the service's reply ends the wait
     /// at once, rather than holding a thread for the subscription's minute.
     @Test(.timeLimit(.minutes(1)))
-    func observe_canceledWhileOpening_releasesThreadWithinOneSecond() async throws {
+    func observe_stoppedWhileOpening_finishesWithinOneSecond() async throws {
         let service = HeldXPCService(holding: .everything)
         try await expectStopEndsTheObserver(waitingOn: service)
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func observe_canceledWhileSubscribed_releasesThreadWithinOneSecond() async throws {
+    func observe_stoppedWhileSubscribed_finishesWithinOneSecond() async throws {
         let artifact = try AgentIntegrationServiceArtifact.bundled(in: Bundle.main.bundleURL)
         let service = HeldXPCService(holding: .afterOpening(artifact))
         try await expectStopEndsTheObserver(waitingOn: service)
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func observe_stoppedRightAfterStart_ends() async {
+    func observe_stoppedRightAfterStart_ends() async throws {
         let service = HeldXPCService(holding: .everything)
         let store = ApprovalPresentationStore(controllerClient: { try service.client() })
         store.start()
-        await store.stop()?.value
+        defer { store.stop() }
+        let stopped = try #require(store.stop())
+        await stopped.value
         #expect(!store.isRunning)
     }
 
     private func expectStopEndsTheObserver(waitingOn service: HeldXPCService) async throws {
         let store = ApprovalPresentationStore(controllerClient: { try service.client() })
         store.start()
+        defer { store.stop() }
         await pollUntil(timeout: .seconds(10)) { service.heldCount == 1 }
         try #require(service.heldCount == 1)
 
         let clock = ContinuousClock()
         let stoppedAt = clock.now
-        await store.stop()?.value
+        let stopped = try #require(store.stop())
+        await stopped.value
         #expect(stoppedAt.duration(to: clock.now) < .seconds(1))
     }
 }

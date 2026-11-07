@@ -21,9 +21,10 @@ struct FileApplicationCandidatesTests {
             app("com.sublimetext.4", "sublime Text")
         ]
 
-        let names = FileApplicationCandidates.ordered(found, chosen: nil, excluding: "com.nekoder.weir.app").map(\.name)
+        let list = FileApplicationCandidates.ordered(found, chosen: nil, excluding: "com.nekoder.weir.app")
 
-        #expect(names == ["sublime Text", "TextEdit", "Visual Studio Code", "Zed"])
+        #expect(list.map(\.name) == ["sublime Text", "TextEdit", "Visual Studio Code", "Zed"])
+        #expect(list.map(\.bundleIdentifier) == ["com.sublimetext.4", "com.apple.TextEdit", "com.microsoft.VSCode", "dev.zed.Zed"])
     }
 
     @Test func theChosenApp_isListed_evenWhenItIsGone() throws {
@@ -44,6 +45,7 @@ struct FileApplicationCandidatesTests {
 
         #expect(list.map(\.name) == ["Zed"])
         // What is saved is the same shape as before: an identifier and a name.
-        #expect(list[0].application == FileApplication(bundleIdentifier: "dev.zed.Zed", lastKnownDisplayName: "Zed"))
+        #expect(list.first?.application == FileApplication(bundleIdentifier: "dev.zed.Zed", lastKnownDisplayName: "Zed"))
+        #expect(list.first?.url == URL(fileURLWithPath: "/Applications/Zed.app"))
     }
 }

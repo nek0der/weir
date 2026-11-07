@@ -93,7 +93,7 @@ struct InlineRenameGeometryTests {
         let opensAt = recorder.widths.count
         model.isEditing = true
         await settle(host, timeout: Self.timeout) { Self.textField(in: host) != nil }
-        #expect(Self.textField(in: host) != nil)
+        try #require(Self.textField(in: host) != nil)
         let open = try #require(await settledValue(in: host, timeout: Self.timeout) { recorder.widths.last })
         let opening = Array(recorder.widths[opensAt...])
         #expect(opening.allSatisfy { $0 >= atRest })
@@ -102,7 +102,9 @@ struct InlineRenameGeometryTests {
         #expect(open >= atRest)
         // With no limit to widen to and a name to draw, the open field
         // keeps the label's width exactly.
-        if editingWidthLimit == nil, !name.isEmpty {
+        if editingWidthLimit != nil {
+            #expect(open > atRest)
+        } else if !name.isEmpty {
             #expect(open == atRest)
         }
     }
@@ -286,6 +288,8 @@ struct InlineRenameGeometryTests {
         // Past the outsets nothing, either way.
         #expect(atRest.at(start - style.leadingOutset - 0.5) < 0.01)
         #expect(atRest.at(end + style.trailingOutset + 0.5) < 0.01)
+        #expect(scrolled.at(start - style.leadingOutset - 0.5) < 0.01)
+        #expect(scrolled.at(end + style.trailingOutset + 0.5) < 0.01)
     }
 
     // MARK: - Helpers

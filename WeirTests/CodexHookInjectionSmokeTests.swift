@@ -208,7 +208,8 @@ struct CodexHookInjectionSmokeTests {
             let expected = Set(CodexHookInjection.subscribedEvents.map {
                 $0.jsonKey.prefix(1).lowercased() + $0.jsonKey.dropFirst()
             })
-            let actual = Set(ours.map(\.eventName))
+            let byEvent = Dictionary(grouping: ours, by: \.eventName).mapValues(\.count)
+            let actual = Set(byEvent.keys)
             let missing = expected.subtracting(actual).sorted()
             let unexpected = actual.subtracting(expected).sorted()
             #expect(
@@ -217,14 +218,17 @@ struct CodexHookInjectionSmokeTests {
             )
             // Two more than the events: the matched worktree groups of
             // PreToolUse and PostToolUse.
-            #expect(ours.count == expected.count + 2)
+            let expectedCounts = Dictionary(uniqueKeysWithValues: expected.map { event in
+                (event, ["preToolUse", "postToolUse"].contains(event) ? 2 : 1)
+            })
+            #expect(byEvent == expectedCounts)
             #expect(
                 ours.allSatisfy { $0.trustStatus == "trusted" },
                 "untrusted: \(ours.filter { $0.trustStatus != "trusted" }.map(\.eventName))"
             )
             let user = hooks.filter { $0.source == "user" }
-            #expect(user.count == 1)
-            #expect(user.allSatisfy { $0.trustStatus == "trusted" }, "the person's own hook lost its trust")
+            #expect(user.map(\.eventName) == ["stop"])
+            #expect(user.map(\.trustStatus) == ["trusted"], "the person's own hook lost its trust")
         }
     }
 
@@ -265,6 +269,7 @@ struct CodexHookInjectionSmokeTests {
             let ours = try discoveredHooks(home: home, cwd: dir, extraArguments: arguments)
                 .filter { $0.source == "sessionFlags" }
             #expect(ours.count == CodexHookInjection.subscribedEvents.count + 2)
+            #expect(ours.map(\.eventName).sorted() == untrusted.map(\.eventName).sorted())
             #expect(
                 ours.allSatisfy { $0.trustStatus == "trusted" },
                 "untrusted: \(ours.filter { $0.trustStatus != "trusted" }.map(\.eventName))"

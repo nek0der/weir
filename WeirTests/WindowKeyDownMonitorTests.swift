@@ -37,6 +37,16 @@ struct WindowKeyDownMonitorTests {
         NSApp.postEvent(event, atStart: false)
     }
 
+    private static func installedMonitor(in window: NSWindow) async throws -> WindowKeyDownMonitor.HostView {
+        let content = try #require(window.contentView)
+        await settle(content) {
+            descendants(of: content).contains { $0 is WindowKeyDownMonitor.HostView && $0.window === window }
+        }
+        return try #require(descendants(of: content).compactMap { $0 as? WindowKeyDownMonitor.HostView }.first {
+            $0.window === window
+        })
+    }
+
     /// Waits for the last key posted to come round. The key itself is the
     /// signal, and the app's event queue is real, so a loaded run can hold it
     /// a good while: the deadline is only for a key that never comes.
@@ -58,10 +68,8 @@ struct WindowKeyDownMonitorTests {
         }
         own.orderFront(nil)
         other.orderFront(nil)
-        for window in [own, other] {
-            let content = try #require(window.contentView)
-            await settle(content) { descendants(of: content).contains { $0 is WindowKeyDownMonitor.HostView } }
-        }
+        let removed = try await Self.installedMonitor(in: own)
+        _ = try await Self.installedMonitor(in: other)
 
         try Self.post("a", to: own)
         try Self.post("b", to: other)
@@ -70,6 +78,7 @@ struct WindowKeyDownMonitorTests {
         #expect(seen.keys == ["a"])
 
         own.contentView = nil
+        #expect(removed.window == nil)
         try Self.post("c", to: own)
         try Self.post("d", to: other)
         await Self.waitForDelivery { witnessed.keys == ["b", "d"] }
@@ -77,12 +86,25 @@ struct WindowKeyDownMonitorTests {
         #expect(seen.keys == ["a"], "removed with its view")
     }
 
-    /// The sidebar's monitor sees ⌥⌘↑ ⌥⌘↓ at the window, before the window
-    /// sends them on to the menus (where the pane menu holds the same keys),
-    /// and takes only those: a plain arrow, or one with ⇧ too, goes on.
+    private final class KeyReceiver: NSView {
+        private(set) var keys: [String] = []
+
+        override var acceptsFirstResponder: Bool {
+            true
+        }
+
+        override func keyDown(with event: NSEvent) {
+            keys.append(WindowKeyDownMonitorTests.name(of: event))
+        }
+    }
+
+    private static func name(of event: NSEvent) -> String {
+        let name = event.charactersIgnoringModifiers.map { $0 == Self.up ? "up" : $0 == Self.down ? "down" : $0 } ?? ""
+        return (event.modifierFlags.contains(.shift) ? "⇧" : "") + name
+    }
+
     @Test func theSidebarsMonitor_takesOptionCommandArrows_andLetsTheRestGoOn() async throws {
         let taken = Seen()
-        let passed = Seen()
         let monitor = WindowKeyDownMonitor { event, window in
             let route = SidebarKeyRoute.route(
                 for: event,
@@ -90,20 +112,31 @@ struct WindowKeyDownMonitorTests {
                 hasKeyboard: true,
                 isComposing: window.isComposingText
             )
-            let name = event.charactersIgnoringModifiers.map { $0 == Self.up ? "up" : $0 == Self.down ? "down" : $0 } ?? ""
-            let flags = event.modifierFlags.contains(.shift) ? "⇧" : ""
-            if case .moveProject = route {
-                taken.keys.append(flags + name)
-                return true
-            }
-            passed.keys.append(flags + name)
-            return false
+            guard case .moveProject = route else { return false }
+            taken.keys.append(Self.name(of: event))
+            return true
         }
-        let window = hostedInWindow(monitor.frame(width: 10, height: 10), width: 200, height: 100).window
-        defer { window.close() }
-        window.orderFront(nil)
-        let content = try #require(window.contentView)
-        await settle(content) { descendants(of: content).contains { $0 is WindowKeyDownMonitor.HostView } }
+        let (window, host) = hostedInWindow(monitor.frame(width: 10, height: 10), width: 200, height: 100)
+        let content = NSView(frame: host.frame)
+        window.contentView = content
+        host.frame = content.bounds
+        host.autoresizingMask = [.width, .height]
+        content.addSubview(host)
+        let receiver = KeyReceiver(frame: NSRect(x: 0, y: 0, width: 8, height: 8))
+        content.addSubview(receiver)
+        let witnessed = Seen()
+        let other = Self.window(recordingInto: witnessed)
+        defer {
+            window.close()
+            other.close()
+        }
+        other.orderFront(nil)
+        window.makeKeyAndOrderFront(nil)
+        _ = try await Self.installedMonitor(in: other)
+        _ = try await Self.installedMonitor(in: window)
+        try #require(receiver.window === window)
+        try #require(window.makeFirstResponder(receiver))
+        #expect(window.firstResponder === receiver)
 
         for (keyCode, characters, modifiers) in [
             (UInt16(126), Self.up, NSEvent.ModifierFlags([.command, .option])),
@@ -121,10 +154,12 @@ struct WindowKeyDownMonitorTests {
             )
             NSApp.postEvent(event, atStart: false)
         }
-        await Self.waitForDelivery { passed.keys.last == "a" }
+        try Self.post("w", to: other)
+        await Self.waitForDelivery { witnessed.keys == ["w"] }
 
+        #expect(witnessed.keys == ["w"])
         #expect(taken.keys == ["up", "down"])
-        #expect(passed.keys == ["up", "⇧up", "a"])
+        #expect(receiver.keys == ["up", "⇧up", "a"])
     }
 
     private static let up = String(UnicodeScalar(UInt16(NSUpArrowFunctionKey)).map(Character.init) ?? " ")

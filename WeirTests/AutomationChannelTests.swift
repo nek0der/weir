@@ -12,28 +12,36 @@
     struct AutomationRunFolderTests {
         @Test func create_makesAPrivateFolderWithTokenAndInfo() throws {
             try withShortTempDir { base in
-                let folder = AutomationRunFolder(base: base, pid: 4242)
+                let run = try #require(UUID(uuidString: "1234ABCD-1111-4111-8111-1234ABCD1234"))
+                let folder = AutomationRunFolder(base: base, runID: run, pid: 4242, nonce: "launch-nonce")
 
                 let token = try folder.create()
 
-                #expect(token.count == 64)
+                #expect(token.utf8.count == 64)
+                #expect(token.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) })
+                #expect(folder.folder.lastPathComponent == "1234abcd")
                 #expect(try String(contentsOf: folder.tokenURL, encoding: .utf8) == token)
                 #expect(mode(of: folder.folder) == 0o700)
                 #expect(mode(of: folder.tokenURL) == 0o600)
                 #expect(mode(of: folder.infoURL) == 0o600)
                 let info = try #require(AutomationRunFolder.readInfo(at: folder.infoURL))
+                #expect(info.run == run.uuidString)
                 #expect(info.pid == 4242)
+                #expect(info.nonce == "launch-nonce")
                 #expect(info.socket == folder.socketURL.path)
-                #expect(info.protocol == AutomationProtocol.marker)
+                #expect(info.protocol == "weir-automation-protocol/1")
             }
         }
 
         @Test func create_refusesABaseOthersCanRead() throws {
             try withShortTempDir { base in
-                chmod(base.path, 0o755)
+                try #require(chmod(base.path, 0o755) == 0)
                 let folder = AutomationRunFolder(base: base)
 
-                #expect(throws: (any Error).self) { try folder.create() }
+                let error = try #require(#expect(throws: NSError.self) { try folder.create() })
+                #expect(error.domain == NSPOSIXErrorDomain)
+                #expect(error.code == Int(EACCES))
+                #expect(!FileManager.default.fileExists(atPath: folder.folder.path))
             }
         }
 
@@ -267,18 +275,18 @@
         }
 
         @Test func eachMismatch_isRefused() {
-            let refused: [AutomationController.PaneFacts] = [
-                facts(isSameRun: false),
-                facts(hasTerminal: false),
-                facts(generation: 3),
-                facts(generation: nil),
-                facts(isInTmux: true),
-                facts(processNames: ["zsh"]),
-                facts(processNames: []),
-                facts(hasUnsubmittedInput: true)
+            let refused = [
+                (facts(isSameRun: false), "the pane was read in another run"),
+                (facts(hasTerminal: false), "no such pane"),
+                (facts(generation: 3), "the pane's terminal was made again since it was read"),
+                (facts(generation: nil), "the pane's terminal was made again since it was read"),
+                (facts(isInTmux: true), "the pane runs tmux, whose client the channel does not resolve"),
+                (facts(processNames: ["zsh"]), "the process in front is zsh, not opencode"),
+                (facts(processNames: []), "the process in front is unknown, not opencode"),
+                (facts(hasUnsubmittedInput: true), "the pane holds text the person has not sent")
             ]
-            for paneFacts in refused {
-                #expect(AutomationController.typingRefusal(paneFacts, ref: ref, expect: expect) != nil)
+            for (paneFacts, reason) in refused {
+                #expect(AutomationController.typingRefusal(paneFacts, ref: ref, expect: expect) == reason)
             }
         }
 
@@ -605,13 +613,22 @@
             #expect(try AutomationSettings.value(at: "keyboard.overrides.splitRight.key", in: settings) == .string("d"))
         }
 
-        @Test func aKeyThisBuildDoesNotKnow_isRefused() {
-            for key in ["font.sise", "nonsense", "font.size.inner", "schemaVersion", "", "font..size"] {
-                #expect(throws: AutomationSettings.Failure.self) {
-                    try AutomationSettings.setting(.int(1), at: key, in: WeirSettings())
-                }
+        @Test(arguments: [
+            ("font.sise", "font.sise is not a setting this build knows"),
+            ("nonsense", "nonsense is not a setting this build knows"),
+            ("font.size.inner", "inner is inside a value, not a group of settings"),
+            ("schemaVersion", "schemaVersion is the file's, not a setting"),
+            ("", "a setting is named like font.family"),
+            ("font..size", "a setting is named like font.family")
+        ])
+        func aKeyThisBuildDoesNotKnow_isRefused(key: String, reason: String) {
+            #expect(throws: AutomationSettings.Failure(message: reason)) {
+                try AutomationSettings.setting(.int(1), at: key, in: WeirSettings())
             }
-            #expect(throws: AutomationSettings.Failure.self) {
+        }
+
+        @Test func aMisspelledKey_isNotRead() {
+            #expect(throws: AutomationSettings.Failure(message: "font.sise is not a setting this build knows")) {
                 try AutomationSettings.value(at: "font.sise", in: WeirSettings())
             }
         }
@@ -620,12 +637,20 @@
     struct AutomationServerTests {
         private static let token = String(repeating: "ab", count: 32)
 
-        @Test(.timeLimit(.minutes(1)))
-        func aRequestBeforeHello_isRefusedAndTheConnectionClosed() throws {
+        @Test(.timeLimit(.minutes(1)), arguments: [
+            #"{"id":"1","op":"state"}"#,
+            #"{"id":"1","op":"hello","token":"wrong","protocol":"weir-automation-protocol/1"}"#,
+            #"{"id":"1","op":"hello","token":"\#(String(repeating: "ab", count: 31))ac","protocol":"weir-automation-protocol/1"}"#,
+            #"{"id":"1","op":"hello","token":"\#(token)","protocol":"weir-automation-protocol/0"}"#
+        ])
+        func anUnauthenticatedRequest_isRefusedAndTheConnectionClosed(request: String) throws {
             try withServer { path in
                 let client = try LineClient(path: path)
-                try client.send(#"{"id":"1","op":"state"}"#)
-                #expect(try client.readReply()?.status == .failed)
+                try client.send(request)
+                let reply = try #require(try client.readReply())
+                #expect(reply.status == .failed)
+                #expect(reply.id == "1")
+                #expect(reply.reason == "the first request must be hello with this run's token")
                 #expect(try client.readReply() == nil)
             }
         }
@@ -635,17 +660,10 @@
             try withServer { path in
                 let client = try LineClient(path: path)
                 try client.send("not json")
-                #expect(try client.readReply()?.status == .failed)
-                #expect(try client.readReply() == nil)
-            }
-        }
-
-        @Test(.timeLimit(.minutes(1)))
-        func aWrongToken_isRefused() throws {
-            try withServer { path in
-                let client = try LineClient(path: path)
-                try client.send(Self.hello(token: "wrong"))
-                #expect(try client.readReply()?.status == .failed)
+                let reply = try #require(try client.readReply())
+                #expect(reply.status == .failed)
+                #expect(reply.id.isEmpty)
+                #expect(reply.reason?.hasPrefix("the line is not a request:") == true)
                 #expect(try client.readReply() == nil)
             }
         }
@@ -655,11 +673,25 @@
             try withServer { path in
                 let client = try LineClient(path: path)
                 try client.send(Self.hello(token: Self.token))
-                #expect(try client.readReply()?.status == .done)
-                try client.send(#"{"id":"7","op":"state"}"#)
-                let reply = try #require(try client.readReply())
-                #expect(reply.id == "7")
-                #expect(reply.reason == "handled state")
+                let hello = try #require(try client.readReply())
+                #expect(hello.status == .done)
+                #expect(hello.id == "1")
+                try client.send(#"""
+                {"id":"7","op":"state"}
+                {"id":"8","op":"commands"}
+                """#)
+                let replies = try [
+                    #require(try client.readReply()),
+                    #require(try client.readReply())
+                ].sorted { $0.id < $1.id }
+                let first = replies[0]
+                let second = replies[1]
+                #expect(first.id == "7")
+                #expect(first.status == .done)
+                #expect(first.reason == "handled state")
+                #expect(second.id == "8")
+                #expect(second.status == .done)
+                #expect(second.reason == "handled commands")
             }
         }
 
@@ -668,8 +700,12 @@
             try withServer { path in
                 let client = try LineClient(path: path)
                 try client.send(Self.hello(token: Self.token))
-                _ = try client.readReply()
-                try client.send(String(repeating: "x", count: AutomationProtocol.maxMessageBytes + 1024))
+                try #require(try client.readReply()?.status == .done)
+                let oversized = try JSONSerialization.data(withJSONObject: [
+                    "id": "oversized", "op": "state",
+                    "padding": String(repeating: "x", count: AutomationProtocol.maxMessageBytes + 1)
+                ])
+                try client.send(#require(String(data: oversized, encoding: .utf8)))
                 #expect(try client.readReply() == nil)
             }
         }
@@ -694,7 +730,7 @@
         }
 
         private static func hello(token: String) -> String {
-            #"{"id":"1","op":"hello","token":"\#(token)","protocol":"\#(AutomationProtocol.marker)"}"#
+            #"{"id":"1","op":"hello","token":"\#(token)","protocol":"weir-automation-protocol/1"}"#
         }
 
         private func withServer(_ body: (String) throws -> Void) throws {

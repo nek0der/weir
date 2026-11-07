@@ -26,9 +26,9 @@ struct MenuBarAppearanceTests {
         let defaults = try #require(InMemoryDefaults())
 
         #expect(!SystemAppearance.isSystemDark(defaults: defaults), "light leaves the key unset")
-        defaults.set("Dark", forKey: SystemAppearance.interfaceStyleKey)
+        defaults.set("Dark", forKey: "AppleInterfaceStyle")
         #expect(SystemAppearance.isSystemDark(defaults: defaults))
-        defaults.set("Light", forKey: SystemAppearance.interfaceStyleKey)
+        defaults.set("Light", forKey: "AppleInterfaceStyle")
         #expect(!SystemAppearance.isSystemDark(defaults: defaults))
     }
 

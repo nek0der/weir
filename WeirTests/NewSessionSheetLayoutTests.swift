@@ -227,7 +227,11 @@ struct NewSessionSheetLayoutTests {
         #expect(Set(forms).count == forms.count)
         #expect(forms.contains(model.carryLine(locale: english)))
         model.setCarryCount(4)
+        #expect(model.carryLine(locale: english).contains("4"))
         #expect(model.carryLineForms(locale: english) == forms, "the forms do not follow the count")
+        model.setCarryCount(0)
+        #expect(model.carryLine(locale: english) == "No uncommitted changes")
+        #expect(forms.contains(model.carryLine(locale: english)))
         let (_, project) = WorkspaceSessionFixture.withProject(name: "duesmith")
         var context = Self.context(project: project, branches: ["main"])
         context.carrySource = nil

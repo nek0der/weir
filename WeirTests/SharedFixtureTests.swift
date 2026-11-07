@@ -50,29 +50,51 @@ struct SharedFixtureTests {
         let payload = Data(repeating: UInt8(ascii: "x"), count: 1 << 20)
         let started = ContinuousClock.now
         let output = try TestProcess.run(
-            URL(fileURLWithPath: "/bin/sleep"),
-            arguments: ["30"],
+            URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "printf 'started' >&2; exec /bin/sleep 30"],
             stdin: payload,
             timeout: .seconds(1)
         )
         #expect(ContinuousClock.now - started < .seconds(10))
+        #expect(output.stderrText == "started")
+        #expect(ContinuousClock.now - started >= .seconds(1))
         #expect(output.ending == .timedOut)
+        #expect(output.status == SIGTERM || output.status == SIGKILL)
+        #expect(kill(output.pid, 0) == -1 && errno == ESRCH)
     }
 
     /// Something the child started keeps its stdin open past the child's exit
     /// without reading it, and the run still ends with the child.
     @Test func process_aDescendantHoldingStdin_doesNotHoldTheRun() throws {
-        let payload = Data(repeating: UInt8(ascii: "x"), count: 1 << 20)
-        let started = ContinuousClock.now
-        let output = try TestProcess.run(
-            URL(fileURLWithPath: "/bin/sh"),
-            // Stdin redirected explicitly: a background job of a shell without
-            // job control otherwise reads /dev/null.
-            arguments: ["-c", "sleep 8 0<&0 >/dev/null 2>&1 & exit 0"],
-            stdin: payload
-        )
-        #expect(ContinuousClock.now - started < .seconds(5))
-        #expect(output.ending == .exited)
+        try withTempDir { dir in
+            let pidFile = dir.appendingPathComponent("descendant.pid")
+            defer {
+                if let text = try? String(contentsOf: pidFile, encoding: .utf8),
+                   let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 1
+                {
+                    kill(pid, SIGTERM)
+                }
+            }
+            let script = """
+            (/bin/test -r /dev/fd/0 || exit 9; printf ready > "$1"; exec /bin/sleep 30) 0<&0 >/dev/null 2>&1 &
+            printf '%s' "$!" > "$2"
+            while [ ! -f "$1" ]; do /bin/sleep 0.01; done
+            printf ready
+            exit 0
+            """
+            let started = ContinuousClock.now
+            let output = try TestProcess.run(
+                URL(fileURLWithPath: "/bin/sh"),
+                arguments: ["-c", script, "fixture", dir.appendingPathComponent("ready").path, pidFile.path],
+                stdin: Data(repeating: UInt8(ascii: "x"), count: 1 << 20)
+            )
+            #expect(ContinuousClock.now - started < .seconds(5))
+            #expect(output.ending == .exited)
+            #expect(output.status == 0)
+            #expect(output.stdoutText == "ready")
+            let pid = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8)))
+            #expect(kill(pid, 0) == 0, "the descendant still holds its inherited stdin")
+        }
     }
 
     // MARK: - Temporary folders
@@ -98,8 +120,13 @@ struct SharedFixtureTests {
     @Test func scratchFile_writesThroughFoldersThatAreNotThereYet() throws {
         try withTempDir { dir in
             try ScratchFile.write("deep", to: "a/b/c.txt", in: dir)
+            let parent = dir.appendingPathComponent("a/b")
+            var isDirectory: ObjCBool = false
+            #expect(FileManager.default.fileExists(atPath: parent.path, isDirectory: &isDirectory) && isDirectory.boolValue)
+            #expect(try Data(contentsOf: parent.appendingPathComponent("c.txt")) == Data("deep".utf8))
             #expect(try ScratchFile.read("a/b/c.txt", in: dir) == "deep")
-            #expect(throws: (any Error).self) { try ScratchFile.read("missing.txt", in: dir) }
+            let error = #expect(throws: CocoaError.self) { try ScratchFile.read("missing.txt", in: dir) }
+            #expect(error?.code == .fileReadNoSuchFile)
         }
     }
 
@@ -114,7 +141,11 @@ struct SharedFixtureTests {
         #expect(try await repo.git(["log", "-1", "--format=%s"]) == "first")
         #expect(try await repo.git(["status", "--porcelain"]).isEmpty)
         #expect(try repo.read("dir/a.txt") == "one\n")
-        await #expect(throws: TempGitRepo.GitFailure.self) { try await repo.git(["checkout", "-q", "no-such-branch"]) }
+        #expect(try await repo.git(["show", "HEAD:dir/a.txt"]) == "one")
+        let arguments = ["checkout", "-q", "no-such-branch"]
+        let error = await #expect(throws: TempGitRepo.GitFailure.self) { try await repo.git(arguments) }
+        #expect(error?.arguments == arguments)
+        #expect(error?.stderr.isEmpty == false)
     }
 
     // MARK: - ShimHarness
@@ -124,14 +155,15 @@ struct SharedFixtureTests {
             let stub = try ShimHarness.recordingStub(named: "agent", in: dir)
             let output = try TestProcess.run(
                 stub,
-                arguments: ["one", "two words", ""],
+                arguments: ["one", "two words", "", "two\nlines"],
                 environment: ShimHarness.environment(in: dir, merging: ["MARK": "set", "PATH": "/usr/bin:/bin"])
             )
             #expect(output.status == 0)
             #expect(
                 ShimHarness.recordedArgv(ShimHarness.argvRecord(in: dir), keepsEmptyArguments: true)
-                    == ["one", "two words", ""]
+                    == ["one", "two words", "", "two\nlines"]
             )
+            #expect(try Data(contentsOf: dir.appendingPathComponent("args")) == Data("one\0two words\0\0two\nlines\0".utf8))
             #expect(ShimHarness.launched(in: dir) == [stub.path, "/usr/bin:/bin"])
             let environment = try ScratchFile.read("env", in: dir).split(separator: "\n")
             #expect(environment.contains("MARK=set"))

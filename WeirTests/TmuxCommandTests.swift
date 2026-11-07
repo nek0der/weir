@@ -17,15 +17,19 @@ struct TmuxCommandTests {
         #expect(TmuxCommand().run(executable: "/nonexistent/weir-tmux", arguments: [], timeout: 30) == .launchFailed)
     }
 
-    @Test func ignoredTermination_isKilledWithinTotalDeadline() {
-        let start = ProcessInfo.processInfo.systemUptime
-        let result = TmuxCommand().run(executable: "/bin/sh", arguments: ["-c", "trap '' TERM; while :; do :; done"], timeout: 0.05)
-        #expect(result == .timedOut)
-        // The timeout and both graces come to under half a second. A run
-        // that never sent SIGKILL would not return at all, so the bound only
-        // has to stand well past the graces, and leaves room for a busy CI
-        // runner, as the drain test's below does.
-        #expect(ProcessInfo.processInfo.systemUptime - start < 10)
+    @Test func ignoredTermination_isKilledWithinTotalDeadline() throws {
+        try withTempDir { folder in
+            let armed = folder.appendingPathComponent("ignores-term")
+            let start = ProcessInfo.processInfo.systemUptime
+            let result = TmuxCommand().run(
+                executable: "/bin/sh",
+                arguments: ["-c", #"trap '' TERM; : > "$1"; exec /bin/sleep 30"#, "sh", armed.path],
+                timeout: 1
+            )
+            #expect(FileManager.default.fileExists(atPath: armed.path))
+            #expect(result == .timedOut)
+            #expect(ProcessInfo.processInfo.systemUptime - start < 10)
+        }
     }
 
     @Test func descendantHoldingWriter_doesNotKeepReaderAlive() throws {
@@ -38,8 +42,9 @@ struct TmuxCommandTests {
             let result = TmuxCommand().run(
                 executable: "/bin/sh",
                 arguments: ["-c", "sleep 30 & echo $! > \"$1\"; exit 0", "sh", descendant.path],
-                timeout: 0.05
+                timeout: 1
             )
+            #expect(FileManager.default.fileExists(atPath: descendant.path))
             #expect(result == .timedOut)
             // The exit and the 0.2-second drain grace, against the 30 seconds
             // the descendant holds the pipe. The bound is well short of that
@@ -48,22 +53,34 @@ struct TmuxCommandTests {
         }
     }
 
-    @Test func cancellationBeforeAndDuringLaunch_isDistinct() {
+    @Test func cancellationBeforeAndAfterLaunch_returnsCanceled() async throws {
         let canceled = TmuxCommand()
         canceled.cancel()
         #expect(canceled.run(executable: "/usr/bin/true", arguments: []) == .canceled)
-        let running = TmuxCommand()
-        let cancel = DispatchWorkItem { @Sendable in running.cancel() }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.05, execute: cancel)
-        // Neither the child nor the timeout may end the run before the
-        // cancel does. Under the short default timeout, a cancel that a busy
-        // machine ran late lost to it, and the run said `.timedOut`.
-        #expect(running.run(executable: "/bin/sleep", arguments: ["60"], timeout: 60) == .canceled)
+
+        try await withTempDir { folder in
+            let marker = folder.appendingPathComponent("started")
+            let command = TmuxCommand()
+            let run = Task.detached {
+                command.run(
+                    executable: "/bin/sh",
+                    arguments: ["-c", #": > "$1"; exec /bin/sleep 30"#, "sh", marker.path],
+                    timeout: 30
+                )
+            }
+            await pollUntil(timeout: .seconds(10), interval: .milliseconds(10)) {
+                FileManager.default.fileExists(atPath: marker.path)
+            }
+            #expect(FileManager.default.fileExists(atPath: marker.path))
+            command.cancel()
+            #expect(await run.value == .canceled)
+        }
     }
 
     @Test func outputLimitAndInvalidEncoding_areNotPartialSuccess() {
         // A timeout no run here reaches, as in the first test: the half-second
         // default could report a late start as `.timedOut`.
+        #expect(TmuxCommand().run(executable: "/usr/bin/printf", arguments: ["abc"], timeout: 30, outputLimit: 3) == .success("abc"))
         #expect(TmuxCommand().run(executable: "/usr/bin/printf", arguments: ["abcdef"], timeout: 30, outputLimit: 3) == .outputLimit)
         #expect(TmuxCommand().run(executable: "/usr/bin/printf", arguments: ["\\377"], timeout: 30) == .invalidOutput)
     }

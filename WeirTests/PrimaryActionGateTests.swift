@@ -188,7 +188,8 @@ struct PrimaryActionGateTests {
         var gate = Self.gate(at: start)
         #expect(Self.decide(&gate, isApprovalCardFocused: true, at: start.advanced(by: .seconds(1))) == .swallow)
         // Even in a pane with no bar: the card took the key.
-        #expect(Self.decide(&gate, inPane: Self.otherPane, isApprovalCardFocused: true, at: start) == .swallow)
+        #expect(Self.decide(&gate, inPane: Self.otherPane, hasAgent: false, isApprovalCardFocused: true, at: start) == .swallow)
+        #expect(Self.decide(&gate, at: start.advanced(by: .seconds(1))) == .perform(.resume(Self.stop)))
     }
 
     @Test func aPressPerformsOnce_andAHeldKeyNever() {
@@ -233,5 +234,8 @@ struct PrimaryActionGateTests {
         let now = start.advanced(by: .milliseconds(1200))
         #expect(Self.decide(&gate, inPane: Self.otherPane, at: now) == .swallow)
         #expect(Self.decide(&gate, at: now) == .perform(.resume(Self.stop)), "the item shown in this pane, not the other's")
+        let later = start.advanced(by: .milliseconds(1600))
+        #expect(Self.decide(&gate, inPane: Self.otherPane, at: later) == .perform(.resume(Self.otherStop)))
+        #expect(Self.decide(&gate, at: later) == .swallow)
     }
 }

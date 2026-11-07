@@ -75,6 +75,18 @@ struct SplitSeamGeometryTests {
                 #expect(geometry.first.width >= 80, "extent \(extent), ratio \(ratio)")
                 #expect(geometry.second.width >= 120, "extent \(extent), ratio \(ratio)")
                 #expect(abs(geometry.second.minX - geometry.first.maxX - 1 / scale) < 0.0001)
+
+                let stacked = SplitSeamGeometry(
+                    size: CGSize(width: 300, height: extent),
+                    ratio: ratio,
+                    direction: .vertical,
+                    displayScale: scale,
+                    firstMinimum: 80,
+                    secondMinimum: 120
+                )
+                #expect(stacked.first.height >= 80, "extent \(extent), ratio \(ratio)")
+                #expect(stacked.second.height >= 120, "extent \(extent), ratio \(ratio)")
+                #expect(abs(stacked.second.minY - stacked.first.maxY - 1 / scale) < 0.0001)
             }
         }
     }

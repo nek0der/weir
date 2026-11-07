@@ -181,17 +181,19 @@ struct ReviewDestinationTests {
         #expect(choices.map { ReviewTabText.destinationLabel($0, locale: Self.japanese) } == ["Claude #1（1）", "Claude #1（2）", "Claude #2"])
     }
 
-    @Test func insert_isUnavailableOnlyOnceThePaneIsGone() {
+    @Test func aClosedDestinationIgnoresAnEarlierReadyAnswer() {
         let pane = UUID()
         let ready = ReviewDestination(paneID: pane, title: "Claude Code")
         let tab = Self.tab(agent: pane, destination: pane)
-        let choices = ReviewTabModel.destinationChoices([ready])
-        func status(isPaneOpen: Bool, destination: ReviewDestination?, isResolving: Bool) -> ReviewTabModel.DestinationStatus {
+        let alternate = ReviewDestination(paneID: UUID(), title: "zsh")
+        func status(
+            isPaneOpen: Bool, destination: ReviewDestination?, isResolving: Bool, choices: [ReviewDestination] = []
+        ) -> ReviewTabModel.DestinationStatus {
             ReviewTabModel.destinationStatus(tab, .init(
                 isPaneOpen: isPaneOpen,
                 destination: destination,
                 isResolving: isResolving,
-                choices: choices,
+                choices: ReviewTabModel.destinationChoices(choices),
                 agents: []
             ))
         }
@@ -199,9 +201,12 @@ struct ReviewDestinationTests {
         #expect(status(isPaneOpen: true, destination: ready, isResolving: false) == .ready(ready))
         #expect(status(isPaneOpen: true, destination: nil, isResolving: true) == .resolving)
         // The only pane listed is itself, which is no other pane.
-        #expect(status(isPaneOpen: true, destination: nil, isResolving: false) == .noTerminal(hasOtherPanes: false))
+        #expect(status(isPaneOpen: true, destination: nil, isResolving: false, choices: [ready]) == .noTerminal(hasOtherPanes: false))
+        #expect(status(isPaneOpen: true, destination: nil, isResolving: false, choices: [ready, alternate])
+            == .noTerminal(hasOtherPanes: true))
         // An answer from before the pane closed does not keep it on offer.
-        #expect(!status(isPaneOpen: false, destination: ready, isResolving: false).isReady)
+        #expect(status(isPaneOpen: false, destination: ready, isResolving: false, choices: [alternate]) == .paneClosed)
+        #expect(status(isPaneOpen: false, destination: ready, isResolving: false) == .noPane)
         #expect(ReviewTabText.insertHelp(.ready(ready), locale: Self.english) == "Inserts the comments into Claude Code’s input")
     }
 
@@ -275,27 +280,42 @@ struct ReviewDestinationTests {
         #expect(ReviewTabModel.paneAfterClosing(tab, livePanes: live, inserted: closing.inserted?.id) == closing.expected?.id)
     }
 
-    @Test func theDestinationChosen_isKeptThroughAChangeOfScope() {
-        let agent = UUID()
-        let shell = UUID()
-        let window = ProjectWindowState(id: WindowID())
-        window.review = Self.tab(agent: agent, destination: agent)
-        window.reviewPresentation.open(URL(fileURLWithPath: "/repo"), originPaneID: agent, initialScope: .uncommitted)
+    @Test func theDestinationChosen_isKeptThroughAChangeOfScope() throws {
+        let fixture = ActionStoresFixture()
+        let window = fixture.window
+        let container = ContainerID.project(fixture.project.id)
+        let agentTab = try #require(fixture.session.tabs(in: container).first)
+        let agent = try #require(agentTab.splitTree.allLeafIDs().first)
+        let shellTab = fixture.session.openTab(container: container)
+        let shell = try #require(shellTab.splitTree.allLeafIDs().first)
+        let opening = UUID()
+        window.review = ReviewTabState(
+            root: fixture.root, selection: .uncommitted(includesChangesOutsideTurns: false), fixedPoint: ReviewTabFixedPoint(),
+            agentPaneID: agent, destinationPaneID: agent, opening: opening
+        )
+        window.reviewPresentation.open(URL(fileURLWithPath: fixture.root), originPaneID: agent, initialScope: .uncommitted)
 
         ReviewTabActions.chooseDestination(shell, window: window)
-
         #expect(window.review?.destinationPaneID == shell)
         #expect(window.reviewPresentation.originPaneID == shell)
-        let context = ReviewTabModel.Context(turns: [], isViewed: { _ in false }, branchBase: "main")
-        let tab = window.review.map { ReviewTabModel.select(.branch(base: "main"), in: $0, context) }
-        #expect(tab?.destinationPaneID == shell)
-        #expect(tab?.agentPaneID == agent, "closing still goes back to the agent")
+
+        ReviewTabActions.select(.branch(base: "main"), conversation: nil, window: window, stores: fixture.review)
+
+        #expect(window.review?.scope == .branch(base: "main"))
+        #expect(window.reviewPresentation.requestedScope == .branch(base: "main"))
+        #expect(window.review?.opening == opening)
+        #expect(window.review?.destinationPaneID == shell)
+        #expect(window.reviewPresentation.originPaneID == shell)
+        #expect(window.review?.agentPaneID == agent, "closing still goes back to the agent")
     }
 
     @Test func afterAnInsert_theToastSaysWhatStayedBehind() {
-        #expect(ReviewTabText.inserted(held: 0).key == "Review inserted. Press Return to send it.")
-        #expect(ReviewTabText.inserted(held: 2)
-            .key == "Review inserted. %lld comments no longer match the current diff and stay in this review.")
+        #expect(ReviewTabText.inserted(held: 0).resolved(in: Self.english) == "Review inserted. Press Return to send it.")
+        #expect(ReviewTabText.inserted(held: 0).resolved(in: Self.japanese) == "レビューを挿入しました。Return を押すと送信されます。")
+        #expect(ReviewTabText.inserted(held: 2).resolved(in: Self.english)
+            == "Review inserted. 2 comments no longer match the current diff and stay in this review.")
+        #expect(ReviewTabText.inserted(held: 2).resolved(in: Self.japanese)
+            == "レビューを挿入しました。2 件のコメントは現在の差分と一致しないため、このレビューに残っています。")
     }
 
     @Test func aCompleteInsert_closesOnlyTheTabItStartedIn_inFront_withNothingBeingWritten() {
@@ -322,6 +342,13 @@ struct ReviewDestinationTests {
         let shellTab = session.openTab(container: container)
         let agent = try #require(agentTab.splitTree.allLeafIDs().first)
         let shell = try #require(shellTab.splitTree.allLeafIDs().first)
+        session.setActiveTab(agentTab.id)
+        PaneActions.split(session, direction: .horizontal)
+        let competing = try #require(session.tab(agentTab.id)?.splitTree.focusedLeafID)
+        try #require(competing != agent)
+        session.update(agentTab.id) { $0.zoomedLeafID = competing }
+        #expect(session.tab(agentTab.id)?.zoomedLeafID == competing)
+        session.setActiveTab(shellTab.id)
         let window = ProjectWindowState(selection: session.primarySelection)
         window.review = Self.tab(agent: agent, destination: agent)
         window.reviewPresentation.open(URL(fileURLWithPath: "/repo"), originPaneID: agent, initialScope: .uncommitted)
@@ -341,6 +368,8 @@ struct ReviewDestinationTests {
         #expect(window.review == nil)
         #expect(session.primarySelection.activeTabID == agentTab.id)
         #expect(session.tab(agentTab.id)?.splitTree.focusedLeafID == agent)
+        #expect(session.tab(agentTab.id)?.zoomedLeafID == agent)
+        #expect(window.reviewPresentation.originPaneID == nil)
         #expect(window.decisionBarSelection[agent] == nil, "⌘J's choice would keep the sentence behind it")
         #expect(window.pendingDecisionBarDone[agent] == .insertedReview(agent: .claude))
 
@@ -359,6 +388,7 @@ struct ReviewDestinationTests {
         #expect(window.review == nil)
         #expect(session.primarySelection.activeTabID == shellTab.id)
         #expect(window.pendingDecisionBarDone[shell] == nil)
+        #expect(window.pendingDecisionBarDone[agent] == .insertedReview(agent: .claude))
 
         // A request waiting in the pane keeps its bar: the toast says it,
         // and nothing is left to show later about comments sent since.
@@ -412,7 +442,8 @@ struct ReviewDestinationTests {
         window.reviewPresentation.open(URL(fileURLWithPath: "/repo"), originPaneID: agent, initialScope: .uncommitted)
         ReviewTabActions.chooseDestination(shell, window: window)
         let registry = RecordingSurfaceRegistry()
-        registry.deliverers[agent] = RecordingReviewDeliverer()
+        let other = RecordingReviewDeliverer()
+        registry.deliverers[agent] = other
         // The shell's view is registered, its surface is not: a tab not
         // shown since launch.
         let deliverer = RecordingReviewDeliverer()
@@ -431,7 +462,8 @@ struct ReviewDestinationTests {
         let reviewSession = ReviewSession(root: root, git: repository, drafts: RecordingReviewDraftStore())
         _ = await reviewSession.reload(scope: .uncommitted, selectedFileID: nil)
         let line = try #require(reviewSession.diff?.lines.first { $0.isCommentable && $0.kind == .added })
-        #expect(reviewSession.add(line: line, body: "Mine"))
+        try #require(reviewSession.add(line: line, body: "Mine"))
+        let comment = try #require(reviewSession.comments.first)
         var broughtForward: [UUID] = []
         let target = ReviewInsertion.Target(
             session: session,
@@ -464,8 +496,15 @@ struct ReviewDestinationTests {
         }
 
         #expect(broughtForward == [shell])
-        #expect(deliverer.delivered.count == 1, "the paste was started; the shell did not take it")
-        #expect(reviewSession.comments.allSatisfy { $0.insertedAt == nil }, "nothing was marked")
+        try #require(deliverer.delivered.count == 1)
+        let prompt = try #require(deliverer.delivered.first)
+        #expect(prompt.contains("Mine"))
+        #expect(prompt.contains("a.swift"))
+        let refusedReceipt = try #require(deliverer.receipts.first ?? nil)
+        #expect(refusedReceipt.root == reviewSession.root)
+        #expect(refusedReceipt.commentIDs == [comment.id])
+        #expect(refusedReceipt.settlement?.wasDelivered == false)
+        #expect(reviewSession.comments == [comment])
         let tab = try #require(window.review)
         #expect(tab.isShown, "the review tab is still open, in front")
         #expect(tab.destinationPaneID == shell, "and still writes to the shell")
@@ -474,18 +513,16 @@ struct ReviewDestinationTests {
         // The sheet stays up: the insert waits on the paste's answer, marking
         // nothing meanwhile, and a cancel there is the same refusal.
         deliverer.verdict = .waits
-        async let suspended: Void = {
-            await #expect(throws: ReviewError.pasteRefused) {
-                try await ReviewInsertion.run(reviewSession: reviewSession, to: target)
-            }
-        }()
-        await pollUntil { deliverer.delivered.count >= 2 }
-        try #require(deliverer.delivered.count == 2, "the second insert reached the paste")
-        #expect(reviewSession.comments.allSatisfy { $0.insertedAt == nil }, "nothing is marked while the sheet is up")
+        let pending = try await Self.awaitPaste(reviewSession, to: target, deliverer: deliverer, count: 2)
+        #expect(deliverer.delivered == [prompt, prompt])
+        #expect(pending.receipt.root == reviewSession.root)
+        #expect(pending.receipt.commentIDs == [comment.id])
+        #expect(pending.settlement.wasDelivered == nil)
+        #expect(reviewSession.comments == [comment], "nothing is marked while the sheet is up")
         #expect(window.review?.isShown == true)
-        try #require(deliverer.receipts.last ?? nil).settlement?.settle(wasDelivered: false)
-        await suspended
-        #expect(reviewSession.comments.allSatisfy { $0.insertedAt == nil })
+        pending.settlement.settle(wasDelivered: false)
+        await #expect(throws: ReviewError.pasteRefused) { try await pending.task.value }
+        #expect(reviewSession.comments == [comment])
         #expect(window.review?.destinationPaneID == shell)
 
         // The same insert, with the paste taken: marked, complete, and the
@@ -494,7 +531,9 @@ struct ReviewDestinationTests {
         let outcome = try await ReviewInsertion.run(reviewSession: reviewSession, to: target)
         #expect(outcome.isComplete)
         #expect(outcome.paneID == shell)
-        #expect(reviewSession.comments.allSatisfy { $0.insertedAt != nil })
+        #expect(reviewSession.comments.filter { $0.insertedAt != nil }.map(\.id) == [comment.id])
+        #expect(deliverer.delivered == [prompt, prompt, prompt])
+        #expect(other.delivered.isEmpty)
         let closed = ReviewTabActions.closeAfterInsert(
             ReviewTabInserted(paneID: outcome.paneID, agent: outcome.agent, opening: tab.opening, selection: tab.selection),
             window: window,
@@ -505,6 +544,37 @@ struct ReviewDestinationTests {
         #expect(closed == .toShell)
         #expect(window.review == nil)
         #expect(session.primarySelection.activeTabID == shellTab.id)
+    }
+
+    private struct PendingPaste {
+        let task: Task<ReviewInsertion.Outcome, any Error>
+        let receipt: ReviewPasteReceipt
+        let settlement: ReviewPasteSettlement
+    }
+
+    /// A late paste must still settle when the test cannot reach its expected receipt.
+    private static func awaitPaste(
+        _ reviewSession: ReviewSession,
+        to target: ReviewInsertion.Target,
+        deliverer: RecordingReviewDeliverer,
+        count: Int
+    ) async throws -> PendingPaste {
+        let running = Task { try await ReviewInsertion.run(reviewSession: reviewSession, to: target) }
+        do {
+            await pollUntil { deliverer.delivered.count >= count }
+            try #require(deliverer.delivered.count == count)
+            let receipt = try #require(deliverer.receipts.last ?? nil)
+            let settlement = try #require(receipt.settlement)
+            return PendingPaste(task: running, receipt: receipt, settlement: settlement)
+        } catch {
+            deliverer.verdict = .isRefused
+            for receipt in deliverer.receipts {
+                receipt?.settlement?.settle(wasDelivered: false)
+            }
+            running.cancel()
+            _ = await running.result
+            throw error
+        }
     }
 
     private static func waitingRequest(paneID: UUID) -> [AttentionItem] {
@@ -548,7 +618,9 @@ struct ReviewDestinationTests {
         let reviewSession = ReviewSession(root: root, git: repository, drafts: drafts)
         _ = await reviewSession.reload(scope: .uncommitted, selectedFileID: nil)
         let line = try #require(reviewSession.diff?.lines.first { $0.isCommentable && $0.kind == .added })
-        #expect(reviewSession.add(line: line, body: "Mine"))
+        try #require(reviewSession.add(line: line, body: "Mine"))
+        let mine = try #require(reviewSession.shownComments.first)
+        #expect(reviewSession.legacyComments == [theirs])
 
         let outcome = try await ReviewInsertion.run(
             reviewSession: reviewSession,
@@ -564,8 +636,17 @@ struct ReviewDestinationTests {
 
         #expect(reviewSession.comments.first { $0.id == theirs.id }?.isLegacy == true)
         #expect(outcome.held == 0)
-        #expect(deliverer.delivered.count == 1)
-        #expect(reviewSession.comments.first { $0.id == theirs.id }?.insertedAt == nil, "not sent, not marked")
+        #expect(outcome.isComplete)
+        try #require(deliverer.delivered.count == 1)
+        let prompt = try #require(deliverer.delivered.first)
+        #expect(prompt.contains("Mine"))
+        #expect(!prompt.contains("About their turn"))
+        let receipt = try #require(deliverer.receipts.first ?? nil)
+        #expect(receipt.commentIDs == [mine.id])
+        #expect(reviewSession.comments.filter { $0.insertedAt != nil }.map(\.id) == [mine.id])
+        let saved = try #require(try drafts.load(root: root))
+        #expect(saved.allComments.first { $0.id == theirs.id } == theirs)
+        #expect(saved.allComments.filter { $0.insertedAt != nil }.map(\.id) == [mine.id])
         #expect(reviewSession.staleCommentIDs.isEmpty, "never checked, so never stale")
     }
 
@@ -587,7 +668,10 @@ struct ReviewDestinationTests {
             lines: ReviewDiffParser.parse("@@ -1,1 +1,2 @@\n-old\n+new\n+more")
         )
         let root = URL(fileURLWithPath: "/tmp/weir-review-edited-\(UUID().uuidString)")
-        let reviewSession = ReviewSession(root: root, git: repository, drafts: RecordingReviewDraftStore())
+        let drafts = RecordingReviewDraftStore()
+        let writer = ReviewDraftWriter(root: root, drafts: drafts)
+        let reviewSession = ReviewSession(writer: writer, git: repository)
+        let otherReview = ReviewSession(writer: writer, git: repository)
         _ = await reviewSession.reload(scope: .uncommitted, selectedFileID: nil)
         let lines = try #require(reviewSession.diff?.lines.filter { $0.isCommentable && $0.kind == .added })
         try #require(lines.count == 2)
@@ -604,16 +688,25 @@ struct ReviewDestinationTests {
             locale: Self.english,
             isSameReview: { true }
         )
-        let running = Task { try await ReviewInsertion.run(reviewSession: reviewSession, to: target) }
-        await pollUntil { !deliverer.delivered.isEmpty }
-        #expect(reviewSession.edit(edited.id, body: "New"))
-        try #require(deliverer.receipts.last ?? nil).settlement?.settle(wasDelivered: true)
-        let outcome = try await running.value
+        let pending = try await Self.awaitPaste(reviewSession, to: target, deliverer: deliverer, count: 1)
+        #expect(pending.receipt.root == reviewSession.root)
+        #expect(Set(pending.receipt.commentIDs) == [kept.id, edited.id])
+        #expect(pending.receipt.commentIDs.count == 2)
+        #expect(deliverer.delivered.first?.contains("Old") == true)
+        #expect(deliverer.delivered.first?.contains("Kept") == true)
+        #expect(deliverer.delivered.first?.contains("New") == false)
+        #expect(pending.settlement.wasDelivered == nil)
+        #expect(otherReview.edit(edited.id, body: "New"))
+        pending.settlement.settle(wasDelivered: true)
+        let outcome = try await pending.task.value
 
         #expect(outcome.changed == 1)
         #expect(!outcome.isComplete)
         #expect(reviewSession.comments.first { $0.id == kept.id }?.insertedAt != nil)
-        #expect(reviewSession.comments.first { $0.id == edited.id }?.insertedAt == nil, "sent as it was, not as it is")
+        let current = try #require(reviewSession.comments.first { $0.id == edited.id })
+        #expect(current.body == "New")
+        #expect(current.insertedAt == nil)
+        #expect(try drafts.load(root: root)?.comments == reviewSession.comments)
     }
 }
 
@@ -670,28 +763,42 @@ struct ReviewDestinationStartTests {
         }
     }
 
+    private static func startAndWaitForThePaneTab(_ setup: Setup) async throws -> Task<Bool, Never> {
+        let started = start(setup)
+        let window = setup.fixture.window
+        await pollUntil { window.selection.activeTabID == setup.restored.id && window.review?.isShown == false }
+        do {
+            try #require(window.selection.activeTabID == setup.restored.id)
+            try #require(window.review?.isShown == false)
+            return started
+        } catch {
+            started.cancel()
+            _ = await started.value
+            throw error
+        }
+    }
+
     @Test func aPaneThatGotReady_putsTheReviewBackInFront() async throws {
         let setup = try Self.setUp()
         let fixture = setup.fixture
-        let started = Self.start(setup)
-        await pollUntil { fixture.window.selection.activeTabID == setup.restored.id }
-        #expect(fixture.window.review?.isShown == false, "the pane's tab came forward")
+        let original = try #require(fixture.window.review)
+        let started = try await Self.startAndWaitForThePaneTab(setup)
         setup.deliverer.isReadyForReviewPaste = true
 
         #expect(await started.value)
-        #expect(fixture.window.review?.isShown == true)
+        #expect(fixture.window.review == original)
+        #expect(fixture.window.selection.activeTabID == setup.restored.id)
     }
 
-    /// The person went to another tab while the pane started: they stay
-    /// there, and the review stays behind, so the insert does not close
-    /// it onto the pane.
+    /// The person went to another tab while the pane started.
     @Test func aMoveToAnotherTabDuringTheWait_isKept() async throws {
         let setup = try Self.setUp()
         let fixture = setup.fixture
+        var expected = try #require(fixture.window.review)
+        expected.isShown = false
         let other = fixture.session.openTab(container: .project(fixture.project.id))
         fixture.session.setActiveTab(setup.first.id, in: fixture.window.id, intent: .person)
-        let started = Self.start(setup)
-        await pollUntil { fixture.window.selection.activeTabID == setup.restored.id }
+        let started = try await Self.startAndWaitForThePaneTab(setup)
         ReviewTabActions.hide(
             window: fixture.window,
             showing: other.id,
@@ -703,22 +810,26 @@ struct ReviewDestinationStartTests {
 
         #expect(await started.value)
         #expect(fixture.window.selection.activeTabID == other.id)
-        #expect(fixture.window.review?.isShown == false)
+        #expect(fixture.window.review == expected)
     }
 
-    /// The review was opened again during the wait: that one is not
-    /// brought in front as if it were the one the insert left.
-    @Test func anotherOpeningDuringTheWait_isNotBroughtForward() async throws {
+    @Test(arguments: [false, true])
+    func anotherOpeningOrScopeDuringTheWait_isNotBroughtForward(changesScope: Bool) async throws {
         let setup = try Self.setUp()
         let fixture = setup.fixture
-        let started = Self.start(setup)
-        await pollUntil { fixture.window.selection.activeTabID == setup.restored.id }
-        var reopened = Self.review(root: fixture.root, destination: setup.pane)
-        reopened.isShown = false
-        fixture.window.review = reopened
+        var replacement = try #require(fixture.window.review)
+        if changesScope {
+            replacement.selection = .branch(base: "main")
+        } else {
+            replacement = Self.review(root: fixture.root, destination: setup.pane)
+        }
+        let started = try await Self.startAndWaitForThePaneTab(setup)
+        replacement.isShown = false
+        fixture.window.review = replacement
         setup.deliverer.isReadyForReviewPaste = true
 
         #expect(await started.value)
-        #expect(fixture.window.review?.isShown == false)
+        #expect(fixture.window.selection.activeTabID == setup.restored.id)
+        #expect(fixture.window.review == replacement)
     }
 }

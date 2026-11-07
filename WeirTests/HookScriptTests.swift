@@ -7,6 +7,35 @@ import Foundation
 import Testing
 @testable import Weir
 
+struct HookRecipeEnvironmentTests {
+    @Test func invalidRecipe_throwsBeforeBuildingTheEnvironment() {
+        let directory = URL(fileURLWithPath: "/unused")
+        let agent = HookAgent.claude
+        let states = AgentInstallRecipe.Variable(name: "STATES", value: .stateDirectory)
+        let sessions = AgentInstallRecipe.Variable(name: "SESSIONS", value: .sessionDirectory)
+        let cases: [([AgentInstallRecipe.Variable], HookAgent.RecipeError)] = [
+            ([], .missingVariable(provider: .claude, placeholder: .stateDirectory)),
+            ([states], .missingVariable(provider: .claude, placeholder: .sessionDirectory)),
+            (
+                [states, sessions, .init(name: "", value: .cwdEventsDirectory)],
+                .missingVariable(provider: .claude, placeholder: .cwdEventsDirectory)
+            ),
+            ([states, .init(name: "STATES", value: .sessionDirectory)], .duplicateVariable(provider: .claude, name: "STATES")),
+            ([.init(name: "HOME", value: .stateDirectory), sessions], .duplicateVariable(provider: .claude, name: "HOME")),
+            (
+                [states, sessions, .init(name: "SESSIONS", value: .cwdEventsDirectory)],
+                .duplicateVariable(provider: .claude, name: "SESSIONS")
+            )
+        ]
+        for (variables, expected) in cases {
+            let error = #expect(throws: HookAgent.RecipeError.self) {
+                _ = try agent.environment(in: directory, paneID: "pane", recipeVariables: variables)
+            }
+            #expect(error == expected)
+        }
+    }
+}
+
 @Suite(
     "Hook receiver",
     .tags(.smoke),
@@ -49,6 +78,11 @@ struct HookScriptTests {
         let indexMTime = try #require(
             try (FileManager.default.attributesOfItem(atPath: indexURL.path)[.modificationDate]) as? Date
         )
+        let indexBytes = try Data(contentsOf: indexURL)
+        let other = UUID().uuidString.lowercased()
+        let otherRef = "refs/weir/turn/\(other)"
+        let otherIndex = repo.url.appendingPathComponent(".git/weir/turn-\(other).index")
+        let sentinel = Data("other pane".utf8)
         var baseTree = ""
         _ = try runHooks(
             agent,
@@ -78,6 +112,8 @@ struct HookScriptTests {
                     #expect(!FileManager.default.fileExists(atPath: privateIndexURL.path))
                     try Data().write(to: privateIndexURL)
                     try Data().write(to: readIndexURL)
+                    try sentinel.write(to: otherIndex)
+                    try #require(gitExitStatus(["update-ref", otherRef, baseTree], in: repo.url) == 0)
                 } else if eventIndex == 1 {
                     #expect(record?["turnBaseTree"] as? String == baseTree)
                     #expect(record?["turnRoot"] as? String == expectedRoot)
@@ -86,10 +122,14 @@ struct HookScriptTests {
                     #expect(try gitExitStatus(["show-ref", "--verify", "--quiet", paneRef], in: repo.url) == 1)
                     #expect(!FileManager.default.fileExists(atPath: privateIndexURL.path))
                     #expect(!FileManager.default.fileExists(atPath: readIndexURL.path))
+                    #expect(try Data(contentsOf: otherIndex) == sentinel)
+                    #expect(try GitProcess.runSync(["rev-parse", otherRef], cwd: repo.url).stdout
+                        .trimmingCharacters(in: .whitespacesAndNewlines) == baseTree)
                 }
             }
         )
         #expect(!baseTree.isEmpty)
+        #expect(try Data(contentsOf: indexURL) == indexBytes)
         #expect(try await repo.git(["status", "--porcelain"]) == status)
         #expect(
             try (FileManager.default.attributesOfItem(atPath: indexURL.path)[.modificationDate]) as? Date == indexMTime
@@ -101,84 +141,88 @@ struct HookScriptTests {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
         let prompt = agent.payload("UserPromptSubmit", extra: ["cwd": repo.url.path])
+        let metadata = repo.url.appendingPathComponent(".git/weir")
+        try #require(!FileManager.default.fileExists(atPath: metadata.path))
         let disabled = try runHooks(agent, [prompt], extraEnvironment: ["WEIR_TURN_SNAPSHOT": "0"])
-        let outsideRepository = try runHooks(agent, [agent.payload("UserPromptSubmit")])
-        let missingGit = try withTempDir { directory in
-            try runHooks(agent, [prompt], extraEnvironment: ["PATH": pathWithoutGit(in: directory)])
+        #expect(!FileManager.default.fileExists(atPath: metadata.path))
+        let outsideRepository = try withTempDir { directory in
+            try #require(gitExitStatus(["rev-parse", "--show-toplevel"], in: directory) == 128)
+            return try runHooks(agent, [agent.payload("UserPromptSubmit", extra: ["cwd": directory.path])])
         }
+        let missingGit = try withTempDir { directory in
+            let path = try pathWithoutGit(in: directory)
+            let discovery = try TestProcess.run(
+                URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", "command -v git"],
+                environment: IsolatedProcessEnvironment.make(["PATH": path])
+            )
+            try #require(discovery.ending == .exited && discovery.status != 0)
+            return try runHooks(agent, [prompt], extraEnvironment: ["PATH": path])
+        }
+        #expect(!FileManager.default.fileExists(atPath: metadata.path))
         for optionalRecord in [disabled, outsideRepository, missingGit] {
             let record = try #require(optionalRecord)
+            #expect(record["state"] as? String == "running")
             #expect(record["turnBaseTree"] == nil)
             #expect(record["turnRoot"] == nil)
         }
     }
 
-    /// A turn's scratch files go in the git directory git names as an
-    /// absolute path, from the top of the worktree and from a folder inside
-    /// it. `git rev-parse --git-dir` prints `.git` at the top, and `.git`
-    /// resolved against a root URL with no trailing slash lands in the root's
-    /// parent: a temporary repository's snapshot would go to
-    /// `$TMPDIR/.git/weir`, shared by every later run.
+    /// A nested directory and a linked worktree each use the Git directory
+    /// resolved by Git itself, regardless of the payload's directory.
     @Test("writes a turn's scratch files only inside the repository's git directory", arguments: HookAgent.allCases)
     func promptSnapshot_staysInsideTheRepositoryGitDirectory(agent: HookAgent) async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
         let nested = repo.url.appendingPathComponent("src/deep")
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
-        for cwd in [repo.url, nested] {
+        let linked = try await repo.addLinkedWorktree(branch: "linked")
+        let mainGit = try await repo.git(["rev-parse", "--absolute-git-dir"])
+        let linkedGit = try await TempGitRepo.git(["rev-parse", "--absolute-git-dir"], in: linked)
+        try #require(linkedGit != mainGit)
+        for cwd in [repo.url, nested, linked] {
+            let root = try await TempGitRepo.git(["rev-parse", "--show-toplevel"], in: cwd)
+            let gitDir = try await TempGitRepo.git(["rev-parse", "--absolute-git-dir"], in: cwd)
+            let metadata = URL(fileURLWithPath: gitDir).appendingPathComponent("weir")
             let record = try #require(try runHooks(agent, [
                 agent.payload("UserPromptSubmit", extra: ["cwd": cwd.path]),
                 agent.payload("Stop", extra: ["cwd": cwd.path])
             ]))
-            #expect(record["turnRoot"] != nil)
+            #expect(record["turnRoot"] as? String == root)
+            #expect(record["turnBaseTree"] is String)
+            #expect(FileManager.default.fileExists(atPath: metadata.path))
         }
-        let weir = repo.url.appendingPathComponent(".git/weir")
-        #expect(FileManager.default.fileExists(atPath: weir.path))
-        let beside = try FileManager.default.contentsOfDirectory(atPath: repo.scratch.path)
-        #expect(beside == [repo.url.lastPathComponent])
+        #expect(!FileManager.default.fileExists(atPath: repo.scratch.appendingPathComponent(".git").path))
         #expect(!FileManager.default.fileExists(atPath: nested.appendingPathComponent(".git").path))
     }
 
     // MARK: - Pid
 
-    /// The shim exports its own pid and then `exec`s the agent, so outside
-    /// tmux the value already is the process the Swift-side liveness sweep
-    /// watches. Guessing by process name cannot tell two agents in one tree
-    /// apart; the exported value can.
-    @Test("prefers the pid the shim exported", arguments: HookAgent.allCases)
-    func exportedPid_isRecorded(agent: HookAgent) throws {
-        let record = try runHooks(agent, agent.midTurn(), extraEnvironment: [agent.pidVariable: "424242"])
-        #expect(record?["pid"] as? String == "424242")
+    enum PIDInput: CaseIterable, Sendable {
+        case valid, malformed, hosted, absent, empty
     }
 
-    /// The value reaches the record's JSON verbatim, and an inherited
-    /// variable is not numeric by construction the way a value read out of
-    /// `ps` is. A malformed record is dropped whole by the projection's record
-    /// scan, taking the pane's badge with it.
-    @Test("refuses an exported pid that is not a number", arguments: HookAgent.allCases)
-    func nonNumericExportedPid_isRefused(agent: HookAgent) throws {
-        let record = try runHooks(agent, agent.midTurn(), extraEnvironment: [agent.pidVariable: "\" ,\"x\":1"])
-        #expect(record?["pid"] == nil)
-    }
-
-    /// Inside tmux the shim publishes its own pid and then `exec`s tmux, so
-    /// the value names the client rather than the agent, and the client is
-    /// gone on the first detach. The walk is the only source that finds the
-    /// agent wherever tmux placed it, so the inherited value is dropped.
-    @Test("ignores the exported pid inside tmux, where it names the client", arguments: HookAgent.allCases)
-    func exportedPid_isIgnoredInsideTmux(agent: HookAgent) throws {
-        let record = try runHooks(
-            agent,
-            agent.midTurn(),
-            extraEnvironment: [agent.pidVariable: "424242", "TMUX": "/tmp/tmux-501/default,4242,0"]
-        )
-        #expect(record?["pid"] == nil)
-    }
-
-    @Test("records no pid when the shim exported none", arguments: HookAgent.allCases)
-    func noExportedPid_leavesThePidFieldOff(agent: HookAgent) throws {
-        let record = try runHooks(agent, agent.midTurn(), extraEnvironment: [agent.pidVariable: ""])
-        #expect(record?["pid"] == nil)
+    @Test("records a valid exported pid only outside tmux", arguments: HookAgent.allCases, PIDInput.allCases)
+    func exportedPid_requiresANumericValueOutsideTmux(agent: HookAgent, input: PIDInput) throws {
+        var environment: [String: String] = [:]
+        switch input {
+        case .valid:
+            environment[agent.pidVariable] = "424242"
+        case .malformed:
+            environment[agent.pidVariable] = "\" ,\"x\":1"
+        case .hosted:
+            environment = [agent.pidVariable: "424242", "TMUX": "/tmp/tmux-501/default,4242,0"]
+        case .absent:
+            break
+        case .empty:
+            environment[agent.pidVariable] = ""
+        }
+        let record = try #require(try runHooks(agent, agent.midTurn(), extraEnvironment: environment))
+        #expect(record["state"] as? String == "running")
+        if input == .valid {
+            #expect(record["pid"] as? String == "424242")
+        } else {
+            #expect(record["pid"] == nil)
+        }
     }
 
     /// The pid tests above are also satisfied by a walk that never matches
@@ -196,7 +240,7 @@ struct HookScriptTests {
             // relocated system binary on launch (exit 137).
             let fakeAgent = dir.appendingPathComponent(agent.rawValue)
             try FileManager.default.createSymbolicLink(at: fakeAgent, withDestinationURL: URL(fileURLWithPath: "/bin/sh"))
-            var environment = agent.environment(in: dir, paneID: paneID)
+            var environment = try agent.environment(in: dir, paneID: paneID)
             environment["WEIR_HOOK_HELPER"] = try #require(HookHelperFixture.helperURL).path
             // The trailing `true` keeps the shell from exec'ing the hook in
             // place, which would drop the agent-named process out of the very
@@ -216,19 +260,21 @@ struct HookScriptTests {
 
     // MARK: - Tmux
 
-    /// The pane strip's tab marks a hosted pane from this flag, and the
-    /// record is what clears it: `SessionEnd` and the pid sweep drop the
-    /// whole record, so nothing has to notice the tmux session went away.
-    @Test("records that the agent is hosted in tmux", arguments: HookAgent.allCases)
-    func insideTmux_recordsTheHostedFlag(agent: HookAgent) throws {
-        let record = try runHooks(agent, agent.midTurn(), extraEnvironment: ["TMUX": "/tmp/tmux-501/weir,4242,0"])
-        #expect(record?["isTmuxHosted"] as? Bool == true)
+    @Test("sets the hosted flag only inside tmux", arguments: HookAgent.allCases, [false, true])
+    func tmuxHostedFlag_isTrueOrOmitted(agent: HookAgent, isHosted: Bool) throws {
+        let environment = isHosted ? ["TMUX": "/tmp/tmux-501/weir,4242,0"] : [:]
+        let record = try #require(try runHooks(agent, agent.midTurn(), extraEnvironment: environment))
+        #expect(record["state"] as? String == "running")
+        if isHosted {
+            #expect(record["isTmuxHosted"] as? Bool == true)
+        } else {
+            #expect(record["isTmuxHosted"] == nil)
+        }
     }
 
-    @Test("leaves the hosted flag off outside tmux", arguments: HookAgent.allCases)
-    func outsideTmux_omitsTheHostedFlag(agent: HookAgent) throws {
-        #expect(try runHooks(agent, agent.midTurn())?["isTmuxHosted"] == nil)
-    }
+}
+
+extension HookScriptTests {
 
     // MARK: - Fixture recording
 
@@ -238,34 +284,43 @@ struct HookScriptTests {
     /// what the title rules are later replayed from.
     @Test("records raw payloads and the transcript when WEIR_HOOK_RECORD_DIR is set", arguments: HookAgent.allCases)
     func recordDirectory_keepsRawPayloadsInOrder(agent: HookAgent) throws {
-        try withTempDir { recordRoot in
-            let recordDir = recordRoot.appendingPathComponent("record")
+        try withTempDir { dir in
+            let recordDir = dir.appendingPathComponent("record")
             try FileManager.default.createDirectory(at: recordDir, withIntermediateDirectories: true)
-            let transcript = recordRoot.appendingPathComponent("transcript.jsonl")
+            let transcript = dir.appendingPathComponent("transcript.jsonl")
             let transcriptBytes = Data("{\"type\":\"ai-title\",\"aiTitle\":\"Fixture\"}\n".utf8)
             try transcriptBytes.write(to: transcript)
+            let start = agent.payload("SessionStart", extra: ["cwd": dir.path, "transcript_path": transcript.path])
+            let ordered = try JSONSerialization.data(withJSONObject: start, options: [.prettyPrinted, .sortedKeys])
             let payloads = [
-                agent.payload("SessionStart", extra: ["transcript_path": transcript.path]),
-                agent.payload("UserPromptSubmit", extra: ["prompt": "count \"quoted\" \\ things"])
+                Data("  \n".utf8) + ordered + Data("\n\n".utf8),
+                Data(#"{ "prompt" : "count \"quoted\" \\ things", "hook_event_name": "UserPromptSubmit" }"#.utf8)
             ]
-
-            _ = try runHooks(agent, payloads, extraEnvironment: ["WEIR_HOOK_RECORD_DIR": recordDir.path])
-
-            let recorded = try FileManager.default.contentsOfDirectory(atPath: recordDir.path).sorted()
-            #expect(recorded == [
-                "0000-SessionStart.json",
-                "0000-SessionStart.transcript.jsonl",
-                "0001-UserPromptSubmit.json"
-            ])
-            for (index, name) in ["0000-SessionStart.json", "0001-UserPromptSubmit.json"].enumerated() {
-                let bytes = try Data(contentsOf: recordDir.appendingPathComponent(name))
-                let sent = try JSONSerialization.data(withJSONObject: payloads[index])
-                #expect(bytes.count == sent.count, "\(name) was rewritten rather than copied")
-                let parsed = try JSONSerialization.jsonObject(with: bytes) as? NSDictionary
-                #expect(parsed == payloads[index] as NSDictionary)
+            let paneID = UUID().uuidString
+            var environment = try agent.environment(in: dir, paneID: paneID)
+            environment["WEIR_HOOK_RECORD_DIR"] = recordDir.path
+            environment["WEIR_HOOK_HELPER"] = try #require(HookHelperFixture.helperURL).path
+            let wrapper = try agent.wrapper()
+            for payload in payloads {
+                let output = try TestProcess.run(
+                    URL(fileURLWithPath: "/bin/sh"), arguments: [wrapper.path],
+                    environment: IsolatedProcessEnvironment.make(environment), stdin: payload, cwd: dir
+                )
+                try #require(output.ending == .exited && output.status == 0, "\(output.stderrText)")
             }
-            let copiedTranscript = try Data(contentsOf: recordDir.appendingPathComponent("0000-SessionStart.transcript.jsonl"))
-            #expect(copiedTranscript == transcriptBytes)
+
+            let copied = [
+                "0000-SessionStart.json": payloads[0],
+                "0000-SessionStart.transcript.jsonl": transcriptBytes,
+                "0001-UserPromptSubmit.json": payloads[1]
+            ]
+            let manager = FileManager.default
+            #expect(try Set(manager.contentsOfDirectory(atPath: recordDir.path)) == Set(copied.keys))
+            for (name, expected) in copied {
+                let url = recordDir.appendingPathComponent(name)
+                #expect(try Data(contentsOf: url) == expected)
+                #expect(try manager.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int == 0o600)
+            }
         }
     }
 
@@ -281,39 +336,47 @@ struct HookScriptTests {
 
     // MARK: - Wrapper
 
-    /// The helper is the only receiver, so a bundle without it records
-    /// nothing: the wrapper says so on stderr, which the agent shows, and
-    /// fails the call rather than exit 0 as if it had been recorded.
-    @Test("fails loudly when the helper is missing", arguments: HookAgent.allCases)
+    /// The wrapper in a bundle accepts only its adjacent helper, even
+    /// when a working source-tree override is provided.
+    @Test("fails loudly when the bundled helper is missing", arguments: HookAgent.allCases)
     func wrapper_withoutHelper_failsLoudly(agent: HookAgent) throws {
         try withTempDir { dir in
-            let output = try HookScriptHarness.feed(
-                agent.payload("SessionStart"),
-                to: URL(fileURLWithPath: "/bin/sh"),
-                arguments: [agent.wrapper().path],
-                environment: IsolatedProcessEnvironment.make([
-                    "PATH": ShimHarness.systemPath,
-                    "HOME": dir.path,
-                    "WEIR_HOOK_HELPER": dir.appendingPathComponent("AgentIntegrationHookHelper").path,
-                    "WEIR_PANE_ID": UUID().uuidString
-                ])
-            )
-            #expect(output.status == 1)
-            #expect(output.stderrText.contains("Hook Helper is missing"))
-        }
-    }
+            let resources = dir.appendingPathComponent("Fixture.app/Contents/Resources")
+            let shim = resources.appendingPathComponent("\(agent.rawValue)-shim")
+            let common = resources.appendingPathComponent("agent-shim")
+            let manager = FileManager.default
+            try manager.createDirectory(at: shim, withIntermediateDirectories: true)
+            try manager.createDirectory(at: common, withIntermediateDirectories: true)
+            let source = try agent.wrapper()
+            let wrapper = shim.appendingPathComponent("weir-hook")
+            try manager.copyItem(at: source, to: wrapper)
+            let sourceCommon = source.deletingLastPathComponent().deletingLastPathComponent()
+                .appendingPathComponent("agent-shim/runtime-common.sh")
+            try manager.copyItem(at: sourceCommon, to: common.appendingPathComponent("runtime-common.sh"))
 
-    /// An agent's settings may name the wrapper through a link, and the
-    /// wrapper finds the helper and keeps the run's identity either way.
-    @Test("runs the same through a link to the wrapper", arguments: HookAgent.allCases)
-    func linkedWrapper_keepsTheRunIdentityAndRevision(agent: HookAgent) throws {
-        try withTempDir { linkDir in
-            let link = linkDir.appendingPathComponent("weir-hook")
-            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: agent.wrapper())
-            let runID = UUID().uuidString
-            let record = try runHooks(agent, agent.midTurn(), extraEnvironment: ["WEIR_AGENT_RUN_ID": runID], wrapper: link)
-            #expect(record?["runId"] as? String == runID)
-            #expect(record?["revision"] as? Int == 2)
+            let helper = try #require(HookHelperFixture.helperURL)
+            try #require(manager.isExecutableFile(atPath: helper.path))
+            let missing = resources.deletingLastPathComponent().appendingPathComponent("MacOS/AgentIntegrationHookHelper")
+            try #require(!manager.fileExists(atPath: missing.path))
+            var environment = try agent.environment(in: dir, paneID: UUID().uuidString)
+            environment["WEIR_HOOK_HELPER"] = helper.path
+            let output = try HookScriptHarness.feed(
+                agent.payload("SessionStart", extra: ["cwd": dir.path]),
+                to: URL(fileURLWithPath: "/bin/sh"),
+                arguments: [wrapper.path],
+                environment: IsolatedProcessEnvironment.make(environment),
+                cwd: dir
+            )
+            let pwd = try TestProcess.run(URL(fileURLWithPath: "/bin/pwd"), arguments: ["-P"], cwd: shim)
+            try #require(pwd.ending == .exited && pwd.status == 0)
+            let shellPath = pwd.stdoutText.trimmingCharacters(in: .newlines) + "/../../MacOS/AgentIntegrationHookHelper"
+            #expect(output.status == 1)
+            #expect(output.stdout.isEmpty)
+            #expect(output
+                .stderrText ==
+                "Weir: the Hook Helper is missing at \(shellPath), so this agent's turns are not recorded. Reinstall Weir.\n")
+            #expect(!manager.fileExists(atPath: dir.appendingPathComponent("states").path))
+            #expect(!manager.fileExists(atPath: dir.appendingPathComponent("sessions").path))
         }
     }
 
@@ -343,12 +406,32 @@ struct HookScriptTests {
         #expect(record?["runId"] as? String == runID)
     }
 
+}
+
+extension HookScriptTests {
+
     // MARK: - Lifecycle
 
     @Test("replays a run's lifecycle transitions event by event", arguments: HookAgent.allCases)
     func lifecycle_replaysEachTransition(agent: HookAgent) throws {
         let steps = agent.lifecycle
-        let records = try HookScriptHarness.replayRecords(agent, steps.map(\.payload))
+        let oldTimestamp = "2000-01-01T00:00:00Z"
+        var records: [[String: Any]] = []
+        _ = try runHooks(agent, steps.map(\.payload), extraEnvironment: ["WEIR_TURN_SNAPSHOT": "0"]) { _, states, paneID, index in
+            let url = try states.appendingPathComponent(AgentRecordFixtures.recordFileName(paneID))
+            var record = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
+            records.append(record)
+            let next = index + 1
+            if steps.indices.contains(next), steps[next].lastHookEvent == "session_started" {
+                // A stale timestamp distinguishes reset from retention
+                // even when both processes start in the same second.
+                record["sessionStartedAt"] = oldTimestamp
+                if steps[next].payload["source"] as? String == "compact" {
+                    record["runStartedAt"] = oldTimestamp
+                }
+                try JSONSerialization.data(withJSONObject: record).write(to: url)
+            }
+        }
 
         try #require(records.count == steps.count)
         for (index, step) in steps.enumerated() {
@@ -359,16 +442,17 @@ struct HookScriptTests {
             #expect(record["revision"] as? Int == index + 1, "step \(index) \(event)")
             #expect(record["stateEpisodeToken"] as? String == String(step.episodeToken), "step \(index) \(event)")
             #expect(record["lastHookEvent"] as? String == step.lastHookEvent, "step \(index) \(event)")
+            if step.lastHookEvent == "session_started" {
+                let started = try #require(optionalText(record, "sessionStartedAt"))
+                #expect(started > oldTimestamp)
+                if step.payload["source"] as? String == "compact" {
+                    #expect(optionalText(record, "runStartedAt") == oldTimestamp)
+                }
+            }
             for (key, expected) in step.texts {
                 #expect(optionalText(record, key) == expected, "step \(index) \(event): \(key)")
             }
         }
-        // Every start refreshes `sessionStartedAt`, so across the final
-        // SessionStart the value can only move forward; equality would hold
-        // only while both events landed in the same second.
-        let restartedAt = try #require(optionalText(records[records.count - 1], "sessionStartedAt"))
-        let previousAt = try #require(optionalText(records[records.count - 2], "sessionStartedAt"))
-        #expect(restartedAt >= previousAt)
     }
 
     /// The events the agent is told to call us on are the list the helper
@@ -377,29 +461,64 @@ struct HookScriptTests {
     @Test("every subscribed event maps to a lifecycle state", arguments: HookAgent.allCases)
     func subscribedEvents_allReachABranch(agent: HookAgent) throws {
         let events = try agent.lifecycleSubscriptions()
-        #expect(!events.isEmpty)
+        #expect(events.sorted() == agent.neutralEvents.keys.sorted())
         for event in events {
-            let record = try runHooks(agent, agent.midTurn() + [agent.payload(event, extra: agent.extras(for: event))])
+            let record = try #require(try runHooks(agent, agent.midTurn() + [agent.payload(event, extra: agent.extras(for: event))]))
             let mapped = try #require(agent.neutralEvents[event], "no neutral event named for \(event)")
-            #expect(record?["lastHookEvent"] as? String == mapped, "the hook runtime has no branch for \(event)")
+            #expect(record["lastHookEvent"] as? String == mapped)
+            #expect(record["revision"] as? Int == 3)
+            let state = switch mapped {
+            case "session_started": "idle"
+            case "session_ended": "unknown"
+            case "compacting": "compacting"
+            case "approval_requested", "waiting_for_input": "needsInput"
+            case "turn_finished", "interrupted": "finished"
+            case "failed": "error"
+            default: "running"
+            }
+            #expect(record["state"] as? String == state, "\(event)")
         }
     }
 
     @Test("keeps one episode token across repeated waiting writes", arguments: HookAgent.allCases)
     func waitingEpisode_repeatedState_keepsToken(agent: HookAgent) throws {
-        let record = try runHooks(agent, [agent.payload("UserPromptSubmit"), agent.waitingPayload, agent.waitingPayload])
-        #expect(record?["state"] as? String == "needsInput")
-        #expect(record?["revision"] as? Int == 3)
-        #expect(record?["stateEpisodeToken"] as? String == "2")
+        let prompt = agent.payload("UserPromptSubmit")
+        let records = try HookScriptHarness.replayRecords(agent, [prompt, agent.waitingPayload, agent.waitingPayload, prompt])
+        #expect(records.map { $0["state"] as? String } == ["running", "needsInput", "needsInput", "running"])
+        #expect(records.map { $0["revision"] as? Int } == [1, 2, 3, 4])
+        #expect(records.map { $0["stateEpisodeToken"] as? String } == ["1", "2", "2", "4"])
     }
 
-    @Test("keys one invocation by run id and increments its revision", arguments: HookAgent.allCases)
-    func runIdentity_multipleEvents_shareOneOrderedRecord(agent: HookAgent) throws {
-        let runID = UUID().uuidString
-        let record = try runHooks(agent, agent.midTurn(), extraEnvironment: ["WEIR_AGENT_RUN_ID": runID])
-        #expect(record?["runId"] as? String == runID)
-        #expect(record?["revision"] as? Int == 2)
-        #expect(record?["stateEpisodeToken"] as? String == "2")
+    @Test("keys one invocation by run id and increments its revision", arguments: HookAgent.allCases, [false, true])
+    func runIdentity_multipleEvents_shareOneOrderedRecord(agent: HookAgent, usesLink: Bool) throws {
+        try withTempDir { dir in
+            let wrapper = try agent.wrapper()
+            let invoked = dir.appendingPathComponent("weir-hook")
+            if usesLink {
+                try FileManager.default.createSymbolicLink(at: invoked, withDestinationURL: wrapper)
+            }
+            let runID = UUID().uuidString
+            let name = try AgentRecordFixtures.recordFileName(runID)
+            var revisions: [Int] = []
+            var episodes: [String] = []
+            let record = try runHooks(
+                agent, agent.midTurn(), extraEnvironment: ["WEIR_AGENT_RUN_ID": runID], wrapper: usesLink ? invoked : wrapper
+            ) { _, states, paneID, event in
+                let record = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: states.appendingPathComponent(name)))
+                    as? [String: Any])
+                #expect(record["runId"] as? String == runID)
+                #expect(record["paneId"] as? String == paneID)
+                #expect(record["state"] as? String == (event == 0 ? "idle" : "running"))
+                let suffix = try #require(AgentProviderRegistry.recordLayout?.runRecordSuffix)
+                let files = try FileManager.default.contentsOfDirectory(atPath: states.path).filter { $0.hasSuffix(suffix) }
+                #expect(files == [name])
+                try revisions.append(#require(record["revision"] as? Int))
+                try episodes.append(#require(record["stateEpisodeToken"] as? String))
+            }
+            try #require(record != nil)
+            #expect(revisions == [1, 2])
+            #expect(episodes == ["1", "2"])
+        }
     }
 
     // MARK: - Files the app reads by name
@@ -409,14 +528,22 @@ struct HookScriptTests {
     /// reported name is what catches a writer that drifts.
     @Test("writes the resume hint under the name the app reads", arguments: HookAgent.allCases)
     func resumeHint_usesTheReportedName(agent: HookAgent) throws {
-        var wasRead = false
-        _ = try runHooks(agent, [agent.payload("SessionStart")]) { dir, _, paneID, _ in
-            let url = try dir.appendingPathComponent("sessions/" + AgentRecordFixtures.hintFileName(paneID))
-            let hint = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
-            #expect(hint?["paneId"] as? String == paneID)
-            wasRead = true
+        try withTempDir { cwd in
+            var read: AgentSessionHintFixture?
+            let record = try #require(try runHooks(agent, [agent.payload("SessionStart", extra: ["cwd": cwd.path])]) { dir, _, paneID, _ in
+                let sessions = dir.appendingPathComponent("sessions")
+                let name = try AgentRecordFixtures.hintFileName(paneID)
+                let url = sessions.appendingPathComponent(name)
+                let hint = try PersistenceCoders.makeDecoder().decode(AgentSessionHintFixture.self, from: Data(contentsOf: url))
+                #expect(hint.paneId == paneID)
+                #expect(hint.schemaVersion == 1)
+                #expect(hint.sessionId == agent.sessionID)
+                #expect(hint.cwd == cwd.path)
+                read = hint
+            })
+            let hint = try #require(read)
+            #expect(record["sessionId"] as? String == hint.sessionId)
         }
-        #expect(wasRead)
     }
 
     // MARK: - Helpers

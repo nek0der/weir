@@ -81,6 +81,9 @@ struct CommitAndPRModelTests {
         #expect(CommitAndPRModel.cleanUpBlocker(Fixture.make(unpushed: 0)) == nil)
         // The upstream deleted as the request merged: not known, not a stop.
         #expect(CommitAndPRModel.cleanUpBlocker(Fixture.make(unpushed: nil)) == nil)
+        let dirty = CommitAndPRModel.cleanUpBlocker(Fixture.make(unpushed: nil, uncommitted: 3))
+        #expect(dirty?.unpushed == 0)
+        #expect(dirty?.uncommitted == 3)
         #expect(CommitAndPRText.cleanUpBlocked(unpushed: 2, uncommitted: 1, locale: Self.english) == """
         This worktree has work that isn’t on a remote:
         2 unpushed commits
@@ -103,9 +106,10 @@ struct CommitAndPRModelTests {
         #expect(CommitAndPRModel.make(input).externalTool
             == CommitAndPRModel.ExternalTool(name: "tig", command: "/opt/homebrew/bin/tig --all"))
         input.externalCommand = "env PAGER=less TERM=xterm tig"
-        #expect(CommitAndPRModel.make(input).externalTool?.name == "tig")
+        #expect(CommitAndPRModel.make(input).externalTool
+            == CommitAndPRModel.ExternalTool(name: "tig", command: "env PAGER=less TERM=xterm tig"))
         input.externalCommand = "env -i tig"
-        #expect(CommitAndPRModel.make(input).externalTool?.name == "tig")
+        #expect(CommitAndPRModel.make(input).externalTool == CommitAndPRModel.ExternalTool(name: "tig", command: "env -i tig"))
     }
 
     @Test func theFootAction_isTheOutsideChanges_thenCreatePR_thenTheRequest() {
@@ -188,9 +192,15 @@ struct CommitAndPRModelTests {
         // An empty bar, then a button again: that button waits anew.
         let later = swapped + .seconds(10)
         gate.noteShown(nil, at: later)
-        gate.noteShown(.openPullRequest, at: later + .seconds(1))
-        #expect(!gate.accepts(.openPullRequest, at: later + .seconds(1) + .milliseconds(100), settle: delay))
-        #expect(gate.accepts(.openPullRequest, at: later + .seconds(1) + delay, settle: delay))
+        #expect(!gate.accepts(.createPullRequest, at: later, settle: delay))
+        gate.noteShown(.createPullRequest, at: later + .seconds(1))
+        #expect(!gate.accepts(.createPullRequest, at: later + .seconds(1) + delay - .milliseconds(1), settle: delay))
+        #expect(gate.accepts(.createPullRequest, at: later + .seconds(1) + delay, settle: delay))
+
+        let opening = later + .seconds(3)
+        gate.noteShown(.openPullRequest, at: opening)
+        #expect(!gate.accepts(.openPullRequest, at: opening + .milliseconds(100), settle: delay))
+        #expect(gate.accepts(.openPullRequest, at: opening + delay, settle: delay))
     }
 
     @Test func theFootBarsWait_followsASlowDoubleClick() {

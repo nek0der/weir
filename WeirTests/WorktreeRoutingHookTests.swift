@@ -71,7 +71,7 @@ struct WorktreeRoutingHookTests {
             rootURL: scratch.repo,
             worktrees: [],
             worktreePlacement: .siblingPrefixed,
-            bootstrap: [.shorthand("touch bootstrapped.txt")],
+            bootstrap: [.shorthand("echo bootstrapped > bootstrapped.txt")],
             worktreeRouting: [.claude: routeClaude]
         )
         SessionStore(directory: scratch.support).saveSynchronously(SessionSnapshot(
@@ -186,13 +186,14 @@ struct WorktreeRoutingHookTests {
         try await route(hook, scratch, branch: "feature/alpha")
 
         #expect(FileManager.default.fileExists(atPath: worktree.path))
-        #expect(FileManager.default.fileExists(
-            atPath: worktree.appendingPathComponent("bootstrapped.txt").path
-        ))
+        let bootstrapped = try String(contentsOf: worktree.appendingPathComponent("bootstrapped.txt"), encoding: .utf8)
+        #expect(bootstrapped == "bootstrapped\n")
         // The event is what refreshes the sidebar; one the application does
         // not list is a worktree it never shows.
         let event = try #require(try event(in: states(scratch, provider: "claude")))
         #expect(event["branch"] as? String == "feature/alpha")
+        let reportedPath = try #require(event["worktreePath"] as? String)
+        #expect(URL(fileURLWithPath: reportedPath).resolvingSymlinksInPath().path == worktree.resolvingSymlinksInPath().path)
     }
 
     /// `PreToolUse` runs ahead of the person's prompt: a "No" there must find
@@ -218,9 +219,10 @@ struct WorktreeRoutingHookTests {
         writeRouting(scratch, routeClaude: true)
 
         let hook = try helperHook(scratch)
-        for branch in ["feature/alpha", "fix/alpha"] {
+        for (branch, expectedLeaf) in [("feature/alpha", "feature-alpha"), ("fix/alpha", "fix-alpha")] {
+            #expect(BranchNameSuggester.folderLeaf(of: branch) == expectedLeaf)
             try await route(hook, scratch, branch: branch)
-            let folder = scratch.sibling(BranchNameSuggester.folderLeaf(of: branch))
+            let folder = scratch.sibling(expectedLeaf)
             #expect(FileManager.default.fileExists(atPath: folder.path), "\(branch)")
         }
     }
@@ -251,7 +253,8 @@ struct WorktreeRoutingHookTests {
         // renamed would fail open and silently ignore the opt-out.
         #expect(try reroutedCommand(helperHook(scratch), scratch, branch: "feature/beta") == nil)
         #expect(!FileManager.default.fileExists(
-            atPath: scratch.sibling("beta").path
+            atPath: scratch.sibling("feature-beta").path
         ))
+        #expect(try event(in: states(scratch, provider: "claude")) == nil)
     }
 }

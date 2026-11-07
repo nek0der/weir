@@ -10,12 +10,21 @@ struct CheckoutNameTests {
     @Test func aDetachedMainCheckout_isStillARepository() {
         let root = URL(fileURLWithPath: "/tmp/weir")
         // On a branch, detached at a commit, and a folder git does not know.
-        #expect(CheckoutName.isRepository(Project(name: "weir", rootURL: root, mainBranchName: "main", mainHeadSHA: "abc1234")))
-        #expect(CheckoutName.isRepository(Project(name: "weir", rootURL: root, mainBranchName: nil, mainHeadSHA: "abc1234")))
-        #expect(!CheckoutName.isRepository(Project(name: "weir", rootURL: root)))
+        #expect(CheckoutName.isRepository(Project(name: "weir", rootURL: root, mainBranchName: "main")))
+        let detached = Project(name: "weir", rootURL: root, mainHeadSHA: "abc1234")
+        #expect(CheckoutName.isRepository(detached))
+        #expect(CheckoutName.hasWorktreeMenu(detached))
+        let folder = Project(name: "weir", rootURL: root)
+        #expect(!CheckoutName.isRepository(folder))
+        #expect(!CheckoutName.hasWorktreeMenu(folder))
         // A worktree found by git says so too, before the main folder's sync.
         let worktree = Worktree(label: "feat", workingDirectory: root.appendingPathComponent("feat"), origin: .gitWorktree)
         #expect(CheckoutName.isRepository(Project(name: "weir", rootURL: root, worktrees: [worktree])))
+
+        let pin = Worktree(label: "pin", workingDirectory: root.appendingPathComponent("pin"), origin: .userPinned)
+        let withPin = Project(name: "weir", rootURL: root, worktrees: [pin])
+        #expect(!CheckoutName.isRepository(withPin))
+        #expect(CheckoutName.hasWorktreeMenu(withPin))
     }
 
     @Test func aCheckout_isNamedByItsBranch_withOneFallbackEverywhere() {

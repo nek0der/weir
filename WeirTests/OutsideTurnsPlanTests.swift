@@ -86,7 +86,12 @@ struct OutsideTurnsPlanTests {
 
         #expect(plan.gaps.isEmpty, "a tree taken elsewhere says nothing of here")
         #expect(plan.since == nil)
-        #expect(Self.plan([]).since == nil)
+        #expect(plan.isComplete)
+
+        let empty = Self.plan([])
+        #expect(empty.gaps.isEmpty)
+        #expect(empty.since == nil)
+        #expect(empty.isComplete)
     }
 
     /// Two agents' overlapping turns ended in one second at different
@@ -219,7 +224,11 @@ struct OutsideTurnsPlanTests {
         )
 
         #expect(plan.gaps == [OutsideTurnsPlan.Gap(end: "e-A3", begin: "b-B1")])
-        #expect(Self.plan(turns).gaps.count == 2, "a turn recorded in another worktree leaves the gap counted")
+        #expect(plan.since == "e-B1")
+        #expect(Self.plan(turns).gaps == [
+            OutsideTurnsPlan.Gap(end: "e-A1", begin: "b-A3"),
+            OutsideTurnsPlan.Gap(end: "e-A3", begin: "b-B1")
+        ], "a turn recorded in another worktree leaves the gap counted")
     }
 
     @Test func aGapADeletedTurnFellIn_isLeftOut_whateverItsConversation_andTheOthersStay() throws {
@@ -236,12 +245,17 @@ struct OutsideTurnsPlanTests {
 
         #expect(plan.gaps == [OutsideTurnsPlan.Gap(end: "e-A2", begin: "b-A3")], "B1's changes lie between A1 and A2")
         #expect(plan.since == "e-A3", "nothing deleted ran after the last turn")
-        #expect(Self.plan(turns).gaps.count == 2, "counted when nothing was deleted")
+        let bothGaps = [
+            OutsideTurnsPlan.Gap(end: "e-A1", begin: "b-A2"),
+            OutsideTurnsPlan.Gap(end: "e-A2", begin: "b-A3")
+        ]
+        #expect(Self.plan(turns).gaps == bothGaps, "counted when nothing was deleted")
         let ranLater = try OutsideTurnsPlan.make(turns: turns, isHere: { $0.root == "/repo" }, deleted: [Self.interval(59, 59)])
         #expect(ranLater.since == nil)
-        #expect(ranLater.gaps.count == 2)
+        #expect(ranLater.gaps == bothGaps)
         let endedWithIt = try OutsideTurnsPlan.make(turns: turns, isHere: { $0.root == "/repo" }, deleted: [Self.interval(58, 58)])
         #expect(endedWithIt.since == nil, "the same second: it may have written after")
+        #expect(endedWithIt.gaps == bothGaps)
     }
 
     @Test func aDeletedTurnOverlappingOneLeft_leavesOutTheGapItRunsInto_butNotOneItStaysWithin() throws {
@@ -250,8 +264,13 @@ struct OutsideTurnsPlanTests {
             Self.turn("A2", conversation: "a", number: 2, start: 40, end: 50)
         ]
         let isHere: (SnapshotTree) -> Bool = { $0.root == "/repo" }
-        #expect(try OutsideTurnsPlan.make(turns: turns, isHere: isHere, deleted: [Self.interval(5, 15)]).gaps.isEmpty)
-        #expect(try OutsideTurnsPlan.make(turns: turns, isHere: isHere, deleted: [Self.interval(2, 8)]).gaps.count == 1)
+        let crosses = try OutsideTurnsPlan.make(turns: turns, isHere: isHere, deleted: [Self.interval(5, 15)])
+        #expect(crosses.gaps.isEmpty)
+        #expect(crosses.since == "e-A2")
+
+        let contained = try OutsideTurnsPlan.make(turns: turns, isHere: isHere, deleted: [Self.interval(2, 8)])
+        #expect(contained.gaps == [OutsideTurnsPlan.Gap(end: "e-A1", begin: "b-A2")])
+        #expect(contained.since == "e-A2")
     }
 
     private static func interval(_ start: Int, _ end: Int) throws -> DateInterval {

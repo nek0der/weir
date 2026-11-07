@@ -18,12 +18,14 @@ struct ConversationIdentityRuleTests {
 
     @Test func assign_singleActive_isEmpty() {
         #expect(ConversationIdentityRule.assign(active: [first], previous: [:], paletteCount: 6).isEmpty)
+        #expect(ConversationIdentityRule.assign(active: [first], previous: [first: 2], paletteCount: 6).isEmpty)
+        #expect(ConversationIdentityRule.assign(active: [first, second], previous: [first: 2], paletteCount: 0).isEmpty)
         #expect(ConversationIdentityRule.assign(active: [], previous: [first: 2], paletteCount: 6).isEmpty)
     }
 
     @Test func assign_newConversations_takeLowestFreeIndexInCreationOrder() {
-        let assigned = ConversationIdentityRule.assign(active: [first, second, third], previous: [:], paletteCount: 6)
-        #expect(assigned == [first: 0, second: 1, third: 2])
+        let assigned = ConversationIdentityRule.assign(active: [third, first, second], previous: [:], paletteCount: 6)
+        #expect(assigned == [third: 0, first: 1, second: 2])
     }
 
     @Test func assign_keepsPreviousIndex_whenOthersEnd() {
@@ -58,7 +60,7 @@ struct ConversationIdentityRuleTests {
             previous: [first: 0, second: 0, third: 2],
             paletteCount: 3
         )
-        #expect(uneven[fourth] == 1)
+        #expect(uneven == [first: 0, second: 0, third: 2, fourth: 1])
     }
 
     /// A conversation holds a color while it runs here or has turns to
@@ -85,11 +87,18 @@ struct ConversationIdentityRuleTests {
     @Test func choices_carryTheirIdentity() throws {
         var extras = TurnSummaryFixture.Extras()
         extras.conversationID = "b"
-        let turns = try [ChangesPanelFixture.turn(1), ChangesPanelFixture.turn(1, extras: extras)]
+        var ended = TurnSummaryFixture.Extras()
+        ended.conversationID = "c"
+        let turns = try [
+            ChangesPanelFixture.turn(1),
+            ChangesPanelFixture.turn(1, extras: extras),
+            ChangesPanelFixture.turn(1, extras: ended)
+        ]
         var input = ChangesPanelFixture.input(ChangesPanelFixture.agents(turns))
         input.identities = [turns[0].conversation: 3, turns[1].conversation: 0]
         let choices = ChangesPanelModel.conversations(input)
-        #expect(choices.map(\.identity) == [3, 0])
+        #expect(choices.map(\.conversation) == turns.map(\.conversation))
+        #expect(choices.map(\.identity) == [3, 0, nil])
     }
 
     /// A key that differs from the last read's at every call, so each
@@ -143,6 +152,7 @@ struct ConversationIdentityRuleTests {
             return [first, second]
         }
         let read = store.identities(for: container, key: Self.key(1), active: active)
+        #expect(read == [first: 0, second: 1])
         #expect(store.identities(for: container, key: Self.key(1), active: active) == read)
         #expect(asked == 1)
         #expect(store.derivationCount == 1)

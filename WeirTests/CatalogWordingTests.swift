@@ -25,7 +25,7 @@ struct CatalogWordingTests {
         let data = try Data(contentsOf: root.appending(path: "Weir/Resources/Localizable.xcstrings"))
         let catalog = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         let strings = try #require(catalog["strings"] as? [String: Any])
-        return strings.map { key, entry in
+        let entries = strings.map { key, entry in
             let localizations = (entry as? [String: Any])?["localizations"] as? [String: Any] ?? [:]
             let english = CatalogFixture.values(in: localizations["en"])
             return Entry(
@@ -35,6 +35,8 @@ struct CatalogWordingTests {
                 comment: (entry as? [String: Any])?["comment"] as? String ?? ""
             )
         }
+        try #require(entries.contains { !$0.japanese.isEmpty })
+        return entries
     }
 
     /// Japanese never addresses the reader as 「あなた」, which macOS does
@@ -101,12 +103,15 @@ struct CatalogWordingTests {
     /// once was.
     @Test func voiceOverStrings_sayInWordsWhatTheScreenSaysInSymbols() throws {
         let symbols = #/ · |→| / |\d/\d|lld/%|\bT%(\d\$)?lld|[⌘⇧⌥⌃⏎⎋]/#
-        for entry in try Self.entries() where entry.comment.contains("VoiceOver") {
+        let entries = try Self.entries()
+        let spoken = entries.filter { $0.comment.contains("VoiceOver") }
+        try #require(spoken.contains { !$0.japanese.isEmpty })
+        for entry in spoken {
             for value in entry.english + entry.japanese {
                 #expect(!value.contains(symbols), "\(entry.key): \(value)")
             }
         }
-        for entry in try Self.entries() {
+        for entry in entries {
             for value in entry.japanese {
                 #expect(!value.contains(#/展開されています|折りたたまれています/#), "\(entry.key): \(value)")
             }

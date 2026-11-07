@@ -8,9 +8,7 @@ import Testing
 @testable import Weir
 @testable import WeirDomain
 
-/// The tests find their window among `NSApp.windows`, where the host app
-/// may own one too (its presenter opens the restored windows), so a test
-/// takes only the window its own `show` added.
+@Suite(.hostsWindows)
 @MainActor
 struct ProjectWindowPresenterTests {
     @MainActor
@@ -36,9 +34,8 @@ struct ProjectWindowPresenterTests {
 
         /// Shows the primary and returns the window that appeared for it.
         func showPrimary() -> NSWindow? {
-            let before = Set(NSApp.windows.map(ObjectIdentifier.init))
             registry.show(primary.id)
-            return NSApp.windows.first { !before.contains(ObjectIdentifier($0)) }
+            return presenter.nsWindow(for: primary.id)
         }
 
         /// Shows the primary on a project of its own, so choosing another
@@ -60,9 +57,8 @@ struct ProjectWindowPresenterTests {
             _ project: Project,
             from source: ProjectWindowState?
         ) throws -> (state: ProjectWindowState, window: NSWindow) {
-            let before = Set(NSApp.windows.map(ObjectIdentifier.init))
             let state = try #require(registry.openInNewWindow(project: project.id, in: session, from: source))
-            let window = try #require(NSApp.windows.first { !before.contains(ObjectIdentifier($0)) })
+            let window = try #require(presenter.nsWindow(for: state.id))
             return (state, window)
         }
     }
@@ -113,7 +109,9 @@ struct ProjectWindowPresenterTests {
             }
             registry.hide(registry.primary.id)
         }
+        let initialSize = primaryWindow.frame.size
         primaryWindow.setFrame(NSRect(origin: primaryWindow.frame.origin, size: NSSize(width: 520, height: 410)), display: false)
+        try #require(primaryWindow.frame.size != initialSize)
 
         let (state, window) = try fixture.openInNewWindow(fixture.addProject("sized"), from: registry.primary)
         opened = state
@@ -251,6 +249,7 @@ struct ProjectWindowPresenterTests {
         fixture.presenter.show(stranger, openedFrom: nil)
 
         #expect(!fixture.presenter.isOnScreen(stranger.id))
+        #expect(fixture.presenter.windowIDs.isEmpty)
     }
 
     @Test func eachProjectsWindow_isAWindowOfItsOwn_hiddenAlone() throws {
@@ -290,5 +289,7 @@ struct ProjectWindowPresenterTests {
 
         #expect(again === other)
         #expect(otherWindow.isVisible)
+        #expect(fixture.presenter.nsWindow(for: other.id) === otherWindow)
+        #expect(fixture.presenter.windowIDs == [registry.primary.id, other.id])
     }
 }

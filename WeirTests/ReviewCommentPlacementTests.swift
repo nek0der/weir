@@ -172,15 +172,9 @@ struct ReviewCommentPlacementTests {
             !built.contains { ($0.line?.text ?? "").hasPrefix("diff --git") || ($0.line?.text ?? "").hasPrefix("index ") },
             "File metadata is not rendered"
         )
-        let kinds = built.map(\.kind)
-        let isInOrder = if case .hunk = kinds[0], case .code = kinds[1], case .comment = kinds[2],
-                           case .composer = kinds[3], case .code = kinds[4]
-        {
-            true
-        } else {
-            false
-        }
-        #expect(isInOrder, "Row order")
+        let hunk = try #require(lines.first { $0.kind == .hunk })
+        let added = try #require(lines.first { $0.kind == .added })
+        #expect(built.map(\.kind) == [.hunk(hunk), .code(removed), .comment(comment), .composer(removed), .code(added)])
         #expect(
             ReviewRowBuilder.lineCommentCounts(comments: [comment], fileID: file.id) == [removed.id: 1],
             "Gutter counts are keyed by line"

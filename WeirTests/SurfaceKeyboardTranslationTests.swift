@@ -62,8 +62,12 @@ struct SurfaceKeyboardTranslationTests {
             consumedMods: SurfaceView.translateMods(translated.modifierFlags)
         )
 
+        #expect(translated !== event)
+        #expect(translated.keyCode == event.keyCode)
         #expect(!translated.modifierFlags.contains(.option))
         #expect(translated.modifierFlags.contains(.numericPad))
+        #expect(rawKey.keycode == 11)
+        #expect(rawKey.action == GHOSTTY_ACTION_PRESS)
         #expect(rawKey.mods.rawValue & GHOSTTY_MODS_ALT.rawValue != 0)
         #expect(rawKey.mods.rawValue & GHOSTTY_MODS_ALT_RIGHT.rawValue != 0)
         #expect(rawKey.consumed_mods.rawValue & GHOSTTY_MODS_ALT.rawValue == 0)
@@ -191,7 +195,7 @@ struct SurfaceKeyboardTranslationTests {
             isComposing: false,
             isRepeat: false
         )
-        #expect(optionCommand?.isCommandOnly == false)
+        #expect(optionCommand == PrimaryKeyPress(isCommandOnly: false, isComposing: false))
         #expect(SurfaceView
             .primaryKeyPress(keyCode: UInt16(kVK_Return), modifierFlags: [.shift], isComposing: false, isRepeat: false) == nil)
         #expect(SurfaceView

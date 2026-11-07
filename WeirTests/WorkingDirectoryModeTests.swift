@@ -18,7 +18,10 @@ struct WorkingDirectoryModeTests {
         let encoded = try WorkingDirectoryMode.allCases.map { mode in
             try String(bytes: encoder.encode(mode), encoding: .utf8)
         }
-        #expect(encoded == [#""home""#, #""inheritPrevious""#, #""fixed""#])
+        let stored = [#""home""#, #""inheritPrevious""#, #""fixed""#]
+        #expect(encoded == stored)
+        let decoder = JSONDecoder()
+        #expect(try stored.map { try decoder.decode(WorkingDirectoryMode.self, from: Data($0.utf8)) } == WorkingDirectoryMode.allCases)
     }
 
     // MARK: - The scratch row's folder
@@ -62,7 +65,7 @@ struct WorkingDirectoryModeTests {
     }
 
     @Test("openTab .loose inheritPrevious prefers the active tab's live pwd over its launch cwd")
-    func openTab_looseInherit_prefersLivePwd() {
+    func openTab_looseInherit_prefersLivePwd() throws {
         let session = WorkspaceSession()
         session.quickTabDefaultsProvider = { (.inheritPrevious, nil) }
         let seed = session.openTab(
@@ -71,9 +74,8 @@ struct WorkingDirectoryModeTests {
         )
         // Simulate the shell `cd`-ing: libghostty's PWD action updates
         // `pwd`, which must win over the stale launch `workingDirectory`.
-        if let idx = session.tabs.firstIndex(where: { $0.id == seed.id }) {
-            session.tabs[idx].pwd = "/tmp/weir-after-cd"
-        }
+        let idx = try #require(session.tabs.firstIndex { $0.id == seed.id })
+        session.tabs[idx].pwd = "/tmp/weir-after-cd"
         let next = session.openTab(container: .loose)
         #expect(next.workingDirectory == "/tmp/weir-after-cd")
     }

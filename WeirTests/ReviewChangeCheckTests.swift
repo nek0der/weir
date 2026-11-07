@@ -37,13 +37,17 @@ struct ReviewChangeCheckTests {
             Issue.record("the index could not be read")
             return false
         }
-        /// Every file here exists but `gone.swift`, so a state of `c.txt`
-        /// without a hash is a read that failed.
-        func take(_ paths: Set<String>) async -> [String: ReviewReadState] {
+        /// A retry can recover a timed-out read. Every expected hash must be present
+        /// before using the snapshot to detect a later mutation.
+        func take(_ paths: Set<String>, hashing expected: [String: String]) async -> [String: ReviewReadState] {
             var states: [String: ReviewReadState] = [:]
-            for _ in 0..<3 where states["c.txt"]?.hash == nil {
+            for _ in 0..<3 {
                 states = await ReviewChangeCheck.take(paths, git: git, root: repo.url, scope: .uncommitted)
+                if expected.allSatisfy({ states[$0.key]?.hash == Self.blobID(Data($0.value.utf8)) }) {
+                    return states
+                }
             }
+            Issue.record("Could not read the expected hashes for \(expected.keys.sorted())")
             return states
         }
         try repo.write("let a = 1\n", to: "a.swift")
@@ -53,7 +57,8 @@ struct ReviewChangeCheckTests {
         try await repo.git(["commit", "-m", "files"])
         try repo.write("let a = 2\n", to: "a.swift")
         let paths: Set = ["a.swift", "gone.swift", "c.txt"]
-        var states = await take(paths)
+        var contents = ["a.swift": "let a = 2\n", "gone.swift": "let gone = 1\n", "c.txt": "base\n"]
+        var states = await take(paths, hashing: contents)
 
         #expect(await !changed(states, "a.swift"))
         let file = repo.url.appendingPathComponent("a.swift")
@@ -62,18 +67,19 @@ struct ReviewChangeCheckTests {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
         #expect(await changed(states, "a.swift"), "a mode is diffed")
 
-        states = await take(paths)
+        states = await take(paths, hashing: contents)
         // `cp -p`: the same size and modification time, other bytes.
         let modified = try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate]
         try repo.write("let a = 3\n", to: "a.swift")
         try FileManager.default.setAttributes([.modificationDate: modified as Any], ofItemAtPath: file.path)
         #expect(await changed(states, "a.swift"))
 
-        states = await take(paths)
+        contents["a.swift"] = "let a = 3\n"
+        states = await take(paths, hashing: contents)
         try await repo.git(["add", "a.swift"])
         #expect(await changed(states, "a.swift"), "a stage")
 
-        states = await take(paths)
+        states = await take(paths, hashing: contents)
         try FileManager.default.removeItem(at: repo.url.appendingPathComponent("gone.swift"))
         #expect(await changed(states, "gone.swift"), "a tracked file deleted")
 
@@ -86,13 +92,21 @@ struct ReviewChangeCheckTests {
         try await repo.git(["commit", "-qam", "main"])
         // Fails by design: it stops at the conflict.
         await #expect(throws: TempGitRepo.GitFailure.self) { try await repo.git(["merge", "other"]) }
-        states = await take(paths)
-        #expect(states["c.txt"]?.index?.split(separator: ";").count == 3, "three stages")
+        let conflict = try Data(contentsOf: repo.url.appendingPathComponent("c.txt"))
+        let conflictText = try #require(String(data: conflict, encoding: .utf8))
+        contents["gone.swift"] = nil
+        contents["c.txt"] = conflictText
+        states = await take(paths, hashing: contents)
+        let stages = ["base\n", "main\n", "other\n"].enumerated().map { index, content in
+            "100644 \(Self.blobID(Data(content.utf8))) \(index + 1);"
+        }.joined()
+        #expect(states["c.txt"]?.index == stages)
         try repo.write("resolved\n", to: "c.txt")
         try await repo.git(["add", "c.txt"])
         #expect(await changed(states, "c.txt"))
 
-        states = await take(paths)
+        contents["c.txt"] = "resolved\n"
+        states = await take(paths, hashing: contents)
         try await repo.git(["commit", "-qm", "merged"])
         #expect(await changed(states, "c.txt"), "HEAD moved")
     }
@@ -126,14 +140,16 @@ struct ReviewChangeCheckTests {
         for path in paths {
             try repo.write("\(path)\n", to: path)
         }
+        try repo.write("other\n", to: "outside.txt")
         try await repo.git(["add", "."])
+        let expected = Self.indexEntries(for: paths)
 
         let few = try await ReviewGit.indexEntries(Set(paths.prefix(3)), root: repo.url)
         let all = try await ReviewGit.indexEntries(Set(paths), root: repo.url)
 
-        #expect(few.count == 3, "by name")
-        #expect(all.count == 70, "the whole index, filtered")
-        #expect(paths.prefix(3).allSatisfy { few[$0] == all[$0] })
+        let requestedFew = Set(paths.prefix(3))
+        #expect(few == expected.filter { requestedFew.contains($0.key) })
+        #expect(all == expected)
     }
 
     @Test func theIndex_isReadAsBytes_passingOverPathsThatAreNotUTF8() {
@@ -188,6 +204,8 @@ struct ReviewChangeCheckTests {
         #expect(try await changed("u.txt", from: states), "untracked, then added")
 
         states = await ReviewChangeCheck.take(["l"], git: git, root: repo.url, scope: .uncommitted)
+        try #require(states["l"]?.hash == "link:a.txt")
+        #expect(try await !changed("l", from: states))
         try FileManager.default.removeItem(at: link)
         try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: "b.txt")
         #expect(try await changed("l", from: states), "a link pointed at an identical file is still another link")
@@ -206,8 +224,9 @@ struct ReviewChangeCheckTests {
             let repo = try await TempGitRepo.make()
             defer { repo.cleanup() }
             try ScratchFile.write("outside\n", to: "f.txt", in: outside)
-            try repo.write("small\n", to: "small.txt")
-            try repo.write(String(repeating: "x", count: 100), to: "large.txt")
+            let atLimit = String(repeating: "x", count: 50)
+            try repo.write(atLimit, to: "small.txt")
+            try repo.write(atLimit + "x", to: "large.txt")
             try repo.write("locked\n", to: "locked.txt")
             try FileManager.default.createDirectory(at: repo.url.appendingPathComponent("folder"), withIntermediateDirectories: true)
             try FileManager.default.createSymbolicLink(
@@ -228,9 +247,11 @@ struct ReviewChangeCheckTests {
                 maxBytes: 50
             )
 
-            #expect(hashes["small.txt"] == Self.blobID(Data("small\n".utf8)), "kept although another path failed its batch")
+            #expect(hashes["small.txt"] == Self.blobID(Data(atLimit.utf8)), "the byte limit is inclusive")
             #expect(hashes["large.txt"] == nil, "over the limit: never read")
-            #expect(hashes["locked.txt"] == nil, "Git could not read it")
+            if geteuid() != 0 {
+                #expect(hashes["locked.txt"] == nil, "Git could not read it")
+            }
             #expect(hashes["folder"] == nil, "not a file")
             #expect(hashes["away"] == "link:" + outside.appendingPathComponent("f.txt").path, "a link is its target's name, not followed")
             #expect(hashes["out/f.txt"] == nil, "not read outside the work tree through a link")
@@ -240,7 +261,7 @@ struct ReviewChangeCheckTests {
     @Test(.tags(.smoke)) func indexEntries_tooLargeToReadWhole_areReadByNameInBatches() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
-        let paths = (0..<5).map { "f\($0).txt" }
+        let paths = (0..<(ReviewGit.pathspecBatch + 3)).map { "f\($0).txt" }
         for path in paths {
             try repo.write("\(path)\n", to: path)
         }
@@ -249,7 +270,14 @@ struct ReviewChangeCheckTests {
         let whole = try await ReviewGit.indexEntries(Set(paths), root: repo.url, byName: 2)
         let batched = try await ReviewGit.indexEntries(Set(paths), root: repo.url, byName: 2, wholeIndexLimitBytes: 10)
 
-        #expect(whole.count == 5)
-        #expect(batched == whole, "the whole index over its limit, read by name instead")
+        let expected = Self.indexEntries(for: paths)
+        #expect(whole == expected)
+        #expect(batched == expected)
+    }
+
+    private static func indexEntries(for paths: [String]) -> [String: String] {
+        Dictionary(uniqueKeysWithValues: paths.map { path in
+            (path, "100644 \(blobID(Data("\(path)\n".utf8))) 0;")
+        })
     }
 }

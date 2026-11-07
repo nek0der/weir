@@ -115,8 +115,10 @@ struct ScratchOwnerTests {
 
         session.moveTab(moving.id, to: .project(project.id))
 
+        #expect(session.tab(moving.id)?.container == .project(project.id))
         #expect(session.primarySelection.activeTabID == sibling.id)
         #expect(session.selection(other)?.activeTabID == sibling.id)
+        #expect(session.scratchDrawingWindowID == session.primaryWindowID)
     }
 
     // MARK: - A hidden window
@@ -129,6 +131,7 @@ struct ScratchOwnerTests {
         session.setActiveTab(scratch.id, in: other)
         session.setActiveTab(projectTab.id)
         let scratchPane = try #require(scratch.splitTree.allLeafIDs().first)
+        #expect(session.window(showingPane: scratchPane) == other)
         #expect(session.shownTabIDs == [projectTab.id, scratch.id])
 
         session.setWindow(other, isHidden: true)
@@ -144,6 +147,7 @@ struct ScratchOwnerTests {
 
         session.setWindow(other, isHidden: false)
         #expect(session.shownContainerIDs == [.loose])
+        #expect(session.window(showingPane: scratchPane) == session.primaryWindowID)
     }
 
     @Test func hidingTheWindowDrawingTheScratch_handsItToAnotherWithItSelected_andBack() {

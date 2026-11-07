@@ -39,8 +39,7 @@ struct PRMarkPresentationTests {
             PRMarkPresentation.supervisionStyle(for: PRInfoFixture.make(state: .closed))
         ].map { try #require($0) }
         #expect(styles.map(\.kind) == [.open, .draft, .merged, .closed])
-        let keys = styles.map(\.accessibilityKey.key)
-        #expect(Set(keys).count == keys.count)
+        #expect(styles.map(\.accessibilityKey.key) == ["PR open", "PR draft", "PR merged", "PR closed"])
     }
 
     /// The rule this suite exists for: each outcome of the checks draws

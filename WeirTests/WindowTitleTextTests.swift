@@ -39,7 +39,9 @@ struct WindowTitleTextTests {
         let session = WorkspaceSession()
 
         #expect(WindowTitleText.projectAndBranch(.loose, in: session) == "Weir")
-        #expect(WindowTitleText.projectAndBranch(.project(UUID()), in: session) == "Weir", "a project that is gone")
+        let removedProject = UUID()
+        #expect(WindowTitleText.projectAndBranch(.project(removedProject), in: session) == "Weir")
+        #expect(WindowTitleText.projectAndBranch(.worktree(projectID: removedProject, worktreeID: UUID()), in: session) == "Weir")
     }
 
     @Test func theScratchTabs_areNamedByTheWindowsProject() {

@@ -12,39 +12,41 @@ struct HostedPaneEnvironmentFileTests {
     @Test func removeOrphans_removesOnlyStaleSavedEnvironments() throws {
         try withTempDir { dir in
             let fm = FileManager.default
+            let now = Date(timeIntervalSince1970: 1_700_000_000)
             func file(_ name: String, age: TimeInterval) throws -> URL {
                 let url = dir.appendingPathComponent(name)
-                fm.createFile(atPath: url.path, contents: Data("export SECRET='hunter2'\n".utf8))
-                try fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -age)], ofItemAtPath: url.path)
+                fm.createFile(atPath: url.path, contents: Data("export EXAMPLE='fixture'\n".utf8))
+                try fm.setAttributes([.modificationDate: now.addingTimeInterval(-age)], ofItemAtPath: url.path)
                 return url
             }
             let stale = 2 * HostedPaneEnvironmentFile.staleAfter
             let leftBehind = try file("weir-hosted-env.AAAAAAAAAAAA", age: stale)
             let beingRead = try file("weir-hosted-env.BBBBBBBBBBBB", age: 0)
+            let atBoundary = try file("weir-hosted-env.EEEEEEEEEEEE", age: HostedPaneEnvironmentFile.staleAfter)
             let someoneElses = try file("other-tool.CCCCCCCCCCCC", age: stale)
             // A link with the shim's name is no file the shim wrote, however
             // old. `setAttributes` would age what it points to, so the link
             // itself is aged with `lutimes`.
             let link = dir.appendingPathComponent("weir-hosted-env.DDDDDDDDDDDD")
             try fm.createSymbolicLink(at: link, withDestinationURL: someoneElses)
-            let then = timeval(tv_sec: time(nil) - Int(stale), tv_usec: 0)
+            let then = timeval(tv_sec: Int(now.timeIntervalSince1970 - stale), tv_usec: 0)
             var times = [then, then]
             #expect(lutimes(link.path, &times) == 0)
 
-            HostedPaneEnvironmentFile.removeOrphans(in: [dir])
+            HostedPaneEnvironmentFile.removeOrphans(in: [dir], now: now)
 
             #expect(!fm.fileExists(atPath: leftBehind.path))
             #expect(fm.fileExists(atPath: beingRead.path))
+            #expect(fm.fileExists(atPath: atBoundary.path))
             #expect(fm.fileExists(atPath: someoneElses.path))
             #expect((try? fm.destinationOfSymbolicLink(atPath: link.path)) != nil)
         }
     }
 
-    /// The folders the shim writes to: TMPDIR as a pane inherits it, and the
-    /// one macOS keeps for this user, each once.
-    @Test func defaultDirectories_holdTheUsersTemporaryFolderOnce() {
+    @Test func defaultDirectories_includeTheTemporaryDirectoryWithoutDuplicates() {
+        let temporary = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path
         let directories = HostedPaneEnvironmentFile.defaultDirectories.map(\.path)
-        #expect(!directories.isEmpty)
+        #expect(directories.contains(temporary))
         #expect(Set(directories).count == directories.count)
     }
 }

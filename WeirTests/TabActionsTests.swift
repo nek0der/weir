@@ -18,34 +18,41 @@ struct TabActionsTests {
         session.recordClosedTab(tab)
         session.closeTab(tab.id)
         var told: [UUID: UUID] = [:]
-        var tabCountWhenTold: Int?
-        session.onTabReopening = { closed, paneIDs in
+        var tabCountsWhenTold: [Int] = []
+        session.onTabReopening = { [weak session] closed, paneIDs in
             #expect(closed.id == tab.id)
             told = paneIDs
-            tabCountWhenTold = session.tabs.count
+            if let session {
+                tabCountsWhenTold.append(session.tabs.count)
+            }
         }
         let before = session.tabs.count
         TabActions.reopenClosedTab(session)
-        #expect(tabCountWhenTold == before)
+        #expect(tabCountsWhenTold == [before])
         let new = try #require(told[pane])
-        #expect(session.tabs.contains { $0.splitTree.allLeafIDs().contains(new) })
+        #expect(told == [pane: new])
+        #expect(new != pane)
+        #expect(session.activeTab(in: session.primaryWindowID)?.splitTree.allLeafIDs() == [new])
     }
 
     // MARK: - Reopen closed tab
 
     @Test("closeTab pushes a ClosedTab snapshot of the full Tab")
-    func closeTab_pushesClosedTabSnapshot() {
+    func closeTab_pushesClosedTabSnapshot() throws {
         let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
         let registry = NoopSurfaceRegistry()
         session.update(tab.id) { t in
             t.titleOverride = "build"
             t.workingDirectory = "/tmp/weir-test-cwd"
         }
+        let before = try #require(session.tab(tab.id))
 
         TabActions.closeTab(session, registry: registry, tabID: tab.id)
 
         #expect(session.closedTabStack.count == 1)
         let closed = session.closedTabStack.last
+        #expect(closed?.tab == before)
+        #expect(session.tab(tab.id) == nil)
         #expect(closed?.tab.container == .loose)
         #expect(closed?.tab.displayTitle == "build")
         #expect(closed?.tab.workingDirectory == "/tmp/weir-test-cwd")
@@ -103,20 +110,23 @@ struct TabActionsTests {
         PaneActions.split(session, direction: .horizontal)
         PaneActions.split(session, direction: .vertical)
         // Snapshot the original split-tree structure before close.
-        let originalLeafCount = try #require(session.tab(tab.id)?.splitTree.allLeafIDs().count)
-        let originalIsSplit = try #require(session.tab(tab.id)).splitTree.isSplit
         let originalLeafIDs = try #require(session.tab(tab.id)?.splitTree.allLeafIDs())
+        try #require(originalLeafIDs.count == 3)
 
         TabActions.closeTab(session, registry: registry, tabID: tab.id)
         TabActions.reopenClosedTab(session)
 
         let revived = try #require(session.activeTab(in: session.primaryWindowID))
-        #expect(revived.splitTree.allLeafIDs().count == originalLeafCount)
-        #expect(revived.splitTree.isSplit == originalIsSplit)
+        let ids = revived.splitTree.allLeafIDs()
+        try #require(ids.count == 3)
+        let right = PaneSplit(direction: .vertical, ratio: 0.5, first: .leaf(id: ids[1]), second: .leaf(id: ids[2]))
+        let root = PaneSplit(direction: .horizontal, ratio: 0.5, first: .leaf(id: ids[0]), second: .split(right))
+        #expect(revived.splitTree == SplitTree(root: .split(root), focusedLeafID: ids[2]))
         // None of the new leaf IDs should equal any of the originals —
         // remapping guarantees fresh UUIDs so the registry doesn't
         // collide with whatever the previous SurfaceViews held.
-        let revivedLeafIDs = Set(revived.splitTree.allLeafIDs())
+        let revivedLeafIDs = Set(ids)
+        #expect(revivedLeafIDs.count == 3)
         #expect(revivedLeafIDs.isDisjoint(with: Set(originalLeafIDs)))
     }
 
@@ -127,6 +137,7 @@ struct TabActionsTests {
         PaneActions.split(session, direction: .horizontal)
         PaneActions.toggleZoom(session)
         let zoomedBefore = try #require(session.tab(tab.id)?.zoomedLeafID)
+        let zoomedPosition = try #require(session.tab(tab.id)?.splitTree.allLeafIDs().firstIndex(of: zoomedBefore))
 
         TabActions.closeTab(session, registry: registry, tabID: tab.id)
         TabActions.reopenClosedTab(session)
@@ -135,7 +146,7 @@ struct TabActionsTests {
         let zoomedAfter = try #require(revived.zoomedLeafID)
         // Same logical position (zoomed leaf still present), fresh UUID.
         #expect(zoomedAfter != zoomedBefore)
-        #expect(revived.splitTree.allLeafIDs().contains(zoomedAfter))
+        #expect(revived.splitTree.allLeafIDs().firstIndex(of: zoomedAfter) == zoomedPosition)
     }
 
     @Test("reopenClosedTab preserves paneStates with remapped pane IDs")
@@ -221,23 +232,23 @@ struct TabActionsTests {
             let tab = session.openTab(container: .loose, title: "tab-\(i)")
             TabActions.closeTab(session, registry: registry, tabID: tab.id)
         }
-        #expect(session.closedTabStack.count == WorkspaceSession.closedTabStackLimit)
-        #expect(session.closedTabStack.last?.tab.displayTitle == "tab-\(WorkspaceSession.closedTabStackLimit + extra - 1)")
-        // And the front is no longer "tab-0" but the first one that survived the cap.
-        #expect(session.closedTabStack.first?.tab.displayTitle == "tab-\(extra)")
+        let expected = (extra..<(WorkspaceSession.closedTabStackLimit + extra)).map { "tab-\($0)" }
+        #expect(session.closedTabStack.map(\.tab.displayTitle) == expected)
     }
 
     // MARK: - A tab that types a command
 
-    @Test func aTabTypingACommand_opensInTheContainer_withTheCommandStagedOnce() {
+    @Test func aTabTypingACommand_opensInTheContainer_withTheCommandStagedOnce() throws {
         let (session, project) = WorkspaceSessionFixture.withProject()
         let container = ContainerID.project(project.id)
         TabActions.newTab(session, in: container, typing: CommitAndPRActions.createPullRequestCommand)
-        let pane = session.tabs(in: container).last?.splitTree.allLeafIDs().first
-        #expect(pane.flatMap { session.stagedLaunch(paneID: $0)?.command } == "gh pr create --fill")
-        if let pane {
-            session.clearStagedLaunch(paneID: pane)
-        }
-        #expect(pane.flatMap { session.stagedLaunch(paneID: $0) } == nil)
+        let tab = try #require(session.activeTab(in: session.primaryWindowID))
+        let pane = try #require(tab.splitTree.allLeafIDs().first)
+        #expect(tab.container == container)
+        #expect(tab.initialCommands == [pane: "gh pr create --fill"])
+        #expect(session.stagedLaunch(paneID: pane)?.command == "gh pr create --fill")
+        session.clearStagedLaunch(paneID: pane)
+        #expect(session.stagedLaunch(paneID: pane) == nil)
+        #expect(session.tab(tab.id)?.initialCommands.isEmpty == true)
     }
 }

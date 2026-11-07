@@ -32,7 +32,8 @@ struct ForgeResolverTests {
             ("github.com:nek0der/weir.git", "github.com"),
             ("ssh://git@github.com:22/nek0der/weir.git", "github.com"),
             // Host casing is normalized so cache keys collapse.
-            ("https://GitHub.com/nek0der/weir.git", "github.com")
+            ("https://GitHub.com/nek0der/weir.git", "github.com"),
+            (" \t git@GitLab.com:acme/app.git \t", "gitlab.com")
         ]
     )
     func host_extractsFromRemoteURL(raw: String, expected: String) {
@@ -105,9 +106,8 @@ struct ForgeResolverTests {
     /// follow `gh`'s own priority so we agree with the tool we are
     /// about to invoke.
     ///
-    /// This also covers the caches on either side of the resolve and
-    /// the `git config --get-regexp` line parsing, none of which is
-    /// reachable any other way.
+    /// The temporary repository exercises the actual config read and the
+    /// working-directory cache across an explicit invalidation.
     @Test(
         "a fork resolves by its upstream, not its origin",
         .tags(.smoke)
@@ -116,18 +116,58 @@ struct ForgeResolverTests {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
         try await repo.git(["remote", "add", "origin", "https://gitlab.com/me/weir.git"])
-        let resolver = ForgeResolver(locator: ToolLocator())
-        // Only `origin` so far, and the heuristic answers for it
-        // without spawning a CLI.
+        let reads = Recorded<[URL]>([])
+        let none = ToolLocator(known: ["gh": nil, "glab": nil])
+        let resolver = ForgeResolver(locator: none) { arguments, directory in
+            reads.update { $0.append(directory) }
+            return await PRStatusFetcher.liveGit(arguments, directory)
+        }
         #expect(await resolver.forge(for: repo.url) == .gitLab)
 
         try await repo.git(["remote", "add", "upstream", "https://github.com/nek0der/weir.git"])
-        // Still GitLab: the working-directory cache answers, which is
-        // what stops every tick from re-reading remotes.
         #expect(await resolver.forge(for: repo.url) == .gitLab)
+        #expect(reads.value == [repo.url])
 
         await resolver.invalidate()
         #expect(await resolver.forge(for: repo.url) == .gitHub)
+        #expect(reads.value == [repo.url, repo.url])
+    }
+
+    @Test func usableRemotesFollowTheNamedPriorityThenAlphabeticalOrder() {
+        let remotes = [
+            "z": "git@gitlab.com:team/last.git",
+            "origin": "git@github.com:team/origin.git",
+            "a": "git@github.com:team/first.git",
+            "github": "git@github.com:team/github.git",
+            "upstream": "git@gitlab.com:team/upstream.git",
+            "local": "/tmp/forge-local"
+        ]
+        #expect(ForgeResolver.remotesByPriority(remotes).map(\.name) == ["upstream", "github", "origin", "a", "z"])
+    }
+
+    @Test func invalidationDuringRemoteReadDoesNotCacheItsOldForge() async throws {
+        let gate = Gate<ToolResult>()
+        let calls = Recorded(0)
+        let resolver = ForgeResolver(locator: ToolLocator(known: ["gh": nil, "glab": nil])) { _, _ in
+            calls.update { $0 += 1 }
+            if calls.value == 1 {
+                return await gate.wait()
+            }
+            return ToolResult(exitCode: 0, stdout: "remote.origin.url https://gitlab.com/acme/app.git\n", stderr: "")
+        }
+        let folder = URL(fileURLWithPath: "/nonexistent/forge-checkout")
+        let old = ToolResult(exitCode: 0, stdout: "remote.origin.url https://github.com/acme/app.git\n", stderr: "")
+        async let before = resolver.answer(for: folder)
+        defer { gate.open(with: old) }
+        try await gate.waitUntilRequested()
+
+        await resolver.invalidate()
+        gate.open(with: old)
+
+        #expect(await before == .known(.gitHub))
+        #expect(await resolver.answer(for: folder) == .known(.gitLab))
+        #expect(await resolver.answer(for: folder) == .known(.gitLab))
+        #expect(calls.value == 2)
     }
 
     /// Remotes that could not be read are no answer, and are not kept: the
@@ -178,7 +218,32 @@ struct ForgeResolverTests {
     func forge_noRemote_isNil() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
-        let resolver = ForgeResolver(locator: ToolLocator())
-        #expect(await resolver.forge(for: repo.url) == nil)
+        try await withTempDir { directory in
+            let executable = directory.appendingPathComponent("forge-probe")
+            let probeLog = directory.appendingPathComponent("probe-called")
+            // The marker is beside this script regardless of the probe's cwd.
+            let script = #"""
+            #!/bin/sh
+            printf '%s\n' "$@" >> "${0%/*}/probe-called"
+            exit 1
+            """#
+            try Data((script + "\n").utf8).write(to: executable)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+            let locator = ToolLocator(known: ["gh": executable, "glab": executable])
+            let resolver = ForgeResolver(locator: locator)
+            #expect(await resolver.isAuthenticated(kind: .gitHub, host: "probe.invalid") == false)
+            let invocation = try String(contentsOf: probeLog, encoding: .utf8)
+            #expect(invocation == "auth\ntoken\n--hostname\nprobe.invalid\n")
+            try FileManager.default.removeItem(at: probeLog)
+
+            #expect(await resolver.answer(for: repo.url) == .known(nil))
+            #expect(!FileManager.default.fileExists(atPath: probeLog.path))
+
+            try await repo.git(["remote", "add", "origin", "https://github.com/acme/app.git"])
+            #expect(await resolver.forge(for: repo.url) == .gitHub)
+            await resolver.invalidate()
+            #expect(await resolver.forge(for: repo.url) == .gitHub)
+            #expect(!FileManager.default.fileExists(atPath: probeLog.path))
+        }
     }
 }

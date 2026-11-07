@@ -94,6 +94,7 @@ struct AgentShimLocatorTests {
             Issue.record("zsh did not exit within ten seconds")
             return nil
         }
+        #expect(shell.terminationStatus == 0)
         return try String(contentsOf: output, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -132,7 +133,9 @@ struct AgentShimLocatorTests {
             #expect(after == before)
             #expect(afterEmpty == before)
             let leading = ordered.reversed().map(\.path) + ["/opt/person/bin"]
-            #expect(after.split(separator: ":").prefix(leading.count).map(String.init) == leading)
+            let paths = after.split(separator: ":").map(String.init)
+            #expect(Array(paths.prefix(leading.count)) == leading)
+            #expect(paths.filter { leading.contains($0) } == leading)
         }
     }
 }

@@ -45,7 +45,11 @@ struct NewWorktreeSheetSlotTests {
         #expect(slot.request == next)
         // The replaced one's view appearing late marks nothing up.
         slot.appeared(stuck.id)
+        #expect(slot.request == next)
         #expect(!slot.isShown)
+
+        slot.appeared(next.id)
+        #expect(slot.isShown)
     }
 
     /// Under another sheet, ours could not come up: it is not kept, so
@@ -108,6 +112,11 @@ struct NewWorktreeSheetSlotTests {
         let request = NewSessionSheetRequest(projectID: project)
         _ = slot.open(request, isWindowCovered: false, introducesInstantKey: true)
 
+        let isSaidForAnotherRequest = slot.appeared(UUID())
+        #expect(!isSaidForAnotherRequest)
+        #expect(!slot.isShown)
+        #expect(slot.introducesInstantKey)
+
         let isSaid = slot.appeared(request.id)
         let isSaidAgain = slot.appeared(request.id)
 
@@ -140,10 +149,12 @@ struct NewWorktreeSheetSlotTests {
     @Test func closing_orTheCoverEnding_dropsTheNote() {
         var slot = NewWorktreeSheetSlot()
         _ = slot.open(NewSessionSheetRequest(projectID: project), isWindowCovered: false, introducesInstantKey: true)
+        #expect(slot.introducesInstantKey)
         slot.close()
         #expect(!slot.introducesInstantKey)
 
         _ = slot.open(NewSessionSheetRequest(projectID: project), isWindowCovered: false, introducesInstantKey: true)
+        #expect(slot.introducesInstantKey)
         slot.coverEnded()
         #expect(!slot.introducesInstantKey)
     }

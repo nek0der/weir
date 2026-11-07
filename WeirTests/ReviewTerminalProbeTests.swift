@@ -58,7 +58,7 @@ struct ReviewTerminalProbeTests {
             // No clients and no pane to ask for: each surface reads its own
             // tty, as `deliveryTTY` falls back to it when tmux has no client
             // on the tty.
-            name: "without tmux every surface reads its own tty",
+            name: "with no known tmux clients, each surface reads its own tty",
             surfaces: ["/dev/ttys001", "/dev/ttys002"],
             hasClient: false,
             activePane: nil,
@@ -87,8 +87,11 @@ struct ReviewTerminalProbeTests {
         #expect(TmuxClientProbe.parsePaneTTY("") == nil, "Empty answer accepted")
         #expect(TmuxClientProbe.parsePaneTTY("can't find session: $9\n") == nil, "Error text accepted")
         let clients = TmuxClientProbe.parseClients("/dev/ttys003\t$1\tweir-a b\n", socketPath: "/tmp/socket")
-        #expect(clients["/dev/ttys003"]?.sessionID == "$1", "Client tty is the key")
-        #expect(clients["/dev/ttys003"]?.sessionName == "weir-a b", "Session name with a space")
+        #expect(clients == ["/dev/ttys003": TmuxBinding(
+            socketPath: "/tmp/socket",
+            sessionID: "$1",
+            sessionName: "weir-a b"
+        )])
     }
 
     @Test func aSurfaceWithoutTmuxInFront_isDeliveredToByItsOwnTTY() {

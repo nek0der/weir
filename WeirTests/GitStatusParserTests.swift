@@ -11,7 +11,7 @@ struct GitStatusParserTests {
     @Test(
         "parses the branch and counts the changed entries",
         arguments: [
-            // (porcelain, branch, changedEntries)
+            // Each fragment has a complete, independent expected status.
             (
                 """
                 # branch.oid abc
@@ -19,7 +19,7 @@ struct GitStatusParserTests {
                 # branch.upstream origin/main
                 # branch.ab +0 -0
                 """,
-                "main", 0
+                GitWorktreeStatus(branch: "main", upstream: "origin/main", changedEntries: 0, hasAheadBehind: true)
             ),
             (
                 """
@@ -27,7 +27,7 @@ struct GitStatusParserTests {
                 # branch.head dev
                 1 .M N... 100644 100644 100644 aaa bbb file.swift
                 """,
-                "dev", 1
+                GitWorktreeStatus(branch: "dev", changedEntries: 1)
             ),
             (
                 """
@@ -35,18 +35,17 @@ struct GitStatusParserTests {
                 # branch.head main
                 ? newfile.txt
                 """,
-                "main", 1
-            )
+                GitWorktreeStatus(branch: "main", changedEntries: 1)
+            ),
+            ("# branch.oid aaa\n# branch.head (detached)", GitWorktreeStatus()),
+            ("", GitWorktreeStatus())
         ]
     )
     func parse_porcelainV2_extractsBranchAndStatus(
         porcelain: String,
-        expectedBranch: String,
-        expectedChanged: Int
+        expected: GitWorktreeStatus
     ) {
-        let status = GitStatus.parse(porcelain)
-        #expect(status.branch == expectedBranch)
-        #expect(status.changedEntries == expectedChanged)
+        #expect(GitStatus.parse(porcelain) == expected)
     }
 
     @Test func parse_countsEachChangedRenamedUnmergedAndUntrackedEntry_butNotIgnoredOnes() {
@@ -59,6 +58,16 @@ struct GitStatusParserTests {
         ? untracked.txt
         ! ignored.log
         """
+        let records = [
+            ("1 .M N... 100644 100644 100644 aaa bbb changed.swift", 1),
+            ("2 R. N... 100644 100644 100644 aaa bbb R100 new.swift\told.swift", 1),
+            ("u UU N... 100644 100644 100644 100644 aaa bbb ccc conflict.swift", 1),
+            ("? untracked.txt", 1),
+            ("! ignored.log", 0)
+        ]
+        for (record, expected) in records {
+            #expect(GitStatus.parse(record).changedEntries == expected, "\(record)")
+        }
         #expect(GitStatus.parse(porcelain).changedEntries == 4)
         #expect(GitStatus.parse("# branch.oid aaa\n# branch.head main").changedEntries == 0)
     }
@@ -80,13 +89,4 @@ struct GitStatusParserTests {
         #expect(!gone.hasAheadBehind)
     }
 
-    @Test("a detached HEAD names no branch")
-    func parse_detachedHead_hasNoBranch() {
-        #expect(GitStatus.parse("# branch.oid aaa\n# branch.head (detached)").branch == nil)
-    }
-
-    @Test("empty input yields the empty status")
-    func parse_emptyInput_returnsEmptyStatus() {
-        #expect(GitStatus.parse("") == GitWorktreeStatus())
-    }
 }

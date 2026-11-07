@@ -83,7 +83,7 @@ struct SidebarRowCheckoutTests {
 
     /// A label stands for the row on its first line, so the branch goes
     /// beside it; no other name needs one.
-    @Test func onlyALabel_showsTheBranch_unlessItIsTheBranch() {
+    @Test func onlyAManualLabel_showsADistinctBranchOrFolder() {
         let label = RowName(text: "Login work", source: .manual)
         #expect(label.checkoutBeside(branch: "feat/login", folder: "login-redesign")
             == RowCheckout(name: "feat/login", shown: "feat/login", isBranch: true))
@@ -91,14 +91,11 @@ struct SidebarRowCheckoutTests {
         #expect(RowName(text: "Add tests", source: .conversation).checkoutBeside(branch: "feat/login", folder: "login-redesign") == nil)
         #expect(RowName(text: "feat/login", source: .branch).checkoutBeside(branch: "feat/login", folder: "login-redesign") == nil)
         #expect(RowName(text: "login-redesign", source: .folder).checkoutBeside(branch: nil, folder: "login-redesign") == nil)
-    }
 
-    /// A label on a checkout with no branch known shows its folder.
-    @Test func aLabelWithNoBranch_showsTheFolder_unlessItIsTheFolder() {
-        let label = RowName(text: "Login work", source: .manual)
         #expect(label.checkoutBeside(branch: nil, folder: "login-redesign")
             == RowCheckout(name: "login-redesign", shown: "login-redesign", isBranch: false))
-        #expect(label.checkoutBeside(branch: "", folder: "login-redesign")?.isBranch == false, "an empty branch is none")
+        #expect(label.checkoutBeside(branch: "", folder: "login-redesign")
+            == RowCheckout(name: "login-redesign", shown: "login-redesign", isBranch: false))
         #expect(RowName(text: "Login-Redesign", source: .manual).checkoutBeside(branch: nil, folder: "login-redesign") == nil)
         #expect(label.checkoutBeside(branch: nil, folder: nil) == nil)
     }
@@ -127,10 +124,11 @@ struct SidebarRowCheckoutTests {
     /// branch its folder shortened by its project's folder name.
     @Test func theSession_givesALabeledWorktree_itsBranch_orItsShortenedFolder() throws {
         let rootURL = WorkspaceSessionFixture.projectRootURL("parent").appendingPathComponent("duesmith")
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "duesmith", rootURL: rootURL)
+        let (session, project) = WorkspaceSessionFixture.withProject(name: "Duesmith App", rootURL: rootURL)
         let index = try #require(session.projects.firstIndex { $0.id == project.id })
         let repository = project.rootURL.lastPathComponent
         #expect(repository == "duesmith")
+        #expect(project.name == "Duesmith App")
         let parent = project.rootURL.deletingLastPathComponent()
         let branched = Worktree(
             label: "tax",
@@ -153,7 +151,9 @@ struct SidebarRowCheckoutTests {
 
         let bisect = ContainerID.worktree(projectID: project.id, worktreeID: detached.id)
         session.renameRow(bisect, to: "Find the regression", runtimes: [])
-        #expect(session.rowCheckout(of: bisect) == RowCheckout(name: "\(repository)-bisect", shown: "bisect", isBranch: false))
+        #expect(session.rowCheckout(of: bisect) == RowCheckout(name: "duesmith-bisect", shown: "bisect", isBranch: false))
+        session.renameRow(bisect, to: "BISECT", runtimes: [])
+        #expect(session.rowCheckout(of: bisect) == nil)
     }
 
     /// A worktree with no branch is named by its folder, and a newline in
@@ -205,16 +205,22 @@ struct SidebarRowCheckoutTests {
     @Test func theSession_givesTheCheckout_ofEveryLabeledRow() {
         let fixture = Self.project()
         let (session, worktree) = (fixture.session, fixture.worktree)
-        #expect(session.rowCheckout(of: worktree) == nil, "a row named by its branch")
+        let checkout = RowCheckout(name: "feat/login", shown: "feat/login", isBranch: true)
+        #expect(session.rowName(of: worktree) == RowName(text: "feat/login", source: .branch))
+        #expect(session.rowCheckout(of: worktree) == nil)
         #expect(session.rowCheckout(of: .loose) == nil)
 
         session.renameRow(worktree, to: "Login work", runtimes: [])
-        #expect(session.rowCheckout(of: worktree)?.shown == "feat/login")
+        #expect(session.rowName(of: worktree) == RowName(text: "Login work", source: .manual))
+        #expect(session.rowCheckout(of: worktree) == checkout)
         session.renameRow(worktree, to: "", runtimes: [])
 
-        let tab = session.openTab(container: worktree)
-        session.update(tab.id) { $0.titleOverride = "Tab name" }
-        #expect(session.rowCheckout(of: worktree)?.shown == "feat/login", "a label given to its first tab")
+        let unnamed = session.openTab(container: worktree)
+        let named = session.openTab(container: worktree)
+        #expect(session.tabs(in: worktree).map(\.id) == [unnamed.id, named.id])
+        session.update(named.id) { $0.titleOverride = "Tab name" }
+        #expect(session.rowName(of: worktree) == RowName(text: "Tab name", source: .manual))
+        #expect(session.rowCheckout(of: worktree) == checkout)
     }
 
     /// The rename field starts from the row's label, and empty on a row
@@ -232,19 +238,26 @@ struct SidebarRowCheckoutTests {
         let labeled = try #require(Self.model(session, project).rows.first { $0.id == worktree })
         #expect(labeled.label == "Login work")
 
-        // A conversation names no label.
         session.renameRow(worktree, to: "", runtimes: [])
+        let projectIndex = try #require(session.projects.firstIndex { $0.id == project.id })
+        let worktreeIndex = try #require(session.projects[projectIndex].worktrees.firstIndex { $0.id == worktree.worktreeID })
+        session.projects[projectIndex].worktrees[worktreeIndex].gitRef = GitRef(branchName: nil, headSHA: "abc")
         let tab = session.openTab(container: worktree)
+        let paneID = try #require(tab.splitTree.allLeafIDs().first)
         session.update(tab.id) {
             $0.conversationName = ConversationName(
                 name: "Add tests",
                 provider: .claude,
-                paneID: UUID(),
+                paneID: paneID,
                 conversationID: "c",
                 startedAt: nil
             )
         }
-        #expect(session.rowName(of: worktree)?.label == nil)
+        #expect(session.rowName(of: worktree) == RowName(text: "Add tests", source: .conversation))
+        let conversational = try #require(Self.model(session, session.projects[projectIndex]).rows.first { $0.id == worktree })
+        #expect(conversational.name == "Add tests")
+        #expect(conversational.label == nil)
+        #expect(conversational.checkout == nil)
         // Submitting the empty field it starts with renames nothing.
         #expect(InlineRenameField.submission(draft: "", startedFrom: "", submitsEmptyName: true) == nil)
     }
@@ -255,6 +268,10 @@ struct SidebarRowCheckoutTests {
         let fixture = Self.project()
         let (session, project, worktree) = (fixture.session, fixture.project, fixture.worktree)
         session.renameRow(worktree, to: "Login work", runtimes: [])
+        let labeled = try #require(Self.model(session, project).rows.first { $0.id == worktree })
+        #expect(labeled.label == "Login work")
+        #expect(labeled.checkout == RowCheckout(name: "feat/login", shown: "feat/login", isBranch: true))
+
         session.renameRow(worktree, to: "", runtimes: [])
         #expect(session.rowName(of: worktree) == RowName(text: "feat/login", source: .branch))
         let row = try #require(Self.model(session, project).rows.first { $0.id == worktree })
@@ -267,7 +284,9 @@ struct SidebarRowCheckoutTests {
     @Test func aLabeledRow_startsItsSecondLineWithItsBranch_beforeAFactThatSaysMore() {
         let row = Self.row(checkout: "feat/login", fact: .init(agents: Self.idleAgent.agents, uncommittedFiles: 3))
         #expect(row.showsFact)
-        #expect(SessionRowFactText.lineLead(row, fact: row.factText, locale: Self.english) == "feat/login · ")
+        let lead = SessionRowFactText.lineLead(row, fact: row.factText, locale: Self.english)
+        #expect(lead == "feat/login · ")
+        #expect(!lead.contains(row.factText))
         #expect(Self.lineTwo(row) == "feat/login · 3 files uncommitted")
 
         let japanese = Self.row(
@@ -333,54 +352,35 @@ struct SidebarRowCheckoutTests {
         #expect(Self.lineTwo(row) == "Idle")
     }
 
-    /// The project's folder row, labeled, shows the project's folder when
-    /// no branch is known, in place of a fact that only names its state.
-    @Test func theLabeledFolderRowWithNoBranch_showsTheProjectsFolder_inPlaceOfTheState() throws {
-        let fixture = Self.project()
-        let (session, project) = (fixture.session, fixture.project)
+    @Test func theLabeledMainCheckout_showsTheBranchOrFolder_inPlaceOfIdle() throws {
+        let (session, project) = WorkspaceSessionFixture.withProject(
+            name: "Duesmith App",
+            rootURL: WorkspaceSessionFixture.projectRootURL("parent").appendingPathComponent("duesmith")
+        )
+        let index = try #require(session.projects.firstIndex { $0.id == project.id })
         let root = ContainerID.project(project.id)
         let unnamed = try #require(Self.model(session, project).rows.first { $0.id == root })
         #expect(Self.lineTwo(unnamed) == "Idle")
 
         session.renameRow(root, to: "Main checkout", runtimes: [])
-        let named = try #require(Self.model(session, project).rows.first { $0.id == root })
-        let folder = project.rootURL.lastPathComponent
-        #expect(named.name == "Main checkout")
-        #expect(Self.lineTwo(named) == folder)
-        #expect(SessionRowFactText.spokenLabel(for: named, projectName: "weir", now: .now, locale: Self.english)
-            == "Shell, Main checkout, Folder \(folder), weir, Repository folder")
-    }
+        let detached = try #require(Self.model(session, session.projects[index]).rows.first { $0.id == root })
+        #expect(detached.name == "Main checkout")
+        #expect(Self.lineTwo(detached) == "duesmith")
+        #expect(SessionRowFactText.spokenLabel(for: detached, projectName: "Duesmith App", now: .now, locale: Self.english)
+            == "Shell, Main checkout, Folder duesmith, Duesmith App, Repository folder")
 
-    /// The project's folder row, labeled, shows its branch as any labeled
-    /// row does; its mark, not its line, says it is the repository.
-    @Test func theLabeledFolderRowWithABranch_showsItsBranch_asAWorktreeDoes() throws {
-        let fixture = Self.project()
-        let (session, project) = (fixture.session, fixture.project)
-        let index = try #require(session.projects.firstIndex { $0.id == project.id })
         session.projects[index].mainBranchName = "main"
-        let root = ContainerID.project(project.id)
-        session.renameRow(root, to: "Main checkout", runtimes: [])
-        let named = try #require(Self.model(session, session.projects[index]).rows.first { $0.id == root })
-        #expect(Self.lineTwo(named) == "main")
-        #expect(SessionRowFactText.spokenLabel(for: named, projectName: "weir", now: .now, locale: Self.english)
-            == "Shell, Main checkout, Branch main, weir, Repository folder")
-    }
-
-    /// The checkout and the fact are set apart, the lead keeping the
-    /// separator, so the view can cut the fact before the checkout.
-    @Test func theCheckoutLead_endsWithTheSeparator_andHoldsNoFact() {
-        let row = Self.row(checkout: "feat/login", fact: .init(uncommittedFiles: 3))
-        let fact = SessionRowFactText.current(row, now: .now, locale: Self.english)
-        let lead = SessionRowFactText.lineLead(row, fact: fact, locale: Self.english)
-        #expect(lead + fact == AgentStatusText.joined(["feat/login", fact], locale: Self.english))
-        #expect(!lead.contains(fact))
+        let branched = try #require(Self.model(session, session.projects[index]).rows.first { $0.id == root })
+        #expect(Self.lineTwo(branched) == "main")
+        #expect(SessionRowFactText.spokenLabel(for: branched, projectName: "Duesmith App", now: .now, locale: Self.english)
+            == "Shell, Main checkout, Branch main, Duesmith App, Repository folder")
     }
 
     // MARK: - Tooltip and VoiceOver
 
     /// The line shows a folder shortened; the tooltip and VoiceOver say it
     /// whole, so nothing is lost.
-    @Test func theTooltipAndVoiceOver_sayTheFolderWhole() {
+    @Test func checkoutTooltip_keepsTheFullFolderAndNamesTheBranchOnce() {
         let row = Self.row(
             checkout: "fix-tax-rounding",
             fullCheckout: "duesmith-fix-tax-rounding",
@@ -392,10 +392,7 @@ struct SidebarRowCheckoutTests {
             == "Login work · duesmith-fix-tax-rounding")
         #expect(SessionRowFactText.spokenLabel(for: row, projectName: "duesmith", now: .now, locale: Self.english)
             == "Shell, Login work, Worktree duesmith-fix-tax-rounding, duesmith, 2 files uncommitted")
-    }
 
-    /// The branch beside a label is said once.
-    @Test func theTooltip_namesTheBranchOnce() {
         #expect(SessionRowFactText.tooltip(for: Self.row(checkout: "feat/login"), now: .now, locale: Self.english)
             == "Login work · feat/login")
     }
@@ -417,31 +414,113 @@ struct SidebarRowCheckoutTests {
 
     // MARK: - Elsewhere the row is a choice
 
-    /// A labeled checkout with a branch passes no folder to show, so its
-    /// line is its branch and its path, as any row not named by its branch;
-    /// one with no branch gives its shortened folder.
-    @Test func theWorktreeMenu_givesALabeledCheckoutsBranch_orItsFolder() {
+    private struct LabeledCheckouts {
+        let session: WorkspaceSession
+        let project: Project
+        let login: ContainerID
+        let tax: ContainerID
+    }
+
+    private static func labeledCheckouts() throws -> LabeledCheckouts {
+        let root = WorkspaceSessionFixture.projectRootURL("parent").appendingPathComponent("duesmith")
+        let (session, project) = WorkspaceSessionFixture.withProject(name: "Duesmith App", rootURL: root)
+        let index = try #require(session.projects.firstIndex { $0.id == project.id })
+        let parent = root.deletingLastPathComponent()
+        let login = Worktree(
+            label: "login-redesign",
+            workingDirectory: parent.appendingPathComponent("duesmith-login-redesign"),
+            gitRef: GitRef(branchName: "feat/login"),
+            origin: .gitWorktree
+        )
+        let tax = Worktree(
+            label: "Fix-Tax-Rounding",
+            workingDirectory: parent.appendingPathComponent("duesmith-fix-tax-rounding"),
+            gitRef: GitRef(branchName: nil, headSHA: "abc"),
+            origin: .gitWorktree
+        )
+        session.projects[index].worktrees = [login, tax]
+        let loginRow = ContainerID.worktree(projectID: project.id, worktreeID: login.id)
+        let taxRow = ContainerID.worktree(projectID: project.id, worktreeID: tax.id)
+        session.renameRow(loginRow, to: "Login work", runtimes: [])
+        session.renameRow(taxRow, to: "Tax rounding", runtimes: [])
+        return LabeledCheckouts(session: session, project: session.projects[index], login: loginRow, tax: taxRow)
+    }
+
+    @Test func theWorktreeMenu_givesALabeledCheckoutsBranch_orItsFolder() throws {
+        let fixture = try Self.labeledCheckouts()
+        let (session, project) = (fixture.session, fixture.project)
+        let rows = Dictionary(uniqueKeysWithValues: Self.model(session, project).rows.map { ($0.id, $0) })
+        let sections = SidebarPresentedSections.computed(
+            project: project, session: session, window: session.primaryWindowID,
+            queue: AttentionQueue(), pullRequest: { _ in nil }, gitFacts: { _ in nil }
+        )
+        let entries = WorktreeDropdownEntry.entries(of: project, in: sections, rows: rows)
+        let parent = project.rootURL.deletingLastPathComponent()
+
+        let branched = try #require(entries.first { $0.id == fixture.login })
+        #expect(branched.name == "Login work")
+        #expect(branched.branch == "feat/login")
+        let loginPath = PathFormatting.abbreviateHome(parent.appendingPathComponent("duesmith-login-redesign").path)
+        #expect(PathFormatting.abbreviateHome(branched.folder.path) == loginPath)
         #expect(WorktreeDropdownText.detail(
-            name: "Login work",
-            branch: "feat/login",
-            folder: "~/w/login-redesign",
-            agentCount: 2,
-            locale: Self.english
-        ) == "feat/login · ~/w/login-redesign · Agents 2")
+            name: branched.name, branch: branched.branch, folder: loginPath,
+            shownFolder: rows[fixture.login]?.checkout.flatMap { $0.isBranch ? nil : $0.shown },
+            agentCount: 2, locale: Self.english
+        ) == "feat/login · \(loginPath) · Agents 2")
+
+        let detached = try #require(entries.first { $0.id == fixture.tax })
+        #expect(detached.name == "Tax rounding")
+        #expect(detached.branch == "Fix-Tax-Rounding")
+        #expect(detached.folder == parent.appendingPathComponent("duesmith-fix-tax-rounding"))
         #expect(WorktreeDropdownText.detail(
-            name: "Tax rounding",
-            branch: "",
-            folder: "~/w/duesmith-fix-tax-rounding",
-            shownFolder: "fix-tax-rounding",
-            agentCount: 0,
-            locale: Self.english
+            name: detached.name, branch: detached.branch, folder: PathFormatting.abbreviateHome(detached.folder.path),
+            shownFolder: rows[fixture.tax]?.checkout.flatMap { $0.isBranch ? nil : $0.shown },
+            agentCount: 0, locale: Self.english
         ) == "fix-tax-rounding")
     }
 
-    @Test func anAllProjectsCard_isPlacedByALabeledRowsBranch() {
-        #expect(AllProjectsText.place(project: "weir", branch: "feat/login", checkout: "feat/login") == "weir / feat/login")
-        #expect(AllProjectsText.place(project: "weir", branch: nil, checkout: "login-redesign") == "weir / login-redesign")
-        #expect(AllProjectsText.spokenPlace(project: "weir", branch: "feat/login", checkout: "feat/login", locale: Self.english)
-            == "weir, feat/login")
+    @Test func labeledAllProjectsCards_showTheBranchOrShortenedFolder() throws {
+        let fixture = try Self.labeledCheckouts()
+        let (session, project) = (fixture.session, fixture.project)
+        session.openTab(container: fixture.login)
+        session.openTab(container: fixture.tax)
+        let registry = WindowRegistry(primary: session.primarySelection)
+        registry.presenter = RecordingWindowPresenter()
+        let cards = AllProjectsModel.cards(AllProjectsModel.Sources(
+            session: session, window: session.primaryWindowID, registry: registry, queue: AttentionQueue(),
+            runtimes: [], approvals: ApprovalLedger(), pullRequest: { _ in nil }, gitFacts: { _ in nil },
+            locale: Self.english
+        ))
+        #expect(cards.allSatisfy { $0.projectID == project.id })
+
+        let branched = try #require(cards.first { $0.id == fixture.login })
+        #expect(branched.name == "Login work")
+        #expect(branched.branch == "feat/login")
+        #expect(branched.checkout == "feat/login")
+        #expect(branched.folderName == "duesmith-login-redesign")
+        #expect(AllProjectsText.place(project: branched.projectName, branch: branched.branch, checkout: branched.checkout)
+            == "Duesmith App / feat/login")
+        #expect(AllProjectsText.spokenPlace(
+            project: branched.projectName,
+            branch: branched.branch,
+            checkout: branched.checkout,
+            locale: Self.english
+        )
+            == "Duesmith App, feat/login")
+
+        let detached = try #require(cards.first { $0.id == fixture.tax })
+        #expect(detached.name == "Tax rounding")
+        #expect(detached.branch == "Fix-Tax-Rounding")
+        #expect(detached.checkout == "fix-tax-rounding")
+        #expect(detached.folderName == "duesmith-fix-tax-rounding")
+        #expect(AllProjectsText.place(project: detached.projectName, branch: detached.branch, checkout: detached.checkout)
+            == "Duesmith App / fix-tax-rounding")
+        #expect(AllProjectsText.spokenPlace(
+            project: detached.projectName,
+            branch: detached.branch,
+            checkout: detached.checkout,
+            locale: Self.english
+        )
+            == "Duesmith App, fix-tax-rounding")
     }
 }

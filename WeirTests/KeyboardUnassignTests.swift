@@ -1,5 +1,5 @@
 // KeyboardUnassignTests.swift
-// Weir — a shortcut unassigned from Settings stays unassigned, comes back with ↺, and ⌫ means the same in both recorders.
+// Weir — explicit shortcut removal survives persistence, and recorder keys preserve modified bindings.
 
 import Foundation
 import Testing
@@ -22,7 +22,9 @@ struct KeyboardUnassignTests {
         #expect(keyboard.shortcut(for: .newWorktree) == nil)
         #expect(keyboard.canRestoreDefault(.newWorktree))
         let saved = try JSONDecoder().decode(KeyboardSettings.self, from: JSONEncoder().encode(keyboard))
-        #expect(Self.normalized(saved).shortcut(for: .newWorktree) == nil)
+        keyboard = Self.normalized(saved)
+        #expect(keyboard.shortcut(for: .newWorktree) == nil)
+        #expect(keyboard.unassigned == [WeirShortcutAction.newWorktree.rawValue])
 
         keyboard.restoreDefault(for: .newWorktree)
         keyboard = Self.normalized(keyboard)
@@ -30,27 +32,26 @@ struct KeyboardUnassignTests {
         #expect(!keyboard.canRestoreDefault(.newWorktree))
     }
 
-    @Test func unassigningAnOverride_dropsItAndTheDefault() {
+    @Test(arguments: [
+        (WeirShortcutAction.newWorktree, StoredShortcut(key: "n", modifiers: [.command])),
+        (.newWindow, StoredShortcut(key: "n", modifiers: [.command, .control]))
+    ])
+    func unassigningAnOverride_dropsItAndTheDefault(action: WeirShortcutAction, defaultShortcut: StoredShortcut) {
         var keyboard = KeyboardSettings()
-        keyboard.setOverride(Self.optionCommandN, for: .newWorktree)
-        keyboard.unassign(.newWorktree)
+        keyboard.setOverride(Self.optionCommandN, for: action)
+        #expect(keyboard.shortcut(for: action) == Self.optionCommandN)
+        keyboard.unassign(action)
         keyboard = Self.normalized(keyboard)
 
         #expect(keyboard.overrides.isEmpty)
-        #expect(keyboard.shortcut(for: .newWorktree) == nil)
-    }
-
-    @Test func unassigningARebindedAction_dropsItsBinding_andLeavesItsDefaultToRestore() {
-        var keyboard = KeyboardSettings()
-        keyboard.setOverride(Self.optionCommandN, for: .newWindow)
-        keyboard.unassign(.newWindow)
-        keyboard = Self.normalized(keyboard)
-
-        #expect(keyboard.shortcut(for: .newWindow) == nil)
+        #expect(keyboard.shortcut(for: action) == nil)
+        #expect(keyboard.unassigned == [action.rawValue])
         #expect(keyboard.unbound.isEmpty)
-        #expect(keyboard.canRestoreDefault(.newWindow))
-        keyboard.restoreDefault(for: .newWindow)
-        #expect(keyboard.shortcut(for: .newWindow) == WeirShortcutAction.newWindow.defaultShortcut)
+        #expect(keyboard.canRestoreDefault(action))
+        keyboard.restoreDefault(for: action)
+        #expect(keyboard.shortcut(for: action) == defaultShortcut)
+        #expect(keyboard.unassigned.isEmpty)
+        #expect(!keyboard.canRestoreDefault(action))
     }
 
     @Test func anUnassignedDefault_staysOff_whenItsKeysAreTakenAndFreedAgain() {
@@ -60,6 +61,8 @@ struct KeyboardUnassignTests {
         keyboard.unassign(.newWorktree)
         keyboard.setOverride(Self.commandN, for: .newTab)
         keyboard = Self.normalized(keyboard)
+        #expect(keyboard.shortcut(for: .newTab) == Self.commandN)
+        #expect(keyboard.shortcut(for: .newWorktree) == nil)
         keyboard.restoreDefault(for: .newTab)
         keyboard = Self.normalized(keyboard)
 
@@ -77,11 +80,15 @@ struct KeyboardUnassignTests {
         keyboard = Self.normalized(keyboard)
         #expect(keyboard.unbound.isEmpty)
         #expect(keyboard.migrationNotice == nil)
+        #expect(keyboard.shortcut(for: .newTab) == Self.commandN)
+        #expect(keyboard.shortcut(for: .newWorktree) == nil)
 
         var withHotKey = KeyboardSettings()
         withHotKey.unassign(.newWorktree)
         withHotKey = Self.normalized(withHotKey, hotKey: Self.commandN)
         #expect(withHotKey.migrationNotice == nil)
+        #expect(withHotKey.unbound.isEmpty)
+        #expect(withHotKey.unassigned == [WeirShortcutAction.newWorktree.rawValue])
         #expect(withHotKey.shortcut(for: .newWorktree) == nil)
     }
 
@@ -106,26 +113,29 @@ struct KeyboardUnassignTests {
         let old = try JSONDecoder().decode(KeyboardSettings.self, from: Data(#"{"overrides":{}}"#.utf8))
         #expect(old.unassigned.isEmpty)
 
-        let written = try #require(String(bytes: JSONEncoder().encode(KeyboardSettings()), encoding: .utf8))
-        #expect(!written.contains("unassigned"))
+        let written = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(KeyboardSettings())) as? [String: Any])
+        #expect(written["unassigned"] == nil)
+        let recorded = try JSONDecoder().decode(KeyboardSettings.self, from: Data(#"{"unassigned":["newWorktree"],"overrides":{}}"#.utf8))
+        #expect(recorded.unassigned == ["newWorktree"])
         var keyboard = KeyboardSettings()
         keyboard.unassign(.newWorktree)
         let roundTripped = try JSONDecoder().decode(KeyboardSettings.self, from: JSONEncoder().encode(keyboard))
         #expect(roundTripped.unassigned == [WeirShortcutAction.newWorktree.rawValue])
     }
 
-    @Test func backspace_restoresTheDefault_andEscapeCancels_inBothRecorders() {
-        #expect(ShortcutRecorderKey.meaning(of: .backspace, modifiers: []) == .restoreDefault)
-        #expect(ShortcutRecorderKey.meaning(of: .escape, modifiers: []) == .cancel)
-        #expect(ShortcutRecorderKey.meaning(of: .return, modifiers: []) == .record)
-        #expect(ShortcutRecorderKey.meaning(of: nil, modifiers: []) == .record)
-    }
-
-    /// With a modifier held, ⌫ and ⎋ are keys like any other, so ⌘⌫ can
-    /// close something and ⌘⎋ can be bound.
-    @Test(arguments: [NamedKey.backspace, .escape])
-    func modifiedBackspaceOrEscape_isRecorded(key: NamedKey) {
-        #expect(ShortcutRecorderKey.meaning(of: key, modifiers: [.command]) == .record)
-        #expect(ShortcutRecorderKey.meaning(of: key, modifiers: [.shift]) == .record)
+    @Test(arguments: [
+        (NamedKey?.some(.backspace), ShortcutModifiers(), ShortcutRecorderKey.restoreDefault),
+        (.escape, ShortcutModifiers(), .cancel),
+        (.return, ShortcutModifiers(), .record),
+        (nil, ShortcutModifiers(), .record),
+        (.backspace, .command, .record),
+        (.backspace, .shift, .record),
+        (.escape, .command, .record),
+        (.escape, .shift, .record)
+    ])
+    func recorderKeys_distinguishBareControlsFromModifiedBindings(
+        key: NamedKey?, modifiers: ShortcutModifiers, expected: ShortcutRecorderKey
+    ) {
+        #expect(ShortcutRecorderKey.meaning(of: key, modifiers: modifiers) == expected)
     }
 }

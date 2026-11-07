@@ -55,11 +55,16 @@ struct AgentProjectionCommandTests {
          "expect":{"expect":"none"},"onMismatch":"abort"}
         """)
 
-        guard case let .endStoppedTurn(_, _, _, byProgramStatus) = command.op else {
+        guard case let .endStoppedTurn(token, turnID, transcriptPath, byProgramStatus) = command.op else {
             Issue.record("decoded as \(command.op)")
             return
         }
+        #expect(token == "5")
+        #expect(turnID == nil)
+        #expect(transcriptPath == "/t/session.jsonl")
         #expect(byProgramStatus)
+        #expect(command.target == .record(provider: "claude", storageID: "RUN"))
+        #expect(command.onMismatch == .abort)
     }
 
     @Test func aTurnTarget_isReportedUnderItsOwnName() throws {

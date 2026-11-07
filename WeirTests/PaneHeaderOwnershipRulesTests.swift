@@ -40,7 +40,12 @@ struct PaneHeaderOwnershipRulesTests {
     }
 
     private func orders(_ runs: [Rules.Run]) -> [[Rules.Run]] {
-        [runs, Array(runs.reversed()), Array(runs.dropFirst()) + Array(runs.prefix(1))]
+        guard !runs.isEmpty else { return [[]] }
+        return runs.indices.flatMap { index in
+            var remaining = runs
+            let first = remaining.remove(at: index)
+            return orders(remaining).map { [first] + $0 }
+        }
     }
 
     @Test func noRunsHasNoOwnerOrAmbiguity() {
@@ -99,12 +104,13 @@ struct PaneHeaderOwnershipRulesTests {
         #expect(Rules.select(from: [parent, child]).ownerID == "parent")
     }
 
-    @Test func endedDescendantsReturnToTheNearestKnownAncestor() {
+    @Test(arguments: [(false, "parent"), (true, "child")])
+    func endedDescendantsReturnToTheNearestKnownAncestor(isChildKnown: Bool, expectedOwner: String) {
         let parent = run("parent", launched: 100, observed: 110)
-        let child = run("child", parent: "parent", launched: 101, observed: 120, isKnown: false)
+        let child = run("child", parent: "parent", launched: 101, observed: 120, isKnown: isChildKnown)
         let grandchild = run("grandchild", parent: "child", launched: 102, observed: 130, isKnown: false)
         for input in orders([parent, child, grandchild]) {
-            #expect(Rules.select(from: input).ownerID == "parent")
+            #expect(Rules.select(from: input) == Rules.Selection(ownerID: expectedOwner, isAmbiguous: false))
         }
     }
 
@@ -126,11 +132,11 @@ struct PaneHeaderOwnershipRulesTests {
     @Test func cyclicParentsAndDuplicateInvocationIDsAreAmbiguous() {
         let parent = run("parent", parent: "child")
         let child = run("child", parent: "parent", launched: 101)
-        #expect(Rules.select(from: [parent, child]).isAmbiguous)
+        #expect(Rules.select(from: [parent, child]) == Rules.Selection(ownerID: nil, isAmbiguous: true))
         let duplicate = Rules.Run(
             id: "other-provider", runID: parent.runID, endpoint: parent.endpoint, updatedAt: parent.updatedAt
         )
-        #expect(Rules.select(from: [parent, duplicate]).isAmbiguous)
+        #expect(Rules.select(from: [parent, duplicate]) == Rules.Selection(ownerID: nil, isAmbiguous: true))
     }
 
     @Test func equalLegacyStampsDoNotGuessByID() {

@@ -11,57 +11,56 @@ import Testing
 struct StateGlyphTests {
     private typealias Tokens = SupervisionTokens
     private typealias Geometry = StateGlyphGeometry
+    private nonisolated static let sizes: [CGFloat] = [15, 11]
 
     // MARK: - VoiceOver
 
-    /// Each glyph keeps the name VoiceOver reads for it.
     @Test(arguments: [
-        (StateGlyph.Kind.needsApproval, "Needs approval"),
-        (.needsAnswer, "Needs answer"),
-        (.needsResponse, "Needs response"),
-        (.stopped, "Stopped"),
-        (.unread, "Unread"),
-        (.unreadWorkingAfterTurn, "Unread, working in the background"),
-        (.running, "Running"),
-        (.idle, "Idle"),
-        (.workingAfterTurn, "Working in the background"),
-        (.unknown, "Unknown")
+        (StateGlyph.Kind.needsApproval, "Needs approval", "承認待ち"),
+        (.needsAnswer, "Needs answer", "回答待ち"),
+        (.needsResponse, "Needs response", "応答待ち"),
+        (.needsSignIn, "Needs sign-in", "サインイン待ち"),
+        (.stopped, "Stopped", "停止"),
+        (.unread, "Unread", "未読"),
+        (.unreadWorkingAfterTurn, "Unread, working in the background", "未読、バックグラウンドで作業中"),
+        (.running, "Running", "実行中"),
+        (.idle, "Idle", "待機中"),
+        (.workingAfterTurn, "Working in the background", "バックグラウンドで作業中"),
+        (.unknown, "Unknown", "不明")
     ])
-    func eachState_keepsItsName(kind: StateGlyph.Kind, name: String) {
-        #expect(kind.name.resolved(in: Locale(identifier: "en")) == name)
+    func eachState_keepsItsName(kind: StateGlyph.Kind, english: String, japanese: String) {
+        #expect(kind.name.resolved(in: Locale(identifier: "en")) == english)
+        #expect(kind.name.resolved(in: Locale(identifier: "ja")) == japanese)
     }
 
     // MARK: - Reduce Motion
 
-    /// The running arc turns, and under Reduce Motion it is drawn still.
-    @Test func theRunningArc_turnsOnlyWithoutReduceMotion() {
-        #expect(RunningArc.turn(isTurning: true) != nil)
-        #expect(RunningArc.turn(isTurning: false) == nil)
-    }
-
-    /// The dot of work after a turn goes round, and under Reduce Motion it
-    /// rests at the ring's upper right.
-    @Test func theOrbitingDot_turnsOnlyWithoutReduceMotion() {
-        #expect(StateGlyphOrbit.turn(isTurning: true) != nil)
-        #expect(StateGlyphOrbit.turn(isTurning: false) == nil)
+    @Test(arguments: [false, true])
+    func theRunningArcAndOrbit_turnOnlyWithoutReduceMotion(reduceMotion: Bool) {
+        #expect((RunningArc.turn(isTurning: !reduceMotion) != nil) == !reduceMotion)
+        #expect((StateGlyphOrbit.turn(isTurning: !reduceMotion) != nil) == !reduceMotion)
         #expect(StateGlyphOrbit.restingAngle == .degrees(45))
     }
 
     // MARK: - What the environment says
 
-    /// The glyph draws what its environment asks for: Reduce Motion stops
-    /// the arc, Increase Contrast reaches the face, and an override stands
-    /// in for the accent.
-    @Test func theEnvironment_reachesTheFace() {
-        func face(reduceMotion: Bool = false, contrast: ColorSchemeContrast = .standard, ink: Color? = nil) -> StateGlyphFace {
-            StateGlyph(kind: .unread, unreadInkOverride: ink)
-                .face(isReduceMotionOn: reduceMotion, contrast: contrast, accent: .purple)
-        }
-        #expect(face().isTurning)
-        #expect(!face(reduceMotion: true).isTurning)
-        #expect(!face().isContrastIncreased)
-        #expect(face(contrast: .increased).isContrastIncreased)
-        #expect(face(ink: .white).unreadInk == .white)
+    @Test(arguments: [StateGlyph.Kind.running, .workingAfterTurn, .unread])
+    func theEnvironment_reachesTheFace(kind: StateGlyph.Kind) {
+        let glyph = StateGlyph(kind: kind, size: 11, unreadInkOverride: .white)
+
+        let standard = glyph.face(isReduceMotionOn: false, contrast: .standard, accent: .purple)
+        let increased = glyph.face(isReduceMotionOn: true, contrast: .increased, accent: .purple)
+
+        #expect(standard.kind == kind)
+        #expect(increased.kind == kind)
+        #expect(standard.size == 11)
+        #expect(increased.size == 11)
+        #expect(standard.isTurning)
+        #expect(!increased.isTurning)
+        #expect(!standard.isContrastIncreased)
+        #expect(increased.isContrastIncreased)
+        #expect(standard.unreadInk == .white)
+        #expect(increased.unreadInk == .white)
     }
 
     /// Without an override the unread glyph is drawn in the accent the
@@ -74,131 +73,128 @@ struct StateGlyphTests {
         for resolved in try accent.resolvedInBothAppearances() {
             let appearance = try #require(NSAppearance(named: resolved.appearance))
             let drawn = try #require(SRGB(NSColor(ink), in: appearance))
-            let wanted = AccentIconRule.color(resolved.color, on: AccentIconRule.grounds(isDark: resolved.isDark))
-            #expect(abs(drawn.luminance - wanted.luminance) < 0.002, "\(accent) in \(resolved.appearance.rawValue)")
-            for ground in AccentIconRule.grounds(isDark: resolved.isDark) {
-                #expect(ContrastRatio.between(drawn, ground) >= ContrastRatio.icon, "\(accent) on \(ground)")
+            let grounds = AccentIconRule.grounds(isDark: resolved.isDark)
+            for ground in grounds {
+                #expect(ContrastRatio.between(drawn, ground) >= 3, "\(accent) on \(ground)")
+            }
+
+            let source = resolved.color
+            let endpoint = resolved.isDark ? 1.0 : 0.0
+            let sources = [source.red, source.green, source.blue]
+            let channels = [drawn.red, drawn.green, drawn.blue]
+            // Moving toward black or white applies one fraction to every
+            // channel. A different hue could still have the same contrast.
+            let reference = try #require(sources.indices.max { abs(sources[$0] - endpoint) < abs(sources[$1] - endpoint) })
+            let span = endpoint - sources[reference]
+            try #require(abs(span) > 0.001)
+            let fraction = (channels[reference] - sources[reference]) / span
+            for (input, output) in zip(sources, channels) {
+                #expect(abs(output - (input + (endpoint - input) * fraction)) < 0.002)
+            }
+            if grounds.allSatisfy({ ContrastRatio.between(source, $0) >= 3 }) {
+                #expect(abs(fraction) < 0.002, "an already readable accent stays unchanged")
+            } else {
+                #expect(fraction > 0 && fraction <= 1, "the accent moves toward the contrast endpoint")
             }
         }
     }
 
     // MARK: - Geometry
 
-    /// The rings: unread at 1.6 of the disc's 14 units, idle a 1pt
-    /// hairline under it, and both 0.5pt heavier with Increase Contrast,
-    /// so the idle ring reaches 1.5pt and takes `muted`.
-    @Test func theRings_thickenWithIncreaseContrast() {
-        let standard = Geometry(size: 15, isContrastIncreased: false)
-        let increased = Geometry(size: 15, isContrastIncreased: true)
-        #expect(abs(standard.ringWidth(.unread) - 15 * 1.6 / 14) < 0.001)
+    @Test(arguments: sizes)
+    func theRings_thickenWithIncreaseContrast(size: CGFloat) {
+        let standard = Geometry(size: size, isContrastIncreased: false)
+        let increased = Geometry(size: size, isContrastIncreased: true)
         #expect(standard.ringWidth(.idle) == 1)
         #expect(increased.ringWidth(.idle) == 1.5)
-        #expect(increased.ringWidth(.unread) > standard.ringWidth(.unread))
-        #expect(standard.ringWidth(.unread) > standard.ringWidth(.idle))
+        #expect(abs(standard.ringWidth(.unread) - size * 1.6 / 14) < 0.001)
+        #expect(abs(increased.ringWidth(.unread) - (size * 1.6 / 14 + 0.5)) < 0.001)
         #expect(standard.idleInk == Tokens.faint)
         #expect(increased.idleInk == Tokens.muted)
     }
 
-    /// Every part of "!" and "?" stays inside the disc they are drawn
-    /// on; the marks scale with the glyph, so this holds at every size.
-    @Test func theMarks_stayInsideTheirDisc() {
-        let center = CGPoint(x: 8, y: 8)
-        let radius = Geometry.discUnits / 2
-        let bar = Geometry.exclamationBar
-        let stroke = Geometry.questionStrokeUnits / 2
-        let extremes = [
-            CGPoint(x: bar.minX, y: bar.minY), CGPoint(x: bar.maxX, y: bar.maxY),
-            CGPoint(x: Geometry.exclamationDotCenter.x, y: Geometry.exclamationDotCenter.y + Geometry.markDotRadius),
-            CGPoint(x: Geometry.questionDotCenter.x, y: Geometry.questionDotCenter.y + Geometry.markDotRadius),
-            // The question mark's hook, at its left and its top.
-            CGPoint(x: Geometry.questionStart.x - stroke, y: Geometry.questionStart.y),
-            CGPoint(x: Geometry.questionArcCenter.x, y: Geometry.questionArcCenter.y - Geometry.questionArcRadius - stroke)
-        ]
-        for extreme in extremes {
-            #expect(hypot(extreme.x - center.x, extreme.y - center.y) < radius, "\(extreme)")
-        }
-    }
-
     // MARK: - Drawing
 
-    /// Each state drawn in light and dark: a red disc with a white "!", an
-    /// amber disc with a white "?", an accent ring around an accent dot,
-    /// and a faint ring with nothing inside.
-    @Test(arguments: [false, true])
-    func eachGlyph_drawsTheLegendsShape(isDark: Bool) throws {
-        let stopped = try Self.render(.stopped, isDark: isDark)
-        Self.expect(stopped, at: (8, 6.4), is: Tokens.onStopped.value(isDark: isDark), "the stopped glyph's bar")
-        Self.expect(stopped, at: (8, 11.6), is: Tokens.onStopped.value(isDark: isDark), "the stopped glyph's dot")
-        Self.expect(stopped, at: (4.5, 8), is: Tokens.stopped.value(isDark: isDark), "the stopped disc")
-        #expect(Tokens.onStopped.value(isDark: isDark) == SRGB(0xFFFFFF))
+    @Test(arguments: [false, true], sizes)
+    func eachGlyph_drawsTheLegendsShape(isDark: Bool, size: CGFloat) throws {
+        let red = Tokens.stopped.value(isDark: isDark)
+        let white = SRGB(0xFFFFFF)
+        let stopped = try Self.render(.stopped, isDark: isDark, size: size)
+        Self.expect(stopped, at: (8, 6.4), is: white, "the stopped bar")
+        Self.expect(stopped, at: (8, 9.9), is: red, "the gap in the exclamation mark")
+        Self.expect(stopped, at: (8, 11.6), is: white, "the stopped dot")
+        Self.expect(stopped, at: (4.5, 8), is: red, "the stopped disc")
+        Self.expectMark(stopped, in: white)
 
-        let waiting = try Self.render(.needsApproval, isDark: isDark)
-        Self.expect(waiting, at: (8, 12), is: Tokens.onWaiting.value(isDark: isDark), "the waiting glyph's dot")
-        Self.expect(waiting, at: (4.5, 8), is: Tokens.waitingGlyph.value(isDark: isDark), "the waiting disc")
-        Self.expect(waiting, at: (8, 9.4), is: Tokens.onWaiting.value(isDark: isDark), "the question mark's stem")
-        // The hook turns over the top, not under: white at its top, and
-        // the disc where an arc drawn the other way would pass.
-        let top = (Double(Geometry.questionArcCenter.x), Double(Geometry.questionArcCenter.y - Geometry.questionArcRadius))
-        Self.expect(waiting, at: top, is: Tokens.onWaiting.value(isDark: isDark), "the top of the question mark's hook")
-        Self.expect(waiting, at: (6.98, 7.93), is: Tokens.waitingGlyph.value(isDark: isDark), "under the hook")
+        let amber = Tokens.waitingGlyph.value(isDark: isDark)
+        let waitingInk = Tokens.onWaiting.value(isDark: isDark)
+        for kind in [StateGlyph.Kind.needsApproval, .needsAnswer, .needsResponse, .needsSignIn] {
+            let waiting = try Self.render(kind, isDark: isDark, size: size)
+            Self.expect(waiting, at: (8.05, 3.92), is: waitingInk, "the top of the question mark's hook")
+            Self.expect(waiting, at: (6.98, 7.93), is: amber, "the disc under the hook")
+            Self.expect(waiting, at: (8, 9.4), is: waitingInk, "the question mark's stem")
+            Self.expect(waiting, at: (8, 10.6), is: amber, "the gap in the question mark")
+            Self.expect(waiting, at: (8, 12), is: waitingInk, "the question mark's dot")
+            Self.expect(waiting, at: (4.5, 8), is: amber, "the waiting disc")
+            Self.expectMark(waiting, in: waitingInk)
+        }
 
-        let ink = SRGB(0x2C6EE0)
-        let unread = try Self.render(.unread, isDark: isDark, unreadInk: ink)
-        Self.expect(unread, at: (8, 8), is: ink, "the unread dot")
-        Self.expect(unread, at: (8, 1.8), is: ink, "the unread ring")
-        #expect(Self.alpha(unread, at: (8, 3.8)) < 0.05, "between the unread ring and its dot")
+        let unread = try Self.render(.unread, isDark: isDark, size: size, unreadInk: red)
+        Self.expect(unread, at: (8, 8), is: red, "the unread dot")
+        Self.expect(unread, at: (8, 1.8), is: red, "the unread ring")
+        #expect(Self.alpha(unread, at: (4.5, 8)) < 0.05, "where the same red fills the stopped disc")
 
-        let idle = try Self.render(.idle, isDark: isDark)
-        Self.expect(idle, at: (8, 1.45), is: Tokens.faint.value(isDark: isDark), "the idle ring")
+        let faint = Tokens.faint.value(isDark: isDark)
+        let grayUnread = try Self.render(.unread, isDark: isDark, size: size, unreadInk: faint)
+        let idle = try Self.render(.idle, isDark: isDark, size: size)
+        Self.expect(grayUnread, at: (8, 8), is: faint, "the unread dot in the idle ring's color")
+        Self.expect(idle, at: (8, 1.45), is: faint, "the idle ring")
         #expect(Self.alpha(idle, at: (8, 8)) < 0.05, "inside the idle ring")
 
-        let unknown = try Self.render(.unknown, isDark: isDark)
-        #expect(Self.alpha(unknown, at: (8, 8)) < 0.05, "inside the unknown ring")
+        let running = try Self.render(.running, isDark: isDark, size: size)
+        Self.expect(running, at: (12.3, 12.3), is: Tokens.running.value(isDark: isDark), "the stationary quarter arc")
+        Self.expect(running, at: (3.7, 3.7), is: Tokens.line.value(isDark: isDark), "the track opposite the arc")
+        #expect(Self.alpha(running, at: (8, 8)) < 0.05)
     }
 
-    /// Work left running after a turn keeps the rest it rides on, the idle
-    /// ring or the unread ring and its dot, and adds a dot centered on the
-    /// ring's line. Drawn still, as under Reduce Motion, the dot sits at
-    /// `restingAngle`, and shows at the compact size a tab draws as well as
-    /// at a row's, with and without Increase Contrast.
-    @Test(arguments: [false, true], [WeirLayout.Supervision.stateGlyphSize, WeirLayout.Supervision.stateGlyphCompactSize])
+    @Test(arguments: [false, true], sizes)
     func workAfterATurn_addsADotOnTheRing(isDark: Bool, size: CGFloat) throws {
-        for isContrastIncreased in [false, true] {
-            let geometry = Geometry(size: size, isContrastIncreased: isContrastIncreased)
-            let dot = geometry.orbitInk.value(isDark: isDark)
-            func dotCenter(on ring: Geometry.Ring) -> (Double, Double) {
-                let radius = Double(geometry.orbitRadius(on: ring) / geometry.unit)
-                let angle = StateGlyphOrbit.restingAngle.radians
-                return (8 + radius * sin(angle), 8 - radius * cos(angle))
+        let dot = Tokens.text.value(isDark: isDark)
+        let accent = SRGB(0x2C6EE0)
+        for increased in [false, true] {
+            let gain: CGFloat = increased ? 0.5 : 0
+            let idleInk = (increased ? Tokens.muted : Tokens.faint).value(isDark: isDark)
+            let cases: [(StateGlyph.Kind, CGFloat)] = [
+                (.workingAfterTurn, 1 + gain),
+                (.unreadWorkingAfterTurn, size * 1.6 / 14 + gain)
+            ]
+            for (kind, width) in cases {
+                let ringInk = kind == .workingAfterTurn ? idleInk : accent
+                // The ring's middle line, projected at 45° and 225° in the
+                // 16-unit drawing square.
+                let offset = Double((size - width) * 7 / size) / sqrt(2.0)
+                let pixels = try Self.render(kind, isDark: isDark, size: size, isContrastIncreased: increased, unreadInk: accent)
+                Self.expect(pixels, at: (8 + offset, 8 - offset), is: dot, "the dot at the upper right")
+                Self.expect(pixels, at: (8 - offset, 8 + offset), is: ringInk, "the ring opposite the dot")
+                if kind == .workingAfterTurn {
+                    #expect(Self.alpha(pixels, at: (8, 8)) < 0.05)
+                } else {
+                    Self.expect(pixels, at: (8, 8), is: accent, "the unread dot")
+                }
             }
-            let what = "at \(size)pt, contrast \(isContrastIncreased)"
-
-            let working = try Self.render(.workingAfterTurn, isDark: isDark, size: size, isContrastIncreased: isContrastIncreased)
-            Self.expect(working, at: dotCenter(on: .idle), is: dot, "the dot on the idle ring \(what)")
-            #expect(Self.alpha(working, at: (8, 8)) < 0.05, "inside the ring \(what)")
-
-            let ink = SRGB(0x2C6EE0)
-            let unread = try Self.render(
-                .unreadWorkingAfterTurn, isDark: isDark, size: size, isContrastIncreased: isContrastIncreased, unreadInk: ink
-            )
-            Self.expect(unread, at: dotCenter(on: .unread), is: dot, "the dot on the unread ring \(what)")
-            Self.expect(unread, at: (8, 8), is: ink, "the unread dot \(what)")
         }
     }
 
-    /// The dot sits on the middle of the ring's line, stands out of the
-    /// ring it rides on, follows the ring's width so Increase Contrast
-    /// enlarges it, and keeps a size a tab's 11pt mark still shows on the
-    /// idle hairline.
-    @Test func theOrbitingDot_isCenteredOnItsRing_andWiderThanIt() {
-        let compact = Geometry(size: WeirLayout.Supervision.stateGlyphCompactSize, isContrastIncreased: false)
-        let increased = Geometry(size: WeirLayout.Supervision.stateGlyphCompactSize, isContrastIncreased: true)
-        for ring in [Geometry.Ring.idle, .unread] {
-            #expect(compact.orbitRadius(on: ring) == (compact.size - compact.ringWidth(ring)) / 2)
-            #expect(compact.orbitDotDiameter(on: ring) >= 1.6 * compact.ringWidth(ring))
-            #expect(increased.orbitDotDiameter(on: ring) >= compact.orbitDotDiameter(on: ring))
-        }
-        #expect(compact.orbitDotDiameter(on: .idle) >= 2)
+    @Test(arguments: sizes, [Geometry.Ring.idle, .unread])
+    func theOrbitingDot_isCenteredOnItsRing_andWiderThanIt(size: CGFloat, ring: StateGlyphGeometry.Ring) {
+        let standard = Geometry(size: size, isContrastIncreased: false)
+        let increased = Geometry(size: size, isContrastIncreased: true)
+        let width: CGFloat = ring == .idle ? 1 : size * 1.6 / 14
+        #expect(abs(standard.orbitRadius(on: ring) - (size - width) / 2) < 0.001)
+        #expect(abs(increased.orbitRadius(on: ring) - (size - width - 0.5) / 2) < 0.001)
+        #expect(abs(standard.orbitDotDiameter(on: ring) - max(2.4, width * 1.8)) < 0.001)
+        #expect(abs(increased.orbitDotDiameter(on: ring) - max(2.4, (width + 0.5) * 1.8)) < 0.001)
+        #expect(increased.orbitDotDiameter(on: ring) > standard.orbitDotDiameter(on: ring))
     }
 
     /// The dot's ink, the body text's, stands at least 2:1 from the ring it
@@ -217,40 +213,42 @@ struct StateGlyphTests {
         #expect(Geometry(size: 15, isContrastIncreased: true).orbitInk == Tokens.text)
     }
 
-    /// Unknown draws a dashed ring in `muted` at every size the glyph is
-    /// drawn: its dashes and gaps both show around the ring, so it never
-    /// reads as the idle ring's solid line, nor as an empty slot.
-    @Test(arguments: [false, true], [WeirLayout.Supervision.stateGlyphSize, WeirLayout.Supervision.stateGlyphCompactSize])
+    @Test(arguments: [false, true], sizes)
     func theUnknownGlyph_isADashedRing(isDark: Bool, size: CGFloat) throws {
-        let pixels = try Self.render(.unknown, isDark: isDark, size: size)
-        let geometry = Geometry(size: size, isContrastIncreased: false)
-        // The ring's middle line, in the square's units.
-        let radius = (size - geometry.ringWidth(.unknown)) / 2 / geometry.unit
-        let samples = (0..<96).map { step in
-            let angle = Double(step) / 96 * 2 * .pi
-            return Self.pixel(pixels, at: (8 + Double(radius) * cos(angle), 8 + Double(radius) * sin(angle)))
-        }
-        let inked = samples.filter { $0.alpha > 0.6 }
-        let clear = samples.filter { $0.alpha < 0.1 }
-        #expect(inked.count >= 16, "dashes at \(size)pt: \(inked.count)")
-        #expect(clear.count >= 16, "gaps at \(size)pt: \(clear.count)")
-        let muted = Tokens.muted.value(isDark: isDark)
-        let solid = inked.filter { $0.alpha > 0.95 }
-        #expect(!solid.isEmpty)
-        for pixel in solid {
-            #expect(abs(pixel.color.luminance - muted.luminance) < 0.03, "\(pixel.color.hexBytes)")
+        for increased in [false, true] {
+            let pixels = try Self.render(.unknown, isDark: isDark, size: size, isContrastIncreased: increased)
+            let width: CGFloat = increased ? 1.5 : 1
+            let radius = Double((size - width) * 7 / size)
+            let muted = Tokens.muted.value(isDark: isDark)
+            #expect(Self.alpha(pixels, at: (8, 8)) < 0.05)
+
+            // Ignore the antialiased transition pixels before counting
+            // alternations, including the transition across the sample seam.
+            var sectors: [Bool] = []
+            for step in 0..<96 {
+                let angle = Double(step) * 2 * .pi / 96
+                let sample = Self.pixel(pixels, at: (8 + radius * cos(angle), 8 + radius * sin(angle)))
+                if sample.alpha > 0.95 {
+                    Self.expectColor(sample.color, is: muted, "the unknown ring")
+                    sectors.append(true)
+                } else if sample.alpha < 0.1 {
+                    sectors.append(false)
+                }
+            }
+            let transitions = zip(sectors, sectors.dropFirst() + sectors.prefix(1)).count { $0 != $1 }
+            #expect(transitions >= 12, "alternating dashes and gaps at \(size)pt, contrast \(increased)")
         }
     }
 
     /// The unknown ring's dashes and gaps share its length equally, and
     /// Increase Contrast thickens it as it does the idle ring.
-    @Test func theUnknownDashes_splitTheRing_andThickenWithIncreaseContrast() {
+    @Test func theUnknownDashes_splitTheRing_andThickenWithIncreaseContrast() throws {
         for isContrastIncreased in [false, true] {
             let geometry = Geometry(size: 15, isContrastIncreased: isContrastIncreased)
             let width = geometry.ringWidth(.unknown)
             #expect(width == geometry.ringWidth(.idle))
             let dash = geometry.unknownDash
-            #expect(dash.count == 2)
+            try #require(dash.count == 2)
             // Drawn with round caps, each dash shows a line's width longer
             // than its pattern, which the gap gives back.
             let shownDash = dash[0] + width
@@ -262,24 +260,6 @@ struct StateGlyphTests {
         #expect(Geometry(size: 15, isContrastIncreased: false).unknownInk == Tokens.muted)
     }
 
-    /// At the compact size a tab draws, "!" keeps the gap between its bar
-    /// and its dot, and "?" its hook, stem, and dot, in both appearances.
-    @Test(arguments: [false, true])
-    func theMarks_stayLegibleAtTheCompactSize(isDark: Bool) throws {
-        let size = WeirLayout.Supervision.stateGlyphCompactSize
-        let white = Tokens.onStopped.value(isDark: isDark)
-        let stopped = try Self.render(.stopped, isDark: isDark, size: size)
-        Self.expect(stopped, at: (8, 6.4), is: white, "the bar at \(size)pt")
-        Self.expect(stopped, at: (8, 9.9), is: Tokens.stopped.value(isDark: isDark), "the gap at \(size)pt")
-        Self.expect(stopped, at: (8, 11.6), is: white, "the dot at \(size)pt")
-        let waiting = try Self.render(.needsAnswer, isDark: isDark, size: size)
-        let top = (Double(Geometry.questionArcCenter.x), Double(Geometry.questionArcCenter.y - Geometry.questionArcRadius))
-        Self.expect(waiting, at: top, is: Tokens.onWaiting.value(isDark: isDark), "the hook at \(size)pt")
-        Self.expect(waiting, at: (8, 9.4), is: Tokens.onWaiting.value(isDark: isDark), "the stem at \(size)pt")
-        Self.expect(waiting, at: (8, 10.6), is: Tokens.waitingGlyph.value(isDark: isDark), "the gap at \(size)pt")
-        Self.expect(waiting, at: (8, 12), is: Tokens.onWaiting.value(isDark: isDark), "the dot at \(size)pt")
-    }
-
     /// A folded project heading draws its marks at that compact size: the
     /// face sizes itself, so a frame around a full-size glyph would not.
     @Test(arguments: [SessionRowFact.Glyph.needsAnswer, .stopped, .running])
@@ -287,30 +267,6 @@ struct StateGlyphTests {
         let face = SidebarProjectHeaderView.mark(glyph).stateGlyph
             .face(isReduceMotionOn: true, contrast: .standard, accent: .blue)
         #expect(face.size == WeirLayout.Supervision.stateGlyphCompactSize)
-    }
-
-    /// An accent that shares the stopped disc's red still reads as unread
-    /// rather than stopped: the unread glyph is open between its ring and
-    /// its dot, where the stopped disc is filled.
-    @Test(arguments: [false, true])
-    func aRedAccent_stillDiffersFromStopped_byItsShape(isDark: Bool) throws {
-        let red = Tokens.stopped.value(isDark: isDark)
-        let unread = try Self.render(.unread, isDark: isDark, unreadInk: red)
-        let stopped = try Self.render(.stopped, isDark: isDark)
-        #expect(Self.alpha(unread, at: (4.5, 8)) < 0.05)
-        #expect(Self.alpha(stopped, at: (4.5, 8)) > 0.95)
-    }
-
-    /// A gray accent (macOS's Graphite, which the default accent follows)
-    /// still tells unread from idle: the unread glyph has its dot, the idle
-    /// ring is empty inside.
-    @Test(arguments: [false, true])
-    func aGrayAccent_stillDiffersFromIdle_byItsDot(isDark: Bool) throws {
-        let gray = AccentIconRule.color(SRGB(0x8C8C8C), on: AccentIconRule.grounds(isDark: isDark))
-        let unread = try Self.render(.unread, isDark: isDark, unreadInk: gray)
-        let idle = try Self.render(.idle, isDark: isDark)
-        Self.expect(unread, at: (8, 8), is: gray, "the unread dot")
-        #expect(Self.alpha(idle, at: (8, 8)) < 0.05)
     }
 
     /// Increase Contrast widens the idle ring into what was empty, and
@@ -346,7 +302,7 @@ struct StateGlyphTests {
         .environment(\.colorScheme, isDark ? .dark : .light)
         let renderer = ImageRenderer(content: face)
         renderer.scale = scale
-        return try Pixels(#require(renderer.cgImage), unit: size / Geometry.discUnits * scale)
+        return try Pixels(#require(renderer.cgImage), unit: size / 14 * scale)
     }
 
     /// An image's pixels in sRGB, eight bits a channel, premultiplied.
@@ -398,7 +354,7 @@ struct StateGlyphTests {
         pixel(pixels, at: point).alpha
     }
 
-    /// The pixel is opaque and within a step of `expected` in each channel.
+    /// A landmark has an opaque interior and the expected ink.
     private static func expect(
         _ pixels: Pixels,
         at point: (Double, Double),
@@ -407,9 +363,31 @@ struct StateGlyphTests {
     ) {
         let (color, alpha) = pixel(pixels, at: point)
         #expect(alpha > 0.95, "\(what): alpha \(alpha)")
-        let channels = [(color.red, expected.red), (color.green, expected.green), (color.blue, expected.blue)]
-        for (drawn, wanted) in channels {
-            #expect(abs(drawn - wanted) < 0.03, "\(what): \(color.hexBytes) for \(expected.hexBytes)")
+        Self.expectColor(color, is: expected, what)
+    }
+
+    private static func expectColor(_ color: SRGB, is expected: SRGB, _ what: String) {
+        #expect(matches(color, expected), "\(what): \(color.hexBytes) for \(expected.hexBytes)")
+    }
+
+    private static func matches(_ color: SRGB, _ expected: SRGB) -> Bool {
+        abs(color.red - expected.red) < 0.03
+            && abs(color.green - expected.green) < 0.03
+            && abs(color.blue - expected.blue) < 0.03
+    }
+
+    /// The mark's opaque pixels leave a margin inside the 14-unit disc.
+    private static func expectMark(_ pixels: Pixels, in ink: SRGB) {
+        var farthest: CGFloat = 0
+        for y in 0..<pixels.width {
+            for x in 0..<pixels.width {
+                let sample = pixels.at(x: x, y: y)
+                guard sample.alpha > 0.95, Self.matches(sample.color, ink) else { continue }
+                let dx = (CGFloat(x) + 0.5) / pixels.unit - 7
+                let dy = (CGFloat(y) + 0.5) / pixels.unit - 7
+                farthest = max(farthest, hypot(dx, dy))
+            }
         }
+        #expect(farthest > 0 && farthest < 6.5)
     }
 }

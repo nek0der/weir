@@ -13,24 +13,35 @@ struct FullScreenEntryQueueTests {
 
     @Test func oneWindowGoesAtATime_theNextOnceItArrives() {
         var queue = FullScreenEntryQueue()
+        let unrelated = WindowID()
+        #expect(queue.isIdle)
+        #expect(queue.attempt == 0)
 
         #expect(queue.add(first) == first)
         #expect(queue.add(second) == nil)
+        #expect(queue.add(third) == nil)
+        #expect(queue.entering == first)
+        #expect(queue.waiting == [second, third])
+        #expect(queue.attempt == 1)
+        #expect(!queue.isIdle)
         queue.started(first)
+        #expect(queue.hasStarted)
+        let before = queue
+        #expect(queue.settled(unrelated) == nil)
+        #expect(queue == before)
 
         #expect(queue.settled(first) == second)
-        #expect(queue.settled(second) == nil)
-        #expect(queue.isIdle)
-    }
-
-    @Test func anotherWindowsArrival_doesNotLetTheNextGo() {
-        var queue = FullScreenEntryQueue()
-        _ = queue.add(first)
-        _ = queue.add(second)
-
-        // The person took a third window into full screen meanwhile.
+        #expect(queue.entering == second)
+        #expect(queue.waiting == [third])
+        #expect(queue.attempt == 2)
+        #expect(!queue.hasStarted)
+        #expect(queue.settled(second) == third)
+        #expect(queue.entering == third)
+        #expect(queue.waiting.isEmpty)
+        #expect(queue.attempt == 3)
         #expect(queue.settled(third) == nil)
-        #expect(queue.entering == first)
+        #expect(queue.isIdle)
+        #expect(queue.attempt == 3)
     }
 
     @Test func aRequestThatNeverBegan_letsTheNextGoInTime() {
@@ -63,84 +74,107 @@ struct FullScreenEntryQueueTests {
     @Test func windowsNotInLine_changeNothing() {
         var queue = FullScreenEntryQueue()
         _ = queue.add(first)
+        _ = queue.add(second)
         let before = queue
 
-        queue.started(second)
-        #expect(queue.timedOut(second, attempt: queue.attempt) == nil)
-        #expect(queue.settled(second) == nil)
+        queue.started(third)
+        #expect(queue.timedOut(third, attempt: queue.attempt) == nil)
+        #expect(queue.settled(third) == nil)
         #expect(queue == before)
     }
 
-    @Test func aWindowHiddenAfterItBegan_letsTheNextGo_whoseTimeLimitThenCounts() {
+    enum HiddenPosition: Sendable, CaseIterable {
+        case waiting, entering, started, absent
+    }
+
+    @Test(arguments: HiddenPosition.allCases)
+    func hidingAWindowOnlyChangesItsOwnRequest(_ position: HiddenPosition) {
         var queue = FullScreenEntryQueue()
         _ = queue.add(first)
         _ = queue.add(second)
-        queue.started(first)
+        let target: WindowID = switch position {
+        case .waiting: second
+        case .entering, .started: first
+        case .absent: third
+        }
+        if position == .started {
+            queue.started(first)
+        }
+        let before = queue
+        let hidden = queue.withdraw(target)
 
-        #expect(queue.withdraw(first).next == second)
-        #expect(!queue.hasStarted)
-        #expect(queue.timedOut(second, attempt: queue.attempt) == nil)
-        #expect(queue.isIdle)
+        switch position {
+        case .absent:
+            #expect(!hidden.wasPending)
+            #expect(hidden.next == nil)
+            #expect(queue == before)
+        case .waiting:
+            #expect(hidden.wasPending)
+            #expect(hidden.next == nil)
+            #expect(queue.entering == first)
+            #expect(queue.waiting.isEmpty)
+            #expect(queue.attempt == before.attempt)
+            #expect(queue.add(target) == nil)
+            #expect(queue.waiting == [target])
+            #expect(queue.settled(first) == target)
+        case .entering, .started:
+            #expect(hidden.wasPending)
+            #expect(hidden.next == second)
+            #expect(queue.entering == second)
+            #expect(!queue.hasStarted)
+            #expect(queue.attempt == before.attempt + 1)
+            #expect(queue.timedOut(second, attempt: queue.attempt) == nil)
+            #expect(queue.isIdle)
+            #expect(queue.add(target) == target)
+        }
+        if position != .absent {
+            #expect(queue.entering == target)
+            #expect(queue.waiting.isEmpty)
+            #expect(queue.settled(target) == nil)
+            #expect(queue.isIdle)
+        }
     }
 
-    @Test func hidingTheWindowOnItsWay_letsTheNextGo_andItGoesWhenShown() {
-        var queue = FullScreenEntryQueue()
-        _ = queue.add(first)
-        _ = queue.add(second)
-        _ = queue.add(third)
-
-        let hiddenWaiting = queue.withdraw(third)
-        #expect(hiddenWaiting.wasPending)
-        #expect(hiddenWaiting.next == nil)
-
-        let hiddenOnItsWay = queue.withdraw(first)
-        #expect(hiddenOnItsWay.wasPending)
-        #expect(hiddenOnItsWay.next == second)
-
-        let notInLine = queue.withdraw(first)
-        #expect(!notInLine.wasPending)
-        #expect(notInLine.next == nil)
+    enum DeferredFront: Sendable, CaseIterable {
+        case latest, hidden, passedOver
     }
 
-    @Test func theWindowLastUsed_comesToTheFrontOnceTheLineIsDone() {
+    @Test(arguments: DeferredFront.allCases)
+    func theWindowLastUsed_comesToTheFrontOnceTheLineIsDone(_ disposition: DeferredFront) {
         var queue = FullScreenEntryQueue()
+        queue.raiseWhenDone(second)
+        #expect(queue.takeFrontIfDone() == nil)
+        #expect(queue.front == nil)
+
         _ = queue.add(first)
         queue.raiseWhenDone(second)
-
-        #expect(queue.takeFrontIfDone() == nil)
-        _ = queue.settled(first)
-        #expect(queue.takeFrontIfDone() == second)
-        #expect(queue.takeFrontIfDone() == nil)
-
-        // Nothing in line: the window is in front already.
         queue.raiseWhenDone(third)
+        #expect(queue.front == third)
         #expect(queue.takeFrontIfDone() == nil)
-    }
+        switch disposition {
+        case .latest: queue.shown(third)
+        case .hidden: _ = queue.withdraw(third)
+        case .passedOver: queue.shown(second)
+        }
 
-    @Test func aWindowHiddenOrPassedOver_isNotBroughtToTheFront() {
-        var hidden = FullScreenEntryQueue()
-        _ = hidden.add(first)
-        hidden.raiseWhenDone(second)
-        _ = hidden.withdraw(second)
-        _ = hidden.settled(first)
-        #expect(hidden.takeFrontIfDone() == nil)
-
-        // Another window shown meanwhile is the person's choice.
-        var chosen = FullScreenEntryQueue()
-        _ = chosen.add(first)
-        chosen.raiseWhenDone(second)
-        chosen.shown(third)
-        _ = chosen.settled(first)
-        #expect(chosen.takeFrontIfDone() == nil)
+        _ = queue.settled(first)
+        #expect(queue.takeFrontIfDone() == (disposition == .latest ? third : nil))
+        #expect(queue.takeFrontIfDone() == nil)
+        #expect(queue.front == nil)
     }
 
     @Test func aWindowAddedTwice_waitsOnce() {
         var queue = FullScreenEntryQueue()
-        _ = queue.add(first)
-        _ = queue.add(first)
-        _ = queue.add(second)
-        _ = queue.add(second)
-
+        #expect(queue.add(first) == first)
+        let attempt = queue.attempt
+        #expect(queue.add(first) == nil)
+        #expect(queue.attempt == attempt)
+        #expect(queue.add(second) == nil)
+        #expect(queue.add(second) == nil)
         #expect(queue.waiting == [second])
+        #expect(queue.settled(first) == second)
+        #expect(queue.attempt == attempt + 1)
+        #expect(queue.settled(second) == nil)
+        #expect(queue.isIdle)
     }
 }

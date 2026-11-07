@@ -38,6 +38,7 @@ extension WindowProjectSwitchTests {
         fixture.registry.onDidSwitchProject = { follow($0, in: fixture.session, cell: 6) }
         fixture.choose(fixture.bTab, in: window)
         PaneActions.split(fixture.session, direction: .horizontal, in: window.id)
+        try #require(fixture.session.activeTab(in: window.id)?.splitTree.allLeafIDs().count == 2)
         try #require(freshLayout(window, in: fixture.session, cell: 6) == .overlay)
         fixture.choose(fixture.aTab, in: window)
         window.changesPanelLayoutBasis = nil
@@ -88,7 +89,9 @@ extension WindowProjectSwitchTests {
         let fixture = try Self.splitProjectFixture()
         let window = fixture.primary
 
+        #expect(fixture.session.activeTab(in: window.id)?.splitTree.allLeafIDs().count == 1)
         PaneActions.split(fixture.session, direction: .horizontal, in: window.id)
+        #expect(fixture.session.activeTab(in: window.id)?.splitTree.allLeafIDs().count == 2)
         Self.follow(window, in: fixture.session, cell: 6)
 
         #expect(window.selection.shownProjectID == fixture.a.id)
@@ -105,6 +108,8 @@ extension WindowProjectSwitchTests {
 
         // Decided by the switch itself, with no view to follow it: nothing
         // of a closed panel is on screen to move.
+        #expect(window.selection.shownProjectID == fixture.b.id)
+        #expect(!window.selection.isChangesPanelPresented)
         #expect(window.changesPanelLayout == .overlay)
         #expect(window.changesPanelCellWidth == 6)
     }

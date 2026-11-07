@@ -16,6 +16,7 @@ struct ReviewInsertionTests {
         let registry = RecordingSurfaceRegistry()
         let deliverer = RecordingReviewDeliverer()
         let review: ReviewSession
+        let git: FakeReviewRepository
 
         /// Where the insert goes. The pane is read when the insert asks for
         /// it, which `originPaneID` can change between asks.
@@ -49,11 +50,11 @@ struct ReviewInsertionTests {
         let fixture = WorkspaceSessionFixture.withLooseTab()
         let git = try FakeReviewRepository.oneFile()
         let review = if let drafts {
-            ReviewSession(root: URL(fileURLWithPath: "/tmp/weir-review-root"), git: git, drafts: drafts)
+            ReviewSession(root: WorkspaceSessionFixture.projectRootURL("review-insert"), git: git, drafts: drafts)
         } else {
             fakeReviewSession(git: git)
         }
-        let insert = Insert(session: fixture.session, paneID: fixture.paneID, review: review)
+        let insert = Insert(session: fixture.session, paneID: fixture.paneID, review: review, git: git)
         if isPaneStarted {
             insert.registry.deliverers[fixture.paneID] = insert.deliverer
         }
@@ -73,23 +74,29 @@ struct ReviewInsertionTests {
         let deliverer = RecordingReviewDeliverer()
         registry.deliverers[paneID] = deliverer
         let destination = ReviewDestination(paneID: paneID, title: "zsh", foreground: "zsh")
-        let receipt = ReviewPasteReceipt(root: URL(fileURLWithPath: "/tmp/x"), commentIDs: [UUID()])
+        let settlement = ReviewPasteSettlement()
+        let receipt = ReviewPasteReceipt(root: URL(fileURLWithPath: "/tmp/x"), commentIDs: [UUID()], settlement: settlement)
         let prompt = try ReviewPrompt(validating: "<review></review>")
         try ReviewAgents.insert(prompt, into: destination, registry: registry, receipt: receipt)
         #expect(deliverer.delivered == ["<review></review>"])
         // The receipt travels with the text: it is what a later refusal uses
         // to find the comments again.
+        #expect(deliverer.receipts.count == 1)
         #expect(deliverer.receipts.first??.commentIDs == receipt.commentIDs)
-        // A pane that refuses reports it rather than swallowing it.
-        deliverer.failure = ReviewError.targetUnavailable
-        #expect(throws: ReviewError.self) {
+        #expect(deliverer.receipts.first??.root == receipt.root)
+        #expect(deliverer.receipts.first??.settlement === settlement)
+        #expect(settlement.wasDelivered == true)
+
+        deliverer.failure = ReviewError.invalidText
+        #expect(throws: ReviewError.invalidText) {
             try ReviewAgents.insert(prompt, into: destination, registry: registry, receipt: receipt)
         }
-        // A pane that is gone has no destination at all.
         registry.deliverers[paneID] = nil
-        #expect(throws: ReviewError.self) {
+        #expect(throws: ReviewError.targetUnavailable) {
             try ReviewAgents.insert(prompt, into: destination, registry: registry, receipt: receipt)
         }
+        #expect(deliverer.delivered == [prompt.text])
+        #expect(deliverer.receipts.count == 1)
     }
 
     /// The order an insert happens in, which is what keeps a comment from
@@ -103,7 +110,7 @@ struct ReviewInsertionTests {
         // A pane that refuses leaves the comment unmarked: the reader has to
         // be able to try again, and a mark would say the agent had been asked.
         deliverer.failure = ReviewError.targetUnavailable
-        await #expect(throws: ReviewError.self) {
+        await #expect(throws: ReviewError.targetUnavailable) {
             try await ReviewInsertion.run(reviewSession: store, to: insert.target())
         }
         #expect(store.comments.first?.insertedAt == nil)
@@ -124,25 +131,38 @@ struct ReviewInsertionTests {
         // asked as "is this the same review" rather than "is a review up",
         // since closing and opening again on the same pane answers yes to
         // the second (`aReviewClosedAndOpenedAgain...`).
-        let deliveredBefore = deliverer.delivered.count
-        await #expect(throws: ReviewError.self) {
+        let sent = deliverer.delivered
+        let marked = store.comments
+        await #expect(throws: ReviewError.targetUnavailable) {
             try await ReviewInsertion.run(reviewSession: store, to: insert.target(isSameReview: { false }))
         }
-        #expect(deliverer.delivered.count == deliveredBefore)
+        #expect(deliverer.delivered == sent)
+        #expect(store.comments == marked)
 
-        // The reader switching pane inside the wait is the same refusal. The
-        // pane is read again on the far side of it, so a value captured before
-        // the wait cannot be what the check compares.
-        let elsewhere = UUID()
-        insert.registry.deliverers[elsewhere] = RecordingReviewDeliverer()
-        var origin = insert.paneID
-        await #expect(throws: ReviewError.self) {
-            try await ReviewInsertion.run(reviewSession: store, to: insert.target(originPaneID: {
-                defer { origin = elsewhere }
-                return origin
-            }))
+        let anotherTab = insert.session.openTab(container: .loose)
+        let elsewhere = try #require(anotherTab.splitTree.allLeafIDs().first)
+        let another = RecordingReviewDeliverer()
+        insert.registry.deliverers[elsewhere] = another
+        try #require(ReviewAgents.destination(session: insert.session, paneID: elsewhere, registry: insert.registry)?.isLive == true)
+        let origin = Recorded(insert.paneID)
+        let files = insert.git.files
+        let gate = Gate<[ReviewFile]>()
+        insert.git.nextFilesGate = gate
+        async let retargeted = ReviewInsertion.run(reviewSession: store, to: insert.target(originPaneID: { origin.value }))
+        defer { gate.open(with: files) }
+        try await gate.waitUntilRequested()
+        origin.value = elsewhere
+        gate.open(with: files)
+
+        do {
+            _ = try await retargeted
+            Issue.record("Expected ReviewError.targetUnavailable.")
+        } catch {
+            #expect(error as? ReviewError == .targetUnavailable)
         }
-        #expect(deliverer.delivered.count == deliveredBefore)
+        #expect(deliverer.delivered == sent)
+        #expect(another.delivered.isEmpty)
+        #expect(store.comments == marked)
     }
 
     /// Closing review and opening it again inside the insert's wait is a
@@ -154,23 +174,37 @@ struct ReviewInsertionTests {
     /// closure because what has to hold is that `open` makes a new opening —
     /// something a closure written here could not fail.
     @Test func aReviewClosedAndOpenedAgainDoesNotTakeTheInsertItStarted() async throws {
-        let insert = try await Self.insert()
+        let drafts = RecordingReviewDraftStore()
+        let insert = try await Self.insert(drafts: drafts)
         let presentation = ReviewPresentation()
-        let directory = URL(fileURLWithPath: "/tmp/weir-review-root")
+        let directory = insert.review.root
+        let files = insert.git.files
+        let gate = Gate<[ReviewFile]>()
+        let saved = try #require(try drafts.load(root: directory))
         presentation.open(directory, originPaneID: insert.paneID)
         let opening = presentation.opening
-        // What the reader does inside the wait.
+        insert.git.nextFilesGate = gate
+        let target = insert.target(isSameReview: { presentation.opening == opening })
+        async let inserting = ReviewInsertion.run(reviewSession: insert.review, to: target)
+        defer { gate.open(with: files) }
+        try await gate.waitUntilRequested()
+
         presentation.close()
         presentation.open(directory, originPaneID: insert.paneID)
+        #expect(presentation.opening != opening)
+        #expect(presentation.originPaneID == insert.paneID)
+        gate.open(with: files)
 
-        await #expect(throws: ReviewError.self) {
-            try await ReviewInsertion.run(
-                reviewSession: insert.review,
-                to: insert.target(isSameReview: { presentation.opening == opening })
-            )
+        do {
+            _ = try await inserting
+            Issue.record("Expected ReviewError.targetUnavailable.")
+        } catch {
+            #expect(error as? ReviewError == .targetUnavailable)
         }
         #expect(insert.deliverer.delivered.isEmpty)
-        #expect(insert.review.comments.first?.insertedAt == nil)
+        #expect(insert.review.comments == saved.comments)
+        #expect(try drafts.load(root: directory)?.comments == saved.comments)
+        #expect(drafts.saves == 1)
     }
 
     /// A paste that nobody claims settles itself as refused.
@@ -258,6 +292,7 @@ struct ReviewInsertionTests {
         #expect(AgentForeground.isShellAtPrompt(names: ["zsh"], leaderArguments: ["-l"]))
         #expect(!AgentForeground.isShellAtPrompt(names: ["claude"], leaderArguments: ["--resume", "x"]))
         #expect(!AgentForeground.isShellAtPrompt(names: ["zsh", "claude"], leaderArguments: []))
+        #expect(!AgentForeground.isShellAtPrompt(names: ["zsh"], leaderArguments: ["-c", "echo waiting"]))
         #expect(!AgentForeground.isShellAtPrompt(names: [], leaderArguments: nil))
     }
 
@@ -289,17 +324,45 @@ struct ReviewInsertionTests {
         deliverer.isReadyForReviewPaste = false
         #expect(ReviewAgents.destination(session: insert.session, paneID: insert.paneID, registry: insert.registry)?.isLive == false)
 
-        await #expect(throws: ReviewError.paneDidNotStart) {
-            try await ReviewInsertion.run(reviewSession: insert.review, to: insert.target(startPane: { _ in false }))
+        let timedOut = Gate<Bool>()
+        let didNotStart = insert.target(startPane: { pane in
+            #expect(pane == insert.paneID)
+            return await timedOut.wait()
+        })
+        async let waiting = ReviewInsertion.run(reviewSession: insert.review, to: didNotStart)
+        defer { timedOut.open(with: false) }
+        try await timedOut.waitUntilRequested()
+        #expect(deliverer.delivered.isEmpty)
+        #expect(insert.review.comments.first?.insertedAt == nil)
+        timedOut.open(with: false)
+        do {
+            _ = try await waiting
+            Issue.record("Expected ReviewError.paneDidNotStart.")
+        } catch {
+            #expect(error as? ReviewError == .paneDidNotStart)
         }
         #expect(deliverer.delivered.isEmpty)
+        #expect(insert.review.comments.first?.insertedAt == nil)
 
-        let outcome = try await ReviewInsertion.run(reviewSession: insert.review, to: insert.target(startPane: { _ in
-            deliverer.isReadyForReviewPaste = true
+        let ready = Gate<Void>()
+        let willStart = insert.target(startPane: { pane in
+            #expect(pane == insert.paneID)
+            await ready.wait()
             return true
-        }))
+        })
+        async let starting = ReviewInsertion.run(reviewSession: insert.review, to: willStart)
+        defer { ready.open() }
+        try await ready.waitUntilRequested()
+        #expect(deliverer.delivered.isEmpty)
+        #expect(insert.review.comments.first?.insertedAt == nil)
+        deliverer.isReadyForReviewPaste = true
+        ready.open()
+
+        let outcome = try await starting
         #expect(outcome.paneID == insert.paneID)
+        #expect(outcome.wasRecorded)
         #expect(deliverer.delivered.count == 1)
+        #expect(insert.review.comments.first?.insertedAt != nil)
     }
 
     /// A pane whose terminal has not started is started before the text

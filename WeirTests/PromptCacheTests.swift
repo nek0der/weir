@@ -38,43 +38,25 @@ struct PromptCacheStatusTests {
         #expect(status(window(), secondsAfterAnchor: 3500, running: true) == .hidden)
     }
 
-    @Test func status_fiveMinutesOrMoreLeft_isValid() {
-        #expect(status(window(), secondsAfterAnchor: 0) == .valid)
-        #expect(status(window(), secondsAfterAnchor: 3600 - 300) == .valid)
+    @Test(arguments: [3600, 300])
+    func status_usesTheScaledAndCappedWarningLead(ttl: Int) {
+        let lead = ttl == 3600 ? 300 : 60
+        let window = window(ttl: ttl)
+        #expect(PromptCacheStatus.warningLead(ttlSeconds: ttl) == Double(lead))
+        #expect(status(window, secondsAfterAnchor: 0) == .valid)
+        #expect(status(window, secondsAfterAnchor: 1) == .valid)
+        #expect(status(window, secondsAfterAnchor: Double(ttl - lead)) == .valid)
+        #expect(status(window, secondsAfterAnchor: Double(ttl - lead + 1)) == .expiringSoon)
+        #expect(status(window, secondsAfterAnchor: Double(ttl - 1)) == .expiringSoon)
+        #expect(status(window, secondsAfterAnchor: Double(ttl)) == .expired)
+        #expect(status(window, secondsAfterAnchor: 86400) == .expired)
     }
 
-    @Test func status_underFiveMinutesLeft_isExpiringSoon() {
-        #expect(status(window(), secondsAfterAnchor: 3600 - 299) == .expiringSoon)
-        #expect(status(window(), secondsAfterAnchor: 3599) == .expiringSoon)
-    }
-
-    @Test func warningLead_isAFifthOfTheWindowAtMostFiveMinutes() {
-        #expect(PromptCacheStatus.warningLead(ttlSeconds: 3600) == 300, "an hour warns five minutes ahead")
-        #expect(PromptCacheStatus.warningLead(ttlSeconds: 300) == 60, "five minutes warn one minute ahead")
-        // A five-minute window is not yellow from the moment its turn ends.
-        #expect(status(window(ttl: 300), secondsAfterAnchor: 1) == .valid)
-        #expect(status(window(ttl: 300), secondsAfterAnchor: 240) == .valid)
-        #expect(status(window(ttl: 300), secondsAfterAnchor: 241) == .expiringSoon)
-    }
-
-    @Test func nextTransition_aimsAtTheScaledLead() {
-        let short = window(ttl: 300)
-        #expect(PromptCacheStatus.nextTransition(of: short, after: anchor) == anchor.addingTimeInterval(240))
-        #expect(
-            PromptCacheStatus.nextTransition(of: short, after: anchor.addingTimeInterval(240))
-                == anchor.addingTimeInterval(300)
-        )
-    }
-
-    @Test func status_atAndAfterExpiry_isExpired() {
-        #expect(status(window(), secondsAfterAnchor: 3600) == .expired)
-        #expect(status(window(), secondsAfterAnchor: 86400) == .expired)
-    }
-
-    @Test func nextTransition_walksWarningThenExpiryThenNothing() {
-        let window = window()
-        let warning = anchor.addingTimeInterval(3300)
-        let expiry = anchor.addingTimeInterval(3600)
+    @Test(arguments: [3600, 300])
+    func nextTransition_walksWarningThenExpiryThenNothing(ttl: Int) {
+        let window = window(ttl: ttl)
+        let warning = anchor.addingTimeInterval(ttl == 3600 ? 3300 : 240)
+        let expiry = anchor.addingTimeInterval(Double(ttl))
         #expect(PromptCacheStatus.nextTransition(of: window, after: anchor) == warning)
         #expect(PromptCacheStatus.nextTransition(of: window, after: warning) == expiry)
         #expect(PromptCacheStatus.nextTransition(of: window, after: expiry) == nil)
@@ -93,7 +75,7 @@ struct PromptCacheStatusTests {
         #expect(PromptCacheStatus.nextTransition(of: [], after: anchor) == nil)
     }
 
-    @Test func tokens_roundToThreeSignificantDigits() {
+    @Test func tokens_useCompactUnitsAndRoundAcrossThresholds() {
         #expect(PromptCacheFormatting.tokens(0) == "0")
         #expect(PromptCacheFormatting.tokens(999) == "999")
         #expect(PromptCacheFormatting.tokens(1000) == "1k")
@@ -183,18 +165,27 @@ struct PromptCacheMonitorTests {
         let now = anchor
         let monitor = PromptCacheMonitor(clock: { now })
         let first = window(observedAt: now.addingTimeInterval(-4000))
-        monitor.update(windows: ["claude:A": first])
+        monitor.update(windows: ["claude:A": first, "claude:B": first])
         monitor.markAnswered(runtimeID: "claude:A", window: first)
         monitor.markPresented(runtimeID: "claude:A", window: first)
-        #expect(monitor.isAnswered(runtimeID: "claude:A", window: first))
-        #expect(monitor.hasPresented(runtimeID: "claude:A", window: first))
+        #expect(!monitor.isAnswered(runtimeID: "claude:B", window: first))
+        #expect(!monitor.hasPresented(runtimeID: "claude:B", window: first))
+
+        var revised = first
+        revised.rewriteTokens = 20
+        monitor.update(windows: ["claude:A": revised, "claude:B": first])
+        #expect(monitor.isAnswered(runtimeID: "claude:A", window: revised))
+        #expect(monitor.hasPresented(runtimeID: "claude:A", window: revised))
+        monitor.markAnswered(runtimeID: "claude:B", window: first)
+        monitor.markPresented(runtimeID: "claude:B", window: first)
 
         let later = window(observedAt: now.addingTimeInterval(-3700))
-        monitor.update(windows: ["claude:A": later])
+        monitor.update(windows: ["claude:A": later, "claude:B": first])
         #expect(!monitor.isAnswered(runtimeID: "claude:A", window: later))
         #expect(!monitor.hasPresented(runtimeID: "claude:A", window: later))
-        #expect(monitor.answeredExpiries.isEmpty, "answers for windows that are gone are pruned")
-        #expect(monitor.presentedExpiries.isEmpty, "so is what was shown for them")
+        let peer = PromptCacheMonitor.ExpiryKey(runtimeID: "claude:B", observedAt: first.observedAt)
+        #expect(monitor.answeredExpiries == [peer])
+        #expect(monitor.presentedExpiries == [peer])
     }
 }
 
@@ -418,35 +409,27 @@ struct PromptCacheAttentionTests {
         #expect(attention.expiredPromptCache(paneID: paneID) != nil, "the clock stays for another try")
     }
 
-    @Test func commands_neverFollowAKeyTypedAfterTheTurnEnded() throws {
+    @Test func commands_respectWhenTheLastKeyWasTyped() throws {
         let (_, _, paneID) = WorkspaceSessionFixture.withLooseTab()
         let attention = AttentionState()
         let typist = RecordingTypist()
-        publish(attention, paneID: paneID, state: .finished, window: window(minutesAgo: 70))
-        let expired = try #require(attention.expiredPromptCache(paneID: paneID))
-
-        // Say `/resume` was typed and its picker is open: no draft is
-        // recorded once Return opened it, but the key came after the Stop.
-        typist.lastKeyInputAt = Date().addingTimeInterval(1)
-        #expect(!attention.performPromptCacheAction(.newConversation, for: expired, typist: typist))
-        #expect(typist.typed.isEmpty)
-    }
-
-    @Test func commands_typeAtACleanPromptAndLeaveTheNextAnswerOpen() throws {
-        let (_, _, paneID) = WorkspaceSessionFixture.withLooseTab()
-        let attention = AttentionState()
-        let typist = RecordingTypist()
-        // The user's last key was the Return that started the turn.
-        typist.lastKeyInputAt = Date().addingTimeInterval(-600)
         publish(attention, paneID: paneID, state: .finished, window: window(minutesAgo: 70))
         let first = try #require(attention.expiredPromptCache(paneID: paneID))
+        let turnEnded = try #require(attention.runtimesByKind[.claude]?.first?.badge.updatedAt)
         let target = PromptCacheTarget(runtimeID: "claude:run", paneID: paneID)
+
+        // Return may have opened a picker without leaving a draft.
+        typist.lastKeyInputAt = turnEnded.addingTimeInterval(1)
+        #expect(!attention.performPromptCacheAction(.newConversation, for: first, typist: typist))
+        #expect(typist.typed.isEmpty)
+        #expect(attention.promptCachePanelContent(for: target, typist: typist)?.commandBlock == .unsubmittedInput)
+        #expect(attention.expiredPromptCache(paneID: paneID)?.window == first.window)
+
+        typist.lastKeyInputAt = turnEnded.addingTimeInterval(-600)
         #expect(attention.promptCachePanelContent(for: target, typist: typist)?.canTypeCommands == true)
         #expect(attention.performPromptCacheAction(.summarize, for: first, typist: typist))
+        #expect(typist.typed == ["/compact"])
 
-        // Our own command left the marks as they were, so the next expiry,
-        // after the next turn, can be answered the same way.
-        #expect(!typist.hasUnsubmittedInput)
         publish(attention, paneID: paneID, state: .finished, window: window(minutesAgo: 65))
         let second = try #require(attention.expiredPromptCache(paneID: paneID))
         #expect(attention.performPromptCacheAction(.newConversation, for: second, typist: typist))
@@ -482,7 +465,7 @@ struct PromptCacheAttentionTests {
         #expect(presentation.request == nil)
     }
 
-    @Test func panelOpenedWhileExpiring_countsAsShownOnceItExpires() throws {
+    @Test func panelShown_countsOnlyForAnExpiredWindow() throws {
         let (_, _, paneID) = WorkspaceSessionFixture.withLooseTab()
         let attention = AttentionState()
         let presentation = PromptCachePanelPresentation()
@@ -493,15 +476,19 @@ struct PromptCacheAttentionTests {
             anchor: CGRect(x: 0, y: 0, width: 16, height: 16)
         )
 
-        // Opened while yellow: nothing to count yet.
-        publish(attention, paneID: paneID, state: .finished, window: window(minutesAgo: 57))
+        let expiring = window(minutesAgo: 57)
+        publish(attention, paneID: paneID, state: .finished, window: expiring)
+        #expect(attention.promptCacheMark(paneID: paneID)?.status == .expiringSoon)
         attention.notePromptCachePanelShown(target)
-        let expiring = try #require(attention.runtimesByKind[.claude]?.first?.badge.cacheWindow)
-        #expect(!attention.promptCache.hasPresented(runtimeID: "claude:run", window: expiring))
+        #expect(!attention.promptCache.hasPresented(runtimeID: target.runtimeID, window: expiring))
 
-        // Still open when it turns red: the host reports it again.
-        publish(attention, paneID: paneID, state: .finished, window: window(minutesAgo: 70))
+        let expired = window(minutesAgo: 70)
+        publish(attention, paneID: paneID, state: .finished, window: expired)
+        let eligible = try #require(attention.expiredPromptCache(paneID: paneID))
+        #expect(eligible.window == expired)
+        #expect(!attention.promptCache.hasPresented(runtimeID: target.runtimeID, window: expired))
         attention.notePromptCachePanelShown(target)
+        #expect(attention.promptCache.hasPresented(runtimeID: target.runtimeID, window: expired))
         #expect(!attention.autoOpenPromptCachePanel(
             paneID: paneID,
             in: .test(),

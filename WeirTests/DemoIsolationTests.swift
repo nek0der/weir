@@ -49,6 +49,8 @@ struct DemoIsolationTests {
         let items = attention.queueItems(in: session)
         #expect(items.map(\.subject.paneID) == [pane])
         #expect(attention.allRuntimes.map(\.badge.state) == [.finished])
+        #expect(attention.allRuntimes.map(\.paneIDs) == [[pane]])
+        #expect(items.compactMap(\.subject.runtimeID) == attention.allRuntimes.map(\.id))
     }
 
     /// The runtime demo mode stands in for each agent carries its
@@ -70,14 +72,18 @@ struct DemoIsolationTests {
 
     /// The demo adapter takes the staged turns as a pass would report them,
     /// and writes nothing.
-    @Test func theDemoAdapter_reportsTheStagedTurns() {
+    @Test func theDemoAdapter_reportsTheStagedTurns() throws {
         let adapter = AgentProjectionAdapter(writesFiles: false, staged: DemoFixture.stagedProjection)
         let session = WorkspaceSession()
         _ = session.restore(from: DemoFixture.snapshot)
         adapter.bootstrap(into: session, attention: AttentionState())
         #expect(adapter.turnHistory.hasLoaded)
-        #expect(adapter.turnHistory.turns(of: DemoFixture.remindersConversation).count == 5)
-        #expect(adapter.turnHistory.turns(of: DemoFixture.prReviewConversation).count == 2)
+        let expected = [(DemoFixture.remindersConversation, 5), (DemoFixture.prReviewConversation, 2)]
+        for (conversation, count) in expected {
+            let staged = try DemoFixture.stagedTurns(of: conversation)
+            #expect(staged.count == count)
+            #expect(adapter.turnHistory.turns(of: conversation) == staged)
+        }
     }
 
     /// The store made with staged facts holds them and asks Git nothing: not
@@ -140,6 +146,10 @@ struct DemoIsolationTests {
 
         let roots = RepositoryRoots.staged()
         await roots.resolve(root)
+        #expect(roots.answer(for: root) == .repository(path: root.path))
+        let other = DemoFixture.dotfilesRoot
+        await roots.resolve(other)
+        #expect(roots.answer(for: other) == .repository(path: other.path))
         #expect(roots.answer(for: root) == .repository(path: root.path))
     }
 }

@@ -76,13 +76,14 @@ struct ProcessNamesTests {
         // An argument that is not UTF-8 keeps the path readable.
         let odd = ProcessNames.parseProcessArguments(area(2, path: "/bin/sh", ["sh"], end: [0xFF, 0xFE, 0]))
         #expect(odd?.executable == "/bin/sh")
+        #expect(odd?.arguments == ["\u{FFFD}\u{FFFD}"])
         #expect(ProcessNames.parseProcessArguments(area(3, path: "/bin/bash", ["bash"])) == nil)
         #expect(ProcessNames.parseProcessArguments(Array(area(1, path: "/bin/zsh", ["-zsh"]).dropLast())) == nil)
         #expect(ProcessNames.parseProcessArguments([1, 0]) == nil)
     }
 
-    @Test("reads the executable name of a live process")
-    func processName_ofSelf_isTheTestHost() {
+    @Test("reads a nonempty accounting name for the current process")
+    func accountingName_ofSelf_isNotEmpty() {
         let name = ProcessNames.accountingName(of: getpid())
         #expect(name?.isEmpty == false)
     }

@@ -109,6 +109,13 @@ struct ApprovalAnswerDraftTests {
         draft.selectOtherIfFilled(questionIndex: 0, in: size)
         #expect(!draft.isOtherSelected(questionIndex: 0))
 
+        draft.setFreeText(" \t\n", questionIndex: 0, in: size)
+        draft.toggle(label: "S", questionIndex: 0, in: size)
+        draft.selectOtherIfFilled(questionIndex: 0, in: size)
+        #expect(draft.freeText[0] == " \t\n")
+        #expect(!draft.isOtherSelected(questionIndex: 0))
+        #expect(draft.answers(for: [size]) == ["Which size?": "S"])
+
         draft.setFreeText("XL", questionIndex: 0, in: size)
         draft.toggle(label: "S", questionIndex: 0, in: size)
         draft.selectOtherIfFilled(questionIndex: 0, in: size)

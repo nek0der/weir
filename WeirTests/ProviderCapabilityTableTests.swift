@@ -32,14 +32,18 @@ struct ProviderCapabilityTableTests {
     /// provider each, and nothing for one this build does not have.
     @Test("the helper's capabilities sit on the provider whose id it checked", arguments: AgentKind.allCases)
     func helperCapabilities_keepTheTable(kind: AgentKind) {
+        let expected = [
+            (ProviderCapabilityName.questionEndsWithTurn, kind == .claude),
+            (ProviderCapabilityName.questionAnsweredByAgent, kind == .codex),
+            (ProviderCapabilityName.approvalHookRecordsLifecycle, kind == .codex),
+            (ProviderCapabilityName.approvalWithdrawnBySignal, kind == .opencode),
+            (ProviderCapabilityName.approvalPromptBesideCard, [.claude, .opencode].contains(kind))
+        ]
         let capabilities = RustProviderBridge.capabilities(provider: kind.rawValue)
-        #expect(capabilities.contains(ProviderCapabilityName.questionEndsWithTurn) == (kind == .claude))
-        #expect(capabilities.contains(ProviderCapabilityName.questionAnsweredByAgent) == (kind == .codex))
-        #expect(capabilities.contains(ProviderCapabilityName.approvalHookRecordsLifecycle) == (kind == .codex))
-        #expect(capabilities.contains(ProviderCapabilityName.approvalWithdrawnBySignal) == (kind == .opencode))
-        #expect(capabilities.contains(ProviderCapabilityName.approvalPromptBesideCard) == [.claude, .opencode].contains(kind))
-        // The app reads the same descriptors through its own registry.
-        #expect(AgentProviderRegistry.has(ProviderCapabilityName.questionAnsweredByAgent, kind) == (kind == .codex))
+        for (capability, isPresent) in expected {
+            #expect(capabilities.contains(capability) == isPresent, "\(capability)")
+            #expect(AgentProviderRegistry.has(capability, kind) == isPresent, "\(capability)")
+        }
     }
 
     /// The waits the approval service receives as requests are read from
@@ -118,8 +122,19 @@ struct ProviderCapabilityTableTests {
             from: Data(#"{"outcome":"intercepted","exit_code":2,"message":"routed","stdout":"{}"}"#.utf8)
         )
         #expect(intercepted == RustHookOutcome(outcome: .intercepted, exitCode: 2, message: "routed", stdout: "{}"))
-        #expect(throws: (any Error).self) {
+        let missingStatus = #expect(throws: DecodingError.self) {
             try JSONDecoder().decode(RustHookOutcome.self, from: Data(#"{"outcome":"applied"}"#.utf8))
         }
+        guard case let .keyNotFound(key, _)? = missingStatus else {
+            Issue.record("expected a missing required exit status")
+            return
+        }
+        #expect(key.stringValue == "exit_code")
+
+        let malformedOptional = try JSONDecoder().decode(
+            RustHookOutcome.self,
+            from: Data(#"{"outcome":"applied","exit_code":0,"message":false,"stdout":42}"#.utf8)
+        )
+        #expect(malformedOptional == RustHookOutcome(outcome: .applied, exitCode: 0, message: nil))
     }
 }

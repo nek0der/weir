@@ -73,138 +73,130 @@ struct SessionLaunchDestinationTests {
         }
     }
 
-    @Test func aSetupFinishingInAProjectAnotherWindowShows_leavesThatWindowsSelection() async throws {
-        try await withTempDir { dir in
-            let fixture = try await Fixture.make(in: dir, bootstrap: [])
-            let session = fixture.session
-            // The launch's window has gone to another project; a second
-            // window shows the session's row, empty.
-            let other = session.addOrActivateProject(rootURL: dir.appendingPathComponent("other"), suggestedName: "other")
-            session.setActiveContainer(.project(other.id))
-            let second = WorkspaceSessionFixture.addWindow(to: session)
-            session.setActiveContainer(Self.row(fixture), in: second)
-            let primaryBefore = try #require(session.currentNavTarget(in: session.primaryWindowID))
+    private static let setupCommand = "printf ready > setup-log"
 
-            begin(fixture)
-
-            #expect(fixture.tabs.count == 1)
-            #expect(session.selection(second)?.activeContainerID == Self.row(fixture))
-            #expect(session.selection(second)?.activeTabID == nil)
-            #expect(session.currentNavTarget(in: session.primaryWindowID) == primaryBefore)
-        }
+    private func beginShellSetup(_ fixture: Fixture, in window: WindowID? = nil) throws {
+        begin(fixture, in: window)
+        let launch = try #require(fixture.store.launches[fixture.worktree.id])
+        #expect(launch.windowID == (window ?? fixture.session.primaryWindowID))
+        try #require(launch.phase == .settingUp(stepIndex: 0, stepCount: 1, command: Self.setupCommand))
+        #expect(fixture.tabs.isEmpty)
     }
 
-    @Test func aSetupWhoseWindowShowsAnotherProject_isBehind() async throws {
+    private func finishedShell(_ fixture: Fixture) async throws -> Tab {
+        await pollUntil(timeout: .seconds(10)) { fixture.store.launches[fixture.worktree.id] == nil }
+        #expect(fixture.store.launches.isEmpty)
+        let tab = try #require(fixture.tabs.first)
+        #expect(fixture.tabs.count == 1)
+        #expect(tab.initialCommands.isEmpty)
+        return tab
+    }
+
+    private func finishedShellAfterSetup(_ fixture: Fixture) async throws -> Tab {
+        let tab = try await finishedShell(fixture)
+        let log = fixture.worktree.workingDirectory.appendingPathComponent("setup-log")
+        #expect(try String(contentsOf: log, encoding: .utf8) == "ready")
+        return tab
+    }
+
+    @Test func aSetupFinishingInAProjectAnotherWindowShows_leavesThatWindowsSelection() async throws {
         try await withTempDir { dir in
-            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand("true")])
+            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand(Self.setupCommand)])
             let session = fixture.session
+            let original = Self.row(fixture)
             let other = session.addOrActivateProject(rootURL: dir.appendingPathComponent("other"), suggestedName: "other")
-            // Asked for on the new row, which would bring the tab to front.
-            session.setActiveContainer(Self.row(fixture))
-            begin(fixture)
-            // The person goes to another project while the setup runs.
-            let typing = session.openTab(container: .project(other.id))
+            session.setActiveContainer(original)
+            try #require(session.primarySelection.shownProjectID == fixture.project.id)
+            try beginShellSetup(fixture)
 
-            await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) { !fixture.tabs.isEmpty }
+            let shell = session.openTab(container: .project(other.id))
+            let second = WorkspaceSessionFixture.addWindow(to: session)
+            session.setActiveContainer(original, in: second)
+            let primaryBefore = WorkspaceSession.NavTarget(container: .project(other.id), tabID: shell.id)
+            let secondBefore = WorkspaceSession.NavTarget(container: original, tabID: nil)
+            try #require(session.currentNavTarget(in: session.primaryWindowID) == primaryBefore)
+            try #require(session.currentNavTarget(in: second) == secondBefore)
+            let switches = ProjectSwitchRecorder.connect(to: session)
 
-            let tab = try #require(fixture.tabs.first)
-            #expect(session.primarySelection.activeTabID == typing.id)
-            #expect(session.lastActiveTabID(for: Self.row(fixture)) == tab.id)
+            _ = try await finishedShellAfterSetup(fixture)
+
+            #expect(session.currentNavTarget(in: session.primaryWindowID) == primaryBefore)
+            #expect(session.currentNavTarget(in: second) == secondBefore)
+            #expect(switches.isUntouched)
         }
     }
 
     @Test func skippingASetup_afterThePersonMovedToAnotherRow_opensItBehind() async throws {
         try await withTempDir { dir in
-            // A step that holds the skip for a while: SIGTERM is ignored
-            // until the SIGKILL.
-            let (fixture, _) = try await Fixture.startBlockingSetup(in: dir, ignoresTERM: true, request: Fixture.shell)
+            let (fixture, pid) = try await Fixture.startBlockingSetup(in: dir, ignoresTERM: true, request: Fixture.shell)
+            defer { fixture.store.cancelAll() }
             let session = fixture.session
-            // The bar was pressed on the new row.
             session.setActiveContainer(Self.row(fixture))
+            try #require(Fixture.isRunning(pid))
 
             fixture.store.skipSetup(worktreeID: fixture.worktree.id, in: session)
-            // While the step stops, the person goes to a shell of another row.
+            try #require(fixture.store.launches[fixture.worktree.id]?.isStoppingSetup == true)
+            try #require(fixture.tabs.isEmpty)
             let shell = session.openTab(container: .project(fixture.project.id))
+            let selected = WorkspaceSession.NavTarget(container: .project(fixture.project.id), tabID: shell.id)
 
-            await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) { !fixture.tabs.isEmpty }
+            let tab = try await finishedShell(fixture)
 
-            let tab = try #require(fixture.tabs.first)
-            #expect(session.primarySelection.activeTabID == shell.id)
+            #expect(!Fixture.isRunning(pid))
+            #expect(session.currentNavTarget(in: session.primaryWindowID) == selected)
             #expect(session.lastActiveTabID(for: Self.row(fixture)) == tab.id)
         }
     }
 
     @Test func aSetupFinishingWhileItsWindowIsHidden_selectsItThere() async throws {
         try await withTempDir { dir in
-            let fixture = try await Fixture.make(in: dir, bootstrap: [])
+            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand(Self.setupCommand)])
             let session = fixture.session
             let other = WorkspaceSessionFixture.addWindow(to: session)
             session.setActiveContainer(Self.row(fixture), in: other)
-            let asked = session.waitOrigin(in: other)
-            // The window is closed (hidden) on the empty row: it still shows
-            // the project, and opens again on the new tab.
-            session.setWindow(other, isHidden: true)
             let primaryBefore = try #require(session.currentNavTarget(in: session.primaryWindowID))
-
-            begin(fixture, in: other)
-
-            let tab = try #require(fixture.tabs.first)
-            #expect(session.selection(other)?.activeTabID == tab.id)
-            #expect(session.currentNavTarget(in: session.primaryWindowID) == primaryBefore)
-            // By contrast, a wait the person started from that window while
-            // it was shown reads the hiding as leaving it.
-            #expect(session.intentAfterWait(from: asked) == .behind)
-        }
-    }
-
-    @Test func aSetupFinishingInAProjectNoWindowShows_raisesNoWindow() async throws {
-        try await withTempDir { dir in
-            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand("true")])
-            let session = fixture.session
-            let other = session.addOrActivateProject(rootURL: dir.appendingPathComponent("other"), suggestedName: "other")
-            session.setActiveContainer(Self.row(fixture))
-            begin(fixture)
-            session.setActiveContainer(.project(other.id))
-            // From now on a selection of another project's session would
-            // switch the window, or bring forward the one that shows it.
+            try beginShellSetup(fixture, in: other)
+            session.setWindow(other, isHidden: true)
             let switches = ProjectSwitchRecorder.connect(to: session)
 
-            await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) { !fixture.tabs.isEmpty }
+            let tab = try await finishedShellAfterSetup(fixture)
 
+            #expect(session.hiddenWindowIDs.contains(other))
+            #expect(session.currentNavTarget(in: other) == .init(container: Self.row(fixture), tabID: tab.id))
+            #expect(session.currentNavTarget(in: session.primaryWindowID) == primaryBefore)
             #expect(switches.isUntouched)
-            #expect(session.primarySelection.activeContainerID == .project(other.id))
-            #expect(session.windowIDs.allSatisfy { session.selection($0)?.shownProjectID != fixture.project.id })
         }
     }
 
     @Test func setupFinishingAfterThePersonSwitchedToAnotherProject_keepsTheWindowThere() async throws {
         try await withTempDir { dir in
-            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand("true")])
+            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand(Self.setupCommand)])
             let session = fixture.session
+            let original = Self.row(fixture)
+            let window = session.primaryWindowID
             let other = session.addOrActivateProject(rootURL: dir.appendingPathComponent("other"), suggestedName: "other")
-            session.setActiveContainer(Self.row(fixture))
-            session.primarySelection.projectID = fixture.project.id
+            session.setActiveContainer(original)
+            try #require(session.primarySelection.shownProjectID == fixture.project.id)
+            try beginShellSetup(fixture)
+
+            let shell = session.openTab(container: .project(other.id))
+            let otherSelection = WorkspaceSession.NavTarget(container: .project(other.id), tabID: shell.id)
+            try #require(session.currentNavTarget(in: window) == otherSelection)
+            try #require(session.projectViews[fixture.project.id]?.activeContainerID == original)
+            try #require(session.projectViews[fixture.project.id]?.activeTabID == nil)
             let switches = ProjectSwitchRecorder.connect(to: session)
-            begin(fixture)
-            // The person switches the window to the other project while the
-            // setup runs.
-            session.setActiveContainer(.project(other.id))
-            #expect(session.primarySelection.shownProjectID == other.id)
 
-            await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) { !fixture.tabs.isEmpty }
+            let tab = try await finishedShellAfterSetup(fixture)
 
-            // The window stays where the person went; the project it left
-            // keeps the new tab on the row it was left on, empty then.
-            let tab = try #require(fixture.tabs.first)
-            #expect(session.primarySelection.shownProjectID == other.id)
-            #expect(session.primarySelection.activeContainerID == .project(other.id))
+            #expect(switches.isUntouched)
+            #expect(session.currentNavTarget(in: window) == otherSelection)
+            #expect(session.windowIDs.allSatisfy { session.selection($0)?.shownProjectID != fixture.project.id })
+            #expect(session.lastActiveTabID(for: original) == tab.id)
+            #expect(session.projectViews[fixture.project.id]?.activeContainerID == original)
             #expect(session.projectViews[fixture.project.id]?.activeTabID == tab.id)
-            #expect(switches.switches.count == 1)
-            #expect(switches.raised.isEmpty)
-            // Coming back finds it.
-            session.setActiveContainer(Self.row(fixture))
-            #expect(session.primarySelection.shownProjectID == fixture.project.id)
-            #expect(session.primarySelection.activeTabID == tab.id)
+
+            #expect(session.chooseProject(fixture.project.id, in: window) == window)
+            #expect(session.currentNavTarget(in: window) == .init(container: original, tabID: tab.id))
         }
     }
 
@@ -215,26 +207,51 @@ struct SessionLaunchDestinationTests {
             let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand("true")])
             // The project's own row, with no tab.
             fixture.session.setActiveContainer(.project(fixture.project.id))
+            try #require(fixture.session.primarySelection.activeTabID == nil)
+            let before = try #require(fixture.session.currentNavTarget(in: fixture.session.primaryWindowID))
             fixture.begin()
-            await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) { fixture.hasStarted }
+            await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) {
+                fixture.store.launches[fixture.worktree.id]?.phase == .starting(isLaunched: false)
+            }
+            let launch = try #require(fixture.store.launches[fixture.worktree.id])
+            try #require(launch.phase == .starting(isLaunched: false))
+            let pane = try #require(launch.paneID)
+            let launchedTab = try #require(fixture.session.tab(containing: pane))
+            #expect(launchedTab.container == Self.row(fixture))
             #expect(fixture.tabs.count == 1)
-            #expect(fixture.session.primarySelection.activeContainerID == .project(fixture.project.id))
+            #expect(fixture.session.currentNavTarget(in: fixture.session.primaryWindowID) == before)
+            #expect(fixture.session.primarySelection.activeTabID == nil)
         }
+    }
+
+    private func startingAgentTab(_ fixture: Fixture) throws -> Tab {
+        let launch = try #require(fixture.store.launches[fixture.worktree.id])
+        try #require(launch.phase == .starting(isLaunched: false))
+        let pane = try #require(launch.paneID)
+        let tab = try #require(fixture.session.tab(containing: pane))
+        #expect(tab.container == Self.row(fixture))
+        #expect(tab.initialCommands == [pane: "claude"])
+        return tab
     }
 
     @Test func skippingTheSetup_bringsTheAgentToFront_overAShellOfTheRow() async throws {
         try await withTempDir { dir in
-            // A step that runs for 30 s, longer than the test waits: only the
-            // skip starts the agent.
-            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand("exec sleep 30")])
-            let container = ContainerID.worktree(projectID: fixture.project.id, worktreeID: fixture.worktree.id)
+            let (fixture, pid) = try await Fixture.startBlockingSetup(in: dir)
+            defer { fixture.store.cancelAll() }
+            let id = fixture.worktree.id
+            let container = Self.row(fixture)
             let shell = fixture.session.openTab(container: container)
-            fixture.begin()
-            fixture.store.skipSetup(worktreeID: fixture.worktree.id, in: fixture.session)
-            // Once the step has stopped.
-            await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) { fixture.tabs.count == 2 }
-            let agentTab = try #require(fixture.tabs.first { $0.id != shell.id })
-            #expect(fixture.session.primarySelection.activeTabID == agentTab.id)
+            try #require(Fixture.isRunning(pid))
+
+            fixture.store.skipSetup(worktreeID: id, in: fixture.session)
+            try #require(fixture.store.launches[id]?.isStoppingSetup == true)
+            #expect(fixture.tabs.map(\.id) == [shell.id])
+            await pollUntil(timeout: .seconds(10)) { fixture.store.launches[id]?.phase == .starting(isLaunched: false) }
+
+            let tab = try startingAgentTab(fixture)
+            #expect(!Fixture.isRunning(pid))
+            #expect(Set(fixture.tabs.map(\.id)) == [shell.id, tab.id])
+            #expect(fixture.session.currentNavTarget(in: fixture.session.primaryWindowID) == .init(container: container, tabID: tab.id))
         }
     }
 
@@ -244,9 +261,18 @@ struct SessionLaunchDestinationTests {
             let container = ContainerID.worktree(projectID: fixture.project.id, worktreeID: fixture.worktree.id)
             fixture.session.setActiveContainer(container)
             fixture.begin()
-            await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) { fixture.hasStarted }
+            await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) {
+                fixture.store.launches[fixture.worktree.id]?.phase == .starting(isLaunched: false)
+            }
+            let launch = try #require(fixture.store.launches[fixture.worktree.id])
+            try #require(launch.phase == .starting(isLaunched: false))
+            let pane = try #require(launch.paneID)
+            let launchedTab = try #require(fixture.session.tab(containing: pane))
+            #expect(launchedTab.container == Self.row(fixture))
+            #expect(fixture.session.stagedLaunch(paneID: pane)?.command == "claude")
+            let tab = try #require(fixture.tabs.first)
             #expect(fixture.session.primarySelection.activeContainerID == container)
-            #expect(fixture.session.primarySelection.activeTabID == fixture.tabs.first?.id)
+            #expect(fixture.session.primarySelection.activeTabID == tab.id)
         }
     }
 
@@ -255,17 +281,19 @@ struct SessionLaunchDestinationTests {
     @Test func theAgentsTab_opensInTheWindowTheSessionWasAskedForIn() async throws {
         try await withTempDir { dir in
             let fixture = try await Fixture.make(in: dir, bootstrap: [])
-            let other = WorkspaceSessionFixture.addWindow(to: fixture.session)
-            let worktree = ContainerID.worktree(projectID: fixture.project.id, worktreeID: fixture.worktree.id)
-            fixture.session.setActiveContainer(worktree, in: other)
-            let primaryBefore = try #require(fixture.session.currentNavTarget(in: fixture.session.primaryWindowID))
+            let session = fixture.session
+            let other = WorkspaceSessionFixture.addWindow(to: session)
+            let worktree = Self.row(fixture)
+            session.setActiveContainer(worktree, in: other)
+            let primaryBefore = try #require(session.currentNavTarget(in: session.primaryWindowID))
+            try #require(session.currentNavTarget(in: other) == .init(container: worktree, tabID: nil))
 
-            begin(fixture, in: other)
-            await pollUntil(timeout: .seconds(10)) { !fixture.tabs.isEmpty }
+            fixture.begin(in: other)
 
-            let tab = try #require(fixture.tabs.first)
-            #expect(fixture.session.selection(other)?.activeTabID == tab.id)
-            #expect(fixture.session.currentNavTarget(in: fixture.session.primaryWindowID) == primaryBefore)
+            let tab = try startingAgentTab(fixture)
+            #expect(fixture.tabs.count == 1)
+            #expect(session.currentNavTarget(in: other) == .init(container: worktree, tabID: tab.id))
+            #expect(session.currentNavTarget(in: session.primaryWindowID) == primaryBefore)
         }
     }
 
@@ -298,6 +326,7 @@ struct SessionLaunchDestinationTests {
 
             begin(fixture, in: other)
             await pollUntil(timeout: .seconds(10)) { !fixture.tabs.isEmpty }
+            _ = try #require(fixture.tabs.first)
 
             #expect(session.selection(other)?.activeTabID == scratch.id)
             #expect(session.scratchOwnerWindowID == session.primaryWindowID)
@@ -307,70 +336,86 @@ struct SessionLaunchDestinationTests {
 
     @Test func aRetry_opensTheTabInTheWindowWhoseBarWasUsed() async throws {
         try await withTempDir { dir in
-            let marker = dir.appendingPathComponent("marker")
-            let fixture = try await Fixture.make(in: dir, bootstrap: [
-                .shorthand("test -f '\(marker.path)' || exit 3")
-            ])
+            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand("test -f marker || exit 3")])
+            let session = fixture.session
             let id = fixture.worktree.id
-            let worktree = ContainerID.worktree(projectID: fixture.project.id, worktreeID: id)
+            let worktree = Self.row(fixture)
             begin(fixture)
             await pollUntil(timeout: .seconds(10)) { fixture.store.launches[id]?.failure != nil }
-            let other = WorkspaceSessionFixture.addWindow(to: fixture.session)
-            fixture.session.setActiveContainer(worktree, in: other)
+            try #require(fixture.store.launches[id]?.failure?.stage == .setup(stepIndex: 0))
+            #expect(fixture.tabs.isEmpty)
+            let other = WorkspaceSessionFixture.addWindow(to: session)
+            session.setActiveContainer(worktree, in: other)
+            let primaryBefore = try #require(session.currentNavTarget(in: session.primaryWindowID))
 
-            FileManager.default.createFile(atPath: marker.path, contents: nil)
-            fixture.store.retry(worktreeID: id, in: fixture.session, window: other)
-            await pollUntil(timeout: .seconds(10)) { !fixture.tabs.isEmpty }
+            try Data().write(to: fixture.worktree.workingDirectory.appendingPathComponent("marker"))
+            fixture.store.retry(worktreeID: id, in: session, window: other)
+            let tab = try await finishedShell(fixture)
 
-            let tab = try #require(fixture.tabs.first)
-            #expect(fixture.session.selection(other)?.activeTabID == tab.id)
-            #expect(fixture.session.primarySelection.activeTabID != tab.id)
+            #expect(session.currentNavTarget(in: other) == .init(container: worktree, tabID: tab.id))
+            #expect(session.currentNavTarget(in: session.primaryWindowID) == primaryBefore)
         }
     }
 
     @Test func skippingTheSetup_opensTheTabInTheWindowWhoseBarWasUsed() async throws {
         try await withTempDir { dir in
-            let (fixture, _) = try await Fixture.startBlockingSetup(in: dir, request: Fixture.shell)
+            let (fixture, pid) = try await Fixture.startBlockingSetup(in: dir, request: Fixture.shell)
+            defer { fixture.store.cancelAll() }
+            let session = fixture.session
             let id = fixture.worktree.id
-            let worktree = ContainerID.worktree(projectID: fixture.project.id, worktreeID: id)
-            let other = WorkspaceSessionFixture.addWindow(to: fixture.session)
-            fixture.session.setActiveContainer(worktree, in: other)
+            let worktree = Self.row(fixture)
+            let other = WorkspaceSessionFixture.addWindow(to: session)
+            session.setActiveContainer(worktree, in: other)
+            let primaryBefore = try #require(session.currentNavTarget(in: session.primaryWindowID))
+            try #require(Fixture.isRunning(pid))
 
-            fixture.store.skipSetup(worktreeID: id, in: fixture.session, window: other)
-            await pollUntil(timeout: .seconds(10)) { !fixture.tabs.isEmpty }
+            fixture.store.skipSetup(worktreeID: id, in: session, window: other)
+            try #require(fixture.store.launches[id]?.isStoppingSetup == true)
+            let tab = try await finishedShell(fixture)
 
-            let tab = try #require(fixture.tabs.first)
-            #expect(fixture.session.selection(other)?.activeTabID == tab.id)
-            #expect(fixture.session.primarySelection.activeTabID != tab.id)
+            #expect(!Fixture.isRunning(pid))
+            #expect(session.currentNavTarget(in: other) == .init(container: worktree, tabID: tab.id))
+            #expect(session.currentNavTarget(in: session.primaryWindowID) == primaryBefore)
         }
     }
 
     @Test func aPressThatDoesNothing_leavesTheLaunchInItsWindow() async throws {
         try await withTempDir { dir in
-            let (fixture, _) = try await Fixture.startBlockingSetup(in: dir, request: Fixture.shell)
+            let (fixture, pid) = try await Fixture.startBlockingSetup(in: dir, request: Fixture.shell)
+            defer { fixture.store.cancelAll() }
+            let session = fixture.session
             let id = fixture.worktree.id
-            let second = WorkspaceSessionFixture.addWindow(to: fixture.session)
-            let third = WorkspaceSessionFixture.addWindow(to: fixture.session)
-            // The windows whose bars are pressed show the session's project,
-            // as a bar's window does: a launch lands in no window that does
-            // not.
-            let worktree = ContainerID.worktree(projectID: fixture.project.id, worktreeID: id)
-            fixture.session.setActiveContainer(worktree, in: second)
-            fixture.session.setActiveContainer(worktree, in: third)
-            let before = try #require(fixture.store.launches[id]).windowID
+            let second = WorkspaceSessionFixture.addWindow(to: session)
+            let third = WorkspaceSessionFixture.addWindow(to: session)
+            let worktree = Self.row(fixture)
+            session.setActiveContainer(worktree, in: second)
+            // A delayed duplicate can still carry a different window ID.
+            try #require(session.selection(second)?.shownProjectID == fixture.project.id)
+            let primaryBefore = try #require(session.currentNavTarget(in: session.primaryWindowID))
+            let thirdBefore = try #require(session.currentNavTarget(in: third))
+            try #require(Fixture.isRunning(pid))
+            let before = try #require(fixture.store.launches[id])
+            try #require(before.windowID == session.primaryWindowID)
 
-            // Nothing failed: a retry has nothing to do.
-            fixture.store.retry(worktreeID: id, in: fixture.session, window: second)
-            #expect(try #require(fixture.store.launches[id]).windowID == before)
+            fixture.store.retry(worktreeID: id, in: session, window: second)
+            #expect(fixture.store.launches[id]?.windowID == before.windowID)
+            #expect(fixture.store.launches[id]?.phase == before.phase)
 
-            // A second skip while the first stops the setup does nothing.
-            fixture.store.skipSetup(worktreeID: id, in: fixture.session, window: second)
-            fixture.store.skipSetup(worktreeID: id, in: fixture.session, window: third)
-            #expect(try #require(fixture.store.launches[id]).windowID == second)
+            fixture.store.skipSetup(worktreeID: id, in: session, window: second)
+            try #require(fixture.store.launches[id]?.isStoppingSetup == true)
+            try #require(fixture.store.launches[id]?.windowID == second)
+            #expect(fixture.tabs.isEmpty)
 
-            await pollUntil(timeout: .seconds(10)) { !fixture.tabs.isEmpty }
-            let tab = try #require(fixture.tabs.first)
-            #expect(fixture.session.selection(second)?.activeTabID == tab.id)
+            fixture.store.skipSetup(worktreeID: id, in: session, window: third)
+            #expect(fixture.store.launches[id]?.windowID == second)
+            #expect(fixture.store.launches[id]?.isStoppingSetup == true)
+            let tab = try await finishedShell(fixture)
+
+            #expect(!Fixture.isRunning(pid))
+            #expect(session.currentNavTarget(in: second) == .init(container: worktree, tabID: tab.id))
+            #expect(session.currentNavTarget(in: session.primaryWindowID) == primaryBefore)
+            #expect(session.currentNavTarget(in: third) == thirdBefore)
         }
     }
+
 }

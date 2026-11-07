@@ -7,10 +7,15 @@ import Testing
 @testable import WeirDomain
 
 struct WorktreeOpenChoiceTests {
-    @Test func aChoice_readsBackAsStored() {
-        for choice in [WorktreeOpenChoice.agent(.claude), .agent(.codex), .shell, .nothing] {
-            #expect(WorktreeOpenChoice(stored: choice.stored) == choice)
-        }
+    @Test(arguments: [
+        ("claude", WorktreeOpenChoice.agent(.claude)),
+        ("codex", .agent(.codex)),
+        ("shell", .shell),
+        ("nothing", .nothing)
+    ])
+    func aChoice_readsAndWritesItsStoredValue(stored: String, choice: WorktreeOpenChoice) {
+        #expect(choice.stored == stored)
+        #expect(WorktreeOpenChoice(stored: stored) == choice)
     }
 
     /// A value a later build wrote is no choice, and "none", an earlier
@@ -23,9 +28,11 @@ struct WorktreeOpenChoiceTests {
 
     @Test func theFirstChoice_isTheFirstRememberedThatCanOpen_elseTheFirstAgent_elseTheShell() {
         #expect(WorktreeOpenChoice.initial(remembered: ["codex", "claude"], installed: [.claude, .codex]) == .agent(.codex))
-        // An agent no longer found is passed over, not offered.
         #expect(WorktreeOpenChoice.initial(remembered: ["codex", "nothing"], installed: [.claude]) == .nothing)
         #expect(WorktreeOpenChoice.initial(remembered: [nil, "gemini"], installed: [.codex]) == .agent(.codex))
+        #expect(WorktreeOpenChoice.initial(remembered: ["claude"], installed: [.codex]) == .agent(.codex))
+        #expect(WorktreeOpenChoice.initial(remembered: [], installed: [.codex, .claude]) == .agent(.codex))
+        #expect(WorktreeOpenChoice.initial(remembered: ["claude"], installed: []) == .shell)
         #expect(WorktreeOpenChoice.initial(remembered: [], installed: []) == .shell)
     }
 
@@ -38,6 +45,7 @@ struct WorktreeOpenChoiceTests {
         #expect(WorktreeOpenChoice.menuAgents(catalog: [], installed: [.codex]).isEmpty)
         #expect(WorktreeOpenChoice.others == [.shell, .nothing])
         #expect(WorktreeOpenChoice.agent(.claude).isAvailable(installed: []) == false)
+        #expect(WorktreeOpenChoice.shell.isAvailable(installed: []))
         #expect(WorktreeOpenChoice.nothing.isAvailable(installed: []))
     }
 }

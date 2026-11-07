@@ -17,25 +17,16 @@ struct FinderRevealTests {
         }
     }
 
-    @Test func aMissingFile_selectsItsFolder() throws {
+    @Test(arguments: ["gone.txt", "a/b/c/gone.txt"])
+    func aMissingFile_selectsItsNearestExistingFolder(relativePath: String) throws {
         try withTempDir { dir in
-            let file = dir.appendingPathComponent("gone.txt")
+            let nearest = dir.appendingPathComponent("nearest", isDirectory: true)
+            try FileManager.default.createDirectory(at: nearest, withIntermediateDirectories: false)
+            let file = nearest.appendingPathComponent(relativePath)
 
             let target = FinderReveal.target(for: file, exists: FinderReveal.itemExists(atPath:))
 
-            #expect(target?.path == dir.standardizedFileURL.path)
-        }
-    }
-
-    /// A worktree yet to be made, or a file whose folder went with it:
-    /// the nearest folder above that is still there.
-    @Test func aMissingFolderChain_selectsTheNearestFolderThatExists() throws {
-        try withTempDir { dir in
-            let file = dir.appendingPathComponent("a/b/c/gone.txt")
-
-            let target = FinderReveal.target(for: file, exists: FinderReveal.itemExists(atPath:))
-
-            #expect(target?.path == dir.standardizedFileURL.path)
+            #expect(target?.path == nearest.standardizedFileURL.path)
         }
     }
 
@@ -90,9 +81,10 @@ struct FinderRevealTests {
         }
     }
 
-    @Test func withinARoot_aPathOutsideIt_selectsNothing() {
+    @Test(arguments: ["/elsewhere/a.swift", "/repo-other/a.swift"])
+    func withinARoot_aPathOutsideIt_selectsNothing(path: String) {
         let target = FinderReveal.target(
-            for: URL(fileURLWithPath: "/elsewhere/a.swift"),
+            for: URL(fileURLWithPath: path),
             within: URL(fileURLWithPath: "/repo"),
             exists: { _ in true }
         )
@@ -111,22 +103,28 @@ struct FinderRevealTests {
             let present = dir.appendingPathComponent("present.json")
             try Data().write(to: present)
             let gone = dir.appendingPathComponent("gone.json")
+            let alsoPresent = dir.appendingPathComponent("also-present.json")
+            try Data().write(to: alsoPresent)
 
-            let targets = FinderReveal.targets(for: [gone, present], exists: FinderReveal.itemExists(atPath:))
+            let targets = FinderReveal.targets(for: [present, gone, alsoPresent], exists: FinderReveal.itemExists(atPath:))
 
-            #expect(targets == [present])
+            #expect(targets == [present, alsoPresent])
         }
     }
 
     /// Moved out by hand, as the saving notice asks: their folder instead.
     @Test func severalFiles_noneThere_selectTheFirstOnesFolder() throws {
         try withTempDir { dir in
-            let first = dir.appendingPathComponent("one.json")
-            let second = dir.appendingPathComponent("two.json")
+            let firstFolder = dir.appendingPathComponent("first")
+            let secondFolder = dir.appendingPathComponent("second")
+            try FileManager.default.createDirectory(at: firstFolder, withIntermediateDirectories: false)
+            try FileManager.default.createDirectory(at: secondFolder, withIntermediateDirectories: false)
+            let first = firstFolder.appendingPathComponent("one.json")
+            let second = secondFolder.appendingPathComponent("two.json")
 
             let targets = FinderReveal.targets(for: [first, second], exists: FinderReveal.itemExists(atPath:))
 
-            #expect(targets.map(\.path) == [dir.standardizedFileURL.path])
+            #expect(targets.map(\.path) == [firstFolder.standardizedFileURL.path])
         }
     }
 

@@ -22,13 +22,19 @@ struct OneShotTests {
         #expect(shot.hasFired)
     }
 
-    @Test("second call is silently dropped")
+    @Test("reentrant and later calls are dropped")
     func secondCall_noOp() {
         var count = 0
-        let shot = OneShot<Void> { count += 1 }
-        shot.call()
-        shot.call()
-        shot.call()
+        var shot: OneShot<Void>?
+        shot = OneShot {
+            count += 1
+            if count == 1 {
+                shot?.call()
+            }
+        }
+        shot?.call()
+        shot?.call()
+        shot?.call()
         #expect(count == 1)
     }
 

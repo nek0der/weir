@@ -36,29 +36,53 @@ struct CloseConfirmationFlowTests {
         try body(gate)
     }
 
-    @Test func aTab_closesOnlyOnceTheAnswerIsYes() throws {
+    @Test(arguments: [false, true])
+    func aTabClosesOnlyAfterApproval(approves: Bool) throws {
         try withGate { gate in
-            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
-            TabActions.closeTab(session, registry: NoopSurfaceRegistry(), tabID: tab.id)
-            // Asked, and still open while the question is up.
-            #expect(gate.requests.map(\.paneIDs) == [[pane]])
-            #expect(session.tab(tab.id) != nil)
+            let (session, target, first, unrelated, _) = WorkspaceSessionFixture.withTwoLooseTabs()
+            let registry = NoopSurfaceRegistry()
+            PaneActions.split(session, direction: .horizontal)
+            let leaves = try #require(session.tab(target.id)?.splitTree.allLeafIDs())
+            try #require(leaves.count == 2 && leaves.contains(first))
+            let window = session.primaryWindowID
+
+            TabActions.closeTab(session, registry: registry, tabID: target.id, in: window)
+
+            try checkRequest(gate, kind: .tab, source: .keyboard, panes: leaves, window: window)
+            #expect(session.tab(target.id)?.splitTree.allLeafIDs() == leaves)
+            #expect(session.primarySelection.activeTabID == target.id)
+            #expect(session.closedTabStack.isEmpty)
+            if !approves {
+                session.setActiveTab(unrelated.id, in: window, intent: .person)
+            }
             let answer = try #require(gate.answer)
-            answer(true)
-            #expect(session.tab(tab.id) == nil)
-            #expect(session.closedTabStack.count == 1)
+            answer(approves)
+
+            #expect(session.tabs(in: .loose).map(\.id) == (approves ? [unrelated.id] : [unrelated.id, target.id]))
+            #expect(session.primarySelection.activeTabID == unrelated.id)
+            #expect(session.closedTabStack.map(\.tab.id) == (approves ? [target.id] : []))
+            if approves {
+                #expect(session.closedTabStack.first?.tab.splitTree.allLeafIDs() == leaves)
+            } else {
+                #expect(session.tab(target.id)?.splitTree.allLeafIDs() == leaves)
+            }
+            #expect(gate.requests.count == 1)
         }
     }
 
-    @Test func aTab_staysWhenTheAnswerIsNo() throws {
-        try withGate { gate in
-            let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
-            TabActions.closeTab(session, registry: NoopSurfaceRegistry(), tabID: tab.id)
-            let answer = try #require(gate.answer)
-            answer(false)
-            #expect(session.tab(tab.id) != nil)
-            #expect(session.closedTabStack.isEmpty)
-        }
+    private func checkRequest(
+        _ gate: PendingGate,
+        kind: CloseConfirmer.Kind,
+        source: CloseConfirmer.Source,
+        panes: [UUID],
+        window: WindowID?
+    ) throws {
+        #expect(gate.requests.count == 1)
+        let request = try #require(gate.requests.first)
+        #expect(request.kind == kind)
+        #expect(request.source == source)
+        #expect(request.paneIDs == panes)
+        #expect(request.window == window)
     }
 
     @Test func aTabGoneBeforeTheAnswer_isNotClosedAgain() throws {
@@ -74,53 +98,86 @@ struct CloseConfirmationFlowTests {
         }
     }
 
-    @Test func aPane_closesOnlyOnceTheAnswerIsYes_andOnlyThatPane() throws {
-        try withGate { gate in
-            let (session, tab, first) = WorkspaceSessionFixture.withLooseTab()
-            CloseConfirmer.gate = nil
-            PaneActions.split(session, direction: .horizontal)
-            gate.install()
-            let focused = try #require(session.tab(tab.id)?.splitTree.effectiveFocusedLeafID)
-            #expect(focused != first)
-            PaneActions.closeActivePane(session, registry: NoopSurfaceRegistry())
-            #expect(session.tab(tab.id)?.splitTree.allLeafIDs().count == 2)
-            // The window moves its focus to the other pane while the
-            // question is up; the answer still closes the pane it was about.
-            session.update(tab.id) { $0.splitTree.focusedLeafID = first }
-            let answer = try #require(gate.answer)
-            answer(true)
-            #expect(session.tab(tab.id)?.splitTree.allLeafIDs() == [first])
-        }
+    enum PaneChange: CaseIterable {
+        case focusMoved
+        case requestedPaneExited
     }
 
-    @Test func aPaneGoneBeforeTheAnswer_leavesTheTabAsItIs() throws {
+    @Test(arguments: PaneChange.allCases)
+    func anApprovedPaneCloseRespectsTheOriginalLeaf(_ change: PaneChange) throws {
         try withGate { gate in
             let (session, tab, first) = WorkspaceSessionFixture.withLooseTab()
-            CloseConfirmer.gate = nil
+            let registry = NoopSurfaceRegistry()
             PaneActions.split(session, direction: .horizontal)
-            gate.install()
-            let focused = try #require(session.tab(tab.id)?.splitTree.effectiveFocusedLeafID)
-            PaneActions.closeActivePane(session, registry: NoopSurfaceRegistry())
-            // Its shell exited while the question was up.
-            session.update(tab.id) { $0.splitTree = $0.splitTree.remove(focused).tree }
-            let answer = try #require(gate.answer)
-            answer(true)
-            #expect(session.tab(tab.id)?.splitTree.allLeafIDs() == [first])
-        }
-    }
+            let split = try #require(session.tab(tab.id)?.splitTree)
+            let requested = try #require(split.effectiveFocusedLeafID)
+            try #require(requested != first)
+            try #require(split.allLeafIDs().count == 2)
+            let window = session.primaryWindowID
 
-    @Test func aSheetAnswerCancelledByItsWindow_closesNothing() throws {
-        try withGate { gate in
-            let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
-            TabActions.closeTab(session, registry: NoopSurfaceRegistry(), tabID: tab.id)
-            let answer = try #require(gate.answer)
-            // The sheet's answer, as `WindowAlert.begin` gives it.
-            let sheet = SheetAnswer { answer($0 == .alertFirstButtonReturn) }
-            sheet.parentClosed()
-            // A late click on the sheet's Close is dropped.
-            sheet.give(.alertFirstButtonReturn)
-            #expect(session.tab(tab.id) != nil)
+            PaneActions.closeActivePane(session, registry: registry, in: window)
+
+            try checkRequest(gate, kind: .pane, source: .keyboard, panes: [requested], window: window)
+            #expect(session.tab(tab.id)?.splitTree == split)
             #expect(session.closedTabStack.isEmpty)
+            switch change {
+            case .focusMoved:
+                session.update(tab.id) { $0.splitTree.focusedLeafID = first }
+                #expect(session.tab(tab.id)?.splitTree.effectiveFocusedLeafID == first)
+            case .requestedPaneExited:
+                PaneActions.removeClosedLeaf(
+                    requested, fromTab: tab.id, session, registry: registry, agentProjection: nil, pullsKeyboardFocus: false
+                )
+                #expect(session.tab(tab.id)?.splitTree.allLeafIDs() == [first])
+            }
+            let answer = try #require(gate.answer)
+            answer(true)
+
+            #expect(session.tabs.map(\.id) == [tab.id])
+            #expect(session.tab(tab.id)?.splitTree.allLeafIDs() == [first])
+            #expect(session.closedTabStack.isEmpty)
+            #expect(gate.requests.count == 1)
+        }
+    }
+
+    enum FirstSheetEvent: CaseIterable {
+        case parentClosed
+        case cancelButton
+        case closeButton
+    }
+
+    @Test(arguments: FirstSheetEvent.allCases)
+    func aCloseSheetUsesOnlyItsFirstResponse(_ event: FirstSheetEvent) throws {
+        try withGate { gate in
+            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            let window = session.primaryWindowID
+            TabActions.closeTab(session, registry: NoopSurfaceRegistry(), tabID: tab.id, in: window)
+            try checkRequest(gate, kind: .tab, source: .keyboard, panes: [pane], window: window)
+            let answer = try #require(gate.answer)
+            let record = SheetRecord()
+            let sheet = SheetAnswer {
+                record.responses.append($0)
+                answer($0 == .alertFirstButtonReturn)
+            }
+            sheet.onFinish = { record.finishes += 1 }
+            let expected: NSApplication.ModalResponse
+            switch event {
+            case .parentClosed:
+                expected = .cancel
+                sheet.parentClosed()
+            case .cancelButton:
+                expected = .alertSecondButtonReturn
+                sheet.give(expected)
+            case .closeButton:
+                expected = .alertFirstButtonReturn
+                sheet.give(expected)
+            }
+            sheet.parentClosed()
+            sheet.give(.alertFirstButtonReturn)
+            #expect(record.responses == [expected])
+            #expect(record.finishes == 1)
+            #expect((session.tab(tab.id) == nil) == (event == .closeButton))
+            #expect(session.closedTabStack.map(\.tab.id) == (event == .closeButton ? [tab.id] : []))
         }
     }
 
@@ -137,17 +194,44 @@ struct CloseConfirmationFlowTests {
         }
     }
 
-    @Test func closeAllTabs_closesOnlyTheTabsItAskedAbout() throws {
+    enum BulkChange: CaseIterable {
+        case tabOpened
+        case tabSplit
+        case tabMoved
+    }
+
+    @Test(arguments: BulkChange.allCases)
+    func closeAllTabsClosesOnlyTheOriginalUnchangedTabs(_ change: BulkChange) throws {
         try withGate { gate in
-            let (session, tabA, _, tabB, _) = WorkspaceSessionFixture.withTwoLooseTabs()
-            TabActions.closeAllTabs(session, registry: NoopSurfaceRegistry(), in: .loose, from: session.primaryWindowID)
-            #expect(gate.requests.first?.window == session.primaryWindowID)
-            let opened = session.openTab(container: .loose)
+            let (session, tabA, paneA, tabB, paneB) = WorkspaceSessionFixture.withTwoLooseTabs()
+            let window = session.primaryWindowID
+            TabActions.closeAllTabs(session, registry: NoopSurfaceRegistry(), in: .loose, from: window)
+            try checkRequest(gate, kind: .allTabs, source: .mouse, panes: [paneB, paneA], window: window)
+            #expect(session.tabs(in: .loose).map(\.id) == [tabB.id, tabA.id])
+            #expect(session.closedTabStack.isEmpty)
+
+            let kept: Tab
+            switch change {
+            case .tabOpened:
+                kept = session.openTab(container: .loose)
+            case .tabSplit:
+                PaneActions.split(session, direction: .horizontal)
+                kept = try #require(session.tab(tabA.id))
+                try #require(kept.splitTree.allLeafIDs().count == 2)
+            case .tabMoved:
+                let project = session.addOrActivateProject(rootURL: WorkspaceSessionFixture.projectRootURL("move"), suggestedName: "move")
+                session.moveTab(tabA.id, to: .project(project.id))
+                kept = try #require(session.tab(tabA.id))
+                try #require(kept.container == .project(project.id))
+            }
             let answer = try #require(gate.answer)
             answer(true)
-            #expect(session.tab(tabA.id) == nil)
-            #expect(session.tab(tabB.id) == nil)
-            #expect(session.tab(opened.id) != nil)
+
+            #expect(session.tabs.map(\.id) == [kept.id])
+            #expect(session.tab(kept.id)?.splitTree.allLeafIDs() == kept.splitTree.allLeafIDs())
+            #expect(session.tab(kept.id)?.container == kept.container)
+            #expect(session.closedTabStack.map(\.tab.id) == (change == .tabOpened ? [tabB.id, tabA.id] : [tabB.id]))
+            #expect(gate.requests.count == 1)
         }
     }
 
@@ -170,92 +254,97 @@ struct CloseConfirmationFlowTests {
         }
     }
 
-    @Test func closeAllTabs_leavesATabThatSplitWhileAsked() throws {
-        try withGate { gate in
-            let (session, tabA, _, tabB, _) = WorkspaceSessionFixture.withTwoLooseTabs()
-            TabActions.closeAllTabs(session, registry: NoopSurfaceRegistry(), in: .loose)
-            // The active tab, A, splits while the question is up.
-            CloseConfirmer.gate = nil
-            PaneActions.split(session, direction: .horizontal)
-            let answer = try #require(gate.answer)
-            answer(true)
-            #expect(session.tab(tabA.id)?.splitTree.allLeafIDs().count == 2)
-            #expect(session.tab(tabB.id) == nil)
-        }
-    }
-
-    @Test func aSheet_answersOnce() {
-        let record = SheetRecord()
-        let sheet = SheetAnswer { record.responses.append($0) }
-        sheet.onFinish = { record.finishes += 1 }
-        sheet.give(.alertSecondButtonReturn)
-        sheet.parentClosed()
-        sheet.give(.alertFirstButtonReturn)
-        #expect(record.responses == [.alertSecondButtonReturn])
-        #expect(record.finishes == 1)
-    }
-
-    /// What a sheet answered, for `aSheet_answersOnce`.
     @MainActor
     private final class SheetRecord {
         var responses: [NSApplication.ModalResponse] = []
         var finishes = 0
     }
 
-    /// Asks to close the tab's one pane, and says whether the question
-    /// the gate got is about a pane that carries an agent, as
-    /// `AppState.confirmClose` reads it for the `onlyWhenAgent` policy.
+    /// The model input to the app's only-when-agent policy.
     private func asksAboutAnAgent(closing tab: Tab, in session: WorkspaceSession, gate: PendingGate) throws -> Bool {
-        TabActions.closeTab(session, registry: NoopSurfaceRegistry(), tabID: tab.id)
+        let count = gate.requests.count
+        let window = session.primaryWindowID
+        TabActions.closeTab(session, registry: NoopSurfaceRegistry(), tabID: tab.id, in: window)
+        #expect(gate.requests.count == count + 1)
         let request = try #require(gate.requests.last)
+        #expect(request.kind == .tab)
+        #expect(request.source == .keyboard)
+        #expect(request.window == window)
+        #expect(request.paneIDs == tab.splitTree.allLeafIDs())
+        #expect(session.tab(tab.id) != nil)
+        #expect(session.closedTabStack.isEmpty)
         return session.hasLiveAgent(inAnyOf: request.paneIDs)
     }
 
-    @Test func aCodexJustTypedIntoAShell_isAskedAbout_beforeItHasARecord() throws {
+    @Test(arguments: AgentKind.allCases)
+    func aStagedAgentFromTheStripProtectsTheNewPane(kind: AgentKind) throws {
         try withGate { gate in
-            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
-            // Codex writes its record at its first prompt; until then only
-            // its terminal's job in front says it is there.
-            PaneAgentInFrontFollower(session: session).apply(.agent(.codex), at: .titleChanged, inPane: pane)
-            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
-            #expect(isAsked)
+            let session = WorkspaceSession()
+            let pane = try #require(TabActions.newTab(session, in: .loose, running: kind))
+            let tab = try #require(session.tab(containing: pane))
+            #expect(tab.initialCommands == [pane: kind.launchCommand])
+            #expect(tab.agentsInFront == [pane: PaneAgentInFront(kind: kind, isStaged: true)])
+            #expect(tab.agentBadges.isEmpty)
+            #expect(try asksAboutAnAgent(closing: tab, in: session, gate: gate))
         }
     }
 
     @Test(arguments: AgentKind.allCases)
-    func anAgentOpenedByTheStripsPlus_isAskedAbout_beforeItIsInFront(kind: AgentKind) throws {
+    func aHooklessAgentProtectsItsPaneBeforeAndAfterAnInnerCommand(kind: AgentKind) throws {
         try withGate { gate in
             let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
-            session.update(tab.id) { $0.agentsInFront[pane] = PaneAgentInFront(kind: kind, isStaged: true) }
-            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
-            #expect(isAsked)
-        }
-    }
-
-    @Test(arguments: AgentKind.allCases)
-    func anAgentStartedWithoutHooks_isAskedAbout_thoughItNeverWritesARecord(kind: AgentKind) throws {
-        try withGate { gate in
-            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            PaneActions.split(session, direction: .horizontal)
+            let split = try #require(session.tab(tab.id))
+            let sibling = try #require(split.splitTree.allLeafIDs().first { $0 != pane })
             let follower = PaneAgentInFrontFollower(session: session)
             follower.apply(.agent(kind), at: .titleChanged, inPane: pane)
-            // A command it runs finishes under it; the agent is still in
-            // front, and no hook ever places a run in the pane.
+            let seen = try #require(session.tab(tab.id))
+            #expect(seen.agentsInFront == [pane: PaneAgentInFront(kind: kind, isStaged: false)])
+            #expect(seen.agentBadges.isEmpty)
+            #expect(try asksAboutAnAgent(closing: seen, in: session, gate: gate))
+
             follower.apply(.agent(kind), at: .commandFinished, inPane: pane)
-            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
-            #expect(isAsked)
+            let afterCommand = try #require(session.tab(tab.id))
+            #expect(afterCommand.agentsInFront == seen.agentsInFront)
+            #expect(afterCommand.agentBadges.isEmpty)
+            #expect(try asksAboutAnAgent(closing: afterCommand, in: session, gate: gate))
+
+            session.update(tab.id) { $0.splitTree.focusedLeafID = sibling }
+            let count = gate.requests.count
+            PaneActions.closeActivePane(session, registry: NoopSurfaceRegistry(), in: session.primaryWindowID)
+            #expect(gate.requests.count == count + 1)
+            let request = try #require(gate.requests.last)
+            #expect(request.kind == .pane)
+            #expect(request.paneIDs == [sibling])
+            #expect(!session.hasLiveAgent(inAnyOf: request.paneIDs))
         }
     }
 
     @Test(arguments: AgentKind.allCases)
-    func aRunRestoredAtLaunch_isAskedAbout_whileItsStateIsUnknown(kind: AgentKind) throws {
+    func aRestoredUnknownRunIsProtectedAfterItsFirstForegroundReading(kind: AgentKind) throws {
         try withGate { gate in
-            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
-            session.update(tab.id) { $0.agentBadges[kind] = [pane: AgentBadge(state: .unknown, updatedAt: Date())] }
-            // Its resume is typed into the restored pane and waits at the
-            // agent's prompt, which reports nothing until the person types.
+            let (original, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+            original.update(tab.id) {
+                $0.agentBadges[kind] = [pane: AgentBadge(state: .unknown, updatedAt: Date())]
+                $0.agentsInFront[pane] = PaneAgentInFront(kind: kind, isStaged: false)
+            }
+            let data = try JSONEncoder().encode(original.makeSnapshot())
+            let snapshot = try JSONDecoder().decode(SessionSnapshot.self, from: data)
+            let session = WorkspaceSession()
+            #expect(session.restore(from: snapshot) == nil)
+            let restored = try #require(session.tab(tab.id))
+            #expect(restored.splitTree.allLeafIDs() == [pane])
+            #expect(restored.agentBadges[kind]?[pane]?.state == .unknown)
+            #expect(restored.agentBadges[kind]?[pane]?.isTmuxHosted != true)
+            #expect(restored.agentsInFront.isEmpty)
+            #expect(!session.hasLiveAgent(inAnyOf: [pane]))
+
             PaneAgentInFrontFollower(session: session).apply(.agent(kind), at: .titleChanged, inPane: pane)
-            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
-            #expect(isAsked)
+
+            let observed = try #require(session.tab(tab.id))
+            #expect(observed.agentsInFront == [pane: PaneAgentInFront(kind: kind, isStaged: false)])
+            #expect(observed.agentBadges[kind]?[pane]?.state == .unknown)
+            #expect(try asksAboutAnAgent(closing: observed, in: session, gate: gate))
         }
     }
 
@@ -271,36 +360,36 @@ struct CloseConfirmationFlowTests {
         }
     }
 
-    @Test func aRunWhoseAgentEnded_isNotAskedAbout_whileItsBadgeWaitsForTheSweep() throws {
+    enum ShellHistory: CaseIterable {
+        case neverHadAgent
+        case agentReturnedToShell
+        case endedRunBadgeRemains
+    }
+
+    @Test(arguments: ShellHistory.allCases)
+    func aShellPaneDoesNotProtectTheClose(_ history: ShellHistory) throws {
         try withGate { gate in
             let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
             let follower = PaneAgentInFrontFollower(session: session)
-            follower.apply(.agent(.claude), at: .titleChanged, inPane: pane)
-            // `/exit`: SessionEnd leaves the record unknown, and the shell's
-            // prompt comes back.
-            session.update(tab.id) { $0.agentBadges[.claude] = [pane: AgentBadge(state: .unknown, updatedAt: Date())] }
-            follower.apply(.none, at: .commandFinished, inPane: pane)
-            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
-            #expect(!isAsked)
-        }
-    }
-
-    @Test func aPaneWhoseAgentLeftForTheShell_isNotAskedAbout() throws {
-        try withGate { gate in
-            let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
-            let follower = PaneAgentInFrontFollower(session: session)
-            follower.apply(.agent(.codex), at: .titleChanged, inPane: pane)
-            follower.apply(.none, at: .commandFinished, inPane: pane)
-            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
-            #expect(!isAsked)
-        }
-    }
-
-    @Test func aPlainShell_isNotAskedAbout() throws {
-        try withGate { gate in
-            let (session, tab, _) = WorkspaceSessionFixture.withLooseTab()
-            let isAsked = try asksAboutAnAgent(closing: tab, in: session, gate: gate)
-            #expect(!isAsked)
+            if history != .neverHadAgent {
+                let kind: AgentKind = history == .endedRunBadgeRemains ? .claude : .codex
+                follower.apply(.agent(kind), at: .titleChanged, inPane: pane)
+                #expect(session.tab(tab.id)?.agentsInFront == [pane: PaneAgentInFront(kind: kind, isStaged: false)])
+                #expect(session.hasLiveAgent(inAnyOf: [pane]))
+                if history == .endedRunBadgeRemains {
+                    session.update(tab.id) { $0.agentBadges[kind] = [pane: AgentBadge(state: .unknown, updatedAt: Date())] }
+                }
+                follower.apply(.none, at: .commandFinished, inPane: pane)
+            }
+            let shell = try #require(session.tab(tab.id))
+            #expect(shell.agentsInFront.isEmpty)
+            if history == .endedRunBadgeRemains {
+                #expect(shell.agentBadges[.claude]?[pane]?.state == .unknown)
+            } else {
+                #expect(shell.agentBadges.isEmpty)
+            }
+            let carriesAgent = try asksAboutAnAgent(closing: shell, in: session, gate: gate)
+            #expect(!carriesAgent)
         }
     }
 

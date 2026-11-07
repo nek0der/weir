@@ -20,10 +20,12 @@ struct ToastCenterTests {
         try? await Task.sleep(for: .seconds(lifetime * 6))
     }
 
-    @Test func aToastGoes_afterItsLifetime() async {
+    @Test func aToastGoes_afterItsLifetime() async throws {
         let center = ToastCenter()
         let window = WindowID()
-        center.show(Self.toast(), in: window)
+        let toast = Self.toast()
+        center.show(toast, in: window)
+        try #require(center.current(in: window)?.id == toast.id)
         await pollUntil { center.current(in: window) == nil }
         #expect(center.current(in: window) == nil)
     }
@@ -52,9 +54,11 @@ struct ToastCenterTests {
         center.holdDismiss(toast.id, in: window, reason: .pointer)
         center.holdDismiss(toast.id, in: window, reason: .palette)
         center.releaseDismiss(toast.id, in: window, reason: .pointer)
+        #expect(center.isHeld(toast.id, in: window))
         await Self.outliveTheLifetime()
         #expect(center.current(in: window)?.id == toast.id)
         center.releaseDismiss(toast.id, in: window, reason: .palette)
+        #expect(!center.isHeld(toast.id, in: window))
         await pollUntil { center.current(in: window) == nil }
         #expect(center.current(in: window) == nil)
     }
@@ -72,6 +76,11 @@ struct ToastCenterTests {
         #expect(!center.isHeld(second.id, in: window))
         center.holdDismiss(first.id, in: window, reason: .pointer)
         #expect(!center.isHeld(first.id, in: window), "a toast no longer shown takes no hold")
+
+        center.holdDismiss(second.id, in: window, reason: .palette)
+        center.releaseDismiss(first.id, in: window, reason: .palette)
+        #expect(center.isHeld(second.id, in: window))
+        center.releaseDismiss(second.id, in: window, reason: .palette)
         await pollUntil { center.current(in: window) == nil }
         #expect(center.current(in: window) == nil)
     }
@@ -111,8 +120,10 @@ struct ToastCenterTests {
         let toast = Self.toast()
         center.show(toast, in: window)
         center.holdDismiss(toast.id, in: window, reason: .pointer)
+        #expect(center.isHeld(toast.id, in: window))
         center.dismiss(in: window)
         #expect(!center.isHeld(toast.id, in: window))
+        #expect(center.current(in: window) == nil)
     }
 
     /// VoiceOver's announcement names the palette only where there is an

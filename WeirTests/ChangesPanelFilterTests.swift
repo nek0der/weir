@@ -53,6 +53,7 @@ struct ChangesPanelFilterTests {
             "the conversations with turns to read, not the viewed one a pane runs"
         )
         #expect(facts.agents.map(\.ordinal) == [1, 2], "named among every conversation of the kind")
+        #expect(facts.agents.map(\.unviewedCount) == [2, 1])
         #expect(facts.unviewed == 3)
         #expect(facts.agents.map(\.unviewedCount).reduce(0, +) == facts.unviewed, "the breakdown adds up to the badge")
         #expect(ChangesPanelModel.unviewedTotal(input) == 3)
@@ -76,6 +77,7 @@ struct ChangesPanelFilterTests {
             extras.promptHead = prompt
             return try TurnSummaryFixture.turn(
                 "T\(number)-\(conversation)",
+                phase: end == nil ? "started" : "finished",
                 changes: TurnSummaryFixture.changedFiles,
                 number: number,
                 extras: extras
@@ -91,8 +93,8 @@ struct ChangesPanelFilterTests {
 
         #expect(list.conversations.map(\.latestPrompt?.head) == ["Save the order", "Fix the README"])
         #expect(list.conversations.map(\.lastActivity) == [
-            UnreadTurnRules.date("2026-10-12T10:30:00Z"),
-            UnreadTurnRules.date("2026-10-12T10:40:00Z")
+            Date(timeIntervalSince1970: 1_791_801_000),
+            Date(timeIntervalSince1970: 1_791_801_600)
         ])
         #expect(ConversationChoice.byLatestActivity(list.conversations).map(\.conversation) == [
             running[0].conversation,

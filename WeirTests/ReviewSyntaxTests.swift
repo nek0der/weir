@@ -12,8 +12,9 @@ struct ReviewSyntaxTests {
         // left alone. `class` is colored wherever it appears — the lexer reads
         // one line at a time and does not look back at the `.` before it, so a
         // member with a keyword's name is colored like the keyword.
-        let words = ReviewSyntax.tokens(in: "let information = value.class", language: swift)
-        #expect(words.count == 2, "Expected `let` and `class`: \(words.count)")
+        let source = "let information = value.class"
+        let words = ReviewSyntax.tokens(in: source, language: swift)
+        #expect(words.map { String(source[$0.range]) } == ["let", "class"])
         #expect(words.allSatisfy { $0.kind == .keyword }, "Both are keywords")
         let line = "let name = \"text\" // let"
         let mixed = ReviewSyntax.tokens(in: line, language: swift)

@@ -33,6 +33,7 @@ struct VisibilityInputBuilderTests {
 
     @Test func aZoomOnALeafThatIsGone_showsTheSplit() {
         let display = Self.display(zoomed: UUID())
+        #expect(VisibilityInputBuilder.renderedPanes(display) == [Self.left, Self.right])
         #expect(VisibilityInputBuilder.attendedPanes(display) == [Self.left, Self.right])
     }
 
@@ -45,5 +46,6 @@ struct VisibilityInputBuilderTests {
     @Test func noTab_showsNothing() {
         let display = PaneAreaDisplay(leafIDs: [], zoomedLeafID: nil, review: .closed)
         #expect(VisibilityInputBuilder.renderedPanes(display).isEmpty)
+        #expect(VisibilityInputBuilder.attendedPanes(display).isEmpty)
     }
 }

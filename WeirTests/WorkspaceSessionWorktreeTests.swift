@@ -22,11 +22,12 @@ struct WorkspaceSessionWorktreeTests {
     @Test("createGitWorktree: success attaches a worktree row to the project")
     func createGitWorktree_whenGitSucceeds_attachesWorktreeRow() async throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
-        let git = FakeGit() // default = success
+        let git = FakeGit()
+        let path = WorktreeFixture.freshPath()
 
         let wt = try await session.createGitWorktree(
             projectID: project.id,
-            path: WorktreeFixture.freshPath(),
+            path: path,
             baseBranch: "main",
             newBranchName: "feature-x",
             openTab: false,
@@ -34,27 +35,36 @@ struct WorkspaceSessionWorktreeTests {
         )
 
         let updated = try #require(session.projects.first { $0.id == project.id })
-        #expect(updated.worktrees.contains { $0.id == wt.id })
+        #expect(updated.worktrees == [wt])
         #expect(wt.label == "feature-x")
-        #expect(git.createCalls.count == 1)
+        #expect(wt.workingDirectory == path)
+        #expect(wt.gitRef?.branchName == "feature-x")
+        #expect(wt.admission == .created)
+        #expect(session.makeSnapshot().projects.first { $0.id == project.id }?.worktrees == [wt])
+        #expect(session.tabs.isEmpty)
     }
 
     @Test("createGitWorktree: makes the new branch from the base, then adds the worktree on it")
     func createGitWorktree_withNewBranchName_forwardsBranchToGit() async throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
         let git = FakeGit()
+        let path = WorktreeFixture.freshPath()
         _ = try await session.createGitWorktree(
             projectID: project.id,
-            path: WorktreeFixture.freshPath(),
+            path: path,
             baseBranch: "main",
             newBranchName: "feature-y",
             openTab: false,
             git: git
         )
+        #expect(git.operations == ["branch", "worktree add"])
         let branch = try #require(git.branchCalls.first)
+        #expect(branch.repoRoot == project.rootURL)
         #expect(branch.name == "feature-y")
         #expect(branch.startPoint == "main")
         let call = try #require(git.createCalls.first)
+        #expect(call.repoRoot == project.rootURL)
+        #expect(call.path == path)
         #expect(call.baseBranch == "feature-y")
     }
 
@@ -108,7 +118,10 @@ struct WorkspaceSessionWorktreeTests {
             #expect(!FileManager.default.fileExists(atPath: path.path))
             #expect(git.removeCalls.map(\.force) == [true])
             #expect(git.removeCalls.first?.path == path)
+            #expect(git.removeCalls.first?.repoRoot == project.rootURL)
             #expect(git.pruneCalls == [project.rootURL])
+            #expect(session.project(project.id)?.worktrees.isEmpty == true)
+            #expect(session.tabs.isEmpty)
         }
     }
 
@@ -138,24 +151,31 @@ struct WorkspaceSessionWorktreeTests {
             }
             #expect(branch == "feature-t")
             #expect(leftover == path)
-            #expect(FileManager.default.fileExists(atPath: path.path))
+            let leftoverFile = path.appendingPathComponent("checked-out.txt")
+            let bytes = try Data(contentsOf: leftoverFile)
+            #expect(bytes == Data("half".utf8))
             #expect(git.removeCalls.isEmpty)
+            #expect(git.pruneCalls.isEmpty)
+            #expect(session.project(project.id)?.worktrees.isEmpty == true)
+            #expect(session.tabs.isEmpty)
         }
     }
 
     @Test("createGitWorktree: unknown project id throws projectNotFound")
     func createGitWorktree_withUnknownProject_throwsProjectNotFound() async {
         let session = WorkspaceSession()
+        let git = FakeGit()
         let error = await WorktreeFixture.failure(CreateWorktreeError.self) {
             try await session.createGitWorktree(
                 projectID: UUID(),
                 path: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),
                 baseBranch: "main",
-                newBranchName: nil,
+                newBranchName: "feature",
                 openTab: false,
-                git: FakeGit()
+                git: git
             )
         }
+        #expect(git.operations.isEmpty)
         guard case .projectNotFound? = error else {
             Issue.record("expected .projectNotFound, got \(String(describing: error))")
             return
@@ -169,6 +189,9 @@ struct WorkspaceSessionWorktreeTests {
         try await withTempDir { dir in
             let collidingPath = dir.appendingPathComponent("worktree")
             try FileManager.default.createDirectory(at: collidingPath, withIntermediateDirectories: true)
+            let sentinel = collidingPath.appendingPathComponent("existing.txt")
+            let original = Data("existing contents".utf8)
+            try original.write(to: sentinel)
             let git = FakeGit()
 
             let error = await WorktreeFixture.failure(CreateWorktreeError.self) {
@@ -176,7 +199,7 @@ struct WorkspaceSessionWorktreeTests {
                     projectID: project.id,
                     path: collidingPath,
                     baseBranch: "main",
-                    newBranchName: nil,
+                    newBranchName: "feature",
                     openTab: false,
                     git: git
                 )
@@ -186,7 +209,9 @@ struct WorkspaceSessionWorktreeTests {
             } else {
                 Issue.record("expected .pathAlreadyExists, got \(String(describing: error))")
             }
-            #expect(git.createCalls.isEmpty)
+            #expect(git.operations.isEmpty)
+            #expect(try Data(contentsOf: sentinel) == original)
+            #expect(session.project(project.id)?.worktrees.isEmpty == true)
         }
     }
 
@@ -212,6 +237,9 @@ struct WorkspaceSessionWorktreeTests {
             return
         }
         #expect(stderr == "fatal: invalid reference: bogus")
+        #expect(git.operations == ["worktree add"])
+        #expect(session.project(project.id)?.worktrees.isEmpty == true)
+        #expect(session.tabs.isEmpty)
     }
 
     // MARK: - Delete — happy path
@@ -231,8 +259,7 @@ struct WorkspaceSessionWorktreeTests {
 
         let tab = session.openTab(container: .worktree(projectID: project.id, worktreeID: wt.id))
 
-        // Reset for the delete leg.
-        git.nextRemoveResult = .success()
+        let neighbor = session.openTab(container: .project(project.id))
         let freed = try await session.deleteGitWorktree(
             projectID: project.id,
             worktreeID: wt.id,
@@ -241,9 +268,12 @@ struct WorkspaceSessionWorktreeTests {
         )
 
         let updated = try #require(session.projects.first { $0.id == project.id })
-        #expect(!updated.worktrees.contains { $0.id == wt.id })
-        #expect(!freed.isEmpty)
-        #expect(Set(freed) == Set(tab.splitTree.allLeafIDs()))
+        #expect(updated.worktrees.isEmpty)
+        #expect(freed == tab.splitTree.allLeafIDs())
+        #expect(session.tabs.map(\.id) == [neighbor.id])
+        #expect(git.removeCalls.map(\.repoRoot) == [project.rootURL])
+        #expect(git.removeCalls.map(\.path) == [wt.workingDirectory])
+        #expect(git.removeCalls.map(\.force) == [false])
     }
 
     // MARK: - Delete — errors
@@ -251,14 +281,16 @@ struct WorkspaceSessionWorktreeTests {
     @Test("deleteGitWorktree: unknown project id throws projectNotFound")
     func deleteGitWorktree_withUnknownProject_throwsProjectNotFound() async {
         let session = WorkspaceSession()
+        let git = FakeGit()
         let error = await WorktreeFixture.failure(DeleteWorktreeError.self) {
             try await session.deleteGitWorktree(
                 projectID: UUID(),
                 worktreeID: UUID(),
                 force: false,
-                git: FakeGit()
+                git: git
             )
         }
+        #expect(git.removeCalls.isEmpty)
         guard case .projectNotFound? = error else {
             Issue.record("expected .projectNotFound, got \(String(describing: error))")
             return
@@ -266,16 +298,23 @@ struct WorkspaceSessionWorktreeTests {
     }
 
     @Test("deleteGitWorktree: unknown worktree id throws worktreeNotFound")
-    func deleteGitWorktree_withUnknownWorktree_throwsWorktreeNotFound() async {
+    func deleteGitWorktree_withUnknownWorktree_throwsWorktreeNotFound() async throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
+        let survivor = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, admission: .opened)
+        let tab = session.openTab(container: .worktree(projectID: project.id, worktreeID: survivor.id))
+        let rows = try #require(session.project(project.id)).worktrees
+        let git = FakeGit()
         let error = await WorktreeFixture.failure(DeleteWorktreeError.self) {
             try await session.deleteGitWorktree(
                 projectID: project.id,
                 worktreeID: UUID(),
                 force: false,
-                git: FakeGit()
+                git: git
             )
         }
+        #expect(git.removeCalls.isEmpty)
+        #expect(session.project(project.id)?.worktrees == rows)
+        #expect(session.tabs.map(\.id) == [tab.id])
         guard case .worktreeNotFound? = error else {
             Issue.record("expected .worktreeNotFound, got \(String(describing: error))")
             return
@@ -292,31 +331,27 @@ struct WorkspaceSessionWorktreeTests {
         case rowDropped
     }
 
-    @Test("deleteGitWorktree: git's refusal decides the error, or drops the row of a folder git no longer knows", arguments: [
-        ("fatal: '/p' contains modified or untracked files, use --force", RemovalOutcome.dirtyNeedsForce),
-        ("fatal: cannot remove a locked working tree, lock reason: on usb\nuse 'remove -f -f' to override or unlock first", .locked),
-        ("use --force to delete", .dirtyNeedsForce),
-        ("fatal: working trees containing submodules cannot be moved or removed", .submodulesNeedForce),
-        ("fatal: permission denied", .gitFailed("fatal: permission denied")),
-        ("fatal: '/p' is not a working tree", .rowDropped)
-    ])
-    func deleteGitWorktree_whenGitRefuses_readsItsWords(stderr: String, expected: RemovalOutcome) async throws {
-        #expect(try await Self.removalOutcome(stderr: stderr) == expected)
-    }
+    private nonisolated static let locked = "fatal: cannot remove a locked working tree, lock reason: on usb\n"
+        + "use 'remove -f -f' to override or unlock first"
 
-    /// A lock holds whether or not the person chose Force: git wants
-    /// `--force` twice for it, so Force Delete would fail the same way.
-    @Test("deleteGitWorktree: a locked worktree is named as locked, Force or not", arguments: [false, true])
-    func deleteGitWorktree_ofALockedWorktree_saysItIsLocked(force: Bool) async throws {
-        let stderr = "fatal: cannot remove a locked working tree, lock reason: on usb\nuse 'remove -f -f' to override or unlock first"
-        #expect(try await Self.removalOutcome(stderr: stderr, force: force) == .locked)
+    @Test("deleteGitWorktree: Git’s refusal decides the error or drops an already-gone row", arguments: [
+        ("fatal: '/p' contains modified or untracked files, use --force", false, RemovalOutcome.dirtyNeedsForce),
+        (Self.locked, false, .locked),
+        (Self.locked, true, .locked),
+        ("use --force to delete", false, .dirtyNeedsForce),
+        ("fatal: working trees containing submodules cannot be moved or removed", false, .submodulesNeedForce),
+        ("fatal: permission denied", false, .gitFailed("fatal: permission denied")),
+        ("fatal: '/p' is not a working tree", false, .rowDropped)
+    ])
+    func deleteGitWorktree_whenGitRefuses_readsItsWords(stderr: String, force: Bool, expected: RemovalOutcome) async throws {
+        #expect(try await Self.removalOutcome(stderr: stderr, force: force) == expected)
     }
 
     /// "No such file or directory" is said of any file git could not open,
     /// so the row goes only once a listing no longer names the worktree.
     @Test("deleteGitWorktree: a missing file drops the row only when git no longer lists the worktree", arguments: [
         (ListingAfterRemoval.without, RemovalOutcome.rowDropped),
-        (.stillNamingIt, .gitFailed("error: unable to open .git/hooks/x: No such file or directory")),
+        (.samePathDifferentBranch, .gitFailed("error: unable to open .git/hooks/x: No such file or directory")),
         (.namingItsBranchElsewhere, .gitFailed("error: unable to open .git/hooks/x: No such file or directory")),
         (.failed, .gitFailed("error: unable to open .git/hooks/x: No such file or directory"))
     ])
@@ -331,7 +366,7 @@ struct WorkspaceSessionWorktreeTests {
     /// What `git worktree list` says after a removal git refused.
     enum ListingAfterRemoval: Sendable {
         case without
-        case stillNamingIt
+        case samePathDifferentBranch
         /// Under another spelling of its path, as git lists the real one.
         case namingItsBranchElsewhere
         case failed
@@ -342,7 +377,7 @@ struct WorkspaceSessionWorktreeTests {
         stderr: String,
         force: Bool = false,
         listing: ListingAfterRemoval = .without
-    ) async throws -> RemovalOutcome? {
+    ) async throws -> RemovalOutcome {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
         let git = FakeGit()
         let wt = try await session.createGitWorktree(
@@ -353,14 +388,16 @@ struct WorkspaceSessionWorktreeTests {
             openTab: false,
             git: git
         )
+        let tab = session.openTab(container: .worktree(projectID: project.id, worktreeID: wt.id))
+        let rows = try #require(session.project(project.id)).worktrees
         git.nextRemoveResult = .failure(stderr)
         switch listing {
         case .without: break
-        case .stillNamingIt:
+        case .samePathDifferentBranch:
             git.listedWorktrees = [GitWorktreeInfo(
                 path: wt.workingDirectory,
                 headSHA: "abc",
-                branch: "feature",
+                branch: "different",
                 isDetached: false,
                 isBare: false,
                 isLocked: false,
@@ -380,60 +417,26 @@ struct WorkspaceSessionWorktreeTests {
             git.nextListWorktreesError = .nonZeroExit(.failure("fatal: detected dubious ownership in repository"))
         }
 
-        let error = await WorktreeFixture.failure(DeleteWorktreeError.self) {
-            try await session.deleteGitWorktree(projectID: project.id, worktreeID: wt.id, force: force, git: git)
+        do {
+            let freed = try await session.deleteGitWorktree(projectID: project.id, worktreeID: wt.id, force: force, git: git)
+            #expect(session.project(project.id)?.worktrees.isEmpty == true)
+            #expect(session.tab(tab.id) == nil)
+            #expect(freed == tab.splitTree.allLeafIDs())
+            return .rowDropped
+        } catch let error as DeleteWorktreeError {
+            #expect(session.project(project.id)?.worktrees == rows)
+            #expect(session.tab(tab.id) != nil)
+            switch error {
+            case .dirtyNeedsForce: return .dirtyNeedsForce
+            case .submodulesNeedForce: return .submodulesNeedForce
+            case .locked: return .locked
+            case let .gitFailed(stderr): return .gitFailed(stderr)
+            default: throw error
+            }
         }
-
-        let isRowKept = session.project(project.id)?.worktrees.contains { $0.id == wt.id } == true
-        return switch error {
-        case .dirtyNeedsForce?: .dirtyNeedsForce
-        case .submodulesNeedForce?: .submodulesNeedForce
-        case .locked?: .locked
-        case let .gitFailed(stderr)?: .gitFailed(stderr)
-        case nil where !isRowKept: .rowDropped
-        default: nil
-        }
-    }
-
-    @Test("deleteGitWorktree: force retry is forwarded to git")
-    func deleteGitWorktree_withForce_forwardsForceToGit() async throws {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
-        let git = FakeGit()
-        let wt = try await session.createGitWorktree(
-            projectID: project.id,
-            path: WorktreeFixture.freshPath(),
-            baseBranch: "main",
-            newBranchName: "feature",
-            openTab: false,
-            git: git
-        )
-
-        _ = try await session.deleteGitWorktree(
-            projectID: project.id,
-            worktreeID: wt.id,
-            force: true,
-            git: git
-        )
-
-        let call = try #require(git.removeCalls.first)
-        #expect(call.force)
     }
 
     // MARK: - Admission
-
-    @Test("createGitWorktree: the row it adds is Weir's")
-    func createGitWorktree_admitsTheRowAsCreated() async throws {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
-        let wt = try await session.createGitWorktree(
-            projectID: project.id,
-            path: WorktreeFixture.freshPath(),
-            baseBranch: "main",
-            newBranchName: "feature",
-            openTab: false,
-            git: FakeGit()
-        )
-        #expect(session.worktree(projectID: project.id, worktreeID: wt.id)?.admission == .created)
-    }
 
     /// A row kept for the same folder, hidden after its folder went missing,
     /// is taken over rather than doubled when the worktree is made again.
@@ -442,7 +445,9 @@ struct WorkspaceSessionWorktreeTests {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
         let path = WorktreeFixture.freshPath()
         let index = try #require(session.projects.firstIndex { $0.id == project.id })
-        let kept = WorktreeFixture.make(workingDirectory: path, isHidden: true, isMissing: true, admission: .discovered)
+        var kept = WorktreeFixture.make(workingDirectory: path, isHidden: true, isMissing: true, admission: .discovered)
+        kept.gitRef = GitRef(branchName: "previous", worktreePath: path)
+        kept.displayName = "Old checkout"
         session.projects[index].worktrees.append(kept)
 
         let wt = try await session.createGitWorktree(
@@ -459,12 +464,15 @@ struct WorkspaceSessionWorktreeTests {
         #expect(rows.count == 1)
         #expect(rows.first?.admission == .created)
         #expect(rows.first?.isHidden == false)
+        #expect(rows.first?.missingSince == nil)
+        #expect(rows.first?.gitRef?.branchName == "feature")
+        #expect(rows.first?.displayName == nil)
     }
 
     /// The person choosing a row, or opening a tab in it, admits a row Git
     /// only reported, and one an older file held with no admission.
-    @Test("the person's choice of a row, or a tab they open in it, admits it as opened", arguments: [
-        WorktreeAdmission?.some(.discovered), nil
+    @Test("a person’s selection or tab opening admits a row and preserves created admission", arguments: [
+        WorktreeAdmission?.some(.discovered), nil, .some(.created)
     ])
     func thePersonsChoice_admitsTheRow(admission: WorktreeAdmission?) throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
@@ -479,8 +487,9 @@ struct WorkspaceSessionWorktreeTests {
             selects: false
         )
 
-        #expect(session.worktree(projectID: project.id, worktreeID: chosen.id)?.admission == .opened)
-        #expect(session.worktree(projectID: project.id, worktreeID: tabbed.id)?.admission == .opened)
+        let expected: WorktreeAdmission = admission == .created ? .created : .opened
+        #expect(session.worktree(projectID: project.id, worktreeID: chosen.id)?.admission == expected)
+        #expect(session.worktree(projectID: project.id, worktreeID: tabbed.id)?.admission == expected)
     }
 
     /// Only the person opens a row: a selection that moves the window on, or
@@ -488,22 +497,23 @@ struct WorkspaceSessionWorktreeTests {
     @Test("a selection the person did not make admits nothing", arguments: [SelectionIntent.repair, .behind])
     func aSelectionNotThePersons_admitsNothing(intent: SelectionIntent) throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
-        let row = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, admission: .discovered)
-        let container = ContainerID.worktree(projectID: project.id, worktreeID: row.id)
+        let selected = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, admission: .discovered)
+        let opened = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, admission: .discovered)
+        let container = ContainerID.worktree(projectID: project.id, worktreeID: selected.id)
+        let background = ContainerID.worktree(projectID: project.id, worktreeID: opened.id)
+        let window = session.primaryWindowID
+        session.setActiveContainer(.project(project.id), in: window, intent: .person)
+        if intent == .behind {
+            session.setWindow(window, isHidden: true)
+        }
 
-        session.setActiveContainer(container, in: session.primaryWindowID, intent: intent)
-        session.openTab(container: container, in: session.primaryWindowID, intent: intent, selects: false)
-
-        #expect(session.worktree(projectID: project.id, worktreeID: row.id)?.admission == .discovered)
-    }
-
-    /// The person opening a row Weir made leaves it Weir's.
-    @Test("the person's choice leaves a row Weir made as Weir's")
-    func thePersonsChoice_keepsACreatedRow() throws {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
-        let row = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, admission: .created)
-        session.setActiveContainer(.worktree(projectID: project.id, worktreeID: row.id), in: session.primaryWindowID, intent: .person)
-        #expect(session.worktree(projectID: project.id, worktreeID: row.id)?.admission == .created)
+        session.setActiveContainer(container, in: window, intent: intent)
+        #expect(session.primarySelection.activeContainerID == container)
+        #expect(session.worktree(projectID: project.id, worktreeID: selected.id)?.admission == .discovered)
+        let tab = session.openTab(container: background, in: session.primaryWindowID, intent: intent, selects: false)
+        #expect(session.tabs(in: background).map(\.id) == [tab.id])
+        #expect(session.primarySelection.activeContainerID == container)
+        #expect(session.worktree(projectID: project.id, worktreeID: opened.id)?.admission == .discovered)
     }
 
     /// Move to Other Worktrees puts a row among the other worktrees and says
@@ -528,9 +538,10 @@ struct WorkspaceSessionWorktreeTests {
     func releaseWorktree_ofADiscoveredOrAbsentRow_changesNothing() throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo")
         let row = try WorkspaceSessionFixture.appendWorktree(to: project.id, in: session, admission: .discovered)
-        #expect(session.releaseWorktree(projectID: project.id, worktreeID: row.id) == nil)
-        #expect(session.releaseWorktree(projectID: project.id, worktreeID: UUID()) == nil)
-        #expect(session.releaseWorktree(projectID: UUID(), worktreeID: row.id) == nil)
+        for (projectID, rowID) in [(project.id, row.id), (project.id, UUID()), (UUID(), row.id)] {
+            #expect(session.releaseWorktree(projectID: projectID, worktreeID: rowID) == nil)
+            #expect(session.project(project.id)?.worktrees == [row])
+        }
     }
 
     // MARK: - Per-worktree last-active restoration
@@ -584,31 +595,24 @@ struct WorkspaceSessionWorktreeTests {
     @Test func droppingOnAWorktreeRow_isANoOp_onlyWhenItChangesNothing() throws {
         let (session, project) = try makeSessionWithThreeWorktrees()
         let ids = worktreeIDs(of: project.id, in: session)
-        let first = ids[0]
-        let third = ids[2]
+        try #require(ids.count == 3)
+        #expect(session.isNoOpDrop(of: ids[0], onWorktree: ids[0], projectID: project.id, position: .before))
+        #expect(session.isNoOpDrop(of: ids[0], onWorktree: ids[1], projectID: project.id, position: .before))
+        #expect(session.isNoOpDrop(of: ids[1], onWorktree: ids[0], projectID: project.id, position: .after))
+        #expect(!session.isNoOpDrop(of: ids[2], onWorktree: ids[0], projectID: project.id, position: .before))
 
-        #expect(session.isNoOpDrop(of: first, onWorktree: first, projectID: project.id, position: .before))
-        #expect(!session.isNoOpDrop(of: third, onWorktree: first, projectID: project.id, position: .before))
-        // A worktree never moves to another project's rows.
-        #expect(session.isNoOpDrop(of: third, onWorktree: first, projectID: UUID(), position: .before))
+        let other = session.addOrActivateProject(rootURL: WorkspaceSessionFixture.projectRootURL("other"), suggestedName: "other")
+        let foreign = try WorkspaceSessionFixture.appendWorktree(to: other.id, in: session)
+        #expect(session.isNoOpDrop(of: foreign.id, onWorktree: ids[0], projectID: project.id, position: .before))
     }
 
-    @Test("reorderWorktree(.before) drops the source ahead of the target")
-    func reorderWorktree_before_dropsAheadOfTarget() throws {
+    @Test(arguments: [(DropPosition.before, 2, 0, [2, 0, 1]), (.after, 0, 1, [1, 0, 2])])
+    func reorderWorktree_placesTheSourceOnTheRequestedSide(position: DropPosition, from: Int, target: Int, order: [Int]) throws {
         let (session, project) = try makeSessionWithThreeWorktrees()
         let ids = worktreeIDs(of: project.id, in: session)
         try #require(ids.count == 3)
-        session.reorderWorktree(projectID: project.id, sourceID: ids[2], target: ids[0], position: .before)
-        #expect(worktreeIDs(of: project.id, in: session) == [ids[2], ids[0], ids[1]])
-    }
-
-    @Test("reorderWorktree(.after) drops the source behind the target")
-    func reorderWorktree_after_dropsBehindTarget() throws {
-        let (session, project) = try makeSessionWithThreeWorktrees()
-        let ids = worktreeIDs(of: project.id, in: session)
-        try #require(ids.count == 3)
-        session.reorderWorktree(projectID: project.id, sourceID: ids[0], target: ids[1], position: .after)
-        #expect(worktreeIDs(of: project.id, in: session) == [ids[1], ids[0], ids[2]])
+        session.reorderWorktree(projectID: project.id, sourceID: ids[from], target: ids[target], position: position)
+        #expect(worktreeIDs(of: project.id, in: session) == order.map { ids[$0] })
     }
 
     @Test("reorderWorktree is a no-op when the source or target is unknown, or in another project")
@@ -619,14 +623,16 @@ struct WorkspaceSessionWorktreeTests {
         let other = session.addOrActivateProject(rootURL: WorkspaceSessionFixture.projectRootURL("other"), suggestedName: "other")
         let foreign = try WorkspaceSessionFixture.appendWorktree(to: other.id, in: session, origin: .userPinned)
 
-        session.reorderWorktree(projectID: project.id, sourceID: UUID(), target: ids[0], position: .before)
-        session.reorderWorktree(projectID: project.id, sourceID: ids[0], target: UUID(), position: .after)
-        session.reorderWorktree(projectID: project.id, sourceID: foreign.id, target: ids[1], position: .before)
-        session.reorderWorktree(projectID: project.id, sourceID: ids[1], target: foreign.id, position: .after)
-        session.reorderWorktree(projectID: UUID(), sourceID: ids[2], target: ids[0], position: .before)
-
-        #expect(worktreeIDs(of: project.id, in: session) == ids)
-        #expect(worktreeIDs(of: other.id, in: session) == [foreign.id])
+        func expectUnchanged(projectID: UUID = project.id, source: UUID, target: UUID, position: DropPosition) {
+            session.reorderWorktree(projectID: projectID, sourceID: source, target: target, position: position)
+            #expect(worktreeIDs(of: project.id, in: session) == ids)
+            #expect(worktreeIDs(of: other.id, in: session) == [foreign.id])
+        }
+        expectUnchanged(source: UUID(), target: ids[0], position: .before)
+        expectUnchanged(source: ids[0], target: UUID(), position: .after)
+        expectUnchanged(source: foreign.id, target: ids[1], position: .before)
+        expectUnchanged(source: ids[1], target: foreign.id, position: .after)
+        expectUnchanged(projectID: UUID(), source: ids[2], target: ids[0], position: .before)
     }
 
     // MARK: - Delete Worktrees
@@ -635,7 +641,8 @@ struct WorkspaceSessionWorktreeTests {
     func deleteGitWorktrees_whenGitSucceeds_dropsEveryRow() async throws {
         let (session, project) = try makeSessionWithThreeWorktrees()
         let ids = worktreeIDs(of: project.id, in: session)
-        let tab = session.openTab(container: .worktree(projectID: project.id, worktreeID: ids[0]))
+        let roots = try #require(session.project(project.id)).worktrees.map(\.workingDirectory)
+        let tabs = ids.map { session.openTab(container: .worktree(projectID: project.id, worktreeID: $0)) }
         let git = FakeGit()
         let registry = RecordingSurfaceRegistry()
 
@@ -651,26 +658,27 @@ struct WorkspaceSessionWorktreeTests {
         #expect(refused.isEmpty)
         #expect(worktreeIDs(of: project.id, in: session) == [ids[2]])
         #expect(git.removeCalls.map(\.force) == [false, false])
-        #expect(Set(registry.unregisteredIDs) == Set(tab.splitTree.allLeafIDs()))
+        #expect(git.removeCalls.map(\.repoRoot) == [project.rootURL, project.rootURL])
+        #expect(git.removeCalls.map(\.path) == Array(roots.prefix(2)))
+        #expect(session.tabs.map(\.id) == [tabs[2].id])
+        #expect(registry.unregisteredIDs == tabs.prefix(2).flatMap { $0.splitTree.allLeafIDs() })
     }
 
-    @Test("deleteGitWorktrees: one Git would remove only with Force keeps its row and comes back")
-    func deleteGitWorktrees_whenGitAsksForForce_keepsTheRowsAndReturnsThem() async throws {
+    @Test(arguments: [false, true])
+    func deleteGitWorktrees_returnsOnlyRefusalsAndRetriesOnlyThoseRows(allRefused: Bool) async throws {
         let (session, project) = try makeSessionWithThreeWorktrees()
         let ids = worktreeIDs(of: project.id, in: session)
-        let git = FakeGit()
-        git.nextRemoveResult = .failure("fatal: '/p' contains modified or untracked files, use --force to delete it")
+        let roots = try #require(session.project(project.id)).worktrees.map(\.workingDirectory)
+        let tabs = ids.map { session.openTab(container: .worktree(projectID: project.id, worktreeID: $0)) }
+        let refusedCount = allRefused ? 2 : 1
+        let git = SelectiveRemovalGit(refusedPaths: Set(roots.prefix(refusedCount)))
+        let registry = RecordingSurfaceRegistry()
 
         let refused = await ContainerActions.deleteGitWorktrees(
-            session,
-            registry: RecordingSurfaceRegistry(),
-            projectID: project.id,
-            worktreeIDs: [ids[0], ids[1]],
-            force: false,
-            git: git
+            session, registry: registry, projectID: project.id, worktreeIDs: Array(ids.prefix(2)), force: false, git: git
         )
 
-        #expect(refused.map(\.worktreeID) == [ids[0], ids[1]])
+        #expect(refused.map(\.worktreeID) == Array(ids.prefix(refusedCount)))
         #expect(refused.allSatisfy { refusal in
             if case .dirtyNeedsForce? = refusal.error as? DeleteWorktreeError {
                 true
@@ -678,26 +686,80 @@ struct WorkspaceSessionWorktreeTests {
                 false
             }
         })
-        #expect(worktreeIDs(of: project.id, in: session) == ids)
+        let kept = Array(ids.prefix(refusedCount)) + [ids[2]]
+        #expect(worktreeIDs(of: project.id, in: session) == kept)
+        #expect(session.tabs.map(\.id) == Array(tabs.prefix(refusedCount)).map(\.id) + [tabs[2].id])
+        let removed = Array(tabs.prefix(2).dropFirst(refusedCount))
+        #expect(registry.unregisteredIDs == removed.flatMap { $0.splitTree.allLeafIDs() })
 
-        git.nextRemoveResult = .success()
         let forced = await ContainerActions.deleteGitWorktrees(
-            session,
-            registry: RecordingSurfaceRegistry(),
-            projectID: project.id,
-            worktreeIDs: refused.map(\.worktreeID),
-            force: true,
-            git: git
+            session, registry: registry, projectID: project.id, worktreeIDs: refused.map(\.worktreeID), force: true, git: git
         )
 
         #expect(forced.isEmpty)
-        #expect(git.removeCalls.map(\.force) == [false, false, true, true])
+        let calls = await git.removals
+        #expect(calls.map(\.path) == Array(roots.prefix(2)) + Array(roots.prefix(refusedCount)))
+        #expect(calls.map(\.repoRoot) == Array(repeating: project.rootURL, count: 2 + refusedCount))
+        #expect(calls.map(\.force) == [false, false] + Array(repeating: true, count: refusedCount))
         #expect(worktreeIDs(of: project.id, in: session) == [ids[2]])
+        #expect(session.tabs.map(\.id) == [tabs[2].id])
+        #expect(registry.unregisteredIDs == (removed + tabs.prefix(refusedCount)).flatMap { $0.splitTree.allLeafIDs() })
     }
 
     @Test("The names Git refused are quoted as each language quotes them")
     func refusedNames_areQuotedInTheLanguage() {
         #expect(WorktreeOperationText.lines(["a", "b"], locale: Locale(identifier: "en")) == "\u{201C}a\u{201D}\n\u{201C}b\u{201D}")
         #expect(WorktreeOperationText.lines(["a", "b"], locale: Locale(identifier: "ja")) == "「a」\n「b」")
+    }
+}
+
+/// Scripts a refusal by path so one batch can contain both outcomes.
+private actor SelectiveRemovalGit: GitRunning {
+    private let refusedPaths: Set<URL>
+    private let otherOperations = FakeGit()
+    private(set) var removals: [FakeGit.RemoveCall] = []
+
+    init(refusedPaths: Set<URL>) {
+        self.refusedPaths = refusedPaths
+    }
+
+    func removeWorktree(repoRoot: URL, path: URL, force: Bool) async throws -> GitResult {
+        removals.append(.init(repoRoot: repoRoot, path: path, force: force))
+        if !force, refusedPaths.contains(path) {
+            return .failure("fatal: contains modified or untracked files, use --force to delete it")
+        }
+        return .success()
+    }
+
+    func createWorktree(repoRoot: URL, path: URL, baseBranch: String) async throws -> GitResult {
+        try await otherOperations.createWorktree(repoRoot: repoRoot, path: path, baseBranch: baseBranch)
+    }
+
+    func createBranch(repoRoot: URL, name: String, startPoint: String) async throws -> GitResult {
+        try await otherOperations.createBranch(repoRoot: repoRoot, name: name, startPoint: startPoint)
+    }
+
+    func pruneWorktrees(repoRoot: URL) async throws -> GitResult {
+        try await otherOperations.pruneWorktrees(repoRoot: repoRoot)
+    }
+
+    func listWorktrees(repoRoot: URL) async throws -> [GitWorktreeInfo] {
+        try await otherOperations.listWorktrees(repoRoot: repoRoot)
+    }
+
+    func fetch(repoRoot: URL, remote: String, branch: String) async throws -> GitResult {
+        try await otherOperations.fetch(repoRoot: repoRoot, remote: remote, branch: branch)
+    }
+
+    nonisolated func fetchRef(repoRoot: URL, remote: String, ref: String) async throws -> FetchedRef {
+        try await otherOperations.fetchRef(repoRoot: repoRoot, remote: remote, ref: ref)
+    }
+
+    func listIgnored(repoRoot: URL) async throws -> [String] {
+        try await otherOperations.listIgnored(repoRoot: repoRoot)
+    }
+
+    func commitsBehind(repoRoot: URL, local: String, upstream: String) async -> Int? {
+        await otherOperations.commitsBehind(repoRoot: repoRoot, local: local, upstream: upstream)
     }
 }

@@ -115,19 +115,21 @@ struct ReviewFileMenuModelTests {
             try Data().write(to: fileURL)
             let file = ReviewFile(path: "a.txt", layer: .unstaged, status: .modified)
             let items = ReviewFileMenuModel.items(for: file, in: root, application: .macOSDefault)
-            let open = try #require(items[2].action)
-            #expect(open.fileURL() != nil)
+            let actions = try items.map { try #require($0.action) }
+            try #require(actions == [
+                .copyRelativePath("a.txt"),
+                .copyAbsolutePath("a.txt", root: root),
+                .open("a.txt", root: root),
+                .reveal("a.txt", root: root)
+            ])
+            let canonical = fileURL.standardizedFileURL.resolvingSymlinksInPath()
+            #expect(actions.dropFirst().map { $0.fileURL() } == [canonical, canonical, canonical])
 
             try FileManager.default.removeItem(at: fileURL)
             try FileManager.default.createSymbolicLink(at: fileURL, withDestinationURL: outside)
 
-            #expect(open.fileURL() == nil)
-            #expect(items.compactMap(\.action).allSatisfy { action in
-                if case .copyRelativePath = action {
-                    return true
-                }
-                return action.fileURL() == nil
-            })
+            #expect(actions.first == .copyRelativePath("a.txt"))
+            #expect(actions.dropFirst().map { $0.fileURL() } == [nil, nil, nil])
         }
     }
 }

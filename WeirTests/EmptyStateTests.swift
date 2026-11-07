@@ -42,67 +42,71 @@ struct EmptyStateTests {
     /// each case, so a new one does not compile until it has a number
     /// there, and the inventory must then hold one of it.
     @Test func theInventory_holdsEveryKind() {
-        #expect(Set(EmptyState.inventory.map(\.kindNumber)) == Set(0...23))
-    }
-
-    /// Where its surface sizes itself to what it holds (a popover, All
-    /// Projects), each size still has a height of its own, the compact one
-    /// the shorter.
-    @Test func eachSize_hasAHeightOfItsOwn_whereItsSurfaceFitsIt() {
-        let regular = fittingHeight(of: SupervisionEmptyState(.noNotifications, size: .regular).frame(width: 320))
-        let compact = fittingHeight(of: SupervisionEmptyState(.noNotifications, size: .compact).frame(width: 320))
-        #expect(compact > 0)
-        #expect(compact < regular)
-        #expect(regular < 300, "\(regular): no taller than its words")
+        let kinds = EmptyState.inventory.map(\.kindNumber)
+        #expect(Set(kinds) == Set(0...23))
+        #expect(kinds.count == 25)
+        // The inventory carries both variants of the new-tab instructions.
+        let newTabStates = EmptyState.inventory.filter { $0.kindNumber == 20 }
+        #expect(newTabStates.contains(.noOpenTab(newTabShortcut: "⌘T")))
+        #expect(newTabStates.contains(.noOpenTab(newTabShortcut: nil)))
     }
 
     /// A description, when there is one, is a sentence in both languages,
     /// except the Settings search's aside, which repeats what was typed.
     @Test(arguments: EmptyState.inventory)
     func eachDescription_isASentence_inBothLanguages(state: EmptyState) {
-        guard case .noSettingsFound = state else {
-            let english = state.description(locale: Self.english)
-            let japanese = state.description(locale: Self.japanese)
-            #expect((english == nil) == (japanese == nil), "both languages describe it, or neither")
-            if let english, let japanese {
-                #expect(english.hasSuffix("."), "\(english)")
-                #expect(japanese.hasSuffix("。"), "\(japanese)")
-                #expect(english != japanese)
-            }
+        let english = state.description(locale: Self.english)
+        let japanese = state.description(locale: Self.japanese)
+        if case let .noSettingsFound(query) = state {
+            #expect(query == "font")
+            #expect(english == "font")
+            #expect(japanese == "font")
             return
         }
-        #expect(state.description(locale: Self.english) == "font")
+        #expect((english == nil) == (japanese == nil), "both languages describe it, or neither")
+        if let english, let japanese {
+            #expect(english.hasSuffix("."), "\(english)")
+            #expect(japanese.hasSuffix("。"), "\(japanese)")
+            #expect(english != japanese)
+        }
+    }
+
+    @Test func theNewTabDescription_namesItsShortcutWhenAssigned() {
+        let assigned = EmptyState.noOpenTab(newTabShortcut: "⌘T")
+        #expect(assigned.description(locale: Self.english) == "Choose a worktree in the sidebar, or open a new tab with ⌘T.")
+        #expect(assigned.description(locale: Self.japanese) == "サイドバーでワークツリーを選択するか、⌘T で新しいタブを開いてください。")
+        let unassigned = EmptyState.noOpenTab(newTabShortcut: nil)
+        #expect(unassigned.description(locale: Self.english) == "Choose a worktree in the sidebar, or open a new tab.")
+        #expect(unassigned.description(locale: Self.japanese) == "サイドバーでワークツリーを選択するか、新しいタブを開いてください。")
     }
 
     /// The surfaces whose words say the same absence share one message.
     @Test func theSameAbsence_saysTheSameWords() {
         #expect(EmptyState.noTabs.message(locale: Self.japanese) == "タブはありません")
         #expect(EmptyState.noOpenTab(newTabShortcut: "⌘T").message(locale: Self.japanese) == "タブはありません")
-        #expect(EmptyState.noWorktreeSelected.message(locale: Self.english) == "No Worktree Selected")
-        #expect(EmptyState.noWorktreeSelected.message(locale: Self.japanese) == "ワークツリーが選択されていません")
         #expect(EmptyState.nothingNeedsAttention.message(locale: Self.japanese) == "要対応はありません")
         #expect(EmptyState.noNotifications.message(locale: Self.japanese) == "通知はありません")
     }
 
-    /// All Projects lists only the worktrees with a tab open or an item,
-    /// so with no card it says none is open, not that there is none.
-    @Test func allProjectsWithNoCard_saysNoWorktreeIsOpen_notThatThereIsNone() {
-        #expect(EmptyState.noOpenWorktrees.message(locale: Self.english) == "No Open Worktrees")
-        #expect(EmptyState.noOpenWorktrees.message(locale: Self.japanese) == "開いているワークツリーはありません")
-        #expect(EmptyState.noOpenWorktrees.description(locale: Self.english)
+    @Test func noOpenWorktrees_noSelection_andNoProjects_haveDistinctCopy() throws {
+        let existing = AllProjectsModel(cards: [], query: "", attentionCount: 0, hasProjects: true)
+        let closed = try #require(existing.emptyState)
+        #expect(closed == .noOpenWorktrees)
+        #expect(closed.message(locale: Self.english) == "No Open Worktrees")
+        #expect(closed.message(locale: Self.japanese) == "開いているワークツリーはありません")
+        #expect(closed.description(locale: Self.english)
             == "Worktrees with a tab open or something that needs attention appear here.")
-        #expect(EmptyState.noOpenWorktrees.description(locale: Self.japanese) == "タブを開いているワークツリーと、\n要対応のあるワークツリーが表示されます。")
-        #expect(EmptyState.noOpenWorktrees.message(locale: Self.english) != EmptyState.noWorktreeSelected.message(locale: Self.english))
-    }
-
-    /// With no project at all, the sidebar and All Projects say so rather
-    /// than that a worktree is absent or closed; the Open Folder… button
-    /// under it says how one is added, so there is no description.
-    @Test func noProject_saysThereIsNone_withNoDescription() {
-        #expect(EmptyState.noProjects.message(locale: Self.english) == "No Projects")
-        #expect(EmptyState.noProjects.message(locale: Self.japanese) == "プロジェクトはありません")
-        #expect(EmptyState.noProjects.description(locale: Self.english) == nil)
-        #expect(EmptyState.noProjects.symbol == "folder")
+        #expect(closed.description(locale: Self.japanese) == "タブを開いているワークツリーと、\n要対応のあるワークツリーが表示されます。")
+        #expect(EmptyState.noWorktreeSelected.message(locale: Self.english) == "No Worktree Selected")
+        #expect(EmptyState.noWorktreeSelected.message(locale: Self.japanese) == "ワークツリーが選択されていません")
+        let new = AllProjectsModel(cards: [], query: "", attentionCount: 0, hasProjects: false)
+        let absent = try #require(new.emptyState)
+        #expect(absent == .noProjects)
+        #expect(absent.message(locale: Self.english) == "No Projects")
+        #expect(absent.message(locale: Self.japanese) == "プロジェクトはありません")
+        #expect(absent.description(locale: Self.english) == nil)
+        #expect(absent.description(locale: Self.japanese) == nil)
+        #expect(absent.symbol == "folder")
     }
 
     /// Each symbol is one the system has, so no empty state draws a blank
@@ -161,7 +165,7 @@ struct EmptyStateTests {
     /// the symbol (the heading line's slack around its words, the heading's
     /// bottom inset, the block's top inset), by a step, and clears the
     /// popover's rounded corner, which makes the same room read as less.
-    @Test func aPopoversEmptyState_hasMoreRoomUnderItsWordsThanOverItsSymbol() {
+    @Test func compactPopoverMetrics_leaveMoreRoomBelowTheWords() {
         let compact = SupervisionEmptyState<EmptyView>.Metrics(.compact)
         let headingWords = fittingHeight(of: Text(verbatim: "Needs Attention").font(.supervision(.row)))
         let above = (WeirLayout.Supervision.secondaryButtonHeight - headingWords) / 2
@@ -169,7 +173,8 @@ struct EmptyStateTests {
             + compact.insets.top
         let below = compact.insets.bottom
 
-        #expect(below > WeirLayout.floatingPanelCornerRadius)
+        #expect(compact.insets.top == WeirLayout.Supervision.spaceXS)
+        #expect(below - WeirLayout.floatingPanelCornerRadius == WeirLayout.Supervision.spaceXS)
         #expect(below - above >= WeirLayout.Supervision.spaceXS, "\(above) over the symbol, \(below) under the words")
     }
 
@@ -185,10 +190,11 @@ struct EmptyStateTests {
     /// Japanese, the incomplete record's description leaves no word or two
     /// alone on its second line, and its two lines take about the same
     /// width.
-    @Test func aWrappedDescription_isSetInLinesOfEvenLength() {
+    @Test func aWrappedDescription_isSetInLinesOfEvenLength() throws {
         let japanese = Self.japanese
-        let description = EmptyState.incompleteRecord.description(locale: japanese) ?? ""
-        let text = Text(verbatim: description).font(.system(size: WeirFont.Supervision.Size.meta.rawValue))
+        let description = try #require(EmptyState.incompleteRecord.description(locale: japanese))
+        let text = Text(verbatim: PhraseBreaks.joined(description, locale: japanese))
+            .font(.system(size: WeirFont.Supervision.Size.meta.rawValue))
         let room: CGFloat = 280
         let plain = NSHostingView(rootView: text.frame(width: room)).fittingSize
         let balanced = NSHostingView(rootView: BalancedLines { text }.frame(width: room)).fittingSize
@@ -202,18 +208,18 @@ struct EmptyStateTests {
         #expect(balancedWidth >= single / 2, "\(balancedWidth): no narrower than half the line")
     }
 
-    /// A list's box in a form draws the message alone: no symbol and no
-    /// description.
-    @Test func theInlineSize_isTheMessageAlone() {
-        let inline = fittingHeight(of: SupervisionEmptyState(.noTestCommands, size: .inline).frame(width: 400))
-        let compact = fittingHeight(of: SupervisionEmptyState(.noTestCommands, size: .compact).frame(width: 400))
-        #expect(inline > 0)
-        #expect(inline < 22, "\(inline): one line of words")
-        #expect(inline < compact)
-    }
+    @Test func inlineFitsOneLine_andCompactIsSmallerThanRegular() throws {
+        let state = EmptyState.noNotifications
+        _ = try #require(state.description(locale: Self.english))
+        let inlineHeight = fittingHeight(of: SupervisionEmptyState(state, size: .inline).frame(width: 320))
+        let compactHeight = fittingHeight(of: SupervisionEmptyState(state, size: .compact).frame(width: 320))
+        let regularHeight = fittingHeight(of: SupervisionEmptyState(state, size: .regular).frame(width: 320))
+        #expect(inlineHeight > 0)
+        #expect(inlineHeight < 22, "\(inlineHeight): one line of words")
+        #expect(inlineHeight < compactHeight)
+        #expect(compactHeight < regularHeight)
+        #expect(regularHeight < 300, "\(regularHeight): no taller than its words")
 
-    /// A popover's empty state is smaller than a panel's at every step.
-    @Test func theCompactSize_isSmallerThanTheRegular() {
         let regular = SupervisionEmptyState<EmptyView>.Metrics(.regular)
         let compact = SupervisionEmptyState<EmptyView>.Metrics(.compact)
         #expect(compact.symbol.rawValue < regular.symbol.rawValue)
@@ -221,7 +227,8 @@ struct EmptyStateTests {
         #expect(compact.description.rawValue < regular.description.rawValue)
         #expect(compact.symbolGap < regular.symbolGap)
         #expect(compact.descriptionGap < regular.descriptionGap)
-        #expect(regular.description.rawValue < regular.message.rawValue, "the description is under the message")
+        #expect(compact.description.rawValue < compact.message.rawValue)
+        #expect(regular.description.rawValue < regular.message.rawValue)
     }
 }
 

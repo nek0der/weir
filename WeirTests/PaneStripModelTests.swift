@@ -8,8 +8,30 @@ import Testing
 
 @MainActor
 struct PaneStripModelTests {
-    private static func items(_ kinds: [AttentionItemKind], paneID: UUID) -> [AttentionItem] {
-        AttentionItem.testList(kinds, pane: paneID)
+    private static func items(
+        _ kinds: [AttentionItemKind],
+        paneID: UUID? = nil,
+        provider: AgentKind = .claude
+    ) -> [AttentionItem] {
+        var queue = AttentionQueue()
+        for (offset, kind) in kinds.enumerated() {
+            let runtimeID = "\(provider.rawValue):r\(offset)"
+            let episode = EpisodeKey(origin: .runtime(runtimeID), episodeToken: "1")
+            let id: AttentionItemID = switch kind {
+            case let .approval(fact): .approval(fact.key)
+            case let .question(fact): .question(fact.key)
+            case .prompt: .prompt(episode)
+            case .stop: .stop(episode)
+            case let .unread(turn): .unread(turn.turnID)
+            }
+            queue.insert(
+                id: id,
+                kind: kind,
+                subject: .runtime(id: runtimeID, provider: provider, paneID: paneID ?? UUID(), tabID: nil, projectID: nil),
+                arrivedAt: Date(timeIntervalSince1970: TimeInterval(offset))
+            )
+        }
+        return queue.items
     }
 
     private static func input(
@@ -37,16 +59,20 @@ struct PaneStripModelTests {
         UnreadTurn(turnID: TurnID("t"), changes: .unknown)
     )
 
-    @Test func aTabsTitleShapedLikeAPath_isCutAtItsHead_soThreeShellsStayApart() {
-        let titles = ["…/sample-reviews/demo-repos/alpha", "~/notes", "me@mac: ~/weir"]
-        let model = PaneStripModel(items: titles.map { Self.input(title: $0) }, activeTabID: nil, reviewTab: .none)
-        #expect(model.items.map(\.titleTruncation) == [.pathTitle, .pathTitle, .pathTitle])
-    }
-
-    @Test func aTabsTitleThatIsANameOrACommand_isCutAtItsEnd() {
-        let titles = ["zsh", "Claude Code", "/review-pr 123 fix", "/init"]
-        let model = PaneStripModel(items: titles.map { Self.input(title: $0) }, activeTabID: nil, reviewTab: .none)
-        #expect(model.items.map(\.titleTruncation) == [.name, .name, .name, .name])
+    @Test(arguments: [
+        ("…/sample-reviews/demo-repos/alpha", SupervisionTruncation.pathTitle),
+        ("~/notes", .pathTitle),
+        ("me@mac: ~/weir", .pathTitle),
+        ("zsh", .name),
+        ("Claude Code", .name),
+        ("/review-pr 123 fix", .name),
+        ("/init", .name)
+    ])
+    func aTabsTitle_usesPathOrNameTruncation(title: String, truncation: SupervisionTruncation) throws {
+        let model = PaneStripModel(items: [Self.input(title: title)], activeTabID: nil, reviewTab: .none)
+        let item = try #require(model.items.first)
+        #expect(item.title == title)
+        #expect(item.titleTruncation == truncation)
     }
 
     @Test func aPanesFrame_isForAWaitOrAStop_neverForAnUnreadTurn() {
@@ -55,8 +81,19 @@ struct PaneStripModelTests {
         #expect(PaneAttention.of(Self.items([.stop(.processExited), .question(ApprovalFact.test(isQuestion: true))], paneID: pane))
             == .needsAnswer)
         #expect(PaneAttention.of(Self.items([Self.unread, .stop(.processExited)], paneID: pane)) == .stopped)
+        #expect(PaneAttention.of(Self.items([.prompt(.unclassified(detail: nil)), .stop(.processExited)], paneID: pane))
+            == .needsResponse)
+        #expect(PaneAttention.of(Self.items([.prompt(.signIn), .stop(.processExited)], paneID: pane))
+            == .needsSignIn)
+        #expect(PaneAttention.of(Self.items([
+            .approval(ApprovalFact.test()), .question(ApprovalFact.test(isQuestion: true))
+        ], paneID: pane)) == .needsAnswer)
         #expect(PaneAttention.of(Self.items([Self.unread], paneID: pane)) == nil)
-        #expect(PaneAttention.needsAnswer.isWaiting && PaneAttention.needsApproval.isWaiting && !PaneAttention.stopped.isWaiting)
+        #expect(PaneAttention.needsAnswer.isWaiting)
+        #expect(PaneAttention.needsApproval.isWaiting)
+        #expect(PaneAttention.needsResponse.isWaiting)
+        #expect(PaneAttention.needsSignIn.isWaiting)
+        #expect(!PaneAttention.stopped.isWaiting)
     }
 
     @Test func theSelectedTab_isTheActiveOne_untilAReviewStandsInItsPlace() {
@@ -102,7 +139,12 @@ struct PaneStripModelTests {
             items: [PaneStripModel.ItemInput(
                 id: UUID(),
                 title: "Fix the tests",
-                agents: [.init(kind: .claude)],
+                agents: [
+                    .init(kind: .claude, paneGlyphs: [.running]),
+                    .init(kind: .codex),
+                    .init(kind: .antigravity),
+                    .init(kind: .opencode, paneItems: Self.items([.stop(.processExited)], provider: .opencode))
+                ],
                 hasUnread: false,
                 isInTmux: true,
                 exitCodes: []
@@ -110,8 +152,14 @@ struct PaneStripModelTests {
             activeTabID: nil,
             reviewTab: .none
         ).items[0]
-        #expect(agent.agents.map(\.kind) == [.claude])
-        #expect(agent.tooltip(locale: Locale(identifier: "ja")) == "Fix the tests\nClaude\ntmux で実行中のため、Weir を終了してもセッションは残ります")
+        #expect(agent.shownAgents.map(\.kind) == [.claude, .codex])
+        #expect(agent.hiddenAgentCount == 2)
+        #expect(agent.tooltip(locale: Locale(identifier: "en")) == [
+            "Fix the tests", "Claude · Running", "Codex", "Antigravity", "OpenCode · Stopped",
+            "Running in tmux — the session survives quitting Weir"
+        ].joined(separator: "\n"))
+        #expect(agent.tooltip(locale: Locale(identifier: "ja")).split(separator: "\n").last
+            == "tmux で実行中のため、Weir を終了してもセッションは残ります")
     }
 
     // MARK: - The state glyph
@@ -123,6 +171,7 @@ struct PaneStripModelTests {
         (.needsApproval, .needsApproval),
         (.needsAnswer, .needsAnswer),
         (.needsResponse, .needsResponse),
+        (.needsSignIn, .needsSignIn),
         (.stopped, .stopped)
     ])
     func aTab_showsItsPanesState_asTheSidebarsGlyph(glyph: SessionRowFact.Glyph, kind: StateGlyph.Kind) {
@@ -130,6 +179,7 @@ struct PaneStripModelTests {
             .needsApproval: .approval(ApprovalFact.test()),
             .needsAnswer: .question(ApprovalFact.test(isQuestion: true)),
             .needsResponse: .prompt(.unclassified(detail: nil)),
+            .needsSignIn: .prompt(.signIn),
             .stopped: .stop(.processExited)
         ]
         let items = kinds[glyph].map { Self.items([$0], paneID: UUID()) } ?? []
@@ -139,14 +189,15 @@ struct PaneStripModelTests {
             reviewTab: .none
         ).items[0]
         #expect(item.stateGlyph == glyph)
+        #expect(item.agents == [.init(kind: .claude, state: glyph, identities: [])])
         #expect(item.stateGlyph.map(StateGlyph.Kind.init) == kind)
     }
 
     /// A split tab shows its panes' first state in the one state order, as the
     /// sidebar's row does: a wait, then a stop, then a run.
-    @Test func aSplitTab_showsItsPanesInTheSidebarsOrder() {
+    @Test func aSplitTabsGlyph_usesSidebarStatePriority() {
         func glyph(_ glyphs: [SessionRowFact.Glyph], _ kinds: [AttentionItemKind]) -> SessionRowFact.Glyph? {
-            PaneStripModel.tabGlyph(glyphs, items: Self.items(kinds, paneID: UUID()))
+            PaneStripModel.tabGlyph(glyphs, items: Self.items(kinds))
         }
         let approval = AttentionItemKind.approval(ApprovalFact.test())
         let question = AttentionItemKind.question(ApprovalFact.test(isQuestion: true))
@@ -155,6 +206,7 @@ struct PaneStripModelTests {
         #expect(glyph([.running, .needsApproval], [approval]) == .needsApproval)
         #expect(glyph([.stopped, .running, .needsAnswer], [stop, question]) == .needsAnswer)
         #expect(glyph([.needsResponse, .stopped], [stop, response]) == .needsResponse)
+        #expect(glyph([.needsApproval, .needsAnswer], [approval, question]) == .needsAnswer)
         #expect(glyph([.running, .stopped], [stop]) == .stopped)
         #expect(glyph([.running, .running], []) == .running)
         #expect(glyph([.unread, .running], [Self.unread]) == .running)
@@ -163,12 +215,15 @@ struct PaneStripModelTests {
     /// An approval and a wait for a response rank the same (`PanePriority`),
     /// so the tab shows the one that arrived first, as the row does.
     @Test func aSplitTab_withAnApprovalAndAResponse_showsTheFirstToArrive() {
-        let pane = UUID()
         let approval = AttentionItemKind.approval(ApprovalFact.test())
         let response = AttentionItemKind.prompt(.unclassified(detail: nil))
         let glyphs: [SessionRowFact.Glyph] = [.needsApproval, .needsResponse]
-        #expect(PaneStripModel.tabGlyph(glyphs, items: Self.items([response, approval], paneID: pane)) == .needsResponse)
-        #expect(PaneStripModel.tabGlyph(glyphs, items: Self.items([approval, response], paneID: pane)) == .needsApproval)
+        let responseFirst = Self.items([response, approval])
+        let approvalFirst = Self.items([approval, response])
+        #expect(PaneStripModel.tabGlyph(glyphs, items: responseFirst) == .needsResponse)
+        #expect(PaneStripModel.tabGlyph(glyphs, items: responseFirst.reversed()) == .needsResponse)
+        #expect(PaneStripModel.tabGlyph(glyphs, items: approvalFirst) == .needsApproval)
+        #expect(PaneStripModel.tabGlyph(glyphs, items: approvalFirst.reversed()) == .needsApproval)
     }
 
     /// A shell's tab, a tab at rest, and a turn's unread show no glyph.
@@ -194,9 +249,12 @@ struct PaneStripModelTests {
         #expect(running.agentLines(locale: Locale(identifier: "ja")) == ["Claude · 実行中"])
         #expect(running.agentLines(locale: Locale(identifier: "en")) == ["Claude · Running"])
         #expect(running.tooltip(locale: Locale(identifier: "ja")) == "Fix\nClaude · 実行中")
+        #expect(running.spokenLabel(locale: Locale(identifier: "en")) == "Fix, Claude, Running")
+        #expect(running.spokenLabel(locale: Locale(identifier: "ja")) == "Fix、Claude、実行中")
 
         let idle = PaneStripModel(items: [Self.input(agent: .codex)], activeTabID: nil, reviewTab: .none).items[0]
         #expect(idle.agentLines(locale: Locale(identifier: "ja")) == ["Codex"])
+        #expect(idle.agentLines(locale: Locale(identifier: "en")) == ["Codex"])
     }
 
     /// A failed exit's mark is in the display language, in the same words
@@ -220,59 +278,82 @@ struct PaneStripModelTests {
         PaneActions.split(session, direction: .horizontal)
         let split = try #require(session.tab(tab.id))
         let leaves = split.splitTree.allLeafIDs()
-        let badge = AgentBadge(state: .running, runStartedAt: Date(), updatedAt: Date())
-        func run(_ kind: AgentKind, _ id: String, in pane: UUID) -> AgentRuntimePresentation {
-            AgentRuntimePresentation.test(kind: kind, runID: id, badge: badge, paneIDs: [pane])
-        }
-        let codex = run(.codex, "x", in: leaves[0])
-        let claude = run(.claude, "c", in: leaves[1])
+        try #require(leaves.count == 2)
+        let neighbor = session.openTab(container: .loose)
+        let neighborPane = try #require(neighbor.splitTree.allLeafIDs().first)
+        let stamp = Date(timeIntervalSince1970: 100)
+        let badge = AgentBadge(state: .running, runStartedAt: stamp, updatedAt: stamp)
+        let codex = AgentRuntimePresentation.test(kind: .codex, runID: "x", badge: badge, paneIDs: [leaves[0]])
+        let claude = AgentRuntimePresentation.test(runID: "c", badge: badge, paneIDs: [leaves[1]])
+        let otherClaude = AgentRuntimePresentation.test(runID: "neighbor", badge: badge, paneIDs: [neighborPane])
+        session.update(tab.id) { $0.agentBadges = [.codex: [leaves[0]: badge], .claude: [leaves[1]: badge]] }
+        session.update(neighbor.id) { $0.agentBadges = [.claude: [neighborPane: badge]] }
 
-        func glyph(_ queue: AttentionQueue) -> SessionRowFact.Glyph? {
+        func model(_ queue: AttentionQueue) -> PaneStripModel {
             PaneStripModel(
                 container: split.container,
                 session: session,
                 window: session.primaryWindowID,
                 queue: queue,
-                runtimes: [codex, claude],
+                runtimes: [codex, claude, otherClaude],
                 mountedTmuxPaneIDs: [],
                 reviewTab: .none
-            ).item(for: tab)?.stateGlyph
+            )
         }
-        #expect(glyph(AttentionQueue()) == .running)
+        let before = model(AttentionQueue())
+        #expect(before.item(for: tab)?.paneCount == 2)
+        #expect(before.item(for: tab)?.stateGlyph == .running)
+        #expect(before.item(for: neighbor)?.stateGlyph == .running)
 
         var queue = AttentionQueue()
         queue.insert(
             id: .stop(EpisodeKey(origin: .runtime(claude.id), episodeToken: "1")),
             kind: .stop(.processExited),
-            subject: .runtime(id: claude.id, provider: .claude, paneID: leaves[1], tabID: nil, projectID: nil),
-            arrivedAt: Date(timeIntervalSince1970: 0)
+            subject: .runtime(id: claude.id, provider: .claude, paneID: leaves[1], tabID: tab.id, projectID: nil),
+            arrivedAt: stamp
         )
-        #expect(glyph(queue) == .stopped)
+        let after = model(queue)
+        #expect(after.item(for: tab)?.stateGlyph == .stopped)
+        #expect(after.item(for: tab)?.agents == [
+            .init(kind: .claude, state: .stopped, identities: []),
+            .init(kind: .codex, state: .running, identities: [])
+        ])
+        #expect(after.item(for: neighbor)?.stateGlyph == .running)
+        #expect(after.item(for: neighbor)?.agents == [.init(kind: .claude, state: .running, identities: [])])
     }
 
-    /// A running agent with an unread turn in its pane still shows that it
-    /// runs: the unread, which a tab never shows, does not hide the run.
-    @Test func aRunningAgentWithAnUnreadTurn_showsItRuns() {
+    @Test func anUnreadTurnDoesNotHideARunningAgentOrMarkAFinishedTab() {
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
-        let badge = AgentBadge(state: .running, runStartedAt: Date(), updatedAt: Date())
-        let claude = AgentRuntimePresentation.test(runID: "c", badge: badge, paneIDs: [pane])
+        let stamp = Date(timeIntervalSince1970: 100)
+        let running = AgentBadge(state: .running, runStartedAt: stamp, updatedAt: stamp)
+        let finished = AgentBadge(state: .finished, updatedAt: stamp)
+        let turnID = TurnID("t")
         var queue = AttentionQueue()
         queue.insert(
-            id: .stop(EpisodeKey(origin: .runtime(claude.id), episodeToken: "1")),
-            kind: Self.unread,
-            subject: .runtime(id: claude.id, provider: .claude, paneID: pane, tabID: nil, projectID: nil),
-            arrivedAt: Date(timeIntervalSince1970: 0)
+            id: .unread(turnID),
+            kind: .unread(UnreadTurn(turnID: turnID, changes: .unknown)),
+            subject: .runtime(id: "claude:c", provider: .claude, paneID: pane, tabID: tab.id, projectID: nil),
+            arrivedAt: stamp
         )
-        let item = PaneStripModel(
-            container: tab.container,
-            session: session,
-            window: session.primaryWindowID,
-            queue: queue,
-            runtimes: [claude],
-            mountedTmuxPaneIDs: [],
-            reviewTab: .none
-        ).item(for: tab)
-        #expect(item?.stateGlyph == .running)
+        func item(_ badge: AgentBadge) -> PaneStripModel.Item? {
+            session.update(tab.id) { $0.agentBadges = [.claude: [pane: badge]] }
+            return PaneStripModel(
+                container: tab.container,
+                session: session,
+                window: session.primaryWindowID,
+                queue: queue,
+                runtimes: [AgentRuntimePresentation.test(runID: "c", badge: badge, paneIDs: [pane])],
+                mountedTmuxPaneIDs: [],
+                reviewTab: .none
+            ).item(for: tab)
+        }
+        let working = item(running)
+        #expect(working?.stateGlyph == .running)
+        #expect(working?.hasUnread == false)
+        let settled = item(finished)
+        #expect(settled?.stateGlyph == nil)
+        #expect(settled?.agents == [.init(kind: .claude, state: nil, identities: [])])
+        #expect(settled?.hasUnread == false)
     }
 
     @Test func theStrip_followsTheSessionsTabs_inTheirOrder() {
@@ -280,6 +361,7 @@ struct PaneStripModelTests {
         let container = ContainerID.project(project.id)
         let first = session.openTab(container: container)
         let second = session.openTab(container: container)
+        let scratch = session.openTab(container: .loose)
         session.update(first.id) { $0.titleOverride = "build" }
         session.setActiveTab(first.id)
 
@@ -290,28 +372,38 @@ struct PaneStripModelTests {
             mountedTmuxPaneIDs: [],
             reviewTab: .none
         )
-        #expect(model.items.map(\.id).suffix(2) == [first.id, second.id])
+        #expect(model.items.map(\.id) == [first.id, second.id])
+        #expect(model.item(for: scratch) == nil)
         #expect(model.item(for: first)?.title == "build")
-        #expect(model.item(for: first)?.isActive == true)
+        #expect(model.items.map(\.isActive) == [true, false])
     }
 
-    @Test func plus_opensAClaudeOrCodexTab_orAShell_inItsSession() throws {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
-        let container = ContainerID.project(project.id)
+    @Test(arguments: [
+        (Optional(AgentKind.claude), Optional("claude")),
+        (.codex, "codex"),
+        (.antigravity, "agy"),
+        (.opencode, "opencode"),
+        (nil, nil)
+    ])
+    func newTabAction_stagesOnlyTheNewTabInTheRequestingWindow(agent: AgentKind?, command: String?) throws {
+        let fixture = ProjectWindowsFixture()
+        let window = try fixture.window(showing: fixture.b)
+        let container = ContainerID.project(fixture.b.id)
+        let before = fixture.session.tabs.map(\.id)
 
-        for agent in AgentKind.allCases {
-            TabActions.newTab(session, in: container, running: agent)
-            let tab = try #require(session.activeTab(in: session.primaryWindowID))
-            let pane = try #require(tab.splitTree.allLeafIDs().first)
-            #expect(tab.container == container)
-            #expect(tab.initialCommands[pane] == agent.launchCommand)
-        }
-        #expect(AgentKind.claude.launchCommand == "claude")
-        #expect(AgentKind.codex.launchCommand == "codex")
+        let pane = try #require(TabActions.newTab(
+            fixture.session, in: container, running: agent, window: window.id, intent: .person, selects: true
+        ))
+        let tab = try #require(fixture.session.drawnTab(in: window.id))
 
-        TabActions.newTab(session, in: container, running: nil)
-        #expect(session.activeTab(in: session.primaryWindowID)?.initialCommands.isEmpty == true)
-        #expect(session.activeTab(in: session.primaryWindowID)?.container == container)
+        #expect(fixture.session.tabs.count == before.count + 1)
+        #expect(fixture.session.tabs.map(\.id).filter { $0 != tab.id } == before)
+        #expect(tab.container == container)
+        #expect(tab.splitTree.allLeafIDs() == [pane])
+        #expect(tab.initialCommands == (command.map { [pane: $0] } ?? [:]))
+        #expect(tab.agentsInFront == (agent.map { [pane: PaneAgentInFront(kind: $0, isStaged: true)] } ?? [:]))
+        #expect(fixture.session.drawnTab(in: fixture.primary.id)?.id == fixture.aTab.id)
+        #expect(fixture.session.tab(fixture.bTab.id)?.initialCommands.isEmpty == true)
     }
 
     @Test func theActiveTab_isTheOneOfTheWindowDrawingTheStrip() {
@@ -346,14 +438,17 @@ struct PaneStripModelTests {
     private static func run(
         _ id: String,
         in pane: UUID,
-        startedAt seconds: TimeInterval = 0
+        startedAt seconds: TimeInterval = 0,
+        firstPrompt: String? = nil
     ) -> (badge: AgentBadge, runtime: AgentRuntimePresentation) {
-        let badge = AgentBadge(
+        let stamp = Date(timeIntervalSince1970: seconds)
+        var badge = AgentBadge(
             state: .running,
-            updatedAt: Date(),
+            updatedAt: stamp,
             conversationID: id,
-            sessionStartedAt: Date(timeIntervalSince1970: seconds)
+            sessionStartedAt: stamp
         )
+        badge.firstPrompt = firstPrompt
         let runtime = AgentRuntimePresentation.test(
             runID: id,
             badge: badge,
@@ -411,10 +506,13 @@ struct PaneStripModelTests {
         fixture.attention.replaceRuntimes([only.runtime], kind: .claude)
         await ChangesPanelActions.resolveRoot(window: fixture.window, stores: fixture.changes)
 
-        let item = Self.strip(fixture).item(for: tab)
+        #expect(fixture.conversationIdentities.identities(in: container).isEmpty)
+        #expect(only.runtime.conversation == TurnSummaryFixture.conversation("a"))
+        let item = try #require(Self.strip(fixture).item(for: tab))
 
-        #expect(item?.runningIdentities.isEmpty == true)
-        #expect(item?.agents.first?.identities == [])
+        #expect(item.stateGlyph == .running)
+        #expect(item.runningIdentities.isEmpty)
+        #expect(item.agents == [.init(kind: .claude, state: .running, identities: [])])
     }
 
     /// A split tab running two conversations of one kind has one badge, with
@@ -426,24 +524,22 @@ struct PaneStripModelTests {
         let tab = try #require(fixture.session.tabs(in: container).first)
         let panes = tab.splitTree.allLeafIDs()
         try #require(panes.count == 2)
-        let older = Self.run("older", in: panes[0], startedAt: 0)
-        let newer = Self.run("newer", in: panes[1], startedAt: 60)
-        fixture.session.update(tab.id) { $0.agentBadges[.claude] = [panes[0]: older.badge, panes[1]: newer.badge] }
+        let newer = Self.run("newer", in: panes[0], startedAt: 60)
+        let older = Self.run("older", in: panes[1], startedAt: 0)
+        fixture.session.update(tab.id) { $0.agentBadges[.claude] = [panes[0]: newer.badge, panes[1]: older.badge] }
         fixture.attention.replaceRuntimes([older.runtime, newer.runtime], kind: .claude)
         await ChangesPanelActions.resolveRoot(window: fixture.window, stores: fixture.changes)
         let identities = fixture.conversationIdentities.identities(in: container)
 
-        let item = Self.strip(fixture).item(for: tab)
-
-        let key = TurnSummaryFixture.conversation("newer")
+        let item = try #require(Self.strip(fixture).item(for: tab))
+        let newerKey = TurnSummaryFixture.conversation("newer")
         let olderKey = TurnSummaryFixture.conversation("older")
-        #expect(item?.agents.count == 1)
-        #expect(item?.agents.first?.identities == [olderKey, key].compactMap { identities[$0] })
-        #expect(item?.agents.first?.identities.count == 2)
-        // The second pane's conversation still finds the tab: a card of
-        // either outlines it, each in its own color.
-        #expect(item?.runningIdentities == [olderKey: identities[olderKey], key: identities[key]].compactMapValues(\.self))
-        #expect(item?.runningIdentities.count == 2)
+        let newerColor = try #require(identities[newerKey])
+        let olderColor = try #require(identities[olderKey])
+        #expect(newerColor != olderColor)
+
+        #expect(item.agents == [.init(kind: .claude, state: .running, identities: [newerColor, olderColor])])
+        #expect(item.runningIdentities == [newerKey: newerColor, olderKey: olderColor])
     }
 
     /// A tab with only a shell, beside two running conversations, has no
@@ -455,15 +551,27 @@ struct PaneStripModelTests {
         fixture.session.openTab(container: container)
         let tabs = fixture.session.tabs(in: container)
         try #require(tabs.count == 3)
-        let first = try Self.run("a", in: #require(tabs[0].splitTree.allLeafIDs().first))
-        let second = try Self.run("b", in: #require(tabs[1].splitTree.allLeafIDs().first))
+        let firstPane = try #require(tabs[0].splitTree.allLeafIDs().first)
+        let secondPane = try #require(tabs[1].splitTree.allLeafIDs().first)
+        let first = Self.run("a", in: firstPane)
+        let second = Self.run("b", in: secondPane, startedAt: 60)
+        fixture.session.update(tabs[0].id) { $0.agentBadges[.claude] = [firstPane: first.badge] }
+        fixture.session.update(tabs[1].id) { $0.agentBadges[.claude] = [secondPane: second.badge] }
         fixture.attention.replaceRuntimes([first.runtime, second.runtime], kind: .claude)
         await ChangesPanelActions.resolveRoot(window: fixture.window, stores: fixture.changes)
 
-        let shell = Self.strip(fixture).item(for: tabs[2])
-
-        #expect(shell?.agents.isEmpty == true)
-        #expect(shell?.runningIdentities.isEmpty == true)
+        let strip = Self.strip(fixture)
+        let identities = fixture.conversationIdentities.identities(in: container)
+        let a = TurnSummaryFixture.conversation("a")
+        let b = TurnSummaryFixture.conversation("b")
+        let aColor = try #require(identities[a])
+        let bColor = try #require(identities[b])
+        #expect(aColor != bColor)
+        #expect(strip.item(for: tabs[0])?.agents == [.init(kind: .claude, state: .running, identities: [aColor])])
+        #expect(strip.item(for: tabs[1])?.agents == [.init(kind: .claude, state: .running, identities: [bColor])])
+        let shell = try #require(strip.item(for: tabs[2]))
+        #expect(shell.agents.isEmpty)
+        #expect(shell.runningIdentities.isEmpty)
     }
 
     /// A scratch tab has no cards to match, but its title still follows its
@@ -471,7 +579,7 @@ struct PaneStripModelTests {
     @Test func items_scratchSplitOfAgents_takesItsTitleOnceItsConversationHasAName() {
         let (session, tab, first) = WorkspaceSessionFixture.withLooseTab()
         let second = UUID()
-        let older = Self.run("older", in: first, startedAt: 0)
+        var older = Self.run("older", in: first, startedAt: 0)
         var newer = Self.run("newer", in: second, startedAt: 60)
         session.update(tab.id) { tab in
             tab.splitTree = tab.splitTree.insert(at: first, direction: .horizontal, newID: second).tree
@@ -490,8 +598,14 @@ struct PaneStripModelTests {
                 reviewTab: .none
             ).item(for: tab)?.title
         }
+        #expect(session.tab(tab.id)?.latestAgentSessionPaneID == second)
         #expect(title() == "alpha")
-        newer.badge.firstPrompt = "Fix the tests"
+
+        older = Self.run("older", in: first, startedAt: 0, firstPrompt: "Earlier task")
+        session.update(tab.id) { $0.agentBadges[.claude]?[first] = older.badge }
+        #expect(title() == "alpha")
+
+        newer = Self.run("newer", in: second, startedAt: 60, firstPrompt: "Fix the tests")
         session.update(tab.id) { $0.agentBadges[.claude]?[second] = newer.badge }
         #expect(title() == "Terminal's title")
     }

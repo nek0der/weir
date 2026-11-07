@@ -43,7 +43,8 @@ struct AgentProjectionAdapterTests {
         try AgentRecordFixtures.write(record, to: state)
 
         let intents = AgentResumeIntentStore(
-            directory: root.appendingPathComponent("resume-intents", isDirectory: true)
+            directory: root.appendingPathComponent("resume-intents", isDirectory: true),
+            writesFiles: writesFiles
         )
         let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
         let adapter = ProjectionFixture.adapter(
@@ -63,82 +64,82 @@ struct AgentProjectionAdapterTests {
         )
     }
 
-    @Test("a run an intent has claimed survives the sweep")
-    func resumeIntent_keepsTheRecordTheRestoreNeeds() throws {
+    @Test("a fresh intent protects a dead run from retirement", arguments: [false, true])
+    func resumeIntent_keepsTheRecordTheRestoreNeeds(hasIntent: Bool) throws {
         try withTempDir { root in
             let paneID = UUID()
             let harness = try harness(in: root, paneID: paneID)
-            try harness.intents.save(AgentResumeIntent(
-                runID: Self.run,
-                paneID: paneID,
-                sessionID: "session-1",
-                ownerRunID: nil,
-                pid: "4242",
-                createdAt: Date()
-            ))
+            let original = try Data(contentsOf: harness.recordURL)
+            if hasIntent {
+                try harness.intents.save(AgentResumeIntent(
+                    runID: Self.run,
+                    paneID: paneID,
+                    sessionID: "session-1",
+                    ownerRunID: nil,
+                    pid: "4242",
+                    createdAt: Date()
+                ))
+                try #require(harness.intents.record(runID: Self.run)?.paneID == paneID)
+            }
+            var passes = 0
+            harness.adapter.onProjectionApplied = { _ in passes += 1 }
 
             harness.adapter.bootstrap(into: harness.session, attention: AttentionState())
 
-            // The intent is the only evidence that Weir killed this run at
-            // quit rather than losing it. Retiring the record now would take
-            // away what the restore rebuilds from.
             #expect(harness.adapter.lastFailure == nil)
-            #expect(FileManager.default.fileExists(atPath: harness.recordURL.path))
+            #expect(passes == 1)
+            if hasIntent {
+                #expect(try Data(contentsOf: harness.recordURL) == original)
+                #expect(try Self.archivedRecords(in: harness.state).isEmpty)
+            } else {
+                #expect(!FileManager.default.fileExists(atPath: harness.recordURL.path))
+                #expect(try Self.archivedRecords(in: harness.state) == [original])
+            }
         }
     }
 
-    @Test("the same run with no intent is retired")
-    func withoutAnIntent_theDeadRunIsRetired() throws {
-        try withTempDir { root in
-            let harness = try harness(in: root, paneID: UUID())
-
-            harness.adapter.bootstrap(into: harness.session, attention: AttentionState())
-
-            // The contrast is the point: without this the case above would
-            // pass even if the sweep never ran.
-            #expect(harness.adapter.lastFailure == nil)
-            #expect(!FileManager.default.fileExists(atPath: harness.recordURL.path))
-        }
+    private static func archivedRecords(in state: URL) throws -> [Data] {
+        let retired = state.appendingPathComponent("retired", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: retired.path) else { return [] }
+        return try FileManager.default.contentsOfDirectory(at: retired, includingPropertiesForKeys: nil)
+            .map { try Data(contentsOf: $0) }
     }
 
-    @Test("a run that may not write leaves every record where it is")
+    @Test("an adapter without writes leaves real records and hints as they were")
     func anAdapterThatMayNotWrite_retiresNothing() throws {
-        // Demo mode: a pass keeps only the records of the panes it sees, and
-        // a demo window shows none of the person's.
         try withTempDir { root in
-            let harness = try harness(in: root, paneID: UUID(), writesFiles: false)
+            let pane = UUID()
+            let harness = try harness(in: root, paneID: pane, writesFiles: false)
+            let hints = root.appendingPathComponent("sessions")
+            try AgentRecordFixtures.write(AgentSessionHintFixture(
+                paneId: pane.uuidString, sessionId: "private-session", cwd: "/private/project",
+                updatedAt: "2026-09-14T12:00:00Z", runId: Self.run
+            ), to: hints)
+            let before = try Self.files(in: root)
+            let attention = AttentionState()
+            let originalTabs = harness.session.tabs
 
             harness.adapter.prepareForLaunch()
-            harness.adapter.bootstrap(into: harness.session, attention: AttentionState())
+            harness.adapter.bootstrap(into: harness.session, attention: attention)
             harness.adapter.refresh()
             harness.adapter.prepareForTermination()
 
-            #expect(FileManager.default.fileExists(atPath: harness.recordURL.path))
+            #expect(try Self.files(in: root) == before)
+            #expect(harness.session.tabs == originalTabs)
+            #expect(attention.allRuntimes.isEmpty)
         }
     }
 
-    @Test("a run that may not write creates no directory to watch")
-    func anAdapterThatMayNotWrite_watchesNothing() throws {
-        // Watching creates the directories, and these would be the person's.
-        try withTempDir { root in
-            let state = root.appendingPathComponent("agent-states", isDirectory: true)
-            let sessions = root.appendingPathComponent("sessions", isDirectory: true)
-            let adapter = AgentProjectionAdapter(
-                directories: ["claude": AgentDirectories(state: state, sessions: sessions, cwdEvents: nil)],
-                descriptors: AgentProviderRegistry.descriptors.filter { $0.key == "claude" },
-                resumeIntents: AgentResumeIntentStore(
-                    directory: root.appendingPathComponent("resume-intents", isDirectory: true),
-                    writesFiles: false
-                ),
-                writesFiles: false
-            )
-
-            adapter.startWatching()
-            defer { adapter.stopWatching() }
-
-            #expect(!FileManager.default.fileExists(atPath: state.path))
-            #expect(!FileManager.default.fileExists(atPath: sessions.path))
+    private static func files(in directory: URL) throws -> [String: Data] {
+        let manager = FileManager.default
+        var entries: [String: Data] = [:]
+        for entry in try manager.subpathsOfDirectory(atPath: directory.path) {
+            let url = directory.appendingPathComponent(entry)
+            var isDirectory: ObjCBool = false
+            try #require(manager.fileExists(atPath: url.path, isDirectory: &isDirectory))
+            entries[entry] = isDirectory.boolValue ? Data() : try Data(contentsOf: url)
         }
+        return entries
     }
 
     @Test("the first pass after launch lists the stop of a dead run nothing claimed, then retires it, hint and all")
@@ -185,8 +186,18 @@ struct AgentProjectionAdapterTests {
             // first pass, which lists the stop a live death would have
             // rather than retiring it before anyone saw it.
             #expect(adapter.lastFailure == nil)
-            #expect(FileManager.default.fileExists(atPath: recordURL.path))
-            #expect(FileManager.default.fileExists(atPath: hintURL.path))
+            let originalRecord = try Data(contentsOf: recordURL)
+            let originalHint = try Data(contentsOf: hintURL)
+            var stopSessions: [AgentSessionInfo] = []
+            var stopCalls = 0
+            adapter.onRunsExited = {
+                stopCalls += 1
+                #expect((try? Data(contentsOf: recordURL)) == originalRecord)
+                #expect((try? Data(contentsOf: hintURL)) == originalHint)
+                if let info = session.activeTab(in: session.primaryWindowID)?.agentSessions[.claude]?[pane] {
+                    stopSessions.append(info)
+                }
+            }
 
             adapter.bootstrap(into: session, attention: attention)
 
@@ -197,12 +208,24 @@ struct AgentProjectionAdapterTests {
             // from the candidates, and this run is the stop's to resume, not
             // the relaunch's. The pid is what decides, not the pane.
             #expect(adapter.lastFailure == nil)
-            #expect(attention.allRuntimes.map(\.badge.stopReason) == [AgentBadge.processExitedReason])
+            try #require(attention.allRuntimes.count == 1)
+            let runtime = try #require(attention.allRuntimes.first)
+            #expect(runtime.runID == Self.run)
+            #expect(runtime.kind == .claude)
+            #expect(runtime.paneIDs == [pane])
+            #expect(runtime.badge.stopReason == AgentBadge.processExitedReason)
+            let info = AgentSessionInfo(sessionId: "S", cwd: "/tmp")
+            #expect(stopCalls == 1)
+            #expect(stopSessions == [info])
             #expect(!FileManager.default.fileExists(atPath: hintURL.path))
             #expect(!FileManager.default.fileExists(atPath: recordURL.path))
-            let tab = session.activeTab(in: session.primaryWindowID)
-            #expect(tab?.agentSessions[.claude]?[pane]?.sessionId == "S")
-            #expect(tab?.agentResumeCandidates[pane] == nil)
+            let tab = try #require(session.activeTab(in: session.primaryWindowID))
+            #expect(tab.agentSessions[.claude]?[pane] == info)
+            #expect(tab.agentResumeCandidates[pane] == nil)
+
+            adapter.refresh()
+            #expect(adapter.lastFailure == nil)
+            #expect(stopCalls == 1)
         }
     }
 
@@ -266,114 +289,116 @@ struct AgentProjectionAdapterTests {
     @Test("an ended session's hint left at quit is kept from the next launch's rules, and deleted then")
     func aForgottenHint_leftAtQuit_isKeptAcrossARelaunch() throws {
         try withTempDir { root in
-            let state = root.appendingPathComponent("agent-states", isDirectory: true)
-            let sessions = root.appendingPathComponent("sessions", isDirectory: true)
-            for directory in [state, sessions] {
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            }
-            let (session, _, pane) = WorkspaceSessionFixture.withLooseTab()
-            let hint = AgentSessionHintFixture(
-                paneId: pane.uuidString,
-                sessionId: "S",
-                cwd: "/tmp",
-                updatedAt: "2026-09-14T12:00:00Z"
-            )
-            let hintURL = try sessions.appendingPathComponent(AgentRecordFixtures.hintFileName(pane.uuidString))
-            try AgentRecordFixtures.write(hint, to: sessions)
-            let fileURL = root.appendingPathComponent(AgentForgottenHintFile.fileName)
-            let forgotten = [AgentForgottenHint(provider: "claude", pane: pane, sessionID: "S")]
-
-            // The removal fails: the folder will not let the file go.
-            try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: sessions.path)
-            let quitting = ProjectionFixture.adapter(
-                provider: "claude", state: state, sessions: sessions, forgottenHintsURL: fileURL, processStatus: { _ in .dead }
-            )
-            quitting.forgetSession("S", of: .claude, inPane: pane)
-            quitting.prepareForTermination()
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: sessions.path)
-            #expect(quitting.forgottenHints == forgotten, "a failed removal is tried again, not settled")
-            #expect(FileManager.default.fileExists(atPath: hintURL.path))
-            #expect(AgentForgottenHintFile.read(fileURL).elements == forgotten)
-
-            // The next launch, with a hook holding the lock.
-            let relaunched = ProjectionFixture.adapter(
-                provider: "claude", state: state, sessions: sessions, forgottenHintsURL: fileURL, processStatus: { _ in .dead }
-            )
+            let fixture = try Self.forgottenHintFixture(in: root)
+            let quitting = fixture.adapter()
+            let relaunched: AgentProjectionAdapter
             do {
-                let held = try AgentRecordFixtures.HeldLock(on: hintURL)
+                let held = try AgentRecordFixtures.HeldLock(on: fixture.hintURL)
+                try withExtendedLifetime(held) { () throws in
+                    quitting.forgetSession("S", of: .claude, inPane: fixture.pane)
+                    quitting.prepareForTermination()
+                    #expect(quitting.forgottenHints == fixture.forgotten)
+                    #expect(try Data(contentsOf: fixture.hintURL) == fixture.hintBytes)
+                    #expect(AgentForgottenHintFile.read(fixture.queueURL).elements == fixture.forgotten)
+                }
+                relaunched = fixture.adapter()
                 withExtendedLifetime(held) {
-                    #expect(relaunched.forgottenHints == forgotten)
-                    relaunched.bootstrap(into: session, attention: AttentionState())
+                    #expect(relaunched.forgottenHints == fixture.forgotten)
+                    relaunched.bootstrap(into: fixture.session, attention: AttentionState())
                     #expect(relaunched.lastFailure == nil)
-                    #expect(session.activeTab(in: session.primaryWindowID)?.agentSessions[.claude]?[pane] == nil)
+                    let tab = fixture.session.activeTab(in: fixture.session.primaryWindowID)
+                    #expect(tab?.agentSessions[.claude]?[fixture.pane] == nil)
+                    #expect(tab?.agentResumeCandidates[fixture.pane] == nil)
+                    #expect(relaunched.forgottenHints == fixture.forgotten)
                 }
             }
 
             relaunched.refresh()
-            #expect(!FileManager.default.fileExists(atPath: hintURL.path))
+            #expect(relaunched.lastFailure == nil)
+            #expect(!FileManager.default.fileExists(atPath: fixture.hintURL.path))
             #expect(relaunched.forgottenHints.isEmpty)
-            #expect(!FileManager.default.fileExists(atPath: fileURL.path), "nothing waits: the file is gone")
+            #expect(!FileManager.default.fileExists(atPath: fixture.queueURL.path))
         }
     }
 
-    /// The ended session's hint stays (a hook holds its lock), and the
-    /// folder its file lives in will not take the write. The list does not
-    /// change again, but the write is tried again: by the next pass, and at
-    /// quit, so the next launch still keeps the session from the rules.
-    @Test("an ended session's hint whose save failed is saved by the next pass, and at quit")
-    func aForgottenHint_whoseSaveFailed_isSavedOnceTheFolderTakesIt() throws {
+    @Test(
+        "a failed forgotten-hint save is retried by the next pass or at quit",
+        .enabled(if: geteuid() != 0),
+        arguments: [false, true]
+    )
+    func aForgottenHint_whoseSaveFailed_isSavedOnceTheFolderTakesIt(retryAtQuit: Bool) throws {
         try withTempDir { root in
-            let state = root.appendingPathComponent("agent-states", isDirectory: true)
-            let sessions = root.appendingPathComponent("sessions", isDirectory: true)
-            let kept = root.appendingPathComponent("kept", isDirectory: true)
-            for directory in [state, sessions, kept] {
-                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            }
-            let (session, _, pane) = WorkspaceSessionFixture.withLooseTab()
-            let hint = AgentSessionHintFixture(
-                paneId: pane.uuidString,
-                sessionId: "S",
-                cwd: "/tmp",
-                updatedAt: "2026-09-14T12:00:00Z"
-            )
-            let hintURL = try sessions.appendingPathComponent(AgentRecordFixtures.hintFileName(pane.uuidString))
-            try AgentRecordFixtures.write(hint, to: sessions)
-            let forgotten = [AgentForgottenHint(provider: "claude", pane: pane, sessionID: "S")]
-            let held = try AgentRecordFixtures.HeldLock(on: hintURL)
+            let fixture = try Self.forgottenHintFixture(in: root)
+            let adapter = fixture.adapter()
+            adapter.bootstrap(into: fixture.session, attention: AttentionState())
+            let kept = fixture.queueURL.deletingLastPathComponent()
+            let probe = kept.appendingPathComponent("write-probe")
+            let manager = FileManager.default
+            let held = try AgentRecordFixtures.HeldLock(on: fixture.hintURL)
             defer { withExtendedLifetime(held) {} }
-            defer {
-                try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: kept.path)
+            defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: kept.path) }
+            try manager.setAttributes([.posixPermissions: 0o500], ofItemAtPath: kept.path)
+            #expect(throws: (any Error).self) { try Data("probe".utf8).write(to: probe, options: .atomic) }
+            try #require(!manager.fileExists(atPath: probe.path))
+
+            adapter.forgetSession("S", of: .claude, inPane: fixture.pane)
+
+            try #require(adapter.forgottenHints == fixture.forgotten)
+            try #require(!manager.fileExists(atPath: fixture.queueURL.path))
+            try #require(try Data(contentsOf: fixture.hintURL) == fixture.hintBytes)
+            try manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: kept.path)
+            try Data("probe".utf8).write(to: probe, options: .atomic)
+            try #require(try Data(contentsOf: probe) == Data("probe".utf8))
+
+            if retryAtQuit {
+                adapter.prepareForTermination()
+            } else {
+                adapter.refresh()
             }
 
-            // By the next pass.
-            let fileURL = kept.appendingPathComponent(AgentForgottenHintFile.fileName)
-            let adapter = ProjectionFixture.adapter(
-                provider: "claude", state: state, sessions: sessions, forgottenHintsURL: fileURL, processStatus: { _ in .dead }
-            )
-            adapter.bootstrap(into: session, attention: AttentionState())
-            try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: kept.path)
-            adapter.forgetSession("S", of: .claude, inPane: pane)
-            #expect(adapter.forgottenHints == forgotten)
-            #expect(!FileManager.default.fileExists(atPath: fileURL.path), "the folder would not take it")
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: kept.path)
-            adapter.refresh()
-            #expect(adapter.forgottenHints == forgotten, "the hook still holds the hint")
-            #expect(AgentForgottenHintFile.read(fileURL).elements == forgotten)
-
-            // At quit, with no pass between.
-            let quitURL = root.appendingPathComponent("quit", isDirectory: true)
-            try FileManager.default.createDirectory(at: quitURL, withIntermediateDirectories: true)
-            let quitFileURL = quitURL.appendingPathComponent(AgentForgottenHintFile.fileName)
-            let quitting = ProjectionFixture.adapter(
-                provider: "claude", state: state, sessions: sessions, forgottenHintsURL: quitFileURL, processStatus: { _ in .dead }
-            )
-            try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: quitURL.path)
-            quitting.forgetSession("S", of: .claude, inPane: pane)
-            #expect(!FileManager.default.fileExists(atPath: quitFileURL.path))
-            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: quitURL.path)
-            quitting.prepareForTermination()
-            #expect(AgentForgottenHintFile.read(quitFileURL).elements == forgotten)
+            #expect(adapter.forgottenHints == fixture.forgotten)
+            #expect(AgentForgottenHintFile.read(fixture.queueURL).elements == fixture.forgotten)
+            #expect(try Data(contentsOf: fixture.hintURL) == fixture.hintBytes)
         }
+    }
+
+    private struct ForgottenHintFixture {
+        let state: URL
+        let hints: URL
+        let hintURL: URL
+        let queueURL: URL
+        let pane: UUID
+        let session: WorkspaceSession
+        let hintBytes: Data
+
+        var forgotten: [AgentForgottenHint] {
+            [AgentForgottenHint(provider: "claude", pane: pane, sessionID: "S")]
+        }
+
+        @MainActor
+        func adapter() -> AgentProjectionAdapter {
+            ProjectionFixture.adapter(
+                provider: "claude", state: state, sessions: hints, forgottenHintsURL: queueURL, processStatus: { _ in .dead }
+            )
+        }
+    }
+
+    private static func forgottenHintFixture(in root: URL) throws -> ForgottenHintFixture {
+        let state = root.appendingPathComponent("agent-states", isDirectory: true)
+        let sessions = root.appendingPathComponent("sessions", isDirectory: true)
+        let kept = root.appendingPathComponent("kept", isDirectory: true)
+        for directory in [state, sessions, kept] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let (session, _, pane) = WorkspaceSessionFixture.withLooseTab()
+        let hintURL = try sessions.appendingPathComponent(AgentRecordFixtures.hintFileName(pane.uuidString))
+        try AgentRecordFixtures.write(AgentSessionHintFixture(
+            paneId: pane.uuidString, sessionId: "S", cwd: "/tmp", updatedAt: "2026-09-14T12:00:00Z"
+        ), to: sessions)
+        return try ForgottenHintFixture(
+            state: state, hints: sessions, hintURL: hintURL, queueURL: kept.appendingPathComponent(AgentForgottenHintFile.fileName),
+            pane: pane, session: session, hintBytes: Data(contentsOf: hintURL)
+        )
     }
 
     /// `~/.codex` linked to a dotfiles folder: the rules read the memory
@@ -518,90 +543,149 @@ struct AgentProjectionAdapterTests {
             let after = try #require(session.tab(tab.id))
             #expect(after.agentBadges[.claude] == [:])
             #expect(after.conversationName?.name == "Run sleep 15 with a timer")
+            #expect(after.conversationName?.conversationID == "S")
+            #expect(after.conversationName?.provider == .claude)
+            adapter.refresh()
+            #expect(adapter.lastFailure == nil)
+            #expect(session.tab(tab.id)?.conversationName == after.conversationName)
         }
     }
 
-    @Test("a lock file beside the worktree events is not read as an event")
+}
+
+@MainActor
+extension AgentProjectionAdapterTests {
+
+    // MARK: - Watchers and sweep cadence
+
+    @Test("a worktree event triggers exactly one refetch while neighboring temporary and lock files survive")
     func worktreeEvents_ignoreWhatIsNotAnEvent() throws {
         try withTempDir { root in
             let harness = try harness(in: root, paneID: UUID())
             let events = try AgentRecordFixtures.worktreeEvents(in: harness.state)
             try FileManager.default.createDirectory(at: events, withIntermediateDirectories: true)
-            // The first pass only takes note of what is already there, so the
-            // files have to arrive after it for this to reach the rule that
-            // consumes them.
+            var requested: [String] = []
+            harness.adapter.onGitSyncRequested = { requested.append($0) }
             harness.adapter.bootstrap(into: harness.session, attention: AttentionState())
 
-            let event = try "1757000000-1-a-create" + AgentRecordFixtures.layout().worktreeEventSuffix
-            let lock = try AgentRecordFixtures.lockURL(for: events.appendingPathComponent(event))
-            let planted: Set = [lock.lastPathComponent, ".\(event).tmp.42"]
-            for name in planted {
-                try Data("{}".utf8).write(to: events.appendingPathComponent(name))
+            let eventURL = try Self.writeWorktreeEvent(in: events)
+            let lock = try AgentRecordFixtures.lockURL(for: eventURL)
+            let temporary = events.appendingPathComponent(".\(eventURL.lastPathComponent).tmp.42")
+            let retained = [(lock, Data("lock bytes".utf8)), (temporary, Data("temporary bytes".utf8))]
+            for (file, bytes) in retained {
+                try bytes.write(to: file)
+            }
+
+            harness.adapter.refresh()
+
+            #expect(harness.adapter.lastFailure == nil)
+            #expect(requested == ["/example/repo"])
+            let left = try Set(FileManager.default.contentsOfDirectory(atPath: events.path))
+            #expect(left == Set(retained.map(\.0.lastPathComponent)))
+            for (file, bytes) in retained {
+                #expect(try Data(contentsOf: file) == bytes)
             }
             harness.adapter.refresh()
-
-            // Consuming either of these would delete it and, for the lock
-            // file, create another one under a longer name every pass. Compare
-            // the names rather than the count: deleting both and leaving two
-            // new lock files behind would keep the count the same.
-            #expect(harness.adapter.lastFailure == nil)
-            let left = try Set(FileManager.default.contentsOfDirectory(atPath: events.path))
-            #expect(left == planted, "left: \(left.sorted())")
+            #expect(requested == ["/example/repo"])
         }
     }
 
-    @Test("the sweep follows the records: a provider with none does not set the pace")
+    private static func writeWorktreeEvent(in events: URL) throws -> URL {
+        let name = try "1757000000-1-a-create" + AgentRecordFixtures.layout().worktreeEventSuffix
+        let url = events.appendingPathComponent(name)
+        try Data(#"{"repoRoot":"/example/repo","worktreePath":"/example/feature","branch":"feature"}"#.utf8)
+            .write(to: url, options: .atomic)
+        return url
+    }
+
+    @Test("only providers with records take part in the sweep cadence")
     func sweepInterval_followsTheRecordsThePassRead() throws {
         try withTempDir { root in
-            let harness = try harness(in: root, paneID: UUID())
+            let (session, _, pane) = WorkspaceSessionFixture.withLooseTab()
+            let claude = root.appendingPathComponent("claude-state")
+            let codex = root.appendingPathComponent("codex-state")
+            let directories = [
+                "claude": AgentDirectories(state: claude, sessions: root.appendingPathComponent("claude-hints"), cwdEvents: nil),
+                "codex": AgentDirectories(state: codex, sessions: root.appendingPathComponent("codex-hints"), cwdEvents: nil)
+            ]
+            let adapter = AgentProjectionAdapter(
+                directories: directories,
+                descriptors: AgentProviderRegistry.descriptors.filter { directories[$0.key] != nil },
+                resumeIntents: AgentResumeIntentStore(directory: root.appendingPathComponent("resume-intents")),
+                processStatus: { _ in .alive },
+                turnCollector: TurnGarbageCollector(sweep: ProjectionFixture.sweepsNothing)
+            )
+            let slow = olderRunRecord(paneID: pane, runID: Self.run, pid: "4242")
+            let fast = olderRunRecord(paneID: pane, runID: UUID().uuidString, pid: "4343")
+            try AgentRecordFixtures.write(slow, to: claude)
 
-            // The one record on disk is Claude's, so Claude's declared cadence
-            // is the one the sweep takes.
-            harness.adapter.bootstrap(into: harness.session, attention: AttentionState())
-            #expect(harness.adapter.lastFailure == nil)
-            #expect(harness.adapter.sweepInterval == 30)
+            adapter.bootstrap(into: session, attention: AttentionState())
+            #expect(adapter.lastFailure == nil)
+            #expect(adapter.sweepInterval == 30)
 
-            // That pass retired the record (its process is dead and nothing
-            // claimed it). With nothing left to ask about, there is no sweep
-            // to run until a hook writes again.
-            #expect(!FileManager.default.fileExists(atPath: harness.recordURL.path))
-            harness.adapter.refresh()
-            #expect(harness.adapter.sweepInterval == nil)
+            try AgentRecordFixtures.write(fast, to: codex)
+            adapter.refresh()
+            #expect(adapter.lastFailure == nil)
+            #expect(adapter.sweepInterval == 3)
+
+            try FileManager.default.removeItem(at: codex.appendingPathComponent(AgentRecordFixtures.recordFileName(fast.storageID)))
+            adapter.refresh()
+            #expect(adapter.lastFailure == nil)
+            #expect(adapter.sweepInterval == 30)
+
+            try FileManager.default.removeItem(at: claude.appendingPathComponent(AgentRecordFixtures.recordFileName(slow.storageID)))
+            adapter.refresh()
+            #expect(adapter.lastFailure == nil)
+            #expect(adapter.sweepInterval == nil)
         }
     }
 
-    @Test("watching a fresh install creates the directories the hooks write into")
-    func startWatching_createsTheDirectoriesThatDoNotExistYet() throws {
-        try withTempDir { root in
-            // Nothing has run an agent on this machine yet, so none of the
-            // record directories are there to open a descriptor on.
+    @Test("watching creates hook directories only when writes are enabled", arguments: [false, true])
+    func startWatching_createsTheDirectoriesThatDoNotExistYet(writesFiles: Bool) async throws {
+        try await withTempDir { root in
             let state = root.appendingPathComponent("codex-agent-states", isDirectory: true)
             let sessions = root.appendingPathComponent("codex-sessions", isDirectory: true)
-            // Kept out of the provider's state directory so the store's own
-            // setup does not create it before the watcher gets there.
+            let cwd = root.appendingPathComponent("codex-cwd-events", isDirectory: true)
+            let events = try AgentRecordFixtures.worktreeEvents(in: state)
+            let turns = try AgentRecordFixtures.turns(in: state)
+            let paths = [state, sessions, cwd, events, turns]
             let adapter = ProjectionFixture.adapter(
-                state: state,
-                sessions: sessions,
+                state: state, sessions: sessions, cwdEvents: cwd,
                 resumeIntents: AgentResumeIntentStore(
-                    directory: root.appendingPathComponent("resume-intents", isDirectory: true)
-                )
+                    directory: root.appendingPathComponent("resume-intents", isDirectory: true), writesFiles: writesFiles
+                ),
+                writesFiles: writesFiles
             )
-            #expect(!FileManager.default.fileExists(atPath: state.path))
+            let session = WorkspaceSession()
+            var requested: [String] = []
+            var applied = 0
+            adapter.onGitSyncRequested = { requested.append($0) }
+            adapter.onProjectionApplied = { _ in applied += 1 }
+            adapter.bootstrap(into: session)
+            try #require(paths.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
 
             adapter.startWatching()
             defer { adapter.stopWatching() }
 
-            for directory in try [
-                state,
-                sessions,
-                AgentRecordFixtures.worktreeEvents(in: state)
-            ] {
+            for directory in paths {
                 var isDirectory: ObjCBool = false
-                let exists = FileManager.default.fileExists(
-                    atPath: directory.path,
-                    isDirectory: &isDirectory
-                )
-                #expect(exists && isDirectory.boolValue, "missing: \(directory.path)")
+                let exists = FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory)
+                #expect(exists == writesFiles, "\(directory.path)")
+                if writesFiles {
+                    #expect(isDirectory.boolValue, "\(directory.path)")
+                }
+            }
+            if writesFiles {
+                // Let the catch-up pass finish before writing the event. The
+                // fixture has no runtime records to arm the sweep timer.
+                await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) { applied >= 2 }
+                try #require(applied >= 2)
+                try #require(adapter.sweepInterval == nil)
+                let event = try Self.writeWorktreeEvent(in: events)
+                await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) { !requested.isEmpty }
+                #expect(requested == ["/example/repo"])
+                #expect(!FileManager.default.fileExists(atPath: event.path))
+                #expect(adapter.lastFailure == nil)
             }
         }
     }
@@ -645,18 +729,29 @@ struct AgentProjectionAdapterTests {
                 runId: runID
             ), to: hints)
             let hintURL = try hints.appendingPathComponent(AgentRecordFixtures.hintFileName(paneID.uuidString))
-            let projection = ProjectionFixture.adapter(state: states, sessions: hints)
+            let recordURL = try states.appendingPathComponent(AgentRecordFixtures.recordFileName(runID))
+            let recordBytes = try Data(contentsOf: recordURL)
+            let hintBytes = try Data(contentsOf: hintURL)
+            let projection = ProjectionFixture.adapter(state: states, sessions: hints, processStatus: { _ in .dead })
+            var passes = 0
+            projection.onProjectionApplied = { _ in passes += 1 }
             do {
                 let held = try AgentRecordFixtures.HeldLock(on: hintURL)
-                withExtendedLifetime(held) {
+                try withExtendedLifetime(held) { () throws in
                     projection.bootstrap(into: session)
-                    #expect(AgentRecordFixtures.records(in: states).count == 1)
-                    #expect(AgentRecordFixtures.hint(forPaneID: paneID, in: hints) != nil)
+                    #expect(projection.lastFailure == nil)
+                    #expect(passes == 1)
+                    #expect(try Data(contentsOf: recordURL) == recordBytes)
+                    #expect(try Data(contentsOf: hintURL) == hintBytes)
+                    #expect(try Self.archivedRecords(in: states).isEmpty)
                 }
             }
             projection.refresh()
-            #expect(AgentRecordFixtures.records(in: states).isEmpty)
-            #expect(AgentRecordFixtures.hint(forPaneID: paneID, in: hints) == nil)
+            #expect(projection.lastFailure == nil)
+            #expect(passes == 2)
+            #expect(!FileManager.default.fileExists(atPath: recordURL.path))
+            #expect(!FileManager.default.fileExists(atPath: hintURL.path))
+            #expect(try Self.archivedRecords(in: states) == [recordBytes])
         }
     }
 
@@ -668,39 +763,57 @@ struct AgentProjectionAdapterTests {
         try withTempDir { directory in
             let (session, _, paneID) = WorkspaceSessionFixture.withLooseTab()
             let runID = UUID().uuidString
+            let sessionID = UUID().uuidString
             let states = directory.appendingPathComponent("states")
             let hints = directory.appendingPathComponent("sessions")
             try AgentRecordFixtures.write(olderRunRecord(paneID: paneID, runID: runID, pid: "12345"), to: states)
             try AgentRecordFixtures.write(AgentSessionHintFixture(
-                paneId: paneID.uuidString,
-                sessionId: UUID().uuidString,
-                cwd: directory.path,
-                updatedAt: "2026-09-09T00:00:00Z",
-                runId: runID
+                paneId: paneID.uuidString, sessionId: sessionID, cwd: directory.path,
+                updatedAt: "2026-09-09T00:00:00Z", runId: runID
             ), to: hints)
-            var status = AgentProcessStatus.alive
-            let intents = AgentResumeIntentStore(
-                directory: states.appendingPathComponent("resume-intents", isDirectory: true)
-            )
-            let projection = ProjectionFixture.adapter(
-                state: states, sessions: hints,
-                resumeIntents: intents, processStatus: { _ in status }
-            )
-            projection.bootstrap(into: session)
             let recordURL = try states.appendingPathComponent(AgentRecordFixtures.recordFileName(runID))
+            let hintURL = try hints.appendingPathComponent(AgentRecordFixtures.hintFileName(paneID.uuidString))
+            let recordBytes = try Data(contentsOf: recordURL)
+            let hintBytes = try Data(contentsOf: hintURL)
+            let intentDirectory = states.appendingPathComponent("resume-intents", isDirectory: true)
+            let intents = AgentResumeIntentStore(directory: intentDirectory)
+            let quitting = ProjectionFixture.adapter(
+                state: states, sessions: hints, resumeIntents: intents, processStatus: { _ in .alive }
+            )
+            quitting.bootstrap(into: session)
+            #expect(quitting.lastFailure == nil)
             do {
                 let held = try AgentRecordFixtures.HeldLock(on: recordURL)
-                withExtendedLifetime(held) {
-                    projection.prepareForTermination()
-                    #expect(intents.record(runID: runID) != nil)
-                    #expect(AgentRecordFixtures.records(in: states).first?.killedByWeirAt == nil)
+                try withExtendedLifetime(held) { () throws in
+                    quitting.prepareForTermination()
+                    let intent = try #require(intents.record(runID: runID))
+                    #expect(intent.runID == runID)
+                    #expect(intent.paneID == paneID)
+                    #expect(intent.sessionID == sessionID)
+                    #expect(intent.pid == "12345")
+                    #expect(try Data(contentsOf: recordURL) == recordBytes)
+                    #expect(try Data(contentsOf: hintURL) == hintBytes)
                 }
             }
-            status = .dead
-            projection.prepareForLaunch()
-            #expect(AgentRecordFixtures.hint(forPaneID: paneID, in: hints) != nil)
-            #expect(AgentRecordFixtures.records(in: states).first?.resumeAttemptedAt != nil)
-            #expect(intents.record(runID: runID) == nil)
+
+            let reopenedIntents = AgentResumeIntentStore(directory: intentDirectory)
+            let relaunched = ProjectionFixture.adapter(
+                state: states, sessions: hints, resumeIntents: reopenedIntents, processStatus: { _ in .dead }
+            )
+            try #require(reopenedIntents.record(runID: runID)?.sessionID == sessionID)
+            relaunched.prepareForLaunch()
+            #expect(relaunched.lastFailure == nil)
+            let marked = try #require(AgentRecordFixtures.records(in: states).first)
+            #expect(marked.storageID == runID)
+            #expect(marked.resumeAttemptedAt != nil)
+            #expect(try Data(contentsOf: hintURL) == hintBytes)
+            #expect(reopenedIntents.record(runID: runID) == nil)
+
+            relaunched.bootstrap(into: session)
+            #expect(relaunched.lastFailure == nil)
+            let tab = try #require(session.activeTab(in: session.primaryWindowID))
+            #expect(tab.agentSessions[.codex]?[paneID]?.sessionId == sessionID)
+            #expect(tab.agentResumeCandidates[paneID] == [.codex])
         }
     }
 

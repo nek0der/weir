@@ -32,34 +32,33 @@ struct BackgroundWorkTests {
 
     // MARK: - Projection
 
-    @Test func badge_readsEachCount_andAKindLeftOutAsZero() throws {
-        #expect(try Self.badge(#"{"shells":2,"subagents":1}"#).backgroundWork == BackgroundWork(shells: 2, subagents: 1, others: 0))
-        #expect(try Self.badge(#"{"others":3}"#).backgroundWork == BackgroundWork(shells: 0, subagents: 0, others: 3))
+    @Test(arguments: [
+        (nil, BackgroundWork?.none),
+        ("null", nil),
+        (#"{"shells":2,"subagents":1}"#, BackgroundWork(shells: 2, subagents: 1)),
+        (#"{"others":3}"#, BackgroundWork(others: 3)),
+        (#""two""#, nil),
+        ("[1,2]", nil),
+        ("7", nil),
+        ("{}", nil),
+        (#"{"shells":0}"#, nil),
+        (#"{"shells":"2"}"#, nil),
+        (#"{"shells":-1}"#, nil),
+        (#"{"shells":"2","subagents":1}"#, BackgroundWork(subagents: 1))
+    ])
+    func badge_readsValidCounts_andKeepsTheRestOfTheBadge(json: String?, work: BackgroundWork?) throws {
+        let badge = try Self.badge(json)
+        #expect(badge.backgroundWork == work, "\(json ?? "missing")")
+        #expect(badge.state == .finished)
     }
 
-    @Test func badge_withoutTheField_hasNoBackgroundWork() throws {
-        #expect(try Self.badge(nil).backgroundWork == nil)
-        #expect(try Self.badge("null").backgroundWork == nil)
-    }
-
-    /// A shape this build cannot read costs the sentence, never the badge.
-    @Test func badge_aShapeItCannotRead_costsTheWorkAlone() throws {
-        for shape in [#""two""#, "[1,2]", "7", "{}", #"{"shells":0}"#, #"{"shells":"2"}"#, #"{"shells":-1}"#] {
-            let badge = try Self.badge(shape)
-            #expect(badge.backgroundWork == nil, "\(shape)")
-            #expect(badge.state == .finished)
-        }
-        // One count of another type does not take the others with it.
-        #expect(try Self.badge(#"{"shells":"2","subagents":1}"#).backgroundWork == BackgroundWork(subagents: 1))
-    }
-
-    /// The badge is persisted with the session; a count left out reads as
-    /// zero, however the counts were spelled when it was written.
     @Test func persistedWork_readsAMissingCountAsZero() throws {
-        let work = try JSONDecoder().decode(BackgroundWork.self, from: Data(#"{"shells":1}"#.utf8))
-        #expect(work == BackgroundWork(shells: 1))
-        let written = try JSONEncoder().encode(BackgroundWork(subagents: 2))
-        #expect(try JSONDecoder().decode(BackgroundWork.self, from: written) == BackgroundWork(subagents: 2))
+        let restored = try Self.badge(#"{"shells":1}"#)
+        #expect(restored.backgroundWork == BackgroundWork(shells: 1))
+
+        let original = Self.badge(.finished, backgroundWork: BackgroundWork(subagents: 2))
+        let written = try JSONEncoder().encode(original)
+        #expect(try JSONDecoder().decode(AgentBadge.self, from: written) == original)
     }
 
     // MARK: - Decision bar
@@ -79,9 +78,10 @@ struct BackgroundWorkTests {
         #expect(japanese.text == "T3 · ファイルの変更なし · バックグラウンドでシェル 1 件が実行中")
     }
 
-    @Test func unread_saysWhatStillRuns_afterItsReceipt() {
+    @Test func unread_saysWhatStillRuns_afterItsReceipt() throws {
         let turn = UnreadTurn(turnID: TurnID("T6"), numbers: 6...6, changes: .changed(files: 2, added: 94, removed: 2))
-        let items = AttentionItem.testList([.unread(turn)], pane: Self.pane)
+        let items = Self.unreadItems(turn, runtime: "claude:run", provider: .claude)
+        let item = try #require(items.first)
         let work = BackgroundWork(shells: 2, subagents: 1)
         let input = DecisionBarContent.Input(items: items, agent: Self.resting, backgroundWork: Self.ofRun(work, of: items))
 
@@ -90,7 +90,8 @@ struct BackgroundWorkTests {
         #expect(bar.text == "2 files +94 −2 · 2 shells and 1 subagent still running in the background")
         #expect(bar.spokenText == "2 files +94 −2, 2 shells and 1 subagent still running in the background")
         #expect(bar.runs.map(\.text).joined() == bar.text)
-        #expect(bar.primaryAction != nil, "Mark as Viewed stays")
+        #expect(bar.primaryAction == .markReviewed(item.id, throughTurn: 6))
+        #expect(bar.runs.last == ReceiptRun(text: "2 shells and 1 subagent still running in the background", role: .plain))
 
         let japanese = Self.model(input, locale: Self.japanese)
         #expect(japanese.text.hasSuffix(" · バックグラウンドでシェル 2 件、サブエージェント 1 件が実行中"))
@@ -98,9 +99,10 @@ struct BackgroundWorkTests {
 
     /// A pane can hold two runs: the work one left is not said beside the
     /// other's unread turn.
-    @Test func unread_ofAnotherRun_doesNotSayIt() {
+    @Test(arguments: [AgentKind.claude, .codex])
+    func unread_ofAnotherRun_doesNotSayIt(provider: AgentKind) {
         let turn = UnreadTurn(turnID: TurnID("T2"), numbers: 2...2, changes: .changed(files: 1, added: 3, removed: 0))
-        let items = AttentionItem.testList([.unread(turn)], pane: Self.pane, provider: .codex)
+        let items = Self.unreadItems(turn, runtime: "\(provider.rawValue):reading", provider: provider)
         let input = DecisionBarContent.Input(
             items: items,
             agent: Self.resting,
@@ -109,7 +111,8 @@ struct BackgroundWorkTests {
         let bar = Self.model(input)
         #expect(bar.tag == "T2", "the unread turn is what the bar shows")
         #expect(bar.content.backgroundWork == nil)
-        #expect(!bar.text.contains("background"), "\(bar.text)")
+        #expect(bar.content.body == .unread(turn))
+        #expect(bar.text == "1 file +3 −0")
     }
 
     @Test func everyKind_isNamed_inOrder() {
@@ -138,40 +141,64 @@ struct BackgroundWorkTests {
     @Test func paneBar_readsTheWorkFromThePanesRun() throws {
         let (session, _, pane) = WorkspaceSessionFixture.withLooseTab()
         let conversation = TurnSummaryFixture.conversation
-        let turn = try TurnSummaryFixture.turn("t1", number: 4)
+        let otherConversation = TurnSummaryFixture.conversation("other")
+        let turn = try TurnSummaryFixture.turn("T4", number: 4)
+        var extras = TurnSummaryFixture.Extras()
+        extras.conversationID = "other"
+        let otherTurn = try TurnSummaryFixture.turn("T9", number: 9, extras: extras)
         func bar(_ work: BackgroundWork?) -> DecisionBarModel? {
             var badge = AgentBadge(state: .finished, updatedAt: Date())
             badge.backgroundWork = work
             let runtime = AgentRuntimePresentation.test(badge: badge, paneIDs: [pane], conversation: conversation)
+            let other = AgentRuntimePresentation.test(
+                runID: "other",
+                badge: Self.badge(.finished, backgroundWork: BackgroundWork(shells: 5)),
+                paneIDs: [UUID()],
+                conversation: otherConversation
+            )
             var sources = DecisionBarModel.Sources(
                 session: session,
                 window: ProjectWindowState(selection: session.primarySelection),
                 queue: AttentionQueue(),
-                runtimes: [runtime],
+                runtimes: [other, runtime],
                 approvals: ApprovalLedger(),
                 next: nil
             )
-            sources.history = [conversation: [turn]]
+            sources.history = [conversation: [turn], otherConversation: [otherTurn]]
             return DecisionBarModel(paneID: pane, sources: sources, locale: Self.english)
         }
         #expect(bar(BackgroundWork(subagents: 1))?.text == "T4 · No file changes · 1 subagent still running in the background")
         #expect(bar(nil)?.text == "T4 · No file changes")
+        #expect(bar(nil)?.content.backgroundWork == nil)
     }
 
     /// A request, a stop, or a line after something was done is what the
     /// person acts on; the work behind a finished turn is not said there.
-    @Test func onlyATurnsReceipt_saysIt() {
-        let approval = AttentionItem.testList([.approval(ApprovalFact.test())], pane: Self.pane)
-        let stop = AttentionItem.testList([.stop(.processExited)], pane: Self.pane)
-        for items in [approval, stop] {
-            // The work is the item's own run's, so only the body keeps it out.
+    @Test func onlyATurnsReceipt_saysIt() throws {
+        let fact = ApprovalFact.test()
+        let prompt = PromptWait(detail: "Allow edit?")
+        let approval = try #require(AttentionItem.testList([.approval(fact)], pane: Self.pane, filesRequestsByKey: true).first)
+        let cases: [(AttentionItem, DecisionBarContent.Body)] = [
+            (approval, .approval(provider: fact.provider, action: .other, answer: .card(heldUntil: fact.deadline))),
+            (.testPrompt(prompt, pane: Self.pane), .prompt(provider: .claude, wait: prompt)),
+            (.testStop(pane: Self.pane), .stopped(.processExited, resume: .unavailable))
+        ]
+        for (item, body) in cases {
+            let items = [item]
             let work = Self.ofRun(BackgroundWork(shells: 1), of: items)
             let bar = Self.model(.init(items: items, agent: Self.resting, backgroundWork: work))
+            #expect(bar.content.body == body)
+            #expect(bar.content.itemID == item.id)
             #expect(bar.content.backgroundWork == nil)
-            #expect(!bar.text.contains("background"), "\(bar.text)")
         }
-        let summary = Self.model(.init(agent: Self.resting, backgroundWork: Self.ofRun(BackgroundWork(shells: 1))))
-        #expect(summary.content.backgroundWork == nil, "no turn to say it after")
+
+        let work = Self.ofRun(BackgroundWork(shells: 1))
+        let summary = Self.model(.init(agent: Self.resting, backgroundWork: work))
+        #expect(summary.content.body == .summary(.idle))
+        #expect(summary.content.backgroundWork == nil)
+        let done = Self.model(.init(agent: Self.resting, done: .init(result: .answeredInTerminal, next: nil), backgroundWork: work))
+        #expect(done.content.body == .done(.answeredInTerminal, next: nil))
+        #expect(done.content.backgroundWork == nil)
     }
 
     // MARK: - Work after a turn
@@ -228,31 +255,36 @@ struct BackgroundWorkTests {
         provider: .claude, state: .finished, detail: nil, backgroundWork: BackgroundWork(shells: 1), runtimeID: "claude:run"
     )
     private static let inATurn = SessionRowFact.Agent(provider: .codex, state: .running, detail: "Edit")
-    private static let unreadTurn = AttentionItemKind.unread(UnreadTurn(
+    private static let unreadTurn = UnreadTurn(
         turnID: TurnID("T2"), numbers: 2...2, changes: .changed(files: 1, added: 3, removed: 0)
-    ))
+    )
 
-    /// The unread turn of `runtimeID`'s run in the pane.
-    private static func unread(of runtimeID: String) -> [AttentionItem] {
+    private static func unreadItems(_ turn: UnreadTurn, runtime: String, provider: AgentKind) -> [AttentionItem] {
         var queue = AttentionQueue()
         queue.insert(
-            id: .stop(EpisodeKey(origin: .runtime(runtimeID), episodeToken: "1")),
-            kind: unreadTurn,
-            subject: .runtime(id: runtimeID, provider: .claude, paneID: pane, tabID: nil, projectID: nil),
+            id: .unread(turn.turnID),
+            kind: .unread(turn),
+            subject: .runtime(id: runtime, provider: provider, paneID: pane, tabID: nil, projectID: nil),
             arrivedAt: Date(timeIntervalSince1970: 0)
         )
         return queue.items
     }
 
+    /// The unread turn of Claude's run in the pane.
+    private static func unread(of runtimeID: String) -> [AttentionItem] {
+        unreadItems(unreadTurn, runtime: runtimeID, provider: .claude)
+    }
+
     /// Work outside a turn (running with no turn start) is the agent's own
     /// work in the foreground, such as a stop hook's continuation: a
     /// running turn, as before.
-    @Test func row_workOutsideATurn_isRunning() {
-        let runtime = AgentRuntimePresentation.test(badge: Self.badge(.running))
+    @Test(arguments: [(AgentState.running, SessionRowFact.Fact.running(nil)), (.compacting, .compacting)])
+    func row_workOutsideATurnAndCompacting_areRunning(state: AgentState, fact: SessionRowFact.Fact) {
+        let runtime = AgentRuntimePresentation.test(badge: Self.badge(state))
         let agent = SessionRowFact.Agent(runtime: runtime)
         #expect(!agent.isWorkingAfterTurn)
         let row = SessionRowFact.make(.init(agents: [agent]))
-        #expect(row.glyph == .running)
+        #expect(row == SessionRowFact(glyph: .running, fact: fact, badge: .agent(.claude)))
         #expect(PaneHeaderRules.mark(paneItems: [], shown: [runtime])?.glyph == .running)
     }
 
@@ -278,26 +310,27 @@ struct BackgroundWorkTests {
     /// An unread turn wears the unread mark of work only when its own run
     /// left the work; another run's work in the row does not mark it.
     @Test func row_unreadTurn_isMarkedWithItsOwnRunsWorkOnly() {
-        let own = SessionRowFact.make(.init(items: Self.unread(of: "claude:run"), agents: [Self.leftRunning]))
-        #expect(own.glyph == .unreadWorkingAfterTurn)
-        #expect(own.fact == .unread(.changed(files: 1, added: 3, removed: 0)))
+        let receipt = SessionRowFact.Fact.unread(.changed(files: 1, added: 3, removed: 0))
+        let sameProvider = Self.agent(.finished, runtimeID: "claude:other")
+        let cases: [(SessionRowFact.Agent, SessionRowFact.Glyph)] = [
+            (Self.leftRunning, .unreadWorkingAfterTurn),
+            (Self.agent(.finished, BackgroundWork(shells: 1), runtimeID: "claude:another"), .unread),
+            (Self.agent(.finished, BackgroundWork(shells: 1)), .unread)
+        ]
+        for (agent, glyph) in cases {
+            let row = SessionRowFact.make(.init(items: Self.unread(of: "claude:run"), agents: [sameProvider, agent]))
+            #expect(row == SessionRowFact(glyph: glyph, fact: receipt, badge: .agent(.claude)))
+        }
 
-        let other = SessionRowFact.make(.init(
-            items: Self.unread(of: "codex:other"),
-            agents: [Self.leftRunning, Self.agent(.finished, provider: .codex, runtimeID: "codex:other")]
-        ))
-        #expect(other.glyph == .unread)
+        let codex = Self.unreadItems(Self.unreadTurn, runtime: "codex:other", provider: .codex)
+        let other = Self.agent(.finished, provider: .codex, runtimeID: "codex:other")
+        let crossProvider = SessionRowFact.make(.init(items: codex, agents: [Self.leftRunning, other]))
+        #expect(crossProvider == SessionRowFact(glyph: .unread, fact: receipt, badge: .agent(.codex)))
 
-        // An agent known only by its pane's badge names no run.
-        let unnamed = Self.agent(.finished, BackgroundWork(shells: 1))
-        #expect(SessionRowFact.make(.init(items: Self.unread(of: "claude:run"), agents: [unnamed])).glyph == .unread)
-
-        // A wait still goes first.
-        let waiting = SessionRowFact.make(.init(
-            items: AttentionItem.testList([.approval(ApprovalFact.test())], pane: Self.pane),
-            agents: [Self.leftRunning]
-        ))
+        let approval = AttentionItem.testList([.approval(ApprovalFact.test())], pane: Self.pane, filesRequestsByKey: true)
+        let waiting = SessionRowFact.make(.init(items: Self.unread(of: "claude:run") + approval, agents: [Self.leftRunning]))
         #expect(waiting.glyph == .needsApproval)
+        #expect(waiting.badge == .agent(.claude))
     }
 
     /// A turn in progress goes before work left running, whichever comes
@@ -325,13 +358,6 @@ struct BackgroundWorkTests {
         #expect(row.badge == .agent(.claude))
         #expect(SessionRowFact.leadAgentIndex(of: [resting]) == 0)
         #expect(SessionRowFact.leadAgentIndex(of: []) == nil)
-    }
-
-    /// Compacting is a running turn as before.
-    @Test func row_compacting_staysRunning() {
-        let row = SessionRowFact.make(.init(agents: [Self.agent(.compacting)]))
-        #expect(row.glyph == .running)
-        #expect(row.fact == .compacting)
     }
 
     /// The pane's header and its tab mark work left running too: a tab

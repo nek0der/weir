@@ -22,14 +22,17 @@ struct SetupCommandsDraftTests {
             [BootstrapItem].self,
             from: JSONEncoder().encode(SetupCommandsDraft.items(from: text, previous: steps))
         )
-        #expect(saved[1].timeout == 900)
-        #expect(saved[1].cwd == "services/db")
+        #expect(saved == steps)
     }
 
     @Test func aDetailedLineEditedInPlace_keepsItsTimeoutAndCwd() {
         let edited = SetupCommandsDraft.items(from: "npm ci\nmake db-seed\ncp .env.example .env", previous: steps)
 
-        #expect(edited[1] == .detailed(BootstrapDetail(cmd: "make db-seed", timeout: 900, cwd: "services/db")))
+        #expect(edited == [
+            .shorthand("npm ci"),
+            .detailed(BootstrapDetail(cmd: "make db-seed", timeout: 900, cwd: "services/db")),
+            .shorthand("cp .env.example .env")
+        ])
     }
 
     @Test func aDetailedLineMoved_keepsItsSettings_andNewLinesArePlain() {
@@ -52,11 +55,12 @@ struct SetupCommandsDraftTests {
         #expect(SetupCommandsDraft.droppedDetailCount(before: steps, after: steps) == 0)
     }
 
-    @Test func theNoteUnderTheEditor_namesEachLinesSettings() {
+    @Test func theNoteUnderTheEditor_namesEachLinesSettings() throws {
         let details = SetupCommandsDraft.details(of: steps)
 
         #expect(details == [.init(line: 2, timeoutSeconds: 900, cwd: "services/db")])
-        let english = SetupCommandsDraft.description(of: details[0]).resolved(in: Locale(identifier: "en"))
+        let detail = try #require(details.first)
+        let english = SetupCommandsDraft.description(of: detail).resolved(in: Locale(identifier: "en"))
         #expect(english == "Line 2: times out after 900 s, runs in services/db")
     }
 }

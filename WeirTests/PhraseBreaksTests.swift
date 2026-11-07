@@ -49,8 +49,9 @@ struct PhraseBreaksTests {
         #expect(joined == ["変更を", "追跡できません。"].map { $0.map(String.init).joined(separator: PhraseBreaks.wordJoiner) }.joined())
     }
 
-    @Test func english_isLeftAsItIs() {
-        let text = EmptyState.noNotifications.description(locale: Self.english) ?? ""
+    @Test func english_isLeftAsItIs() throws {
+        let text = try #require(EmptyState.noNotifications.description(locale: Self.english))
+        #expect(!text.isEmpty)
         #expect(PhraseBreaks.joined(text, locale: Self.english) == text)
     }
 }

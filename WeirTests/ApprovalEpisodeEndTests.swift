@@ -100,9 +100,11 @@ struct ApprovalEpisodeEndTests {
 
     // MARK: - A request that left the pending list
 
-    @Test func aRequestWhosePaneIsGone_leavesTheLedgerAtRelease() {
+    @Test(arguments: [false, true])
+    func aRequestWithoutAPane_leavesTheLedgerAtRelease(isScopedQuestion: Bool) {
         let store = ApprovalPresentationStore()
-        let request = ApprovalPresentation.test(sessionID: "nowhere")
+        let operation = isScopedQuestion ? AgentQuestionTurnCompletion.operationIDPrefix + "turn" : nil
+        let request = ApprovalPresentation.test(sessionID: "nowhere", operationID: operation)
         store.receive([request])
         store.receive([], epoch: request.epoch, terminals: [request.id: .resolved(.delegate)])
         #expect(store.ledger.entry(for: request) != nil)
@@ -112,11 +114,17 @@ struct ApprovalEpisodeEndTests {
         #expect(store.ledger.entry(for: request) == nil)
     }
 
-    @Test func aHandedOverRequest_staysWhileItsTurnRuns_andLeavesWhenItIsOver() {
+    @Test(arguments: [false, true])
+    func aHandedOverRequest_staysWhileItsTurnRuns_andLeavesWhenItIsOver(staysDisconnected: Bool) {
         let fixture = Self.storeWithEndedRequest(state: .running, terminal: .resolved(.delegate))
 
         fixture.store.releaseStaleApprovals(in: fixture.session)
         #expect(fixture.store.ledger.entry(for: fixture.request)?.state == .handedToTerminal(since: Self.now))
+        if staysDisconnected {
+            fixture.store.stop()
+            #expect(fixture.store.ledger.epoch == nil)
+            #expect(fixture.isKeptAfterAPass())
+        }
 
         fixture.agent(.finished, runStartedAt: nil)
         #expect(!fixture.isKeptAfterAPass())
@@ -144,7 +152,8 @@ struct ApprovalEpisodeEndTests {
         #expect(fixture.isKeptAfterAPass())
 
         fixture.agent(.running, runStartedAt: Self.ownPrompt)
-        fixture.store.releaseStaleApprovals(in: fixture.session)
+        #expect(fixture.isKeptAfterAPass())
+        #expect(fixture.store.ledger.entry(for: fixture.request)?.state == .handedToTerminal(since: Self.now))
         fixture.agent(.finished, runStartedAt: nil)
         #expect(!fixture.isKeptAfterAPass())
     }
@@ -166,25 +175,16 @@ struct ApprovalEpisodeEndTests {
         #expect(fixture.isKeptAfterAPass())
     }
 
-    @Test func aHandedOverRequest_leavesWhenALaterPromptStartsAnotherTurn() {
-        // "No" in Claude's dialog sends no hook: the run stays running, and
-        // the next prompt is the first sign the request's turn is over.
-        let fixture = Self.storeWithEndedRequest(state: .running, runStartedAt: Self.ownPrompt, terminal: .resolved(.delegate))
-        #expect(fixture.isKeptAfterAPass())
-
-        fixture.agent(.running, runStartedAt: Self.laterPrompt)
-
-        #expect(!fixture.isKeptAfterAPass())
-    }
-
-    /// A request our clock or the broker timed out (`.expired`), and one
-    /// whose record the broker lost (`nil`).
-    @Test(arguments: [BrokerTerminal.expired, nil])
-    func aTimedOutOrLostRequest_staysThroughItsTurn_andLeavesWhenALaterPromptStartsAnotherTurn(
-        terminal: BrokerTerminal?
-    ) {
+    /// An expired, lost or delegated request stays with its turn. A later
+    /// prompt is evidence that turn ended, even without a finished badge.
+    @Test(arguments: [BrokerTerminal.expired, nil, .resolved(.delegate)])
+    func aRequestLeftToThePrompt_staysThroughItsTurn_untilALaterPrompt(terminal: BrokerTerminal?) {
         let fixture = Self.storeWithEndedRequest(state: .running, runStartedAt: Self.ownPrompt, terminal: terminal)
-        let expected: ApprovalRequestState = terminal == nil ? .unknownResult : .timedOut
+        let expected: ApprovalRequestState = switch terminal {
+        case .expired: .timedOut
+        case .resolved(.delegate): .handedToTerminal(since: Self.now)
+        default: .unknownResult
+        }
         fixture.store.releaseStaleApprovals(in: fixture.session)
         #expect(fixture.store.ledger.entry(for: fixture.request)?.state == expected)
 
@@ -215,10 +215,21 @@ struct ApprovalEpisodeEndTests {
     /// turn ending before it left the list may be another prompt's, and the
     /// run's next prompt does not end it either; the turn that ran after it
     /// left the list does, whether the TUI took it or the broker timed it out.
-    @Test(arguments: [BrokerTerminal.resolved(.delegate), .expired])
-    func aScopedQuestion_endsOnlyWithATurnThatRanAfterIt(terminal: BrokerTerminal) {
+    @Test(arguments: [BrokerTerminal.resolved(.delegate), .expired], [false, true])
+    func aScopedQuestion_endsOnlyWithATurnThatRanAfterIt(terminal: BrokerTerminal, sawRunningWhilePending: Bool) {
         let operation = AgentQuestionTurnCompletion.operationIDPrefix + "turn"
-        let fixture = Self.storeWithEndedRequest(state: .finished, terminal: terminal, operationID: operation)
+        let (session, pane) = Self.claudePane(sawRunningWhilePending ? .running : .finished)
+        let request = ApprovalPresentation.test(sessionID: "session", operationID: operation)
+        let store = Self.pendingStore(request, seenAt: Self.seenAt)
+        let fixture = EndedRequest(store: store, session: session, request: request, paneID: pane)
+        if sawRunningWhilePending {
+            #expect(fixture.isKeptAfterAPass())
+            #expect(store.pending.map(\.id) == [request.id])
+            fixture.agent(.finished, runStartedAt: nil)
+        }
+        store.apply(.test(pending: [], terminals: [request.id: terminal]), epoch: request.epoch, now: Self.now, seenAt: Self.seenAt)
+        let expected: ApprovalRequestState = terminal == .expired ? .timedOut : .handedToTerminal(since: Self.now)
+        #expect(store.ledger.entry(for: request)?.state == expected)
         #expect(fixture.isKeptAfterAPass())
 
         fixture.agent(.running, runStartedAt: Self.ownPrompt)
@@ -230,14 +241,11 @@ struct ApprovalEpisodeEndTests {
         #expect(!fixture.isKeptAfterAPass())
     }
 
-    @Test func aScopedQuestion_endsWhenSettledOrWhenItsPaneIsGone() {
+    @Test func aScopedQuestion_leavesOnceTheBrokerSettlesIt() {
         let operation = AgentQuestionTurnCompletion.operationIDPrefix + "turn"
         let settled = Self.storeWithEndedRequest(state: .running, terminal: .resolved(.allowOnce), operationID: operation)
+        #expect(settled.store.ledger.entry(for: settled.request)?.state == .answered(.allowOnce))
         #expect(!settled.isKeptAfterAPass())
-
-        let handed = Self.storeWithEndedRequest(state: .running, terminal: .resolved(.delegate), operationID: operation)
-        handed.store.releaseStaleApprovals(in: WorkspaceSession())
-        #expect(handed.store.ledger.entry(for: handed.request) == nil)
     }
 
     // MARK: - The release
@@ -298,9 +306,14 @@ struct ApprovalEpisodeEndTests {
         // not send it again. Calling without a suspension point in between
         // keeps the first decision in flight regardless of scheduling.
         store.releaseStaleApprovals(in: session)
+        #expect(store.resolvingIDs == [request.id])
         await recorded.waitForCount(1)
         await store.waitUntilResolved(request)
-        #expect(await recorded.entries.map(\.resolution) == [.delegate])
+        let decisions = await recorded.entries
+        #expect(decisions.map(\.id) == [request.id])
+        #expect(decisions.map(\.resolution) == [.delegate])
+        #expect(store.resolvingIDs.isEmpty)
+        #expect(store.ledger.entry(for: request) == nil)
     }
 
     /// How the app can lose its subscription while a decision is on its way.
@@ -313,8 +326,9 @@ struct ApprovalEpisodeEndTests {
     /// landed. Until its send returns, the turn's end must not release the
     /// request, or the agent would get a hand-over the person never asked for.
     @Test(arguments: Interruption.allCases)
-    func anInterruptionDuringThePersonsSend_releasesNothing(_ interruption: Interruption) async {
+    func anInterruptionDuringThePersonsSend_releasesNothing(_ interruption: Interruption) async throws {
         let gate = Gate<Void>()
+        defer { gate.open() }
         let recorded = DecisionRecorder()
         let store = ApprovalPresentationStore(decisionSender: { approval, resolution in
             await recorded.append(approval.id, resolution)
@@ -325,7 +339,14 @@ struct ApprovalEpisodeEndTests {
         store.receive([request])
         store.releaseStaleApprovals(in: session)
         store.resolve(request, .allowOnce)
-        await gate.waitUntilRequested()
+        await pollUntil { gate.requests == 1 }
+        try #require(gate.requests == 1)
+        let sending = try #require(store.ledger.entry(for: request)?.state)
+        guard case .sending(.allowOnce, _) = sending else {
+            Issue.record("Expected the original decision to remain in flight")
+            return
+        }
+        try #require(store.resolvingIDs == [request.id])
 
         switch interruption {
         case .droppedConnection: store.connectionDidDrop()
@@ -333,23 +354,23 @@ struct ApprovalEpisodeEndTests {
         }
         // The broker has not taken the answer yet, so the next subscription
         // still lists the request, and its turn ends meanwhile.
+        #expect(store.resolvingIDs == [request.id])
         store.receive([request])
         Self.move(session, paneID, to: .finished)
         store.releaseStaleApprovals(in: session)
+        #expect(store.pending.map(\.id) == [request.id])
+        #expect(store.resolvingIDs == [request.id])
+        #expect(store.ledger.entry(for: request)?.state == sending)
 
         gate.open()
         await store.waitUntilResolved(request)
-        #expect(await recorded.entries.map(\.resolution) == [.allowOnce])
-    }
-
-    @Test func aReleaseThatSucceeds_endsTheEpisode() async {
-        let releasing = Self.releasingStore { _, _ in }
-        let (store, request) = (releasing.store, releasing.request)
-
-        store.releaseStaleApprovals(in: releasing.session)
-        await store.waitUntilResolved(request)
-
-        #expect(store.ledger.entry(for: request) == nil)
+        #expect(store.resolvingIDs.isEmpty)
+        #expect(store.ledger.entry(for: request)?.state == .answered(.allowOnce))
+        store.releaseStaleApprovals(in: session)
+        #expect(store.resolvingIDs.isEmpty)
+        let sent = await recorded.entries
+        #expect(sent.map(\.id) == [request.id])
+        #expect(sent.map(\.resolution) == [.allowOnce])
     }
 
     /// Where the release reads the request's turn: the run whose hooks
@@ -412,9 +433,15 @@ struct ApprovalEpisodeEndTests {
         store.receive([request])
         store.releaseStaleApprovals(in: session)
 
-        store.resolve(request, .answer(["Which color?": "Red"]))
+        let answer = ApprovalResolution.answer(["Which color?": "Red"])
+        store.resolve(request, answer)
         await recorded.waitForCount(1)
         await store.waitUntilResolved(request)
+        #expect(store.ledger.entry(for: request)?.state == .answered(answer))
+        #expect(store.pending.map(\.id) == [request.id])
+        let sent = await recorded.entries
+        #expect(sent.map(\.id) == [request.id])
+        #expect(sent.map(\.resolution) == [answer])
 
         // The turn ends before the broker projection drops the answered
         // request; a late `delegate` would be rejected as already terminal.
@@ -500,8 +527,8 @@ struct ApprovalEpisodeEndTests {
     @Test(arguments: ReleaseSetback.allCases)
     func aReleaseThatDoesNotGoThrough_isNeitherReportedNorRetried(setback: ReleaseSetback) async {
         let sent = DecisionRecorder()
-        let releasing = Self.releasingStore { _, _ in
-            await sent.next()
+        let releasing = Self.releasingStore { request, resolution in
+            await sent.append(request.id, resolution)
             throw setback.error
         }
         let (store, request) = (releasing.store, releasing.request)
@@ -513,8 +540,10 @@ struct ApprovalEpisodeEndTests {
 
         store.releaseStaleApprovals(in: releasing.session)
         #expect(store.resolvingIDs.isEmpty)
-        #expect(await sent.count == 1)
-        #expect((store.ledger.entry(for: request) == nil) == (setback != .failed))
+        let decisions = await sent.entries
+        #expect(decisions.map(\.id) == [request.id])
+        #expect(decisions.map(\.resolution) == [.delegate])
+        #expect(store.ledger.entry(for: request)?.state == (setback == .failed ? .held : nil))
     }
 }
 

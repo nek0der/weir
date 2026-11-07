@@ -15,9 +15,10 @@ struct AllProjectsModelTests {
         project: String = "weir",
         branch: String? = "main"
     ) -> AllProjectsModel.Card {
-        AllProjectsModel.Card(
-            id: .project(UUID()),
-            projectID: UUID(),
+        let projectID = UUID()
+        return AllProjectsModel.Card(
+            id: .project(projectID),
+            projectID: projectID,
             projectName: project,
             paletteIndex: nil,
             branch: branch,
@@ -104,18 +105,22 @@ struct AllProjectsModelTests {
     }
 
     @Test func cards_fallIntoTheThreeLayersOfState() {
+        var pullRequest = Self.card("pull request")
+        pullRequest.pullRequest = .init(number: 17, state: .open, isDraft: false)
         let cards = [
             Self.card("idle"), Self.card("question", glyph: .needsAnswer), Self.card("running", glyph: .running),
-            Self.card("stopped", glyph: .stopped), Self.card("unread", glyph: .unread), Self.card("pr"),
+            Self.card("stopped", glyph: .stopped), Self.card("unread", glyph: .unread), pullRequest,
+            Self.card("background work", glyph: .workingAfterTurn),
+            Self.card("unread background work", glyph: .unreadWorkingAfterTurn),
             Self.card("shell", glyph: .shell), Self.card("unknown", glyph: .unknown), Self.card("approval", glyph: .needsApproval)
         ]
 
         let model = AllProjectsModel(cards: cards, query: "", attentionCount: 7)
 
         #expect(model.groups.map(\.section) == [.needsAttention, .running, .idle])
-        #expect(model.groups[0].cards.map(\.name) == ["question", "stopped", "unread", "approval"])
+        #expect(model.groups[0].cards.map(\.name) == ["question", "stopped", "unread", "unread background work", "approval"])
         #expect(model.groups[1].cards.map(\.name) == ["running"])
-        #expect(model.groups[2].cards.map(\.name) == ["idle", "pr", "shell", "unknown"])
+        #expect(model.groups[2].cards.map(\.name) == ["idle", "pull request", "background work", "shell", "unknown"])
         // The title bar's number, and the running sessions shown.
         #expect(model.attentionCount == 7)
         #expect(model.runningCount == 1)
@@ -186,17 +191,23 @@ struct AllProjectsModelTests {
         #expect(AllProjectsModel(cards: cards, query: "SITE", attentionCount: 0).cards.map(\.name) == ["Pricing copy"])
         #expect(AllProjectsModel(cards: cards, query: "feat/pri", attentionCount: 0).cards.map(\.name) == ["Pricing copy"])
         #expect(AllProjectsModel(cards: cards, query: "weir ssh", attentionCount: 0).cards.map(\.name) == ["ssh"])
+        #expect(AllProjectsModel(cards: cards, query: "site ssh", attentionCount: 0).cards.isEmpty)
         #expect(AllProjectsModel(cards: cards, query: "  ", attentionCount: 0).cards.count == 2)
     }
 
     @Test func aFilterNothingMatches_saysSo_andNoCardsSaysNoneIsOpen() {
-        let none = AllProjectsModel(cards: [Self.card("ssh")], query: "zzz", attentionCount: 0)
+        let running = Self.card("ssh", glyph: .running)
+        let none = AllProjectsModel(cards: [running], query: "zzz", attentionCount: 2)
         let unfiltered = AllProjectsModel(cards: [], query: "", attentionCount: 0)
-        let shown = AllProjectsModel(cards: [Self.card("ssh")], query: "", attentionCount: 0)
+        let shown = AllProjectsModel(cards: [running], query: "", attentionCount: 2)
         let nothingAdded = AllProjectsModel(cards: [], query: "", attentionCount: 0, hasProjects: false)
 
         #expect(none.groups.isEmpty)
         #expect(none.emptyState == .noMatchingWorktrees)
+        #expect(none.runningCount == 0)
+        #expect(shown.runningCount == 1)
+        #expect(none.attentionCount == 2)
+        #expect(shown.attentionCount == 2)
         // The sheet lists only worktrees with a tab open or an item, so
         // with no card it says none is open, not that there is none.
         #expect(unfiltered.emptyState == .noOpenWorktrees)
@@ -221,8 +232,9 @@ struct AllProjectsModelTests {
         selection.reconcile(with: [Self.card("b"), moved])
 
         #expect(selection.selectedID == card.id)
-        selection.reconcile(with: [Self.card("c")])
-        #expect(selection.selectedID != card.id)
+        let first = Self.card("c")
+        selection.reconcile(with: [first, Self.card("d")])
+        #expect(selection.selectedID == first.id)
     }
 
     @Test func tab_goesFromTheFilter_throughTheSelectedCardsButton_toTheClose_andRoundAgain() {
@@ -319,6 +331,7 @@ struct AllProjectsModelTests {
         #expect(columns(531) == 1)
         #expect(columns(532) == 2)
         #expect(columns(570) == 2)
+        #expect(columns(803) == 2)
         #expect(columns(804) == 3)
         #expect(columns(1040) == 3)
         // Before the sheet is measured, it is laid out as wide.
@@ -339,10 +352,12 @@ struct AllProjectsModelTests {
     }
 
     @Test func noCards_leaveNothingSelected() {
-        var selection = AllProjectsSelection()
-
+        let card = Self.card("a")
+        var selection = AllProjectsSelection(selectedID: card.id)
         selection.reconcile(with: [])
         #expect(selection.selectedID == nil)
+
+        selection = AllProjectsSelection(selectedID: card.id)
         selection.move(.next, in: [], columns: 3)
         #expect(selection.selectedID == nil)
     }
@@ -388,9 +403,10 @@ struct AllProjectsModelTests {
     /// its stop is what the person has to see: it is a card all the same.
     @Test func aRowWithNoTabButAStop_isACardThatNeedsAttention() throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "failed")
+        let stop = AttentionItemID.stop(EpisodeKey(origin: .sessionRow(worktreeRoot: project.rootURL), episodeToken: "1"))
         var queue = AttentionQueue()
         queue.insert(
-            id: .stop(EpisodeKey(origin: .sessionRow(worktreeRoot: project.rootURL), episodeToken: "1")),
+            id: stop,
             kind: .stop(.launchFailed(.setup(stepIndex: 0), logTail: "boom")),
             subject: .sessionRow(projectID: project.id, worktreeRoot: project.rootURL),
             arrivedAt: Date(timeIntervalSince1970: 0)
@@ -399,6 +415,9 @@ struct AllProjectsModelTests {
         let cards = Self.cards(session, registry: registry, queue: queue)
         #expect(cards.count == 1)
         let card = try #require(cards.first)
+        #expect(card.id == .project(project.id))
+        #expect(card.leadItemID == stop)
+        #expect(card.leadPaneID == nil)
         #expect(card.section == .needsAttention)
     }
 
@@ -437,33 +456,29 @@ struct AllProjectsModelTests {
         #expect(try Self.cardAction(kind, ledger: ApprovalLedger()) == expected)
     }
 
-    /// A request the ledger holds is answered on the approval card.
-    @Test func aCardWithAHeldRequestTheLedgerHas_offersAnswer() throws {
-        let request = ApprovalPresentation.test(summary: "swift test", deadlineMilliseconds: 0, hasInputCommand: true)
-        let ledger = ApprovalLedger()
-        ledger.observe(pending: [request], epoch: request.epoch)
-
-        #expect(try Self.cardAction(.approval(ApprovalFact.test(key: request.key)), ledger: ledger) == .answer(request.key))
+    enum HeldRequest: Sendable {
+        case approval
+        case blankQuestion
+        case unlistedQuestion
     }
 
-    /// A question the ledger holds offers Answer… though it has no text to
-    /// show (an empty first prompt, no summary): the card still asks it.
-    @Test func aCardWithAHeldQuestionWithNoText_offersAnswer() throws {
-        let request = ApprovalPresentation.test(
-            summary: nil,
-            questions: [ApprovalQuestion(header: nil, prompt: "", options: [], isMultiSelect: false)]
-        )
+    @Test(arguments: [HeldRequest.approval, .blankQuestion, .unlistedQuestion])
+    func aHeldCardsRequest_offersAnswerOnlyWithItsOwnLedgerEntry(_ scenario: HeldRequest) throws {
+        let isQuestion = scenario != .approval
+        let request = isQuestion
+            ? ApprovalPresentation.test(
+                toolName: "AskUserQuestion", summary: nil,
+                questions: [ApprovalQuestion(header: nil, prompt: "", options: [], isMultiSelect: false)]
+            )
+            : ApprovalPresentation.test(summary: "swift test", deadlineMilliseconds: 0, hasInputCommand: true)
+        let decoy = ApprovalPresentation.test(epoch: request.epoch, summary: "unrelated")
         let ledger = ApprovalLedger()
-        ledger.observe(pending: [request], epoch: request.epoch)
+        let hasRequest = scenario != .unlistedQuestion
+        ledger.observe(pending: hasRequest ? [decoy, request] : [decoy], epoch: request.epoch)
 
-        #expect(try Self.cardAction(.question(ApprovalFact.test(key: request.key, isQuestion: true)), ledger: ledger)
-            == .answer(request.key))
-    }
-
-    /// A question the ledger does not hold offers neither a card it could
-    /// not fill nor the pane, as the Needs Attention list does.
-    @Test func aCardWithAHeldQuestionTheLedgerLacks_offersNothing() throws {
-        #expect(try Self.cardAction(.question(ApprovalFact.test(isQuestion: true)), ledger: ApprovalLedger()) == nil)
+        let fact = ApprovalFact.test(key: request.key, isQuestion: isQuestion)
+        let kind: AttentionItemKind = isQuestion ? .question(fact) : .approval(fact)
+        #expect(try Self.cardAction(kind, ledger: ledger) == (hasRequest ? .answer(request.key) : nil))
     }
 
     /// The button of the one card of a project whose tab's pane holds an
@@ -484,14 +499,20 @@ struct AllProjectsModelTests {
         queue.insert(
             id: id,
             kind: kind,
-            subject: .runtime(id: "r", provider: .claude, paneID: paneID, tabID: tab.id, projectID: project.id),
+            subject: .runtime(
+                id: "r", provider: kind.approvalFact?.provider ?? .claude, paneID: paneID, tabID: tab.id, projectID: project.id
+            ),
             arrivedAt: Date(timeIntervalSince1970: 0)
         )
         let registry = WindowRegistry(primary: session.primarySelection)
         registry.presenter = RecordingWindowPresenter()
 
         let cards = Self.cards(session, registry: registry, queue: queue, approvals: ledger)
-        return try #require(cards.first).action
+        let card = try #require(cards.first)
+        #expect(card.id == .project(project.id))
+        #expect(card.leadItemID == id)
+        #expect(card.leadPaneID == paneID)
+        return card.action
     }
 
     @Test func aCardsPlace_isProjectAndBranch_orTheProjectAlone() {
@@ -507,35 +528,30 @@ struct AllProjectsModelTests {
 
         #expect(TerminalTail.lastLines(of: screen) == ["", "✔ 12 tests passed", "$"])
         #expect(TerminalTail.lastLines(of: "one\ntwo", count: 3) == ["one", "two"])
+        #expect(TerminalTail.lastLines(of: "one\ntwo\nthree", count: 2) == ["two", "three"])
         #expect(TerminalTail.lastLines(of: "\n\n").isEmpty)
     }
 
-    @Test func theLastLines_skipTheTUIsChrome_atTheBottom() {
-        // Claude: the input box, its prompt, and the hints under it.
-        let claude = "● Done.\n╭──────────╮\n│ > │\n╰──────────╯\n  ? for shortcuts"
-        #expect(TerminalTail.lastLines(of: claude) == ["● Done."])
-        // Codex: the input box, its prompt with a placeholder, and the
-        // status line under it.
-        let codex = "• Ran echo out > out-long.txt\n\n╭───────────╮\n│ › Ask Codex to do anything │\n╰───────────╯\n"
-            + "  GPT-6.1-Sol xhigh · ~/projects/beta · weekly 91% left · F…"
-        #expect(TerminalTail.lastLines(of: codex) == ["• Ran echo out > out-long.txt"])
-        // Claude's separators and the mode line, with a draft typed.
-        let draft = "● Done.\n────────\n> fix the test\n────────\n  ⏵⏵ accept edits on (shift+tab to cycle)"
-        #expect(TerminalTail.lastLines(of: draft) == ["● Done."])
-    }
-
-    /// The working line above the input box says what the agent does
-    /// now, hint and all; it is kept.
-    @Test func theLastLines_keepTheWorkingLine_aboveTheChrome() {
-        let claude = "● Done.\n✻ Thinking… (12s · ↑ 1.2k tokens · esc to interrupt)\n╭──────────╮\n│ > │\n╰──────────╯\n  ? for shortcuts"
-        #expect(TerminalTail.lastLines(of: claude) == ["● Done.", "✻ Thinking… (12s · ↑ 1.2k tokens · esc to interrupt)"])
-        let codex = "• Working (12s • esc to interrupt)\n╭───╮\n│ › │\n╰───╯\n  gpt-5 high · ~/x · 100% left"
-        #expect(TerminalTail.lastLines(of: codex) == ["• Working (12s • esc to interrupt)"])
-    }
-
-    @Test func theLastLines_areNone_whenTheScreenIsChromeAlone() {
-        let screen = "╭──────────╮\n│ › │\n╰──────────╯\n  gpt-5 high · ~/x · 100% left"
-        #expect(TerminalTail.lastLines(of: screen).isEmpty)
+    @Test(arguments: [
+        ("● Done.\n╭──────────╮\n│ > │\n╰──────────╯\n  ? for shortcuts", ["● Done."]),
+        (
+            "• Ran echo out > out-long.txt\n\n╭───────────╮\n│ › Ask Codex to do anything │\n╰───────────╯\n"
+                + "  GPT-6.1-Sol xhigh · ~/projects/beta · weekly 91% left · F…",
+            ["• Ran echo out > out-long.txt"]
+        ),
+        ("● Done.\n─────────\n> fix the test\n─────────\n  ⏵⏵ accept edits on (shift+tab to cycle)", ["● Done."]),
+        (
+            "● Done.\n✻ Thinking… (12s · ↑ 1.2k tokens · esc to interrupt)\n╭──────────╮\n│ > │\n╰──────────╯\n  ? for shortcuts",
+            ["● Done.", "✻ Thinking… (12s · ↑ 1.2k tokens · esc to interrupt)"]
+        ),
+        (
+            "• Working (12s • esc to interrupt)\n╭───╮\n│ › │\n╰───╯\n  gpt-5 high · ~/x · 100% left",
+            ["• Working (12s • esc to interrupt)"]
+        ),
+        ("╭──────────╮\n│ › │\n╰──────────╯\n  gpt-5 high · ~/x · 100% left", [])
+    ])
+    func theLastLines_omitChromeAndKeepOutput(_ screen: String, expected: [String]) {
+        #expect(TerminalTail.lastLines(of: screen) == expected)
     }
 
     @Test func theLastLines_keepOutputThatOnlyLooksLikeChrome() {
@@ -550,7 +566,7 @@ struct AllProjectsModelTests {
 /// The keys the sheet takes at its window.
 @MainActor
 struct AllProjectsKeysTests {
-    @Test func theArrowsReturnEscAndTab_areTheSheets_andAShortcutIsNot() throws {
+    @Test func keyClassification_acceptsSheetNavigation_andLeavesOtherChordsAlone() throws {
         func key(_ keyCode: UInt16, _ modifiers: NSEvent.ModifierFlags = []) throws -> AllProjectsKeys.Key? {
             try AllProjectsKeys.key(for: NSEvent.testKeyDown(keyCode: keyCode, modifiers: modifiers))
         }
@@ -567,8 +583,11 @@ struct AllProjectsKeysTests {
         // ⌘⏎ opens the card in a new window; ⇧⌘⏎ and ⌥← are
         // shortcuts, and a letter is the field's.
         #expect(try key(36, .command) == .openInNewWindow)
+        #expect(try key(76, .command) == .openInNewWindow)
         #expect(try key(36, [.command, .shift]) == nil)
+        #expect(try key(36, .control) == nil)
         #expect(try key(123, .option) == nil)
+        #expect(try key(48, [.shift, .option]) == nil)
         #expect(try key(0) == nil)
     }
 }

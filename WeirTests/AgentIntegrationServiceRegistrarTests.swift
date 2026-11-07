@@ -70,27 +70,26 @@ struct AgentIntegrationServiceRegistrarTests {
             runningArtifact: .unavailable,
             marker: previousMarker
         ) == .replace)
+        for observation in [RunningServiceArtifactObservation.response(current), .unavailable] {
+            #expect(AgentIntegrationRegistrationDecision.action(
+                status: .enabled,
+                bundledArtifact: current,
+                runningArtifact: observation,
+                marker: nil
+            ) == .replace)
+        }
         #expect(action(.requiresApproval, running: nil) == .awaitApproval)
-        #expect(action(.notFound, running: nil) == .register)
         #expect(action(.unknown, running: nil) == .failUnknown)
-    }
 
-    @Test("registers when Background Task Management has no record yet")
-    func decision_notFoundBeforeFirstRegistrationRegisters() {
-        // macOS reports `.notFound` for an agent that has never been registered
-        // on this machine, not `.notRegistered`. A stale marker from an earlier
-        // install must not turn that first registration into a failure either.
-        let staleMarker = AgentIntegrationRegistrationMarker(
-            phase: .ready,
-            artifact: previous,
-            appVersion: "1"
-        )
-        #expect(AgentIntegrationRegistrationDecision.action(
-            status: .notFound,
-            bundledArtifact: current,
-            runningArtifact: .notApplicable,
-            marker: staleMarker
-        ) == .register)
+        // A stale marker cannot change the system's report that there is no registration.
+        for marker in [nil, previousMarker] {
+            #expect(AgentIntegrationRegistrationDecision.action(
+                status: .notFound,
+                bundledArtifact: current,
+                runningArtifact: .notApplicable,
+                marker: marker
+            ) == .register)
+        }
     }
 
     @Test("fingerprints both executable and launch agent property list")
@@ -119,7 +118,7 @@ struct AgentIntegrationServiceRegistrarTests {
         }
     }
 
-    @Test("persists each registration phase atomically")
+    @Test("persists each registration phase and rejects unreadable markers")
     func marker_roundTripsAndRejectsCorruption() throws {
         try withTempDir { dir in
             let store = AgentIntegrationRegistrationMarkerStore(
@@ -148,7 +147,14 @@ struct AgentIntegrationServiceRegistrarTests {
             )
             try store.write(ready)
             #expect(store.load() == ready)
+            let attributes = try FileManager.default.attributesOfItem(atPath: store.fileURL.path)
+            #expect(attributes[.posixPermissions] as? Int == 0o600)
 
+            let unknown = AgentIntegrationRegistrationMarker(
+                schemaVersion: 2, phase: .ready, artifact: current, appVersion: "2"
+            )
+            try JSONEncoder().encode(unknown).write(to: store.fileURL, options: .atomic)
+            #expect(store.load() == nil, "a decodable marker from another schema is not evidence")
             try Data("invalid".utf8).write(to: store.fileURL, options: .atomic)
             #expect(store.load() == nil)
         }
@@ -326,6 +332,7 @@ struct AgentIntegrationServiceRecoveryTests {
         #expect(failure(Int32(kSMErrorAlreadyRegistered)) == .alreadyRegistered)
         #expect(failure(Int32(kSMErrorLaunchDeniedByUser)) == .deniedByUser)
         #expect(failure(Int32(kSMErrorJobPlistNotFound)) == .missingFromBundle)
+        #expect(failure(Int32(kSMErrorToolNotValid)) == .missingFromBundle)
         #expect(failure(Int32(kSMErrorInvalidSignature)) == .other)
         #expect(failure(Int32(kSMErrorLaunchDeniedByUser), domain: NSPOSIXErrorDomain) == .other)
     }
@@ -362,16 +369,18 @@ struct AgentIntegrationServiceRecoveryTests {
             await registrar.waitUntilIdle()
 
             #expect(system.sleeps == [2, 4, 8, 16, 32].map { .seconds($0) })
-            #expect(system.unregisterCount == 1)
-            #expect(system.registerCount == 1)
+            #expect(system.registrationCalls == [.unregister, .register])
+            #expect(marker(in: directory)?.phase == .registered, "the replacement did not answer")
             #expect(registrar.issue?.reason == .reconciliationFailed)
+            let observed = system.observationCount
 
             // After the one replacement, an activation observes once more
             // and schedules nothing.
             registrar.appDidBecomeActive()
             await registrar.waitUntilIdle()
+            #expect(system.observationCount == observed + 1)
             #expect(system.sleeps.count == 5)
-            #expect(system.unregisterCount == 1)
+            #expect(system.registrationCalls == [.unregister, .register])
         }
     }
 
@@ -379,6 +388,7 @@ struct AgentIntegrationServiceRecoveryTests {
     func reconcile_serviceAnswersAgain_keepsItAndForgetsTheFailures() async throws {
         try await withTempDir { directory in
             let system = FakeServiceSystem(artifact: current)
+            defer { system.releaseSleeps() }
             system.answersAfterSleeps = 2
             try writeMarker(.ready, in: directory)
             let registrar = system.registrar(directory: directory)
@@ -391,6 +401,29 @@ struct AgentIntegrationServiceRecoveryTests {
             #expect(registrar.isReady)
             #expect(readiness == [true])
             #expect(registrar.issue == nil)
+            #expect(system.registerCount == 0)
+
+            system.answersAfterSleeps = Int.max
+            system.holdsSleeps = true
+            registrar.appDidBecomeActive()
+            await registrar.waitUntilReconciled()
+            await untilObserved { system.sleeps.count == 3 }
+            try #require(system.sleeps == [.seconds(2), .seconds(4), .seconds(2)])
+            #expect(!registrar.isReady)
+            #expect(readiness == [true, false])
+
+            system.advance(by: .seconds(59))
+            registrar.appDidBecomeActive()
+            await registrar.waitUntilReconciled()
+            #expect(system.registrationCalls.isEmpty)
+
+            system.advance(by: .seconds(1))
+            registrar.appDidBecomeActive()
+            await registrar.waitUntilReconciled()
+            #expect(system.registrationCalls == [.unregister, .register])
+            system.releaseSleeps()
+            await untilObserved { !system.heldSleepCancellations.isEmpty }
+            #expect(system.heldSleepCancellations == [true])
         }
     }
 
@@ -398,11 +431,13 @@ struct AgentIntegrationServiceRecoveryTests {
     func reconcile_activationsCloseTogether_doNotReplaceEarly() async throws {
         try await withTempDir { directory in
             let system = FakeServiceSystem(artifact: current)
+            defer { system.releaseSleeps() }
             system.holdsSleeps = true
             try writeMarker(.ready, in: directory)
             let registrar = system.registrar(directory: directory)
             registrar.start { _ in }
             await untilObserved { system.sleeps.count == 1 }
+            try #require(system.sleeps.count == 1)
             await registrar.waitUntilReconciled()
             for activation in 1...10 {
                 system.advance(by: .seconds(1))
@@ -424,22 +459,25 @@ struct AgentIntegrationServiceRecoveryTests {
     func replace_failed_isNotRetriedByATimerSetBeforeIt() async throws {
         try await withTempDir { directory in
             let system = FakeServiceSystem(artifact: current)
+            defer { system.releaseSleeps() }
             system.holdsSleeps = true
             system.unregisterError = AgentIntegrationError.requestFailed("unregister failed")
             try writeMarker(.ready, in: directory)
             let registrar = system.registrar(directory: directory)
             registrar.start { _ in }
             await untilObserved { system.sleeps.count == 1 }
+            try #require(system.sleeps.count == 1)
             await registrar.waitUntilReconciled()
 
             system.advance(by: .seconds(60))
             registrar.appDidBecomeActive()
-            await registrar.waitUntilIdle()
+            await registrar.waitUntilReconciled()
             #expect(system.unregisterCount == 1)
             #expect(marker(in: directory)?.phase == .replacing)
 
             system.releaseSleeps()
-            await pollUntil(timeout: .milliseconds(500)) { system.unregisterCount > 1 }
+            await untilObserved { !system.heldSleepCancellations.isEmpty }
+            try #require(system.heldSleepCancellations == [true])
             #expect(system.unregisterCount == 1)
             #expect(registrar.issue?.reason == .reconciliationFailed)
         }
@@ -449,15 +487,22 @@ struct AgentIntegrationServiceRecoveryTests {
     func retry_whileAReconcileRuns_runsAnotherAfterIt() async throws {
         try await withTempDir { directory in
             let system = FakeServiceSystem(artifact: current)
-            system.holdsObservation = true
+            let observation = Gate<Void>()
+            system.observationGate = observation
+            defer { observation.open() }
             try writeMarker(.ready, in: directory)
             let registrar = system.registrar(directory: directory)
             registrar.start { _ in }
-            await untilObserved { system.isObserving }
+            try await observation.waitUntilRequested(timeout: .seconds(5))
+            try #require(system.observationEvents == [.started(1)])
             registrar.retry()
+            #expect(system.observationEvents == [.started(1)])
+
             system.answersAfterSleeps = 0
-            system.releaseObservation()
+            observation.open()
             await registrar.waitUntilIdle()
+
+            #expect(system.observationEvents == [.started(1), .finished(1), .started(2), .finished(2)])
             #expect(system.observationCount == 2)
             #expect(registrar.isReady)
         }
@@ -496,6 +541,9 @@ struct AgentIntegrationServiceRecoveryTests {
             registrar.appDidBecomeActive()
             await registrar.waitUntilIdle()
             #expect(registrar.isReady)
+            #expect(registrar.issue == nil)
+            #expect(system.registrationCalls.isEmpty)
+            #expect(marker(in: directory) == AgentIntegrationRegistrationMarker(phase: .ready, artifact: current, appVersion: "2"))
         }
     }
 
@@ -553,15 +601,31 @@ private final class FakeServiceSystem {
     var registerError: (any Error)?
     var answersAfterSleeps = Int.max
     var holdsSleeps = false
-    var holdsObservation = false
-    private(set) var registerCount = 0
-    private(set) var unregisterCount = 0
+    var observationGate: Gate<Void>?
+    enum RegistrationCall {
+        case register, unregister
+    }
+
+    enum ObservationEvent: Equatable {
+        case started(Int)
+        case finished(Int)
+    }
+
+    private(set) var registrationCalls: [RegistrationCall] = []
+    var registerCount: Int {
+        registrationCalls.count { $0 == .register }
+    }
+
+    var unregisterCount: Int {
+        registrationCalls.count { $0 == .unregister }
+    }
+
     private(set) var observationCount = 0
-    private(set) var isObserving = false
+    private(set) var observationEvents: [ObservationEvent] = []
     private(set) var sleeps: [Duration] = []
+    private(set) var heldSleepCancellations: [Bool] = []
     private var elapsed = Duration.zero
     private let start = SuspendingClock.now
-    private var heldObservation: CheckedContinuation<Void, Never>?
     private var heldSleeps: [CheckedContinuation<Void, Never>] = []
     var unregisterError: (any Error)?
 
@@ -580,12 +644,6 @@ private final class FakeServiceSystem {
         heldSleeps = []
     }
 
-    func releaseObservation() {
-        holdsObservation = false
-        heldObservation?.resume()
-        heldObservation = nil
-    }
-
     func registrar(directory: URL) -> AgentIntegrationServiceRegistrar {
         AgentIntegrationServiceRegistrar(
             applicationSupportDirectory: directory,
@@ -594,14 +652,14 @@ private final class FakeServiceSystem {
                 inspectBundle: { [self] in await (artifact, location) },
                 status: { [self] in status },
                 register: { [self] in
-                    registerCount += 1
+                    registrationCalls.append(.register)
                     if let registerError {
                         throw registerError
                     }
                     status = .enabled
                 },
                 unregister: { [self] in
-                    unregisterCount += 1
+                    registrationCalls.append(.unregister)
                     if let unregisterError {
                         throw unregisterError
                     }
@@ -616,11 +674,10 @@ private final class FakeServiceSystem {
 
     private func observe() async throws -> AgentIntegrationServiceArtifact? {
         observationCount += 1
-        isObserving = true
-        defer { isObserving = false }
-        if holdsObservation {
-            await withCheckedContinuation { heldObservation = $0 }
-        }
+        let number = observationCount
+        observationEvents.append(.started(number))
+        defer { observationEvents.append(.finished(number)) }
+        await observationGate?.wait()
         guard sleeps.count >= answersAfterSleeps else { throw AgentIntegrationError.timeout }
         return artifact
     }
@@ -629,6 +686,7 @@ private final class FakeServiceSystem {
         sleeps.append(duration)
         if holdsSleeps {
             await withCheckedContinuation { heldSleeps.append($0) }
+            heldSleepCancellations.append(Task.isCancelled)
             return
         }
         elapsed += duration

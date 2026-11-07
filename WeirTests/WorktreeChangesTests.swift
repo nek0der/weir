@@ -18,6 +18,13 @@ struct WorktreeChangesTests {
     private actor GitStub {
         private(set) var betweenAsks: [String] = []
         private(set) var sinceAsks = 0
+        private(set) var sinceTrees: [String] = []
+        private let distinguishesTrees: Bool
+
+        init(distinguishesTrees: Bool = false) {
+            self.distinguishesTrees = distinguishesTrees
+        }
+
         private(set) var overlapped = false
         private var isSinceRunning = false
         private var named: Set<String> = []
@@ -29,7 +36,9 @@ struct WorktreeChangesTests {
             if earlier == WorktreeChangesTests.gone || later == WorktreeChangesTests.gone {
                 throw ReviewError.gitFailed
             }
-            let paths: Set = ["\(earlier.prefix(1))-\(later.prefix(1)).swift", "shared.swift"]
+            let earlierName = distinguishesTrees ? earlier.prefix(1) + earlier.suffix(1) : earlier.prefix(1)
+            let laterName = distinguishesTrees ? later.prefix(1) + later.suffix(1) : later.prefix(1)
+            let paths: Set = ["\(earlierName)-\(laterName).swift", "shared.swift"]
             named.formUnion(paths)
             return paths
         }
@@ -48,12 +57,13 @@ struct WorktreeChangesTests {
         }
 
         /// Returns once a "since" waits at the gate `hold` set.
-        func untilASinceIsHeld() async {
-            await held?.waitUntilRequested()
+        func untilASinceIsHeld() async throws {
+            try await held?.waitUntilRequested()
         }
 
-        func since() async throws -> Set<String> {
+        func since(_ tree: String) async throws -> Set<String> {
             sinceAsks += 1
+            sinceTrees.append(tree)
             overlapped = overlapped || isSinceRunning
             isSinceRunning = true
             defer { isSinceRunning = false }
@@ -111,7 +121,7 @@ struct WorktreeChangesTests {
     private static func owner(_ git: GitStub) -> WorktreeChanges {
         WorktreeChanges(git: WorktreeChanges.Git(
             pathsBetween: { _, earlier, later in try await git.between(earlier, later) },
-            pathsSince: { _, _, _ in try await ReviewGit.ChangedSince(paths: git.since()) },
+            pathsSince: { _, tree, _ in try await ReviewGit.ChangedSince(paths: git.since(tree)) },
             uncommitted: { _ in await git.uncommitted() },
             fingerprints: { _, paths, known in try await git.fingerprints(paths, known: known) }
         ))
@@ -178,14 +188,14 @@ struct WorktreeChangesTests {
     }
 
     @Test func aPathChangedInTwoGaps_isCountedOnce() async throws {
-        let git = GitStub()
+        let git = GitStub(distinguishesTrees: true)
         let owner = Self.owner(git)
         let turns = try [Self.turn(1, start: 0, end: 10), Self.turn(2, start: 20, end: 30), Self.turn(3, start: 40, end: 50)]
 
         await owner.refresh(root: Self.root, turns: turns)
 
         #expect(await git.betweenAsks.count == 2)
-        #expect(owner.outsideTurns["/repo"]?.count == 3, "e-b.swift, shared.swift, later.swift")
+        #expect(owner.outsideTurns["/repo"] == ["e1-b2.swift", "e2-b3.swift", "shared.swift", "later.swift"])
     }
 
     @Test func aGoneGap_isRememberedAsUnknown_andNotAskedAgain() async throws {
@@ -234,15 +244,20 @@ struct WorktreeChangesTests {
         let owner = Self.owner(git)
         let turns = try [Self.turn(1, start: 0, end: 10), Self.turn(2, start: 20, end: 30)]
         await owner.refresh(root: Self.root, turns: turns)
-        let before = owner.outsideTurns["/repo"]
+        let before: Set = ["e-b.swift", "shared.swift", "later.swift"]
+        let contents = ["e-b.swift": "blob:0", "shared.swift": "blob:0", "later.swift": "blob:0"]
+        #expect(owner.outsideTurns["/repo"] == before)
+        #expect(owner.outsideTurnsContents["/repo"] == contents)
 
         await git.failSince(with: ReviewError.timedOut)
         await owner.refresh(root: Self.root, turns: turns)
         #expect(owner.outsideTurns["/repo"] == before, "a failure to count is not none")
+        #expect(owner.outsideTurnsContents["/repo"] == contents)
 
         await git.failSince(with: CancellationError())
         await owner.refresh(root: Self.root, turns: turns)
         #expect(owner.outsideTurns["/repo"] == before)
+        #expect(owner.outsideTurnsContents["/repo"] == contents)
     }
 
     /// Requests made while a count runs are merged into the latest, so ten
@@ -255,15 +270,19 @@ struct WorktreeChangesTests {
         let two = try [Self.turn(1, start: 0, end: 10), Self.turn(2, start: 20, end: 30)]
 
         let running = Task { await owner.refresh(root: Self.root, turns: one) }
-        await git.untilASinceIsHeld()
+        do {
+            try await git.untilASinceIsHeld()
+        } catch {
+            await git.release()
+            await running.value
+            throw error
+        }
         #expect(await git.sinceAsks == 1, "the first count is under way")
         let waiting = (0..<10).map { index in
-            Task { await owner.refresh(root: Self.root, turns: index == 9 ? two : one) }
+            Task.immediate { await owner.refresh(root: Self.root, turns: index == 9 ? two : one) }
         }
-        // Each request is taken in as its task starts, before it waits, so
-        // the tasks only have to have started: the main actor runs its jobs
-        // in the order they were queued, theirs before this one.
-        await Task { @MainActor in }.value
+        // Each request registers on MainActor before awaiting the held run.
+        running.cancel()
         await git.release()
         await running.value
         for task in waiting {
@@ -271,7 +290,9 @@ struct WorktreeChangesTests {
         }
 
         #expect(await git.sinceAsks == 2, "one count running, then the latest request")
+        #expect(await git.sinceTrees == [TurnSummaryFixture.tree("e", 1), TurnSummaryFixture.tree("e", 2)])
         #expect(await git.betweenAsks == ["e..b"], "the latest request's turns, with its gap")
+        #expect(owner.outsideTurns["/repo"] == ["e-b.swift", "shared.swift", "later.swift"])
         #expect(await !git.overlapped)
     }
 
@@ -292,16 +313,20 @@ struct WorktreeChangesTests {
     }
 
     @Test func aDeletedTurnsFiles_areForgotten() async throws {
-        let git = GitStub()
+        let git = GitStub(distinguishesTrees: true)
         let owner = Self.owner(git)
         let turn = try Self.turn(1, start: 0, end: 10)
-        await owner.loadTurnPaths([turn], root: Self.root)
-        #expect(owner.paths(of: turn.turnID) != nil)
+        let unknown = try Self.turn(2, start: 20, end: 30, endTree: Self.gone)
+        let peer = try Self.turn(3, start: 40, end: 50)
+        await owner.loadTurnPaths([turn, unknown, peer], root: Self.root)
+        #expect(owner.paths(of: turn.turnID) == ["b1-e1.swift", "shared.swift"])
+        #expect(owner.isUnreadable(unknown.turnID))
+        #expect(owner.paths(of: peer.turnID) == ["b3-e3.swift", "shared.swift"])
 
-        owner.forget(turns: [turn.turnID])
+        owner.forget(turns: [turn.turnID, unknown.turnID])
 
-        #expect(owner.paths(of: turn.turnID) == nil)
-        #expect(!owner.isUnreadable(turn.turnID))
+        #expect(owner.turnPaths == [peer.turnID: .paths(["b3-e3.swift", "shared.swift"])])
+        #expect(!owner.isUnreadable(unknown.turnID))
     }
 
     @Test func aWorktreeNoProjectHolds_isForgotten() async throws {
@@ -310,26 +335,34 @@ struct WorktreeChangesTests {
         let turns = try [Self.turn(1, start: 0, end: 10)]
         let other = URL(fileURLWithPath: "/other")
         await owner.refresh(root: Self.root, turns: turns)
+        await git.edit("later.swift")
         await owner.refresh(root: other, turns: turns)
+        #expect(owner.outsideTurns["/repo"] == ["later.swift"])
+        #expect(owner.outsideTurnsContents["/repo"] == ["later.swift": "blob:0"])
+        #expect(owner.outsideTurnsContents["/other"] == ["later.swift": "blob:1"])
 
         owner.forgetRoots(except: ["/other"])
 
         #expect(owner.outsideTurns["/repo"] == nil)
         #expect(owner.outsideTurnsContents["/repo"] == nil)
-        #expect(owner.outsideTurns["/other"] != nil)
+        #expect(owner.outsideTurns == ["/other": ["later.swift"]])
+        #expect(owner.outsideTurnsContents == ["/other": ["later.swift": "blob:1"]])
     }
 
     @Test func theWorktreeCountedLongestAgo_isDroppedPastTheCap() async throws {
         let git = GitStub()
         let owner = Self.owner(git)
         let turns = try [Self.turn(1, start: 0, end: 10)]
-        for index in 0...WorktreeChanges.maxRoots {
+        let cap = WorktreeChanges.maxRoots
+        for index in 0..<cap {
             await owner.refresh(root: URL(fileURLWithPath: "/repo\(index)"), turns: turns)
         }
+        await owner.refresh(root: URL(fileURLWithPath: "/repo0"), turns: turns)
+        await owner.refresh(root: URL(fileURLWithPath: "/repo\(cap)"), turns: turns)
 
-        #expect(owner.outsideTurns.count == WorktreeChanges.maxRoots)
-        #expect(owner.outsideTurns["/repo0"] == nil)
-        #expect(owner.outsideTurns["/repo\(WorktreeChanges.maxRoots)"] != nil)
+        let expected = Set((0...cap).filter { $0 != 1 }.map { "/repo\($0)" })
+        #expect(Set(owner.outsideTurns.keys) == expected)
+        #expect(Set(owner.outsideTurnsContents.keys) == expected)
     }
 
     @Test func theOldestComparison_isDroppedPastTheCap() async {
@@ -353,17 +386,20 @@ struct WorktreeChangesTests {
     }
 
     @Test func eachTurnsFiles_areReadOnce() async throws {
-        let git = GitStub()
+        let git = GitStub(distinguishesTrees: true)
         let owner = Self.owner(git)
         let turns = try [Self.turn(1, start: 0, end: 10), Self.turn(2, start: 20, end: 30)]
 
         #expect(owner.paths(of: turns[0].turnID) == nil, "not read yet")
         await owner.loadTurnPaths(turns, root: Self.root)
-        let paths = turns.compactMap { owner.paths(of: $0.turnID) }
-        #expect(paths.count == 2)
-        #expect(paths.reduce(into: Set<String>()) { $0.formUnion($1) }.count == 2, "b-e.swift and shared.swift")
+        let expected: [TurnID: WorktreeChanges.Known] = [
+            turns[0].turnID: .paths(["b1-e1.swift", "shared.swift"]),
+            turns[1].turnID: .paths(["b2-e2.swift", "shared.swift"])
+        ]
+        #expect(owner.turnPaths == expected)
         await owner.loadTurnPaths(turns, root: Self.root)
         #expect(await git.betweenAsks.count == 2, "each turn's files read once")
+        #expect(owner.turnPaths == expected)
     }
 
     /// The panel's totals are one comparison between two trees: read once,
@@ -447,9 +483,10 @@ struct WorktreeChangesTests {
         let owner = Self.owner(git)
         let turns = try [Self.turn(1, start: 0, end: 10), Self.turn(2, start: 20, end: 30)]
         await owner.refresh(root: Self.root, turns: turns)
-        let count = owner.outsideTurns["/repo"]
-        let contents = owner.outsideTurnsContents["/repo"]
-        #expect(count?.count == 3)
+        let count: Set = ["e-b.swift", "shared.swift", "later.swift"]
+        let contents = ["e-b.swift": "blob:0", "shared.swift": "blob:0", "later.swift": "blob:0"]
+        #expect(owner.outsideTurns["/repo"] == count)
+        #expect(owner.outsideTurnsContents["/repo"] == contents)
 
         await git.commit(leaving: ["later.swift"])
         await git.failFingerprints()

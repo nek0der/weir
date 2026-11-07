@@ -31,8 +31,8 @@ struct PlanUsageTextTests {
     @Test("a window Codex gives by its length alone is named by that length")
     func windowName_byLength() {
         let name = PlanUsageText.windowName("minutes_1440", locale: english).resolved(in: english)
-        #expect(name.hasSuffix(" limit"))
-        #expect(name != "Usage limit")
+        #expect(name == "1d limit")
+        #expect(PlanUsageText.windowName("minutes_bogus", locale: english) == StopReasonText.limitName("minutes_bogus"))
         #expect(PlanUsageText.windowName(PlanUsageWindow.sevenDay, locale: english) == StopReasonText.limitName(PlanUsageWindow.sevenDay))
         #expect(PlanUsageText.windowName("primary", locale: english) == StopReasonText.limitName("primary"))
     }
@@ -44,9 +44,9 @@ struct PlanUsageTextTests {
         #expect(name == "Usage limit")
     }
 
-    @Test("a window past its reset reads as reset, with nothing to wait for")
-    func row_afterItsReset_saysReset() {
-        let window = PlanUsageWindow(kind: PlanUsageWindow.fiveHour, usedPercent: 100, resetsAt: now.addingTimeInterval(-1))
+    @Test("a window at or past its reset reads as reset, with nothing to wait for", arguments: [-1.0, 0.0])
+    func row_afterItsReset_saysReset(resetOffset: TimeInterval) {
+        let window = PlanUsageWindow(kind: PlanUsageWindow.fiveHour, usedPercent: 100, resetsAt: now.addingTimeInterval(resetOffset))
         let row = PlanUsageText.row(window, now: now, locale: english)
         #expect(row.hasReset)
         #expect(row.percent == 0)
@@ -60,13 +60,15 @@ struct PlanUsageTextTests {
         let last = usage([PlanUsageWindow(kind: PlanUsageWindow.sevenDay, usedPercent: 12, resetsAt: nil)])
         let noPlan = PlanUsageText.codexSection(.read(.noPlan), last: last, now: now, locale: english)
         #expect(noPlan.rows.isEmpty)
-        #expect(noPlan.note?.key.contains("Sign in") == true)
+        #expect(noPlan.note?.key == "Codex reported no plan usage. Sign in to Codex with ChatGPT to see it.")
+        #expect(noPlan.observedAt == nil)
 
         let failed = PlanUsageText.codexSection(.read(.failed), last: last, now: now, locale: english)
-        #expect(failed.rows.count == 1)
+        #expect(failed.rows.map(\.percent) == [12])
+        #expect(failed.observedAt == last.observedAt)
         #expect(failed.isDimmed)
         #expect(failed.title == "Codex")
-        #expect(failed.note?.key.contains("could not be read") == true)
+        #expect(failed.note?.key == "Codex’s usage could not be read.")
 
         let read = PlanUsageText.codexSection(.read(.usage(last)), last: last, now: now, locale: english)
         #expect(!read.isDimmed)
@@ -120,17 +122,25 @@ struct PlanUsageTextTests {
         #expect(PlanUsageText.codexSection(.read(.usage(none)), last: none, now: now, locale: english).resetCredits == nil)
     }
 
-    @Test("values an hour old read as stale")
+    @Test("values older than one hour read as stale")
     func section_marksOldValuesStale() {
         let windows = [PlanUsageWindow(kind: PlanUsageWindow.fiveHour, usedPercent: 1, resetsAt: nil)]
         let fresh = PlanUsageText.claudeSection(usage(windows), now: now, locale: english)
+        let hourOld = PlanUsageText.claudeSection(
+            usage(windows, observedAt: now.addingTimeInterval(-3600)),
+            now: now,
+            locale: english
+        )
         let old = PlanUsageText.claudeSection(
-            usage(windows, observedAt: now.addingTimeInterval(-PlanUsageText.staleAfter - 1)),
+            usage(windows, observedAt: now.addingTimeInterval(-3601)),
             now: now,
             locale: english
         )
         #expect(!fresh.isStale)
+        #expect(!hourOld.isStale)
         #expect(old.isStale)
+        #expect(old.observedAt == now.addingTimeInterval(-3601))
+        #expect(old.rows.map(\.percent) == [1])
     }
 
     @Test("the rail marks a near limit and a reached one differently")

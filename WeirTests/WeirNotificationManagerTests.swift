@@ -49,9 +49,9 @@ struct WeirNotificationManagerTests {
             limiter.allow(key: key, now: Self.start.addingTimeInterval(0.2)),
             // Another key has a window of its own.
             limiter.allow(key: UUID(), now: Self.start.addingTimeInterval(0.2)),
-            // Once the first event leaves the window, one more fits.
-            limiter.allow(key: key, now: Self.start.addingTimeInterval(1.05)),
-            limiter.allow(key: key, now: Self.start.addingTimeInterval(1.06))
+            // The first event leaves exactly one second after it arrived.
+            limiter.allow(key: key, now: Self.start.addingTimeInterval(1)),
+            limiter.allow(key: key, now: Self.start.addingTimeInterval(1.05))
         ]
         #expect(answers == [true, true, false, true, true, false])
     }
@@ -59,7 +59,8 @@ struct WeirNotificationManagerTests {
     @Test func theObservedNotification_holdsTheAgentsBanners() throws {
         try withTempDir { root in
             let banners = Banners()
-            let manager = manager(NotificationHistoryStore(directory: root), banners: banners)
+            let history = NotificationHistoryStore(directory: root, writesFiles: false)
+            let manager = manager(history, banners: banners)
             let center = NotificationCenter()
             manager.holdAgentBanners(onEvery: Self.wake, in: center, for: .seconds(60)) { nil }
 
@@ -68,7 +69,11 @@ struct WeirNotificationManagerTests {
 
             center.post(name: Self.wake, object: nil)
             sendAgentBanner(manager)
-            #expect(banners.posted.count == 1)
+            #expect(banners.posted.map(\.content.title) == ["Claude"])
+            #expect(history.entries.map(\.kind) == [.agentFinished, .agentFinished])
+
+            manager.send(title: "Build", body: "Finished", paneID: UUID(), kind: .desktop)
+            #expect(banners.posted.map(\.content.title) == ["Claude", "Build"])
         }
     }
 

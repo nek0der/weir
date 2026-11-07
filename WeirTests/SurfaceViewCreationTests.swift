@@ -111,7 +111,9 @@ struct SurfaceViewCreationTests {
 
         #expect(view.surface != nil)
         await pollUntil { session.scrollbackPath(ofPane: pane) == nil }
-        #expect(session.tab(tab.id)?.scrollbackPaths[pane] == nil)
+        let restoredTab = try #require(session.tab(tab.id))
+        #expect(restoredTab.scrollbackPaths[pane] == nil)
+        #expect(maker.calls == 2)
     }
 
     /// The failure itself is observed too, so the card appears when
@@ -132,6 +134,7 @@ struct SurfaceViewCreationTests {
 
         #expect(view.surface == nil)
         #expect(view.creation.hasFailed)
+        #expect(maker.calls == 1)
         #expect(notified.value, "SwiftUI was not told creation failed")
     }
 }

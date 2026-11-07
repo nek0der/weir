@@ -12,11 +12,14 @@ struct NewSessionSettingsTests {
 
     @Test func theSheet_remembersWhatOpened_theFetch_andEachProjectsBoxes() throws {
         var settings = NewSessionSettings()
+        settings.fetchesBeforeCreate = false
         let other = URL(fileURLWithPath: "/tmp/work/other")
         settings.remember(
             NewWorktreeChoices(open: .agent(.codex), fetches: true, copiesIgnoredFiles: false, runsSetup: true),
             forProjectAt: Self.app
         )
+        #expect(settings.lastOpen == "codex")
+        #expect(settings.fetchesBeforeCreate)
         settings.remember(NewWorktreeChoices(open: .shell, fetches: false, copiesIgnoredFiles: true, runsSetup: false), forProjectAt: other)
         #expect(settings.memory(forProjectAt: Self.app) == NewWorktreeProjectMemory(
             open: "codex",
@@ -32,7 +35,9 @@ struct NewSessionSettingsTests {
         #expect(settings.lastOpen == "shell")
         #expect(!settings.fetchesBeforeCreate)
         // The same folder by another spelling is the same project.
-        #expect(settings.memory(forProjectAt: URL(fileURLWithPath: "/tmp/work/./app")) != nil)
+        #expect(settings.memory(forProjectAt: URL(fileURLWithPath: "/tmp/work/./app")) == NewWorktreeProjectMemory(
+            open: "codex", copiesIgnoredFiles: false, runsSetup: true
+        ))
         #expect(settings.memory(forProjectAt: URL(fileURLWithPath: "/tmp/work/new")) == nil)
 
         var decoded = WeirSettings.default
@@ -47,11 +52,20 @@ struct NewSessionSettingsTests {
         let fresh = try JSONObjectFixture.object(encoding: WeirSettings.default)
         #expect((fresh["newSession"] as? [String: Any])?["fetchesBeforeCreate"] == nil)
         #expect(WeirSettings.default.newSession.fetchesBeforeCreate)
+        let missing = try JSONDecoder().decode(NewSessionSettings.self, from: Data(#"{"lastOpen":"shell"}"#.utf8))
+        #expect(missing.lastOpen == "shell")
+        #expect(missing.fetchesBeforeCreate)
         var off = WeirSettings.default
         off.newSession.fetchesBeforeCreate = false
         let written = try JSONObjectFixture.object(encoding: off)
         #expect((written["newSession"] as? [String: Any])?["fetchesBeforeCreate"] as? Bool == false)
-        #expect(try !WeirSettingsJSON.decode(written).newSession.fetchesBeforeCreate)
+        var reloaded = try WeirSettingsJSON.decode(written)
+        #expect(!reloaded.newSession.fetchesBeforeCreate)
+        reloaded.newSession.fetchesBeforeCreate = true
+        let restored = try JSONObjectFixture.object(encoding: reloaded)
+        let restoredSession = try #require(restored["newSession"] as? [String: Any])
+        #expect(!restoredSession.keys.contains("fetchesBeforeCreate"))
+        #expect(try WeirSettingsJSON.decode(restored).newSession.fetchesBeforeCreate)
     }
 
     /// What an earlier build kept (the agent and the location) is read to
@@ -91,24 +105,37 @@ struct NewSessionSettingsTests {
         #expect(settings.newSession.projects == ["/tmp/good": NewWorktreeProjectMemory(open: "shell", runsSetup: false)])
     }
 
-    /// A choice a later build added reads back as it was written, and
-    /// keys it added are kept; what this build opens with is
-    /// `WorktreeOpenChoice.initial`'s call.
-    @Test func aLaterBuildsChoice_andKeys_areKept() throws {
-        var object = try JSONObjectFixture.object(encoding: WeirSettings.default)
-        object["newSession"] = ["lastOpen": "gemini", "laterTop": true, "projects": ["/tmp/app": ["open": "gemini", "laterKey": 1]]]
-        let later = try WeirSettingsJSON.decode(object).newSession
+    @Test func aLaterBuildsChoiceAndFields_surviveReadingAndEditingKnownValues() throws {
+        let root = URL(fileURLWithPath: "/tmp/app")
+        let bytes = Data(#"""
+        {
+          "lastOpen": "gemini",
+          "laterTop": true,
+          "projects": {"/tmp/app": {"open": "gemini", "laterKey": 1}}
+        }
+        """#.utf8)
+        var later = try JSONDecoder().decode(NewSessionSettings.self, from: bytes)
         #expect(later.lastOpen == "gemini")
-        #expect(later.projects["/tmp/app"]?.open == "gemini")
-        let written = try JSONObjectFixture.object(encoding: WeirSettingsJSON.decode(object))
-        let newSession = written["newSession"] as? [String: Any]
-        #expect(newSession?["laterTop"] as? Bool == true)
-        let projects = newSession?["projects"] as? [String: Any]
-        #expect((projects?["/tmp/app"] as? [String: Any])?["laterKey"] as? Int == 1)
-        #expect(WorktreeOpenChoice.initial(
-            remembered: later.rememberedOpen(forProjectAt: URL(fileURLWithPath: "/tmp/app")),
-            installed: [.claude]
-        )
-            == .agent(.claude))
+        #expect(later.memory(forProjectAt: root)?.open == "gemini")
+        #expect(WorktreeOpenChoice.initial(remembered: later.rememberedOpen(forProjectAt: root), installed: [.claude]) == .agent(.claude))
+
+        let unchanged = try JSONObjectFixture.object(encoding: later)
+        #expect(unchanged["lastOpen"] as? String == "gemini")
+        let unchangedProjects = try #require(unchanged["projects"] as? [String: [String: Any]])
+        #expect(unchangedProjects["/tmp/app"]?["open"] as? String == "gemini")
+        #expect(unchangedProjects["/tmp/app"]?["laterKey"] as? Int == 1)
+        #expect(unchanged["laterTop"] as? Bool == true)
+
+        later.remember(NewWorktreeChoices(open: .shell, fetches: false, copiesIgnoredFiles: false, runsSetup: true), forProjectAt: root)
+        let written = try JSONObjectFixture.object(encoding: later)
+        #expect(written["laterTop"] as? Bool == true)
+        #expect(written["lastOpen"] as? String == "shell")
+        #expect(written["fetchesBeforeCreate"] as? Bool == false)
+        let projects = try #require(written["projects"] as? [String: [String: Any]])
+        let edited = try #require(projects["/tmp/app"])
+        #expect(edited["laterKey"] as? Int == 1)
+        #expect(edited["open"] as? String == "shell")
+        #expect(edited["copiesIgnoredFiles"] as? Bool == false)
+        #expect(edited["runsSetup"] as? Bool == true)
     }
 }

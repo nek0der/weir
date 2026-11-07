@@ -24,22 +24,15 @@ struct ProjectMenuModelTests {
         )
     }
 
-    /// The rows keep the order they are given, the sidebar's: nothing
-    /// moves up for being used.
-    @Test func projects_comeInTheOrderGiven() {
-        let projects = ["c", "a", "d", "b"].map { Self.project($0) }
-
-        let model = ProjectMenuModel(projects: projects, currentProjectID: nil, query: "", facts: Self.facts())
-
-        #expect(model.rows.map(\.name) == ["c", "a", "d", "b"])
-    }
-
-    /// The dropdown lists the projects in the window's sidebar order, the
-    /// ones its order has not met last, in the session's order.
     @MainActor
-    @Test func theDropdown_listsTheProjectsInTheWindowsSidebarOrder() {
+    @Test func theDropdownKeepsTheWindowsSidebarOrderAndAppendsUnlistedProjects() throws {
         let fixture = ProjectWindowsFixture()
+        let d = fixture.session.addOrActivateProject(rootURL: WorkspaceSessionFixture.projectRootURL("d"), suggestedName: "d")
+        let aa = fixture.session.addOrActivateProject(rootURL: WorkspaceSessionFixture.projectRootURL("aa"), suggestedName: "aa")
+        let other = try fixture.window(showing: fixture.c)
+        fixture.registry.hide(other.id)
         fixture.primary.selection.sidebarArrangement = SidebarArrangement(projectOrder: [fixture.c.id, fixture.a.id])
+        fixture.session.recentProjectPaths = [aa.rootURL, d.rootURL, fixture.b.rootURL]
 
         let rows = ProjectMenuModel(
             session: fixture.session,
@@ -50,8 +43,11 @@ struct ProjectMenuModelTests {
             attention: AttentionState()
         ).rows
 
-        #expect(rows.map(\.id) == [fixture.c.id, fixture.a.id, fixture.b.id])
-        #expect(rows.map(\.isCurrent) == [false, true, false])
+        #expect(rows.map(\.id) == [fixture.c.id, fixture.a.id, fixture.b.id, d.id, aa.id])
+        #expect(rows.map(\.name) == ["c", "a", "b", "d", "aa"])
+        #expect(rows.map(\.isCurrent) == [false, true, false, false, false])
+        #expect(other.isHidden)
+        #expect(rows.map(\.isInOtherWindow) == [true, false, false, false, false])
     }
 
     @Test func theSearch_matchesTheNameOrTheFolder_withoutCase() {
@@ -64,32 +60,30 @@ struct ProjectMenuModelTests {
     }
 
     @Test func eachRow_carriesItsCounts_andMarksTheWindowsProject() {
-        let projects = [Self.project("a"), Self.project("b")]
+        let projects = [Self.project("a"), Self.project("b"), Self.project("c")]
         let facts = Self.facts(
             attention: [projects[0].id: AttentionCounts(stops: 1), projects[1].id: AttentionCounts(unread: 2)],
-            running: [projects[1].id: 3]
+            running: [projects[1].id: 3],
+            shown: [projects[0].id, projects[1].id]
         )
 
         let rows = ProjectMenuModel(projects: projects, currentProjectID: projects[1].id, query: "", facts: facts).rows
 
-        #expect(rows.map(\.attention.style) == [.blocking, .unreadOnly])
-        #expect(rows.map(\.running) == [0, 3])
-        #expect(rows.map(\.isCurrent) == [false, true])
-    }
-
-    @Test func aProjectAnotherWindowShows_isMarked_butNotTheWindowsOwn() {
-        let projects = [Self.project("a"), Self.project("b"), Self.project("c")]
-        // `b` is this window's; `a` is shown in another; `c` in none.
-        let facts = Self.facts(shown: [projects[0].id, projects[1].id])
-
-        let rows = ProjectMenuModel(projects: projects, currentProjectID: projects[1].id, query: "", facts: facts).rows
-
+        #expect(rows.map(\.id) == projects.map(\.id))
+        #expect(rows.map(\.attention.counts) == [AttentionCounts(stops: 1), AttentionCounts(unread: 2), AttentionCounts()])
+        #expect(rows.map(\.attention.count) == [1, 2, 0])
+        #expect(rows.map(\.attention.style) == [.blocking, .unreadOnly, .empty])
+        #expect(rows.map(\.running) == [0, 3, 0])
+        #expect(rows.map(\.isCurrent) == [false, true, false])
         #expect(rows.map(\.isInOtherWindow) == [true, false, false])
     }
 
-    @Test func theMenu_countsTowardThePalettesOrder() {
-        let id = UUID()
-        #expect(ProjectMenuModel.frecencyKey(id) == CommandPaletteAction.activateProject(id).frecencyKey)
+    @Test func theMenuAndPaletteUseTheSameProjectFrecencyKeys() {
+        let first = UUID()
+        let second = UUID()
+        let expected = ["project.\(first.uuidString)", "project.\(second.uuidString)"]
+        #expect([first, second].map(ProjectMenuModel.frecencyKey) == expected)
+        #expect([first, second].map { CommandPaletteAction.activateProject($0).frecencyKey } == expected)
     }
 
     @Test(arguments: [
@@ -140,71 +134,69 @@ struct ProjectMenuModelTests {
         #expect(!row(isCurrent: false, isInOtherWindow: true).opensInNewWindow)
     }
 
-    /// The window's project ends with Close Project…, after its settings
-    /// and its folder.
-    @Test func theWindowsProject_offersCloseProject_afterItsSettingsAndFolder() {
-        let projects = [Self.project("a"), Self.project("b")]
+    @Test(arguments: [
+        (ProjectTrouble?.none, true),
+        (.folderMissing, false),
+        (.gitUnavailable, true),
+        (.listingFailed(detail: "offline"), true)
+    ])
+    func theWindowsProject_offersCloseProject_afterItsSettingsAndFolder(trouble: ProjectTrouble?, canReveal: Bool) {
+        let other = Self.project("other")
+        var project = Self.project("weir")
+        project.trouble = trouble
+        let projects = [other, project]
 
-        #expect(
-            ProjectMenuModel.projectItems(for: projects[1].id, in: projects)
-                == [.settings, .revealInFinder, .close]
-        )
-    }
-
-    /// A project whose folder is gone has nothing to show in Finder: the
-    /// item stays, dimmed, as it does in the sidebar's project menu, which
-    /// asks the same. Its settings and closing it still work.
-    @Test func aProjectWhoseFolderIsGone_cannotShowItInFinder() {
-        var project = Self.project("a")
-
-        #expect(ProjectMenuModel.isEnabled(.revealInFinder, for: project))
-
-        project.trouble = .folderMissing
-
-        #expect(!ProjectMenuModel.isEnabled(.revealInFinder, for: project))
+        #expect(ProjectMenuModel.projectItems(for: project.id, in: projects) == [.settings, .revealInFinder, .close])
+        #expect(ProjectMenuModel.projectItems(for: nil, in: projects).isEmpty)
+        #expect(ProjectMenuModel.projectItems(for: UUID(), in: projects).isEmpty)
         #expect(ProjectMenuModel.isEnabled(.settings, for: project))
+        #expect(ProjectMenuModel.isEnabled(.revealInFinder, for: project) == canReveal)
         #expect(ProjectMenuModel.isEnabled(.close, for: project))
     }
 
-    /// A window that shows no project, or one just removed, has nothing to
-    /// close.
-    @Test func noProject_orOneGone_offersNothingToClose() {
-        let projects = [Self.project("a")]
+    @MainActor
+    @Test func closeProjectBuildsAConfirmationTargetForTheSelectedProject() {
+        let fixture = ProjectWindowsFixture()
 
-        #expect(ProjectMenuModel.projectItems(for: nil, in: projects).isEmpty)
-        #expect(ProjectMenuModel.projectItems(for: UUID(), in: projects).isEmpty)
+        let target = TitleBarMenuHost.closeTarget(for: fixture.b.id, in: fixture.session)
+
+        #expect(target?.projectID == fixture.b.id)
+        #expect(target?.name == "b")
+        fixture.session.removeProject(fixture.b.id)
+        #expect(TitleBarMenuHost.closeTarget(for: fixture.b.id, in: fixture.session) == nil)
+        #expect(TitleBarMenuHost.closeTarget(for: nil, in: fixture.session) == nil)
     }
 
-    /// Choosing Close Project… raises the confirmation for that project,
-    /// named; a project already gone raises none.
     @MainActor
-    @Test func closeProject_raisesTheConfirmationForThatProject() {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
-
-        let target = TitleBarMenuHost.closeTarget(for: project.id, in: session)
-
-        #expect(target?.projectID == project.id)
-        #expect(target?.name == "weir")
-        #expect(TitleBarMenuHost.closeTarget(for: UUID(), in: session) == nil)
-        #expect(TitleBarMenuHost.closeTarget(for: nil, in: session) == nil)
-    }
-
-    /// The confirmation says the agents stop only when one runs in the
-    /// project's own tabs: one in a scratch tab is not the project's.
-    @MainActor
-    @Test func closeProject_saysAgentsStop_onlyForTheProjectsOwn() {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
-        let tab = session.openTab(container: .project(project.id))
-        let scratch = session.openTab(container: .loose)
-        func run(in tab: Tab) {
-            let pane = tab.splitTree.allLeafIDs()[0]
-            session.update(tab.id) { $0.agentBadges[.claude] = [pane: AgentBadge(state: .running, updatedAt: Date())] }
+    @Test func closeWarningDetectsLiveAgentsOnlyInTheProjectsOwnTabs() throws {
+        let fixture = ProjectWindowsFixture()
+        let session = fixture.session
+        let projectID = fixture.a.id
+        let worktree = try WorkspaceSessionFixture.appendWorktree(to: projectID, in: session)
+        let checkout = session.openTab(container: .worktree(projectID: projectID, worktreeID: worktree.id))
+        let stamp = Date(timeIntervalSince1970: 100)
+        func setBadge(_ state: AgentState, in tab: Tab) throws {
+            let pane = try #require(tab.splitTree.allLeafIDs().first)
+            session.update(tab.id) { $0.agentBadges[.claude] = [pane: AgentBadge(state: state, updatedAt: stamp)] }
         }
 
-        #expect(!session.hasLiveAgent(inProject: project.id))
-        run(in: scratch)
-        #expect(!session.hasLiveAgent(inProject: project.id))
-        run(in: tab)
-        #expect(session.hasLiveAgent(inProject: project.id))
+        #expect(!session.hasLiveAgent(inProject: projectID))
+        try setBadge(.running, in: fixture.scratchTab())
+        try setBadge(.running, in: fixture.bTab)
+        try setBadge(.unknown, in: fixture.aTab)
+        #expect(!session.hasLiveAgent(inProject: projectID))
+
+        try setBadge(.running, in: checkout)
+        #expect(session.hasLiveAgent(inProject: projectID))
+        session.update(checkout.id) { $0.agentBadges = [:] }
+        #expect(!session.hasLiveAgent(inProject: projectID))
+        try setBadge(.running, in: fixture.aTab)
+        #expect(session.hasLiveAgent(inProject: projectID))
+        let rootPane = try #require(fixture.aTab.splitTree.allLeafIDs().first)
+        session.update(fixture.aTab.id) {
+            $0.agentBadges = [:]
+            $0.agentsInFront[rootPane] = PaneAgentInFront(kind: .codex, isStaged: false)
+        }
+        #expect(session.hasLiveAgent(inProject: projectID))
     }
 }

@@ -14,12 +14,16 @@ struct GhosttyUserConfigTests {
         """
         #expect(GhosttyUserConfig.fontFamily(in: [config]) == "Iosevka Term")
         #expect(GhosttyUserConfig.fontFamily(in: [config, "font-family = \"\"\nfont-family = Menlo"]) == "Menlo")
+        #expect(GhosttyUserConfig.fontFamily(in: [config, "font-family ="]) == nil)
         #expect(GhosttyUserConfig.fontFamily(in: ["font-size = 14"]) == nil)
     }
 
     @Test func withoutTheGhosttyConfig_theDefaultIsTheEmbeddedFont() {
-        let named = GhosttyUserConfig.defaultFontFamily(readsGhosttyConfig: false) { ["font-family = Menlo"] }
-        #expect(named == GhosttyUserConfig.builtInFontFamily)
+        let named = GhosttyUserConfig.defaultFontFamily(readsGhosttyConfig: false) {
+            Issue.record("Disabled config should not be read")
+            return ["font-family = Menlo"]
+        }
+        #expect(named == "JetBrains Mono")
         #expect(GhosttyUserConfig.defaultFontFamily(readsGhosttyConfig: true) { [] } == "JetBrains Mono")
         #expect(GhosttyUserConfig.defaultFontFamily(readsGhosttyConfig: true) { ["font-family = Menlo"] } == "Menlo")
     }
@@ -34,7 +38,13 @@ struct GhosttyUserConfigTests {
             "/Users/someone/Library/Application Support/com.mitchellh.ghostty/config",
             "/Users/someone/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
         ])
-        #expect(GhosttyUserConfig.candidateFiles(home: home, environment: [:]).first?.path
-            == "/Users/someone/.config/ghostty/config")
+        let defaultPaths = [
+            "/Users/someone/.config/ghostty/config",
+            "/Users/someone/.config/ghostty/config.ghostty",
+            "/Users/someone/Library/Application Support/com.mitchellh.ghostty/config",
+            "/Users/someone/Library/Application Support/com.mitchellh.ghostty/config.ghostty"
+        ]
+        #expect(GhosttyUserConfig.candidateFiles(home: home, environment: [:]).map(\.path) == defaultPaths)
+        #expect(GhosttyUserConfig.candidateFiles(home: home, environment: ["XDG_CONFIG_HOME": ""]).map(\.path) == defaultPaths)
     }
 }

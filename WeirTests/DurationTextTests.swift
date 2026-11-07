@@ -9,9 +9,12 @@ struct DurationTextTests {
     private let en = Locale(identifier: "en")
 
     @Test func aCommandsTime_isSaidInWholeSecondsPastAMinute() {
-        #expect(DurationText.command(134.6, locale: en) == DurationText.command(134, locale: en))
-        #expect(DurationText.command(134, locale: en).contains("2"))
-        #expect(DurationText.command(48.25, locale: en).contains("48.2") || DurationText.command(48.25, locale: en).contains("48.3"))
+        #expect(DurationText.command(48.24, locale: en) == "48.2s")
+        #expect(DurationText.command(48.26, locale: en) == "48.3s")
+        #expect(DurationText.command(59.9, locale: en) == "59.9s")
+        #expect(DurationText.command(60, locale: en) == "1m")
+        #expect(DurationText.command(134, locale: en) == "2m 14s")
+        #expect(DurationText.command(134.6, locale: en) == "2m 14s")
     }
 
     @Test func aDecodedCommandKeepsItsExitFactWhenTheDurationIsUnsupported() throws {

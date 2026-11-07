@@ -25,47 +25,53 @@ struct GitFactsTests {
         try repo.write("b.txt", to: "b.txt")
         try await repo.commit("b.txt", paths: ["b.txt"])
         let onBranch = try await read(repo.url)
+        #expect(onBranch.branch == "feat/x")
+        #expect(onBranch.base == GitFacts.Base(ref: "main"))
         #expect(!onBranch.isOnBase)
         #expect(onBranch.commitsNotOnBase == 2)
+        #expect(onBranch.unpushedCommits == nil)
     }
 
-    @Test func uncommittedFiles_countEachUntrackedFile_andEachChangedOne() async throws {
+    @Test func uncommittedFiles_countEachPathOnce_evenWhenStagedAndUnstaged() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
-        try repo.write("tracked.txt", to: "tracked.txt")
-        try await repo.commit("tracked.txt", paths: ["tracked.txt"])
+        try repo.write("original", to: "both.txt")
+        try repo.write("original", to: "unstaged.txt")
+        try await repo.commit("tracked files", paths: ["both.txt", "unstaged.txt"])
 
-        // Two files in a new folder are two, not the folder as one.
-        let folder = repo.url.appendingPathComponent("new", isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try Data("1".utf8).write(to: folder.appendingPathComponent("one.txt"))
-        try Data("2".utf8).write(to: folder.appendingPathComponent("two.txt"))
-        try repo.write("changed", to: "tracked.txt")
+        try repo.write("staged", to: "both.txt")
+        try repo.write("staged only", to: "staged.txt")
+        try await repo.git(["add", "--", "both.txt", "staged.txt"])
+        try repo.write("unstaged after staging", to: "both.txt")
+        try repo.write("unstaged only", to: "unstaged.txt")
+        try repo.write("untracked", to: "new/one.txt")
+        try repo.write("untracked", to: "new/two.txt")
 
         let facts = try await read(repo.url)
-        #expect(facts.uncommittedFiles == 3)
+        #expect(facts.uncommittedFiles == 5)
     }
 
     @Test func withARemote_theBaseIsOriginsDefault_andUnpushedCommitsAreThoseNoRemoteHas() async throws {
         let repo = try await TempGitRepo.make()
+        defer { repo.cleanup() }
         let remote = try await TempGitRepo.make()
-        defer {
-            repo.cleanup()
-            remote.cleanup()
-        }
-        try await remote.git(["config", "receive.denyCurrentBranch", "ignore"])
+        defer { remote.cleanup() }
+        try await remote.git(["branch", "-m", "trunk"])
+        try remote.write("only on trunk", to: "base.txt")
+        try await remote.commit("trunk base", paths: ["base.txt"])
         try await repo.git(["remote", "add", "origin", remote.url.path])
         try await repo.git(["fetch", "-q", "origin"])
-        try await repo.git(["remote", "set-head", "origin", "main"])
-        try await repo.git(["switch", "-q", "-c", "feat/x", "origin/main"])
+        try await repo.git(["remote", "set-head", "origin", "trunk"])
+        try await repo.git(["switch", "-q", "--no-track", "-c", "feat/x", "origin/trunk"])
         try repo.write("a.txt", to: "a.txt")
         try await repo.commit("a.txt", paths: ["a.txt"])
         try repo.write("b.txt", to: "b.txt")
         try await repo.commit("b.txt", paths: ["b.txt"])
 
         let unpushed = try await read(repo.url)
-        #expect(unpushed.base == GitFacts.Base(ref: "origin/main"))
-        #expect(unpushed.base?.name == "main")
+        #expect(unpushed.branch == "feat/x")
+        #expect(unpushed.base?.ref == "origin/trunk")
+        #expect(unpushed.base?.name == "trunk")
         #expect(unpushed.commitsNotOnBase == 2)
         #expect(unpushed.unpushedCommits == 2)
 
@@ -80,21 +86,20 @@ struct GitFactsTests {
         try await repo.commit("c.txt", paths: ["c.txt"])
         #expect(try await read(repo.url).unpushedCommits == 1)
 
-        // The upstream deleted on the remote as its request merged: there
-        // is nothing to count against, which is not "all unpushed".
+        // A deleted upstream leaves the count unknown even while local
+        // commits are still outside the base.
         try await repo.git(["push", "-q", "origin", "--delete", "feat/x"])
         try await repo.git(["fetch", "-q", "--prune", "origin"])
         let gone = try await read(repo.url)
         #expect(gone.unpushedCommits == nil)
+        #expect(gone.commitsNotOnBase == 3)
     }
 
     @Test func aBranchTrackingTheDefaultBranch_isPushedOnceARemoteHasItsCommits() async throws {
         let repo = try await TempGitRepo.make()
+        defer { repo.cleanup() }
         let remote = try await TempGitRepo.make()
-        defer {
-            repo.cleanup()
-            remote.cleanup()
-        }
+        defer { remote.cleanup() }
         try await repo.git(["remote", "add", "origin", remote.url.path])
         try await repo.git(["fetch", "-q", "origin"])
         // Made from origin/main, the branch tracks origin/main, as an
@@ -106,7 +111,11 @@ struct GitFactsTests {
 
         // Pushed without -u: still ahead of its upstream, but on a remote.
         try await repo.git(["push", "-q", "origin", "feat/x"])
-        #expect(try await read(repo.url).unpushedCommits == 0)
+        let upstream = try await repo.git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])
+        #expect(upstream == "origin/main")
+        let facts = try await read(repo.url)
+        #expect(facts.commitsNotOnBase == 1)
+        #expect(facts.unpushedCommits == 0)
     }
 
     @Test(arguments: [false, true])

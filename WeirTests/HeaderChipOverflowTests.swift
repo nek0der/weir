@@ -56,9 +56,8 @@ struct HeaderChipOverflowTests {
         #expect(shown(204) == [])
     }
 
-    @Test func theName_isCutOnlyOnceNoChipIsLeft() {
-        // Narrower than the name itself: every chip is gone, and the view
-        // cuts the name from its end.
+    @Test func noChipsFit_whenTheNameAlreadyExceedsTheLine() {
+        // Narrower than the fixed content alone, so no chip fits.
         #expect(Self.shown(available: 120).isEmpty)
     }
 }

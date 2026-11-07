@@ -120,12 +120,15 @@ struct ReviewDraftLifecycleTests {
             await store.load(file)
             await store.flushNavigationSave()
             let line = try #require(store.diff?.lines.first, "Line missing")
-            store.add(line: line, body: "Written before the dates existed.")
-            store.markInserted(store.comments)
-            try #require(
-                store.comments.count == 1,
-                "Setup failed: \(store.errorMessage.map { $0.resolved(in: Locale(identifier: "en")) } ?? "")"
-            )
+            let body = "Written before the dates existed."
+            try #require(store.add(line: line, body: body))
+            let id = try #require(store.comments.first?.id)
+            let sent = Date(timeIntervalSince1970: 1000)
+            let resolved = sent.addingTimeInterval(60)
+            try #require(store.markInserted(store.comments, at: sent).wasRecorded)
+            store.setResolved(id, true, at: resolved)
+            try #require(store.comments.first?.insertedAt == sent)
+            try #require(store.comments.first?.resolvedAt == resolved)
             let saved = try #require(
                 FileManager.default.contentsOfDirectory(at: storage, includingPropertiesForKeys: nil).first,
                 "Saved draft missing"
@@ -133,9 +136,9 @@ struct ReviewDraftLifecycleTests {
             // The keys an old app never wrote, taken back out of the file.
             var draft = try JSONObjectFixture.object(Data(contentsOf: saved))
             var comments = try #require(draft["comments"] as? [[String: Any]], "Draft has no comments")
-            let removedDate = comments[0].removeValue(forKey: "insertedAt")
-            #expect(removedDate != nil, "The draft never carried a date")
-            comments[0].removeValue(forKey: "resolvedAt")
+            try #require(comments.count == 1)
+            try #require(comments[0].removeValue(forKey: "insertedAt") != nil)
+            try #require(comments[0].removeValue(forKey: "resolvedAt") != nil)
             draft["comments"] = comments
             try JSONSerialization.data(withJSONObject: draft).write(to: saved)
             let reopened = ReviewSession(root: root, drafts: FileReviewDraftStore(directory: storage))
@@ -143,10 +146,12 @@ struct ReviewDraftLifecycleTests {
                 reopened.comments.count == 1,
                 "An old draft did not reload: \(reopened.errorMessage.map { $0.resolved(in: Locale(identifier: "en")) } ?? "")"
             )
-            #expect(
-                reopened.comments[0].insertedAt == nil && !reopened.comments[0].isResolved,
-                "An old comment did not read as unsent and unresolved"
-            )
+            let comment = reopened.comments[0]
+            #expect(comment.id == id)
+            #expect(comment.body == body)
+            #expect(comment.insertedAt == nil)
+            #expect(comment.resolvedAt == nil)
+            #expect(!comment.isResolved)
         }
     }
 

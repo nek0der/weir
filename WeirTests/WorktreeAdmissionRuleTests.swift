@@ -56,6 +56,7 @@ struct WorktreeAdmissionRuleTests {
     /// admissions were kept.
     @Test(arguments: [
         facts(path: "/work/repo-feat-x"),
+        facts(path: "\(home)/elsewhere/repo"),
         facts(path: "/repo/.worktrees/feat-x"),
         // Only a folder whose name starts so, not one that holds the word.
         facts(path: "/work/my-agent-x"),

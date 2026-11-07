@@ -21,14 +21,16 @@ extension ReviewSession {
     /// `files`, as far as the budget goes (`estimatedLines`). The estimate
     /// opens untracked files, so it is worked out off the main actor; a list
     /// read again meanwhile is asked about by the review itself.
-    func loadStackForSearch(_ files: [ReviewFile]) {
+    /// The returned task ends once the session has handled the estimate.
+    @discardableResult
+    func loadStackForSearch(_ files: [ReviewFile]) -> Task<Void, Never> {
         let stats = stats
         let root = root
         let listRead = listReadCount
         // Taken now, so a Find closed before the estimate is back drops it.
         let ticket = stackLoader.beginSearch()
         let requests = files.map { ReviewStackLoader.Request(file: $0, scope: scopeForFile($0)) }
-        Task {
+        return Task {
             let estimates = await Task.detached(priority: .userInitiated) {
                 files.reduce(into: [String: Int]()) { estimates, file in
                     if let estimate = Self.estimatedLines(file, stat: stats[file.id], root: root) {

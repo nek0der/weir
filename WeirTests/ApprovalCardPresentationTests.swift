@@ -16,7 +16,13 @@ struct ApprovalCardPresentationTests {
         sessionID: String? = nil,
         questions: [ApprovalQuestion] = []
     ) -> ApprovalPresentation {
-        ApprovalPresentation.test(epoch: epoch, sessionID: sessionID, summary: "rm -rf build", questions: questions)
+        ApprovalPresentation.test(
+            epoch: epoch,
+            sessionID: sessionID,
+            toolName: questions.isEmpty ? "Bash" : "AskUserQuestion",
+            summary: questions.isEmpty ? "rm -rf build" : nil,
+            questions: questions
+        )
     }
 
     // MARK: - Which request the card shows
@@ -39,7 +45,7 @@ struct ApprovalCardPresentationTests {
         store.receive([first, second, third])
         #expect(card.presentedApproval == nil)
 
-        // Nor does one coming back over a reconnect, or a restarted service's.
+        // An empty projection or a new service epoch does not open a card either.
         store.receive([], epoch: epoch)
         store.receive([first, second, third])
         #expect(card.presentedApproval == nil)
@@ -73,37 +79,38 @@ struct ApprovalCardPresentationTests {
 
         store.receive([request])
         card.present(request, shouldFocusCard: false)
-        #expect(card.presentedApproval == request)
+        #expect(card.presentedID == request.id)
         #expect(card.cardFocusRequestID == nil)
+        #expect(!card.isCardFocused)
 
         card.present(request)
+        #expect(card.presentedID == request.id)
         #expect(card.cardFocusRequestID == request.id)
+        #expect(!card.isCardFocused)
     }
 
-    @Test func aCardHoldsTheKeyboardOnlyWhileFocusIsInIt() {
+    @Test func theCardTracksFocusWithoutDismissingOnFocusLoss() {
         let store = ApprovalPresentationStore()
         let card = TestApprovalCard(store)
         let request = Self.approval()
         store.receive([request])
         card.present(request)
-        #expect(!card.isCardFocused, "focus arrives a turn after the click")
+        #expect(!card.isCardFocused)
 
         card.cardFocusChanged(true, for: request)
         #expect(card.isCardFocused)
 
-        // The person went to the terminal: the card stays, keys go there.
         card.cardFocusChanged(false, for: request)
         #expect(!card.isCardFocused)
         #expect(card.isCardOpen)
         #expect(card.presentedApproval == request)
 
-        // Escape or the close button.
         card.dismissCard()
         #expect(card.presentedApproval == nil)
         #expect(!card.isCardOpen)
     }
 
-    @Test func staleFocusLoss_leavesTheReplacementCardAlone() {
+    @Test func staleFocusEvents_leaveTheReplacementCardAlone() {
         let store = ApprovalPresentationStore()
         let card = TestApprovalCard(store)
         let first = Self.approval()
@@ -113,10 +120,16 @@ struct ApprovalCardPresentationTests {
         card.present(first)
         card.present(second)
         card.cardFocusChanged(true, for: first)
-        card.cardFocusChanged(false, for: first)
-
-        #expect(card.presentedApproval == second)
+        card.cardFocusRequestCompleted(for: first)
+        #expect(card.presentedID == second.id)
+        #expect(card.cardFocusRequestID == second.id)
         #expect(!card.isCardFocused)
+
+        card.cardFocusChanged(true, for: second)
+        #expect(card.isCardFocused)
+        card.cardFocusChanged(false, for: first)
+        #expect(card.presentedID == second.id)
+        #expect(card.isCardFocused)
     }
 
     @Test func aCardThatGotNoFocus_staysOpen() {
@@ -126,10 +139,13 @@ struct ApprovalCardPresentationTests {
 
         store.receive([request])
         card.present(request)
+        #expect(card.cardFocusRequestID == request.id)
         card.cardFocusRequestCompleted(for: request)
 
+        #expect(card.presentedID == request.id)
         #expect(card.presentedApproval == request)
         #expect(card.cardFocusRequestID == nil)
+        #expect(!card.isCardFocused)
     }
 
     @Test func questionCard_closesLikeAnyCardAndKeepsItsDraft() {
@@ -143,9 +159,11 @@ struct ApprovalCardPresentationTests {
         store.updateAnswerDraft(draft, for: request)
 
         card.dismissCard()
-        #expect(card.presentedApproval == nil)
+        #expect(card.presentedID == nil)
 
         card.present(request)
+        #expect(card.presentedApproval == request)
+        #expect(store.answerDraft(for: request) == draft)
         #expect(store.answerDraft(for: request).answers(for: [Self.question]) == ["Which color?": "Red"])
     }
 
@@ -153,7 +171,7 @@ struct ApprovalCardPresentationTests {
         let store = ApprovalPresentationStore()
         let card = TestApprovalCard(store)
         let first = Self.approval(questions: [Self.question])
-        let second = Self.approval(epoch: first.epoch)
+        let second = Self.approval(epoch: first.epoch, questions: [Self.question])
         store.receive([first, second])
         card.present(first)
         var draft = store.answerDraft(for: first)
@@ -161,8 +179,12 @@ struct ApprovalCardPresentationTests {
         store.updateAnswerDraft(draft, for: first)
 
         card.present(second)
-        #expect(card.presentedApproval == second)
-        #expect(store.answerDraft(for: first).freeText[0] == "Green")
+        #expect(card.presentedID == second.id)
+        #expect(store.answerDraft(for: second) == ApprovalAnswerDraft())
+
+        card.present(first)
+        #expect(card.presentedApproval == first)
+        #expect(store.answerDraft(for: first) == draft)
     }
 
     @Test func answerDraft_leavesWithItsRequest() {
@@ -173,10 +195,13 @@ struct ApprovalCardPresentationTests {
         draft.toggle(label: "Red", questionIndex: 0, in: Self.question)
         store.updateAnswerDraft(draft, for: request)
 
-        // Withdrawn, then the service restarted: a settled request does not
-        // outlive its epoch.
         store.receive([], epoch: request.epoch, terminals: [request.id: .canceled])
+        #expect(store.pending.isEmpty)
+        #expect(store.ledger.entry(for: request)?.state == .withdrawn)
+        #expect(store.answerDraft(for: request) == draft)
+
         store.receive([], epoch: UUID())
+        #expect(store.ledger.entry(for: request) == nil)
         #expect(store.answerDraft(for: request) == ApprovalAnswerDraft())
 
         // A request the store no longer knows cannot gain a draft either.
@@ -202,57 +227,59 @@ struct ApprovalCardPresentationTests {
 
     /// A store with one request presented on its card.
     private static func presentedStore(
+        questions: [ApprovalQuestion] = [],
         sender: @escaping @Sendable (ApprovalPresentation, ApprovalResolution) async throws -> Void = { _, _ in }
     ) -> Presented {
         let store = ApprovalPresentationStore(decisionSender: sender)
         let card = TestApprovalCard(store)
         let epoch = UUID()
-        let request = approval(epoch: epoch)
+        let request = approval(epoch: epoch, questions: questions)
         store.apply(.test(pending: [request]), epoch: epoch, now: now)
         card.present(request)
         return Presented(store: store, card: card, request: request, epoch: epoch)
     }
 
-    @Test(arguments: [BrokerTerminal.resolved(.delegate), .expired])
-    func aRequestThatLeavesThePendingList_keepsItsCardWhileOpen(_ terminal: BrokerTerminal) {
+    @Test(arguments: [
+        (BrokerTerminal.resolved(.delegate), ApprovalRequestState.handedToTerminal(since: now)),
+        (.expired, .timedOut)
+    ])
+    func aRequestThatLeavesThePendingList_keepsItsCardWhileOpen(
+        terminal: BrokerTerminal,
+        expected: ApprovalRequestState
+    ) {
         let presented = Self.presentedStore()
         let (store, request, epoch) = (presented.store, presented.request, presented.epoch)
         let card = presented.card
 
-        store.apply(
-            ApprovalControllerConnection.Projection.test(pending: [], terminals: [request.id: terminal]),
-            epoch: epoch,
-            now: Self.now
-        )
+        store.apply(.test(pending: [], terminals: [request.id: terminal]), epoch: epoch, now: Self.now)
 
+        #expect(store.pending.isEmpty)
+        #expect(store.ledger.entry(for: request)?.state == expected)
+        #expect(card.presentedID == request.id)
         #expect(card.presentedApproval == request)
-        #expect(card.isCardOpen)
     }
 
-    @Test(arguments: [BrokerTerminal.resolved(.allowOnce), .canceled])
-    func aSettledRequest_closesItsCard(_ terminal: BrokerTerminal) {
+    @Test(arguments: [
+        (Optional(BrokerTerminal.resolved(.allowOnce)), ApprovalRequestState.answered(.allowOnce)),
+        (.some(.canceled), .withdrawn),
+        (nil, .unknownResult)
+    ])
+    func aSettledOrMissingRequest_closesItsCard(terminal: BrokerTerminal?, expected: ApprovalRequestState) {
         let presented = Self.presentedStore()
         let (store, request, epoch) = (presented.store, presented.request, presented.epoch)
         let card = presented.card
 
-        store.apply(
-            ApprovalControllerConnection.Projection.test(pending: [], terminals: [request.id: terminal]),
-            epoch: epoch,
-            now: Self.now
-        )
+        let projection: ApprovalControllerConnection.Projection = if let terminal {
+            .test(pending: [], terminals: [request.id: terminal])
+        } else {
+            .test(pending: [], missing: [request.id])
+        }
+        store.apply(projection, epoch: epoch, now: Self.now)
 
-        #expect(card.presentedApproval == nil)
+        #expect(store.pending.isEmpty)
+        #expect(store.ledger.entry(for: request)?.state == expected)
         #expect(card.presentedID == nil)
-    }
-
-    @Test func aRequestTheBrokerLost_closesItsCard() {
-        let presented = Self.presentedStore()
-        let (store, request, epoch) = (presented.store, presented.request, presented.epoch)
-        let card = presented.card
-
-        store.apply(ApprovalControllerConnection.Projection.test(pending: [], missing: [request.id]), epoch: epoch, now: Self.now)
-
-        #expect(!card.isCardOpen)
+        #expect(card.presentedApproval == nil)
     }
 
     @Test func anAnswerThatLost_keepsTheCardToSaySo() async {
@@ -266,18 +293,42 @@ struct ApprovalCardPresentationTests {
         await store.waitUntilResolved(request)
 
         #expect(card.presentedApproval == request)
+        #expect(store.ledger.entry(for: request)?.state == .answered(.deny))
         #expect(store.ledger.entry(for: request)?.isAnsweredElsewhere == true)
+        let model = ApprovalCardModel(approval: request, in: store)
+        #expect(model?.status == .alreadyAnswered)
+        #expect(model?.actions == .some(.none))
     }
 
-    @Test func anAcceptedAnswer_closesTheCard() async {
-        let presented = Self.presentedStore()
+    @Test func anAnswerKeepsTheCardOpenUntilTheBrokerAcceptsIt() async throws {
+        let gate = Gate<Void>()
+        defer { gate.open() }
+        let sent = Recorded<[(approval: ApprovalPresentation, resolution: ApprovalResolution)]>([])
+        let presented = Self.presentedStore { approval, resolution in
+            sent.update { $0.append((approval, resolution)) }
+            await gate.wait()
+        }
         let (store, request) = (presented.store, presented.request)
         let card = presented.card
 
         store.resolve(request, .allowOnce)
-        #expect(card.isCardOpen, "the card says Sending until the broker accepts")
+        guard case .sending(.allowOnce, _)? = store.ledger.entry(for: request)?.state else {
+            Issue.record("Expected the decision to be sending before the first suspension.")
+            return
+        }
+        try await gate.waitUntilRequested()
+        #expect(sent.value.map(\.approval) == [request])
+        #expect(sent.value.map(\.resolution) == [.allowOnce])
+        #expect(card.presentedID == request.id)
+        #expect(card.presentedApproval == request)
+        #expect(ApprovalCardModel(approval: request, in: store)?.actions == .sending)
+
+        gate.open()
         await store.waitUntilResolved(request)
 
+        #expect(store.ledger.entry(for: request)?.state == .answered(.allowOnce))
+        #expect(store.lastFailureID == nil)
+        #expect(card.presentedID == nil)
         #expect(!card.isCardOpen)
     }
 
@@ -300,12 +351,15 @@ struct ApprovalCardPresentationTests {
         )
 
         store.releaseStaleApprovals(in: session)
-        #expect(card.isCardOpen, "the TUI has not answered while the turn runs")
+        #expect(card.presentedApproval == request)
+        #expect(store.ledger.entry(for: request)?.state == .handedToTerminal(since: Self.now))
 
         session.applyAcrossTabs { tab in
             tab.agentBadges[.claude] = [paneID: AgentBadge(state: .finished, updatedAt: Date())]
         }
         store.releaseStaleApprovals(in: session)
+        #expect(store.ledger.entry(for: request) == nil)
+        #expect(card.presentedID == nil)
         #expect(!card.isCardOpen)
     }
 
@@ -318,39 +372,61 @@ struct ApprovalCardPresentationTests {
         store.ledger.endEpisode(id: request.id)
 
         store.receive([request], epoch: epoch)
-        card.present(request)
+        #expect(store.pending == [request])
+        #expect(store.ledger.entry(for: request) == nil)
+        #expect(!card.card.present(key: request.key, from: store))
 
+        #expect(card.presentedID == nil)
         #expect(!card.isCardOpen)
     }
 
-    @Test func theCardModel_readsTheStore() async {
+    @Test func aSendFailureIsShownOnlyForItsOwnCardModel() async {
         struct Offline: Error {}
-        let presented = Self.presentedStore { _, _ in throw Offline() }
-        let (store, request) = (presented.store, presented.request)
+        let store = ApprovalPresentationStore(decisionSender: { _, _ in throw Offline() })
+        let first = Self.approval()
+        let second = Self.approval(epoch: first.epoch)
+        store.receive([first, second])
 
-        store.resolve(request, .deny)
-        await store.waitUntilResolved(request)
+        store.resolve(first, .deny)
+        await store.waitUntilResolved(first)
+        #expect(ApprovalCardModel(approval: first, in: store)?.status == .sendFailed)
 
-        #expect(ApprovalCardModel(approval: request, in: store)?.status == .sendFailed)
+        store.resolve(second, .allowOnce)
+        await store.waitUntilResolved(second)
+
+        guard case .sendFailed(.deny, _)? = store.ledger.entry(for: first)?.state,
+              case .sendFailed(.allowOnce, _)? = store.ledger.entry(for: second)?.state
+        else {
+            Issue.record("Expected both requests to retain their failed decisions.")
+            return
+        }
+        #expect(store.lastFailureID == second.id)
+        #expect(ApprovalCardModel(approval: first, in: store)?.status == .some(.none))
+        #expect(ApprovalCardModel(approval: second, in: store)?.status == .sendFailed)
     }
 
     @Test func anAnchorAndDraftOutliveThePendingList() {
-        let presented = Self.presentedStore()
+        let presented = Self.presentedStore(questions: [Self.question])
         let (store, request, epoch) = (presented.store, presented.request, presented.epoch)
         let card = presented.card
-        store.apply(
-            ApprovalControllerConnection.Projection.test(pending: [], terminals: [request.id: .resolved(.delegate)]),
-            epoch: epoch,
-            now: Self.now
-        )
-
         let row = CGRect(x: 0, y: 100, width: 280, height: 40)
         card.updateRowAnchor(row, for: request)
         var draft = ApprovalAnswerDraft()
-        draft.activeQuestionIndex = 1
+        draft.setFreeText("Green", questionIndex: 0, in: Self.question)
         store.updateAnswerDraft(draft, for: request)
 
+        store.apply(.test(pending: [], terminals: [request.id: .resolved(.delegate)]), epoch: epoch, now: Self.now)
+
+        #expect(store.pending.isEmpty)
         #expect(card.rowAnchor(for: request) == row)
-        #expect(store.answerDraft(for: request).activeQuestionIndex == 1)
+        #expect(store.answerDraft(for: request) == draft)
+
+        let movedRow = row.offsetBy(dx: 0, dy: 40)
+        card.updateRowAnchor(movedRow, for: request)
+        draft.setFreeText("Blue", questionIndex: 0, in: Self.question)
+        store.updateAnswerDraft(draft, for: request)
+
+        #expect(card.rowAnchor(for: request) == movedRow)
+        #expect(store.answerDraft(for: request) == draft)
     }
 }

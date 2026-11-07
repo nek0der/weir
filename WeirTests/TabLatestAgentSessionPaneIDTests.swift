@@ -14,8 +14,8 @@ struct TabLatestAgentSessionPaneIDTests {
     }
 
     /// A running agent's badge whose session started at `startedAt`.
-    private func badge(startedAt: Date?) -> AgentBadge {
-        AgentBadge(state: .running, updatedAt: at(0), sessionStartedAt: startedAt)
+    private func badge(startedAt: Date?, updatedAt: TimeInterval = 0) -> AgentBadge {
+        AgentBadge(state: .running, updatedAt: at(updatedAt), sessionStartedAt: startedAt)
     }
 
     @Test("with no agents, the property is nil")
@@ -29,8 +29,8 @@ struct TabLatestAgentSessionPaneIDTests {
         var (tab, pane1) = Tab.newWithSinglePane(title: "scratch", container: .loose)
         let pane2 = UUID()
         tab.agentBadges[.codex] = [
-            pane1: badge(startedAt: at(100)),
-            pane2: badge(startedAt: at(200))
+            pane1: badge(startedAt: at(100), updatedAt: 400),
+            pane2: badge(startedAt: at(200), updatedAt: 300)
         ]
         #expect(tab.latestAgentSessionPaneID == pane2)
     }

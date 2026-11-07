@@ -13,41 +13,36 @@ struct GitWorktreeListParserTests {
         lines.replacingOccurrences(of: "\n", with: "\0")
     }
 
-    /// A newline is a byte a folder's name may hold; only NUL ends a line.
-    @Test
-    func parse_aPathWithANewline_keepsItWhole() {
-        let porcelain = "worktree /Users/me/repo\nfeat\0HEAD aaa\0branch refs/heads/feat\0locked two\nlines\0\0"
-            + "worktree /Users/me/repo\0HEAD bbb\0detached\0\0"
-        let result = GitWorktreeList.parse(porcelain)
-        #expect(result.map(\.path.path) == ["/Users/me/repo\nfeat", "/Users/me/repo"])
-        #expect(result[0].branch == "feat")
-        #expect(result[0].isLocked)
-        #expect(result[1].isDetached)
+    private static func entry(
+        _ path: String, head: String? = nil, branch: String? = nil,
+        isDetached: Bool = false, isBare: Bool = false, isLocked: Bool = false, isPrunable: Bool = false
+    ) -> GitWorktreeInfo {
+        GitWorktreeInfo(
+            path: URL(fileURLWithPath: path), headSHA: head, branch: branch,
+            isDetached: isDetached, isBare: isBare, isLocked: isLocked, isPrunable: isPrunable
+        )
     }
 
-    @Test("a single worktree on main is parsed with its head + branch")
-    func parse_singleWorktreeOnMain_extractsAllFields() {
-        let porcelain = """
+    /// A newline is a byte a folder's name may hold. Only NUL ends a field.
+    @Test func parse_aPathWithANewline_keepsItWhole() {
+        let porcelain = "worktree /Users/me/repo\nfeat\0HEAD aaa\0branch refs/heads/feat\0locked two\nlines\0\0"
+            + "worktree /Users/me/repo\0HEAD bbb\0detached\0\0"
+        #expect(GitWorktreeList.parse(porcelain) == [
+            Self.entry("/Users/me/repo\nfeat", head: "aaa", branch: "feat", isLocked: true),
+            Self.entry("/Users/me/repo", head: "bbb", isDetached: true)
+        ])
+    }
+
+    @Test("porcelain records retain checkout order, paths, heads and branch state", arguments: [false, true])
+    func parse_multipleWorktrees_separatesBranchAndDetached(hasLinkedWorktrees: Bool) {
+        let primary = """
         worktree /Users/me/repo
         HEAD abc123abc123abc123abc123abc123abc123abc1
         branch refs/heads/main
 
+
         """
-        let result = GitWorktreeList.parse(Self.nulTerminated(porcelain))
-        #expect(result.count == 1)
-        #expect(result[0].path.path == "/Users/me/repo")
-        #expect(result[0].headSHA == "abc123abc123abc123abc123abc123abc123abc1")
-        #expect(result[0].branch == "main")
-        #expect(result[0].isDetached == false)
-    }
-
-    @Test("multiple worktrees: branch / branch / detached are distinguished")
-    func parse_multipleWorktrees_separatesBranchAndDetached() {
-        let porcelain = """
-        worktree /Users/me/repo
-        HEAD aaa
-        branch refs/heads/main
-
+        let linked = """
         worktree /Users/me/repo-feat
         HEAD bbb
         branch refs/heads/feat-x
@@ -57,46 +52,50 @@ struct GitWorktreeListParserTests {
         detached
 
         """
-        let result = GitWorktreeList.parse(Self.nulTerminated(porcelain))
-        #expect(result.count == 3)
-        #expect(result[0].branch == "main")
-        #expect(result[1].branch == "feat-x")
-        #expect(result[2].branch == nil)
-        #expect(result[2].isDetached)
+        var expected = [Self.entry("/Users/me/repo", head: "abc123abc123abc123abc123abc123abc123abc1", branch: "main")]
+        if hasLinkedWorktrees {
+            expected += [
+                Self.entry("/Users/me/repo-feat", head: "bbb", branch: "feat-x"),
+                Self.entry("/Users/me/repo-detached", head: "ccc", isDetached: true)
+            ]
+        }
+        let porcelain = Self.nulTerminated(primary + (hasLinkedWorktrees ? linked : ""))
+        #expect(GitWorktreeList.parse(porcelain) == expected)
     }
 
-    @Test("locked / prunable flags are surfaced when git emits them")
+    @Test("locked and prunable flags stay with their own worktree")
     func parse_lockedAndPrunableFlags_areSurfaced() {
         let porcelain = """
         worktree /Users/me/repo
         HEAD aaa
         branch refs/heads/main
-        locked some-reason
+        locked being repaired
 
         worktree /Users/me/repo-stale
         HEAD bbb
         branch refs/heads/old
-        prunable
+        prunable gitdir points to missing location
+
+        worktree /Users/me/repo-other
+        HEAD ccc
+        branch refs/heads/other
 
         """
-        let result = GitWorktreeList.parse(Self.nulTerminated(porcelain))
-        #expect(result.count == 2)
-        #expect(result[0].isLocked)
-        #expect(result[1].isPrunable)
+        #expect(GitWorktreeList.parse(Self.nulTerminated(porcelain)) == [
+            Self.entry("/Users/me/repo", head: "aaa", branch: "main", isLocked: true),
+            Self.entry("/Users/me/repo-stale", head: "bbb", branch: "old", isPrunable: true),
+            Self.entry("/Users/me/repo-other", head: "ccc", branch: "other")
+        ])
     }
 
-    @Test("a bare repo entry is recognized and has no branch / HEAD")
+    @Test("a bare repo entry is recognized and has no branch or HEAD")
     func parse_bareRepo_setsBareAndOmitsHeadAndBranch() {
         let porcelain = """
         worktree /Users/me/bare.git
         bare
 
         """
-        let result = GitWorktreeList.parse(Self.nulTerminated(porcelain))
-        #expect(result.count == 1)
-        #expect(result[0].isBare)
-        #expect(result[0].branch == nil)
-        #expect(result[0].headSHA == nil)
+        #expect(GitWorktreeList.parse(Self.nulTerminated(porcelain)) == [Self.entry("/Users/me/bare.git", isBare: true)])
     }
 
     @Test("unknown future fields are ignored without aborting the parse")
@@ -104,13 +103,11 @@ struct GitWorktreeListParserTests {
         let porcelain = """
         worktree /tmp/repo
         HEAD aaa
-        branch refs/heads/main
         somefuturefield value
+        branch refs/heads/main
 
         """
-        let result = GitWorktreeList.parse(Self.nulTerminated(porcelain))
-        #expect(result.count == 1)
-        #expect(result[0].branch == "main")
+        #expect(GitWorktreeList.parse(Self.nulTerminated(porcelain)) == [Self.entry("/tmp/repo", head: "aaa", branch: "main")])
     }
 
     /// Smoke test against a freshly-initialized git repo.
@@ -154,14 +151,22 @@ struct GitWorktreeListFetchTests {
     func fetch_ofARepositoryGitRefuses_throws() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
+        let listed = try await GitWorktreeList.fetch(repoRoot: repo.url)
+        try #require(listed.map(\.branch) == ["main"])
         let config = repo.url.appendingPathComponent(".git/config")
-        let handle = try FileHandle(forWritingTo: config)
-        try handle.seekToEnd()
-        try handle.write(contentsOf: Data("this is no config line\n".utf8))
-        try handle.close()
-        await #expect(throws: GitProcessError.self) {
+        let original = try Data(contentsOf: config)
+        try (original + Data("this is no config line\n".utf8)).write(to: config, options: .atomic)
+
+        let error = await #expect(throws: GitProcessError.self) {
             try await GitWorktreeList.fetch(repoRoot: repo.url)
         }
+        guard case let .nonZeroExit(result)? = error else {
+            Issue.record("Expected git to reject the repository configuration")
+            return
+        }
+        #expect(result.exitCode != 0)
+        #expect(result.stderr.contains("bad config line"))
+        #expect(result.stderr.contains(".git/config"))
     }
 
     /// A worktree whose folder was deleted outside git stays listed,
@@ -173,6 +178,8 @@ struct GitWorktreeListFetchTests {
         let linked = try await repo.addLinkedWorktree(branch: "gone")
         try FileManager.default.removeItem(at: linked)
         let worktrees = try await GitWorktreeList.fetch(repoRoot: repo.url)
+        #expect(worktrees.map(\.branch) == ["main", "gone"])
+        #expect(worktrees.last?.path.lastPathComponent == linked.lastPathComponent)
         #expect(worktrees.map(\.isPrunable) == [false, true])
     }
 

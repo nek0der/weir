@@ -77,6 +77,7 @@ struct AgentNotificationEmitterTests {
             #expect(entry.body == "ran the tests")
             #expect(entry.kind == .agentFinished)
             #expect(entry.paneID == pane)
+            #expect(entry.runtimeID == "claude:RUN")
             // With no turn handed over, the history keeps the prompt alone.
             #expect(entry.event == .turnFinished(agent: .claude, turn: nil, prompt: "ran the tests", promptKind: .text, reply: nil))
         }
@@ -174,11 +175,12 @@ struct AgentNotificationEmitterTests {
     func deliver_inAProject_titlesByWhatHappened() throws {
         try withTempDir { root in
             let history = NotificationHistoryStore(directory: root)
+            let banners = Banners()
             let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
             let tab = session.openTab(container: .project(project.id))
             let pane = try #require(tab.splitTree.allLeafIDs().first)
 
-            try emitter(history).deliver(
+            try emitter(history, banners: banners).deliver(
                 payload(kind: .needsInput, body: nil, tab: tab.id, pane: pane),
                 wait: PromptWait(detail: "Bash: swift test", kind: .approval, tool: "Bash"),
                 tab: tab,
@@ -188,13 +190,16 @@ struct AgentNotificationEmitterTests {
             #expect(wait.title == "Claude Code is waiting for approval")
             #expect(wait.containerLabel == "weir")
 
-            try emitter(history).deliver(
+            try emitter(history, banners: banners).deliver(
                 payload(kind: .finished, body: "ran the tests", tab: tab.id, pane: pane),
                 tab: tab,
                 session: session
             )
             let finished = try #require(history.entries.first)
             #expect(finished.title == "Claude Code finished a turn")
+            #expect(finished.containerLabel == "weir")
+            #expect(banners.posted.map(\.content.title) == [wait.title, finished.title])
+            #expect(banners.posted.map(\.content.subtitle) == ["weir", "weir"])
             #expect(AgentNotificationEmitter.subtitle(forContainerLabel: "weir") == "weir")
             #expect(AgentNotificationEmitter.subtitle(forContainerLabel: "") == nil)
         }

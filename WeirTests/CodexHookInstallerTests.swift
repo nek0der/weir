@@ -10,7 +10,7 @@ import Testing
 @Suite("CodexHookInstaller")
 @MainActor
 struct CodexHookInstallerTests {
-    @Test("executes the signed approval helper directly")
+    @Test("builds a quoted approval helper command without a shell prefix")
     func approvalHelperCommand_doesNotInvokeShellAsTheExecutable() {
         let command = CodexHookInstaller.executableCommand(
             for: URL(fileURLWithPath: "/Applications/Weir Dev.app/Contents/MacOS/AgentIntegrationHookHelper")
@@ -37,15 +37,16 @@ struct CodexHookInstallerTests {
                 approvalHelperURL: helper
             )
 
-            let arguments = installer.environment(writesRecords: true)["WEIR_CODEX_HOOK_ARGS"] ?? ""
-            #expect(arguments.contains("permission-request codex"))
-            let expectedHash = CodexTrustHash.compute(
-                eventLabel: "permission_request",
-                command: CodexHookInstaller.executableCommand(for: helper)
-                    + " permission-request codex",
-                timeoutSec: 600
-            )
-            #expect(arguments.contains(expectedHash))
+            let exported = try #require(installer.environment(writesRecords: true)["WEIR_CODEX_HOOK_ARGS"])
+            let arguments = exported.split(separator: "\n")
+            let permission = try #require(arguments.first { $0.hasPrefix("hooks.PermissionRequest=") })
+            let trust = try #require(arguments.first { $0.hasPrefix("hooks.state=") })
+            let command = "'\(helper.resolvingSymlinksInPath().path)' permission-request codex"
+            #expect(permission == #"hooks.PermissionRequest=[{hooks=[{type="command",command="\#(command)",timeout=600}]}]"#)
+
+            let expectedHash = CodexTrustHash.compute(eventLabel: "permission_request", command: command, timeoutSec: 600)
+            let key = "/<session-flags>/config.toml:permission_request:0:0"
+            #expect(trust.contains(#""\#(key)"={enabled=true,trusted_hash="\#(expectedHash)"}"#))
         }
     }
 }

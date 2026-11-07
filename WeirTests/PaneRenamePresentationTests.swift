@@ -32,7 +32,11 @@ struct PaneRenamePresentationTests {
         presentation.requestRename(paneID: paneID)
         let first = try #require(presentation.pendingRename)
         presentation.requestRename(paneID: paneID)
-        #expect(presentation.pendingRename != first)
+        let second = try #require(presentation.pendingRename)
+        #expect(second.paneID == paneID)
+        #expect(second.id != first.id)
+        #expect(presentation.takeRenameRequest(paneID: paneID))
+        #expect(presentation.pendingRename == nil)
     }
 
     @Test func headerDisappeared_dropsAnAskItNeverTook() {
@@ -75,10 +79,16 @@ struct PaneRenamePresentationTests {
         presentation.open(paneID: UUID(), name: "server", anchor: Self.anchor)
         let replaced = try #require(presentation.request)
         let secondPane = UUID()
-        presentation.open(paneID: secondPane, name: "logs", anchor: Self.anchor)
+        let moved = CGRect(x: 300, y: 40, width: 60, height: 24)
+        presentation.open(paneID: secondPane, name: "logs", anchor: moved)
+        let current = try #require(presentation.request)
 
+        #expect(current.paneID == secondPane)
+        #expect(current.name == "logs")
+        #expect(current.anchor == moved)
         #expect(presentation.finish(requestID: replaced.id) == nil)
-        #expect(presentation.request?.paneID == secondPane)
+        #expect(presentation.request == current)
+        #expect(presentation.finish(requestID: current.id) == current)
     }
 
     @Test func headerDisappeared_closesOnlyItsOwnField() {

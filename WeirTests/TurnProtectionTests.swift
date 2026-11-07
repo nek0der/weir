@@ -38,7 +38,7 @@ struct TurnProtectionTests {
         let protection = try #require(Self.protection(TurnProtection.Sources(
             hasLoaded: true,
             history: [Fixture.conversation: [read, unread, running, unprompted, inRange]],
-            isRead: { $0.turnID != unread.turnID },
+            isRead: { [read.turnID, inRange.turnID].contains($0.turnID) },
             rangeTurnIDs: Set(range.turnIDs),
             shownConversations: [Fixture.conversation]
         )))
@@ -115,17 +115,22 @@ struct TurnProtectionTests {
     @Test func aTurnReadAMomentAgo_isHeldForItsUndo() throws {
         let marked = try Fixture.turn("marked", number: 1)
         let viewed = try Fixture.turn("viewed", changes: Fixture.changedFiles, number: 2)
-        let old = try Fixture.turn("old", number: 1)
+        let directlyRead = try Fixture.turn("directlyRead", number: 1)
+        let old = try Fixture.turn("old", number: 2)
 
         let protection = try #require(Self.protection(TurnProtection.Sources(
             hasLoaded: true,
-            history: [Fixture.conversation: [marked, viewed], Self.other: [old]],
+            history: [Fixture.conversation: [marked, viewed], Self.other: [directlyRead, old]],
             isRead: { _ in true },
-            readAt: { $0 == marked.turnID ? Self.now.addingTimeInterval(-60) : Self.now.addingTimeInterval(-3600) },
+            readAt: {
+                [marked.turnID, directlyRead.turnID].contains($0)
+                    ? Self.now.addingTimeInterval(-60)
+                    : Self.now.addingTimeInterval(-3600)
+            },
             lineMovedAt: { $0 == Fixture.conversation ? Self.now.addingTimeInterval(-120) : nil }
         )))
 
-        #expect(protection.heldTurnIDs == [marked.turnID, viewed.turnID], "read an hour ago is read")
+        #expect(protection.heldTurnIDs == [marked.turnID, viewed.turnID, directlyRead.turnID])
         #expect(protection.protectedTurnIDs.isEmpty)
     }
 
@@ -162,12 +167,13 @@ struct TurnProtectionTests {
     }
 
     @Test func theSweep_reachesTheRulesInTheirShape_sortedSoTheSameInputEncodesAlike() throws {
+        let fallback = ConversationKey(provider: .claude, conversationID: "s1", isFallback: true)
         let sweep = AgentProjectionTurnSweep(
             limits: TurnRetentionLimits(maxAgeSeconds: 60, maxPerConversation: 3),
             protection: TurnProtection(
                 protectedTurnIDs: [TurnID("B"), TurnID("A")],
                 heldTurnIDs: [TurnID("D"), TurnID("C")],
-                shownConversations: [Fixture.conversation]
+                shownConversations: [Self.other, fallback, Fixture.conversation]
             )
         )
         let object = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(sweep)) as? [String: Any])
@@ -178,9 +184,10 @@ struct TurnProtectionTests {
         #expect(object["maxTurns"] as? Int == 8000)
         #expect(object["protectedTurnIds"] as? [String] == ["A", "B"])
         #expect(object["heldTurnIds"] as? [String] == ["C", "D"])
-        let shown = try #require((object["shownConversations"] as? [[String: Any]])?.first)
-        #expect(shown["conversationId"] as? String == "s1")
-        #expect(shown["provider"] as? String == "claude")
+        let shown = try #require(object["shownConversations"] as? [[String: Any]])
+        #expect(shown.map { $0["conversationId"] as? String } == ["s1", "s1", "c2"])
+        #expect(shown.map { $0["provider"] as? String } == ["claude", "claude", "codex"])
+        #expect(shown.map { $0["isFallback"] as? Bool } == [false, true, false])
     }
 
     /// A restatement on purpose: these are the numbers the README promises,
@@ -193,59 +200,64 @@ struct TurnProtectionTests {
         #expect(TurnRetentionLimits.standard.maxTurns == 8000)
     }
 
-    /// A closed window's review, kept for its project, holds its range as an
-    /// open review tab does: its comment is still being written. A
-    /// removed project's lets it go.
-    @Test func aParkedReviewsRange_isProtectedFromTheSweep() throws {
+    /// The tab holds its selected range, and its writer holds the other
+    /// ranges the review has read. Both contributions stay while parked.
+    @Test func aParkedReviewsTabAndWriter_holdTheirRangesUntilTheProjectIsForgotten() throws {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "first")
-        let second = session.addOrActivateProject(
-            rootURL: WorkspaceSessionFixture.projectRootURL("parked"),
-            suggestedName: "second"
-        )
+        let root = WorkspaceSessionFixture.projectRootURL("parked").resolvingSymlinksInPath()
+        let second = session.addOrActivateProject(rootURL: root, suggestedName: "second")
         session.setActiveContainer(.project(project.id))
         session.primarySelection.projectID = project.id
         let registry = WindowRegistry(primary: session.primarySelection)
         registry.presenter = RecordingWindowPresenter()
         registry.show(registry.primary.id)
-        let turn = try TurnSummaryFixture.turn(
-            "T7",
-            changes: TurnSummaryFixture.changedFiles,
-            number: 7,
-            endTree: SnapshotTree(tree: TurnSummaryFixture.tree("e", 7), root: "/repo"),
-            extras: .init(beginTree: SnapshotTree(tree: TurnSummaryFixture.tree("b", 7), root: "/repo"))
-        )
-        let range = try #require(ReviewTurnRange(turns: [turn]))
+
+        func range(for number: Int) throws -> ReviewTurnRange {
+            let turn = try Fixture.turn(
+                "T\(number)",
+                changes: Fixture.changedFiles,
+                number: number,
+                endTree: SnapshotTree(tree: Fixture.tree("e", number), root: root.path),
+                extras: .init(beginTree: SnapshotTree(tree: Fixture.tree("b", number), root: root.path))
+            )
+            return try #require(ReviewTurnRange(turns: [turn]))
+        }
+        let read = try range(for: 6)
+        let selected = try range(for: 7)
         let writers = ReviewDraftWriterPool(shouldPersist: false)
-        // What the sweep keeps of the reviews (`AppState.turnProtection`).
-        let protected = { Set(writers.openTurnRanges() + registry.reviewTurnRanges(in: session)) }
         let window = try #require(registry.openInNewWindow(project: second.id, in: session, from: nil))
+        window.reviewSession = writers.session(root: root)
         do {
-            let review = writers.session(root: WorkspaceSessionFixture.projectRootURL("parked-review"))
-            review.writer.rememberRange(range)
-            window.reviewSession = review
+            let review = try #require(window.reviewSession)
+            try #require(review.root.path == read.root)
+            // The writer has read an earlier range. The tab contributes the
+            // selected range independently, before its own read records it.
+            review.writer.rememberRange(read)
         }
         window.review = ReviewTabState(
-            root: "/repo",
-            selection: .turn(range, prompt: TurnPrompt(head: nil)),
+            root: root.path,
+            selection: .turn(selected, prompt: TurnPrompt(head: nil)),
             fixedPoint: ReviewTabFixedPoint(),
             agentPaneID: nil,
             destinationPaneID: nil,
             opening: UUID()
         )
         window.writeComment()
-        #expect(protected() == [range])
+
+        #expect(writers.openTurnRanges() == [read])
+        #expect(registry.reviewTurnRanges(in: session) == [selected])
 
         registry.close(window.id, in: session)
 
-        #expect(registry.parkedReviews[second.id]?.tab != nil)
-        #expect(window.reviewSession == nil, "the closed window keeps nothing open")
-        #expect(protected() == [range])
-        // A project removed meanwhile holds nothing open, as the app lets
-        // its kept review go.
+        #expect(registry.parkedReviews[second.id]?.tab?.review.scope == .turns(selected))
+        #expect(window.reviewSession == nil)
+        #expect(writers.openTurnRanges() == [read])
+        #expect(registry.reviewTurnRanges(in: session) == [selected])
+
         session.removeProject(second.id)
         #expect(registry.reviewTurnRanges(in: session).isEmpty)
         registry.forgetProjectsGone(in: session)
         #expect(registry.parkedReviews.isEmpty)
-        #expect(protected().isEmpty)
+        #expect(writers.openTurnRanges().isEmpty)
     }
 }

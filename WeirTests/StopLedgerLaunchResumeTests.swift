@@ -72,8 +72,8 @@ struct StopLedgerLaunchResumeTests: StopLedgerFixture {
 
     @Test @MainActor func aResumeAtLaunch_thatNeverComesBack_isAStopAfterItsTime() async {
         let store = StopLedgerStore(resumeTimeout: .milliseconds(50))
-        var toldOfTimeout = false
-        store.onResumeTimedOut = { toldOfTimeout = true }
+        var timeoutCount = 0
+        store.onResumeTimedOut = { timeoutCount += 1 }
         store.markResumingAtLaunch(paneID: Self.pane, provider: .codex, sessionID: Self.sessionID, cwd: nil)
         let id = StopLedger.launchResumeItemID(paneID: Self.pane, sessionID: Self.sessionID)
         // The list is rebuilt while the resume is on its way (the mark
@@ -81,10 +81,10 @@ struct StopLedgerLaunchResumeTests: StopLedgerFixture {
         // clock is what makes one, so the pass must leave it running.
         _ = store.update(runtimes: [Self.run("old", .idle, at: 0)], paneExists: Self.always)
         #expect(store.hasResumeClock)
-        await pollUntil(timeout: .seconds(5), interval: .milliseconds(10)) { store.ledger.record(id) != nil }
+        await pollUntil(timeout: .seconds(5), interval: .milliseconds(10)) { timeoutCount > 0 }
         #expect(store.ledger.record(id)?.reason == .notResumedAtLaunch)
         #expect(store.ledger.record(id)?.resume == .failed)
-        #expect(toldOfTimeout)
+        #expect(timeoutCount == 1)
         #expect(!store.hasResumeClock)
     }
 
@@ -178,8 +178,8 @@ struct StopLedgerLaunchResumeTests: StopLedgerFixture {
         let id = StopLedger.itemID(of: Self.run("a", .error))
         store.markResuming(id, window: nil)
         await pollUntil(timeout: .seconds(5), interval: .milliseconds(10)) { store.ledger.record(id) == nil }
-        #expect(asked.count == 2)
-        #expect(asked.last?.1 == .claude)
+        #expect(asked.map(\.0) == [Self.pane, Self.pane])
+        #expect(asked.map(\.1) == [.codex, .claude])
         #expect(store.ledger.record(id) == nil)
         #expect(!store.hasResumeClock)
     }
@@ -192,7 +192,7 @@ struct StopLedgerLaunchResumeTests: StopLedgerFixture {
     /// quickly as a failed resume is one.
     @Test func aResumeThatRanPastAFailedOnesTime_andWasQuit_cameBack_andIsNoStop() {
         let since = Self.start.addingTimeInterval(10)
-        let longRun = StopLedger.failedResumeRunTime + 10
+        let longRun: TimeInterval = 20
         var launch = StopLedger()
         launch.markResumingAtLaunch(paneID: Self.pane, provider: .codex, sessionID: Self.sessionID, cwd: nil, at: since)
         let launchStop = StopLedger.launchResumeItemID(paneID: Self.pane, sessionID: Self.sessionID)
@@ -214,10 +214,16 @@ struct StopLedgerLaunchResumeTests: StopLedgerFixture {
 
         var quick = StopLedger()
         quick.markResumingAtLaunch(paneID: Self.pane, provider: .codex, sessionID: Self.sessionID, cwd: nil, at: since)
-        let ranFor = StopLedger.failedResumeRunTime - 1
+        let ranFor: TimeInterval = 9
         let quickEnd = quick.resumeCommandFinished(inPane: Self.pane, startedAt: since.addingTimeInterval(1), runTime: ranFor)
         #expect(quickEnd == .failed(launchStop))
         #expect(quick.record(launchStop)?.resume == .failed)
+
+        var boundary = StopLedger()
+        boundary.markResumingAtLaunch(paneID: Self.pane, provider: .codex, sessionID: Self.sessionID, cwd: nil, at: since)
+        let atDeadline = boundary.resumeCommandFinished(inPane: Self.pane, startedAt: since.addingTimeInterval(1), runTime: 10)
+        #expect(atDeadline == .cameBack(launchStop))
+        #expect(boundary.records.isEmpty)
     }
 
     /// The store reads the run time from the shell's report, and a resume

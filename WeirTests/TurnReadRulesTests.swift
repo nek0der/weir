@@ -101,7 +101,12 @@ struct TurnReadRulesTests {
     @Test func aTurnThatEndedInSight_isReadOnceItsSnapshotSettlesUnchanged() throws {
         let pending = #"{"kind":"pending"}"#
         var seen: Set<TurnID> = []
-        let inSight = try [Fixture.turn("quiet", changes: pending), Fixture.turn("busy", changes: pending)]
+        let inSight = try [
+            Fixture.turn("quiet", changes: pending),
+            Fixture.turn("busy", changes: pending),
+            Fixture.turn("gone", changes: pending),
+            Fixture.turn("running", phase: "started", changes: pending)
+        ]
         let first = TurnReadRules.turnsRead(
             inSight: [Self.pane],
             runtimes: [runtime()],
@@ -109,8 +114,9 @@ struct TurnReadRulesTests {
             seenWhilePending: &seen
         )
         #expect(first.isEmpty)
+        #expect(seen == [TurnID("quiet"), TurnID("busy"), TurnID("gone")])
 
-        let settled = try [Fixture.turn("quiet"), Fixture.turn("busy", changes: Fixture.changedFiles)]
+        let settled = try [Fixture.turn("quiet"), Fixture.turn("busy", changes: Fixture.changedFiles), Fixture.turn("unseen")]
         let later = TurnReadRules.turnsRead(
             inSight: [UUID()],
             runtimes: [runtime()],
@@ -188,7 +194,10 @@ struct TurnReadRulesTests {
 
     @Test func aTurnStillRunning_standsForNoEpisode() throws {
         let running = try Fixture.turn("running", phase: "started", changes: #"{"kind":"pending"}"#, hasPrompt: false)
+        let ended = try Fixture.turn("ended", hasPrompt: false)
+        let history = [Fixture.conversation: [ended, running]]
 
-        #expect(TurnReadRules.episodeTurns(of: runtime(currentTurn: "running"), history: [Fixture.conversation: [running]]) == nil)
+        #expect(TurnReadRules.episodeTurns(of: runtime(currentTurn: "running"), history: history) == nil)
+        #expect(TurnReadRules.episodeTurns(of: runtime(currentTurn: "ended"), history: history)?.map(\.turnID) == [ended.turnID])
     }
 }

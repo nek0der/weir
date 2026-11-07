@@ -56,21 +56,23 @@ struct ReviewGitNameTests {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
         let root = try await ReviewGit.root(at: repo.url)
-        for name in ["notes 120000", "pin 160000"] {
-            try "before\n".write(to: root.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        let names = ["notes 120000", "pin 160000"]
+        for name in names {
+            try repo.write("before \(name)\n", to: name)
         }
-        try await repo.git(["add", "--", "notes 120000", "pin 160000"])
+        try await repo.git(["add", "--"] + names)
         try await repo.git(["commit", "-q", "-m", "named"])
-        for name in ["notes 120000", "pin 160000"] {
-            try "after\n".write(to: root.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        for name in names {
+            try repo.write("after \(name)\n", to: name)
         }
 
         let files = try await ReviewGit.files(at: root)
-        try #require(files.count == 2)
+        #expect(files.map(\.id) == names.map { "unstaged:\($0)" })
         for file in files {
             let diff = try await ReviewGit.diff(file, root: root)
             #expect(diff.notice == nil, "\(file.path) was refused as a symlink or a submodule")
-            #expect(diff.lines.map(\.kind).contains(.added) && diff.lines.map(\.kind).contains(.removed))
+            #expect(diff.lines.filter { $0.kind == .removed }.map(\.text) == ["before \(file.path)"])
+            #expect(diff.lines.filter { $0.kind == .added }.map(\.text) == ["after \(file.path)"])
         }
     }
 

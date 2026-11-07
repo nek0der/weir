@@ -95,16 +95,24 @@ struct ReviewSessionReloadTests {
         let firstScope = try ReviewScope.turns(TurnSummaryFixture.range(number: 1))
         let nextScope = try ReviewScope.turns(TurnSummaryFixture.range(number: 2))
         repository.files = [file]
+        repository.diffsByScope[firstScope.scopeID] = try [file.id: ReviewDiffFixture.diff(of: file, fingerprint: "first")]
+        let replacement = ReviewFile(path: "other.swift", layer: .turns, status: .modified)
 
-        #expect(await store.reload(scope: firstScope, selectedFileID: nil) != .failed)
+        try #require(await store.reload(scope: firstScope, selectedFileID: nil) == .applied(selectedFileID: file.id))
+        try #require(store.diff?.fingerprint == "first")
+        repository.files = [replacement]
         repository.isFileListFailing = true
         #expect(await store.reload(scope: nextScope, selectedFileID: nil) == .failed)
 
         #expect(store.scope == firstScope)
         #expect(store.scopeForFile(file) == firstScope)
+        #expect(store.files == [file])
+        #expect(store.diff?.file == file)
+        #expect(store.diff?.fingerprint == "first")
     }
 
-    @Test func pollingPreservesTheLoadedSnapshot() async throws {
+    @Test(arguments: [false, true])
+    func pollingPreservesTheLoadedSnapshot(_ isFileListChanging: Bool) async throws {
         let fixture = try fixture()
         let repository = fixture.repository
         let store = fixture.store
@@ -113,21 +121,16 @@ struct ReviewSessionReloadTests {
         await store.load(file)
         await store.detectChanges()
         #expect(!store.hasPendingChanges)
-        repository.fingerprints[file.id] = "f2"
+        if isFileListChanging {
+            repository.files.append(ReviewFile(path: "b.swift", layer: .untracked, status: .untracked))
+        } else {
+            repository.fingerprints[file.id] = "f2"
+        }
         await store.detectChanges()
         #expect(store.hasPendingChanges)
+        #expect(store.files == [file])
+        #expect(store.diff?.file == file)
         #expect(store.diff?.fingerprint == "f1")
-    }
-
-    @Test func pollingDoesNotReplaceTheFileList() async throws {
-        let fixture = try fixture()
-        let repository = fixture.repository
-        let store = fixture.store
-        await store.refreshAsTheAppDoes()
-        repository.files.append(ReviewFile(path: "b.swift", layer: .untracked, status: .untracked))
-        await store.detectChanges()
-        #expect(store.hasPendingChanges)
-        #expect(store.files.count == 1)
     }
 
     @Test func gitFailureDoesNotInvalidateFeedback() async throws {
@@ -153,7 +156,8 @@ struct ReviewSessionReloadTests {
         let gate = Gate<[ReviewFile]>()
         fixture.repository.nextFilesGate = gate
         let poll = Task { await store.detectChanges() }
-        await gate.waitUntilRequested()
+        defer { gate.open(with: []) }
+        try await gate.waitUntilRequested()
         await store.refreshAsTheAppDoes()
         gate.open(with: [])
         await poll.value
@@ -250,7 +254,8 @@ struct ReviewSessionReloadTests {
         let gate = Gate<[ReviewFile]>()
         repository.nextFilesGate = gate
         let reload = Task { await store.reload(scope: .branch(base: "main"), selectedFileID: nil) }
-        await gate.waitUntilRequested()
+        defer { gate.open(with: []) }
+        try await gate.waitUntilRequested()
 
         #expect(store.scope == .uncommitted)
         #expect(store.files == [fixture.file])
@@ -317,7 +322,8 @@ struct ReviewSessionReloadTests {
         let gate = Gate<Void>()
         repository.nextDiffFailureGate = gate
         let obsolete = Task { await store.reload(selectedFileID: nil) }
-        await gate.waitUntilRequested()
+        defer { gate.open() }
+        try await gate.waitUntilRequested()
 
         let latest = ReviewFile(path: "latest.swift", layer: .unstaged, status: .modified)
         let lines = try ReviewDiffParser.parse("@@ -1,1 +1,1 @@\n-old\n+new")
@@ -345,8 +351,10 @@ struct ReviewSessionReloadTests {
         let line = try #require(store.diff?.lines.first)
         #expect(store.add(line: line, body: "Check this."))
         let comment = try #require(store.comments.first)
-        #expect(comment.code.utf8.count <= ReviewSession.maxCodeExcerpt)
-        #expect(!comment.code.contains("\u{FFFD}"))
+        let expected = "a" + String(repeating: "\u{0301}", count: (ReviewSession.maxCodeExcerpt - 1) / 2)
+        #expect(Array(comment.code.utf8) == Array(expected.utf8))
+        #expect(comment.codeCut == .withinLine)
+        #expect(comment.codeMarkers == "+")
         _ = try ReviewPromptBuilder.build(root: store.root, comments: store.comments, locale: Locale(identifier: "en"))
     }
 }

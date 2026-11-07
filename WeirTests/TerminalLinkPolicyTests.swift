@@ -5,6 +5,7 @@
 
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 @testable import Weir
 
 @Suite("Terminal link policy")
@@ -16,48 +17,52 @@ struct TerminalLinkPolicyTests {
     func webLinkWithHostOpens(source: TerminalLinkSource) throws {
         let url = try #require(URL(string: "https://example.com/a?b=c"))
         #expect(TerminalLinkPolicy.action(for: "https://example.com/a?b=c", source: source) == .open(url))
+        #expect(TerminalLinkPolicy.action(for: "https:relative", source: source) == .reject(.invalidWebURL))
     }
 
-    @Test func webLinkWithoutHostIsRejected() {
-        #expect(TerminalLinkPolicy.action(for: "https:relative", source: .hyperlink) == .reject(.invalidWebURL))
-    }
-
-    @Test func mailtoNeedsAnAddress() throws {
-        let url = try #require(URL(string: "mailto:a@example.com"))
-        #expect(TerminalLinkPolicy.action(for: "mailto:a@example.com", source: .hyperlink) == .open(url))
-        #expect(TerminalLinkPolicy.action(for: "mailto:", source: .hyperlink) == .reject(.malformed))
+    @Test(arguments: [TerminalLinkSource.matchedText, .hyperlink])
+    func mailtoNeedsAnAddress(source: TerminalLinkSource) throws {
+        let text = "mailto:a@example.com?subject=Review"
+        let url = try #require(URL(string: text))
+        #expect(TerminalLinkPolicy.action(for: text, source: source) == .open(url))
+        for empty in ["mailto:", "mailto:?subject=Review"] {
+            #expect(TerminalLinkPolicy.action(for: empty, source: source) == .reject(.malformed))
+        }
     }
 
     // MARK: Custom schemes
 
-    @Test func hyperlinkCustomSchemeAsksFirst() throws {
-        let url = try #require(URL(string: "x-apple.systempreferences:com.apple.preference"))
-        #expect(
-            TerminalLinkPolicy.action(for: url.absoluteString, source: .hyperlink) == .confirm(url)
-        )
+    @Test(arguments: [TerminalLinkSource.matchedText, .hyperlink], [
+        "ssh://host.example", "magnet:?xt=urn:btih:abc", "tel:+15555550100", "git://host.example/repo"
+    ])
+    func customSchemesAskBeforeDispatch(source: TerminalLinkSource, text: String) throws {
+        let url = try #require(URL(string: text))
+        #expect(TerminalLinkPolicy.action(for: text, source: source) == .confirm(url))
     }
 
-    /// A match's scheme is visible on screen, but text on screen is still
-    /// written by the program in the pane, and a scheme other than the web's,
-    /// mail's, and file's hands the link to whatever registered it (an ssh client
-    /// that connects, a torrent client that downloads): it asks first, like
-    /// a hyperlink's.
-    @Test(arguments: ["ssh://host.example", "magnet:?xt=urn:btih:abc", "tel:+15555550100", "git://host.example/repo"])
-    func matchedCustomSchemeAsksFirst(_ text: String) throws {
-        let url = try #require(URL(string: text))
-        #expect(TerminalLinkPolicy.action(for: text, source: .matchedText) == .confirm(url))
+    @Test func hyperlinkCustomSchemeAsksFirst() throws {
+        let url = try #require(URL(string: "x-apple.systempreferences:com.apple.preference"))
+        #expect(TerminalLinkPolicy.action(for: url.absoluteString, source: .hyperlink) == .confirm(url))
     }
 
     // MARK: Characters
 
-    @Test(arguments: ["https://example.com/\u{202E}gpj.exe", "https://exa\u{200B}mple.com", "https://example.com/\na"])
-    func invisibleOrLineBreakingCharactersAreRejected(text: String) {
-        #expect(TerminalLinkPolicy.action(for: text, source: .matchedText) == .reject(.unsafeCharacters))
+    @Test(arguments: [TerminalLinkSource.matchedText, .hyperlink], [
+        "https://example.com/\u{202E}gpj.exe", "https://exa\u{200B}mple.com", "https://example.com/\na",
+        "https://example.com/\u{0085}a", "https://example.com/\u{2029}a"
+    ])
+    func invisibleOrLineBreakingCharactersAreRejected(source: TerminalLinkSource, text: String) {
+        #expect(TerminalLinkPolicy.action(for: text, source: source) == .reject(.unsafeCharacters))
     }
 
     @Test func displayStringEscapesWhatWouldHideTheTarget() throws {
         let url = try #require(URL(string: "x-test:a%E2%80%AEb"))
-        #expect(!TerminalLinkPolicy.displayString(for: url).contains("\u{202E}"))
+        #expect(TerminalLinkPolicy.displayString(for: url) == "x-test:a%E2%80%AEb")
+        try withTempDir { dir in
+            let file = try makeFile("left\u{202E}middle\nright.txt", in: dir)
+            let expected = dir.resolvingSymlinksInPath().path + "/left\\u{202E}middle\\u{A}right.txt"
+            #expect(TerminalLinkPolicy.displayString(for: file) == expected)
+        }
     }
 
     // MARK: Files
@@ -69,17 +74,7 @@ struct TerminalLinkPolicyTests {
             try Data("hi".utf8).write(to: file)
             let canonical = file.resolvingSymlinksInPath()
             #expect(TerminalLinkPolicy.action(for: file.absoluteString, source: source) == .openFile(canonical, nil))
-        }
-    }
-
-    @Test func matchedAbsolutePathOpens() throws {
-        try withTempDir { dir in
-            let file = dir.appendingPathComponent("notes.txt")
-            try Data("hi".utf8).write(to: file)
-            #expect(
-                TerminalLinkPolicy.action(for: file.path, source: .matchedText)
-                    == .openFile(file.resolvingSymlinksInPath(), nil)
-            )
+            #expect(TerminalLinkPolicy.action(for: file.path, source: .matchedText) == .openFile(canonical, nil))
         }
     }
 
@@ -107,13 +102,37 @@ struct TerminalLinkPolicyTests {
         }
     }
 
-    @Test(arguments: ["run.command", "run.sh", "script.scpt", "plain"])
-    func scriptsAndExecutablesAreRevealed(name: String) throws {
+    enum UnsafeFileCase: CaseIterable {
+        case extensionOnly, scriptType, executableMode
+    }
+
+    @Test(arguments: UnsafeFileCase.allCases)
+    func scriptsAndExecutablesAreRevealed(sample: UnsafeFileCase) throws {
         try withTempDir { dir in
-            let file = dir.appendingPathComponent(name)
-            try Data("#!/bin/sh\necho hi\n".utf8).write(to: file)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
-            #expect(TerminalLinkPolicy.fileAction(for: file) == .reveal(file.resolvingSymlinksInPath()))
+            let name: String
+            let permissions: Int
+            switch sample {
+            case .extensionOnly: name = "shortcut.url"
+                permissions = 0o644
+            case .scriptType: name = "run.sh"
+                permissions = 0o644
+            case .executableMode: name = "plain.txt"
+                permissions = 0o755
+            }
+            let file = try makeFile(name, in: dir)
+            try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: file.path)
+            let values = try file.resourceValues(forKeys: [.isExecutableKey, .contentTypeKey, .isRegularFileKey])
+            try #require(values.isRegularFile == true)
+            try #require(values.isExecutable == (sample == .executableMode))
+            if sample == .scriptType {
+                try #require(values.contentType?.conforms(to: .script) == true)
+            } else {
+                let type = try #require(values.contentType)
+                try #require(!type.conforms(to: .script) && !type.conforms(to: .executable) && !type.conforms(to: .application))
+            }
+            for source in [TerminalLinkSource.matchedText, .hyperlink] {
+                #expect(TerminalLinkPolicy.action(for: file.absoluteString, source: source) == .reveal(file.resolvingSymlinksInPath()))
+            }
         }
     }
 
@@ -135,12 +154,24 @@ struct TerminalLinkPolicyTests {
         )
     }
 
-    @Test func remoteFileHostIsRejected() {
-        #expect(TerminalLinkPolicy.action(for: "file://server.example/etc/hosts", source: .hyperlink) == .reject(.remoteFile))
+    @Test(arguments: [TerminalLinkSource.matchedText, .hyperlink])
+    func remoteFileHostIsRejected(source: TerminalLinkSource) throws {
+        #expect(TerminalLinkPolicy.action(for: "file://server.example/etc/hosts", source: source) == .reject(.remoteFile))
+        try withTempDir { dir in
+            let file = try makeFile("local.txt", in: dir)
+            var components = try #require(URLComponents(url: file, resolvingAgainstBaseURL: false))
+            components.host = "localhost"
+            let local = try #require(components.url)
+            #expect(TerminalLinkPolicy.action(for: local.absoluteString, source: source) == .openFile(file.resolvingSymlinksInPath(), nil))
+        }
     }
 
-    @Test func fileURLWithFragmentIsRejected() {
-        #expect(TerminalLinkPolicy.action(for: "file:///etc/hosts#x", source: .hyperlink) == .reject(.malformed))
+    @Test(arguments: [TerminalLinkSource.matchedText, .hyperlink], ["#x", "?x=1"])
+    func fileURLWithFragmentOrQueryIsRejected(source: TerminalLinkSource, suffix: String) throws {
+        try withTempDir { dir in
+            let file = try makeFile("local.txt", in: dir)
+            #expect(TerminalLinkPolicy.action(for: file.absoluteString + suffix, source: source) == .reject(.malformed))
+        }
     }
 
     /// OSC 8 requires a URI; a bare path could be reinterpreted later.
@@ -148,8 +179,14 @@ struct TerminalLinkPolicyTests {
         #expect(TerminalLinkPolicy.action(for: "/etc/hosts", source: .hyperlink) == .reject(.malformed))
     }
 
-    @Test func relativeMatchWithNowhereToLookIsRejected() {
-        #expect(TerminalLinkPolicy.action(for: "src/missing.swift:12", source: .matchedText) == .reject(.missingFile))
+    @Test func relativeMatchWithNowhereToLookIsRejected() throws {
+        try withTempDir { dir in
+            let file = try makeFile("src/present.swift", in: dir)
+            let reference = "src/present.swift:12"
+            #expect(TerminalLinkPolicy.action(for: reference, source: .matchedText) == .reject(.missingFile))
+            #expect(TerminalLinkPolicy.action(for: reference, source: .matchedText, baseDirectories: [dir]) ==
+                .openFile(file.resolvingSymlinksInPath(), FilePosition(line: 12, column: nil)))
+        }
     }
 
     // MARK: Paths with a position
@@ -161,7 +198,7 @@ struct TerminalLinkPolicyTests {
         ("Sources/Main.swift:12", FilePosition(line: 12, column: nil)),
         ("Sources/Main.swift#L12", FilePosition(line: 12, column: nil)),
         ("Sources/Main.swift#L12C5", FilePosition(line: 12, column: 5)),
-        ("Sources/Main.swift#L12-L20", FilePosition(line: 12, column: nil)),
+        ("Sources/Main.swift#L12-L20", FilePosition(line: 12, column: nil))
     ])
     func relativePathWithPositionOpensAtThatPosition(text: String, position: FilePosition) throws {
         try withTempDir { dir in
@@ -187,6 +224,7 @@ struct TerminalLinkPolicyTests {
     @Test func literalNameWinsOverASuffix() throws {
         try withTempDir { dir in
             let file = try makeFile("notes:12", in: dir)
+            _ = try makeFile("notes", in: dir)
             #expect(
                 TerminalLinkPolicy.action(for: "notes:12", source: .matchedText, baseDirectories: [dir])
                     == .openFile(file.resolvingSymlinksInPath(), nil)
@@ -217,17 +255,25 @@ struct TerminalLinkPolicyTests {
     /// A position never turns a script into something that opens.
     @Test func scriptWithPositionIsStillRevealed() throws {
         try withTempDir { dir in
-            let file = try makeFile("run.sh", in: dir)
+            let file = try makeFile("run.command", in: dir)
             #expect(
-                TerminalLinkPolicy.action(for: "run.sh:1", source: .matchedText, baseDirectories: [dir])
+                TerminalLinkPolicy.action(for: "run.command:1", source: .matchedText, baseDirectories: [dir])
                     == .reveal(file.resolvingSymlinksInPath())
             )
         }
     }
 
-    @Test(arguments: ["a.swift:0", "a.swift:", "a.swift#L", "a.swift#Lx"])
+    @Test(arguments: ["a.swift:0", "a.swift:", "a.swift#L", "a.swift#Lx", "a.swift#L0", "a.swift:999999999999999999999999999"])
     func malformedSuffixIsNotAPosition(text: String) {
         #expect(TerminalPathReference.candidates(for: text) == [TerminalPathReference(path: text, position: nil)])
+    }
+
+    @Test(arguments: ["a.swift:12:0", "a.swift#L12C0", "a.swift:12:999999999999999999999999999"])
+    func invalidColumnPreservesTheValidLine(text: String) {
+        #expect(TerminalPathReference.candidates(for: text) == [
+            TerminalPathReference(path: text, position: nil),
+            TerminalPathReference(path: "a.swift", position: FilePosition(line: 12, column: nil))
+        ])
     }
 
     private func makeFile(_ relativePath: String, in dir: URL) throws -> URL {

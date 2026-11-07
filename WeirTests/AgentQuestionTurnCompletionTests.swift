@@ -110,8 +110,13 @@ struct AgentQuestionTurnCompletionTests {
                 try AgentQuestionTurnCompletion.record(
                     provider: "claude", payload: event, environment: environment, completedAt: 20, bootSessionID: "boot"
                 )
+                #expect(!monitor.hasCompleted())
             }
-            #expect(!monitor.hasCompleted())
+            try AgentQuestionTurnCompletion.record(
+                provider: "claude", payload: payload("Stop"), environment: environment,
+                completedAt: 30, bootSessionID: "boot"
+            )
+            #expect(monitor.hasCompleted())
         }
     }
 
@@ -174,6 +179,11 @@ struct AgentQuestionTurnCompletionTests {
                 requestedAt: 10, bootSessionID: "new-boot"
             ))
             #expect(!monitor.hasCompleted())
+            try AgentQuestionTurnCompletion.record(
+                provider: "claude", payload: payload("Stop"), environment: environment,
+                completedAt: 20, bootSessionID: "new-boot"
+            )
+            #expect(monitor.hasCompleted())
         }
     }
 
@@ -190,7 +200,8 @@ struct AgentQuestionTurnCompletionTests {
             ))
             #expect(old.hasCompleted())
             var timebase = mach_timebase_info_data_t()
-            #expect(mach_timebase_info(&timebase) == KERN_SUCCESS)
+            try #require(mach_timebase_info(&timebase) == KERN_SUCCESS)
+            try #require(timebase.numer > 0)
             let day = UInt64(86401 * 1_000_000_000 * Double(timebase.denom) / Double(timebase.numer))
             try AgentQuestionTurnCompletion.record(
                 provider: "claude", payload: payload("Stop"), environment: environment,

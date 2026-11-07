@@ -21,9 +21,12 @@ struct WorkspaceSessionOpenProjectTests {
         let project = await session.addProject(at: url) { $0 }
 
         #expect(session.project(project.id) != nil)
+        #expect(session.tabs.map(\.id) == [tab.id])
         #expect(session.primarySelection.activeTabID == tab.id)
         #expect(session.recentProjectPaths.first == url.standardizedFileURL)
         #expect(await session.addProject(at: url) { $0 }.id == project.id)
+        #expect(session.projects.map(\.id) == [project.id])
+        #expect(session.tabs.map(\.id) == [tab.id])
     }
 
     // MARK: - Helpers
@@ -66,14 +69,17 @@ struct WorkspaceSessionOpenProjectTests {
         #expect(session.primarySelection.activeTabID == projectTab.id)
     }
 
-    @Test func openProject_existingProjectWithoutTabs_opensExactlyOneTab() async {
+    @Test func openProject_existingProjectWithoutTabs_opensExactlyOneTab() async throws {
         let session = WorkspaceSession()
         let url = Fixture.projectRootURL("open-project")
         let project = session.addOrActivateProject(rootURL: url)
 
         await session.openProject(at: url, resolveMainCheckout: Self.unchanged)
 
-        #expect(session.tabs.filter { $0.projectID == project.id }.count == 1)
+        let projectTabs = session.tabs.filter { $0.projectID == project.id }
+        #expect(projectTabs.count == 1)
+        let tab = try #require(projectTabs.first)
+        #expect(session.primarySelection.activeTabID == tab.id)
         #expect(session.primarySelection.activeContainerID == .project(project.id))
     }
 
@@ -131,7 +137,11 @@ struct WorkspaceSessionOpenProjectTests {
                 window: session.primaryWindowID,
                 settingsOpener: SettingsOpenerRecorder().opener
             )
-            await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) { !session.projects.isEmpty }
+            await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) {
+                guard let project = session.projects.first else { return false }
+                return session.primarySelection.activeContainerID == .project(project.id)
+                    && session.primarySelection.activeTabID != nil
+            }
             // Write the palette's frecency hit now so no debounced save
             // lands after the directory is gone.
             frecency.flushSynchronously()

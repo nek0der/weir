@@ -4,6 +4,7 @@
 import Foundation
 import Testing
 @testable import Weir
+@testable import WeirDomain
 
 /// A scratch pane's review with a comment being written in it, left by a
 /// window that closes whatever project it shows, or any review left by a
@@ -39,26 +40,26 @@ struct ScratchReviewHandOnTests {
     @Test func aWindowOnAProjectClosingOnTheScratchRow_leavesTheTabForTheScratchRow() throws {
         let fixture = Fixture()
         let tab = try fixture.closeWritingAScratchComment(showing: fixture.c, onScratchRow: true)
-        #expect(fixture.registry.parkedScratchReview?.tab?.review.opening == tab.opening)
+        let parked = try #require(fixture.registry.parkedScratchReview?.tab)
+        let kept = try #require(parked.session)
+        #expect(parked.review.opening == tab.opening)
+        #expect(kept.composer.text == "Why this?")
         #expect(fixture.primary.review == nil)
+
+        fixture.registry.show(project: fixture.c.id, in: fixture.session, from: fixture.primary, intent: .person)
+        #expect(fixture.primary.selection.shownProjectID == fixture.c.id)
+        #expect(fixture.primary.review == nil)
+        #expect(fixture.registry.parkedScratchReview?.tab?.review.opening == tab.opening)
+        #expect(fixture.registry.parkedScratchReview?.tab?.session === kept)
 
         fixture.arriveAtTheScratchRow(fixture.primary)
 
         #expect(fixture.primary.review?.opening == tab.opening)
         #expect(fixture.primary.review?.isShown == false)
+        #expect(fixture.primary.reviewSession === kept)
+        #expect(fixture.primary.reviewSession?.composer.text == "Why this?")
         #expect(fixture.primary.reviewHasUnsavedComment)
         #expect(fixture.registry.parkedScratchReview == nil)
-    }
-
-    @Test func switchingToTheProjectTheWindowShowed_doesNotTakeTheTab() throws {
-        let fixture = Fixture()
-        let tab = try fixture.closeWritingAScratchComment(showing: fixture.c, onScratchRow: true)
-
-        fixture.registry.show(project: fixture.c.id, in: fixture.session, from: fixture.primary, intent: .person)
-
-        #expect(fixture.primary.selection.shownProjectID == fixture.c.id)
-        #expect(fixture.primary.review == nil)
-        #expect(fixture.registry.parkedScratchReview?.tab?.review.opening == tab.opening)
     }
 
     // MARK: - A window already on the scratch row
@@ -98,6 +99,7 @@ struct ScratchReviewHandOnTests {
         let drawer: ProjectWindowState
         let other: ProjectWindowState
         let tab: ReviewTabState
+        let existing: ReviewTabState?
     }
 
     /// The window drawing the scratch tabs, holding a review when
@@ -110,36 +112,44 @@ struct ScratchReviewHandOnTests {
         let drawer = try Self.onTheScratchRow(fixture, showing: fixture.c)
         fixture.session.claimScratch(for: drawer.id)
         #expect(fixture.session.scratchDrawingWindowID == drawer.id)
-        if drawerHasReview {
-            _ = try Self.scratchReview(in: drawer, fixture: fixture, isShown: false)
-        }
+        let existing = drawerHasReview ? try Self.scratchReview(in: drawer, fixture: fixture, isShown: false) : nil
         if otherIsHidden {
             fixture.registry.hide(other.id)
         }
         let tab = try fixture.closeWritingAScratchComment(showing: d)
-        return TwoOnTheScratchRow(fixture: fixture, drawer: drawer, other: other, tab: tab)
+        return TwoOnTheScratchRow(fixture: fixture, drawer: drawer, other: other, tab: tab, existing: existing)
     }
 
-    @Test func theWindowDrawingTheScratchTabs_isAskedFirst() throws {
-        let scene = try Self.twoWindowsOnTheScratchRow(drawerHasReview: false, otherIsHidden: false)
-
-        #expect(scene.drawer.review?.opening == scene.tab.opening)
-        #expect(scene.other.review == nil)
+    enum ScratchRecipient: Sendable, CaseIterable {
+        case drawer, fallback, neither
     }
 
-    @Test func anotherWindowOnTheScratchRow_takesItWhenTheDrawerCannot() throws {
-        let scene = try Self.twoWindowsOnTheScratchRow(drawerHasReview: true, otherIsHidden: false)
+    @Test(arguments: ScratchRecipient.allCases)
+    func theWindowDrawingTheScratchTabs_isAskedFirst(_ recipient: ScratchRecipient) throws {
+        let scene = try Self.twoWindowsOnTheScratchRow(drawerHasReview: recipient != .drawer, otherIsHidden: recipient == .neither)
+        #expect(scene.other.isHidden == (recipient == .neither))
 
-        #expect(scene.drawer.review?.opening != scene.tab.opening)
-        #expect(scene.other.review?.opening == scene.tab.opening)
-        #expect(scene.fixture.registry.parkedScratchReview == nil)
-    }
-
-    @Test func aHiddenWindow_neverTakesIt() throws {
-        let scene = try Self.twoWindowsOnTheScratchRow(drawerHasReview: true, otherIsHidden: true)
-
-        #expect(scene.other.review == nil)
-        #expect(scene.fixture.registry.parkedScratchReview?.tab?.review.opening == scene.tab.opening)
+        switch recipient {
+        case .drawer:
+            #expect(scene.drawer.review?.opening == scene.tab.opening)
+            #expect(scene.drawer.review?.isShown == false)
+            #expect(scene.drawer.reviewSession?.composer.text == "Why this?")
+            #expect(scene.other.review == nil)
+            #expect(scene.fixture.registry.parkedScratchReview == nil)
+        case .fallback:
+            let existing = try #require(scene.existing)
+            #expect(scene.drawer.review == existing)
+            #expect(scene.other.review?.opening == scene.tab.opening)
+            #expect(scene.other.review?.isShown == false)
+            #expect(scene.other.reviewSession?.composer.text == "Why this?")
+            #expect(scene.fixture.registry.parkedScratchReview == nil)
+        case .neither:
+            let existing = try #require(scene.existing)
+            #expect(scene.drawer.review == existing)
+            #expect(scene.other.review == nil)
+            #expect(scene.fixture.registry.parkedScratchReview?.tab?.review.opening == scene.tab.opening)
+            #expect(scene.fixture.registry.parkedScratchReview?.tab?.session?.composer.text == "Why this?")
+        }
     }
 
     // MARK: - A window arriving at the scratch row
@@ -173,13 +183,17 @@ struct ScratchReviewHandOnTests {
         let agentTab = isOfNoProject ? fixture.scratchTab() : fixture.aTab
         let pane = try #require(agentTab.splitTree.allLeafIDs().first)
         let own = try ProjectWindowsFixture.windowWritingAComment(fixture.primary, agentPaneID: pane, isOfNoProject: isOfNoProject)
+        let ownSession = fixture.primary.writeComment("Own draft")
 
         fixture.arriveAtTheScratchRow(fixture.primary)
 
         // Behind, for its comment, as on any move.
         #expect(fixture.primary.review?.opening == own.opening)
         #expect(fixture.primary.review?.isShown == false)
+        #expect(fixture.primary.reviewSession === ownSession)
+        #expect(ownSession.composer.text == "Own draft")
         #expect(fixture.registry.parkedScratchReview?.tab?.review.opening == tab.opening)
+        #expect(fixture.registry.parkedScratchReview?.tab?.session?.composer.text == "Why this?")
     }
 
     @Test func aWindowWritingACommentOfItsOwn_onTheScratchRow_takesTheTabAtItsNextScratchReview() throws {
@@ -187,23 +201,55 @@ struct ScratchReviewHandOnTests {
         let heir = try Self.onTheScratchRow(fixture, showing: fixture.b)
         let scratch = fixture.scratchTab()
         let pane = try #require(scratch.splitTree.allLeafIDs().first)
-        let own = try ProjectWindowsFixture.windowWritingAComment(heir, agentPaneID: pane, isOfNoProject: true)
+        var own = try ProjectWindowsFixture.review(agentPaneID: pane, isOfNoProject: true)
+        own.selection = try .turn(TurnSummaryFixture.range("own-turn", number: 8), prompt: TurnPrompt(head: nil))
+        heir.review = own
+        let ownSession = heir.writeComment("Own draft")
 
         let tab = try fixture.closeWritingAScratchComment(showing: fixture.c)
+        let incoming = try #require(fixture.registry.parkedScratchReview?.tab?.session)
+        fixture.registry.takeParkedReviewBeforeOpening(into: heir, in: fixture.session)
 
         #expect(heir.review?.opening == own.opening)
+        #expect(heir.reviewSession === ownSession)
+        #expect(ownSession.composer.text == "Own draft")
+        #expect(incoming.composer.text == "Why this?")
         #expect(fixture.registry.parkedScratchReview?.tab?.review.opening == tab.opening)
-        // Its turns stay out of the sweep while it waits.
-        #expect(fixture.registry.reviewTurnRanges(in: fixture.session).count == 2)
+        #expect(Self.protectedTurnIDs(fixture) == ["T7", "own-turn"])
 
-        // The window's own comment is saved; ⌥⌘R on the scratch tab.
         heir.letGoOfComment()
         fixture.registry.takeParkedReviewBeforeOpening(into: heir, in: fixture.session)
 
         #expect(heir.review?.opening == tab.opening)
         #expect(heir.review?.isShown == false)
+        #expect(heir.reviewSession === incoming)
+        #expect(heir.reviewSession?.composer.text == "Why this?")
         #expect(heir.reviewHasUnsavedComment)
         #expect(fixture.registry.parkedScratchReview == nil)
+    }
+
+    private static func protectedTurnIDs(_ fixture: Fixture) -> [String] {
+        fixture.registry.reviewTurnRanges(in: fixture.session).map(\.firstTurnID.rawValue).sorted()
+    }
+
+    /// Closes a window with a distinct range and comment, using the real park path.
+    private static func park(
+        _ fixture: Fixture,
+        turnID: String,
+        text: String,
+        agentPane: UUID? = nil
+    ) throws -> (tab: ReviewTabState, session: ReviewSession) {
+        let closing = try fixture.window(showing: fixture.b)
+        fixture.session.showProject(nil, in: closing.id, intent: .person, reason: .person)
+        #expect(closing.selection.shownProjectID == nil)
+        let pane = try #require(agentPane ?? fixture.scratchTab().splitTree.allLeafIDs().first)
+        var tab = try ProjectWindowsFixture.review(agentPaneID: pane, isOfNoProject: agentPane == nil)
+        tab.selection = try .turn(TurnSummaryFixture.range(turnID, number: 7), prompt: TurnPrompt(head: nil))
+        closing.review = tab
+        let session = closing.writeComment(text)
+        fixture.registry.close(closing.id, in: fixture.session)
+        #expect(fixture.registry.window(closing.id) == nil)
+        return (tab, session)
     }
 
     // MARK: - A window that closes showing no project
@@ -230,17 +276,28 @@ struct ScratchReviewHandOnTests {
 
     @Test func windowsClosingOnNoProject_keepEveryComment_forTheScratchRow() throws {
         let fixture = Fixture()
-        let first = try fixture.closeAWindowOfNoProject(hasComment: true)
-        let second = try fixture.closeAWindowOfNoProject(hasComment: true)
+        let first = try Self.park(fixture, turnID: "scratch-first", text: "First draft")
+        let second = try Self.park(fixture, turnID: "scratch-second", text: "Second draft")
 
-        // Both, the one left last first.
-        #expect(fixture.registry.parkedScratchReview?.tabs.map(\.review.opening) == [second.opening, first.opening])
-        #expect(fixture.registry.reviewTurnRanges(in: fixture.session).count == 2)
+        #expect(fixture.registry.parkedScratchReview?.tabs.map(\.review.opening) == [second.tab.opening, first.tab.opening])
+        #expect(Self.protectedTurnIDs(fixture) == ["scratch-first", "scratch-second"])
 
         fixture.arriveAtTheScratchRow(fixture.primary)
-        #expect(fixture.primary.review?.opening == second.opening)
+        #expect(fixture.primary.review?.opening == second.tab.opening)
         #expect(fixture.primary.review?.isShown == false)
-        #expect(fixture.registry.parkedScratchReview?.tabs.map(\.review.opening) == [first.opening])
+        #expect(fixture.primary.reviewSession === second.session)
+        #expect(second.session.composer.text == "Second draft")
+        #expect(fixture.registry.parkedScratchReview?.tabs.map(\.review.opening) == [first.tab.opening])
+        #expect(Self.protectedTurnIDs(fixture) == ["scratch-first", "scratch-second"])
+
+        fixture.primary.letGoOfReview()
+        fixture.registry.takeParkedReviewBeforeOpening(into: fixture.primary, in: fixture.session)
+        #expect(fixture.primary.review?.opening == first.tab.opening)
+        #expect(fixture.primary.review?.isShown == false)
+        #expect(fixture.primary.reviewSession === first.session)
+        #expect(first.session.composer.text == "First draft")
+        #expect(fixture.registry.parkedScratchReview == nil)
+        #expect(Self.protectedTurnIDs(fixture) == ["scratch-first"])
     }
 
     @Test func aWindowClosingOnNoProject_withNoComment_keepsNothing() throws {
@@ -307,6 +364,8 @@ struct ScratchReviewHandOnTests {
             #expect(onC.selection.activeContainerID == row)
         case .theAgentsRowWithAReview:
             fixture.session.setActiveTab(fixture.cTab.id, in: onC.id, intent: .person)
+            #expect(onC.selection.activeContainerID == .project(fixture.c.id))
+            #expect(onC.selection.activeTabID == fixture.cTab.id)
             onC.review = try ProjectWindowsFixture.review()
         }
         let agentPane = try #require(fixture.cTab.splitTree.allLeafIDs().first)
@@ -314,8 +373,10 @@ struct ScratchReviewHandOnTests {
 
         let tab = try fixture.closeAWindowOfNoProject(agentPaneID: agentPane, hasComment: true)
 
-        #expect(onC.review?.opening == own?.opening)
+        #expect(onC.review == own)
         #expect(fixture.registry.parkedReviews[fixture.c.id]?.tab?.review.opening == tab.opening)
+        #expect(fixture.registry.parkedReviews[fixture.c.id]?.tab?.session?.composer.text == "Why this?")
+        #expect(fixture.registry.parkedScratchReview == nil)
     }
 
     @Test func aWindowOpeningAReview_isNotHandedATab() throws {
@@ -333,25 +394,30 @@ struct ScratchReviewHandOnTests {
     @Test func twoReviewsKeptForOneProject_comeBackOneAtEachArrival_bothSafeFromTheSweep() throws {
         let fixture = Fixture()
         let agentPane = try #require(fixture.cTab.splitTree.allLeafIDs().first)
-        let first = try fixture.closeAWindowOfNoProject(agentPaneID: agentPane, hasComment: true)
-        let second = try fixture.closeAWindowOfNoProject(agentPaneID: agentPane, hasComment: true)
+        let first = try Self.park(fixture, turnID: "project-first", text: "First project draft", agentPane: agentPane)
+        let second = try Self.park(fixture, turnID: "project-second", text: "Second project draft", agentPane: agentPane)
 
-        #expect(fixture.registry.parkedReviews[fixture.c.id]?.tabs.map(\.review.opening) == [second.opening, first.opening])
-        #expect(fixture.registry.reviewTurnRanges(in: fixture.session).count == 2)
+        #expect(fixture.registry.parkedReviews[fixture.c.id]?.tabs.map(\.review.opening) == [second.tab.opening, first.tab.opening])
+        #expect(Self.protectedTurnIDs(fixture) == ["project-first", "project-second"])
 
-        // The one left last comes first.
         fixture.registry.show(project: fixture.c.id, in: fixture.session, from: fixture.primary, intent: .person)
-        #expect(fixture.primary.review?.opening == second.opening)
-        #expect(fixture.registry.parkedReviews[fixture.c.id]?.tabs.map(\.review.opening) == [first.opening])
-        #expect(fixture.registry.reviewTurnRanges(in: fixture.session).count == 2)
+        #expect(fixture.primary.review?.opening == second.tab.opening)
+        #expect(fixture.primary.review?.isShown == true)
+        #expect(fixture.primary.reviewSession === second.session)
+        #expect(second.session.composer.text == "Second project draft")
+        #expect(fixture.registry.parkedReviews[fixture.c.id]?.tabs.map(\.review.opening) == [first.tab.opening])
+        #expect(Self.protectedTurnIDs(fixture) == ["project-first", "project-second"])
 
-        // That one is done with; the next arrival at `c` brings the other.
         fixture.primary.letGoOfReview()
         fixture.registry.show(project: fixture.b.id, in: fixture.session, from: fixture.primary, intent: .person)
         fixture.registry.show(project: fixture.c.id, in: fixture.session, from: fixture.primary, intent: .person)
-        #expect(fixture.primary.review?.opening == first.opening)
+        #expect(fixture.primary.review?.opening == first.tab.opening)
+        #expect(fixture.primary.review?.isShown == true)
+        #expect(fixture.primary.reviewSession === first.session)
+        #expect(first.session.composer.text == "First project draft")
         #expect(fixture.primary.reviewHasUnsavedComment)
         #expect(fixture.registry.parkedReviews[fixture.c.id] == nil)
+        #expect(Self.protectedTurnIDs(fixture) == ["project-first"])
     }
 
     @Test func aScratchTabMovedToAProject_thenItsWindowCloses_leavesTheReviewForThatProject() throws {

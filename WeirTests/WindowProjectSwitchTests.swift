@@ -19,36 +19,48 @@ struct WindowProjectSwitchTests {
 
     // MARK: - Switching in place
 
-    @Test func choosingAnotherProjectsTab_switchesThisWindow_andOpensNone() {
+    @Test func choosingAnotherProjectsTab_switchesThisWindow_andOpensNone() throws {
         let fixture = Fixture()
+        let session = fixture.session
+        let window = fixture.primary.id
+        let requested = session.openTab(container: .project(fixture.b.id), in: window, intent: .person, selects: false)
+        session.rememberLastActive(tabID: fixture.bTab.id, container: .project(fixture.b.id))
+        let tabs = session.tabs
+        let before = try #require(session.currentNavTarget(in: window))
+        try #require(before == .init(container: .project(fixture.a.id), tabID: fixture.aTab.id))
 
-        fixture.choose(fixture.bTab, in: fixture.primary)
+        fixture.choose(requested, in: fixture.primary)
 
-        #expect(fixture.primary.selection.shownProjectID == fixture.b.id)
-        #expect(fixture.primary.selection.activeTabID == fixture.bTab.id)
-        #expect(fixture.registry.windows.count == 1)
-        #expect(fixture.session.windowIDs == [fixture.primary.id])
+        #expect(session.currentNavTarget(in: window) == .init(container: .project(fixture.b.id), tabID: requested.id))
+        #expect(fixture.registry.windows.map(\.id) == [window])
+        #expect(session.windowIDs == [window])
         #expect(fixture.presenter.shown.isEmpty)
-        // What the window showed of `a` is kept for it.
-        #expect(fixture.session.projectViews[fixture.a.id]?.activeTabID == fixture.aTab.id)
+        #expect(session.tabs == tabs)
+        #expect(session.projectViews[fixture.a.id]?.activeTabID == fixture.aTab.id)
 
-        // Again, from the same window: still the one window.
         fixture.choose(fixture.cTab, in: fixture.primary)
-        #expect(fixture.primary.selection.shownProjectID == fixture.c.id)
-        #expect(fixture.registry.windows.count == 1)
+        #expect(session.currentNavTarget(in: window) == .init(container: .project(fixture.c.id), tabID: fixture.cTab.id))
+        #expect(fixture.registry.windows.map(\.id) == [window])
+        #expect(session.tabs == tabs)
+        #expect(fixture.presenter.shown.isEmpty)
         fixture.expectInvariants()
     }
 
-    @Test func aTabOpenedInAnotherProject_switchesThisWindow_howeverItIsAskedFor() {
+    @Test func aNewTabOpenedInAnotherProject_switchesThisWindow() {
         let fixture = Fixture()
+        let session = fixture.session
+        let window = fixture.primary.id
+        let destination = ContainerID.project(fixture.b.id)
+        let tabs = Set(session.tabs.map(\.id))
 
-        // A reopened tab, a new tab in a project's row: opened and chosen
-        // in the window asked.
-        let opened = fixture.session.openTab(container: .project(fixture.b.id), in: fixture.primary.id, intent: .person, selects: true)
+        let opened = session.openTab(container: destination, in: window, intent: .person, selects: true)
 
-        #expect(fixture.primary.selection.shownProjectID == fixture.b.id)
-        #expect(fixture.primary.selection.activeTabID == opened.id)
-        #expect(fixture.registry.windows.count == 1)
+        #expect(session.currentNavTarget(in: window) == .init(container: destination, tabID: opened.id))
+        #expect(session.tabs.count == tabs.count + 1)
+        #expect(Set(session.tabs.map(\.id)) == tabs.union([opened.id]))
+        #expect(fixture.registry.windows.map(\.id) == [window])
+        #expect(session.windowIDs == [window])
+        #expect(fixture.presenter.shown.isEmpty)
         fixture.expectInvariants()
     }
 
@@ -122,18 +134,29 @@ struct WindowProjectSwitchTests {
     @Test func switchingProject_keepsTheWindowsSidebarAndChangesPanel() {
         let fixture = Fixture()
         let selection = fixture.primary.selection
+        let frame = CGRect(x: 10, y: 20, width: 900, height: 700)
+        let filter = ConversationKey(provider: .claude, conversationID: "c1", isFallback: false)
+        selection.frame = frame
         selection.sidebarWidth = 333
         selection.sidebarHidden = true
         selection.isChangesPanelPresented = true
         selection.changesPanelWidth = 444
+        selection.changesPanelGrouping = .byConversation
+        selection.changesPanelFilter = filter
 
         fixture.choose(fixture.bTab, in: fixture.primary)
+
+        #expect(selection.shownProjectID == fixture.b.id)
+        #expect(selection.frame == frame)
         #expect(selection.sidebarWidth == 333)
         #expect(selection.sidebarHidden)
         #expect(selection.isChangesPanelPresented)
         #expect(selection.changesPanelWidth == 444)
+        #expect(selection.changesPanelGrouping == .byConversation)
+        #expect(selection.changesPanelFilter == nil)
 
-        // Changed in `b`, and still so back in `a`: the window's, not `b`'s.
+        // The parked project restores its filter while the window keeps
+        // the chrome last used in the other project.
         selection.sidebarWidth = 280
         selection.sidebarHidden = false
         selection.isChangesPanelPresented = false
@@ -141,65 +164,79 @@ struct WindowProjectSwitchTests {
         fixture.session.showProject(fixture.a.id, in: fixture.primary.id, intent: .person, reason: .person)
 
         #expect(selection.shownProjectID == fixture.a.id)
+        #expect(selection.frame == frame)
         #expect(selection.sidebarWidth == 280)
         #expect(!selection.sidebarHidden)
         #expect(!selection.isChangesPanelPresented)
         #expect(selection.changesPanelWidth == 360)
+        #expect(selection.changesPanelGrouping == .byConversation)
+        #expect(selection.changesPanelFilter == filter)
         fixture.expectInvariants()
-    }
-
-    @Test func aProjectSeenForTheFirstTime_keepsThisWindowsSidebarAndChangesPanel() {
-        let fixture = Fixture()
-        let selection = fixture.primary.selection
-        selection.sidebarWidth = 333
-        selection.sidebarHidden = true
-        selection.frame = CGRect(x: 10, y: 20, width: 900, height: 700)
-        selection.isChangesPanelPresented = true
-        selection.changesPanelWidth = 444
-        selection.changesPanelFilter = ConversationKey(provider: .claude, conversationID: "c1", isFallback: false)
-
-        fixture.choose(fixture.bTab, in: fixture.primary)
-
-        #expect(selection.sidebarWidth == 333)
-        #expect(selection.sidebarHidden)
-        #expect(selection.isChangesPanelPresented)
-        #expect(selection.changesPanelWidth == 444)
-        // An agent of the project left is not one of this project's.
-        #expect(selection.changesPanelFilter == nil)
-        // The window keeps its own state.
-        #expect(selection.frame == CGRect(x: 10, y: 20, width: 900, height: 700))
     }
 
     @Test func aSwitch_isDrawnAsOneChange_withTheAppLayerToldInsideIt() {
         let fixture = Fixture()
-        let calls = SwitchCalls()
+        let session = fixture.session
+        let window = fixture.primary.id
+        let row = ContainerID.project(fixture.b.id)
+        let requested = session.openTab(container: row, in: window, intent: .person, selects: false)
+        session.rememberLastActive(tabID: fixture.bTab.id, container: row)
+        var events: [String] = []
         fixture.registry.drawsSwitch = { switching in
-            calls.isSwitching = true
+            events.append("begin")
             switching()
-            calls.isSwitching = false
+            events.append("end")
         }
-        fixture.registry.onWillSwitchProject = { _, _, _ in calls.told.append("will \(calls.isSwitching)") }
-        fixture.registry.onDidSwitchProject = { _ in calls.told.append("did \(calls.isSwitching)") }
+        fixture.registry.onWillSwitchProject = { leaving, from, reason in
+            events.append("will")
+            #expect(leaving.id == window)
+            #expect(from == fixture.a.id)
+            #expect(reason == .person)
+            #expect(leaving.selection.shownProjectID == fixture.a.id)
+            #expect(leaving.selection.activeTabID == fixture.aTab.id)
+        }
+        fixture.registry.onDidSwitchProject = { arrived in
+            events.append("did")
+            #expect(arrived.id == window)
+            #expect(arrived.selection.shownProjectID == fixture.b.id)
+            #expect(arrived.selection.activeTabID == fixture.bTab.id)
+        }
 
-        fixture.choose(fixture.bTab, in: fixture.primary)
+        fixture.choose(requested, in: fixture.primary)
 
-        #expect(fixture.primary.selection.shownProjectID == fixture.b.id)
-        #expect(calls.told == ["will true", "did true"])
+        #expect(events == ["begin", "will", "did", "end"])
+        #expect(session.currentNavTarget(in: window) == .init(container: row, tabID: requested.id))
     }
 
-    @Test func aBackgroundWriteInAProjectNeverShown_keepsTheFirstShowInheritingTheSidebar() {
+    @Test func aBackgroundWriteInAProjectNeverShown_keepsTheFirstShowInheritingTheSidebar() throws {
         let fixture = Fixture()
+        let session = fixture.session
+        let window = fixture.primary.id
+        let row = ContainerID.project(fixture.b.id)
+        let before = try #require(session.currentNavTarget(in: window))
         fixture.primary.selection.sidebarWidth = 333
-        // Work that ends behind, and a repair, in a project no window has
-        // shown: only its rows' last tabs move.
-        let behind = fixture.session.openTab(container: .project(fixture.b.id), in: fixture.primary.id, intent: .behind, selects: true)
-        fixture.session.closeTab(fixture.bTab.id)
-        #expect(fixture.session.projectViews[fixture.b.id] == nil)
-        #expect(fixture.primary.selection.shownProjectID == fixture.a.id)
+        let decoy = session.openTab(container: row, in: window, intent: .person, selects: false)
+        let behind = session.openTab(container: row, in: window, intent: .behind, selects: true)
 
-        fixture.choose(behind, in: fixture.primary)
+        #expect(session.projectViews[fixture.b.id] == nil)
+        #expect(session.currentNavTarget(in: window) == before)
+        #expect(session.lastActiveTabID(for: row) == behind.id)
+        session.setActiveTab(decoy.id, in: window, intent: .repair)
+        #expect(session.projectViews[fixture.b.id] == nil)
+        #expect(session.currentNavTarget(in: window) == before)
+        #expect(session.lastActiveTabID(for: row) == decoy.id)
+        session.setActiveTab(behind.id, in: window, intent: .behind)
+        #expect(session.projectViews[fixture.b.id] == nil)
+        #expect(session.currentNavTarget(in: window) == before)
+        #expect(session.lastActiveTabID(for: row) == behind.id)
+        session.closeTab(fixture.bTab.id)
+        #expect(session.projectViews[fixture.b.id] == nil)
+        #expect(session.currentNavTarget(in: window) == before)
+        #expect(session.tabs(in: row).map(\.id) == [decoy.id, behind.id])
 
-        #expect(fixture.primary.selection.shownProjectID == fixture.b.id)
+        #expect(session.chooseProject(fixture.b.id, in: window) == window)
+
+        #expect(session.currentNavTarget(in: window) == .init(container: row, tabID: behind.id))
         #expect(fixture.primary.selection.sidebarWidth == 333)
     }
 
@@ -222,7 +259,10 @@ struct WindowProjectSwitchTests {
 
     @Test func withOnlyAHiddenWindow_aPersonsSelectionShowsItAndSwitchesIt() throws {
         let fixture = Fixture()
-        fixture.registry.hide(fixture.primary.id)
+        let id = fixture.primary.id
+        fixture.registry.hide(id)
+        try #require(fixture.primary.isHidden && fixture.session.hiddenWindowIDs == [id])
+        try #require(fixture.presenter.onScreen.isEmpty)
 
         // As a notification does: the window commands act on, then the tab.
         let window = try #require(fixture.registry.present(project: fixture.b.id, in: fixture.session, from: nil))
@@ -233,7 +273,9 @@ struct WindowProjectSwitchTests {
         #expect(fixture.session.hiddenWindowIDs.isEmpty)
         #expect(window.selection.shownProjectID == fixture.b.id)
         #expect(window.selection.activeTabID == fixture.bTab.id)
-        #expect(fixture.registry.windows.count == 1)
+        #expect(fixture.registry.windows.map(\.id) == [id])
+        #expect(fixture.presenter.shown == [id])
+        #expect(fixture.presenter.onScreen == [id])
     }
 
     @Test func aRepairInAProjectAnotherWindowShows_writesThereWithoutRaisingIt() throws {
@@ -262,12 +304,17 @@ struct WindowProjectSwitchTests {
         let other = try fixture.window(showing: fixture.b)
         let later = fixture.session.openTab(container: .project(fixture.b.id), in: other.id, intent: .person, selects: false)
 
-        fixture.session.setActiveTab(later.id, in: fixture.primary.id, intent: .behind)
-        fixture.session.setActiveTab(later.id, in: other.id, intent: .behind)
+        let primaryBefore = try #require(fixture.session.currentNavTarget(in: fixture.primary.id))
+        let otherBefore = try #require(fixture.session.currentNavTarget(in: other.id))
+        let views = fixture.session.projectViews
 
-        #expect(other.selection.activeTabID == fixture.bTab.id)
-        #expect(fixture.primary.selection.activeTabID == fixture.aTab.id)
-        #expect(fixture.presenter.shown.isEmpty)
+        for window in [fixture.primary, other] {
+            fixture.session.setActiveTab(later.id, in: window.id, intent: .behind)
+            #expect(fixture.session.currentNavTarget(in: fixture.primary.id) == primaryBefore)
+            #expect(fixture.session.currentNavTarget(in: other.id) == otherBefore)
+            #expect(fixture.session.projectViews == views)
+            #expect(fixture.presenter.shown.isEmpty)
+        }
         fixture.expectInvariants()
     }
 
@@ -309,25 +356,35 @@ struct WindowProjectSwitchTests {
 
     @Test func removingTheShownProject_movesOnlyThatWindow_toTheMostRecentProjectNoOtherWindowShows() throws {
         let fixture = Fixture()
+        let session = fixture.session
+        let preferred = session.addOrActivateProject(rootURL: WorkspaceSessionFixture.projectRootURL("preferred"))
+        let preferredTab = session.openTab(container: .project(preferred.id), in: fixture.primary.id, intent: .person, selects: false)
         let other = try fixture.window(showing: fixture.c)
-        // The primary showed `b` once and went back to `a`; the sidebar's
+        let otherBefore = try #require(session.currentNavTarget(in: other.id))
+        // The primary showed the preferred project and went back to `a`; the sidebar's
         // width, the window's own, is 333 throughout.
-        fixture.choose(fixture.bTab, in: fixture.primary)
+        fixture.choose(preferredTab, in: fixture.primary)
         fixture.primary.selection.sidebarWidth = 333
         fixture.session.showProject(fixture.a.id, in: fixture.primary.id, intent: .person, reason: .person)
         #expect(fixture.primary.selection.sidebarWidth == 333)
-        var reasons: [ProjectSwitchReason] = []
-        fixture.registry.onWillSwitchProject = { _, _, reason in reasons.append(reason) }
+        session.noteProjectUsed(fixture.c.id)
+        try #require(session.recentProjectPaths.prefix(4) == [fixture.c.rootURL, preferred.rootURL, fixture.b.rootURL, fixture.a.rootURL])
+        var switched: [WindowID] = []
+        fixture.registry.onWillSwitchProject = { window, from, reason in
+            switched.append(window.id)
+            #expect(from == fixture.a.id)
+            #expect(reason == .projectRemoved)
+        }
 
         fixture.session.removeProject(fixture.a.id)
 
-        // `c` is the most recent, but another window shows it: `b`, as it
-        // was left.
-        #expect(fixture.primary.selection.shownProjectID == fixture.b.id)
-        #expect(fixture.primary.selection.activeTabID == fixture.bTab.id)
+        // The occupied project ranks first. The preferred free project
+        // ranks above the earlier-listed free project.
+        #expect(fixture.primary.selection.shownProjectID == preferred.id)
+        #expect(fixture.primary.selection.activeTabID == preferredTab.id)
         #expect(fixture.primary.selection.sidebarWidth == 333)
-        #expect(other.selection.shownProjectID == fixture.c.id)
-        #expect(reasons == [.projectRemoved])
+        #expect(session.currentNavTarget(in: other.id) == otherBefore)
+        #expect(switched == [fixture.primary.id])
         #expect(fixture.presenter.shown.isEmpty)
         #expect(fixture.session.projectViews.isEmpty)
         fixture.expectInvariants()
@@ -336,9 +393,10 @@ struct WindowProjectSwitchTests {
     @Test func removingTheShownProjectWithAnOpenReview_leavesNoParkedReviewOrView() throws {
         let fixture = Fixture()
         fixture.tidiesAsTheAppDoes()
-        let tab = try Fixture.review()
-        fixture.primary.review = tab
-        fixture.primary.writeComment()
+        let pane = try #require(fixture.aTab.splitTree.allLeafIDs().first)
+        let tab = try Fixture.windowWritingAComment(fixture.primary, agentPaneID: pane)
+        try #require(fixture.primary.review?.opening == tab.opening)
+        try #require(fixture.primary.reviewHasUnsavedComment)
 
         fixture.session.removeProject(fixture.a.id)
         fixture.registry.forgetProjectsGone(in: fixture.session)
@@ -348,6 +406,7 @@ struct WindowProjectSwitchTests {
         #expect(!fixture.primary.reviewHasUnsavedComment)
         #expect(fixture.primary.reviewSession == nil)
         #expect(fixture.registry.parkedReviews.isEmpty)
+        #expect(fixture.registry.parkedScratchReview == nil)
         #expect(fixture.session.projectViews[fixture.a.id] == nil)
         #expect(fixture.primary.selection.shownProjectID == fixture.c.id)
         fixture.expectInvariants()
@@ -413,22 +472,33 @@ struct WindowProjectSwitchTests {
         #expect(fixture.registry.attention.attendedPanes.contains(pane))
     }
 
-    @Test func removingTheLastProjectAWindowCouldTake_leavesItShowingNothing() throws {
+    @Test(arguments: [false, true])
+    func removingTheLastProjectAWindowCouldTake_leavesItShowingNothing(hasOtherProjects: Bool) throws {
         let fixture = Fixture()
         let scratch = fixture.session.openTab(container: .loose, in: fixture.primary.id, intent: .person, selects: false)
-        let second = try fixture.window(showing: fixture.b)
-        let third = try fixture.window(showing: fixture.c)
-
-        fixture.session.removeProject(fixture.c.id)
+        let target: ProjectWindowState
+        if hasOtherProjects {
+            let second = try fixture.window(showing: fixture.b)
+            let secondBefore = try #require(fixture.session.currentNavTarget(in: second.id))
+            target = try fixture.window(showing: fixture.c)
+            fixture.session.removeProject(fixture.c.id)
+            #expect(fixture.session.currentNavTarget(in: second.id) == secondBefore)
+        } else {
+            fixture.session.removeProject(fixture.b.id)
+            fixture.session.removeProject(fixture.c.id)
+            try #require(fixture.session.projects.map(\.id) == [fixture.a.id])
+            target = fixture.primary
+            fixture.session.removeProject(fixture.a.id)
+            #expect(fixture.session.projects.isEmpty)
+        }
 
         // "Open a Project": on the scratch row, drawing none of
         // its tabs until the person chooses them.
-        #expect(third.selection.shownProjectID == nil)
-        #expect(third.selection.isChoosingProject)
-        #expect(third.selection.activeContainerID == .loose)
-        #expect(third.selection.activeTabID == nil)
-        #expect(!fixture.session.windows(showing: scratch.id).contains(third.id))
-        #expect(second.selection.shownProjectID == fixture.b.id)
+        #expect(target.selection.shownProjectID == nil)
+        #expect(target.selection.isChoosingProject)
+        #expect(target.selection.activeContainerID == .loose)
+        #expect(target.selection.activeTabID == nil)
+        #expect(!fixture.session.windows(showing: scratch.id).contains(target.id))
         fixture.expectInvariants()
     }
 }
@@ -493,20 +563,28 @@ extension WindowProjectSwitchTests {
         let cPane = try #require(fixture.cTab.splitTree.allLeafIDs().first)
         fixture.registry.didReportDisplay(window: fixture.primary.id, rendered: [aPane], attended: [aPane])
         fixture.registry.didReportDisplay(window: other.id, rendered: [cPane], attended: [cPane])
-        var reportedAsItLeft: Set<UUID> = []
-        fixture.registry.onWillSwitchProject = { _, _, _ in
-            reportedAsItLeft = fixture.registry.visibility.union
+        var phases: [String] = []
+        fixture.registry.onWillSwitchProject = { leaving, from, _ in
+            phases.append("will")
+            #expect(leaving.id == fixture.primary.id)
+            #expect(from == fixture.a.id)
+            #expect(fixture.registry.visibility.union == [aPane, cPane])
+            #expect(fixture.registry.attention.attendedPanes == [aPane, cPane])
+        }
+        fixture.registry.onDidSwitchProject = { arriving in
+            phases.append("did")
+            #expect(arriving.id == fixture.primary.id)
+            #expect(fixture.registry.visibility.union == [cPane])
+            #expect(fixture.registry.attention.attendedPanes == [cPane])
         }
 
         fixture.choose(fixture.bTab, in: fixture.primary)
 
         // Told while the project it leaves was still its own; then its panes
         // stop counting, until it reports what it shows of the next one.
-        #expect(reportedAsItLeft.contains(aPane))
-        #expect(!fixture.registry.visibility.union.contains(aPane))
-        #expect(!fixture.registry.attention.attendedPanes.contains(aPane))
-        #expect(fixture.registry.visibility.union.contains(cPane))
-        #expect(fixture.registry.attention.attendedPanes.contains(cPane))
+        #expect(phases == ["will", "did"])
+        #expect(fixture.registry.visibility.union == [cPane])
+        #expect(fixture.registry.attention.attendedPanes == [cPane])
     }
 
     @Test func switching_closesTheRowsCardAndTheFloatingSurfaces_butKeepsTheHistoryAndTheSheet() async throws {
@@ -521,10 +599,16 @@ extension WindowProjectSwitchTests {
         window.approvalCard.present(key: request.key, from: approvals)
         // The other window's card stood beside the Needs Attention button.
         other.approvalCard.present(key: request.key, from: approvals, openedFrom: CGRect(x: 0, y: 0, width: 40, height: 20))
+        try #require(window.approvalCard.presentedApproval(in: approvals)?.id == request.id)
+        try #require(other.approvalCard.presentedApproval(in: approvals)?.id == request.id)
+        let aPane = try #require(fixture.aTab.splitTree.allLeafIDs().first)
+        let cPane = try #require(fixture.cTab.splitTree.allLeafIDs().first)
+        let sheet = NewSessionSheetRequest(projectID: fixture.a.id)
+        try #require(window.openNewWorktreeSheet(sheet) == .opened)
         window.titleBarMenu = TitleBarMenuRequest(menu: .project, anchor: .zero)
         window.isAllProjectsPresented = true
         fixture.session.commandPaletteState = CommandPaletteState(locale: Locale(identifier: "en"), windowID: window.id)
-        window.paneRename.open(paneID: UUID(), name: "pane", anchor: .zero)
+        window.paneRename.open(paneID: aPane, name: "pane", anchor: .zero)
         window.containerColor.open(projectID: fixture.a.id, anchor: .zero)
         window.restoreFocusRequest = UUID()
         window.sidebarFocusRequest = UUID()
@@ -532,12 +616,12 @@ extension WindowProjectSwitchTests {
         window.isSidebarKeptOverPanel = true
         window.notificationHistory.isPresented = true
         window.keyboardShortcuts.isPresented = true
-        window.openNewWorktreeSheet(NewSessionSheetRequest(projectID: fixture.a.id))
-        let aPane = try #require(fixture.aTab.splitTree.allLeafIDs().first)
-        let cPane = try #require(fixture.cTab.splitTree.allLeafIDs().first)
+        window.planUsage.isPresented = true
         let item = AttentionItemID.stop(EpisodeKey(origin: .runtime("a"), episodeToken: "1"))
         window.decisionBarSelection[aPane] = item
         window.decisionBarDone[aPane] = .answeredInTerminal
+        window.pendingDecisionBarDone[aPane] = .answeredInTerminal
+        window.pendingDecisionBarDone[cPane] = .answeredInTerminal
         window.restoreStrips[aPane] = RestoreStrip(turnID: TurnID("t"))
         window.decisionBarSelection[cPane] = item
         let scratch = fixture.scratchTab()
@@ -557,7 +641,9 @@ extension WindowProjectSwitchTests {
             delay: .zero
         )
         await pollUntil { window.prHover.visible != nil }
-        #expect(window.prHover.visible != nil)
+        try #require(window.prHover.visible != nil)
+        try #require(window.titleBarMenu != nil)
+        try #require(window.promptCachePanel.request != nil)
 
         fixture.choose(fixture.bTab, in: window)
 
@@ -583,6 +669,8 @@ extension WindowProjectSwitchTests {
         // The bars and strips of `a`'s panes go; another project's stay.
         #expect(window.decisionBarSelection[aPane] == nil)
         #expect(window.decisionBarDone[aPane] == nil)
+        #expect(window.pendingDecisionBarDone[aPane] == nil)
+        #expect(window.pendingDecisionBarDone[cPane] == .answeredInTerminal)
         #expect(window.restoreStrips[aPane] == nil)
         #expect(window.decisionBarSelection[cPane] == item)
         // A scratch tab's are no project's: the window can still show it.
@@ -591,7 +679,8 @@ extension WindowProjectSwitchTests {
         // The window's own: the history and the new session sheet, which
         // makes its session in `a` still.
         #expect(window.notificationHistory.isPresented)
-        #expect(window.newSession?.projectID == fixture.a.id)
+        #expect(window.planUsage.isPresented)
+        #expect(window.newSession == sheet)
         // Another window's card is its own.
         #expect(other.approvalCard.presentedApproval(in: approvals)?.id == request.id)
     }
@@ -600,77 +689,81 @@ extension WindowProjectSwitchTests {
         let fixture = Fixture()
         fixture.tidiesAsTheAppDoes()
         let other = try fixture.window(showing: fixture.c)
-        fixture.primary.openNewWorktreeSheet(NewSessionSheetRequest(projectID: fixture.a.id))
-        other.openNewWorktreeSheet(NewSessionSheetRequest(projectID: fixture.a.id))
+        let surviving = try fixture.window(showing: fixture.b)
+        let removed = NewSessionSheetRequest(projectID: fixture.a.id)
         let kept = NewSessionSheetRequest(projectID: fixture.c.id)
+        try #require(fixture.primary.openNewWorktreeSheet(removed) == .opened)
+        try #require(other.openNewWorktreeSheet(removed) == .opened)
+        try #require(surviving.openNewWorktreeSheet(kept) == .opened)
 
         fixture.session.removeProject(fixture.a.id)
-        // As the app does when the projects change.
         fixture.registry.forgetProjectsGone(in: fixture.session)
 
         #expect(fixture.primary.newSession == nil)
         #expect(other.newSession == nil)
-        other.openNewWorktreeSheet(kept)
-        fixture.registry.forgetProjectsGone(in: fixture.session)
-        #expect(other.newSession == kept)
+        #expect(surviving.newSession == kept)
     }
 
-    @Test func aCardOpenedFromTheNeedsAttentionButton_staysThroughTheSwitch() {
+    @Test(arguments: [false, true])
+    func switchingProject_keepsOnlyTheWindowControlsApprovalCard(fromDecisionBar: Bool) throws {
         let fixture = Fixture()
         let approvals = ApprovalPresentationStore()
         fixture.tidiesAsTheAppDoes()
         let request = ApprovalPresentation.test(deadlineMilliseconds: 0)
         approvals.receive([request])
-        fixture.primary.approvalCard.present(key: request.key, from: approvals, openedFrom: CGRect(x: 0, y: 0, width: 40, height: 20))
+        let window = fixture.primary
+        if fromDecisionBar {
+            let pane = try #require(fixture.aTab.splitTree.allLeafIDs().first)
+            window.approvalCard.present(key: request.key, from: approvals, openedFromPane: pane, focusesClose: true)
+        } else {
+            window.approvalCard.present(key: request.key, from: approvals, openedFrom: CGRect(x: 0, y: 0, width: 40, height: 20))
+        }
+        try #require(window.approvalCard.presentedApproval(in: approvals)?.id == request.id)
 
-        fixture.choose(fixture.bTab, in: fixture.primary)
+        fixture.choose(fixture.bTab, in: window)
 
-        #expect(fixture.primary.approvalCard.presentedApproval(in: approvals)?.id == request.id)
-    }
-
-    @Test func aCardOpenedFromADecisionBar_closesWithTheSwitch() {
-        let fixture = Fixture()
-        let approvals = ApprovalPresentationStore()
-        fixture.tidiesAsTheAppDoes()
-        let request = ApprovalPresentation.test(deadlineMilliseconds: 0)
-        approvals.receive([request])
-        fixture.primary.approvalCard.present(key: request.key, from: approvals, openedFromPane: UUID(), focusesClose: true)
-
-        fixture.choose(fixture.bTab, in: fixture.primary)
-
-        #expect(fixture.primary.approvalCard.presentedApproval(in: approvals) == nil)
+        #expect(window.approvalCard.presentedApproval(in: approvals)?.id == (fromDecisionBar ? nil : request.id))
+        #expect(approvals.pending.map(\.id) == [request.id])
     }
 
     @Test func theProjectViewsInvariant_holdsAfterEverySwitch() throws {
         let fixture = Fixture()
-        let scratch = fixture.session.openTab(container: .loose, in: fixture.primary.id, intent: .person, selects: false)
-        fixture.expectInvariants()
-        fixture.choose(fixture.bTab, in: fixture.primary)
-        fixture.expectInvariants()
-        let other = try fixture.window(showing: fixture.c)
-        fixture.expectInvariants()
-        fixture.choose(fixture.aOther, in: fixture.primary)
-        fixture.expectInvariants()
-        fixture.choose(fixture.bTab, in: other)
-        fixture.expectInvariants()
-        fixture.choose(scratch, in: other)
-        fixture.expectInvariants()
-        fixture.choose(fixture.cTab, in: fixture.primary)
-        fixture.expectInvariants()
-        fixture.registry.close(other.id, in: fixture.session)
-        fixture.expectInvariants()
-        fixture.choose(fixture.bTab, in: fixture.primary)
-        fixture.expectInvariants()
-        fixture.session.removeProject(fixture.b.id)
-        fixture.expectInvariants()
-        #expect(fixture.primary.selection.shownProjectID != nil)
-    }
-}
+        let session = fixture.session
+        let primary = fixture.primary.id
+        let scratch = fixture.scratchTab()
+        func check(_ owners: [WindowID: UUID], parked: Set<UUID>) {
+            fixture.expectInvariants()
+            #expect(Set(fixture.registry.windows.map(\.id)) == Set(owners.keys))
+            #expect(Set(session.windowIDs) == Set(owners.keys))
+            for (window, project) in owners {
+                #expect(session.selection(window)?.shownProjectID == project)
+            }
+            #expect(Set(session.projectViews.keys) == parked)
+            for (project, view) in session.projectViews {
+                #expect(view.projectID == project)
+                #expect(session.project(project) != nil)
+            }
+        }
 
-/// What a switch told the app layer, and whether it was inside the switch
-/// as drawn (`WindowRegistry.drawsSwitch`).
-@MainActor
-private final class SwitchCalls {
-    var isSwitching = false
-    var told: [String] = []
+        check([primary: fixture.a.id], parked: [])
+        fixture.choose(fixture.bTab, in: fixture.primary)
+        check([primary: fixture.b.id], parked: [fixture.a.id])
+        let other = try fixture.window(showing: fixture.c)
+        check([primary: fixture.b.id, other.id: fixture.c.id], parked: [fixture.a.id])
+        fixture.choose(fixture.aOther, in: fixture.primary)
+        check([primary: fixture.a.id, other.id: fixture.c.id], parked: [fixture.b.id])
+        fixture.choose(fixture.bTab, in: other)
+        check([primary: fixture.a.id, other.id: fixture.b.id], parked: [fixture.c.id])
+        fixture.choose(scratch, in: other)
+        check([primary: fixture.a.id, other.id: fixture.b.id], parked: [fixture.c.id])
+        fixture.choose(fixture.cTab, in: fixture.primary)
+        check([primary: fixture.c.id, other.id: fixture.b.id], parked: [fixture.a.id])
+        fixture.registry.close(other.id, in: session)
+        check([primary: fixture.c.id], parked: [fixture.a.id, fixture.b.id])
+        fixture.choose(fixture.bTab, in: fixture.primary)
+        check([primary: fixture.b.id], parked: [fixture.a.id, fixture.c.id])
+        session.removeProject(fixture.b.id)
+        check([primary: fixture.c.id], parked: [fixture.a.id])
+        #expect(session.currentNavTarget(in: primary) == .init(container: .project(fixture.c.id), tabID: fixture.cTab.id))
+    }
 }

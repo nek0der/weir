@@ -21,6 +21,7 @@ struct BellActionTests {
         features: BellFeatures
     ) {
         #expect(action.rawValue == rawValue)
+        #expect(BellAction(rawValue: rawValue) == action)
         #expect(action.flashes == flashes)
         #expect(action.sounds == sounds)
         #expect(BellAction(flashes: flashes, sounds: sounds) == action)

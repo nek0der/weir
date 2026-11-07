@@ -14,13 +14,10 @@ import UserNotifications
 @MainActor
 @Suite("Main-actor static hooks", .serialized, .timeLimit(.minutes(1)))
 struct MainActorHookTests {
-    /// What a completion handler called from the main actor's hop saw.
-    @MainActor
-    private final class Calls {
-        var options: [UNNotificationPresentationOptions] = []
-        var completions = 0
-        var activations = 0
-        var taps: [NotificationTapPayload] = []
+    private enum TapStep: Equatable {
+        case activated
+        case tapped(UUID?)
+        case completed
     }
 
     private func withHooks(_ body: () async throws -> Void) async rethrows {
@@ -47,50 +44,43 @@ struct MainActorHookTests {
         ]
     }
 
-    /// Calls `present` from a thread off the main actor, as a UN callback
-    /// on a system queue does, and waits for the hop to answer.
-    private func present(_ userInfo: [AnyHashable: Any], calls: Calls) async {
+    /// Calls the nonisolated delegate entry from a detached task and waits
+    /// for the completion delivered by its hop.
+    private func present(_ userInfo: [AnyHashable: Any]) async -> [UNNotificationPresentationOptions] {
         let delegate = WeirNotificationDelegate(activateApp: {})
         let facts = NotificationPresentationFacts(userInfo: userInfo)
+        let calls = Recorded<[UNNotificationPresentationOptions]>([])
         await Task.detached {
             delegate.present(facts) { options in
-                Task { @MainActor in calls.options.append(options) }
+                calls.update { $0.append(options) }
             }
         }.value
-        await pollUntil { !calls.options.isEmpty }
+        await pollUntil { !calls.value.isEmpty }
+        return calls.value
     }
 
-    @Test func present_offTheMainActor_hidesTheBannerWhileTheSourceIsSeen() async {
+    @Test(arguments: [false, true])
+    func present_offTheMainActor_followsSourceVisibility(isSeen: Bool) async {
         await withHooks {
             let pane = UUID()
             var asked: [(UUID?, String?)] = []
             WeirNotificationDelegate.isSourceSeen = { paneID, runtimeID in
                 asked.append((paneID, runtimeID))
-                return true
+                return isSeen
             }
-            let calls = Calls()
-            await present(Self.agentUserInfo(paneID: pane), calls: calls)
-            #expect(calls.options == [[]])
+            let options = await present(Self.agentUserInfo(paneID: pane))
+            let expected: UNNotificationPresentationOptions = isSeen ? [] : [.banner, .sound]
+            #expect(options == [expected])
             #expect(asked.map(\.0) == [pane])
             #expect(asked.map(\.1) == ["runtime-1"])
-        }
-    }
-
-    @Test func present_offTheMainActor_showsTheBannerWhileTheSourceIsNotSeen() async {
-        await withHooks {
-            WeirNotificationDelegate.isSourceSeen = { _, _ in false }
-            let calls = Calls()
-            await present(Self.agentUserInfo(paneID: UUID()), calls: calls)
-            #expect(calls.options == [[.banner, .sound]])
         }
     }
 
     @Test func present_aBannerThatAsksNoFocus_showsEvenWhileTheSourceIsSeen() async {
         await withHooks {
             WeirNotificationDelegate.isSourceSeen = { _, _ in true }
-            let calls = Calls()
-            await present(Self.agentUserInfo(paneID: UUID(), requireFocus: false), calls: calls)
-            #expect(calls.options == [[.banner, .sound]])
+            let options = await present(Self.agentUserInfo(paneID: UUID(), requireFocus: false))
+            #expect(options == [[.banner, .sound]])
         }
     }
 
@@ -113,25 +103,22 @@ struct MainActorHookTests {
             // A source an agent's hook would call seen must not decide here.
             WeirNotificationDelegate.isSourceSeen = { _, _ in true }
 
-            let unfocused = Calls()
-            await present(Self.commandUserInfo(paneID: pane), calls: unfocused)
-            #expect(unfocused.options == [[.banner, .sound]])
+            let unfocused = await present(Self.commandUserInfo(paneID: pane))
+            #expect(unfocused == [[.banner, .sound]])
 
             surface.holdsKeyboardFocus = true
-            let focused = Calls()
-            await present(Self.commandUserInfo(paneID: pane), calls: focused)
-            #expect(focused.options == [[]])
+            let focused = await present(Self.commandUserInfo(paneID: pane))
+            #expect(focused == [[]])
         }
     }
 
     /// A banner that arrives before the registry is wired shows: a banner
     /// we need not have shown is recoverable, a lost one is not.
-    @Test func present_withNoRegistry_failsClosedToABanner() async {
+    @Test func present_withoutARegistry_offersBannerAndSound() async {
         await withHooks {
             WeirNotificationDelegate.registry = nil
-            let calls = Calls()
-            await present(Self.commandUserInfo(paneID: UUID()), calls: calls)
-            #expect(calls.options == [[.banner, .sound]])
+            let options = await present(Self.commandUserInfo(paneID: UUID()))
+            #expect(options == [[.banner, .sound]])
         }
     }
 
@@ -141,19 +128,18 @@ struct MainActorHookTests {
     @Test func deliverTap_aHandlerInstalledBeforeTheHopRuns_getsTheTap() async {
         await withHooks {
             WeirNotificationDelegate.onTap = nil
-            let calls = Calls()
-            let delegate = WeirNotificationDelegate(activateApp: { calls.activations += 1 })
+            let trace = Recorded<[TapStep]>([])
+            let delegate = WeirNotificationDelegate(activateApp: { trace.update { $0.append(.activated) } })
             let pane = UUID()
             let payload = NotificationTapPayload(userInfo: [NotificationPayloadKey.paneID: pane.uuidString])
             // Still on the main actor, so the hop cannot run until we yield.
             delegate.deliverTap(payload) {
-                Task { @MainActor in calls.completions += 1 }
+                trace.update { $0.append(.completed) }
             }
-            WeirNotificationDelegate.onTap = { calls.taps.append($0) }
-            await pollUntil { calls.completions > 0 }
-            #expect(calls.taps.map(\.paneID) == [pane])
-            #expect(calls.activations == 1)
-            #expect(calls.completions == 1)
+            #expect(trace.value.isEmpty)
+            WeirNotificationDelegate.onTap = { payload in trace.update { $0.append(.tapped(payload.paneID)) } }
+            await pollUntil { trace.value.contains(.completed) }
+            #expect(trace.value == [.activated, .tapped(pane), .completed])
         }
     }
 

@@ -40,18 +40,16 @@ struct ReviewCommentExcerptTests {
         #expect(!prompt.text.contains("truncated"))
     }
 
-    /// Forty lines of a hundred fit. The comment still names all hundred,
-    /// so the prompt has to say its code stops early, or the agent reads
-    /// forty lines as the whole selection.
+    /// The comment still names the whole selection, so the prompt needs
+    /// to distinguish its excerpt from the full run.
     @Test func aRunLongerThanTheBudget_keepsWholeLinesAndTellsTheAgentItIsCut() async throws {
         let texts = (1...100).map { String(format: "let value%03d = %@", $0, String(repeating: "x", count: 36)) }
         let (store, comment) = try await Self.comment(on: Self.added(texts))
-        let kept = comment.code.components(separatedBy: "\n")
-
-        #expect(comment.code.utf8.count <= Self.budget)
-        #expect(kept.count < texts.count)
-        #expect(kept == Array(texts.prefix(kept.count)), "whole lines, in order")
-        #expect(comment.codeMarkers?.count == kept.count)
+        let lineBytes = try #require(texts.first).utf8.count
+        let fittingCount = (Self.budget + 1) / (lineBytes + 1)
+        try #require(fittingCount > 0 && fittingCount < texts.count)
+        #expect(comment.code == texts.prefix(fittingCount).joined(separator: "\n"))
+        #expect(comment.codeMarkers == String(repeating: "+", count: fittingCount))
         #expect(comment.codeCut == .betweenLines)
         #expect(comment.promptSpan == "1-100", "the comment names the run the reader chose")
 
@@ -193,12 +191,9 @@ struct ReviewCommentExcerptTests {
         }
         #expect(moved.anchor.newLine == 2)
         #expect(moved.codeCut == nil, "nothing is recorded that the draft did not")
-    }
 
-    /// A short quote with no recorded cut is whole, and a line that only
-    /// starts with it is another line.
-    @Test func aShortQuoteWithNoRecordedCut_isComparedWhole() {
-        let comment = ReviewComment(
+        // The largest legacy quote below the inference threshold is still whole.
+        let short = ReviewComment(
             file: Self.file,
             fingerprint: "f1",
             anchor: ReviewAnchor(lineID: 0, oldLine: nil, newLine: 1),
@@ -206,8 +201,9 @@ struct ReviewCommentExcerptTests {
             codeMarkers: "+",
             body: "Why?"
         )
-        #expect(comment.comparedCut == nil)
-        #expect(!ReviewCommentRelocation.quotesCurrentCode(comment, current: [comment.code + "b"]))
+        #expect(short.comparedCut == nil)
+        #expect(ReviewCommentRelocation.quotesCurrentCode(short, current: [short.code]))
+        #expect(!ReviewCommentRelocation.quotesCurrentCode(short, current: [short.code + "b"]))
     }
 
     /// A comment moved into another scope names only the lines its quote

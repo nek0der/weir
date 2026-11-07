@@ -45,6 +45,9 @@ struct RustProviderBridgeTests {
             "tool_input": ["description": "Inspect status"]
         ]))
 
+        #expect(request["provider"] as? String == "codex")
+        #expect(request["session_id"] as? String == "codex-session")
+        #expect(request["tool_name"] as? String == "shell")
         #expect(request["operation_id"] as? String == "turn-7")
         #expect(request["summary"] as? String == "Inspect status")
     }
@@ -83,8 +86,16 @@ struct RustProviderBridgeTests {
         let output = try #require(try RustProviderBridge.approvalOutput(
             provider: "claude", requestJSON: request, decisionJSON: decision
         ))
-        let text = try #require(String(bytes: output, encoding: .utf8))
-        #expect(text.contains(#""updatedInput":{"answers":{"Which color?":"Red"}"#))
+        let envelope = try #require(JSONSerialization.jsonObject(with: output) as? [String: Any])
+        let hook = try #require(envelope["hookSpecificOutput"] as? [String: Any])
+        #expect(hook["hookEventName"] as? String == "PermissionRequest")
+        let translated = try #require(hook["decision"] as? [String: Any])
+        #expect(translated["behavior"] as? String == "allow")
+        let input = try #require(translated["updatedInput"] as? [String: Any])
+        #expect(input["answers"] as? [String: String] == ["Which color?": "Red"])
+        let questions = try #require(input["questions"] as? [[String: Any]])
+        #expect(questions.map { $0["question"] as? String } == ["Which color?"])
+        #expect(questions.first?["options"] as? [[String: String]] == [["label": "Red"]])
     }
 
     @Test("reports non-permission events as no request and unknown providers as failures")
@@ -137,7 +148,7 @@ struct RustProviderBridgeTests {
         try withTempDir { directory in
             let pane = UUID().uuidString
             let run = UUID().uuidString
-            var environment = HookAgent.codex.environment(in: directory, paneID: pane)
+            var environment = try HookAgent.codex.environment(in: directory, paneID: pane)
             environment["WEIR_AGENT_RUN_ID"] = run
             environment["WEIR_TURN_SNAPSHOT"] = "0"
             let payload = try JSONSerialization.data(withJSONObject: [

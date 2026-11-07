@@ -179,9 +179,13 @@ struct ReviewExpansionTests {
         #expect(ReviewSearch.step(2, by: 1, count: 3) == 0, "Find Next does not wrap")
         #expect(ReviewSearch.step(0, by: -1, count: 3) == 2, "Find Previous does not wrap")
         #expect(ReviewSearch.step(4, by: 1, count: 0) == 0, "Stepping with nothing found must stay put")
-        // The highlight marks every occurrence on a line, and marks the same
-        // text the count was taken from.
-        #expect(ReviewSearch.ranges(in: "one two one", query: "one").count == 1, "One mark per matching line")
+        // One match and highlight per line, at the first occurrence.
+        let repeated = "one two one"
+        let ranges = ReviewSearch.ranges(in: repeated, query: "one")
+        #expect(ranges.count == 1)
+        let first = try #require(ranges.first)
+        #expect(first.lowerBound == repeated.startIndex)
+        #expect(repeated[first] == "one")
         #expect(ReviewSearch.ranges(in: "abc", query: "").isEmpty, "An empty query marks nothing")
     }
 }

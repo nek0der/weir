@@ -56,6 +56,7 @@ struct SelectionIntentTests {
         #expect(session.primarySelection.activeContainerID == .loose)
         #expect(session.scratchOwnerWindowID == other)
         #expect(session.scratchDrawingWindowID == other)
+        #expect(session.selection(other)?.activeTabID == scratch.id)
     }
 
     @Test func theRepairIntent_doesNotClaimTheScratchTabs() {
@@ -81,14 +82,39 @@ struct SelectionIntentTests {
         #expect(!SelectionIntent.behind.claimsScratch)
     }
 
+    @Test func removingTheLastProjectWithoutScratchTabs_leavesAnEmptyChooser() throws {
+        let (session, project) = WorkspaceSessionFixture.withProject()
+        let primary = session.primaryWindowID
+        let peer = WorkspaceSessionFixture.addWindow(to: session)
+        let tab = session.openTab(container: .project(project.id), in: primary)
+        let peerBefore = try #require(session.currentNavTarget(in: peer))
+        try #require(session.primarySelection.activeTabID == tab.id)
+        try #require(session.tabs(in: .loose).isEmpty)
+        try #require(session.scratchDrawingWindowID == peer)
+
+        session.removeProject(project.id)
+
+        #expect(session.primarySelection.isChoosingProject)
+        #expect(session.primarySelection.activeContainerID == .loose)
+        #expect(session.primarySelection.activeTabID == nil)
+        #expect(session.primarySelection.shownProjectID == nil)
+        #expect(session.currentNavTarget(in: peer) == peerBefore)
+        #expect(session.scratchOwnerWindowID == nil)
+        #expect(session.scratchDrawingWindowID == peer)
+        #expect(session.drawnTab(in: primary) == nil)
+        #expect(session.drawnTab(in: peer) == nil)
+    }
+
     @Test func theTabMadeForAWindowWithNone_doesNotClaimTheScratchTabs() throws {
         let session = WorkspaceSession()
         let other = WorkspaceSessionFixture.addWindow(to: session)
 
-        // As the launch makes one when there is no tab to show.
-        let tab = try #require(session.openTabInActiveScope(in: session.primaryWindowID, intent: .repair))
+        let tab = try #require(session.openLaunchTabIfNone())
 
         #expect(session.primarySelection.activeTabID == tab.id)
+        #expect(tab.container == .loose)
+        #expect(session.openLaunchTabIfNone() == nil)
+        #expect(session.tabs.map(\.id) == [tab.id])
         #expect(session.scratchOwnerWindowID == nil)
         // No one chose them, so the first window with them selected draws them.
         #expect(session.scratchDrawingWindowID == session.primaryWindowID)
@@ -193,6 +219,7 @@ extension SelectionIntentTests {
         session.projectViews[left.id] = Self.view(of: left.id, on: hidden, tabID: nil)
         try session.hideWorktree(projectID: left.id, worktreeID: #require(hidden.worktreeID))
         #expect(session.projectViews[left.id]?.activeContainerID == .project(left.id))
+        #expect(session.projectViews[left.id]?.activeTabID == folderTab.id)
         #expect(session.primarySelection.activeContainerID == .loose)
     }
 
@@ -211,9 +238,14 @@ extension SelectionIntentTests {
         let before = try #require(session.currentNavTarget(in: session.primaryWindowID))
 
         session.setActiveTab(otherTab.id, in: primary, intent: .behind)
+        #expect(session.currentNavTarget(in: primary) == before)
         session.setActiveContainer(other, in: primary, intent: .behind)
+        #expect(session.currentNavTarget(in: primary) == before)
         session.activateProject(shown.id, in: second, intent: .behind)
-        session.openTab(container: other, in: primary, intent: .behind, selects: true)
+        #expect(session.selection(second)?.activeContainerID == .loose)
+        let opened = session.openTab(container: other, in: primary, intent: .behind, selects: true)
+        #expect(session.tab(opened.id)?.container == other)
+        #expect(session.currentNavTarget(in: primary) == before)
         // Clearing a window's tab is that window's own, not work behind.
         session.setActiveTab(nil, in: primary, intent: .behind)
 
@@ -344,6 +376,7 @@ extension SelectionIntentTests {
 
     @Test func anAwaitedCreate_fromAWindowThatClosed_selectsTheNewRowInItsView() async throws {
         let (session, asked) = WorkspaceSessionFixture.withProject(name: "asked")
+        session.showProject(nil, in: session.primaryWindowID, intent: .person, reason: .person)
         let other = WorkspaceSessionFixture.addWindow(to: session)
         let folderTab = session.openTab(container: .project(asked.id), in: other)
         let before = try #require(session.currentNavTarget(in: session.primaryWindowID))
@@ -351,8 +384,10 @@ extension SelectionIntentTests {
         let row = try await Self.createAwaited(in: session, project: asked, window: other) {
             // The window closes, and the project keeps its view, on the
             // folder's tab.
-            session.removeWindowsPastPrimary()
-            session.projectViews[asked.id] = Self.view(of: asked.id, on: .project(asked.id), tabID: folderTab.id)
+            session.removeWindow(other)
+            #expect(session.selection(other) == nil)
+            #expect(session.projectViews[asked.id]?.activeContainerID == .project(asked.id))
+            #expect(session.projectViews[asked.id]?.activeTabID == folderTab.id)
         }
 
         // The project opens on the new row, its tab in front.
@@ -379,16 +414,26 @@ extension SelectionIntentTests {
         let (session, registry) = Self.registered()
         let window = registry.primary
         let folder = URL(fileURLWithPath: "/weir-opened-\(UUID().uuidString)")
+        let before = session.currentNavTarget(in: window.id)
 
         // Asked while the window is shown, which is recorded before the
         // wait: the window closes (hides) while the folder is resolved.
-        await SupervisionWindowActions.openProject(at: folder, from: window, session: session, registry: registry, frecency: nil) { url in
+        let shown = await SupervisionWindowActions.openProject(
+            at: folder,
+            from: window,
+            session: session,
+            registry: registry,
+            frecency: nil
+        ) { url in
             registry.hide(window.id)
             return url
         }
 
         let project = try #require(session.projects.first)
+        #expect(shown == nil)
+        #expect(project.rootURL == folder)
         #expect(registry.window(showingProject: project.id, in: session) == nil)
+        #expect(session.currentNavTarget(in: window.id) == before)
         #expect(window.isHidden)
         #expect(session.windowIDs == [window.id])
     }
@@ -397,10 +442,12 @@ extension SelectionIntentTests {
         let (session, registry) = Self.registered()
         let folder = URL(fileURLWithPath: "/weir-opened-\(UUID().uuidString)")
 
-        await SupervisionWindowActions
+        let shown = await SupervisionWindowActions
             .openProject(at: folder, from: registry.primary, session: session, registry: registry, frecency: nil) { $0 }
 
         let project = try #require(session.projects.first)
+        #expect(shown === registry.primary)
+        #expect(project.rootURL == folder)
         #expect(registry.window(showingProject: project.id, in: session) === registry.primary)
         #expect(registry.windows.count == 1)
     }
@@ -410,6 +457,7 @@ extension SelectionIntentTests {
         let other = WorkspaceSessionFixture.addWindow(to: session)
         let folderTab = session.openTab(container: .project(asked.id), in: other)
         let before = try #require(session.currentNavTarget(in: session.primaryWindowID))
+        session.selection(other)?.sidebarHidden = true
 
         let row = try await Self.createAwaited(in: session, project: asked, window: other) {
             session.setWindow(other, isHidden: true)
@@ -420,6 +468,7 @@ extension SelectionIntentTests {
         let tab = try #require(session.tabs(in: row).first)
         #expect(session.selection(other)?.activeContainerID == row)
         #expect(session.selection(other)?.activeTabID == tab.id)
+        #expect(session.selection(other)?.sidebarHidden == true)
         #expect(session.projectViews.isEmpty)
         #expect(session.currentNavTarget(in: session.primaryWindowID) == before)
         #expect(session.lastActiveTabID(for: .project(asked.id)) == folderTab.id)
@@ -429,15 +478,24 @@ extension SelectionIntentTests {
         let (session, asked) = WorkspaceSessionFixture.withProject(name: "asked")
         let other = session.addOrActivateProject(rootURL: URL(fileURLWithPath: "/weir-other"), suggestedName: "other")
         let elsewhere = session.openTab(container: .project(other.id))
-        session.setActiveContainer(.project(asked.id))
+        let before = session.openTab(container: .project(asked.id))
+        session.primarySelection.sidebarWidth = 399
+        try #require(session.primarySelection.activeTabID == before.id)
 
         let row = try await Self.createAwaited(in: session, project: asked) {
             session.setActiveTab(elsewhere.id)
+            #expect(session.projectViews[asked.id]?.activeTabID == before.id)
+            #expect(session.projectViews[asked.id]?.activeContainerID == .project(asked.id))
         }
 
+        #expect(session.primarySelection.shownProjectID == other.id)
         #expect(session.primarySelection.activeTabID == elsewhere.id)
+        #expect(session.primarySelection.activeContainerID == .project(other.id))
         let tab = try #require(session.tabs(in: row).first)
         #expect(session.lastActiveTabID(for: row) == tab.id)
+        #expect(session.projectViews[asked.id]?.activeContainerID == row)
+        #expect(session.projectViews[asked.id]?.activeTabID == tab.id)
+        #expect(session.projectViews[asked.id]?.sidebarWidth == 399)
     }
 
     @Test func anAwaitedCreate_afterThePersonMovedToAnotherRowOfTheSameProject_isBehind() async throws {
@@ -454,6 +512,7 @@ extension SelectionIntentTests {
         #expect(session.primarySelection.activeTabID == typing.id)
         // Chosen later, the new row opens on its tab.
         let tab = try #require(session.tabs(in: row).first)
+        #expect(session.lastActiveTabID(for: row) == tab.id)
         session.setActiveContainer(row)
         #expect(session.primarySelection.activeTabID == tab.id)
     }
@@ -465,7 +524,8 @@ extension SelectionIntentTests {
         let row = try await Self.createAwaited(in: session, project: asked) {}
 
         #expect(session.primarySelection.activeContainerID == row)
-        #expect(session.primarySelection.activeTabID == session.tabs(in: row).first?.id)
+        let tab = try #require(session.tabs(in: row).first)
+        #expect(session.primarySelection.activeTabID == tab.id)
     }
 
     @Test func anAwaitedOpen_fromAWindowThatWentAway_isBehind() async throws {
@@ -476,7 +536,7 @@ extension SelectionIntentTests {
 
         let project = await session.openProject(at: folder, in: other, intent: .person) { url in
             // The window is closed while the folder is resolved.
-            session.removeWindowsPastPrimary()
+            session.removeWindow(other)
             return url
         }
 
@@ -487,33 +547,38 @@ extension SelectionIntentTests {
         #expect(session.projectViews.isEmpty)
     }
 
-    @Test func theIntentAfterAWait_isThePersonsOnlyOnTheRowTheyAskedFrom_inAWindowTheyDidNotLeave() {
+    @Test func theIntentAfterAWait_isThePersonsOnlyOnTheRowTheyAskedFrom_inAWindowTheyDidNotLeave() throws {
         let (session, project) = WorkspaceSessionFixture.withProject()
+        let other = session.addOrActivateProject(rootURL: WorkspaceSessionFixture.projectRootURL("wait-other"))
         let primary = session.primaryWindowID
         let row = ContainerID.project(project.id)
-        session.setActiveContainer(row)
+        let first = session.openTab(container: row)
+        let second = session.openTab(container: row)
+        session.setActiveTab(first.id)
         let asked = session.waitOrigin(in: primary)
 
         #expect(session.intentAfterWait(from: asked) == .person)
+        session.setActiveTab(second.id)
+        try #require(session.primarySelection.activeTabID == second.id)
+        #expect(session.intentAfterWait(from: asked) == .person)
         #expect(session.intentAfterWait(from: nil) == .behind)
         #expect(session.waitOrigin(in: WindowID()) == nil)
-        // Moved to another row meanwhile.
-        session.setActiveContainer(.loose)
+
+        let scratch = session.openTab(container: .loose)
         #expect(session.intentAfterWait(from: asked) == .behind)
-        // On a scratch tab, the same row in another project is somewhere
-        // else: the window switched while the person waited.
-        session.primarySelection.projectID = project.id
+        try #require(session.primarySelection.shownProjectID == project.id)
         let onScratch = session.waitOrigin(in: primary)
         #expect(session.intentAfterWait(from: onScratch) == .person)
-        session.primarySelection.projectID = UUID()
+        session.showProject(other.id, in: primary, intent: .person, reason: .person)
+        session.setActiveTab(scratch.id)
+        try #require(session.primarySelection.shownProjectID == other.id)
+        try #require(session.primarySelection.activeContainerID == .loose)
         #expect(session.intentAfterWait(from: onScratch) == .behind)
-        session.primarySelection.projectID = project.id
-        session.setActiveContainer(row)
-        // Hidden during the wait: left.
+
+        session.setActiveTab(first.id)
         session.setWindow(primary, isHidden: true)
         #expect(session.intentAfterWait(from: asked) == .behind)
-        // Hidden already as they asked (from the menu bar, with every window
-        // closed): not left, and still theirs, shown again or not.
+        // A window that was already hidden has not been left during the wait.
         let askedHidden = session.waitOrigin(in: primary)
         #expect(askedHidden?.wasShown == false)
         #expect(session.intentAfterWait(from: askedHidden) == .person)
@@ -531,6 +596,7 @@ extension SelectionIntentTests {
         let tab: Tab
         let neighbor: Tab
         let target: Project
+        let row: ContainerID
         let suggester: WorktreeMoveSuggester
     }
 
@@ -549,14 +615,22 @@ extension SelectionIntentTests {
             newCwd: FileManager.default.temporaryDirectory,
             kind: .reparentToRegistered(projectID: target.id, worktreeID: #require(row.worktreeID), label: "moved")
         )
-        return SuggestedMove(session: session, undrawn: undrawn, tab: tab, neighbor: neighbor, target: target, suggester: suggester)
+        return SuggestedMove(
+            session: session, undrawn: undrawn, tab: tab, neighbor: neighbor, target: target, row: row, suggester: suggester
+        )
     }
 
     @Test func movingASuggestedTab_isThePersonsInTheDrawingWindow_andARepairElsewhere() throws {
         let move = try Self.suggestedMove()
         let session = move.session
         let projectWindow = WorkspaceSessionFixture.addWindow(to: session)
-        session.selection(projectWindow)?.projectID = move.target.id
+        let before = session.openTab(container: .project(move.target.id), in: projectWindow)
+        let primary = session.primaryWindowID
+        try #require(session.scratchDrawingWindowID == primary)
+        try #require(session.selection(primary)?.activeTabID == move.tab.id)
+        try #require(session.selection(move.undrawn)?.activeTabID == move.tab.id)
+        try #require(!session.showsScratch(in: move.undrawn))
+        try #require(session.selection(projectWindow)?.activeTabID == before.id)
         let calls = ProjectSwitchRecorder.connect(to: session)
 
         move.suggester.accept()
@@ -567,6 +641,9 @@ extension SelectionIntentTests {
         #expect(calls.raised == [projectWindow])
         #expect(calls.switches.isEmpty)
         #expect(session.selection(projectWindow)?.activeTabID == move.tab.id)
+        #expect(session.selection(projectWindow)?.activeContainerID == move.row)
+        #expect(session.tab(move.tab.id)?.container == move.row)
+        #expect(session.selection(primary)?.shownProjectID == nil)
         #expect(session.selection(move.undrawn)?.activeTabID == move.neighbor.id)
         #expect(session.selection(move.undrawn)?.activeContainerID == .loose)
     }
@@ -574,15 +651,23 @@ extension SelectionIntentTests {
     @Test func aRepairToAnotherProjectsTab_neverMakesASecondWindowShowIt() throws {
         let move = try Self.suggestedMove()
         let session = move.session
+        let primary = session.primaryWindowID
+        try #require(session.scratchDrawingWindowID == primary)
+        try #require(session.selection(move.undrawn)?.activeTabID == move.tab.id)
+        try #require(session.windowIDs.allSatisfy { session.selection($0)?.shownProjectID != move.target.id })
+        let calls = ProjectSwitchRecorder.connect(to: session)
 
         move.suggester.accept()
 
-        // The primary window, with no app layer switching it, follows the
-        // tab; the undrawn one stays out of the project.
         #expect(session.primarySelection.activeTabID == move.tab.id)
+        #expect(session.primarySelection.activeContainerID == move.row)
         #expect(session.selection(move.undrawn)?.shownProjectID == nil)
+        #expect(session.selection(move.undrawn)?.activeTabID == move.neighbor.id)
         let showing = session.windowIDs.filter { session.selection($0)?.shownProjectID == move.target.id }
-        #expect(showing == [session.primaryWindowID])
+        #expect(showing == [primary])
+        #expect(calls.switches == [.init(window: primary, from: nil, to: move.target.id, reason: .person)])
+        #expect(calls.arrived == [primary])
+        #expect(calls.raised.isEmpty)
     }
 
     // MARK: - A hidden window
@@ -611,6 +696,9 @@ extension SelectionIntentTests {
         let primary = session.primaryWindowID
 
         session.setActiveTab(otherTab.id, in: primary, intent: .behind)
+        #expect(session.selection(hidden)?.activeContainerID == shownRow)
+        #expect(session.selection(hidden)?.activeTabID == shownTab.id)
+        #expect(session.lastActiveTabID(for: other) == otherTab.id)
         let opened = session.openTab(container: other, in: primary, intent: .behind, selects: true)
 
         #expect(session.selection(hidden)?.activeContainerID == shownRow)
@@ -631,6 +719,10 @@ extension SelectionIntentTests {
         let primary = session.primaryWindowID
 
         let opened = session.openTab(container: row, in: primary, intent: .behind, selects: true)
+        #expect(session.tab(opened.id)?.container == row)
+        #expect(session.selection(hidden)?.activeContainerID == row)
+        #expect(session.selection(hidden)?.activeTabID == inFront.id)
+        #expect(session.lastActiveTabID(for: row) == inFront.id)
         session.setActiveTab(opened.id, in: primary, intent: .behind)
 
         #expect(session.selection(hidden)?.activeTabID == inFront.id)
@@ -653,7 +745,9 @@ extension SelectionIntentTests {
         let tab = session.openTab(container: row, in: session.primaryWindowID, intent: .behind, selects: true)
 
         // Over its empty row, the window of the tab's project takes it.
+        #expect(session.selection(mineWindow)?.activeContainerID == row)
         #expect(session.selection(mineWindow)?.activeTabID == tab.id)
+        #expect(session.lastActiveTabID(for: row) == tab.id)
         #expect(session.selection(theirWindow)?.activeContainerID == .project(theirs.id))
         #expect(session.selection(theirWindow)?.activeTabID == theirTab.id)
         #expect(session.projectViews.isEmpty)

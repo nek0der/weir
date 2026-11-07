@@ -51,16 +51,22 @@ struct NewSessionPullRequestTests {
         }
     }
 
-    @Test(arguments: [PullRequestAvailability.toolMissing(.gitHub), .notSignedIn(.gitLab)])
-    func aCLIMissingOrSignedOut_turnsTheSourceOff_namingTheCLI(_ availability: PullRequestAvailability) async throws {
+    @Test(arguments: [
+        (PullRequestAvailability.toolMissing(.gitHub), "Install gh to create worktrees from pull requests."),
+        (.toolMissing(.gitLab), "Install glab to create worktrees from pull requests."),
+        (.notSignedIn(.gitHub), "gh isn’t signed in, so Weir can’t read pull requests."),
+        (.notSignedIn(.gitLab), "glab isn’t signed in, so Weir can’t read pull requests.")
+    ])
+    func aCLIMissingOrSignedOut_turnsTheSourceOff_namingTheCLI(_ availability: PullRequestAvailability, message: String) async throws {
         let forge = FakePullRequests()
         forge.availability = availability
         try await Self.withFixture(forge) { fixture, _ in
             let model = try await Self.pullRequestForm(fixture)
             #expect(!model.canChoosePullRequest)
             #expect(model.plan == nil)
+            #expect(model.problem == .pullRequestsUnavailable(availability))
             let said = try #require(NewSessionProblemText.pullRequestsUnavailable(availability)).resolved(in: Locale(identifier: "en"))
-            #expect(said.contains(availability == .toolMissing(.gitHub) ? "gh" : "glab"))
+            #expect(said == message)
         }
     }
 
@@ -98,20 +104,6 @@ struct NewSessionPullRequestTests {
         }
     }
 
-    /// An answer for a number the field no longer names is dropped: Create
-    /// never makes a worktree of a request the field does not say.
-    @Test func anAnswerForANumberNoLongerTyped_isDropped() async throws {
-        try await Self.withFixture { fixture, _ in
-            var model = try await Self.pullRequestForm(fixture)
-            model.setPullRequestText("12")
-            model.setPullRequestText("13")
-            model.setPullRequestLookup(.found(.fixture(12)), for: 12)
-            #expect(model.pullRequest == .lookingUp(13))
-            model.setPullRequestText("")
-            #expect(model.pullRequest == .none)
-        }
-    }
-
     enum LookupInterruption: Sendable, CaseIterable {
         case none, differentNumber, cleared, foreignLink, choseFromMenu, leftSource, cancelledAndRetyped
     }
@@ -145,7 +137,14 @@ struct NewSessionPullRequestTests {
             let picked = try #require(menu.first)
             let current = model
             let task = Task { await NewSessionActions.lookUpPullRequest(12, for: current, stores: fixture.stores) }
-            await reader.reply.waitUntilRequested()
+            do {
+                try await reader.reply.waitUntilRequested()
+            } catch {
+                task.cancel()
+                reader.reply.open(with: .notFound(12))
+                _ = await task.value
+                throw error
+            }
             #expect(reader.numbers.value == [12])
             let oldReply = PullRequestHead.fixture(12, branch: "lookup-head")
             switch interruption {
@@ -209,14 +208,27 @@ struct NewSessionPullRequestTests {
 
     /// After a lookup that failed, any edit of the field asks again, the
     /// same number too.
-    @Test func anEditAfterAFailedLookup_asksAgain() async throws {
-        try await Self.withFixture { fixture, _ in
+    @Test(arguments: [
+        (PullRequestLookup.failed("offline"), NewSessionModel.Problem.pullRequestLookupFailed(12, "offline")),
+        (.notFound(12), .pullRequestNotFound(12))
+    ])
+    func anEditAfterAFailedLookup_asksAgain(_ first: PullRequestLookup, _ problem: NewSessionModel.Problem) async throws {
+        try await Self.withFixture { fixture, forge in
+            let forge = try #require(forge)
+            forge.script(12, first)
             var model = try await Self.pullRequestForm(fixture)
             model.setPullRequestText("12")
-            model.setPullRequestLookup(.failed("offline"), for: 12)
-            #expect(model.problem == .pullRequestLookupFailed(12, "offline"))
-            model.setPullRequestText("#12")
-            #expect(model.pullRequest == .lookingUp(12))
+            let firstAnswer = try #require(await NewSessionActions.lookUpPullRequest(12, for: model, stores: fixture.stores))
+            model.setPullRequestLookup(firstAnswer, for: 12)
+            #expect(model.problem == problem)
+            #expect(forge.asked == [12])
+
+            let retried = PullRequestHead.fixture(12, branch: "second-answer")
+            forge.add(retried)
+            try await Self.lookUp(12, in: &model, fixture)
+
+            #expect(forge.asked == [12, 12])
+            #expect(model.pullRequest == .found(retried))
         }
     }
 
@@ -240,16 +252,24 @@ struct NewSessionPullRequestTests {
     /// The head is fetched from the forge's ref before anything is made,
     /// and the new branch starts at the commit the fetch brought, whatever
     /// the forge said before.
-    @Test func create_fetchesTheHeadFirst_andBranchesAtTheFetchedCommit() async throws {
+    @Test(arguments: [
+        (ForgeKind.gitHub, "origin", "github.com/acme/app", "refs/pull/12/head"),
+        (.gitLab, "upstream", "gitlab.com/acme/app", "refs/merge-requests/12/head")
+    ])
+    func create_fetchesTheHeadFirst_andBranchesAtTheFetchedCommit(
+        _ kind: ForgeKind, _ remote: String, _ repository: String, _ ref: String
+    ) async throws {
         try await Self.withFixture { fixture, forge in
+            forge?.availability = .available(PullRequestRepository(forge: kind, remote: remote, repository: repository))
             forge?.add(.fixture(12, branch: "fix/login", commit: "old"))
             fixture.git.nextFetchedRef = FetchedRef(result: .success(), commit: "fetched")
             var model = try await Self.pullRequestForm(fixture)
             try await Self.lookUp(12, in: &model, fixture)
-            #expect(model.plan?.pullRequest?.ref == "refs/pull/12/head")
+            #expect(model.plan?.pullRequest?.ref == ref)
+            #expect(model.plan?.pullRequest?.remote == remote)
 
             #expect(await fixture.create(model) == .created(branch: "fix/login"))
-            #expect(fixture.git.fetchRefCalls == ["origin refs/pull/12/head"])
+            #expect(fixture.git.fetchRefCalls == ["\(remote) \(ref)"])
             #expect(Array(fixture.git.operations.prefix(3)) == ["fetch ref", "branch", "worktree add"])
             #expect(fixture.git.branchCalls.first?.name == "fix/login")
             #expect(fixture.git.branchCalls.first?.startPoint == "fetched")
@@ -297,17 +317,34 @@ struct NewSessionPullRequestTests {
         }
     }
 
-    @Test func aLocalBranchAtTheRequestsCommit_checkedOutElsewhere_stopsCreate() async throws {
+    @Test(arguments: [false, true])
+    func aCheckedOutBranchAtTheRequestCommit_stopsCreate(_ needsFetchToKnow: Bool) async throws {
         try await Self.withFixture { fixture, forge in
-            // The project's folder has the branch checked out.
             fixture.facts.localBranches = ["main", "fix/login"]
             fixture.facts.localBranchTips = ["fix/login": "c1"]
             fixture.facts.head = "fix/login"
-            forge?.add(.fixture(12, branch: "fix/login", commit: "c1"))
+            forge?.add(.fixture(12, branch: "fix/login", commit: needsFetchToKnow ? nil : "c1"))
+            fixture.git.nextFetchedRef = FetchedRef(result: .success(), commit: "c1")
             var model = try await Self.pullRequestForm(fixture)
             try await Self.lookUp(12, in: &model, fixture)
-            #expect(model.problem == .branchCheckedOut)
-            #expect(model.plan == nil)
+
+            if needsFetchToKnow {
+                try #require(model.plan?.pullRequest != nil)
+                let outcome = await fixture.create(model)
+                guard case let .failed(message, madeBranch) = outcome else {
+                    Issue.record("Create accepted the checked-out branch")
+                    return
+                }
+                #expect(madeBranch == nil)
+                #expect(message.resolved(in: Locale(identifier: "en")) == "“fix/login” is checked out in another worktree.")
+                #expect(fixture.git.fetchRefCalls == ["origin refs/pull/12/head"])
+            } else {
+                #expect(model.problem == .branchCheckedOut)
+                #expect(model.plan == nil)
+                #expect(fixture.git.fetchRefCalls.isEmpty)
+            }
+            #expect(fixture.git.branchCalls.isEmpty)
+            #expect(fixture.git.createCalls.isEmpty)
         }
     }
 
@@ -375,35 +412,46 @@ struct NewSessionPullRequestGitTests {
         let bare = try await repo.addBareOrigin()
         let pushed = try await Self.pushRequest(7, branch: "main", to: bare, beside: repo)
 
+        try await repo.git(["fetch", "-q", "origin", "main"])
+        let fetchHead = repo.url.appendingPathComponent(".git/FETCH_HEAD")
+        let previousFetch = try Data(contentsOf: fetchHead)
+        #expect(!previousFetch.isEmpty)
+        let originMain = try await repo.git(["rev-parse", "refs/remotes/origin/main"])
+        let clone = repo.url.deletingLastPathComponent().appendingPathComponent("\(repo.url.lastPathComponent)-fork")
+        for (key, value) in [("core.autocrlf", "false"), ("tag.gpgsign", "false"), ("core.excludesFile", "/dev/null")] {
+            #expect(try await TempGitRepo.git(["config", "--local", "--get", key], in: clone) == value, "\(key)")
+        }
+
         let fetched = try await LiveGit().fetchRef(repoRoot: repo.url, remote: "origin", ref: ForgeKind.gitHub.headRef(of: 7))
 
         #expect(fetched.result.succeeded)
         #expect(fetched.commit == pushed)
         #expect(try await repo.git(["for-each-ref", "refs/weir"]).isEmpty)
         #expect(try await repo.git(["for-each-ref", "refs/remotes/origin", "--format=%(refname)"]) == "refs/remotes/origin/main")
-    }
-
-    /// The fork's clone gets the settings the first repository has, so a
-    /// developer's global excludes file cannot hide the `fork.txt` it adds.
-    @Test func theForksClone_getsTheFixturesLocalOverrides() async throws {
-        let repo = try await TempGitRepo.make()
-        defer { repo.cleanup() }
-        let bare = try await repo.addBareOrigin()
-        try await Self.pushRequest(7, branch: "main", to: bare, beside: repo)
-        let clone = repo.url.deletingLastPathComponent().appendingPathComponent("\(repo.url.lastPathComponent)-fork")
-
-        for (key, value) in [("core.autocrlf", "false"), ("tag.gpgsign", "false"), ("core.excludesFile", "/dev/null")] {
-            #expect(try await TempGitRepo.git(["config", "--local", "--get", key], in: clone) == value, "\(key)")
-        }
+        #expect(try await repo.git(["rev-parse", "refs/remotes/origin/main"]) == originMain)
+        #expect(try Data(contentsOf: fetchHead) == previousFetch)
     }
 
     @Test func aRefTheRemoteDoesNotHave_failsTheFetch() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
         try await repo.addBareOrigin()
-        let fetched = try await LiveGit().fetchRef(repoRoot: repo.url, remote: "origin", ref: ForgeKind.gitHub.headRef(of: 99))
-        #expect(!fetched.result.succeeded)
+        try await repo.git(["fetch", "-q", "origin", "main"])
+        let fetchHead = repo.url.appendingPathComponent(".git/FETCH_HEAD")
+        let previousFetch = try Data(contentsOf: fetchHead)
+        let git = LiveGit()
+        let control = try await git.fetchRef(repoRoot: repo.url, remote: "origin", ref: "refs/heads/main")
+        let main = try await repo.git(["rev-parse", "main"])
+        #expect(control.result.succeeded)
+        #expect(control.commit == main)
+
+        let ref = "refs/pull/99/head"
+        let fetched = try await git.fetchRef(repoRoot: repo.url, remote: "origin", ref: ref)
+        #expect(LiveGit.isMissingRemoteBranch(fetched.result))
+        #expect(fetched.result.stderr.contains("couldn't find remote ref \(ref)"))
         #expect(fetched.commit == nil)
+        #expect(try await repo.git(["for-each-ref", "refs/weir"]).isEmpty)
+        #expect(try Data(contentsOf: fetchHead) == previousFetch)
     }
 
     /// The whole Create through real git: a fork's request whose branch is
@@ -445,6 +493,7 @@ struct NewSessionPullRequestGitTests {
 
             let worktree = try #require(session.project(project.id)?.worktrees.first { $0.gitRef?.branchName == "pr/7" })
             #expect(try await TempGitRepo.git(["rev-parse", "HEAD"], in: worktree.workingDirectory) == pushed)
+            #expect(try await TempGitRepo.git(["symbolic-ref", "HEAD"], in: worktree.workingDirectory) == "refs/heads/pr/7")
             #expect(try await repo.git(["rev-parse", "main"]) == main)
         }
     }

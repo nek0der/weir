@@ -8,69 +8,112 @@ import Testing
 
 @MainActor
 struct ChangesPanelActionsTests {
-    @Test func untilGitHasNamedTheFolder_thePanelWaits_thenListsTheTurnsRecordedThere() async throws {
-        let fixture = ActionStoresFixture()
-        try fixture.record([fixture.turn("t1", number: 1, startedAt: "2026-10-12T00:00:00Z")])
-
-        #expect(ChangesPanelActions.content(window: fixture.window, stores: fixture.changes) == .waitingForRepository)
-
-        await ChangesPanelActions.resolveRoot(window: fixture.window, stores: fixture.changes)
-
-        guard case let .turns(list) = ChangesPanelActions.content(window: fixture.window, stores: fixture.changes) else {
-            Issue.record("the panel lists no turns")
-            return
-        }
-        #expect(list.turnCount == 1)
-        #expect(list.unviewedCount == 1)
-        #expect(ChangesPanelActions.root(window: fixture.window, stores: fixture.changes) == fixture.root)
+    private func turn(_ id: String, number: Int, conversation: String, at time: String, root: String) throws -> TurnSummary {
+        var extras = TurnSummaryFixture.Extras()
+        extras.conversationID = conversation
+        extras.startedAt = time
+        extras.beginTree = SnapshotTree(tree: TurnSummaryFixture.tree("b", number), root: root)
+        return try TurnSummaryFixture.turn(
+            id,
+            changes: TurnSummaryFixture.changedFiles,
+            number: number,
+            endTree: SnapshotTree(tree: TurnSummaryFixture.tree("e", number), root: root),
+            extras: extras
+        )
     }
 
-    /// The turns are the worktree's, not a tab's: with no tab open in it,
-    /// the panel still lists them, counts them, and counts again when one
-    /// changes, and its filter still narrows them.
-    @Test func aWorktreeWithNoTabOpen_listsItsTurns() async throws {
-        let fixture = ActionStoresFixture(opensTab: false)
-        #expect(fixture.session.tabs(in: .project(fixture.project.id)).isEmpty)
-        let first = try fixture.turn("t1", number: 1, conversation: "a", startedAt: "2026-10-12T00:00:00Z")
-        let second = try fixture.turn("t2", number: 1, conversation: "b", startedAt: "2026-10-12T00:01:00Z")
-        fixture.record([first, second])
+    @Test(arguments: [false, true])
+    func thePanelWaitsForGit_thenListsOnlyTurnsFromItsRepository(opensTab: Bool) async throws {
+        let gitRoot = URL(fileURLWithPath: "/fixture/git-root", isDirectory: true)
+        let asks = Recorded<[String]>([])
+        let fixture = ActionStoresFixture(opensTab: opensTab, repositoryRoots: RepositoryRoots(topLevel: { requested in
+            asks.update { $0.append(requested.path) }
+            return gitRoot
+        }, paths: WorktreePathResolver(resolveLinks: { $0 })))
+        let folder = try #require(ChangesPanelActions.folder(window: fixture.window, stores: fixture.changes))
+        try #require(folder.path != gitRoot.path)
+        let first = try turn("t1", number: 1, conversation: "a", at: "2026-10-12T00:00:00Z", root: gitRoot.path)
+        let second = try turn("t2", number: 2, conversation: "b", at: "2026-10-12T00:01:00Z", root: gitRoot.path)
+        let foreign = try turn("t3", number: 3, conversation: "c", at: "2026-10-12T00:02:00Z", root: folder.path)
+        fixture.record([first, second, foreign])
+        #expect(fixture.session.tabs(in: .project(fixture.project.id)).count == (opensTab ? 1 : 0))
 
         #expect(ChangesPanelActions.content(window: fixture.window, stores: fixture.changes) == .waitingForRepository)
+        #expect(ChangesPanelActions.turnsKey(window: fixture.window, stores: fixture.changes).isEmpty)
         await ChangesPanelActions.resolveRoot(window: fixture.window, stores: fixture.changes)
 
-        guard case let .turns(list) = ChangesPanelActions.content(window: fixture.window, stores: fixture.changes) else {
-            Issue.record("a worktree with no tab open lists no turns")
-            return
-        }
+        let list = try ChangesPanelFixture.list(ChangesPanelActions.content(window: fixture.window, stores: fixture.changes))
+        #expect(asks.value == [folder.path])
+        #expect(ChangesPanelActions.root(window: fixture.window, stores: fixture.changes) == gitRoot.path)
+        #expect(list.rows.map(\.turn.turnID) == [first.turnID, second.turnID])
+        #expect(Set(list.conversations.map(\.conversation)) == [first.conversation, second.conversation])
         #expect(list.hasAgents)
         #expect(list.turnCount == 2)
         #expect(list.unviewedCount == 2)
-        #expect(list.conversations.count == 2, "the filter offers each conversation")
-        #expect(ChangesPanelActions.root(window: fixture.window, stores: fixture.changes) == fixture.root)
-        #expect(ChangesPanelActions.turnsKey(window: fixture.window, stores: fixture.changes).count == 2)
-        #expect(ChangesPanelActions.unviewedCount(window: fixture.window, stores: fixture.changes) == 2)
+        let keys = ChangesPanelActions.turnsKey(window: fixture.window, stores: fixture.changes)
+        let expected = Set([first, second].map {
+            ChangesPanelActions.TurnsKey(id: $0.turnID, phase: $0.phase, endTree: $0.endTree?.tree)
+        })
+        #expect(keys.count == 2)
+        #expect(Set(keys) == expected)
 
         ChangesPanelActions.select(first.conversation, window: fixture.window, session: fixture.session)
-        guard case let .turns(narrowed) = ChangesPanelActions.content(window: fixture.window, stores: fixture.changes) else {
-            Issue.record("the filter emptied the panel")
-            return
-        }
+        let narrowed = try ChangesPanelFixture.list(ChangesPanelActions.content(window: fixture.window, stores: fixture.changes))
         #expect(narrowed.filter == first.conversation)
         #expect(narrowed.rows.map(\.turn.turnID) == [first.turnID])
+        #expect(ChangesPanelActions.unviewedCount(window: fixture.window, stores: fixture.changes) == 2)
     }
 
-    /// A row of a worktree with no tab open still opens its turn in the
-    /// review, which finds its root from the worktree's folder.
-    @Test func aWorktreeWithNoTabOpen_opensARowsTurn() async throws {
-        let fixture = ActionStoresFixture(opensTab: false)
-        let turn = try fixture.turn("t1", number: 1, startedAt: "2026-10-12T00:00:00Z")
+    private struct ReviewRequest: Equatable {
+        let request: ReviewTabRequest
+        let pane: UUID?
+        let conversation: ConversationKey?
+        let window: WindowID
+    }
+
+    private func recordingReviews(_ fixture: ActionStoresFixture, in requests: Recorded<[ReviewRequest]>) -> ChangesPanelStores {
+        let stores = fixture.changes
+        return ChangesPanelStores(
+            session: stores.session,
+            repositoryRoots: stores.repositoryRoots,
+            worktreeChanges: stores.worktreeChanges,
+            turnHistory: stores.turnHistory,
+            viewedLines: stores.viewedLines,
+            attention: stores.attention,
+            attentionQueue: stores.attentionQueue,
+            toasts: stores.toasts,
+            conversationIdentities: stores.conversationIdentities,
+            isAppActive: stores.isAppActive,
+            restoredTurnIDs: stores.restoredTurnIDs,
+            restoreGateLookup: stores.restoreGateLookup,
+            restoreRecord: stores.restoreRecord,
+            askRestore: stores.askRestore,
+            openReview: { request, pane, conversation, window in
+                requests.update { $0.append(ReviewRequest(request: request, pane: pane, conversation: conversation, window: window.id)) }
+            },
+            registry: stores.registry,
+            paneVisibility: stores.paneVisibility
+        )
+    }
+
+    @Test(arguments: [false, true])
+    func aRow_opensItsTurnInTheReviewFromItsLivePaneWhenAvailable(opensTab: Bool) async throws {
+        let fixture = ActionStoresFixture(opensTab: opensTab)
+        let turn = try fixture.turn("t1", number: 1, conversation: "a", startedAt: "2026-10-12T00:00:00Z")
         fixture.record([turn])
+        var pane: UUID?
+        if opensTab {
+            let livePane = try #require(fixture.session.focusedPaneID(in: fixture.window.id))
+            fixture.attention.replaceRuntimes([Self.run("a", in: livePane, startedAt: 0).runtime], kind: .claude)
+            pane = livePane
+        }
+        let requests = Recorded<[ReviewRequest]>([])
+        ChangesPanelActions.open(turn, window: fixture.window, stores: recordingReviews(fixture, in: requests))
 
-        ChangesPanelActions.open(turn, window: fixture.window, stores: fixture.changes)
-
-        await pollUntil { !fixture.opened.isEmpty }
-        #expect(fixture.opened.map(\.request) == [.turn(turn.turnID)])
-        #expect(fixture.opened.first?.pane == nil)
+        await pollUntil { !requests.value.isEmpty }
+        #expect(requests.value == [
+            ReviewRequest(request: .turn(turn.turnID), pane: pane, conversation: turn.conversation, window: fixture.window.id)
+        ])
     }
 
     /// The restore strip lives in a pane's decision bar: with no tab open
@@ -88,8 +131,11 @@ struct ChangesPanelActionsTests {
             attention: fixture.attention
         ))
 
-        #expect(fixture.session.tab(containing: pane)?.container == container)
-        #expect(fixture.window.selection.activeTabID == fixture.session.tab(containing: pane)?.id)
+        let tab = try #require(fixture.session.tab(containing: pane))
+        #expect(tab.container == container)
+        #expect(tab.initialCommands.isEmpty)
+        #expect(fixture.session.stagedLaunch(paneID: pane) == nil)
+        #expect(fixture.window.selection.activeTabID == tab.id)
         // Asked again, the tab it opened holds it.
         #expect(RestoreActions.pane(for: turn, window: fixture.window, session: fixture.session, attention: fixture.attention) == pane)
         #expect(fixture.session.tabs(in: container).count == 1)
@@ -110,6 +156,7 @@ struct ChangesPanelActionsTests {
             _ = fixture.session.openTab(container: .loose)
         }
 
+        #expect(fixture.session.tabs(in: .loose).count == (hasTab ? 1 : 0))
         let content = ChangesPanelActions.content(window: fixture.window, stores: fixture.changes)
 
         #expect(content == .noWorktree)
@@ -118,7 +165,7 @@ struct ChangesPanelActionsTests {
         #expect(ChangesPanelActions.turnsKey(window: fixture.window, stores: fixture.changes).isEmpty)
     }
 
-    @Test func markViewedOnARow_movesTheLineAndClearsTheTogglesCount() async throws {
+    @Test func markViewedOnARow_movesTheLineAndReducesTheTogglesCount() async throws {
         let fixture = ActionStoresFixture()
         let first = try fixture.turn("t1", number: 1, startedAt: "2026-10-12T00:00:00Z")
         let second = try fixture.turn("t2", number: 2, startedAt: "2026-10-12T00:01:00Z")
@@ -134,6 +181,7 @@ struct ChangesPanelActionsTests {
             stores: fixture.changes
         )
 
+        #expect(fixture.viewedLines.line(of: first.conversation)?.position == ViewedLinePosition(first))
         #expect(fixture.viewedLines.isViewed(first))
         #expect(!fixture.viewedLines.isViewed(second))
         #expect(ChangesPanelActions.unviewedCount(window: fixture.window, stores: fixture.changes) == 1)
@@ -167,6 +215,7 @@ struct ChangesPanelActionsTests {
             window: fixture.window,
             stores: fixture.changes
         )
+        try #require(!fixture.viewedLines.isViewed(own) && !fixture.viewedLines.isViewed(other))
         ChangesPanelActions.markViewed(
             through: own,
             movesOnlyItsOwnLine: false,
@@ -175,7 +224,8 @@ struct ChangesPanelActionsTests {
             stores: fixture.changes
         )
 
-        #expect(fixture.viewedLines.isViewed(other), "on the timeline the move reaches the other line")
+        #expect(fixture.viewedLines.isViewed(own))
+        #expect(fixture.viewedLines.isViewed(other))
     }
 
     /// "Mark as Unviewed from Here" in a section takes back its own line
@@ -194,7 +244,7 @@ struct ChangesPanelActionsTests {
             window: fixture.window,
             stores: fixture.changes
         )
-        #expect(fixture.viewedLines.isViewed(other) && fixture.viewedLines.isViewed(own))
+        try #require(fixture.viewedLines.isViewed(other) && fixture.viewedLines.isViewed(own))
 
         ChangesPanelActions.markNotViewed(
             from: own,
@@ -214,8 +264,10 @@ struct ChangesPanelActionsTests {
     @Test func aSharedMark_undoneFromASection_restoresOnlyItsOwnLine() async throws {
         let fixture = ActionStoresFixture()
         let other = try fixture.turn("t1", number: 1, conversation: "a", startedAt: "2026-10-12T00:00:00Z")
-        let own = try fixture.turn("t2", number: 1, conversation: "b", startedAt: "2026-10-12T00:05:00Z")
-        fixture.record([other, own])
+        let previous = try fixture.turn("t0", number: 1, conversation: "b", startedAt: "2026-10-12T00:02:00Z")
+        let own = try fixture.turn("t2", number: 2, conversation: "b", startedAt: "2026-10-12T00:05:00Z")
+        fixture.record([other, previous, own])
+        try #require(fixture.viewedLines.markViewed(through: previous, source: .turnRow) != nil)
         await ChangesPanelActions.resolveRoot(window: fixture.window, stores: fixture.changes)
         ChangesPanelActions.markViewed(
             through: own,
@@ -224,7 +276,7 @@ struct ChangesPanelActionsTests {
             window: fixture.window,
             stores: fixture.changes
         )
-        #expect(fixture.viewedLines.isViewed(other) && fixture.viewedLines.isViewed(own))
+        try #require(fixture.viewedLines.isViewed(other) && fixture.viewedLines.isViewed(own))
 
         ChangesPanelActions.setGrouping(.byConversation, window: fixture.window, session: fixture.session)
         #expect(fixture.window.selection.changesPanelGrouping == .byConversation)
@@ -232,49 +284,60 @@ struct ChangesPanelActionsTests {
         let sections = try #require(list.sections)
         let section = try #require(sections.first { $0.id == own.conversation })
         let undo = try #require(section.line?.undo)
-        #expect(undo.map(\.conversation) == [own.conversation])
+        let change = try #require(fixture.viewedLines.line(of: own.conversation)?.history.last)
+        #expect(change.from == ViewedLinePosition(previous))
+        #expect(undo == [ViewedLineUndo(conversation: own.conversation, changeID: change.id)])
 
         ChangesPanelActions.unmark(undo, window: fixture.window, stores: fixture.changes)
 
+        #expect(fixture.viewedLines.line(of: own.conversation)?.position == ViewedLinePosition(previous))
         #expect(!fixture.viewedLines.isViewed(own))
         #expect(fixture.viewedLines.isViewed(other), "the other section's line stays")
     }
 
-    @Test func reviewUnviewed_opensTheWorktreesUnviewedTurns_fromTheNewestConversation() async throws {
+    @Test(arguments: [false, true])
+    func reviewUnviewed_prefersTheFocusedConversation_thenTheNewestUnviewed(focusesOlder: Bool) async throws {
         let fixture = ActionStoresFixture()
         let older = try fixture.turn("t1", number: 1, conversation: "a", startedAt: "2026-10-12T00:00:00Z")
         let newer = try fixture.turn("t2", number: 1, conversation: "b", startedAt: "2026-10-12T00:05:00Z")
-        fixture.record([older, newer])
+        let viewed = try fixture.turn("t3", number: 1, conversation: "c", startedAt: "2026-10-12T00:10:00Z")
+        fixture.record([older, newer, viewed])
+        try #require(fixture.viewedLines.markViewed(through: viewed, source: .turnRow) != nil)
         await ChangesPanelActions.resolveRoot(window: fixture.window, stores: fixture.changes)
 
-        ChangesPanelActions.reviewUnviewed(window: fixture.window, stores: fixture.changes)
+        let pane = try #require(fixture.session.focusedPaneID(in: fixture.window.id))
+        if focusesOlder {
+            fixture.attention.replaceRuntimes([Self.run("a", in: pane, startedAt: 0).runtime], kind: .claude)
+        }
+        let requests = Recorded<[ReviewRequest]>([])
+        ChangesPanelActions.reviewUnviewed(window: fixture.window, stores: recordingReviews(fixture, in: requests))
 
-        await pollUntil { !fixture.opened.isEmpty }
-        #expect(fixture.opened.map(\.request) == [.worktreeUnviewedTurns])
-        #expect(fixture.opened.first?.conversation == newer.conversation)
-        // No pane runs either conversation here.
-        #expect(fixture.opened.first?.pane == nil)
+        await pollUntil { !requests.value.isEmpty }
+        #expect(requests.value == [ReviewRequest(
+            request: .worktreeUnviewedTurns,
+            pane: focusesOlder ? pane : nil,
+            conversation: focusesOlder ? older.conversation : newer.conversation,
+            window: fixture.window.id
+        )])
     }
 
-    @Test func aRow_opensItsTurnInTheReview() async throws {
-        let fixture = ActionStoresFixture()
-        let turn = try fixture.turn("t1", number: 1, startedAt: "2026-10-12T00:00:00Z")
-
-        ChangesPanelActions.open(turn, window: fixture.window, stores: fixture.changes)
-
-        await pollUntil { !fixture.opened.isEmpty }
-        #expect(fixture.opened.map(\.request) == [.turn(turn.turnID)])
-        #expect(fixture.opened.first?.conversation == turn.conversation)
-    }
-
-    @Test func thePanelCountsOnlyWhileWeirIsInFront() {
+    @Test func thePanelCountsOnlyWhileWeirIsInFrontAndItsWindowIsVisible() {
         let fixture = ActionStoresFixture()
         #expect(ChangesPanelActions.isWatching(window: fixture.window, stores: fixture.changes))
 
         fixture.isAppActive = false
+        #expect(!ChangesPanelActions.isWatching(window: fixture.window, stores: fixture.changes))
+        fixture.isAppActive = true
+        #expect(ChangesPanelActions.isWatching(window: fixture.window, stores: fixture.changes))
 
+        fixture.windows.hide(fixture.window.id)
+        #expect(fixture.window.isHidden)
         #expect(!ChangesPanelActions.isWatching(window: fixture.window, stores: fixture.changes))
     }
+
+}
+
+extension ChangesPanelActionsTests {
 
     // MARK: - The tab that runs a conversation
 
@@ -333,7 +396,8 @@ struct ChangesPanelActionsTests {
         let fixture = ActionStoresFixture()
         try fixture.record([
             fixture.turn("t1", number: 1, conversation: "a", startedAt: "2026-10-12T00:00:00Z"),
-            fixture.turn("t2", number: 1, conversation: "b", startedAt: "2026-10-12T00:01:00Z")
+            fixture.turn("t2", number: 1, conversation: "b", startedAt: "2026-10-12T00:01:00Z"),
+            fixture.turn("t3", number: 2, conversation: "a", startedAt: "2026-10-12T00:02:00Z")
         ])
         await ChangesPanelActions.resolveRoot(window: fixture.window, stores: fixture.changes)
         let container = ContainerID.project(fixture.project.id)
@@ -357,6 +421,14 @@ struct ChangesPanelActionsTests {
         #expect(names(list.conversations)[key] == "Payments")
         #expect(names(facts.agents)[key] == "Payments", "the live title, not the first prompt")
         #expect(names(facts.agents) == names(list.conversations), "every conversation named alike")
+        let counts = Dictionary(uniqueKeysWithValues: facts.agents.map { ($0.conversation, $0.unviewedCount) })
+        #expect(counts == [key: 2, TurnSummaryFixture.conversation("b"): 1])
+        ChangesPanelActions.select(key, window: fixture.window, session: fixture.session)
+        let filtered = try ChangesPanelFixture.list(ChangesPanelActions.content(window: fixture.window, stores: fixture.changes))
+        #expect(filtered.rows.map(\.turn.turnID) == [TurnID("t1"), TurnID("t3")])
+        let filteredFacts = ChangesPanelActions.toggleFacts(window: fixture.window, stores: fixture.changes)
+        #expect(filteredFacts.unviewed == 3)
+        #expect(filteredFacts.agents == facts.agents)
     }
 
     /// A tab's place among the session's tabs, from 1, as the pane strip
@@ -383,34 +455,6 @@ struct ChangesPanelActionsTests {
     }
 
     // MARK: - Show Tab
-
-    /// "Show Tab" brings forward the session's tab that runs the card's
-    /// conversation, and focuses the pane it runs in, not the tab's other one.
-    @Test func showTab_conversationInSession_activatesItsTab() throws {
-        let fixture = ActionStoresFixture()
-        let container = ContainerID.project(fixture.project.id)
-        let first = try #require(fixture.session.tabs(in: container).first)
-        fixture.session.openTab(container: container)
-        let tabs = fixture.session.tabs(in: container)
-        try #require(tabs.count == 2)
-        let target = tabs[1]
-        fixture.session.setActiveTab(target.id, in: fixture.window.id, intent: .person)
-        PaneActions.split(fixture.session, direction: .horizontal)
-        let panes = try #require(fixture.session.tab(target.id)).splitTree.allLeafIDs()
-        try #require(panes.count == 2)
-        let live = Self.run("a", in: panes[0], startedAt: 0)
-        fixture.attention.replaceRuntimes([live.runtime], kind: .claude)
-        fixture.session.update(target.id) { $0.splitTree.focusedLeafID = panes[1] }
-        fixture.session.setActiveTab(first.id, in: fixture.window.id, intent: .person)
-        let conversation = TurnSummaryFixture.conversation("a")
-
-        #expect(ChangesPanelActions.offersShowTab(of: conversation, window: fixture.window, stores: fixture.changes))
-        ChangesPanelActions.showTab(of: conversation, window: fixture.window, stores: fixture.changes)
-
-        let shown = try #require(fixture.session.activeTab(in: fixture.window.id))
-        #expect(shown.id == target.id)
-        #expect(shown.splitTree.focusedLeafID == panes[0])
-    }
 
     /// A session in a tab behind the one OpenCode shows in the pane: "Show Tab" also
     /// asks the pane for that session's tab, as ⌘J does.
@@ -471,8 +515,13 @@ struct ChangesPanelActionsTests {
 
         #expect(!ChangesPanelActions.offersShowTab(of: ended, window: fixture.window, stores: fixture.changes))
         #expect(!ChangesPanelActions.offersShowTab(of: elsewhere, window: fixture.window, stores: fixture.changes))
-        ChangesPanelActions.showTab(of: ended, window: fixture.window, stores: fixture.changes)
-        #expect(fixture.session.activeTab(in: fixture.window.id)?.id == tab.id, "nothing to show, nothing moves")
+        let window = fixture.window.id
+        let pane = try #require(fixture.session.focusedPaneID(in: window))
+        for conversation in [ended, elsewhere] {
+            ChangesPanelActions.showTab(of: conversation, window: fixture.window, stores: fixture.changes)
+            #expect(fixture.session.currentNavTarget(in: window) == .init(container: container, tabID: tab.id))
+            #expect(fixture.session.focusedPaneID(in: window) == pane)
+        }
     }
 
     /// With the review tab in front, "Show Tab" puts it behind the tab it
@@ -484,6 +533,8 @@ struct ChangesPanelActionsTests {
         let pane = try #require(tab.splitTree.allLeafIDs().first)
         let live = Self.run("a", in: pane, startedAt: 0)
         fixture.attention.replaceRuntimes([live.runtime], kind: .claude)
+        let elsewhere = fixture.session.openTab(container: container)
+        try #require(fixture.session.activeTab(in: fixture.window.id)?.id == elsewhere.id)
         fixture.window.review = ReviewTabState(
             root: fixture.root,
             selection: .uncommitted(includesChangesOutsideTurns: false),
@@ -492,12 +543,16 @@ struct ChangesPanelActionsTests {
             destinationPaneID: pane,
             opening: UUID()
         )
-        try #require(fixture.window.review?.isShown == true)
+        let before = try #require(fixture.window.review)
+        try #require(before.isShown)
 
         ChangesPanelActions.showTab(of: TurnSummaryFixture.conversation("a"), window: fixture.window, stores: fixture.changes)
 
         #expect(fixture.window.review?.isShown == false)
+        #expect(fixture.window.review?.opening == before.opening)
+        #expect(fixture.window.review?.selection == before.selection)
         #expect(fixture.session.activeTab(in: fixture.window.id)?.id == tab.id)
+        #expect(fixture.session.focusedPaneID(in: fixture.window.id) == pane)
     }
 
     /// A split tab's title stands for the conversation whose session started
@@ -510,6 +565,7 @@ struct ChangesPanelActionsTests {
         let first = try #require(fixture.session.tabs(in: container).first)
         fixture.session.openTab(container: container)
         let target = try #require(fixture.session.tabs(in: container).last)
+        try #require(target.id != first.id)
         fixture.session.setActiveTab(target.id, in: fixture.window.id, intent: .person)
         PaneActions.split(fixture.session, direction: .horizontal)
         let panes = try #require(fixture.session.tab(target.id)).splitTree.allLeafIDs()
@@ -557,13 +613,16 @@ struct ChangesPanelActionsTests {
             fixture.turn("t1", number: 1, conversation: "a", startedAt: "2026-10-12T00:00:00Z"),
             fixture.turn("t2", number: 1, conversation: "b", startedAt: "2026-10-12T00:01:00Z")
         ])
-        let a = try Self.run("a", in: #require(tabs[0].splitTree.allLeafIDs().first), startedAt: 0)
-        let b = try Self.run("b", in: #require(tabs[1].splitTree.allLeafIDs().first), startedAt: 0)
-        fixture.session.update(tabs[0].id) { $0.agentBadges[.claude] = [a.runtime.paneIDs.first ?? UUID(): a.badge] }
-        fixture.session.update(tabs[1].id) { $0.agentBadges[.claude] = [b.runtime.paneIDs.first ?? UUID(): b.badge] }
+        let aPane = try #require(tabs[0].splitTree.allLeafIDs().first)
+        let bPane = try #require(tabs[1].splitTree.allLeafIDs().first)
+        let a = Self.run("a", in: aPane, startedAt: 0)
+        let b = Self.run("b", in: bPane, startedAt: 0)
+        fixture.session.update(tabs[0].id) { $0.agentBadges[.claude] = [aPane: a.badge] }
+        fixture.session.update(tabs[1].id) { $0.agentBadges[.claude] = [bPane: b.badge] }
         fixture.attention.replaceRuntimes([a.runtime, b.runtime], kind: .claude)
         await ChangesPanelActions.resolveRoot(window: fixture.window, stores: fixture.changes)
         let store = fixture.conversationIdentities
+        #expect(store.derivationCount == 0)
 
         guard case let .turns(list) = ChangesPanelActions.content(window: fixture.window, stores: fixture.changes) else {
             Issue.record("the panel lists no turns")

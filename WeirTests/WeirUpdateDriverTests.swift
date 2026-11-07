@@ -12,6 +12,12 @@ struct WeirUpdateDriverTests {
     @MainActor
     final class FakeStandardDriver: NSObject, SPUUserDriver {
         var calls: [String] = []
+        var expectedLengths: [UInt64] = []
+        var receivedLengths: [UInt64] = []
+        var extractionProgress: [Double] = []
+        var downloadCancellation: (() -> Void)?
+        var errorAcknowledgement: (() -> Void)?
+        var readyReply: ((SPUUserUpdateChoice) -> Void)?
 
         func show(_: SPUUpdatePermissionRequest, reply _: @escaping (SUUpdatePermissionResponse) -> Void) {
             calls.append("permission")
@@ -36,32 +42,38 @@ struct WeirUpdateDriverTests {
             calls.append("notFound")
         }
 
-        func showUpdaterError(_: any Error, acknowledgement _: @escaping () -> Void) {
+        func showUpdaterError(_: any Error, acknowledgement: @escaping () -> Void) {
             calls.append("error")
+            errorAcknowledgement = acknowledgement
         }
 
-        func showDownloadInitiated(cancellation _: @escaping () -> Void) {
+        func showDownloadInitiated(cancellation: @escaping () -> Void) {
             calls.append("download")
+            downloadCancellation = cancellation
         }
 
-        func showDownloadDidReceiveExpectedContentLength(_: UInt64) {
+        func showDownloadDidReceiveExpectedContentLength(_ expectedContentLength: UInt64) {
             calls.append("length")
+            expectedLengths.append(expectedContentLength)
         }
 
-        func showDownloadDidReceiveData(ofLength _: UInt64) {
+        func showDownloadDidReceiveData(ofLength length: UInt64) {
             calls.append("data")
+            receivedLengths.append(length)
         }
 
         func showDownloadDidStartExtractingUpdate() {
             calls.append("extract")
         }
 
-        func showExtractionReceivedProgress(_: Double) {
+        func showExtractionReceivedProgress(_ progress: Double) {
             calls.append("extractProgress")
+            extractionProgress.append(progress)
         }
 
-        func showReady(toInstallAndRelaunch _: @escaping (SPUUserUpdateChoice) -> Void) {
+        func showReady(toInstallAndRelaunch reply: @escaping (SPUUserUpdateChoice) -> Void) {
             calls.append("ready")
+            readyReply = reply
         }
 
         func showInstallingUpdate(withApplicationTerminated _: Bool, retryTerminatingApplication _: @escaping () -> Void) {
@@ -120,6 +132,20 @@ struct WeirUpdateDriverTests {
             })
         }
 
+        /// Uses the display item seam to record that the found step was sent to standard UI.
+        func offerInStandardUI() throws -> OneShot<SPUUserUpdateChoice> {
+            var forwarded: OneShot<SPUUserUpdateChoice>?
+            driver.showUpdateFound(
+                UpdateDisplayItem(displayVersion: "v2.3.4"),
+                reply: { _ in },
+                inStandardUI: { reply in
+                    standard.calls.append("found")
+                    forwarded = reply
+                }
+            )
+            return try #require(forwarded)
+        }
+
         var isIdle: Bool {
             if case .idle = model.state {
                 model.sessionID == nil
@@ -146,74 +172,112 @@ struct WeirUpdateDriverTests {
         }
     }
 
-    @Test func checkForUpdates_duringAnUpdateInSparklesWindow_bringsThatWindowForward() {
-        let harness = Harness(isInSight: false)
-        harness.driver.showDownloadInitiated(cancellation: {})
+    enum ShownUpdate: Sendable {
+        case standard
+        case inline
+        case none
+    }
+
+    @Test(arguments: [ShownUpdate.standard, .inline, .none])
+    func askingToFocusAnUpdate_targetsOnlyItsPresentation(_ shown: ShownUpdate) throws {
+        let harness = Harness(isInSight: shown != .standard)
+        switch shown {
+        case .standard:
+            harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
+            _ = try harness.offerInStandardUI()
+        case .inline:
+            harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
+            harness.findUpdate()
+        case .none:
+            break
+        }
+        let id = harness.model.sessionID
 
         harness.driver.showUpdateInFocus()
 
-        #expect(harness.standard.calls == ["download", "focus"])
+        #expect(harness.model.focusRequests == (shown == .inline ? 1 : 0))
+        #expect(harness.standard.calls == (shown == .standard ? ["checking", "found", "focus"] : []))
+        #expect(harness.model.sessionID == id)
+        if shown == .inline {
+            guard case let .available(item, _) = harness.model.state else {
+                Issue.record("the inline offer was replaced")
+                return
+            }
+            #expect(id != nil)
+            #expect(item.displayVersion == "v1.2.3")
+        } else {
+            #expect(harness.isIdle)
+        }
     }
 
-    @Test func checkForUpdates_duringAnInlineUpdate_asksTheWindowToOpenItsPopover() {
-        let harness = Harness(isInSight: true)
-        harness.findUpdate()
-        harness.driver.showDownloadInitiated(cancellation: {})
-
-        harness.driver.showUpdateInFocus()
-
-        #expect(harness.model.focusRequests == 1)
-        #expect(harness.standard.calls.isEmpty)
-    }
-
-    @Test func checkForUpdates_withNothingShown_asksForNothing() {
-        let harness = Harness(isInSight: true)
-
-        harness.driver.showUpdateInFocus()
-
-        #expect(harness.model.focusRequests == 0)
-        #expect(harness.standard.calls.isEmpty)
-    }
-
-    @Test func aSessionInSparklesWindow_leavesTheInlineStateIdle() {
+    @Test func aSessionInSparklesWindow_leavesTheInlineStateIdle() throws {
         let harness = Harness(isInSight: false)
 
         harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
-        #expect(!harness.model.showsBadge)
+        #expect(harness.isIdle)
+        try harness.offerInStandardUI().call(.install)
+        #expect(harness.isIdle)
         harness.driver.showDownloadInitiated(cancellation: {})
         harness.driver.showDownloadDidReceiveExpectedContentLength(100)
-        harness.driver.showDownloadDidReceiveData(ofLength: 50)
+        harness.driver.showDownloadDidReceiveData(ofLength: 51)
+        #expect(harness.isIdle)
         harness.driver.showDownloadDidStartExtractingUpdate()
         harness.driver.showExtractionReceivedProgress(0.5)
 
-        #expect(!harness.model.showsBadge)
-        #expect(harness.standard.calls == ["checking", "download", "length", "data", "extract", "extractProgress"])
+        #expect(harness.isIdle)
+        #expect(harness.standard.calls == ["checking", "found", "download", "length", "data", "extract", "extractProgress"])
+        #expect(harness.standard.expectedLengths == [100])
+        #expect(harness.standard.receivedLengths == [51])
+        #expect(harness.standard.extractionProgress == [0.5])
     }
 
-    @Test func aWindowThatOpensMidSession_doesNotTakeTheSessionFromSparklesWindow() {
+    @Test func aWindowThatOpensMidSession_doesNotTakeTheSessionFromSparklesWindow() throws {
         let harness = Harness(isInSight: false)
+        harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
+        try harness.offerInStandardUI().call(.install)
         harness.driver.showDownloadInitiated(cancellation: {})
+        try #require(harness.driver.isStandardFlow && harness.isIdle)
 
         harness.isInSight = true
         harness.driver.showDownloadDidReceiveData(ofLength: 10)
+        harness.driver.showDownloadDidStartExtractingUpdate()
         harness.driver.showReady(toInstallAndRelaunch: { _ in })
 
-        #expect(!harness.model.showsBadge)
-        #expect(harness.standard.calls == ["download", "data", "ready"])
+        #expect(harness.isIdle)
+        #expect(harness.driver.isStandardFlow)
+        #expect(harness.standard.calls == ["checking", "found", "download", "data", "extract", "ready"])
+        #expect(harness.standard.receivedLengths == [10])
     }
 
-    @Test func anInlineSessionWhoseWindowGoes_movesToSparklesWindowWithoutABadge() {
+    @Test func anInlineSessionWhoseWindowGoes_movesToSparklesWindowWithoutABadge() throws {
         let harness = Harness(isInSight: true)
+        harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
         harness.findUpdate()
+        guard case let .available(_, offer) = harness.model.state else {
+            Issue.record("expected an inline offer")
+            return
+        }
+        offer.call(.install)
         harness.driver.showDownloadInitiated(cancellation: {})
         harness.driver.showDownloadDidStartExtractingUpdate()
-        #expect(harness.model.showsBadge)
+        harness.driver.showExtractionReceivedProgress(0.5)
+        guard case let .extracting(progress) = harness.model.state else {
+            Issue.record("expected inline extraction")
+            return
+        }
+        #expect(progress == 0.5)
+        try #require(harness.model.sessionID != nil)
 
         harness.isInSight = false
-        harness.driver.showReady(toInstallAndRelaunch: { _ in })
+        var choices: [SPUUserUpdateChoice] = []
+        harness.driver.showReady(toInstallAndRelaunch: { choices.append($0) })
 
-        #expect(!harness.model.showsBadge)
+        #expect(harness.isIdle)
         #expect(harness.standard.calls == ["ready"])
+        let reply = try #require(harness.standard.readyReply)
+        reply(.install)
+        reply(.dismiss)
+        #expect(choices == [.install])
     }
 
     @Test func theEndOfASessionInSparklesWindow_closesItsWindows_andTheNextSessionCanShowInline() {
@@ -230,17 +294,34 @@ struct WeirUpdateDriverTests {
         #expect(harness.standard.calls == ["checking", "dismiss"])
     }
 
-    @Test func handingOverToSparklesWindow_settlesTheInlineCallback() {
+    @Test func handingOverToSparklesWindow_settlesTheInlineCallback() throws {
         let harness = Harness(isInSight: true)
-        var cancelCount = 0
-        harness.driver.showUserInitiatedUpdateCheck(cancellation: { cancelCount += 1 })
+        var cancels = 0
+        var acknowledgements = 0
+        harness.driver.showUserInitiatedUpdateCheck(cancellation: { cancels += 1 })
+        guard case let .checking(cancel) = harness.model.state else {
+            Issue.record("expected an inline check")
+            return
+        }
 
         harness.isInSight = false
-        harness.driver.showUpdaterError(CocoaError(.fileNoSuchFile), acknowledgement: {})
+        harness.driver.showUpdaterError(CocoaError(.fileNoSuchFile), acknowledgement: { acknowledgements += 1 })
 
-        #expect(cancelCount == 1)
-        #expect(!harness.model.showsBadge)
+        #expect(cancels == 1)
+        #expect(acknowledgements == 0)
+        #expect(harness.isIdle)
         #expect(harness.standard.calls == ["error"])
+        let acknowledgement = try #require(harness.standard.errorAcknowledgement)
+        acknowledgement()
+        acknowledgement()
+        cancel.call()
+        harness.sparkleEndsTheSession()
+        harness.sparkleEndsTheSession()
+
+        #expect(cancels == 1)
+        #expect(acknowledgements == 1)
+        #expect(harness.isIdle)
+        #expect(harness.standard.calls == ["error", "dismiss"])
     }
 
     // MARK: - Each session keeps its own timers, Retry, and update
@@ -293,82 +374,193 @@ struct WeirUpdateDriverTests {
 
     @Test func closingAFailedCheck_startsNoCheck() throws {
         let harness = Harness(isInSight: true)
+        var acks = 0
         harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
-        harness.driver.showUpdaterError(CocoaError(.fileNoSuchFile), acknowledgement: {})
+        harness.driver.showUpdaterError(CocoaError(.fileNoSuchFile), acknowledgement: { acks += 1 })
         let callbacks = try #require(harness.errorCallbacks)
 
         callbacks.acknowledgement.call()
-        harness.sparkleEndsTheSession()
-
+        callbacks.acknowledgement.call()
+        #expect(acks == 1)
         #expect(harness.startedChecks == 0)
+
+        harness.sparkleEndsTheSession()
+        harness.sparkleEndsTheSession()
+        #expect(acks == 1)
+        #expect(harness.startedChecks == 0)
+        #expect(harness.isIdle)
     }
 
     @Test func aRetryLeftFromAnEarlierSession_startsNoCheck() throws {
         let harness = Harness(isInSight: true)
+        var earlierAcks = 0
         harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
-        harness.driver.showUpdaterError(CocoaError(.fileNoSuchFile), acknowledgement: {})
+        harness.driver.showUpdaterError(CocoaError(.fileNoSuchFile), acknowledgement: { earlierAcks += 1 })
         let earlier = try #require(harness.errorCallbacks)
+        let earlierID = try #require(harness.model.sessionID)
         earlier.acknowledgement.call()
         harness.sparkleEndsTheSession()
 
+        var newerAcks = 0
+        let newerError = CocoaError(.fileWriteNoPermission)
         harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
-        earlier.retry.call()
-        harness.driver.updateCycleDidFinish()
+        harness.driver.showUpdaterError(newerError, acknowledgement: { newerAcks += 1 })
+        let newerID = try #require(harness.model.sessionID)
+        try #require(newerID != earlierID)
+        let newer = try #require(harness.errorCallbacks)
+        try #require(earlier.acknowledgement !== newer.acknowledgement)
 
+        earlier.retry.call()
+        earlier.retry.call()
+
+        #expect(earlierAcks == 1)
+        #expect(newerAcks == 0)
+        #expect(harness.startedChecks == 0)
+        #expect(harness.model.sessionID == newerID)
+        guard case let .error(error, acknowledgement, retry) = harness.model.state else {
+            Issue.record("the newer error was replaced")
+            return
+        }
+        #expect((error as? CocoaError)?.code == .fileWriteNoPermission)
+        #expect(acknowledgement === newer.acknowledgement)
+        #expect(retry === newer.retry)
+
+        acknowledgement.call()
+        harness.sparkleEndsTheSession()
+        #expect(newerAcks == 1)
         #expect(harness.startedChecks == 0)
     }
 
     @Test func theInstallConfirmation_namesTheVersionSparkleFound() {
         let harness = Harness(isInSight: true)
-        harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
-        harness.findUpdate(version: "v1.2.3")
-        guard case let .available(_, reply) = harness.model.state else {
-            Issue.record("the update is not offered inline")
-            return
-        }
-        reply.call(.install)
+        for version in ["v1.2.3", "v2.3.4"] {
+            let releaseNotes = URL(string: "https://example.invalid/notes/\(version)")
+            let offered = UpdateDisplayItem(displayVersion: version, contentLength: 100, releaseNotesURL: releaseNotes)
+            var offerChoices: [SPUUserUpdateChoice] = []
+            var installChoices: [SPUUserUpdateChoice] = []
+            var downloadCancels = 0
+            harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
+            harness.driver.showUpdateFound(
+                offered,
+                reply: { offerChoices.append($0) },
+                inStandardUI: { _ in Issue.record("expected the offer to stay inline") }
+            )
+            guard case let .available(available, offer) = harness.model.state else {
+                Issue.record("expected an inline offer")
+                return
+            }
+            #expect(available.displayVersion == version)
+            offer.call(.install)
 
-        harness.driver.showDownloadInitiated(cancellation: {})
-        guard case let .downloading(downloading, _, _, _) = harness.model.state else {
-            Issue.record("the download is not shown inline")
-            return
-        }
-        #expect(downloading.displayVersion == "v1.2.3")
+            harness.driver.showDownloadInitiated(cancellation: { downloadCancels += 1 })
+            harness.driver.showDownloadDidReceiveExpectedContentLength(100)
+            harness.driver.showDownloadDidReceiveData(ofLength: 44)
+            guard case let .downloading(item, expected, received, _) = harness.model.state else {
+                Issue.record("expected an inline download")
+                return
+            }
+            #expect(item.displayVersion == version)
+            #expect(item.releaseNotesURL == releaseNotes)
+            #expect(expected == 100)
+            #expect(received == 44)
 
-        harness.driver.showDownloadDidStartExtractingUpdate()
-        harness.driver.showExtractionReceivedProgress(1)
-        harness.driver.showReady(toInstallAndRelaunch: { _ in })
-
-        guard case let .readyToInstall(ready, _) = harness.model.state else {
-            Issue.record("the install confirmation is not shown inline")
-            return
+            harness.driver.showDownloadDidStartExtractingUpdate()
+            harness.driver.showExtractionReceivedProgress(1)
+            guard case let .extracting(progress) = harness.model.state else {
+                Issue.record("expected inline extraction")
+                return
+            }
+            #expect(progress == 1)
+            harness.driver.showReady(toInstallAndRelaunch: { installChoices.append($0) })
+            guard case let .readyToInstall(ready, reply) = harness.model.state else {
+                Issue.record("expected an inline install confirmation")
+                return
+            }
+            #expect(ready.displayVersion == version)
+            #expect(ready.contentLength == 100)
+            #expect(ready.releaseNotesURL == releaseNotes)
+            reply.call(.install)
+            reply.call(.dismiss)
+            harness.sparkleEndsTheSession()
+            #expect(offerChoices == [.install])
+            #expect(installChoices == [.install])
+            #expect(downloadCancels == 0)
+            #expect(harness.standard.calls.isEmpty)
+            #expect(harness.isIdle)
         }
-        #expect(ready.displayVersion == "v1.2.3")
-        #expect(harness.standard.calls.isEmpty)
     }
 
-    @Test func anInstallStepWithNoUpdateFound_goesToSparklesWindow() {
+    @Test(arguments: [false, true])
+    func anInstallStepWithNoUpdateFound_goesToSparklesWindow(isReadyStep: Bool) throws {
         let harness = Harness(isInSight: true)
         harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
-
-        harness.driver.showReady(toInstallAndRelaunch: { _ in })
-
-        #expect(!harness.model.showsBadge)
-        #expect(harness.standard.calls == ["ready"])
-    }
-
-    @Test func theStateShown_belongsToTheSessionThatShowedIt() {
-        let harness = Harness(isInSight: true)
-        harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
-        let first = harness.model.sessionID
+        harness.findUpdate(version: "v0.0.1")
         harness.sparkleEndsTheSession()
-        #expect(harness.model.sessionID == nil)
+        try #require(harness.isIdle)
+
+        var checkingCancels = 0
+        harness.driver.showUserInitiatedUpdateCheck(cancellation: { checkingCancels += 1 })
+        if isReadyStep {
+            var replies: [SPUUserUpdateChoice] = []
+            harness.driver.showReady(toInstallAndRelaunch: { replies.append($0) })
+            let reply = try #require(harness.standard.readyReply)
+            reply(.dismiss)
+            reply(.install)
+            #expect(replies == [.dismiss])
+        } else {
+            var downloadCancels = 0
+            harness.driver.showDownloadInitiated(cancellation: { downloadCancels += 1 })
+            let cancel = try #require(harness.standard.downloadCancellation)
+            cancel()
+            cancel()
+            #expect(downloadCancels == 1)
+        }
+
+        #expect(checkingCancels == 1)
+        #expect(harness.isIdle)
+        #expect(harness.standard.calls == [isReadyStep ? "ready" : "download"])
+    }
+
+    @Test func theStateShown_belongsToTheSessionThatShowedIt() throws {
+        let harness = Harness(isInSight: true)
+        harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
+        let first = try #require(harness.model.sessionID)
+        guard case .checking = harness.model.state else {
+            Issue.record("expected an inline check")
+            return
+        }
+        harness.findUpdate()
+        guard case let .available(_, offer) = harness.model.state else {
+            Issue.record("expected an inline offer")
+            return
+        }
+        #expect(harness.model.sessionID == first)
+        offer.call(.install)
+        harness.driver.showDownloadInitiated(cancellation: {})
+        guard case .downloading = harness.model.state else {
+            Issue.record("expected an inline download")
+            return
+        }
+        #expect(harness.model.sessionID == first)
+        harness.driver.showDownloadDidStartExtractingUpdate()
+        guard case .extracting = harness.model.state else {
+            Issue.record("expected inline extraction")
+            return
+        }
+        #expect(harness.model.sessionID == first)
+        harness.driver.showReady(toInstallAndRelaunch: { _ in })
+        guard case .readyToInstall = harness.model.state else {
+            Issue.record("expected an inline install confirmation")
+            return
+        }
+        #expect(harness.model.sessionID == first)
+
+        harness.sparkleEndsTheSession()
+        #expect(harness.isIdle)
 
         harness.driver.showUserInitiatedUpdateCheck(cancellation: {})
-
-        #expect(first != nil)
-        #expect(harness.model.sessionID != nil)
-        #expect(harness.model.sessionID != first)
+        let second = try #require(harness.model.sessionID)
+        #expect(second != first)
     }
 
     @Test func anInstalledReport_dismissesAfterFiveSeconds_withoutOpeningACheck() throws {
@@ -426,9 +618,13 @@ struct WeirUpdateDriverTests {
         #expect(secondAcks == 1)
     }
 
+}
+
+#if DEBUG
+
     // MARK: - Check for Updates through the updater stack
 
-    #if DEBUG
+    extension WeirUpdateDriverTests {
         /// The app's own stack, never started, so no check reaches the
         /// network; its Check for Updates runs the Debug mock.
         private func makeStack() -> UpdaterStack {
@@ -449,61 +645,106 @@ struct WeirUpdateDriverTests {
             }
         }
 
-        @Test func checkForUpdates_whileUpToDateShows_runsOnceSparkleEndsThatSession() {
-            let stack = makeStack()
-            var acks = 0
-            stack.driver.showUserInitiatedUpdateCheck(cancellation: {})
-            stack.driver.showUpdateNotFoundWithError(CocoaError(.fileNoSuchFile), acknowledgement: { acks += 1 })
-
-            stack.checkForUpdates()
-            #expect(acks == 1)
-            #expect(!isOffered(stack.stateModel.state))
-
-            sparkleEndsTheSession(of: stack)
-            #expect(isOffered(stack.stateModel.state))
+        enum DeferredCheck: Sendable {
+            case upToDateMenu
+            case errorMenu
+            case errorRetry
         }
 
-        @Test func checkForUpdates_whileAFailureShows_runsOnceSparkleEndsThatSession() {
+        @Test(arguments: [DeferredCheck.upToDateMenu, .errorMenu, .errorRetry])
+        func aResultAction_rechecksOnceAfterSparkleFinishes(_ action: DeferredCheck) throws {
             let stack = makeStack()
             var acks = 0
+            var deferredStarts = 0
+            let originalStart = try #require(stack.driver.startsCheck)
+            stack.driver.startsCheck = {
+                deferredStarts += 1
+                originalStart()
+            }
             stack.driver.showUserInitiatedUpdateCheck(cancellation: {})
-            stack.driver.showUpdaterError(CocoaError(.fileNoSuchFile), acknowledgement: { acks += 1 })
+            let originalID = try #require(stack.stateModel.sessionID)
+            if action == .upToDateMenu {
+                stack.driver.showUpdateNotFoundWithError(CocoaError(.fileNoSuchFile), acknowledgement: { acks += 1 })
+            } else {
+                stack.driver.showUpdaterError(CocoaError(.fileNoSuchFile), acknowledgement: { acks += 1 })
+            }
 
-            stack.checkForUpdates()
+            if action == .errorRetry {
+                guard case let .error(_, _, retry) = stack.stateModel.state else {
+                    Issue.record("expected the inline error")
+                    return
+                }
+                retry.call()
+                retry.call()
+            } else {
+                stack.checkForUpdates()
+                stack.checkForUpdates()
+            }
+
             #expect(acks == 1)
-            #expect(!isOffered(stack.stateModel.state))
+            #expect(deferredStarts == 0)
+            #expect(stack.stateModel.sessionID == originalID)
+            switch (action, stack.stateModel.state) {
+            case (.upToDateMenu, .notFound), (.errorMenu, .error), (.errorRetry, .error):
+                break
+            default:
+                Issue.record("the result was replaced before the cycle ended")
+            }
 
-            sparkleEndsTheSession(of: stack)
-            #expect(isOffered(stack.stateModel.state))
-        }
-
-        @Test func retry_startsItsCheckThroughTheStack() {
-            let stack = makeStack()
-            stack.driver.showUserInitiatedUpdateCheck(cancellation: {})
-            stack.driver.showUpdaterError(CocoaError(.fileNoSuchFile), acknowledgement: {})
-            guard case let .error(_, _, retry) = stack.stateModel.state else {
-                Issue.record("the failure is not shown inline")
+            stack.driver.dismissUpdateInstallation()
+            #expect(deferredStarts == 0)
+            stack.cycleObserver.updater(stack.updater, didFinishUpdateCycleFor: .updates, error: nil)
+            #expect(deferredStarts == 1)
+            #expect(stack.stateModel.sessionID == nil)
+            guard case let .available(_, firstReply) = stack.stateModel.state else {
+                Issue.record("expected the Debug check to offer an update")
                 return
             }
 
-            retry.call()
-            sparkleEndsTheSession(of: stack)
-
-            #expect(isOffered(stack.stateModel.state))
+            stack.cycleObserver.updater(stack.updater, didFinishUpdateCycleFor: .updates, error: nil)
+            #expect(acks == 1)
+            #expect(deferredStarts == 1)
+            guard case let .available(_, repeatedReply) = stack.stateModel.state else {
+                Issue.record("the Debug offer disappeared after duplicate completion")
+                return
+            }
+            #expect(repeatedReply === firstReply)
         }
 
-        @Test func checkForUpdates_whileARealCheckRuns_leavesItsStateToSparkle() {
+        @Test func checkForUpdates_whileACheckIsOpen_preservesTheInlineState() throws {
             let stack = makeStack()
             var cancels = 0
+            var deferredStarts = 0
+            let originalStart = try #require(stack.driver.startsCheck)
+            stack.driver.startsCheck = {
+                deferredStarts += 1
+                originalStart()
+            }
             stack.driver.showUserInitiatedUpdateCheck(cancellation: { cancels += 1 })
+            let id = try #require(stack.stateModel.sessionID)
+            guard case let .checking(original) = stack.stateModel.state else {
+                Issue.record("expected the inline check")
+                return
+            }
 
             stack.checkForUpdates()
 
-            guard case .checking = stack.stateModel.state else {
-                Issue.record("the mock replaced a real session's state")
+            guard case let .checking(current) = stack.stateModel.state else {
+                Issue.record("the check was replaced")
                 return
             }
+            #expect(current === original)
+            #expect(stack.stateModel.sessionID == id)
             #expect(cancels == 0)
+
+            sparkleEndsTheSession(of: stack)
+            #expect(cancels == 1)
+            #expect(deferredStarts == 0)
+            #expect(stack.stateModel.sessionID == nil)
+            guard case .idle = stack.stateModel.state else {
+                Issue.record("an extra check started after the cycle")
+                return
+            }
         }
 
         @Test func checkForUpdates_withNoSessionOpen_runsTheMock() {
@@ -513,5 +754,5 @@ struct WeirUpdateDriverTests {
 
             #expect(isOffered(stack.stateModel.state))
         }
-    #endif
-}
+    }
+#endif

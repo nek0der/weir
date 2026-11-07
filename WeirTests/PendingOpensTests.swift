@@ -11,10 +11,11 @@ struct PendingOpensTests {
 
     @Test func beforeLaunchFinishes_everythingIsHeld_thenHandedOverOnceInOrder() {
         var opens = PendingOpens()
-        #expect(opens.receive([Self.first]).isEmpty)
-        #expect(opens.receive([Self.second]).isEmpty)
+        let third = URL(fileURLWithPath: "/tmp/third", isDirectory: true)
+        #expect(opens.receive([Self.first, Self.second]).isEmpty)
+        #expect(opens.receive([third]).isEmpty)
 
-        #expect(opens.finishLaunching() == [Self.first, Self.second])
+        #expect(opens.finishLaunching() == [Self.first, Self.second, third])
         #expect(opens.hasFinishedLaunching)
         // Handed over once: a second finish has nothing left.
         #expect(opens.finishLaunching().isEmpty)

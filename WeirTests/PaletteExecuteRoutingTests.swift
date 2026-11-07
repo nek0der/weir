@@ -56,15 +56,18 @@ struct PaletteExecuteRoutingTests {
             Self.open(session, in: session.primaryWindowID, directory: dir)
             let first = try #require(session.commandPaletteState)
             #expect(first.windowID == session.primaryWindowID)
+            first.query = "split"
 
             // Asking again from the same window focuses the open palette.
             Self.open(session, in: session.primaryWindowID, directory: dir)
             #expect(session.commandPaletteState === first)
+            #expect(session.commandPaletteState?.query == "split")
 
             // Another window's ask moves it there, with a fresh query.
             Self.open(session, in: other, directory: dir)
             #expect(session.commandPaletteState !== first)
             #expect(session.commandPaletteState?.windowID == other)
+            #expect(session.commandPaletteState?.query == "")
         }
     }
 
@@ -107,7 +110,8 @@ struct PaletteExecuteRoutingTests {
         let added = try #require(session.tabs.first { $0.id != tab.id })
         #expect(added.container == .loose)
         #expect(session.primarySelection.activeTabID == added.id)
-        #expect(added.initialCommands.values.first == AgentKind.codex.launchCommand)
+        let pane = try #require(added.splitTree.effectiveFocusedLeafID)
+        #expect(added.initialCommands == [pane: AgentKind.codex.launchCommand])
     }
 
     @Test func moveToNewTab_movesTheFocusedPane_andSelectsItsTab() throws {
@@ -123,7 +127,8 @@ struct PaletteExecuteRoutingTests {
         #expect(session.primarySelection.activeTabID == added.id)
     }
 
-    @Test func aRowTheWindowRunsItself_isNotDispatchedAgain() throws {
+    @Test(arguments: [PaletteRowHandling.handled, .handledReturningKeyboard])
+    func aRowHandledByTheWindow_isNotDispatchedAgain(handling: PaletteRowHandling) throws {
         let (session, tabA, _, _, _) = WorkspaceSessionFixture.withTwoLooseTabs()
         var ranInWindow: [WeirShortcutAction] = []
 
@@ -131,20 +136,10 @@ struct PaletteExecuteRoutingTests {
             if case let .shortcutAction(shortcut) = action {
                 ranInWindow.append(shortcut)
             }
-            return .handled
+            return handling
         }
 
         #expect(ranInWindow == [.nextTab])
-        #expect(session.primarySelection.activeTabID == tabA.id)
-    }
-
-    @Test func aRowHandledWithNothingToDo_isNotDispatchedEither() throws {
-        let (session, tabA, _, _, _) = WorkspaceSessionFixture.withTwoLooseTabs()
-
-        try CommandPaletteActions.runRowForTest(.shortcutAction(.nextTab), session: session, window: session.primaryWindowID) { _ in
-            .handledReturningKeyboard
-        }
-
         #expect(session.primarySelection.activeTabID == tabA.id)
     }
 }

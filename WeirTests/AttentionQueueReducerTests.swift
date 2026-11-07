@@ -75,29 +75,18 @@ struct AttentionQueueReducerTests {
         #expect(result.effects == [.announce(id), .notify(id)])
     }
 
-    @Test func aStopOrAnUnreadTurn_isNotNotifiedFromHere() {
-        // The runtime projection posts those banners.
-        let result = Self.reduce(.init(runtimes: [
-            Self.runtime("a", .error),
-            Self.runtime("b", .finished, pane: Self.paneB),
-            Self.runtime("c", .needsInput, pane: UUID())
-        ]))
-        #expect(!result.effects.contains {
-            if case .notify = $0 {
-                true
-            } else {
-                false
-            }
-        })
-    }
-
     @Test func questions_areTheirOwnKind_andACodexOneIsAnsweredInTheTerminal() {
         let claude = Self.request(isQuestion: true)
         let codex = Self.request(at: 1, isQuestion: true, provider: .codex)
-        let queue = Self.reduce(.init(approvals: [claude, codex])).queue
+        let result = Self.reduce(.init(approvals: [claude, codex]))
+        let claudeID = AttentionItemID.question(claude.fact.key)
+        let codexID = AttentionItemID.question(codex.fact.key)
 
-        #expect(queue.items.map(\.id) == [.question(claude.fact.key), .question(codex.fact.key)])
-        #expect(queue.items.map(\.canAnswerInWeir) == [true, false])
+        #expect(result.queue.items.map(\.id) == [claudeID, codexID])
+        #expect(result.queue.items.map(\.kind) == [.question(claude.fact), .question(codex.fact)])
+        #expect(result.queue.items.map(\.canAnswerInWeir) == [true, false])
+        #expect(result.queue.items.map(\.requiresTerminalAnswer) == [false, true])
+        #expect(result.effects == [.announce(claudeID), .notify(claudeID), .announce(codexID), .notify(codexID)])
     }
 
     @Test(arguments: [
@@ -127,9 +116,10 @@ struct AttentionQueueReducerTests {
     }
 
     @Test(arguments: [ApprovalRequestState.answered(.allowOnce), .withdrawn])
-    func aSettledRequest_leaves(_ state: ApprovalRequestState) {
+    func aSettledRequest_leaves(_ state: ApprovalRequestState) throws {
         let first = Self.request()
         let listed = Self.reduce(.init(approvals: [first])).queue
+        try #require(listed.items.map(\.id) == [.approval(first.fact.key)])
         let settled = AttentionQueueReducer.PlacedApproval(
             fact: ApprovalFact(
                 key: first.fact.key, provider: .claude, isQuestion: false,
@@ -142,18 +132,28 @@ struct AttentionQueueReducerTests {
         #expect(Self.reduce(.init(approvals: [settled]), from: listed).queue.items.isEmpty)
     }
 
-    @Test func anUnplacedRequest_isStillListed_andPlacingItIsNotNews() {
+    @Test func anUnplacedRequest_isStillListed_andPlacingItIsNotNews() throws {
         let unplaced = Self.request(pane: nil)
         let first = Self.reduce(.init(approvals: [unplaced]))
-        #expect(first.queue.items.count == 1)
+        let id = AttentionItemID.approval(unplaced.fact.key)
+        #expect(first.queue.items.map(\.id) == [id])
+        let initial = try #require(first.queue.item(id))
+        #expect(initial.kind == .approval(unplaced.fact))
+        #expect(initial.subject == .unplaced(provider: .claude))
+        #expect(first.effects == [.announce(id), .notify(id)])
 
         let placed = AttentionQueueReducer.PlacedApproval(
             fact: unplaced.fact,
             subject: .runtime(id: "r", provider: .claude, paneID: Self.paneA, tabID: nil, projectID: nil),
-            arrivedAt: unplaced.arrivedAt
+            arrivedAt: unplaced.arrivedAt.addingTimeInterval(10)
         )
         let second = Self.reduce(.init(approvals: [placed]), from: first.queue)
-        #expect(second.queue.items.first?.subject.paneID == Self.paneA)
+        #expect(second.queue.items.map(\.id) == [id])
+        let nowPlaced = try #require(second.queue.item(id))
+        #expect(nowPlaced.kind == initial.kind)
+        #expect(nowPlaced.subject == placed.subject)
+        #expect(nowPlaced.arrivalSequence == initial.arrivalSequence)
+        #expect(nowPlaced.arrivedAt == initial.arrivedAt)
         #expect(second.effects.isEmpty)
     }
 
@@ -166,6 +166,8 @@ struct AttentionQueueReducerTests {
         let episode = EpisodeKey(origin: .runtime("a"), episodeToken: "1")
         #expect(result.queue.items.map(\.id) == [.prompt(episode)])
         #expect(result.queue.items.first?.kind == .prompt(.unclassified(detail: "Allow Bash?")))
+        #expect(result.queue.items.first?.requiresTerminalAnswer == true)
+        #expect(result.queue.items.first?.canAnswerInWeir == false)
         #expect(result.effects == [.announce(.prompt(episode))])
     }
 
@@ -177,20 +179,23 @@ struct AttentionQueueReducerTests {
         var monitor = Self.runtime("m", .needsInput, pane: Self.paneB, detail: "Monitor")
         monitor.waitKind = .approval
         monitor.tool = "Monitor"
-        let kinds = Self.reduce(.init(runtimes: [
+        let items = Self.reduce(.init(runtimes: [
             Self.runtime("a", .needsInput, detail: "Write: /repo/notes.txt"),
             question,
             monitor
-        ])).queue.items.map(\.kind)
-
-        #expect(kinds.contains(.prompt(.approval(PromptApproval(
-            tool: "Write",
-            action: .fileChange,
-            subject: "notes.txt",
-            detail: "Write: /repo/notes.txt"
-        )))))
-        #expect(kinds.contains(.prompt(.question(detail: "Read: which file first?"))))
-        #expect(kinds.contains(.prompt(.approval(PromptApproval(tool: "Monitor", action: .other, subject: nil, detail: "Monitor")))))
+        ])).queue.items
+        let byRuntime = Dictionary(items.map { ($0.subject.runtimeID, $0.kind) }, uniquingKeysWith: { first, _ in first })
+        #expect(items.count == 3)
+        #expect(byRuntime == [
+            "a": .prompt(.approval(PromptApproval(
+                tool: "Write",
+                action: .fileChange,
+                subject: "notes.txt",
+                detail: "Write: /repo/notes.txt"
+            ))),
+            "q": .prompt(.question(detail: "Read: which file first?")),
+            "m": .prompt(.approval(PromptApproval(tool: "Monitor", action: .other, subject: nil, detail: "Monitor")))
+        ])
     }
 
     @Test func theRunsWaitWhileItsRequestIsListed_isListedOnce() {
@@ -207,9 +212,19 @@ struct AttentionQueueReducerTests {
         // The hook keeps the run waiting while the allowed command starts:
         // the same episode the request noted.
         let waiting = Self.runtime("a", .needsInput, at: 0, episode: "1")
-        let answered = Self.request(.answered(.allowOnce), waitEpisode: "1")
+        let held = Self.request(waitEpisode: "1")
+        let id = AttentionItemID.approval(held.fact.key)
+        let initial = Self.reduce(.init(runtimes: [waiting], approvals: [held]))
+        #expect(initial.queue.items.map(\.id) == [id])
+        #expect(initial.effects == [.announce(id), .notify(id)])
+        let answered = AttentionQueueReducer.PlacedApproval(
+            fact: ApprovalFact.test(key: held.fact.key, state: .answered(.allowOnce)),
+            subject: held.subject,
+            arrivedAt: held.arrivedAt,
+            waitEpisodeToken: "1"
+        )
 
-        let result = Self.reduce(.init(runtimes: [waiting], approvals: [answered]))
+        let result = Self.reduce(.init(runtimes: [waiting], approvals: [answered]), from: initial.queue)
 
         #expect(result.queue.items.isEmpty)
         #expect(result.effects.isEmpty)
@@ -221,9 +236,12 @@ struct AttentionQueueReducerTests {
         let later = Self.runtime("a", .needsInput, episode: "1")
         let answered = Self.request(.answered(.allowOnce))
 
-        let queue = Self.reduce(.init(runtimes: [later], approvals: [answered])).queue
+        let result = Self.reduce(.init(runtimes: [later], approvals: [answered]))
+        let prompt = AttentionItemID.prompt(EpisodeKey(origin: .runtime("a"), episodeToken: "1"))
 
-        #expect(queue.items.count == 1)
+        #expect(result.queue.items.map(\.id) == [prompt])
+        #expect(result.queue.item(prompt)?.kind == .prompt(.unclassified(detail: nil)))
+        #expect(result.effects == [.announce(prompt)])
     }
 
     @Test func aNewWaitAfterTheAnswer_isListed() {
@@ -264,12 +282,16 @@ struct AttentionQueueReducerTests {
         let waiting = Self.runtime("a", .needsInput)
         let result = Self.reduce(.init(runtimes: [waiting], serviceRequests: Self.installedServiceRequests))
 
-        #expect(result.queue.items.count == 1)
+        let prompt = AttentionItemID.prompt(EpisodeKey(origin: .runtime("a"), episodeToken: "1"))
+        #expect(result.queue.items.map(\.id) == [prompt])
+        #expect(result.queue.item(prompt)?.kind == .prompt(.unclassified(detail: nil)))
         #expect(result.effects.isEmpty)
 
         let stop = Self.runtime("b", .error, pane: Self.paneB)
         let stopped = Self.reduce(.init(runtimes: [waiting, stop], serviceRequests: Self.installedServiceRequests), from: result.queue)
-        #expect(stopped.effects.count == 1, "a stop is still announced")
+        let stopID = AttentionItemID.stop(EpisodeKey(origin: .runtime("b"), episodeToken: "1"))
+        #expect(stopped.queue.items.map(\.id) == [prompt, stopID])
+        #expect(stopped.effects == [.announce(stopID)])
     }
 
     /// While the service runs, only a wait its request will stand for is
@@ -309,11 +331,18 @@ struct AttentionQueueReducerTests {
         #expect(first.queue.items.first?.kind == .stop(.error("Rate limited")))
         #expect(first.effects == [.announce(stop)])
 
-        let resumed = Self.reduce(.init(runtimes: [Self.runtime("a", .running, episode: "2")]), from: first.queue)
+        let repeated = Self.reduce(.init(runtimes: [failed]), from: first.queue)
+        #expect(repeated.queue == first.queue)
+        #expect(repeated.effects.isEmpty)
+
+        let resumed = Self.reduce(.init(runtimes: [Self.runtime("a", .running, episode: "2")]), from: repeated.queue)
         #expect(resumed.queue.items.isEmpty)
+        #expect(resumed.effects.isEmpty)
 
         let again = Self.reduce(.init(runtimes: [Self.runtime("a", .error, episode: "3")]), from: resumed.queue)
-        #expect(again.queue.items.map(\.id) == [.stop(EpisodeKey(origin: .runtime("a"), episodeToken: "3"))])
+        let next = AttentionItemID.stop(EpisodeKey(origin: .runtime("a"), episodeToken: "3"))
+        #expect(again.queue.items.map(\.id) == [next])
+        #expect(again.effects == [.announce(next)])
         // A stop with no message says so.
         #expect(again.queue.items.first?.kind == .stop(.error(nil)))
     }
@@ -353,11 +382,13 @@ struct AttentionQueueReducerTests {
         ]
 
         // Working on the next turn, the earlier ones still wait.
-        let listed = Self.reduce(.init(runtimes: [Self.turns(turns, for: Self.runtime("a", .running))])).queue
+        let result = Self.reduce(.init(runtimes: [Self.turns(turns, for: Self.runtime("a", .running))]))
 
-        // Arriving together, their order is the IDs' and says nothing here.
-        #expect(Set(listed.items.map(\.id)) == Set(turns.map { .unread($0.turnID) }))
-        #expect(listed.items.allSatisfy { item in turns.contains { item.kind == .unread($0) } })
+        let actual = Dictionary(result.queue.items.map { ($0.id, $0.kind) }, uniquingKeysWith: { first, _ in first })
+        #expect(result.queue.items.count == turns.count)
+        let expected = Dictionary(uniqueKeysWithValues: turns.map { (AttentionItemID.unread($0.turnID), AttentionItemKind.unread($0)) })
+        #expect(actual == expected)
+        #expect(result.effects.isEmpty)
     }
 
     @Test func aRunWithRecordedTurns_neverListsItsEpisode() {
@@ -373,17 +404,22 @@ struct AttentionQueueReducerTests {
         ])).queue
         let grown = Self.recorded("T6", 6...7, .changed(files: 3, added: 4, removed: 0))
 
-        let next = Self.reduce(.init(runtimes: [
-            Self.turns([grown], for: Self.runtime("a", .finished)),
+        let result = Self.reduce(.init(runtimes: [
+            Self.turns([grown], for: Self.runtime("a", .finished, at: 10)),
             Self.runtime("b", .error, pane: Self.paneB, at: 5)
-        ]), from: first).queue
+        ]), from: first)
 
-        #expect(next.items.map(\.id) == first.items.map(\.id))
-        #expect(next.items.first?.kind == .unread(grown))
+        #expect(result.queue.items.map(\.id) == first.items.map(\.id))
+        #expect(result.queue.items.first?.kind == .unread(grown))
+        #expect(result.queue.items.map(\.arrivalSequence) == first.items.map(\.arrivalSequence))
+        #expect(result.queue.items.map(\.arrivedAt) == first.items.map(\.arrivedAt))
+        #expect(result.effects.isEmpty)
     }
 
-    @Test func aRuntimeThatGoesAway_takesItsItemWithIt() {
+    @Test func aRuntimeThatGoesAway_takesItsItemWithIt() throws {
         let listed = Self.reduce(.init(runtimes: [Self.runtime("a", .error)])).queue
+        let stop = AttentionItemID.stop(EpisodeKey(origin: .runtime("a"), episodeToken: "1"))
+        try #require(listed.items.map(\.id) == [stop])
         #expect(Self.reduce(.init(runtimes: []), from: listed).queue.items.isEmpty)
     }
 
@@ -397,7 +433,10 @@ struct AttentionQueueReducerTests {
             runtimeID: "a", provider: .claude, paneIDs: [], tabID: nil, projectID: nil,
             state: .error, updatedAt: Self.start, episodeToken: "1", isEpisodeRead: false, detail: nil
         )
-        #expect(Self.reduce(.init(runtimes: [unattached])).queue.items.isEmpty)
+        let recorded = Self.recorded("T1", 1...1, .changed(files: 1, added: 1, removed: 0))
+        let result = Self.reduce(.init(runtimes: [Self.turns([recorded], for: unattached)]))
+        #expect(result.queue.items.isEmpty)
+        #expect(result.effects.isEmpty)
     }
 
     // MARK: - Launch failures
@@ -405,20 +444,29 @@ struct AttentionQueueReducerTests {
     @Test func aFailure_isAStopOnTheSessionRow_newForEachFailure() {
         let root = URL(fileURLWithPath: "/tmp/weir-wt/")
         let projectID = UUID()
-        func failure(_ token: String) -> AttentionQueueReducer.LaunchFailure {
-            .init(projectID: projectID, worktreeRoot: root, stage: .setup(stepIndex: 0), logTail: "boom", token: token, failedAt: Date())
+        func failure(_ token: String, at seconds: TimeInterval) -> AttentionQueueReducer.LaunchFailure {
+            .init(
+                projectID: projectID, worktreeRoot: root, stage: .setup(stepIndex: 0), logTail: "boom",
+                token: token, failedAt: Self.start.addingTimeInterval(seconds)
+            )
         }
-        let (first, effects) = AttentionQueueReducer.reduce(AttentionQueue(), input: .init(launchFailures: [failure("1")]))
+        let origin = EpisodeKey.Origin.sessionRow(worktreeRoot: URL(fileURLWithPath: "/tmp/weir-wt"))
+        let firstID = AttentionItemID.stop(EpisodeKey(origin: origin, episodeToken: "1"))
+        let secondID = AttentionItemID.stop(EpisodeKey(origin: origin, episodeToken: "2"))
+        let (first, effects) = AttentionQueueReducer.reduce(AttentionQueue(), input: .init(launchFailures: [failure("1", at: 0)]))
         let item = first.items.first
         #expect(first.items.count == 1)
         #expect(item?.kind == .stop(.launchFailed(.setup(stepIndex: 0), logTail: "boom")))
         #expect(item?.subject == .sessionRow(projectID: projectID, worktreeRoot: root))
         #expect(item?.subject.isSessionRow(at: URL(fileURLWithPath: "/tmp/weir-wt")) == true)
-        #expect(!effects.isEmpty)
+        #expect(item?.id == firstID)
+        #expect(item?.arrivedAt == Self.start)
+        #expect(effects == [.announce(firstID)])
 
-        let (second, _) = AttentionQueueReducer.reduce(first, input: .init(launchFailures: [failure("2")]))
-        #expect(second.items.count == 1)
-        #expect(second.items.first?.id != item?.id)
+        let (second, nextEffects) = AttentionQueueReducer.reduce(first, input: .init(launchFailures: [failure("2", at: 5)]))
+        #expect(second.items.map(\.id) == [secondID])
+        #expect(second.items.first?.arrivedAt == Self.start.addingTimeInterval(5))
+        #expect(nextEffects == [.announce(secondID)])
         let (cleared, _) = AttentionQueueReducer.reduce(second, input: .init())
         #expect(cleared.items.isEmpty)
     }
@@ -439,15 +487,20 @@ struct AttentionQueueReducerTests {
         #expect(first.items.map(\.subject.paneID) == [Self.paneA, Self.paneB])
 
         // A request arriving later goes last, however urgent.
-        let held = Self.request(pane: UUID(), at: 10)
-        let second = Self.reduce(.init(runtimes: [unread, stop], approvals: [held]), from: first).queue
-        #expect(second.items.last?.id == .approval(held.fact.key))
+        let held = Self.request(pane: UUID(), at: -1)
+        let arrival = Self.reduce(.init(runtimes: [unread, stop], approvals: [held]), from: first)
+        let requestID = AttentionItemID.approval(held.fact.key)
+        #expect(Array(arrival.queue.items.dropLast()) == first.items)
+        #expect(arrival.queue.items.last?.id == requestID)
+        #expect(arrival.effects == [.announce(requestID), .notify(requestID)])
 
         // A change in one item's content leaves it where it is.
-        let reworded = Self.runtime("b", .error, pane: Self.paneB, at: 5, detail: "Now with a reason")
-        let third = Self.reduce(.init(runtimes: [unread, reworded], approvals: [held]), from: second).queue
-        #expect(third.items.map(\.id) == second.items.map(\.id))
-        #expect(third.items[1].kind == .stop(.error("Now with a reason")))
+        let reworded = Self.runtime("b", .error, pane: Self.paneB, at: -5, detail: "Now with a reason")
+        let update = Self.reduce(.init(runtimes: [unread, reworded], approvals: [held]), from: arrival.queue)
+        #expect(update.queue.items.map(\.id) == arrival.queue.items.map(\.id))
+        #expect(update.queue.items.map(\.arrivedAt) == arrival.queue.items.map(\.arrivedAt))
+        #expect(update.queue.items[1].kind == .stop(.error("Now with a reason")))
+        #expect(update.effects.isEmpty)
     }
 
     /// A worktree deleted outside Weir is one stop of its workspace row,
@@ -456,12 +509,16 @@ struct AttentionQueueReducerTests {
         let project = UUID()
         let root = URL(fileURLWithPath: "/tmp/gone")
         let missing = AttentionQueueReducer.MissingWorktree(projectID: project, worktreeRoot: root, missingSince: Self.start)
-        let first = Self.reduce(.init(missingWorktrees: [missing])).queue
-        #expect(first.items.map(\.kind) == [.stop(.worktreeMissing)])
-        #expect(first.items.first?.subject == .sessionRow(projectID: project, worktreeRoot: root))
-        #expect(first.items.first?.arrivedAt == Self.start)
-        // Seen again on the next pass, it is the same item; back, it goes.
-        #expect(Self.reduce(.init(missingWorktrees: [missing]), from: first).queue == first)
-        #expect(Self.reduce(.init(), from: first).queue.items.isEmpty)
+        let first = Self.reduce(.init(missingWorktrees: [missing]))
+        let id = AttentionItemID.stop(EpisodeKey(origin: .sessionRow(worktreeRoot: root), episodeToken: "worktreeMissing"))
+        #expect(first.queue.items.map(\.id) == [id])
+        #expect(first.queue.items.map(\.kind) == [.stop(.worktreeMissing)])
+        #expect(first.queue.item(id)?.subject == .sessionRow(projectID: project, worktreeRoot: root))
+        #expect(first.queue.item(id)?.arrivedAt == Self.start)
+        #expect(first.effects == [.announce(id)])
+        let repeated = Self.reduce(.init(missingWorktrees: [missing]), from: first.queue)
+        #expect(repeated.queue == first.queue)
+        #expect(repeated.effects.isEmpty)
+        #expect(Self.reduce(.init(), from: repeated.queue).queue.items.isEmpty)
     }
 }

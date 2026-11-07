@@ -1,5 +1,5 @@
 // SurfaceContextMenuReleaseTests.swift
-// Weir — a right-click whose press reached libghostty closes with its release.
+// Weir — a right-click menu delegates its close event to the live surface.
 
 import AppKit
 import GhosttyKit
@@ -34,11 +34,10 @@ struct SurfaceContextMenuReleaseTests {
         ))
     }
 
-    /// The menu's tracking takes the physical release, so the press sent
-    /// for the menu has to be answered when it closes. Without that,
-    /// libghostty reported every later move as a right-button drag.
+    /// This checks the delegate wiring. It does not observe libghostty's
+    /// button state after the close callback.
     @Test(.tags(.ffi), .enabled("libghostty is unavailable") { await GhosttyAvailability.isAvailable() })
-    func menu_afterAPressSent_closesWithTheRelease() throws {
+    func menu_afterAPressSent_delegatesClosureToTheSurface() throws {
         let (window, view) = try mountedView()
         defer { window.close() }
         let surface = try #require(view.surface, "the mount never created the surface")

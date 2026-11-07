@@ -76,9 +76,11 @@ struct AgentStateRecordSchemaTests {
             with: "\"state\":\"needsInput\",\"detail\":\"Bash: swift test\",\"tool\":\"Bash\",\"waitKind\":\"approval\""
         )
         let current = try badge(from: waiting, provider: "codex")
+        #expect(current.state == .needsInput)
         #expect(current.promptWaitKind == .approval)
         #expect(current.tool == "Bash")
         let newer = try badge(from: waiting.replacingOccurrences(of: "\"approval\"", with: "\"plan\""), provider: "codex")
+        #expect(newer.state == .needsInput)
         #expect(newer.waitKind == "unknown")
         #expect(newer.promptWaitKind == nil)
         // A record from before the fields.
@@ -87,18 +89,23 @@ struct AgentStateRecordSchemaTests {
         #expect(older.tool == nil)
     }
 
-    @Test("treats a version 2 empty runStartedAt and a version 3 null alike")
-    func runStartedAt_emptyAndAbsent_bothMeanNotRunning() throws {
+    @Test("treats a legacy empty start and missing or null starts alike")
+    func runStartedAt_emptyMissingOrNull_meansNotRunning() throws {
         let versionTwo = Self.versionThree
             .replacingOccurrences(of: "\"schemaVersion\":3", with: "\"schemaVersion\":2")
             .replacingOccurrences(
                 of: "\"state\":\"finished\"",
                 with: "\"state\":\"finished\",\"runStartedAt\":\"\",\"detail\":\"\""
             )
-        let two = try badge(from: versionTwo, provider: "claude")
-        let three = try badge(from: Self.versionThree, provider: "claude")
-        #expect(two.runStartedAt == nil)
-        #expect(three.runStartedAt == nil)
-        #expect(two.state == three.state)
+        let explicitNull = Self.versionThree.replacingOccurrences(
+            of: #""state":"finished""#,
+            with: #""state":"finished","runStartedAt":null,"detail":null"#
+        )
+        for record in [versionTwo, Self.versionThree, explicitNull] {
+            let projected = try badge(from: record, provider: "claude")
+            #expect(projected.runStartedAt == nil)
+            #expect(projected.detail == nil)
+            #expect(projected.state == .finished)
+        }
     }
 }

@@ -95,6 +95,10 @@ struct PaneMinimumSizeTests {
         let row = Self.twoPaneTree(.horizontal)
         #expect(row.root?.minimumExtent(along: .horizontal, leafMinimum: minimum) == 120 + PaneSplit.dividerThickness)
         #expect(row.root?.minimumExtent(along: .vertical, leafMinimum: minimum) == 150)
+
+        let column = Self.twoPaneTree(.vertical)
+        #expect(column.root?.minimumExtent(along: .horizontal, leafMinimum: minimum) == 60)
+        #expect(column.root?.minimumExtent(along: .vertical, leafMinimum: minimum) == 300 + PaneSplit.dividerThickness)
     }
 
     @Test func splitPreflight_refusesOnlyTheAxisBelowItsMinimum() {
@@ -102,6 +106,7 @@ struct PaneMinimumSizeTests {
         let tree = SplitTree(leafID: leaf)
         let minimum = PaneMinimumSize(width: 60, height: 150)
         let area = CGSize(width: 400, height: 250)
+        let narrowArea = CGSize(width: 100, height: 400)
         // Two stacked panes need 300pt of height plus the divider; two side by
         // side need only 120pt of width.
         #expect(!PaneActions.hasRoomToSplit(
@@ -116,6 +121,20 @@ struct PaneMinimumSizeTests {
             paneID: leaf,
             direction: .horizontal,
             availableSize: area,
+            minPaneSize: minimum
+        ))
+        #expect(!PaneActions.hasRoomToSplit(
+            tree: tree,
+            paneID: leaf,
+            direction: .horizontal,
+            availableSize: narrowArea,
+            minPaneSize: minimum
+        ))
+        #expect(PaneActions.hasRoomToSplit(
+            tree: tree,
+            paneID: leaf,
+            direction: .vertical,
+            availableSize: narrowArea,
             minPaneSize: minimum
         ))
     }

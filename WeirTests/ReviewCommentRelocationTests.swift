@@ -26,11 +26,14 @@ struct ReviewCommentRelocationTests {
         try ReviewDiff(file: target, fingerprint: "new", lines: ReviewDiffParser.parse(patch))
     }
 
-    @Test func aCommentsQuotedLines_reAnchorWhereTheyAppearOnce() throws {
+    @Test(arguments: [nil, ReviewSide.new] as [ReviewSide?])
+    func aCommentsQuotedLines_reAnchorWhereTheyAppearOnce(_ side: ReviewSide?) throws {
         let diff = try Self.diff("@@ -1,2 +1,3 @@\n keep\n-old\n+new\n+more")
+        var original = Self.comment(code: "new\nmore", markers: "++")
+        original.side = side
 
         guard case let .placed(moved) = ReviewCommentRelocation.placement(
-            of: Self.comment(code: "new\nmore", markers: "++"),
+            of: original,
             in: diff,
             scopeID: "turns:x"
         ) else {
@@ -41,8 +44,12 @@ struct ReviewCommentRelocationTests {
         #expect(moved.scopeIDs == ["turns:x"])
         #expect(moved.file == Self.target)
         #expect(moved.fingerprint == "new")
-        #expect(moved.anchor.newLine == 2)
-        #expect(moved.end?.newLine == 3)
+        #expect(moved.anchor == ReviewAnchor(lineID: 3, oldLine: nil, newLine: 2))
+        #expect(moved.end == ReviewAnchor(lineID: 4, oldLine: nil, newLine: 3))
+        #expect(moved.id == original.id)
+        #expect(moved.code == original.code)
+        #expect(moved.codeMarkers == "++")
+        #expect(moved.side == side)
         #expect(moved.body == "Why?")
     }
 
@@ -57,12 +64,6 @@ struct ReviewCommentRelocationTests {
         ) == .notFound)
         #expect(ReviewCommentRelocation.placement(of: Self.comment(code: "same", markers: "+"), in: twice, scopeID: "s") == .repeated)
         #expect(ReviewCommentRelocation.placement(of: Self.comment(code: "new", markers: "+"), in: removed, scopeID: "s") == .notFound)
-    }
-
-    @Test func aCommentThatCannotBePlaced_saysWhetherItsCodeIsMissingOrRepeated() throws {
-        let twice = try Self.diff("@@ -1,2 +1,4 @@\n+same\n keep\n+same\n keep")
-
-        #expect(ReviewCommentRelocation.placement(of: Self.comment(code: "same", markers: "+"), in: twice, scopeID: "s") == .repeated)
         #expect(ReviewCommentRelocation.placement(of: Self.comment(code: "gone", markers: "+"), in: twice, scopeID: "s") == .notFound)
     }
 

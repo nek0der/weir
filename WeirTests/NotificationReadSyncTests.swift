@@ -125,17 +125,19 @@ struct NotificationReadSyncTests {
             let attention = AttentionState()
             let runID = UUID().uuidString
             let id = AgentRuntimePresentation.id(kind: .codex, runID: runID)
-            store.record(entry(.agentNeedsInput, runtimeID: id))
+            let row = entry(.agentNeedsInput, runtimeID: id)
+            store.record(row)
             attention.replaceRuntimes([runtime(.needsInput, runID: runID)], kind: .codex)
 
             let sync = NotificationReadSync(historyStore: store, attention: attention, requests: requests)
-            #expect(store.unreadCount == 1)
+            try #require(store.entries.first?.id == row.id && store.entries.first?.isRead == false)
 
             attention.replaceRuntimes([runtime(.running, runID: runID)], kind: .codex)
             await untilObserved { store.unreadCount == 0 }
             #expect(store.unreadCount == 0)
+            #expect(store.entries.first?.id == row.id && store.entries.first?.isRead == true)
             store.flushSynchronously()
-            _ = sync
+            withExtendedLifetime(sync) {}
         }
     }
 
@@ -145,17 +147,22 @@ struct NotificationReadSyncTests {
             let attention = AttentionState()
             let runID = UUID().uuidString
             let id = AgentRuntimePresentation.id(kind: .codex, runID: runID)
-            store.record(entry(.agentNeedsInput, runtimeID: id, eventToken: "1"))
+            let earlier = entry(.agentNeedsInput, runtimeID: id, eventToken: "1")
+            let later = entry(.agentNeedsInput, runtimeID: id, eventToken: "3")
+            store.record(earlier)
             attention.replaceRuntimes([runtime(.needsInput, runID: runID, revision: 1)], kind: .codex)
             let sync = NotificationReadSync(historyStore: store, attention: attention, requests: requests)
 
             attention.replaceRuntimes([runtime(.running, runID: runID, revision: 2)], kind: .codex)
             sync.reconcile()
+            #expect(store.entries.first?.id == earlier.id && store.entries.first?.isRead == true)
             attention.replaceRuntimes([runtime(.needsInput, runID: runID, revision: 3)], kind: .codex)
+            store.record(later)
             sync.reconcile()
 
-            #expect(store.unreadCount == 0)
-            #expect(attention.liveStatus(for: store.entries[0], requests: requests) == .resolved)
+            #expect(store.entries.filter(\.isRead).map(\.id) == [earlier.id])
+            #expect(store.entries.filter { !$0.isRead }.map(\.id) == [later.id])
+            #expect(attention.liveStatus(for: earlier, requests: requests) == .resolved)
         }
     }
 
@@ -185,15 +192,20 @@ struct NotificationReadSyncTests {
             let attention = AttentionState()
             let runID = UUID().uuidString
             let id = AgentRuntimePresentation.id(kind: .codex, runID: runID)
-            store.record(entry(.agentFinished, runtimeID: id, eventToken: "1"))
-            attention.replaceRuntimes([runtime(.finished, runID: runID, revision: 2)], kind: .codex)
+            let stale = entry(.agentFinished, runtimeID: id, eventToken: "1")
+            let matching = entry(.agentFinished, runtimeID: id, eventToken: "2")
+            let current = runtime(.finished, runID: runID, revision: 2)
+            store.record(stale)
+            store.record(matching)
+            attention.replaceRuntimes([current], kind: .codex)
 
             // The later episode is viewed; the row is for the earlier one.
-            let current = try #require(attention.allRuntimes.first?.attentionEventToken)
-            attention.markFinishedRuntimesViewed(matching: [id: [current]])
+            attention.markFinishedRuntimesViewed(matching: [id: ["2"]])
+            try #require(attention.isViewed(current))
             NotificationReadSync(historyStore: store, attention: attention, requests: requests).reconcile()
 
-            #expect(store.unreadCount == 1)
+            #expect(store.entries.filter(\.isRead).map(\.id) == [matching.id])
+            #expect(store.entries.filter { !$0.isRead }.map(\.id) == [stale.id])
         }
     }
 
@@ -225,7 +237,8 @@ struct NotificationReadSyncTests {
             var isLineDown = false
             attention.turnReadDecision = { $0.id == id ? isLineDown : nil }
             store.record(entry(.agentFinished, runtimeID: id))
-            attention.replaceRuntimes([runtime(.finished, runID: runID, paneID: paneID)], kind: .codex)
+            let current = runtime(.finished, runID: runID, paneID: paneID)
+            attention.replaceRuntimes([current], kind: .codex)
             let sync = NotificationReadSync(historyStore: store, attention: attention, requests: requests)
 
             // Looked at, but it changed files: still unread.
@@ -242,11 +255,11 @@ struct NotificationReadSyncTests {
             // Marking the whole history read marks its rows read, but does
             // not mark the turn viewed.
             NotificationReadSync.markAllRead(historyStore: store, attention: attention, session: session)
-            #expect(attention.allRuntimes.allSatisfy { !attention.isViewed($0) })
+            #expect(!attention.isViewed(current))
 
             // The viewed line passes it.
             isLineDown = true
-            #expect(attention.allRuntimes.allSatisfy(attention.isViewed))
+            #expect(attention.isViewed(current))
         }
     }
 
@@ -265,6 +278,7 @@ struct NotificationReadSyncTests {
                 revision: 2,
                 stateEpisodeToken: "finished-episode"
             )
+            let unrelated = runtime(.finished, runID: UUID().uuidString, stateEpisodeToken: "finished-episode")
 
             store.record(entry(
                 .agentFinished,
@@ -274,9 +288,12 @@ struct NotificationReadSyncTests {
             store.record(entry(.agentNeedsInput, runtimeID: waitingID))
             attention.replaceRuntimes([
                 finished,
-                runtime(.needsInput, runID: waitingRunID)
+                runtime(.needsInput, runID: waitingRunID),
+                unrelated
             ], kind: .codex)
             session.markUnread(paneID: paneID)
+            try #require(session.windowUnreadCount == 1)
+            try #require(store.unreadCount == 2)
 
             var changeCount = 0
             attention.onRuntimeAttentionChanged = { changeCount += 1 }
@@ -289,6 +306,7 @@ struct NotificationReadSyncTests {
             #expect(store.unreadCount == 0)
             #expect(session.windowUnreadCount == 0)
             #expect(attention.isViewed(finished))
+            #expect(!attention.isViewed(unrelated))
             #expect(attention.liveStatus(for: entry(.agentNeedsInput, runtimeID: waitingID), requests: requests) == .stillWaiting)
             #expect(changeCount == 1)
         }
@@ -400,11 +418,12 @@ struct NotificationReadSyncTests {
             ))
 
             let sync = NotificationReadSync(historyStore: store, attention: attention, requests: requests)
+            try #require(!attention.isViewed(current))
             attention.replaceRuntimes([current], kind: .codex)
 
             await untilObserved { attention.isViewed(current) }
             #expect(attention.isViewed(current))
-            _ = sync
+            withExtendedLifetime(sync) {}
         }
     }
 

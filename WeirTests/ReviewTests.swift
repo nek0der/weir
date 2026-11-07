@@ -96,6 +96,7 @@ struct ReviewKeyboardRoutingTests {
     @Test func reviewInsertShortcutRequiresCommandReturn() throws {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: [], backing: .buffered, defer: true)
         window.isReleasedWhenClosed = false
+        defer { window.close() }
         let table = ReviewTableView(frame: .zero, menuLocale: Locale(identifier: "en"))
         window.contentView = table
         var keys: [ReviewTableKey] = []

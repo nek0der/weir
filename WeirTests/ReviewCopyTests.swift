@@ -1,6 +1,7 @@
 // ReviewCopyTests.swift
 // Weir — verifies that Review copies code without diff decoration.
 
+import AppKit
 import Foundation
 import Testing
 @testable import Weir
@@ -96,16 +97,31 @@ struct ReviewCopyTests {
         #expect(rebased?.anchor?.rowIndex == 0)
         #expect(rebased?.head?.rowIndex == 2)
         #expect(ReviewCopyPayload.text(rows: movedRows, selection: rebased ?? ReviewTextSelection()) == "irst\nla")
+
+        let replacement = ReviewLine(id: 3, kind: .context, text: "another line", oldLine: 3, newLine: 3)
+        let replacedRows = [movedRows[0], ReviewRow(id: 1, kind: .code(replacement))]
+        #expect(selection.rebased(in: replacedRows) == nil)
     }
 
     @MainActor
     @Test func pointerLayoutReturnsOnlyComposedCharacterBoundaries() {
-        let text = "a\u{301}\u{302}b"
-        let boundaries: Set = [0, 3, 4]
+        let cluster = "a\u{301}\u{302}"
+        let text = cluster + "bc"
+        let boundaries: Set = [0, 3, 4, 5]
         let layout = ReviewCodeTextLayout()
+        let font = ReviewRowMetrics.font
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let clusterWidth = (cluster as NSString).size(withAttributes: attributes).width
+        let letterWidth = ("b" as NSString).size(withAttributes: attributes).width
+        let lineWidth = (text as NSString).size(withAttributes: attributes).width
+
+        #expect(layout.utf16Offset(in: text, x: -1, font: font) == 0)
+        #expect(layout.utf16Offset(in: text, x: clusterWidth + letterWidth * 0.25, font: font) == 3)
+        #expect(layout.utf16Offset(in: text, x: clusterWidth + letterWidth * 0.75, font: font) == 4)
+        #expect(layout.utf16Offset(in: text, x: lineWidth + 1, font: font) == 5)
 
         for x in stride(from: CGFloat.zero, through: 80, by: 0.5) {
-            #expect(boundaries.contains(layout.utf16Offset(in: text, x: x, font: ReviewRowMetrics.font)))
+            #expect(boundaries.contains(layout.utf16Offset(in: text, x: x, font: font)))
         }
     }
 }

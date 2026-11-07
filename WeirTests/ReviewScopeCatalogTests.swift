@@ -53,6 +53,7 @@ struct ReviewScopeCatalogTests {
             return
         }
         #expect(unviewed.numbers == 6...8, "the answer-only turn between them is part of the comparison")
+        #expect(unviewed.turnIDs == [turns[1].turnID, turns[2].turnID, turns[3].turnID])
         let each = options.compactMap { option -> Int? in
             if case let .turn(range, _) = option {
                 return range.firstNumber
@@ -241,10 +242,22 @@ struct ReviewScopeCatalogTests {
     }
 
     @Test func aTurnEndingAfterTheRange_isOfferedNotAdded_upToTheLastWithAnEnd() throws {
-        let range = try #require(try ReviewTurnRange(turns: [Self.turn(6)]))
-        let turns = try [Self.turn(5), Self.turn(6), Self.turn(7), Self.turn(8, hasEnd: false), Self.turn(9, phase: "started")]
+        let covered = try Self.turn(6)
+        let range = try #require(ReviewTurnRange(turns: [covered]))
+        let next = try Self.turn(9)
+        // A later number alone does not make an already covered turn new.
+        let renumbered = try Fixture.turn(covered.turnID.rawValue, number: 10, endTree: covered.endTree)
+        let turns = try [
+            Self.turn(5),
+            covered,
+            Self.turn(7, conversationID: "other"),
+            Self.turn(8, phase: "started"),
+            next,
+            renumbered,
+            Self.turn(11, hasEnd: false)
+        ]
 
-        #expect(ReviewScopeCatalog.followingTurns(after: range, in: turns).map(\.displayNumber) == [7])
+        #expect(ReviewScopeCatalog.followingTurns(after: range, in: turns).map(\.turnID) == [next.turnID])
         #expect(try ReviewScopeCatalog.followingTurns(after: range, in: [Self.turn(7, hasEnd: false)]).isEmpty)
     }
 }

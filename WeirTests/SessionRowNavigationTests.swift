@@ -37,7 +37,9 @@ struct SessionRowNavigationTests {
         #expect(SessionRowNavigation.step(from: second, in: rows, forward: true) == first)
         #expect(SessionRowNavigation.step(from: first, in: rows, forward: false) == second)
         // From a container the sidebar does not list (a project gone).
-        #expect(SessionRowNavigation.step(from: .project(UUID()), in: rows, forward: true) == first)
+        let stale = ContainerID.project(UUID())
+        #expect(SessionRowNavigation.step(from: stale, in: rows, forward: true) == first)
+        #expect(SessionRowNavigation.step(from: stale, in: rows, forward: false) == second)
         #expect(SessionRowNavigation.step(from: first, in: [], forward: true) == nil)
     }
 

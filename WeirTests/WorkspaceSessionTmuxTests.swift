@@ -39,7 +39,7 @@ struct WorkspaceSessionTmuxTests {
         session.captureTmuxBindings(
             surfaces: [frame(pane, "zsh")], bindings: [:], observedAt: [:], now: 1, detachedPaneIDs: [pane]
         )
-        #expect(session.tab(tab.id)?.tmuxBindings[pane] == nil)
+        #expect(session.tab(tab.id)?.tmuxBindings.isEmpty == true)
     }
 
     /// A shell in a pane that was never seen in tmux this run, as after a
@@ -76,8 +76,7 @@ struct WorkspaceSessionTmuxTests {
             surfaces: [frame(pane, "tmux")], bindings: [pane: binding("work")],
             observedAt: ["/tmp/s": 1], now: 1, detachedPaneIDs: []
         )
-        #expect(session.tab(tab.id)?.tmuxBindings[ghost] == nil)
-        #expect(session.tab(tab.id)?.tmuxBindings[pane] == binding("work"))
+        #expect(session.tab(tab.id)?.tmuxBindings == [pane: binding("work")])
     }
 
     /// A client seen on the pane's tty is captured as the pane's binding;
@@ -93,7 +92,9 @@ struct WorkspaceSessionTmuxTests {
         session.captureTmuxBindings(surfaces: [frame], bindings: [pane: binding], observedAt: [path: 1], now: 1, detachedPaneIDs: [])
         #expect(session.tab(tab.id)?.tmuxBindings[pane] == binding)
         session.captureTmuxBindings(surfaces: [frame], bindings: [:], observedAt: [:], now: 2, detachedPaneIDs: [])
-        #expect(session.tab(tab.id)?.tmuxBindings[pane]?.isProvisional == true)
+        var expected = binding
+        expected.isProvisional = true
+        #expect(session.tab(tab.id)?.tmuxBindings[pane] == expected)
         let unresolved = try #require(session.tab(tab.id))
         #expect(TmuxReattachCommandBuilder.initialCommand(for: unresolved, paneID: pane) != nil)
         session.captureTmuxBindings(

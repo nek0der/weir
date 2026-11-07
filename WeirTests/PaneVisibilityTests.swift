@@ -25,12 +25,15 @@ struct PaneVisibilityTests {
         let front = WindowID()
         let back = WindowID()
         let pane = UUID()
+        let onlyBack = UUID()
         var visibility = PaneVisibility()
         visibility.report(window: front, visiblePaneIDs: [pane])
-        visibility.report(window: back, visiblePaneIDs: [pane])
+        visibility.report(window: back, visiblePaneIDs: [pane, onlyBack])
+        #expect(visibility.union == [pane, onlyBack])
 
         visibility.report(window: back, visiblePaneIDs: [])
 
+        #expect(visibility.visibleByWindow == [front: [pane]])
         #expect(visibility.union == [pane])
     }
 
@@ -54,6 +57,7 @@ struct PaneVisibilityTests {
 
         visibility.report(window: window, visiblePaneIDs: [new])
 
+        #expect(visibility.visibleByWindow == [window: [new]])
         #expect(visibility.union == [new])
     }
 }
