@@ -389,7 +389,7 @@ pub(crate) fn command_run(input: RawHookInput<'_>) -> Result<Option<CommandRun>,
             .and_then(|response| response.get("backgroundTaskId"))
             .is_some();
     let exit_code = match string(&object, "hook_event_name") {
-        _ if is_background => None,
+        Some("PostToolUse" | "PostToolUseFailure") if is_background => None,
         Some("PostToolUse") => {
             let interrupted = object
                 .get("tool_response")
@@ -1184,10 +1184,44 @@ mod tests {
             background.exit_code, None,
             "a background command has not ended"
         );
+        for payload in [
+            r#"{"hook_event_name":"PostToolUse","tool_name":"Bash","cwd":"/r","tool_input":{"command":"cargo test"},"tool_response":{"backgroundTaskId":"task-1"}}"#,
+            r#"{"hook_event_name":"PostToolUseFailure","tool_name":"Bash","cwd":"/r","tool_input":{"command":"cargo test"},"is_interrupt":true,"error":"Exit code 7\nInterrupted"}"#,
+        ] {
+            assert_eq!(
+                run(payload),
+                Some(CommandRun {
+                    command: "cargo test".into(),
+                    cwd: Some("/r".into()),
+                    exit_code: None
+                }),
+                "{payload}"
+            );
+        }
     }
 
     #[test]
     fn other_tools_and_hooks_report_no_run() {
+        for event in ["PreToolUse", "PermissionDenied", "UnknownHook"] {
+            for (input, response) in [
+                (
+                    serde_json::json!({"command": "cargo test", "run_in_background": true}),
+                    serde_json::json!({}),
+                ),
+                (
+                    serde_json::json!({"command": "cargo test"}),
+                    serde_json::json!({"backgroundTaskId": "task-1"}),
+                ),
+            ] {
+                let payload = serde_json::json!({
+                    "hook_event_name": event,
+                    "tool_name": "Bash",
+                    "tool_input": input,
+                    "tool_response": response
+                });
+                assert_eq!(run(&payload.to_string()), None, "{payload}");
+            }
+        }
         assert_eq!(
             run(
                 r#"{"hook_event_name":"PostToolUse","tool_name":"Edit","tool_input":{"file_path":"a"}}"#

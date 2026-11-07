@@ -92,6 +92,7 @@ pub(crate) fn transcript_turn_reading(transcript: &[u8], prompt_id: Option<&str>
                 if let Some(prompt_id) = prompt_id
                     && string(&record, "promptId").is_some_and(|other| other != prompt_id)
                 {
+                    is_answered = true;
                     break;
                 }
                 // An interrupt ends the turn: no response is to come, for
@@ -450,15 +451,19 @@ mod tests {
 
     #[test]
     fn the_next_prompt_ends_the_turn() {
-        let bytes = transcript(&[
-            prompt("p1", "go"),
-            reply("req_1", 1, 2, 3, 4),
-            prompt("p2", "and then"),
-            reply("req_2", 9, 9, 9, 9),
-        ]);
-        let reading = transcript_turn_reading(&bytes, Some("p1"));
-        assert_eq!(reading.usage, Some(usage(1, 2, 3, 4)));
-        assert!(!reading.is_awaiting_response);
+        for had_tool_result in [false, true] {
+            let mut lines = vec![prompt("p1", "go"), reply("req_1", 1, 2, 3, 4)];
+            if had_tool_result {
+                lines.push(tool_result("p1", ""));
+            }
+            lines.extend([prompt("p2", "and then"), reply("req_2", 9, 9, 9, 9)]);
+            let reading = transcript_turn_reading(&transcript(&lines), Some("p1"));
+            assert!(
+                !reading.is_awaiting_response,
+                "tool result before the next prompt: {had_tool_result}"
+            );
+            assert_eq!(reading.usage, Some(usage(1, 2, 3, 4)));
+        }
     }
 
     #[test]

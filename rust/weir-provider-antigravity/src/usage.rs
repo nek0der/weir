@@ -61,7 +61,11 @@ fn reset_delay(error: &str) -> Option<Duration> {
         // Only the seconds of a Go duration carry a fraction, too small to
         // matter to a reset.
         let whole = match number.split_once('.') {
-            Some((whole, _)) if unit == 1 => whole,
+            Some((whole, fraction))
+                if unit == 1 && fraction.bytes().all(|byte| byte.is_ascii_digit()) =>
+            {
+                whole
+            }
             Some(_) => return None,
             None => number,
         };
@@ -110,6 +114,7 @@ mod tests {
             "You have exhausted your quota. Your quota will reset after soon.",
             "You have exhausted your quota. Your quota will reset after 500ms.",
             "You have exhausted your quota. Your quota will reset after 3h0x.",
+            "You have exhausted your quota. Your quota will reset after 1.2.3s.",
             "You have exhausted your quota. Your quota will reset after 99999999999999999999h.",
         ] {
             assert_eq!(

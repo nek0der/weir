@@ -187,9 +187,12 @@ pub(crate) fn turn_reading(transcript: &[u8], marker: Option<&str>) -> TurnReadi
         .filter(|step| text(step, "type") == Some("PLANNER_RESPONSE"))
     {
         has_request = true;
-        usage.input_tokens += count(step, "input_tokens");
-        usage.cache_read_tokens += count(step, "cache_read_tokens");
-        usage.output_tokens += count(step, "output_tokens");
+        usage = usage.plus(TurnUsage {
+            input_tokens: count(step, "input_tokens"),
+            cache_read_tokens: count(step, "cache_read_tokens"),
+            output_tokens: count(step, "output_tokens"),
+            ..TurnUsage::default()
+        });
     }
     TurnReading {
         marker: marker.map(str::to_owned),
@@ -244,6 +247,28 @@ mod tests {
             .expect("usage");
         assert_eq!(usage.input_tokens, 62_970);
         assert_eq!(usage.cache_read_tokens, 113_132);
+    }
+
+    #[test]
+    fn a_turn_with_unrepresentably_large_counters_does_not_wrap() {
+        let transcript = [
+            json!({"step_index": 0, "source": "USER_EXPLICIT", "type": "USER_INPUT"}),
+            json!({"step_index": 1, "type": "PLANNER_RESPONSE", "input_tokens": u64::MAX,
+                "cache_read_tokens": u64::MAX, "output_tokens": u64::MAX}),
+            json!({"step_index": 2, "type": "PLANNER_RESPONSE", "input_tokens": 1,
+                "cache_read_tokens": 2, "output_tokens": 3}),
+        ]
+        .map(|step| step.to_string())
+        .join("\n");
+        assert_eq!(
+            turn_reading(transcript.as_bytes(), None).usage,
+            Some(TurnUsage {
+                input_tokens: u64::MAX,
+                cache_read_tokens: u64::MAX,
+                output_tokens: u64::MAX,
+                ..TurnUsage::default()
+            })
+        );
     }
 
     #[test]

@@ -34,7 +34,14 @@ pub fn unix_seconds(time: SystemTime) -> u64 {
 /// `days_from_civil`).
 #[must_use]
 pub fn days_from_civil(year: i64, month: u32, day: u32) -> Option<i64> {
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    let days_in_month = match month {
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        _ => return None,
+    };
+    if !(1..=days_in_month).contains(&day) {
         return None;
     }
     let year = if month <= 2 { year - 1 } else { year };
@@ -123,6 +130,19 @@ mod tests {
         assert_eq!(format_utc_seconds(time), "2026-09-13T16:00:01Z");
         let leap = UNIX_EPOCH + Duration::from_secs(951_782_401);
         assert_eq!(format_utc_seconds(leap), "2000-02-29T00:00:01Z");
+    }
+
+    #[test]
+    fn parsing_rejects_impossible_calendar_dates() {
+        for value in [
+            "2026-02-29T00:00:00Z",
+            "2024-02-30T00:00:00Z",
+            "2100-02-29T00:00:00Z",
+            "2026-04-31T00:00:00Z",
+        ] {
+            assert_eq!(parse_utc_seconds(value), None, "{value}");
+        }
+        assert_eq!(parse_utc_seconds("2000-02-29T00:00:01Z"), Some(951_782_401));
     }
 
     #[test]

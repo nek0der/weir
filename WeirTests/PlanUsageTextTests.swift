@@ -37,6 +37,13 @@ struct PlanUsageTextTests {
         #expect(PlanUsageText.windowName("primary", locale: english) == StopReasonText.limitName("primary"))
     }
 
+    @Test("an unrepresentable window length keeps the generic label")
+    func windowName_unrepresentableLengthUsesGenericLabel() {
+        let kind = "minutes_\(Int.max)"
+        let name = PlanUsageText.windowName(kind, locale: english).resolved(in: english)
+        #expect(name == "Usage limit")
+    }
+
     @Test("a window past its reset reads as reset, with nothing to wait for")
     func row_afterItsReset_saysReset() {
         let window = PlanUsageWindow(kind: PlanUsageWindow.fiveHour, usedPercent: 100, resetsAt: now.addingTimeInterval(-1))

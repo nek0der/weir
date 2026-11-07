@@ -192,7 +192,11 @@ enum PlanUsageText {
         guard kind.hasPrefix(prefix), let minutes = Int(kind.dropFirst(prefix.count)), minutes > 0 else {
             return StopReasonText.limitName(kind)
         }
-        let length = Duration.seconds(minutes * 60).formatted(
+        let (seconds, didOverflow) = minutes.multipliedReportingOverflow(by: 60)
+        guard !didOverflow else {
+            return StopReasonText.limitName(kind)
+        }
+        let length = Duration.seconds(seconds).formatted(
             .units(allowed: [.days, .hours, .minutes], width: .narrow).locale(locale)
         )
         return LocalizedStringResource(
