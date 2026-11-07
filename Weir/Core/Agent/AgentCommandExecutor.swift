@@ -169,21 +169,24 @@ struct AgentCommandExecutor {
               let hintURL = owner.paneStoreURL(.sessions, pane: newPane),
               let found = revivableRecord(in: owner, suffix: suffix, session: session.sessionId, pane: oldPane)
         else { return false }
-        let target = owner.state.appendingPathComponent(found.storageID + suffix)
         let stamp = AgentDateParsing.formatISO8601(now)
         do {
-            let outcome = try AgentFileLock.withLock(for: target) {
-                var record = found.record
+            var runID: String?
+            let outcome = try AgentFileLock.withLock(for: found.url) {
+                guard var record = try readExistingJSON(found.url) else { return .notFound }
+                guard isRevivable(record, storageID: found.storageID, session: session.sessionId, pane: oldPane)
+                else { return .preconditionChanged }
                 record["paneId"] = newPane.uuidString
                 record["state"] = "unknown"
                 record["resumeAttemptedAt"] = stamp
                 record.removeValue(forKey: "pid")
                 record.removeValue(forKey: "killedByWeirAt")
-                let written = writeJSON(record, to: target)
-                if written == .applied, found.url != target {
-                    try SecureFileWrite.removeItem(at: found.url)
-                }
-                return written
+                runID = record["runId"] as? String
+                // A pane-scoped record follows the new pane's file name.
+                // A run-scoped record keeps its file name across the reopen.
+                guard let storageID = storageID(of: record), let target = owner.recordURL(storageID: storageID)
+                else { return .preconditionChanged }
+                return try writeRevivedRecord(record, from: found.url, to: target)
             }
             guard outcome == .applied else { return false }
             // The shape the hook writes a hint in (`SideWrite::SessionHint`).
@@ -194,7 +197,7 @@ struct AgentCommandExecutor {
                 "sessionId": session.sessionId,
                 "updatedAt": stamp
             ]
-            hint["runId"] = found.record["runId"]
+            hint["runId"] = runID
             hint["cwd"] = session.cwd
             return try AgentFileLock.withLock(for: hintURL) { writeJSON(hint, to: hintURL) } == .applied
         } catch {
@@ -203,11 +206,37 @@ struct AgentCommandExecutor {
         }
     }
 
-    /// A record that can be given back to a reopened pane, and where it is.
+    /// Writes a revived record while its source is locked. A different file
+    /// name must be vacant under its own lock before the source can be removed.
+    private func writeRevivedRecord(_ record: [String: Any], from source: URL, to target: URL) throws -> RecordMutationOutcome {
+        guard source != target else { return writeJSON(record, to: target) }
+        return try AgentFileLock.withLock(for: target) {
+            var metadata = stat()
+            guard lstat(target.path, &metadata) != 0, errno == ENOENT else { return .preconditionChanged }
+            let outcome = writeJSON(record, to: target)
+            guard outcome == .applied else { return outcome }
+            do {
+                try SecureFileWrite.removeItem(at: source)
+            } catch CocoaError.fileNoSuchFile {
+                // Another process already removed the source.
+            } catch {
+                try? SecureFileWrite.removeItem(at: target)
+                throw error
+            }
+            return .applied
+        }
+    }
+
+    /// Where the record that can be given back to a reopened pane lives.
     private struct RevivableRecord {
         let url: URL
         let storageID: String
-        let record: [String: Any]
+    }
+
+    private func isRevivable(_ record: [String: Any], storageID: String, session: String, pane: UUID) -> Bool {
+        record["sessionId"] as? String == session
+            && (record["paneId"] as? String).flatMap(UUID.init(uuidString:)) == pane
+            && self.storageID(of: record) == storageID
     }
 
     /// The record of `session` in `pane`: the one still live, as a quick
@@ -231,12 +260,11 @@ struct AgentCommandExecutor {
             return newerAt > olderAt
         }
         for url in records(in: owner.state) + retired {
-            guard let record = readJSON(url),
-                  record["sessionId"] as? String == session,
-                  (record["paneId"] as? String).flatMap(UUID.init(uuidString:)) == pane,
-                  let storageID = url.lastPathComponent.split(separator: ".").first
+            guard let storageID = url.lastPathComponent.split(separator: ".").first.map(String.init),
+                  let record = readJSON(url),
+                  isRevivable(record, storageID: storageID, session: session, pane: pane)
             else { continue }
-            return RevivableRecord(url: url, storageID: String(storageID), record: record)
+            return RevivableRecord(url: url, storageID: storageID)
         }
         return nil
     }

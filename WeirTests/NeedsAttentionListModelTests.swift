@@ -274,28 +274,34 @@ struct NeedsAttentionListModelTests {
         #expect(Self.model(queue, locale: Self.japanese).rows.first?.fact == "停止：プロセスが異常終了しました。")
     }
 
-    @Test @MainActor func aPanesItem_isNamedByItsTab_andARequestWithNoPane_byItsAgent() throws {
-        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir")
+    @Test @MainActor func aPlacedItem_usesItsRowName_andUnresolvedItemsUseTheAgentName() throws {
+        let root = WorkspaceSessionFixture.projectRootURL("naming").appendingPathComponent("sandbox-folder")
+        let (session, project) = WorkspaceSessionFixture.withProject(name: "weir", rootURL: root)
         let tab = session.openTab(container: .project(project.id))
         let paneID = try #require(tab.splitTree.allLeafIDs().first)
+        let approval = ApprovalFact.test(provider: .opencode)
         let queue = Self.queue([
             Entry(
                 .stop(Self.episode("a")),
                 .stop(.processExited),
                 .runtime(id: "a", provider: .claude, paneID: paneID, tabID: tab.id, projectID: project.id)
             ),
-            Entry(.stop(Self.episode("b")), .stop(.processExited), .unplaced(provider: .codex))
+            Entry(.approval(approval.key), .approval(approval), .unplaced(provider: .opencode)),
+            Entry(
+                .stop(Self.episode("c")),
+                .stop(.processExited),
+                .runtime(id: "c", provider: .opencode, paneID: UUID(), tabID: UUID(), projectID: project.id)
+            )
         ])
 
-        let names = queue.items.map { NeedsAttentionListModel.names(of: $0, in: session, locale: Self.english) }
-
-        #expect(names == [
-            NeedsAttentionListModel.Names(
-                title: SessionSidebarModel.rowName(of: tab.container, in: session, locale: Self.english),
-                place: "weir"
-            ),
-            NeedsAttentionListModel.Names(title: "Codex", place: nil)
-        ])
+        let expected = [
+            NeedsAttentionListModel.Names(title: "sandbox-folder", place: "weir"),
+            NeedsAttentionListModel.Names(title: "OpenCode", place: nil),
+            NeedsAttentionListModel.Names(title: "OpenCode", place: nil)
+        ]
+        for locale in [Self.english, Self.japanese] {
+            #expect(queue.items.map { NeedsAttentionListModel.names(of: $0, in: session, locale: locale) } == expected)
+        }
     }
 
     @Test @MainActor func aPanesItem_isNamedAsItsSidebarRowIs_notByTheTerminalsTitle() throws {

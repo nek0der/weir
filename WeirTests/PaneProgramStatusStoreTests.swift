@@ -153,23 +153,41 @@ struct PaneProgramStatusStoreTests {
         #expect(scene.changes == 2)
     }
 
-    /// Every shell command ends in a return, so only the first asks for a
-    /// pass, while each still ends what the program reported.
-    @Test func aPanesReturnToTheShell_requestsOnePass_andEndsTheReport() {
+    @Test(arguments: [false, true])
+    func aReturnToTheShellEndsTheReportAndPublishesTheShellMarker(hasReport: Bool) {
         let scene = Scene()
+        var shellSnapshots: [Set<UUID>] = []
+        var statusSnapshots: [[UUID: PaneProgramStatusStore.Status]] = []
+        scene.store.onChange = {
+            shellSnapshots.append(scene.store.panesBackAtShell)
+            statusSnapshots.append(scene.store.statuses)
+        }
+        defer { scene.store.onChange = nil }
+        if hasReport {
+            scene.report(.blocked)
+            #expect(statusSnapshots.last?[Self.pane]?.state == .blocked)
+            #expect(shellSnapshots.last == [])
+        }
+
+        let beforeReturn = shellSnapshots.count
         scene.store.commandReturnedToShell(in: Self.pane)
+        #expect(shellSnapshots.count == beforeReturn + 1)
+        #expect(shellSnapshots.last == [Self.pane])
+        #expect(statusSnapshots.last == [:])
         #expect(scene.store.panesBackAtShell == [Self.pane])
-        #expect(scene.changes == 1)
+        let count = shellSnapshots.count
 
         scene.store.commandReturnedToShell(in: Self.pane)
-        #expect(scene.changes == 1)
+        #expect(shellSnapshots.count == count)
 
         scene.report(.idle)
-        #expect(scene.changes == 2)
+        #expect(statusSnapshots.last?[Self.pane]?.state == .idle)
         scene.store.commandReturnedToShell(in: Self.pane)
         #expect(scene.store.statuses.isEmpty)
         #expect(scene.store.panesBackAtShell == [Self.pane])
-        #expect(scene.changes == 3)
+        #expect(shellSnapshots.count == count + 2)
+        #expect(shellSnapshots.last == [Self.pane], "the pass must read the completed shell return")
+        #expect(statusSnapshots.last == [:])
     }
 
     @Test func aClosedPane_isNoLongerBackAtTheShell() {

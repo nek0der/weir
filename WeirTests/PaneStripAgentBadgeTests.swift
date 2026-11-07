@@ -204,10 +204,11 @@ struct PaneStripAgentBadgeTests {
     /// hook before its first prompt. The run retired when the tab closed
     /// comes back for the new pane: the agent's report makes the pane the
     /// conversation's, and the hint lets a relaunch resume it.
-    @Test func aReopenedTabsRun_comesBackForItsNewPane() throws {
+    @Test(arguments: [false, true], [false, true])
+    func aReopenedTabsRun_comesBackForItsNewPane(hasRunID: Bool, isRetired: Bool) throws {
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
         let oldPane = UUID()
-        let run = "1E9FFA50-B32F-46C4-BCED-C789AFACE803"
+        let run = hasRunID ? "1E9FFA50-B32F-46C4-BCED-C789AFACE803" : nil
         let sessionID = "01a15490-ade7-7223-a767-7eb22b5c69e1"
         var closed = tab
         closed.agentSessions[.codex] = [oldPane: AgentSessionInfo(sessionId: sessionID, cwd: "/tmp/repo")]
@@ -220,24 +221,41 @@ struct PaneStripAgentBadgeTests {
             for directory in [state, sessions, retired] {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             }
-            // As the pass that saw the pane close retired it.
-            let record = """
-            {"schemaVersion":3,"paneId":"\(oldPane.uuidString)","runId":"\(run)","revision":3,\
-            "stateEpisodeToken":"3","state":"finished","updatedAt":"2026-10-20T06:40:00Z",\
-            "lastHookEvent":"turn_finished","hasPrompt":true,"pid":"4242","sessionId":"\(sessionID)"}
-            """
-            let retiredFile = try retired
-                .appendingPathComponent(AgentRecordFixtures.recordFileName("\(run).1793000000.\(UUID().uuidString)"))
-            try Data(record.utf8).write(to: retiredFile)
+            let record = AgentStateRecordFixture(
+                schemaVersion: hasRunID ? 3 : 2, runId: run, revision: hasRunID ? 3 : nil,
+                stateEpisodeToken: hasRunID ? "3" : nil, paneId: oldPane.uuidString,
+                state: "finished", updatedAt: "2026-10-20T06:40:00Z", lastHookEvent: "turn_finished",
+                pid: "4242", sessionId: sessionID
+            )
+            let sourceStem = isRetired ? "\(record.storageID).1793000000.\(UUID().uuidString)" : record.storageID
+            let source = try (isRetired ? retired : state)
+                .appendingPathComponent(AgentRecordFixtures.recordFileName(sourceStem))
+            try JSONEncoder().encode(record).write(to: source)
+            let target = try state.appendingPathComponent(AgentRecordFixtures.recordFileName(run ?? pane.uuidString))
 
             let adapter = ProjectionFixture.adapter(provider: "codex", state: state, sessions: sessions, processStatus: { _ in .dead })
             adapter.reviveRuns(of: closed, paneIDs: [oldPane: pane])
-            #expect(!FileManager.default.fileExists(atPath: retiredFile.path))
-            let revived = try #require(AgentRecordFixtures.records(in: state).first)
-            #expect(revived.paneId == pane.uuidString)
-            #expect(revived.state == "unknown")
-            #expect(revived.pid == nil)
-            #expect(revived.resumeAttemptedAt != nil)
+            #expect(FileManager.default.fileExists(atPath: target.path))
+            if source != target {
+                #expect(!FileManager.default.fileExists(atPath: source.path))
+            }
+            let records = AgentRecordFixtures.records(in: state)
+            #expect(records.count == 1)
+            #expect(records.first?.schemaVersion == record.schemaVersion)
+            #expect(records.first?.runId == run)
+            #expect(records.first?.paneId == pane.uuidString)
+            #expect(records.first?.state == "unknown")
+            #expect(records.first?.pid == nil)
+            #expect(records.first?.resumeAttemptedAt != nil)
+
+            let hint = try #require(AgentRecordFixtures.hint(forPaneID: pane, in: sessions))
+            #expect(hint.schemaVersion == 1)
+            #expect(hint.paneId == pane.uuidString)
+            #expect(hint.sessionId == sessionID)
+            #expect(hint.cwd == "/tmp/repo")
+            #expect(hint.runId == run)
+            #expect(hint.lastHookEvent == "session_started")
+            #expect(hint.updatedAt == records.first?.resumeAttemptedAt)
 
             let at = AgentDateParsing.formatISO8601(Date().addingTimeInterval(5))
             adapter.programStatus = {
@@ -248,9 +266,51 @@ struct PaneStripAgentBadgeTests {
             #expect(adapter.lastFailure == nil)
             let header = try #require(attention.headerRuntime(inPane: pane))
             #expect(header.badge.state == .idle)
-            #expect(header.conversation != nil)
+            #expect(header.conversation == ConversationKey(provider: .codex, conversationID: sessionID, isFallback: false))
             #expect(session.tab(tab.id)?.agentSessions[.codex]?[pane]?.sessionId == sessionID)
             #expect(session.tab(tab.id)?.agentResumeCandidates[pane]?.contains(.codex) == true)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func aReopenedTab_keepsAnOccupiedRecordDestination(hasRunID: Bool) throws {
+        let (_, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        let oldPane = UUID()
+        let run = hasRunID ? UUID().uuidString : nil
+        var closed = tab
+        closed.agentSessions[.codex] = [oldPane: AgentSessionInfo(sessionId: "old", cwd: "/tmp/repo")]
+        closed.agentResumeCandidates[oldPane] = [.codex]
+
+        try withTempDir { root in
+            let state = root.appendingPathComponent("agent-states", isDirectory: true)
+            let sessions = root.appendingPathComponent("sessions", isDirectory: true)
+            let retired = state.appendingPathComponent("retired", isDirectory: true)
+            for directory in [state, sessions, retired] {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            }
+            let record = AgentStateRecordFixture(
+                runId: run, paneId: oldPane.uuidString, state: "finished", updatedAt: "2026-10-20T06:40:00Z", sessionId: "old"
+            )
+            let source = try retired.appendingPathComponent(
+                AgentRecordFixtures.recordFileName("\(record.storageID).1793000000.\(UUID().uuidString)")
+            )
+            let original = try JSONEncoder().encode(record)
+            try original.write(to: source)
+
+            let occupied = AgentStateRecordFixture(
+                runId: run, paneId: pane.uuidString, state: "running", updatedAt: "2026-10-20T06:41:00Z", sessionId: "other"
+            )
+            let destination = try state.appendingPathComponent(AgentRecordFixtures.recordFileName(occupied.storageID))
+            let existing = try JSONEncoder().encode(occupied)
+            try existing.write(to: destination)
+
+            let adapter = ProjectionFixture.adapter(provider: "codex", state: state, sessions: sessions)
+            adapter.reviveRuns(of: closed, paneIDs: [oldPane: pane])
+
+            #expect((try? Data(contentsOf: destination)) == existing)
+            #expect((try? Data(contentsOf: source)) == original)
+            #expect(AgentRecordFixtures.records(in: state) == [occupied])
+            #expect(AgentRecordFixtures.hint(forPaneID: pane, in: sessions) == nil)
         }
     }
 

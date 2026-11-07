@@ -157,8 +157,8 @@ package enum AttentionQueueReducer {
         package var launchFailures: [LaunchFailure] = []
         package var missingWorktrees: [MissingWorktree] = []
         package var retainedStops: [RetainedStop] = []
-        /// Stops the person dismissed while their run is still in error
-        /// (`StopLedger.dismissed`).
+        /// Stops dismissed or superseded by a newer stop while their run
+        /// still reports the same error episode (`StopLedger.dismissed`).
         package var dismissedStops: Set<AttentionItemID> = []
 
         package init(

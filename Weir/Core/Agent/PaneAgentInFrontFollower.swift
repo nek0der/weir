@@ -39,6 +39,13 @@ final class PaneAgentInFrontFollower {
     /// the follower weakly and ends within seconds, so none outlives it
     /// for long.
     private var titleReads: [UUID: Task<Void, Never>] = [:]
+    private struct FinishRead {
+        let id: UUID
+        var sawNoAgentAtTitle = false
+    }
+
+    /// The latest command end still being read in each pane.
+    private var finishReads: [UUID: FinishRead] = [:]
 
     init(session: WorkspaceSession, titleReadDelays: [Duration] = PaneAgentInFrontFollower.titleReadDelays) {
         self.session = session
@@ -55,24 +62,45 @@ final class PaneAgentInFrontFollower {
                 guard !Task.isCancelled, let self else { return }
                 let reading = await read(paneID)
                 guard !Task.isCancelled else { return }
+                switch reading {
+                case .agent:
+                    finishReads[paneID] = nil
+                case .none:
+                    finishReads[paneID]?.sawNoAgentAtTitle = true
+                case .undetermined:
+                    break
+                }
                 apply(reading, at: .titleChanged, inPane: paneID)
                 if case .agent = reading {
                     break
                 }
             }
-            self?.titleReads[paneID] = nil
+            if !Task.isCancelled {
+                self?.titleReads[paneID] = nil
+            }
         }
     }
 
     /// A pane's command finished: the shell's prompt is back, and an agent
     /// that ran there is gone. The readings a title started are dropped, as
     /// this one is later than any of them.
-    func commandFinished(inPane paneID: UUID) {
+    @discardableResult
+    func commandFinished(inPane paneID: UUID) -> Task<Void, Never>? {
         titleReads.removeValue(forKey: paneID)?.cancel()
-        guard let read, session?.tab(containing: paneID) != nil else { return }
-        Task { [weak self] in
+        guard let read, session?.tab(containing: paneID) != nil else { return nil }
+        let readID = UUID()
+        finishReads[paneID] = FinishRead(id: readID)
+        return Task { [weak self] in
             let reading = await read(paneID)
-            self?.apply(reading, at: .commandFinished, inPane: paneID)
+            guard let self, let finishRead = finishReads[paneID], finishRead.id == readID else { return }
+            finishReads[paneID] = nil
+            // A later title may also belong to the shell prompt. Its .none
+            // rules out an older agent reading but cannot clear a staged
+            // agent. The command end can still clear it.
+            if finishRead.sawNoAgentAtTitle, case .agent = reading {
+                return
+            }
+            apply(reading, at: .commandFinished, inPane: paneID)
         }
     }
 

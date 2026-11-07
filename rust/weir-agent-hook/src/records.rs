@@ -356,8 +356,8 @@ pub fn write_worktree_event(
 
 /// Whether the resume hint at `path` may be deleted by run `run_id` for
 /// `session_id`: the stored session must match, and the hint must belong to
-/// this run, or be a legacy hint without a run id while no other live run
-/// record for the pane is newer than the hint.
+/// this run, or be a legacy hint without a run id while no other run
+/// record for the pane is at least as new as the hint.
 #[must_use]
 pub fn hint_is_owned(
     path: &Path,
@@ -383,14 +383,19 @@ pub fn hint_is_owned(
                 .get("updatedAt")
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or_default();
-            !newer_run_record_exists(state_directory, pane_id, hint_updated)
+            !newer_run_record_exists(state_directory, pane_id, run_id, hint_updated)
         }
     }
 }
 
-/// Ambiguous ownership preserves data: a run-scoped record for the same pane
-/// that is at least as new as the hint means the hint may be someone else's.
-fn newer_run_record_exists(state_directory: &Path, pane_id: &str, hint_updated: &str) -> bool {
+/// Ambiguous ownership preserves data: another run's record for the same pane
+/// that is at least as new as the hint means the hint may be that run's.
+fn newer_run_record_exists(
+    state_directory: &Path,
+    pane_id: &str,
+    run_id: &str,
+    hint_updated: &str,
+) -> bool {
     let Ok(entries) = fs::read_dir(state_directory) else {
         return false;
     };
@@ -409,7 +414,10 @@ fn newer_run_record_exists(state_directory: &Path, pane_id: &str, hint_updated: 
             return false;
         };
         record.pane_id == pane_id
-            && record.run_id.as_deref().is_some_and(|run| run != pane_id)
+            && record
+                .run_id
+                .as_deref()
+                .is_some_and(|run| run != pane_id && run != run_id)
             && record.updated_at.as_str() >= hint_updated
     })
 }
@@ -605,6 +613,9 @@ mod tests {
         assert!(hint_is_owned(&hint, "s-1", RUN, PANE, &scratch.0));
         // A pane-scoped record from before run ids does not claim it.
         scratch.record(PANE, "2026-09-14T00:00:20Z");
+        assert!(hint_is_owned(&hint, "s-1", RUN, PANE, &scratch.0));
+        // The caller's own record does not claim the hint against it.
+        scratch.record(RUN, "2026-09-14T00:00:20Z");
         assert!(hint_is_owned(&hint, "s-1", RUN, PANE, &scratch.0));
         // An older run-scoped record does not claim it either.
         scratch.record(OTHER_RUN, "2026-09-14T00:00:05Z");

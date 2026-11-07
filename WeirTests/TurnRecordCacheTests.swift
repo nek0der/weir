@@ -195,13 +195,14 @@ struct TurnRecordCacheTests {
 
     /// The projection drops a turn whose name a pass leaves out, so a
     /// directory that could not be listed must not read as one emptied.
-    @Test func aDirectoryThatCouldNotBeListed_keepsItsTurns_untilItCanBe() throws {
+    @Test(.enabled(if: geteuid() != 0), arguments: [false, true])
+    func aDirectoryThatCouldNotBeListed_keepsItsTurns_untilItCanBe(deniesAncestorSearch: Bool) throws {
         try withTempDir { state in
             try AgentRecordFixtures.writeTurn(id: Self.first, number: 1, session: "s1", runID: Self.run, in: state)
             try AgentRecordFixtures.writeTurn(id: Self.second, number: 2, session: "s1", runID: Self.run, in: state)
             let cache = TurnRecordCache()
             try cache.commit(cache.read([source(state)]))
-            let directory = try source(state).directory
+            let directory = deniesAncestorSearch ? state : try source(state).directory
             try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: directory.path)
             defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
 
@@ -211,13 +212,33 @@ struct TurnRecordCacheTests {
             #expect(read.hasUnreadRecord)
             cache.commit(read)
             #expect(cache.unchanged() == nil, "the next pass lists the directory again")
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+            let recovered = try cache.read([source(state)])
+            #expect(recovered.files.map(\.name) == [Self.first, Self.second])
+            #expect(recovered.files.allSatisfy { $0.content == nil })
+            #expect(!recovered.hasUnreadRecord)
+            cache.commit(recovered)
+            let unchanged = try #require(cache.unchanged())
+            #expect(unchanged.files.map(\.name) == [Self.first, Self.second])
         }
     }
 
-    /// A directory that is not there yet has no turns.
-    @Test func aMissingDirectory_hasNoTurns() throws {
+    /// An absent directory has no turns, including a removed link target.
+    @Test(arguments: [false, true])
+    func aMissingDirectory_hasNoTurns(removesLinkedDirectory: Bool) throws {
         try withTempDir { state in
             let cache = TurnRecordCache()
+            if removesLinkedDirectory {
+                try AgentRecordFixtures.writeTurn(id: Self.first, number: 1, session: "s1", runID: Self.run, in: state)
+                let directory = try source(state).directory
+                let target = state.appendingPathComponent("linked-turns")
+                try FileManager.default.moveItem(at: directory, to: target)
+                try FileManager.default.createSymbolicLink(at: directory, withDestinationURL: target)
+                let initial = try cache.read([source(state)])
+                #expect(initial.files.map(\.name) == [Self.first])
+                cache.commit(initial)
+                try FileManager.default.removeItem(at: target)
+            }
             let read = try cache.read([source(state)])
             #expect(read.files.isEmpty)
             #expect(!read.hasUnreadRecord)

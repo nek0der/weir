@@ -88,6 +88,136 @@ struct PaneStripAgentInFrontTests {
         #expect(session.tab(tab.id)?.agentsInFront.isEmpty == true)
     }
 
+    @Test(.timeLimit(.minutes(1)))
+    func aLateCommandEndReading_doesNotClearANewerAgent() async throws {
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        let follower = PaneAgentInFrontFollower(session: session, titleReadDelays: [.zero])
+        let oldReading = Gate<AgentInFrontReading>()
+        defer { oldReading.open(with: .none) }
+        var reads = 0
+        follower.read = { requestedPane in
+            #expect(requestedPane == pane)
+            reads += 1
+            if reads == 1 {
+                return await oldReading.wait()
+            }
+            return .agent(.codex)
+        }
+        let finished = try #require(follower.commandFinished(inPane: pane))
+        await oldReading.waitUntilRequested()
+
+        await Self.commandStarted(follower, inPane: pane)
+        try #require(session.tab(tab.id)?.agentsInFront[pane]?.kind == .codex)
+        oldReading.open(with: .none)
+        await finished.value
+
+        #expect(reads == 2)
+        #expect(session.tab(tab.id)?.agentsInFront[pane]?.kind == .codex)
+        #expect(Self.item(tab, in: session)?.agents.first?.kind == .codex)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aLateCommandEndReading_doesNotRestoreAnAgentAfterTheShellsTitleRead() async throws {
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        let follower = PaneAgentInFrontFollower(session: session, titleReadDelays: [.zero])
+        let oldReading = Gate<AgentInFrontReading>()
+        defer { oldReading.open(with: .agent(.codex)) }
+        var reads = 0
+        follower.read = { requestedPane in
+            #expect(requestedPane == pane)
+            reads += 1
+            switch reads {
+            case 1: return .agent(.codex)
+            case 2: return await oldReading.wait()
+            default: return .none
+            }
+        }
+        await Self.commandStarted(follower, inPane: pane)
+        try #require(session.tab(tab.id)?.agentsInFront[pane] == PaneAgentInFront(kind: .codex, isStaged: false))
+        let finished = try #require(follower.commandFinished(inPane: pane))
+        await oldReading.waitUntilRequested()
+
+        await Self.commandStarted(follower, inPane: pane)
+        try #require(session.tab(tab.id)?.agentsInFront[pane] == nil)
+        oldReading.open(with: .agent(.codex))
+        await finished.value
+
+        #expect(reads == 3)
+        #expect(session.tab(tab.id)?.agentsInFront[pane] == nil)
+        let item = try #require(Self.item(tab, in: session))
+        #expect(item.agents.isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aLateCommandEndReading_doesNotSupersedeANewerCommandEnd() async throws {
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        let follower = PaneAgentInFrontFollower(session: session, titleReadDelays: [.zero])
+        let oldReading = Gate<AgentInFrontReading>()
+        defer { oldReading.open(with: .none) }
+        var reads = 0
+        follower.read = { requestedPane in
+            #expect(requestedPane == pane)
+            reads += 1
+            if reads == 1 {
+                return await oldReading.wait()
+            }
+            return .agent(.claude)
+        }
+        let older = try #require(follower.commandFinished(inPane: pane))
+        await oldReading.waitUntilRequested()
+        let newer = try #require(follower.commandFinished(inPane: pane))
+        await newer.value
+        let observed = PaneAgentInFront(kind: .claude, isStaged: false)
+        try #require(session.tab(tab.id)?.agentsInFront[pane] == observed)
+
+        oldReading.open(with: .none)
+        await older.value
+
+        #expect(reads == 2)
+        #expect(session.tab(tab.id)?.agentsInFront[pane] == observed)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aCanceledTitleRead_doesNotReplaceTheResultOrLoseTheNewerTask() async throws {
+        let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
+        let follower = PaneAgentInFrontFollower(session: session, titleReadDelays: [.zero])
+        let oldReading = Gate<AgentInFrontReading>()
+        let newReading = Gate<AgentInFrontReading>()
+        defer {
+            oldReading.open(with: .agent(.codex))
+            newReading.open(with: .agent(.claude))
+        }
+        var reads = 0
+        follower.read = { requestedPane in
+            #expect(requestedPane == pane)
+            reads += 1
+            switch reads {
+            case 1: return await oldReading.wait()
+            case 2: return .none
+            default: return await newReading.wait()
+            }
+        }
+        follower.titleChanged(inPane: pane)
+        let older = try #require(follower.pendingTitleReads(inPane: pane))
+        await oldReading.waitUntilRequested()
+        let finished = try #require(follower.commandFinished(inPane: pane))
+        await finished.value
+        follower.titleChanged(inPane: pane)
+        let newer = try #require(follower.pendingTitleReads(inPane: pane))
+        await newReading.waitUntilRequested()
+
+        oldReading.open(with: .agent(.codex))
+        await older.value
+        #expect(session.tab(tab.id)?.agentsInFront[pane] == nil)
+        #expect(follower.pendingTitleReads(inPane: pane) != nil)
+        newReading.open(with: .agent(.claude))
+        await newer.value
+
+        #expect(reads == 3)
+        #expect(session.tab(tab.id)?.agentsInFront[pane] == PaneAgentInFront(kind: .claude, isStaged: false))
+        #expect(follower.pendingTitleReads(inPane: pane) == nil)
+    }
+
     @Test func theShellsPromptTitle_afterTheAgentQuit_alsoTurnsTheTabBack() async {
         // A shell whose 133 D marks are off still titles its prompt.
         let (session, tab, pane) = WorkspaceSessionFixture.withLooseTab()
@@ -169,6 +299,43 @@ struct PaneStripAgentInFrontTests {
         // `codex` was not found: the command ends, and the shell is back.
         follower.apply(.none, at: .commandFinished, inPane: pane)
         #expect(Self.item(tab, in: session, container: container)?.agents.first?.kind == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [AgentInFrontReading.none, .undetermined])
+    func aStagedAgent_goesWhenTheEndReadFinishesAfterANonAgentTitleRead(_ titleReading: AgentInFrontReading) async throws {
+        let (session, project) = WorkspaceSessionFixture.withProject(name: "beta")
+        let container = ContainerID.project(project.id)
+        let pane = try #require(TabActions.newTab(session, in: container, running: .codex))
+        let tab = try #require(session.tab(containing: pane))
+        let staged = PaneAgentInFront(kind: .codex, isStaged: true)
+        try #require(tab.agentsInFront[pane] == staged)
+
+        let follower = PaneAgentInFrontFollower(session: session, titleReadDelays: [.zero])
+        let finishRead = Gate<AgentInFrontReading>()
+        defer { finishRead.open(with: .none) }
+        var reads: [UUID] = []
+        follower.read = { pane in
+            reads.append(pane)
+            if reads.count == 1 {
+                return await finishRead.wait()
+            }
+            return titleReading
+        }
+
+        let finished = try #require(follower.commandFinished(inPane: pane))
+        await finishRead.waitUntilRequested()
+        follower.titleChanged(inPane: pane)
+        let title = try #require(follower.pendingTitleReads(inPane: pane))
+        await title.value
+        try #require(reads == [pane, pane])
+        try #require(session.tab(tab.id)?.agentsInFront[pane] == staged)
+
+        finishRead.open(with: .none)
+        await finished.value
+
+        #expect(session.tab(tab.id)?.agentsInFront[pane] == nil)
+        let shell = try #require(Self.item(tab, in: session, container: container))
+        #expect(shell.agents.isEmpty)
     }
 
     // MARK: - The pane header

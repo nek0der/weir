@@ -138,7 +138,9 @@ final class TurnRecordCache {
                 // every turn a pass does not name, so the ones the last
                 // commit found go by name, which keeps them, and the next
                 // pass lists the directory again.
-                if FileManager.default.fileExists(atPath: source.directory.path) {
+                var directoryStatus = stat()
+                let isMissing = stat(source.directory.path, &directoryStatus) != 0 && errno == ENOENT
+                if !isMissing {
                     let kept = snapshot.named.filter { $0.provider == source.provider }
                     pass.files += kept
                     pass.named += kept

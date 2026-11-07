@@ -407,4 +407,62 @@ struct AgentSiblingTabsTests {
             #expect(!shown)
         }
     }
+
+    enum ReviewedReceiver: CaseIterable {
+        case deadInThisPane
+        case liveInThisPane
+        case inAnotherPane
+        case withoutChannel
+        case unnamed
+    }
+
+    @Test(arguments: ReviewedReceiver.allCases)
+    func reviewedSessionFocusPreservesTheNamedDestination(_ receiver: ReviewedReceiver) async throws {
+        let pane = UUID()
+        let reviewedChannel = UUID()
+        let otherChannel = UUID()
+        let reviewedPane = receiver == .inAnotherPane ? UUID() : pane
+        var reviewed = Self.tab("a", isBehind: true, updatedAt: Date(timeIntervalSince1970: 1), pane: reviewedPane)
+        reviewed.tabChannel = receiver == .withoutChannel ? nil : reviewedChannel
+        reviewed.processID = 4242
+        var other = Self.tab("b", isBehind: false, updatedAt: Date(timeIntervalSince1970: 2), pane: pane)
+        other.tabChannel = otherChannel
+        other.processID = 4243
+        let runs = [reviewed, other]
+        let reviewedConversation = try #require(reviewed.conversation)
+        let requested = receiver == .unnamed ? nil : reviewedConversation
+        let namesReviewed = receiver == .deadInThisPane || receiver == .liveInThisPane
+        #expect(ReviewSessionFocus.conversation(reviewed: requested, inPane: pane, runtimes: runs) == (namesReviewed ? requested : nil))
+
+        try await withTempDir { root in
+            @MainActor func show(limit: Duration) async -> Bool {
+                await ReviewSessionFocus.show(
+                    conversation: requested,
+                    destination: Self.destination(pane),
+                    runtimes: { runs },
+                    limit: limit,
+                    isAlive: { $0 == 4243 || receiver == .liveInThisPane },
+                    under: root
+                )
+            }
+
+            if receiver == .deadInThisPane {
+                let confirmed = await show(limit: .zero)
+                #expect(!confirmed)
+                let entries = try FileManager.default.contentsOfDirectory(atPath: root.path)
+                #expect(entries.isEmpty, "refusal must leave both process channels untouched")
+            } else {
+                let channel = namesReviewed ? reviewedChannel : otherChannel
+                let plugin = Self.answering(channel: channel, root: root, shows: namesReviewed ? "ses_a" : "ses_b")
+                let confirmed = await show(limit: .seconds(3))
+                let request = await plugin.value
+                #expect(confirmed)
+                #expect(request.sessionID == (namesReviewed ? "ses_a" : nil))
+                #expect(request.nonce != nil)
+                let directory = AgentTabFocus.requestURL(channel: channel, under: root).deletingLastPathComponent()
+                let entries = try FileManager.default.contentsOfDirectory(atPath: directory.path)
+                #expect(entries.isEmpty)
+            }
+        }
+    }
 }

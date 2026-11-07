@@ -439,7 +439,11 @@ enum ChangesPanelActions {
             let mapping = ConversationTabs(tabs: tabs, runtimes: runtimes)
             return mapping.running.compactMap { conversation in
                 guard let place = mapping.place(of: conversation), let tab = tabsByID[place.tabID] else { return nil }
-                let runtime = AttentionState.headerRuntime(inPane: place.paneID, among: runtimes)
+                let runtime = runtimes
+                    .filter {
+                        $0.conversation == conversation && $0.paneIDs.contains(place.paneID) && $0.badge.state != .unknown
+                    }
+                    .max { $0.badge.updatedAt < $1.badge.updatedAt }
                 let isTitled = mapping.conversations(of: tab.id)?.titled == conversation
                 let live = ConversationChoice.LiveTab(
                     title: tab.shownTitle,
