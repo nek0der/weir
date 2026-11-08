@@ -264,7 +264,8 @@ struct OpenInNewWindowTests {
         let rows = EmptyWindowModel(session: fixture.session, window: opened.selection).rows
         #expect(rows.map(\.id) == [fixture.a.id, fixture.b.id, fixture.c.id])
         #expect(rows.map(\.isInOtherWindow) == [false, false, false])
-        #expect(rows.map(\.mark) == [nil, nil, nil])
+        #expect(rows.map(\.attention.count) == [0, 0, 0])
+        #expect(rows.map(\.running) == [0, 0, 0])
     }
 
     @Test func newWindow_besideAShownWindow_foldsThatWindowsProject() {
@@ -286,7 +287,7 @@ struct OpenInNewWindowTests {
         #expect(second.selection.isChoosingProject)
     }
 
-    @Test func anEmptyWindowsRow_saysOneThingAtItsEnd_itsWindowFirst() {
+    @Test func anEmptyWindowsRow_keepsWindowAndBothActivityCountsIndependent() {
         let fixture = Fixture()
         let d = fixture.session.addOrActivateProject(rootURL: WorkspaceSessionFixture.projectRootURL("d"), suggestedName: "d")
         let store = AttentionQueueStore()
@@ -306,7 +307,7 @@ struct OpenInNewWindowTests {
         #expect(rows.map(\.attention.count) == [1, 1, 0, 0])
         #expect(rows.map(\.attention.style) == [.blocking, .blocking, .empty, .empty])
         #expect(rows.map(\.running) == [2, 2, 2, 0])
-        #expect(rows.map(\.mark) == [.otherWindow, .attention, .running, nil])
+        #expect(rows.map(\.isInOtherWindow) == [true, false, false, false])
         #expect(rows.map(\.folder) == projects.map(\.rootURL.path))
     }
 

@@ -231,7 +231,7 @@ enum SessionRowFactText {
         if row.fact.glyph != .shell {
             parts += row.agentKinds.map { agentName(.agent($0), locale: locale) }
         }
-        // The chip carries the limit only on screen; a row held by another
+        // The icon carries the limit only on screen; a row held by another
         // agent's limit says so nowhere else.
         if let limit = usageLimitSpoken(row.usageLimits, locale: locale, now: now) {
             parts.append(AgentStatusText.spoken(limit, locale: locale))
@@ -319,27 +319,7 @@ enum SessionRowFactText {
         return name.resolved(in: locale)
     }
 
-    /// The usage limit chip of a row, of the limit holding its
-    /// agents at `now` (`UsageLimit.holding`): "Limit · 3:40 PM", or
-    /// "Limit" when the reset is not known. `nil` once every known reset
-    /// has passed: the chip says the agents are held, which they are not
-    /// any longer (the stopped agent's own row still says it stopped).
-    static func usageLimitChip(_ limits: [UsageLimit], locale: Locale, now: Date) -> String? {
-        guard let limit = UsageLimit.holding(limits, at: now) else { return nil }
-        guard let resetAt = limit.resetAt else {
-            return LocalizedStringResource(
-                "Limit",
-                comment: "Worktree row chip: an agent in the row is at its plan's usage limit"
-            ).resolved(in: locale)
-        }
-        guard resetAt > now else { return nil }
-        return LocalizedStringResource(
-            "Limit · \(StopReasonText.resetTime(resetAt, locale: locale, now: now))",
-            comment: "Worktree row chip: an agent in the row is at its plan's usage limit, and when it resets"
-        ).resolved(in: locale)
-    }
-
-    /// The chip as VoiceOver and the tooltip say it: the limit in full.
+    /// The active usage limit and reset time for VoiceOver and the tooltip.
     static func usageLimitSpoken(_ limits: [UsageLimit], locale: Locale, now: Date) -> String? {
         UsageLimit.holding(limits, at: now).map { StopReasonText.usageLimit($0, locale: locale, now: now) }
     }

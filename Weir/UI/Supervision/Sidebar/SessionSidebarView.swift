@@ -393,9 +393,8 @@ struct SessionSidebarView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 // The time steps once a minute, so a finer tick would
-                // only redraw the same text. A usage limit's chip drops
-                // its reset time as the limit resets, when the sync reads
-                // the limits again.
+                // only redraw the same text. A usage limit's icon disappears
+                // as the limit resets, when the sync reads the limits again.
                 TimelineView(.periodic(from: .now, by: Self.rowClockInterval)) { context in
                     let now = rowClock(at: context.date)
                     // A section per project, so its header stays at the

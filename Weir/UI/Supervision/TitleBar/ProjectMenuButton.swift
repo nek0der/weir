@@ -327,7 +327,7 @@ struct ProjectDropdown: View {
 }
 
 /// A project in the dropdown: a check on the current one, its mark, its
-/// name, and its counts in chips. The arrow keys' row and the hovered one
+/// name, and its activity counts. The arrow keys' row and the hovered one
 /// take the same fill.
 private struct ProjectDropdownRow: View {
     let row: ProjectMenuModel.Row
@@ -355,33 +355,15 @@ private struct ProjectDropdownRow: View {
                         .foregroundStyle(SupervisionTokens.text.color)
                         .lineLimit(1)
                         .supervisionTruncation(.name)
-                    // Choosing it brings that window forward rather than
-                    // switching this one; said faintly, after the
-                    // name, which a narrow row cuts first.
                     if row.isInOtherWindow {
-                        Text("Other Window", comment: "Another window shows this project: choosing it brings that window forward")
-                            .font(.supervision(.row))
+                        Image(systemName: "macwindow.on.rectangle")
+                            .font(.supervision(.meta))
                             .foregroundStyle(SupervisionTokens.muted.color)
-                            .lineLimit(1)
                             .fixedSize()
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                // Each count says what it counts, in words, rather than
-                // leaving a bare number to its color.
-                HStack(spacing: WeirLayout.Supervision.spaceSnug) {
-                    if row.attention.count > 0 {
-                        SupervisionChip(
-                            text: Text(row.attention.label),
-                            tone: row.attention.style == .blocking ? .waiting : .unread
-                        )
-                    }
-                    if row.running > 0 {
-                        SupervisionChip(text: Text("Running · \(row.running)"), tone: .running)
-                    }
-                }
-                // The counts stay whole; the name is what a narrow row cuts.
-                .fixedSize()
+                ProjectActivityCounts(attention: row.attention, running: row.running)
             }
             .padding(Layout.dropdownRowInsets)
             .dropdownRowBackground(isSelected: isSelected, isHovering: isHovering)
@@ -390,7 +372,9 @@ private struct ProjectDropdownRow: View {
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
         .modifier(RowHelp(text: ProjectMenuModel.rowHelp(row, locale: locale)))
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: row.name))
+        .accessibilityValue(Text(verbatim: ProjectMenuModel.rowHelp(row, locale: locale) ?? ""))
         .accessibilityAddTraits(row.isCurrent ? .isSelected : [])
         // VoiceOver's press opens the row here, never as a ⌘-click read
         // from an event kept from earlier; a new window is its own action.

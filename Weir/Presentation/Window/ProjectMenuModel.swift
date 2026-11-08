@@ -122,16 +122,37 @@ struct ProjectMenuModel: Equatable {
         return words.prefix(2).compactMap(\.first).map(String.init).joined().uppercased()
     }
 
-    /// A row's tooltip: the window's own project says so. Another
-    /// project's row says how to open it in a new window, the
-    /// one thing the row does not show: choosing it switches this window.
-    /// A row another window shows has none: that window comes forward
-    /// however it is chosen, which the row says after its name.
+    /// A row's tooltip and VoiceOver value, including the meanings of its icons.
     static func rowHelp(_ row: Row, locale: Locale) -> String? {
+        var parts = [activityDescription(
+            attention: row.attention, running: row.running,
+            isInOtherWindow: row.isInOtherWindow, locale: locale
+        )]
         if row.isCurrent {
-            return LocalizedStringResource("Current Window").resolved(in: locale)
+            parts.append(LocalizedStringResource("Current Window").resolved(in: locale))
+        } else if row.opensInNewWindow {
+            parts.append(NewWindowText.clickHelp(locale: locale))
         }
-        return row.opensInNewWindow ? NewWindowText.clickHelp(locale: locale) : nil
+        let text = parts.filter { !$0.isEmpty }.joined(separator: "\n")
+        return text.isEmpty ? nil : text
+    }
+
+    /// Describes the window marker and both activity counts for project rows.
+    static func activityDescription(
+        attention: NeedsAttentionCountModel, running: Int, isInOtherWindow: Bool, locale: Locale
+    ) -> String {
+        var parts: [String] = []
+        if isInOtherWindow {
+            parts.append(LocalizedStringResource("Other Window").resolved(in: locale))
+        }
+        if attention.count > 0 {
+            parts.append(attention.label.resolved(in: locale))
+            parts.append(contentsOf: AttentionSummaryText.breakdown(attention.counts, locale: locale))
+        }
+        if running > 0 {
+            parts.append(LocalizedStringResource("Running · \(running)").resolved(in: locale))
+        }
+        return AgentStatusText.joined(parts, locale: locale)
     }
 
     /// The project control's tooltip: what it is, and how many items wait

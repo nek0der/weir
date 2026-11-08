@@ -23,7 +23,7 @@ struct IconBadgeMark: View {
                 .foregroundStyle((tone == .blocking ? SupervisionTokens.onWaiting : SupervisionTokens.onUnreadCount).color)
                 .padding(.horizontal, WeirLayout.Supervision.spaceXS)
                 .frame(minWidth: inner, minHeight: inner)
-                .background(Capsule().fill((tone == .blocking ? SupervisionTokens.waitingCount : SupervisionTokens.unreadCount).color))
+                .background(Capsule().fill(Self.countColor(for: tone)))
                 .padding(ring)
                 .background(Capsule().fill(.black).blendMode(.destinationOut))
                 .fixedSize()
@@ -35,6 +35,11 @@ struct IconBadgeMark: View {
         case .stopped:
             dot(color: SupervisionTokens.stopped.color, size: WeirLayout.Supervision.usageLimitDotSize)
         }
+    }
+
+    /// Returns the count color shared by corner badges and inline attention marks.
+    static func countColor(for tone: IconBadge.CountTone) -> Color {
+        (tone == .blocking ? SupervisionTokens.waitingCount : SupervisionTokens.unreadCount).color
     }
 
     private func dot(color: Color, size: CGFloat) -> some View {

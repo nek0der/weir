@@ -16,12 +16,11 @@ struct NeedsAttentionButton: View {
         let model = NeedsAttentionCountModel(attentionQueue.queue.counts())
         TitleBarMenuButton(menu: .needsAttention) { isHighlighted in
             // Lit while its list is open, as Changes is while its panel is.
-            IconControlFace(
-                systemImage: "tray",
+            NeedsAttentionMark(
+                model: model,
+                isControl: true,
                 isLit: window.titleBarMenu?.menu == .needsAttention,
-                isHovering: isHighlighted,
-                badge: .counting(model.count, tone: model.style == .blocking ? .blocking : .unread),
-                standsOnCorner: true
+                isHovering: isHighlighted
             )
         }
         // ⌘J and ⇧⌘J walk the list this opens.
@@ -42,5 +41,35 @@ struct NeedsAttentionButton: View {
             AttentionSummaryText.breakdown(model.counts, locale: locale),
             locale: locale
         )))
+    }
+}
+
+/// The attention tray and count, on a control's corner or inline in a project row.
+struct NeedsAttentionMark: View {
+    let model: NeedsAttentionCountModel
+    var isControl = false
+    var isLit = false
+    var isHovering = false
+
+    private let symbol = "tray"
+
+    var body: some View {
+        let tone: IconBadge.CountTone = model.style == .blocking ? .blocking : .unread
+        if isControl {
+            IconControlFace(
+                systemImage: symbol,
+                isLit: isLit,
+                isHovering: isHovering,
+                badge: .counting(model.count, tone: tone),
+                standsOnCorner: true
+            )
+        } else {
+            HStack(spacing: WeirLayout.Supervision.spaceSnug) {
+                Image(systemName: symbol)
+                Text(verbatim: String(model.count))
+                    .monospacedDigit()
+            }
+            .foregroundStyle(IconBadgeMark.countColor(for: tone))
+        }
     }
 }
