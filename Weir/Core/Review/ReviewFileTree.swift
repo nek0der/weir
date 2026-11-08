@@ -62,8 +62,14 @@ enum ReviewFileTree {
         return directories(files).flatMap(\.files)
     }
 
+    /// The file name with control pictures so it fits on one display line.
     static func name(_ path: String) -> String {
-        String(path.split(separator: "/").last ?? "")
+        PathFormatting.showingControlCharacters(String(path.split(separator: "/").last ?? ""))
+    }
+
+    /// The parent folder as shown in a one-line file label.
+    static func displayParent(_ path: String) -> String? {
+        parent(path).map(PathFormatting.showingControlCharacters)
     }
 
     static func parent(_ path: String) -> String? {

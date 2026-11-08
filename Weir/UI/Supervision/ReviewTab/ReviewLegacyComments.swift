@@ -123,8 +123,11 @@ struct ReviewLegacyComments: View {
         }
     }
 
+    /// One line, so a newline in the file's name shows as a symbol, as the
+    /// file list shows it; the comment keeps the path it was written on.
     private func location(_ comment: ReviewComment) -> String {
-        guard let line = comment.anchor.newLine ?? comment.anchor.oldLine else { return comment.file.path }
-        return "\(comment.file.path):\(line)"
+        let path = PathFormatting.showingControlCharacters(comment.file.path)
+        guard let line = comment.anchor.newLine ?? comment.anchor.oldLine else { return path }
+        return "\(path):\(line)"
     }
 }

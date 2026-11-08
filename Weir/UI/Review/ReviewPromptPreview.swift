@@ -93,7 +93,7 @@ struct ReviewPromptPreview: View {
             Text(verbatim: ReviewFileTree.name(file.path))
                 .font(.supervision(.meta, weight: .semibold, design: .monospaced))
                 .lineLimit(1)
-            if let parent = ReviewFileTree.parent(file.path) {
+            if let parent = ReviewFileTree.displayParent(file.path) {
                 Text(verbatim: parent)
                     .font(.supervision(.badge, design: .monospaced))
                     .foregroundStyle(SupervisionTokens.muted.color)

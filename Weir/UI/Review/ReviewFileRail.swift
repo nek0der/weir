@@ -290,7 +290,7 @@ struct ReviewFileRail: View {
     /// written once against this.
     private struct RailSection: Identifiable, Equatable {
         let id: String
-        /// A layer's name, or a directory path shown as is.
+        /// A layer's name, or a directory path formatted for display.
         let title: DisplayText
         let files: [ReviewFile]
     }
@@ -311,7 +311,9 @@ struct ReviewFileRail: View {
         return ReviewFileTree.directories(ordered).map { group in
             RailSection(
                 id: "dir:" + group.path,
-                title: group.path.isEmpty ? .localized("Repository root") : .verbatim(group.path),
+                title: group.path.isEmpty
+                    ? .localized("Repository root")
+                    : .verbatim(PathFormatting.showingControlCharacters(group.path)),
                 files: group.files
             )
         }
@@ -462,7 +464,7 @@ struct ReviewFileRail: View {
                     Spacer(minLength: WeirLayout.Supervision.spaceXS)
                     ReviewDiffCounts(stat: stats[file.id], size: .caption, spacing: WeirLayout.Supervision.spaceXS)
                 }
-                if showsParent, let parent = ReviewFileTree.parent(file.path) {
+                if showsParent, let parent = ReviewFileTree.displayParent(file.path) {
                     Text(verbatim: parent)
                         .font(.supervisionCode(beside: .meta))
                         .lineLimit(1)
