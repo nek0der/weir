@@ -16,9 +16,16 @@ enum SidebarHeaderText {
         return (header.workingCount + header.moreCount).formatted(.number.locale(locale))
     }
 
-    /// What VoiceOver reads for the header: the project, and how many
-    /// rows it lists, or that another window shows it.
+    /// What VoiceOver reads for the header, including trouble whose icon
+    /// is hidden by the header's single accessibility element.
     static func accessibilityLabel(_ header: SidebarProjectHeader, locale: Locale) -> String {
+        let project = projectLabel(header, locale: locale)
+        guard let trouble = header.trouble else { return project }
+        return [project, ProjectTroubleText.label(trouble.kind).resolved(in: locale)]
+            .formatted(.list(type: .and).locale(locale))
+    }
+
+    private static func projectLabel(_ header: SidebarProjectHeader, locale: Locale) -> String {
         if header.isInOtherWindow {
             return LocalizedStringResource(
                 "\(header.name), project, shown in another window",
@@ -72,10 +79,19 @@ enum SidebarHeaderText {
     }
 }
 
-/// The words for a project's trouble (`ProjectTrouble`): the few the header
-/// shows in place of its count, and the sentence its tooltip and VoiceOver
-/// say, which names what to do next.
+/// The symbol and words for a project's trouble (`ProjectTrouble`): the
+/// icon's accessible label, and the explanation in its tooltip and the
+/// header's VoiceOver hint.
 enum ProjectTroubleText {
+    /// Returns a distinct shape for each kind, so color is not the only cue.
+    static func symbol(_ trouble: ProjectTrouble) -> String {
+        switch trouble {
+        case .folderMissing: "folder.badge.questionmark"
+        case .gitUnavailable: "exclamationmark.triangle"
+        case .listingFailed: "list.bullet.rectangle"
+        }
+    }
+
     static func label(_ trouble: ProjectTrouble) -> LocalizedStringResource {
         switch trouble {
         case .folderMissing:

@@ -174,6 +174,12 @@ struct SidebarProjectActionsMenu: View {
             }
             .tint(Color.primary)
         }
+        if let bringForward = actions.bringOtherWindowForward {
+            Button(action: bringForward) {
+                Label { Text(SidebarProjectActionText.bringForward) } icon: { Image(systemName: "macwindow.on.rectangle") }
+            }
+            .tint(Color.primary)
+        }
         // The title bar's own words and symbols for the same commands.
         Button(action: actions.openSettings) {
             Label(ProjectMenuModel.ProjectItem.settings.label)
