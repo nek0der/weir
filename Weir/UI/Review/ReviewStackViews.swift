@@ -82,7 +82,7 @@ struct ReviewStackFileHeader: View {
             HStack(spacing: WeirLayout.Supervision.spaceS) {
                 disclosure(header)
                 ReviewViewedCheckbox(path: header.file.path, isViewed: header.isViewed, onToggle: onToggleViewed)
-                Text(verbatim: header.file.path)
+                Text(verbatim: PathFormatting.showingControlCharacters(header.file.path))
                     .font(.supervisionCode(beside: .label, weight: .semibold))
                     .foregroundStyle(header.isFolded ? SupervisionTokens.muted.color : SupervisionTokens.text.color)
                     .lineLimit(1)

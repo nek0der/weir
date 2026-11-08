@@ -52,6 +52,25 @@ struct ReviewGitNameTests {
         #expect(try await ReviewGit.pathsChanged(from: head, to: tree, at: root) == ["plain.txt", "r\u{FFFD}sum\u{FFFD}.txt"])
     }
 
+    @Test func aPathWithNewlines_keepsItsGitNameAndShowsItsWholeFileName() async throws {
+        let repo = try await TempGitRepo.make()
+        defer { repo.cleanup() }
+        let path = "source\nfolder/file\nname.txt"
+        try repo.write("new line\n", to: path)
+        try await repo.git(["add", "--", path])
+
+        let files = try await ReviewGit.files(at: repo.url)
+        #expect(files.map(\.path) == [path])
+        let file = try #require(files.first)
+        let groups = ReviewFileTree.directories(files)
+        #expect(groups.map(\.path) == ["source\nfolder"])
+        #expect(ReviewFileTree.name(file.path) == "file␊name.txt")
+        #expect(ReviewFileTree.displayParent(file.path) == "source␊folder")
+
+        let diff = try await ReviewGit.diff(file, root: repo.url)
+        #expect(diff.lines.filter { $0.kind == .added }.map(\.text) == ["new line"])
+    }
+
     @Test func aPathEndingInAModeNumber_isStillText() async throws {
         let repo = try await TempGitRepo.make()
         defer { repo.cleanup() }
