@@ -12,6 +12,34 @@ struct LoginShellPathTests {
         #expect(try await shell.path() == "/opt/bin:/usr/bin")
     }
 
+    @Test(arguments: [
+        ("/opt/company tools/bin:/usr/bin" as String?, "/opt/company tools/bin:/usr/bin:/bin"),
+        (nil, "/usr/bin:/bin")
+    ])
+    func loginPath_comesFromTheShellsExportedEnvironment(exportedPath: String?, expected: String) async throws {
+        try await withTempDir { root in
+            let shell = root.appendingPathComponent("login-shell")
+            let setPath = exportedPath.map { "export PATH='\($0)'" } ?? "unset PATH"
+            // Like Nushell, the stand-in leaves "$PATH" literal in the old command.
+            try ShimHarness.writeExecutable(
+                """
+                #!/bin/sh
+                [ "$1" = -lc ] || exit 1
+                printf 'Welcome back\\n'
+                \(setPath)
+                case "$2" in
+                  printf\\ *) printf '__WEIR_PATH__%s__WEIR_PATH__\\n' '$PATH' ;;
+                  *) /bin/sh -c "$2" || exit ;;
+                esac
+                printf 'Goodbye\\n'
+                """,
+                at: shell
+            )
+            let path = await LoginShellPath.readLoginShell(shell: shell.path, inherited: "/usr/bin:/bin")
+            #expect(path == expected)
+        }
+    }
+
     private struct Read {
         let task: Task<Void, Never>
         let completion: Recorded<Result<String?, any Error>?>
