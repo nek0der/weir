@@ -45,7 +45,7 @@ struct CommandPaletteRow: View {
         HStack(alignment: .firstTextBaseline, spacing: WeirLayout.Supervision.spaceS) {
             Image(systemName: item.icon)
                 .font(.supervision(.label))
-                .foregroundStyle(SupervisionTokens.muted.color)
+                .foregroundStyle(item.action == .restoreTurn ? SupervisionTokens.stoppedText.color : SupervisionTokens.muted.color)
                 .frame(width: 20, alignment: .center)
             highlightedTitle
                 .font(.supervision(.label))

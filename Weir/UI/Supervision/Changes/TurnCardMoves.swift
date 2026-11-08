@@ -60,7 +60,7 @@ struct TurnCardMoves: View {
         switch kind {
         case .line(.markViewedThrough): image("checkmark.circle")
         case .line(.markUnviewedFrom): image("checkmark.circle.badge.xmark")
-        case .restore: image("arrow.uturn.backward").foregroundStyle(SupervisionTokens.stoppedText.color)
+        case .restore: image("gobackward").foregroundStyle(SupervisionTokens.stoppedText.color)
         }
     }
 

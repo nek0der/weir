@@ -90,9 +90,13 @@ private struct QuickTerminalHotKeyRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Show or hide")
                 if let message {
-                    Text(message)
-                        .font(.caption)
-                        .foregroundStyle(SupervisionTokens.stoppedText.color)
+                    Label {
+                        Text(message)
+                    } icon: {
+                        Image(systemName: "xmark.octagon.fill").accessibilityHidden(true)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(SupervisionTokens.stoppedText.color)
                 } else if let warning {
                     Text(warning)
                         .font(.caption)

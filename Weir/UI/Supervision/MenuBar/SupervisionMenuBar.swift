@@ -23,7 +23,7 @@ struct SupervisionMenuBarLabel: View {
 /// system's and the other apps' icons; an amber disc stood out from all of
 /// them, louder than a wait deserves. The shape alone carries the state:
 /// the app's mark stays whole, and a badge at its corner says the rest, a
-/// dot for unread turns and an exclamation mark for what blocks on the
+/// dot for unread turns and a larger filled disc for what blocks on the
 /// person. The drawing is `design/app-icons/menubar-*.svg`, in the same points.
 /// Equatable on what it draws, so the queue changing without the lamp or
 /// the count does not draw it again.
@@ -69,11 +69,7 @@ struct MenuBarLampImage: View, Equatable {
             case .blocking:
                 circle(centerX: 16.5, centerY: 12.5, radius: 6.2).fill()
                 NSGraphicsContext.current?.compositingOperation = .sourceOver
-                let badge = circle(centerX: 16.5, centerY: 12.5, radius: 5)
-                badge.append(NSBezierPath(rect: NSRect(x: 15.6, y: 9.3, width: 1.8, height: 3.9)))
-                badge.append(NSBezierPath(rect: NSRect(x: 15.6, y: 14.1, width: 1.8, height: 1.6)))
-                badge.windingRule = .evenOdd
-                badge.fill()
+                circle(centerX: 16.5, centerY: 12.5, radius: 5).fill()
             }
             return true
         }

@@ -3,7 +3,8 @@
 
 import SwiftUI
 
-/// The glyph for an update state, in `color`: a symbol, or a progress ring
+/// The glyph for an update state: errors in red, success in gray, and other
+/// states in `color`. A symbol, or a progress ring
 /// while the update downloads or unpacks. The left rail's update control
 /// draws it.
 struct UpdateStatusGlyph: View {
@@ -25,11 +26,11 @@ struct UpdateStatusGlyph: View {
                 .symbolEffect(.pulse, options: .repeating, isActive: !reduceMotion)
                 .foregroundStyle(color)
         case .installed:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(color)
+            Image(systemName: "checkmark.circle").foregroundStyle(SupervisionTokens.running.color)
         case .notFound:
-            Image(systemName: "checkmark.circle").foregroundStyle(color)
+            Image(systemName: "checkmark.circle").foregroundStyle(SupervisionTokens.running.color)
         case .error:
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(color)
+            Image(systemName: "xmark.octagon.fill").foregroundStyle(SupervisionTokens.stoppedText.color)
         case .available, .readyToInstall, .idle:
             Image(systemName: "shippingbox.fill").foregroundStyle(color)
         }

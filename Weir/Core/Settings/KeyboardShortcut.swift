@@ -309,6 +309,8 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
     /// `WeirShortcutAction.allCases` adding a new case fails the
     /// build until the icon is picked — the prior `[Action: String]`
     /// map silently fell back to `"questionmark"`.
+    /// The Review command's scope variants share its symbol. Other commands
+    /// use distinct symbols so neighboring choices can be told apart.
     var iconName: String {
         switch self {
         case .newTab: "plus"
@@ -325,18 +327,18 @@ enum WeirShortcutAction: String, CaseIterable, Codable, Identifiable {
         case .notificationHistory: "bell"
         case .review: ReviewPresentation.symbol
         case .reviewLatestTurn: ReviewPresentation.symbol
-        case .toggleChangesPanel: "sidebar.right"
+        case .toggleChangesPanel: "plus.forwardslash.minus"
         case .allProjects: "square.grid.2x2"
-        case .showScratch: "apple.terminal"
-        case .planUsage: "timer"
-        case .nextSession: "chevron.left.chevron.right"
-        case .previousSession: "chevron.left.chevron.right"
-        case .nextTab: "arrow.left.arrow.right"
-        case .previousTab: "arrow.left.arrow.right"
-        case .showNeedsAttention: "list.bullet.rectangle"
+        case .showScratch: "note.text"
+        case .planUsage: "hourglass"
+        case .nextSession: "forward.end"
+        case .previousSession: "backward.end"
+        case .nextTab: "arrow.forward.square"
+        case .previousTab: "arrow.backward.square"
+        case .showNeedsAttention: "tray"
         case .showOpenTabs: "chevron.down.square"
-        case .showProjectMenu: "folder"
-        case .showWorktreeMenu: ContainerSymbol.worktree
+        case .showProjectMenu: ContainerSymbol.project
+        case .showWorktreeMenu: "list.bullet"
         case .showDecisionBarMenu: "ellipsis.circle"
         case .focusSidebar: "sidebar.squares.left"
         case .moveProjectUp: "arrow.up.square"

@@ -85,7 +85,7 @@ struct ReviewBanner: View {
 
         var icon: Color {
             switch self {
-            case .error: SupervisionTokens.stopped.color
+            case .error: SupervisionTokens.stoppedText.color
             case .warning: SupervisionTokens.waiting.color
             case .notice: SupervisionTokens.muted.color
             }

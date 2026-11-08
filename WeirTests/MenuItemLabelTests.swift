@@ -1,6 +1,7 @@
 // MenuItemLabelTests.swift
 // Weir — that each menu item takes its name and symbol from the one definition of its command, as the palette does.
 
+import AppKit
 import Foundation
 import Testing
 @testable import Weir
@@ -65,7 +66,7 @@ struct MenuItemLabelTests {
         #expect(WeirShortcutAction.equalizeSplits.menuLabel.symbol == "equal.square")
         #expect(WeirShortcutAction.nextTab.menuLabel.symbol != WeirShortcutAction.focusPaneRight.menuLabel.symbol)
         #expect(WeirShortcutAction.previousTab.menuLabel.symbol != WeirShortcutAction.focusPaneLeft.menuLabel.symbol)
-        #expect(WeirShortcutAction.nextSession.menuLabel.symbol == "chevron.left.chevron.right")
+        #expect(WeirShortcutAction.nextSession.menuLabel.symbol == "forward.end")
         #expect(WeirShortcutAction.quickOpen.menuLabel.symbol != WeirShortcutAction.find.menuLabel.symbol)
     }
 
@@ -133,14 +134,14 @@ struct MenuItemLabelTests {
         let bars = try #require(windowRows.first { $0.action == .toggleIconBars })
         let barsLabel = MenuItemLabel.iconBars(areHidden: areHidden)
         #expect(bars.title == barsTitle)
-        #expect(bars.icon == "rectangle.lefthalf.inset.filled")
+        #expect(bars.icon == "sidebar.left")
         #expect(bars.title == barsLabel.title.resolved(in: Self.english))
         #expect(bars.icon == barsLabel.symbol)
         #expect(bars.isEnabled)
 
         let move = try #require(windowRows.first { $0.action == .movePaneToNewTab })
         #expect(move.title == "Move Pane to New Tab")
-        #expect(move.icon == "rectangle.split.2x1")
+        #expect(move.icon == "rectangle.portrait.and.arrow.forward")
         #expect(move.title == MenuItemLabel.movePaneToNewTab.title.resolved(in: Self.english))
         #expect(move.icon == MenuItemLabel.movePaneToNewTab.symbol)
     }
@@ -163,6 +164,29 @@ struct MenuItemLabelTests {
     }
 
     // MARK: - Move Pane to New Tab
+
+    @Test("The terminal menu draws moving a pane differently from splitting it")
+    func terminalContextMenu_drawsTheCommandSymbols() throws {
+        let menu = SurfaceContextMenu.make(SurfaceContextMenuState(
+            hasSelection: false,
+            isInPane: true,
+            canRenamePane: false,
+            zoomAction: .zoom,
+            canMoveToNewTab: true,
+            shortcut: { _ in nil }
+        ), locale: Self.english)
+        let expected: [(Selector, String)] = [
+            (#selector(SurfaceView.splitRight(_:)), "rectangle.split.2x1"),
+            (#selector(SurfaceView.splitDown(_:)), "rectangle.split.1x2"),
+            (#selector(SurfaceView.movePaneToNewTab(_:)), "rectangle.portrait.and.arrow.forward")
+        ]
+        for (action, symbol) in expected {
+            let item = try #require(menu.items.first { $0.action == action })
+            let actual = try #require(item.image?.tiffRepresentation)
+            let expectedImage = try #require(NSImage(systemSymbolName: symbol, accessibilityDescription: nil))
+            #expect(actual == expectedImage.tiffRepresentation, "\(item.title): \(symbol)")
+        }
+    }
 
     @Test("a pane moves to a tab of its own only from a tab that holds another, zoomed or not")
     func canMovePaneToNewTab_needsAnotherPane() throws {

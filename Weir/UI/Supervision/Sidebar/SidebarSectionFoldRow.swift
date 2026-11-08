@@ -146,11 +146,13 @@ struct SidebarFoldClear {
             }
         }
 
-        /// One glyph for both: each takes the rows off the list, and the
-        /// confirmation, not the glyph, says what Delete Worktrees… does to
-        /// the folders.
+        /// We distinguish deleting folders from removing rows without
+        /// deleting, before the confirmation explains the consequences.
         var systemImage: String {
-            "xmark"
+            switch self {
+            case .deleteAll: "trash"
+            case .removeAll: "xmark"
+            }
         }
     }
 

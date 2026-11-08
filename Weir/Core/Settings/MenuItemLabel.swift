@@ -43,7 +43,7 @@ extension MenuItemLabel {
             title: areHidden
                 ? LocalizedStringResource("Show Icon Bars", comment: "View menu: shows the window's rails again")
                 : LocalizedStringResource("Hide Icon Bars", comment: "View menu: hides the window's rails"),
-            symbol: "rectangle.lefthalf.inset.filled"
+            symbol: WeirShortcutAction.toggleSidebar.iconName
         )
     }
 
@@ -51,7 +51,7 @@ extension MenuItemLabel {
     /// header's ⋯, its VoiceOver action, the terminal's right-click menu,
     /// and the palette's row. Whether it is offered is
     /// `Tab.canMovePaneToNewTab`.
-    static let movePaneToNewTab = MenuItemLabel(title: "Move Pane to New Tab", symbol: "rectangle.split.2x1")
+    static let movePaneToNewTab = MenuItemLabel(title: "Move Pane to New Tab", symbol: "rectangle.portrait.and.arrow.forward")
 
     /// The one "Show in Finder" label: the project ▾, the sidebar's project
     /// menu, the session rows' menu, the path rows in Settings, the Ghostty

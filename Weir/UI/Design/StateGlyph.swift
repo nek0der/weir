@@ -7,7 +7,7 @@ import SwiftUI
 /// color, and a mark carry it together, so it never rests on color alone.
 /// Only what needs the person is filled: an amber disc with a white "?" waits
 /// for an answer, a red disc with a white "!" has stopped. The rest are
-/// lines: a ring with a dot in the accent is unread, a gray quarter arc on
+/// lines: a ring with a dot in fixed blue is unread, a gray quarter arc on
 /// a pale track runs, a faint ring is idle (`StateGlyphGeometry.idleInk`),
 /// and a dashed ring is unknown: an agent not matched to its hook yet,
 /// whose row would otherwise show an empty slot beside a line that names
@@ -71,16 +71,14 @@ struct StateGlyph: View {
 
     let kind: Kind
     var size: CGFloat = WeirLayout.Supervision.stateGlyphSize
-    /// What the unread ring and dot are drawn in instead of the person's
-    /// accent, on a surface that has its own ink for them (the menu bar's
-    /// rows); `nil` everywhere else.
-    var unreadInkOverride: Color?
+    /// Whether this glyph may animate. We keep aggregate list counts still
+    /// so movement remains a cue for an individual running session.
+    var allowsAnimation = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorSchemeContrast) private var contrast
-    @Environment(\.weirAccent) private var accent
 
     var body: some View {
-        face(isReduceMotionOn: reduceMotion, contrast: contrast, accent: accent)
+        face(isReduceMotionOn: reduceMotion, contrast: contrast)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(kind.name))
     }
@@ -88,13 +86,13 @@ struct StateGlyph: View {
     /// The face for what the environment says, apart from `body` so a test
     /// can give it each contrast and motion setting: SwiftUI lets a view
     /// read those, not set them.
-    func face(isReduceMotionOn: Bool, contrast: ColorSchemeContrast, accent: Color) -> StateGlyphFace {
+    func face(isReduceMotionOn: Bool, contrast: ColorSchemeContrast) -> StateGlyphFace {
         StateGlyphFace(
             kind: kind,
             size: size,
-            isTurning: !isReduceMotionOn,
+            isTurning: allowsAnimation && !isReduceMotionOn,
             isContrastIncreased: contrast == .increased,
-            unreadInk: unreadInkOverride ?? SupervisionTokens.accentIcon(color: accent)
+            unreadInk: SupervisionTokens.unread.color
         )
     }
 }

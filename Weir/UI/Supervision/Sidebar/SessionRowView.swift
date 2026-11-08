@@ -264,7 +264,7 @@ struct SessionRowView: View {
         row.fact.pullRequest == nil ? nil : pullRequestMark
     }
 
-    /// The second line after its fact: a usage limit's icon, then the pull
+    /// The second line after its fact: a usage limit's hourglass, then the pull
     /// request's mark and the agents' badges in the column the time is in. The
     /// column only grows to the left for them, so the fact is what is cut
     /// short, never a mark or a badge.

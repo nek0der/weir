@@ -46,10 +46,10 @@ struct StateGlyphTests {
 
     @Test(arguments: [StateGlyph.Kind.running, .workingAfterTurn, .unread])
     func theEnvironment_reachesTheFace(kind: StateGlyph.Kind) {
-        let glyph = StateGlyph(kind: kind, size: 11, unreadInkOverride: .white)
+        let glyph = StateGlyph(kind: kind, size: 11)
 
-        let standard = glyph.face(isReduceMotionOn: false, contrast: .standard, accent: .purple)
-        let increased = glyph.face(isReduceMotionOn: true, contrast: .increased, accent: .purple)
+        let standard = glyph.face(isReduceMotionOn: false, contrast: .standard)
+        let increased = glyph.face(isReduceMotionOn: true, contrast: .increased)
 
         #expect(standard.kind == kind)
         #expect(increased.kind == kind)
@@ -59,43 +59,28 @@ struct StateGlyphTests {
         #expect(!increased.isTurning)
         #expect(!standard.isContrastIncreased)
         #expect(increased.isContrastIncreased)
-        #expect(standard.unreadInk == .white)
-        #expect(increased.unreadInk == .white)
+        #expect(standard.unreadInk == Tokens.unread.color)
+        #expect(increased.unreadInk == Tokens.unread.color)
     }
 
-    /// Without an override the unread glyph is drawn in the accent the
-    /// environment carries, moved to an icon's contrast as the focus ring's
-    /// is, for every accent in light and dark.
-    @Test(arguments: AccentColor.allCases)
-    func theUnreadInk_isTheAccentAtAnIconsContrast(_ accent: AccentColor) throws {
-        let color = WeirColor.accent(for: accent)
-        let ink = StateGlyph(kind: .unread).face(isReduceMotionOn: false, contrast: .standard, accent: color).unreadInk
-        for resolved in try accent.resolvedInBothAppearances() {
-            let appearance = try #require(NSAppearance(named: resolved.appearance))
-            let drawn = try #require(SRGB(NSColor(ink), in: appearance))
-            let grounds = AccentIconRule.grounds(isDark: resolved.isDark)
-            for ground in grounds {
-                #expect(ContrastRatio.between(drawn, ground) >= 3, "\(accent) on \(ground)")
-            }
+    /// We keep unread blue independent of the person's accent, including
+    /// accents that otherwise resemble waiting or stopped states.
+    @Test(arguments: AccentColor.allCases, [false, true])
+    func theUnreadInk_isFixedBlue(_ accent: AccentColor, isDark: Bool) throws {
+        let glyph = StateGlyph(kind: .unread)
+            .environment(\.weirAccent, WeirColor.accent(for: accent))
+            .environment(\.colorScheme, isDark ? .dark : .light)
+        let renderer = ImageRenderer(content: glyph)
+        renderer.scale = Self.scale
+        let pixels = try Pixels(#require(renderer.cgImage), unit: WeirLayout.Supervision.stateGlyphSize / 14 * Self.scale)
+        Self.expect(pixels, at: (8, 8), is: Tokens.unread.value(isDark: isDark), "the fixed blue unread dot")
+    }
 
-            let source = resolved.color
-            let endpoint = resolved.isDark ? 1.0 : 0.0
-            let sources = [source.red, source.green, source.blue]
-            let channels = [drawn.red, drawn.green, drawn.blue]
-            // Moving toward black or white applies one fraction to every
-            // channel. A different hue could still have the same contrast.
-            let reference = try #require(sources.indices.max { abs(sources[$0] - endpoint) < abs(sources[$1] - endpoint) })
-            let span = endpoint - sources[reference]
-            try #require(abs(span) > 0.001)
-            let fraction = (channels[reference] - sources[reference]) / span
-            for (input, output) in zip(sources, channels) {
-                #expect(abs(output - (input + (endpoint - input) * fraction)) < 0.002)
-            }
-            if grounds.allSatisfy({ ContrastRatio.between(source, $0) >= 3 }) {
-                #expect(abs(fraction) < 0.002, "an already readable accent stays unchanged")
-            } else {
-                #expect(fraction > 0 && fraction <= 1, "the accent moves toward the contrast endpoint")
-            }
+    @Test(arguments: [false, true])
+    func theUnreadBlue_clearsEveryIconGround(isDark: Bool) {
+        let blue = Tokens.unread.value(isDark: isDark)
+        for ground in AccentIconRule.grounds(isDark: isDark) {
+            #expect(ContrastRatio.between(blue, ground) >= 3, "Unread blue on \(ground), dark: \(isDark)")
         }
     }
 
@@ -139,15 +124,14 @@ struct StateGlyphTests {
             Self.expectMark(waiting, in: waitingInk)
         }
 
-        let unread = try Self.render(.unread, isDark: isDark, size: size, unreadInk: red)
-        Self.expect(unread, at: (8, 8), is: red, "the unread dot")
-        Self.expect(unread, at: (8, 1.8), is: red, "the unread ring")
-        #expect(Self.alpha(unread, at: (4.5, 8)) < 0.05, "where the same red fills the stopped disc")
+        let blue = Tokens.unread.value(isDark: isDark)
+        let unread = try Self.render(.unread, isDark: isDark, size: size)
+        Self.expect(unread, at: (8, 8), is: blue, "the unread dot")
+        Self.expect(unread, at: (8, 1.8), is: blue, "the unread ring")
+        #expect(Self.alpha(unread, at: (4.5, 8)) < 0.05, "the unread ring leaves the disc empty")
 
         let faint = Tokens.faint.value(isDark: isDark)
-        let grayUnread = try Self.render(.unread, isDark: isDark, size: size, unreadInk: faint)
         let idle = try Self.render(.idle, isDark: isDark, size: size)
-        Self.expect(grayUnread, at: (8, 8), is: faint, "the unread dot in the idle ring's color")
         Self.expect(idle, at: (8, 1.45), is: faint, "the idle ring")
         #expect(Self.alpha(idle, at: (8, 8)) < 0.05, "inside the idle ring")
 
@@ -160,7 +144,7 @@ struct StateGlyphTests {
     @Test(arguments: [false, true], sizes)
     func workAfterATurn_addsADotOnTheRing(isDark: Bool, size: CGFloat) throws {
         let dot = Tokens.text.value(isDark: isDark)
-        let accent = SRGB(0x2C6EE0)
+        let blue = Tokens.unread.value(isDark: isDark)
         for increased in [false, true] {
             let gain: CGFloat = increased ? 0.5 : 0
             let idleInk = (increased ? Tokens.muted : Tokens.faint).value(isDark: isDark)
@@ -169,17 +153,17 @@ struct StateGlyphTests {
                 (.unreadWorkingAfterTurn, size * 1.6 / 14 + gain)
             ]
             for (kind, width) in cases {
-                let ringInk = kind == .workingAfterTurn ? idleInk : accent
+                let ringInk = kind == .workingAfterTurn ? idleInk : blue
                 // The ring's middle line, projected at 45° and 225° in the
                 // 16-unit drawing square.
                 let offset = Double((size - width) * 7 / size) / sqrt(2.0)
-                let pixels = try Self.render(kind, isDark: isDark, size: size, isContrastIncreased: increased, unreadInk: accent)
+                let pixels = try Self.render(kind, isDark: isDark, size: size, isContrastIncreased: increased)
                 Self.expect(pixels, at: (8 + offset, 8 - offset), is: dot, "the dot at the upper right")
                 Self.expect(pixels, at: (8 - offset, 8 + offset), is: ringInk, "the ring opposite the dot")
                 if kind == .workingAfterTurn {
                     #expect(Self.alpha(pixels, at: (8, 8)) < 0.05)
                 } else {
-                    Self.expect(pixels, at: (8, 8), is: accent, "the unread dot")
+                    Self.expect(pixels, at: (8, 8), is: blue, "the unread dot")
                 }
             }
         }
@@ -265,8 +249,9 @@ struct StateGlyphTests {
     @Test(arguments: [SessionRowFact.Glyph.needsAnswer, .stopped, .running])
     func aFoldedHeadingsMarks_drawAtTheCompactSize(glyph: SessionRowFact.Glyph) {
         let face = SidebarProjectHeaderView.mark(glyph).stateGlyph
-            .face(isReduceMotionOn: true, contrast: .standard, accent: .blue)
+            .face(isReduceMotionOn: true, contrast: .standard)
         #expect(face.size == WeirLayout.Supervision.stateGlyphCompactSize)
+        #expect(!SidebarProjectHeaderView.mark(glyph).stateGlyph.face(isReduceMotionOn: false, contrast: .standard).isTurning)
     }
 
     /// Increase Contrast widens the idle ring into what was empty, and
@@ -289,15 +274,14 @@ struct StateGlyphTests {
         _ kind: StateGlyph.Kind,
         isDark: Bool,
         size: CGFloat = WeirLayout.Supervision.stateGlyphSize,
-        isContrastIncreased: Bool = false,
-        unreadInk: SRGB = SRGB(0x2C6EE0)
+        isContrastIncreased: Bool = false
     ) throws -> Pixels {
         let face = StateGlyphFace(
             kind: kind,
             size: size,
             isTurning: false,
             isContrastIncreased: isContrastIncreased,
-            unreadInk: Color(nsColor: unreadInk.nsColor)
+            unreadInk: Tokens.unread.color
         )
         .environment(\.colorScheme, isDark ? .dark : .light)
         let renderer = ImageRenderer(content: face)

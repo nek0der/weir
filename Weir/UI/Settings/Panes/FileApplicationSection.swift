@@ -55,6 +55,8 @@ struct FileApplicationSection: View {
                 await load()
             }
             if case .configuredApplicationMissing = FileOpener.chosenApplication(in: store) {
+                // This is a caution about availability, not a failed open operation.
+                // An attempt to open a file reports the missing app as an error.
                 Label("Selected app unavailable", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(SupervisionTokens.waitingText.color)
                 SettingsFootnote("Files will open in this app automatically when it becomes available again.")

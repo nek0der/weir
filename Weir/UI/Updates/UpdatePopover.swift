@@ -166,13 +166,10 @@ private struct ReleaseNotesLink: View {
             openURL(url)
         } label: {
             HStack(spacing: WeirLayout.Supervision.spaceS) {
-                Image(systemName: "doc.text").font(.supervision(.label))
+                Image(systemName: "arrow.up.right.square").font(.supervision(.label))
                 Text("View Release Notes", comment: "Update popover: open release notes")
                     .font(.supervision(.row))
                 Spacer(minLength: 0)
-                Image(systemName: "arrow.up.right")
-                    .font(.supervision(.caption))
-                    .foregroundStyle(.secondary)
             }
             .padding(metrics.releaseNotesPadding)
             .contentShape(Rectangle())
@@ -391,8 +388,8 @@ private struct InstalledView: View {
     @Environment(\.updatePopoverMetrics) private var metrics
     var body: some View {
         HStack(spacing: WeirLayout.Supervision.spaceM) {
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+            Image(systemName: "checkmark.circle")
+                .foregroundStyle(SupervisionTokens.running.color)
                 .font(.supervision(.label))
             Text("Update installed", comment: "Update popover: install complete")
                 .font(.supervision(.label))
@@ -411,7 +408,7 @@ private struct NotFoundView: View {
         VStack(alignment: .leading, spacing: WeirLayout.Supervision.spaceM) {
             HStack(spacing: WeirLayout.Supervision.spaceS) {
                 Image(systemName: "checkmark.circle")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(SupervisionTokens.running.color)
                 Text("You’re up to date", comment: "Update popover: no update available")
                     .font(.supervision(.label, weight: .semibold))
             }
@@ -444,8 +441,8 @@ private struct ErrorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: WeirLayout.Supervision.spaceM) {
             HStack(spacing: WeirLayout.Supervision.spaceS) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
+                Image(systemName: "xmark.octagon.fill")
+                    .foregroundStyle(SupervisionTokens.stoppedText.color)
                 Text("Update failed", comment: "Update popover: error header")
                     .font(.supervision(.label, weight: .semibold))
             }

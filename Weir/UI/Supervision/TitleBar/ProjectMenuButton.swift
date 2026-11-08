@@ -356,7 +356,7 @@ private struct ProjectDropdownRow: View {
                         .lineLimit(1)
                         .supervisionTruncation(.name)
                     if row.isInOtherWindow {
-                        Image(systemName: "macwindow.on.rectangle")
+                        Image(systemName: ContainerSymbol.otherWindow)
                             .font(.supervision(.meta))
                             .foregroundStyle(SupervisionTokens.muted.color)
                             .fixedSize()

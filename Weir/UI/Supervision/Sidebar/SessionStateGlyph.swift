@@ -16,10 +16,13 @@ struct SessionStateGlyph: View {
     /// only clip it, never shrink it.
     var size: CGFloat = WeirLayout.Supervision.stateGlyphSize
 
+    /// Whether the glyph may animate; aggregate list counts keep it still.
+    var allowsAnimation = true
+
     /// The state's glyph at this size, apart from `body` so a test can
     /// read the size a caller drew it at.
     var stateGlyph: StateGlyph {
-        StateGlyph(kind: StateGlyph.Kind(glyph), size: size)
+        StateGlyph(kind: StateGlyph.Kind(glyph), size: size, allowsAnimation: allowsAnimation)
     }
 
     var body: some View {

@@ -123,7 +123,10 @@ struct ChangesTurnRow: View {
         ) { isHovering = $0 }
         .overlay {
             if isRinged {
-                shape.strokeBorder(SupervisionTokens.unread.color, lineWidth: Layout.turnOpenRingWidth)
+                // The ring marks the turn shown in review; blue is reserved for unread.
+                // We use a strong neutral because `popoverSelectionEdge` is a faint
+                // overlay for selected rows on popover material, not this card.
+                shape.strokeBorder(SupervisionTokens.muted.color, lineWidth: Layout.turnOpenRingWidth)
                     .accessibilityHidden(true)
             }
         }

@@ -15,10 +15,10 @@
 //
 //   - kind  → the request's own state, told apart by its drawing alone
 //   - badge → its checks: a failing one in red, a running one as an
-//             amber dot, and a passing one as a thin green check
+//             gray dot, and a passing one as a thin green check
 //
-// A running check is something to wait on, so it earns a dot of the
-// waiting color. A passing one is drawn lighter than either disc, a line
+// We use running gray for checks in progress; amber means the person
+// needs to respond. A passing one is drawn lighter than either disc, a line
 // with no disc, so that failing and running checks still stand out on a
 // sidebar where most requests pass.
 //
@@ -53,7 +53,7 @@ struct PRMarkPresentation {
     enum BadgeKind: Equatable {
         /// A red disc with a ✕.
         case failing
-        /// An amber dot with no glyph.
+        /// A gray dot with no glyph.
         case running
         /// A thin green check with no disc.
         case passing
@@ -77,8 +77,8 @@ struct PRMarkPresentation {
                 // The stopped glyph's red, since both are failures.
                 Badge(kind: .failing, color: SupervisionTokens.stopped.color, accessibilityKey: "Checks failing")
             case .pending:
-                // The waiting color: a running check is something to wait on.
-                Badge(kind: .running, color: SupervisionTokens.waiting.color, accessibilityKey: "Checks running")
+                // We reserve amber for waits that need the person.
+                Badge(kind: .running, color: SupervisionTokens.running.color, accessibilityKey: "Checks running")
             case .success:
                 // A check's result rather than a state, so a pass may
                 // be green, in the hover card's green for the same result.

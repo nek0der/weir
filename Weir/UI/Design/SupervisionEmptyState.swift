@@ -223,7 +223,7 @@ extension EmptyState {
         case .noMatchingWorktrees, .noMatchingFiles, .noResults, .noMatchingShortcuts, .noSettingsFound: "magnifyingglass"
         case .noTestCommands, .noTabs, .noOpenTab: "terminal"
         case .noFilesToCopy: "doc.on.doc"
-        case .scratchElsewhere: "macwindow.on.rectangle"
+        case .scratchElsewhere: ContainerSymbol.otherWindow
         }
     }
 }

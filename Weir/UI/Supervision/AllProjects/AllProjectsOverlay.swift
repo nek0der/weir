@@ -212,7 +212,7 @@ private struct AllProjectsPanel: View {
     /// number of cards, which reads lighter than the name.
     private func sectionHeading(_ group: AllProjectsModel.Group) -> some View {
         HStack(spacing: WeirLayout.Supervision.spaceSnug) {
-            SessionStateGlyph(glyph: group.section.glyph)
+            SessionStateGlyph(glyph: group.section.glyph, allowsAnimation: false)
                 .frame(width: Layout.stateGlyphSize, height: Layout.stateGlyphSize)
             Text(verbatim: AllProjectsText.sectionName(group.section, locale: locale))
                 .font(.supervision(.row, weight: .semibold))
@@ -502,10 +502,16 @@ private struct AllProjectsCardView: View {
             SupervisionChip(text: Text(verbatim: chip.text))
         }
         if let note = card.windowNote {
-            Text(verbatim: AllProjectsText.windowNote(note, locale: locale))
-                .font(.supervision(.detail))
-                .foregroundStyle(SupervisionTokens.muted.color)
-                .lineLimit(1)
+            Label {
+                Text(verbatim: AllProjectsText.windowNote(note, locale: locale))
+            } icon: {
+                if note == .otherWindow {
+                    Image(systemName: ContainerSymbol.otherWindow).accessibilityHidden(true)
+                }
+            }
+            .font(.supervision(.detail))
+            .foregroundStyle(SupervisionTokens.muted.color)
+            .lineLimit(1)
         }
     }
 

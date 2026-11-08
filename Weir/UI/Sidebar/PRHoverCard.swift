@@ -405,9 +405,6 @@ struct PRHoverCardContent: View {
             }
         } else {
             HStack(spacing: WeirLayout.Supervision.spaceS) {
-                Image(systemName: "circle.dashed")
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
                 // Forge-specific noun here too, so a GitLab row never
                 // reports "no checks" for a thing GitLab calls a
                 // pipeline.
@@ -490,7 +487,7 @@ struct PRHoverCardContent: View {
         // failure is the stopped red, since both are failures.
         case .success: SupervisionTokens.added.color
         case .failure: SupervisionTokens.stopped.color
-        case .pending: SupervisionTokens.waiting.color
+        case .pending: SupervisionTokens.running.color
         }
     }
 

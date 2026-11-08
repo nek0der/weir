@@ -32,6 +32,11 @@ struct SupervisionHistorySourceHeading: View {
                     }
                 }
                 if let note = words.note {
+                    if heading.note == .otherWindow {
+                        Image(systemName: ContainerSymbol.otherWindow)
+                            .foregroundStyle(SupervisionTokens.muted.color)
+                            .accessibilityHidden(true)
+                    }
                     Text(verbatim: separated(note))
                         .foregroundStyle(SupervisionTokens.muted.color)
                         .lineLimit(1)

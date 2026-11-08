@@ -21,8 +21,9 @@ struct RailPlanUsageButton: View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let level = store.level(at: context.date)
             IconControlButton(
-                systemImage: "timer",
+                systemImage: WeirShortcutAction.planUsage.iconName,
                 name: "Plan Usage",
+                symbolColor: level == .atLimit ? SupervisionTokens.stoppedText.color : SupervisionTokens.running.color,
                 shortcut: settings.settings.keyboard.shortcut(for: .planUsage)?.displayString,
                 isSelected: window.planUsage.isPresented,
                 isLit: isLit,
@@ -322,7 +323,7 @@ private struct PlanUsageRowView: View {
     /// the only sign.
     private var barColor: Color {
         switch row.level {
-        case .normal: SupervisionTokens.unread.color
+        case .normal: SupervisionTokens.running.color
         case .nearLimit: SupervisionTokens.waiting.color
         case .atLimit: SupervisionTokens.stopped.color
         }
