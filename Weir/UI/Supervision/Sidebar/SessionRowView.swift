@@ -136,7 +136,7 @@ struct SessionRowView: View {
                     // We draw the column only with something in it: a
                     // shell's row draws no badge, and an empty column with
                     // its spacing cut the fact short beside blank room.
-                    if hasTrailingMark || usageLimitChip != nil {
+                    if hasTrailingMark || usageLimitDescription != nil {
                         trailingLineTwo(tooltip: tooltip)
                     }
                 }
@@ -264,7 +264,7 @@ struct SessionRowView: View {
         row.fact.pullRequest == nil ? nil : pullRequestMark
     }
 
-    /// The second line after its fact: a usage limit's chip, then the pull
+    /// The second line after its fact: a usage limit's icon, then the pull
     /// request's mark and the agents' badges in the column the time is in. The
     /// column only grows to the left for them, so the fact is what is cut
     /// short, never a mark or a badge.
@@ -272,17 +272,12 @@ struct SessionRowView: View {
         HStack(spacing: Layout.sessionRowColumnSpacing) {
             HStack(spacing: Layout.sessionRowColumnSpacing) {
                 Spacer(minLength: 0)
-                // Worded against the row's clock, so it goes once the
-                // limit resets. VoiceOver reads it in the row's label.
-                if let chip = usageLimitChip {
-                    Text(verbatim: chip)
+                if usageLimitDescription != nil {
+                    Image(systemName: "hourglass")
                         .font(.supervision(.micro, weight: .medium))
                         .foregroundStyle(SupervisionTokens.stoppedText.color)
-                        .lineLimit(1)
                         .fixedSize()
-                        .padding(.horizontal, WeirLayout.Supervision.spaceSnug)
-                        .padding(.vertical, 1)
-                        .overlay(Capsule().strokeBorder(SupervisionTokens.stoppedText.color.opacity(0.5), lineWidth: 1))
+                        .accessibilityHidden(true)
                 }
             }
             .contentShape(Rectangle())
@@ -302,9 +297,9 @@ struct SessionRowView: View {
         }
     }
 
-    /// This is a usage limit's chip, worded against the row's clock.
-    private var usageLimitChip: String? {
-        SessionRowFactText.usageLimitChip(row.usageLimits, locale: locale, now: now)
+    /// The active limit, including its reset time, read against the row's clock.
+    private var usageLimitDescription: String? {
+        SessionRowFactText.usageLimitSpoken(row.usageLimits, locale: locale, now: now)
     }
 
     /// This is true when the second line's column shows a pull request's

@@ -224,8 +224,8 @@ struct EmptyWindowView: View {
     }
 }
 
-/// A project to open, on one line: its mark, its name, and one thing at
-/// its end (`EmptyWindowModel.Mark`). Its folder is its tooltip.
+/// A project row with independent window, attention, and running marks.
+/// Its tooltip includes the folder and activity.
 private struct EmptyWindowProjectRow: View {
     let row: EmptyWindowModel.Row
     let isSelected: Bool
@@ -266,12 +266,10 @@ private struct EmptyWindowProjectRow: View {
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-        // One tooltip: the folder, and what ⌘-click does on a row it opens
-        // in a new window. A second `.help` would hide the first.
-        .help(Text(verbatim: row.opensInNewWindow
-                ? "\(row.folder)\n\(NewWindowText.clickHelp(locale: locale))"
-                : row.folder))
-        .accessibilityElement(children: .combine)
+        .help(Text(verbatim: row.help(locale: locale)))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: row.name))
+        .accessibilityValue(Text(verbatim: row.help(locale: locale)))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         // VoiceOver's press opens the row as a plain click does; a new
         // window is its own action.
@@ -284,27 +282,13 @@ private struct EmptyWindowProjectRow: View {
     }
 
     @ViewBuilder private var mark: some View {
-        switch row.mark {
-        case .otherWindow:
-            // Choosing it moves to that window: the arrow says so before
-            // the click, as the words alone did not.
-            Label {
-                Text("Other Window", comment: "Another window shows this project: choosing it brings that window forward")
-            } icon: {
-                Image(systemName: "arrow.up.right")
-            }
-            .labelStyle(.titleAndIcon)
-            .font(.supervision(.meta))
-            .foregroundStyle(SupervisionTokens.muted.color)
-        case .attention:
-            SupervisionChip(
-                text: Text(row.attention.label),
-                tone: row.attention.style == .blocking ? .waiting : .unread
-            )
-        case .running:
-            SupervisionChip(text: Text("Running · \(row.running)"), tone: .running)
-        case nil:
-            EmptyView()
+        if row.isInOtherWindow {
+            Image(systemName: "macwindow.on.rectangle")
+                .font(.supervision(.meta))
+                .foregroundStyle(SupervisionTokens.muted.color)
+                .accessibilityLabel(Text("Other Window"))
+                .help(Text("Other Window"))
         }
+        ProjectActivityCounts(attention: row.attention, running: row.running)
     }
 }

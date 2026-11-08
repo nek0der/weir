@@ -122,16 +122,48 @@ struct ProjectMenuModelTests {
         let japanese = Locale(identifier: "ja")
         #expect(ProjectMenuModel.rowHelp(row(isCurrent: true), locale: english) == "Current Window")
         #expect(ProjectMenuModel.rowHelp(row(isCurrent: true), locale: japanese) == "現在のウインドウ")
-        // Choosing another switches this window, and ⌘-click opens it in a
-        // new one; one another window shows says so on the row
-        // itself, as that window comes forward either way.
+        // Another window comes forward either way, so its tooltip names
+        // the window rather than offering a new one.
         #expect(ProjectMenuModel.rowHelp(row(isCurrent: false), locale: english) == "⌘-click to open in a new window")
         #expect(ProjectMenuModel.rowHelp(row(isCurrent: false), locale: japanese) == "⌘ クリックで新しいウインドウに開く")
-        #expect(ProjectMenuModel.rowHelp(row(isCurrent: false, isInOtherWindow: true), locale: english) == nil)
+        #expect(ProjectMenuModel.rowHelp(row(isCurrent: false, isInOtherWindow: true), locale: english) == "Other Window")
         // What the tooltip and the VoiceOver action both read.
         #expect(row(isCurrent: false).opensInNewWindow)
         #expect(!row(isCurrent: true).opensInNewWindow)
         #expect(!row(isCurrent: false, isInOtherWindow: true).opensInNewWindow)
+    }
+
+    @Test(arguments: ["en", "ja"])
+    func rowHelpRetainsIconMeaningsAndAttentionBreakdown(language: String) throws {
+        let locale = Locale(identifier: language)
+        let row = ProjectMenuModel.Row(
+            id: UUID(), name: "weir", paletteIndex: nil, isCurrent: false, isInOtherWindow: true,
+            attention: NeedsAttentionCountModel(AttentionCounts(approvals: 1, unread: 2)), running: 3
+        )
+        let help = try #require(ProjectMenuModel.rowHelp(row, locale: locale))
+        let expected = language == "en"
+            ? ["Other Window", "Needs Attention · 3", "1 Approval", "2 Unread", "Running · 3"]
+            : ["別のウインドウ", "要対応 3", "承認 1", "未読 2", "実行中 3"]
+        for text in expected {
+            #expect(help.contains(text))
+        }
+    }
+
+    @Test(arguments: ["en", "ja"])
+    func emptyWindowHelpRetainsActivityAlongsideTheOtherWindowMark(language: String) {
+        let row = EmptyWindowModel.Row(
+            id: UUID(), name: "weir", paletteIndex: nil, folder: "/tmp/weir", isInOtherWindow: true,
+            attention: NeedsAttentionCountModel(AttentionCounts(unread: 2)), running: 3
+        )
+        let help = row.help(locale: Locale(identifier: language))
+        let expected = language == "en"
+            ? ["/tmp/weir", "Other Window", "Needs Attention · 2", "2 Unread", "Running · 3"]
+            : ["/tmp/weir", "別のウインドウ", "要対応 2", "未読 2", "実行中 3"]
+        #expect(row.isInOtherWindow)
+        for text in expected {
+            #expect(help.contains(text))
+        }
+        #expect(!help.contains("⌘"))
     }
 
     @Test(arguments: [

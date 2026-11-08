@@ -200,19 +200,17 @@ struct UsageLimitTests {
         #expect(StopReasonText.resetTime(tomorrow, locale: ja, now: now, calendar: calendar) == "水 9:00")
     }
 
-    @Test func chip_goesOnceAKnownResetHasPassed() {
-        let en = Locale(identifier: "en_US")
+    @Test(arguments: ["en_US", "ja"])
+    func usageLimitDescriptionGoesOnceAKnownResetHasPassed(language: String) {
+        let locale = Locale(identifier: language)
         let limit = UsageLimit(resetAt: Self.reset)
-        #expect(SessionRowFactText.usageLimitChip([limit], locale: en, now: Self.start) ==
-            "Limit · \(StopReasonText.resetTime(Self.reset, locale: en, now: Self.start))")
-        #expect(SessionRowFactText.usageLimitSpoken([limit], locale: en, now: Self.start) ==
-            "Usage limit reached · resets \(StopReasonText.resetTime(Self.reset, locale: en, now: Self.start))")
-        #expect(SessionRowFactText.usageLimitChip([limit], locale: en, now: Self.reset) == nil)
-        #expect(SessionRowFactText.usageLimitSpoken([limit], locale: en, now: Self.reset) == nil)
-        #expect(SessionRowFactText.usageLimitChip([limit, UsageLimit()], locale: en, now: Self.reset) == "Limit")
-        #expect(SessionRowFactText.usageLimitSpoken([limit, UsageLimit()], locale: en, now: Self.reset) == "Usage limit reached")
-        #expect(SessionRowFactText.usageLimitChip([], locale: en, now: Self.start) == nil)
-        #expect(SessionRowFactText.usageLimitSpoken([], locale: en, now: Self.start) == nil)
+        let time = StopReasonText.resetTime(Self.reset, locale: locale, now: Self.start)
+        let expected = language == "en_US" ? "Usage limit reached · resets \(time)" : "利用上限に達しました · \(time) に解除"
+        #expect(SessionRowFactText.usageLimitSpoken([limit], locale: locale, now: Self.start) == expected)
+        #expect(SessionRowFactText.usageLimitSpoken([limit], locale: locale, now: Self.reset) == nil)
+        #expect(SessionRowFactText.usageLimitSpoken([limit, UsageLimit()], locale: locale, now: Self.reset) ==
+            (language == "en_US" ? "Usage limit reached" : "利用上限に達しました"))
+        #expect(SessionRowFactText.usageLimitSpoken([], locale: locale, now: Self.start) == nil)
     }
 
     @Test func badge_keepsTheLimitThroughPersistence() throws {
@@ -221,7 +219,7 @@ struct UsageLimitTests {
         #expect(decoded.usageLimit == badge.usageLimit)
     }
 
-    @Test func sidebar_everyRowWithALimitedAgentShowsTheChip() {
+    @Test func sidebarKeepsUsageLimitsForEveryRowWithALimitedAgent() {
         func row(_ name: String, _ providers: [AgentKind]) -> SessionSidebarModel.RowInput {
             var fact = SessionRowFact.Input()
             fact.agents = providers.map { .init(provider: $0, state: .idle, detail: nil) }
@@ -251,8 +249,6 @@ struct UsageLimitTests {
         let en = Locale(identifier: "en_US")
         #expect(model.rows.map(\.name) == ["a", "b", "mixed", "other"])
         #expect(model.rows.map(\.usageLimits) == [[UsageLimit()], [UsageLimit()], [UsageLimit()], []])
-        #expect(model.rows.map { SessionRowFactText.usageLimitChip($0.usageLimits, locale: en, now: Self.start) } ==
-            ["Limit", "Limit", "Limit", nil])
         #expect(model.rows.map { SessionRowFactText.usageLimitSpoken($0.usageLimits, locale: en, now: Self.start) } ==
             ["Usage limit reached", "Usage limit reached", "Usage limit reached", nil])
         #expect(model.rows.map {

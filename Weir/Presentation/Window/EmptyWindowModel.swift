@@ -6,11 +6,8 @@ import WeirDomain
 
 /// The projects a window that shows nothing lists: every project, in the
 /// order the window's sidebar lists them (`SidebarArrangement`), so the
-/// list and the sidebar beside it never disagree on which projects there
-/// are or where each is. Each says one thing at its end, as project ▾'s
-/// rows count it: the window another shows it in, which choosing brings
-/// forward (`ProjectOpening.otherWindow`); else what waits on the person;
-/// else how many agents run.
+/// list and the sidebar beside it agree on project order. Each row shows
+/// its window marker, attention count, and running count independently.
 struct EmptyWindowModel: Equatable {
     struct Row: Identifiable, Equatable {
         let id: UUID
@@ -33,24 +30,16 @@ struct EmptyWindowModel: Equatable {
             ProjectOpening.offersNewWindow(isShownHere: false, isShownElsewhere: isInOtherWindow)
         }
 
-        /// The one mark at the row's end.
-        var mark: Mark? {
-            if isInOtherWindow {
-                return .otherWindow
+        /// Returns the folder, activity, and opening action for the tooltip and VoiceOver.
+        func help(locale: Locale) -> String {
+            var parts = [folder, ProjectMenuModel.activityDescription(
+                attention: attention, running: running, isInOtherWindow: isInOtherWindow, locale: locale
+            )]
+            if opensInNewWindow {
+                parts.append(NewWindowText.clickHelp(locale: locale))
             }
-            if attention.count > 0 {
-                return .attention
-            }
-            return running > 0 ? .running : nil
+            return parts.filter { !$0.isEmpty }.joined(separator: "\n")
         }
-    }
-
-    /// What a row says at its end, one at most, so the names keep their
-    /// room in a narrow column.
-    enum Mark: Equatable {
-        case otherWindow
-        case attention
-        case running
     }
 
     let rows: [Row]
