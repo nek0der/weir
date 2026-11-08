@@ -647,7 +647,8 @@ final class ReviewSession {
             marks.removeValue(forKey: fileID)
         }
         guard marks != viewed else { return }
-        commit(comments, viewed: marks)
+        updateNavigationMarks(marks)
+        clearOperationError()
     }
 
     /// Brings one file's read mark up to date with the diff now on screen.
@@ -849,9 +850,9 @@ final class ReviewSession {
     /// threw away what they had just written, with only a banner to say why.
     /// Not private only for the scope operations in `ReviewSession+Drafts.swift`.
     @discardableResult
-    func commit(_ next: [ReviewComment], viewed nextViewed: [String: ReviewViewMark]? = nil) -> Bool {
+    func commit(_ next: [ReviewComment]) -> Bool {
         do {
-            try writer.commit(next, viewed: nextViewed.map(withMarks))
+            try writer.commit(next)
             clearOperationError()
             return true
         } catch {

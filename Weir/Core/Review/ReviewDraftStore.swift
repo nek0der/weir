@@ -296,7 +296,7 @@ struct EphemeralReviewDraftStore: ReviewDraftStoring {
 
 /// We serialize all draft writes and deletions on this queue. The snapshot
 /// generation is protected by a separate lock so scheduling never waits on disk I/O.
-/// Edits and deletions invalidate navigation snapshots before their asynchronous hop.
+/// Successful edits and deletions invalidate older navigation snapshots.
 final class ReviewDraftWriteCoordinator: @unchecked Sendable {
     static let shared = ReviewDraftWriteCoordinator()
     private let queue = DispatchQueue(label: "com.nekoder.weir.review.draft-write")
@@ -313,8 +313,8 @@ final class ReviewDraftWriteCoordinator: @unchecked Sendable {
 
     func save(_ draft: ReviewDraft, root: URL, storage: any ReviewDraftStoring) throws {
         try queue.sync {
-            generationLock.withLock { generations[root] = UUID() }
             try storage.save(draft, root: root)
+            generationLock.withLock { generations[root] = UUID() }
         }
     }
 

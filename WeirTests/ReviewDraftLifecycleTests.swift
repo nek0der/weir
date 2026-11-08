@@ -188,6 +188,7 @@ struct ReviewDraftLifecycleTests {
             await store.flushNavigationSave()
             store.setViewed(file.id, true)
             #expect(store.viewed[file.id]?.fingerprint != nil, "An open file was marked without its fingerprint")
+            await store.flushNavigationSave()
             #expect(
                 ReviewSession(root: root, drafts: FileReviewDraftStore(directory: storage)).viewed[file.id] != nil,
                 "The mark did not persist: \(store.errorMessage.map { $0.resolved(in: Locale(identifier: "en")) } ?? "")"
@@ -237,6 +238,7 @@ struct ReviewDraftLifecycleTests {
             let adopted = try #require(listed.viewed[file.id]?.fingerprint, "Opening the file did not record a fingerprint")
             #expect(adopted == listed.diff?.fingerprint, "The recorded fingerprint is not the one on screen")
             listed.setViewed(file.id, false)
+            await listed.flushNavigationSave()
             await store.refreshAsTheAppDoes()
             await store.flushNavigationSave()
             // A file put back the way it was leaves the change list, and a mark on

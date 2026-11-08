@@ -180,30 +180,30 @@ final class ReviewDraftWriter {
         Set(sessions.compactMap { $0.value?.scope.scopeID })
     }
 
-    /// Writes the draft with `next` and, when given, every scope's marks.
+    /// Writes the draft with `next` and the latest navigation metadata.
     ///
     /// Throws without changing anything when the write fails, so the caller
     /// can keep the reader's text where it was. While saving is suspended the
     /// change is kept in memory only, under the banner that says so: writing
     /// would replace the only copy of what is on disk.
-    func commit(_ next: [ReviewComment], viewed nextViewed: [String: [String: ReviewViewMark]]? = nil) throws {
-        navigationSaveTask?.cancel()
-        navigationGeneration = UUID()
-        // The draft below carries the navigation, and an edit that fails
-        // was told to the reader; either way the quit has nothing to add.
-        pendingNavigation = nil
-        let marks = nextViewed ?? viewedByScope
+    func commit(_ next: [ReviewComment]) throws {
         if !isSavingSuspended {
             do {
-                try ReviewDraftWriteCoordinator.shared.save(makeDraft(comments: next, viewed: marks), root: root, storage: drafts)
+                try ReviewDraftWriteCoordinator.shared.save(
+                    makeDraft(comments: next, viewed: viewedByScope), root: root, storage: drafts
+                )
             } catch let error as ReviewError {
                 throw error
             } catch {
                 throw ReviewError.storageFailed
             }
         }
+        // The edit carries the pending navigation. If the write fails,
+        // the navigation save still has the latest read marks to write.
+        navigationSaveTask?.cancel()
+        navigationGeneration = UUID()
+        pendingNavigation = nil
         comments = next
-        viewedByScope = marks
         staleCommentIDs.formIntersection(Set(next.map(\.id)))
     }
 

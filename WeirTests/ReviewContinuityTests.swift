@@ -65,17 +65,44 @@ struct ReviewContinuityTests {
         #expect(store.resumeFile(in: .branch(base: "main"), among: [first, second]) == nil)
     }
 
-    @Test func aCommentAndTheFileOpenWhenItWasWritten_areSavedTogether() async throws {
+    @Test func readMarksAreImmediateAndTheirSaveIsCoalesced() async throws {
         let repository = try FakeReviewRepository.oneFile()
         let file = FakeReviewRepository.unstagedFile
         let drafts = RecordingReviewDraftStore()
-        let store = ReviewSession(root: URL(fileURLWithPath: "/tmp/weir-review-root"), git: repository, drafts: drafts)
+        let root = URL(fileURLWithPath: "/tmp/weir-review-read-marks-\(UUID())")
+        let store = ReviewSession(root: root, git: repository, drafts: drafts)
+        await store.refreshAsTheAppDoes()
+        await store.flushNavigationSave()
+        let saves = drafts.saves
+
+        store.setViewed(file.id, true)
+        #expect(store.viewed[file.id] != nil)
+        store.setViewed(file.id, false)
+        #expect(store.viewed[file.id] == nil)
+        store.setViewed(file.id, true)
+        #expect(drafts.saves == saves)
+
+        await store.flushNavigationSave()
+
+        #expect(drafts.saves == saves + 1)
+        let reopened = ReviewSession(root: root, git: repository, drafts: drafts)
+        #expect(reopened.viewed == store.viewed)
+    }
+
+    @Test func aCommentAndPendingNavigation_areSavedTogether() async throws {
+        let repository = try FakeReviewRepository.oneFile()
+        let file = FakeReviewRepository.unstagedFile
+        let drafts = RecordingReviewDraftStore()
+        let root = URL(fileURLWithPath: "/tmp/weir-review-edit-\(UUID())")
+        let store = ReviewSession(root: root, git: repository, drafts: drafts)
         await store.refreshAsTheAppDoes()
         await store.load(file)
+        await store.flushNavigationSave()
+        let saves = drafts.saves
         store.rememberOpenFile(file.id)
+        store.setViewed(file.id, true)
         let line = try #require(store.diff?.lines.first { $0.isCommentable })
         #expect(store.add(line: line, body: "Keep this comment."))
-        await store.flushNavigationSave()
         let draft = try drafts.load(root: store.root)
         let saved = try #require(draft)
         let comment = try #require(saved.comments.first)
@@ -84,6 +111,33 @@ struct ReviewContinuityTests {
         #expect(comment.file == file)
         #expect(comment.anchor == ReviewAnchor(lineID: line.id, oldLine: line.oldLine, newLine: line.newLine))
         #expect(saved.lastFileID == [ReviewScope.uncommitted.scopeID: file.id])
+        #expect(saved.viewed == [ReviewScope.uncommitted.scopeID: store.viewed])
+
+        await store.flushNavigationSave()
+        #expect(drafts.saves == saves + 1)
+    }
+
+    @Test func aFailedCommentSave_leavesTheReadMarkPending() async throws {
+        let repository = try FakeReviewRepository.oneFile()
+        let file = FakeReviewRepository.unstagedFile
+        let drafts = RecordingReviewDraftStore()
+        let root = URL(fileURLWithPath: "/tmp/weir-review-failed-edit-\(UUID())")
+        let store = ReviewSession(root: root, git: repository, drafts: drafts)
+        await store.refreshAsTheAppDoes()
+        let line = try #require(store.diff?.lines.first { $0.isCommentable })
+        await store.flushNavigationSave()
+
+        store.setViewed(file.id, true)
+        drafts.isFailing = true
+        #expect(!store.add(line: line, body: "Keep this text in the composer."))
+        drafts.isFailing = false
+
+        await store.flushNavigationSave()
+
+        let saved = try #require(try drafts.load(root: store.root))
+        #expect(saved.comments.isEmpty)
+        #expect(saved.viewed == [ReviewScope.uncommitted.scopeID: store.viewed])
+        #expect(store.errorMessage == DisplayText(error: ReviewError.storageFailed))
     }
 
     @Test func navigationQueuedAfterAnEditCannotOverwriteIt() async throws {
