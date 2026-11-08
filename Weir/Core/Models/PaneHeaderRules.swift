@@ -73,7 +73,17 @@ struct PaneHeaderLabel: Equatable {
 
     /// Shared by row layout and rename sizing so every warning reserves space.
     var showsWarning: Bool {
-        runsWithoutAsking || settingsAreAmbiguous
+        warningText != nil
+    }
+
+    /// The warning's words for its icon's tooltip and the header's VoiceOver
+    /// description. Unknown ownership takes priority over permission settings
+    /// that cannot be attributed to the visible agent.
+    var warningText: LocalizedStringResource? {
+        if settingsAreAmbiguous {
+            return Self.unavailableSettings
+        }
+        return runsWithoutAsking ? AgentPermissionMode.bypassPermissions.spokenName : nil
     }
 
     static let unavailableSettings = LocalizedStringResource(
@@ -147,8 +157,8 @@ struct PaneHeaderLabel: Equatable {
 /// How much of a header a row has room for, widest first. The kind's mark
 /// and the "⋯" menu are in every form: the mark says what the pane is and
 /// the menu is how to act on it. Between them the detail goes first, then
-/// the tokens, then the agent's settings, then the warning's words, then the name, then
-/// the state mark with the warning's symbol, then the prompt cache clock,
+/// the tokens, then the agent's settings, then the name, then the state mark
+/// with the warning's symbol, then the prompt cache clock,
 /// which is what a narrow pane most needs to say while it shows: the next
 /// message will cost a re-write, and the clock is the way to deal with it.
 enum PaneHeaderForm: CaseIterable, Equatable {
@@ -183,8 +193,7 @@ enum PaneHeaderForm: CaseIterable, Equatable {
         self == .all
     }
 
-    /// The settings, and the warning in words rather than its symbol
-    /// alone.
+    /// The agent's settings, kept whole while the form has room for them.
     var showsSettings: Bool {
         self == .all || self == .withTokens || self == .withSettings
     }
@@ -194,9 +203,8 @@ enum PaneHeaderForm: CaseIterable, Equatable {
         self == .all || self == .withTokens
     }
 
-    /// The state mark, and the warning, which stays as long as the mark
-    /// does: as words while the form has room for the settings, else as
-    /// its symbol.
+    /// The state mark and warning symbol, kept after the settings and name
+    /// have given way.
     var showsMark: Bool {
         self == .all || self == .withTokens || self == .withSettings || self == .withName || self == .withMark
     }

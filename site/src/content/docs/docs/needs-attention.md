@@ -66,4 +66,4 @@ OpenCode reaches many services and models, so a limit on one of them does not ma
 
 ## An agent that runs without asking
 
-When an agent is set to run every action without asking, its pane header says **Runs without asking** beside a warning sign, so you can tell at a glance.
+When an agent is set to run every action without asking, its pane header shows a warning icon. Its tooltip says **Runs without asking**, and VoiceOver reads the same warning with the header.
