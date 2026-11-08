@@ -502,7 +502,7 @@ final class AppState {
             attention: attention,
             requests: approvalPresentation.ledger
         )
-        self.gitSync = GitSyncCoordinator(session: session)
+        self.gitSync = Self.makeGitSync(session: session)
 
         (prStatusSyncer, turnEndPRRefresh) = Self.makePRStatusSync(session: session, store: prStatusStore, attention: attention)
 
