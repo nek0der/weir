@@ -1,6 +1,7 @@
 // ReviewGitCommand.swift
 // Weir — cancellable, bounded byte output for machine-readable Git queries.
 
+import Darwin
 import Foundation
 import WeirDomain
 
@@ -766,25 +767,62 @@ enum ReviewGit {
         return parts
     }
 
-    /// A file read from the worktree, bounded and contained.
+    /// Reads a regular file whose opened path lies within the worktree.
     ///
-    /// The containment is the point: a path Git reports is relative to the
-    /// worktree, but a directory along it can be a symlink, and following one
-    /// reads a file the reader never asked about under the reviewed file's
-    /// name. The size check is taken before the read and again after it,
-    /// because the file can grow between the two — an agent is working in this
-    /// worktree while the surface is open.
-    private static func worktreeFile(at url: URL, root: URL) throws -> Data {
-        let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-        guard values.isRegularFile == true, values.isSymbolicLink != true,
-              RepositoryPath.isStrictDescendant(url.resolvingSymlinksInPath().path, of: root.resolvingSymlinksInPath().path)
+    /// The callbacks let tests replace a path immediately before open and after descriptor validation.
+    static func worktreeFile(
+        at url: URL,
+        root: URL,
+        beforeOpen: (Int32) throws -> Void = { _ in },
+        beforeRead: () throws -> Void = {}
+    ) throws -> Data {
+        let rootDescriptor = Darwin.open(root.path, O_SEARCH | O_CLOEXEC)
+        guard rootDescriptor >= 0 else { throw ReviewError.unsupported }
+        defer { _ = Darwin.close(rootDescriptor) }
+
+        // We don't know the file type yet. Nonblocking open lets `fstat` reject a FIFO without a writer,
+        // and `O_NOCTTY` prevents acquiring a controlling terminal if a device was substituted.
+        let flags = O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK | O_NOCTTY
+        try beforeOpen(flags)
+        let descriptor = Darwin.open(url.path, flags)
+        guard descriptor >= 0 else {
+            let code = POSIXErrorCode(rawValue: errno) ?? .EIO
+            if code == .ELOOP || code == .EOPNOTSUPP {
+                throw ReviewError.unsupported
+            }
+            throw POSIXError(code)
+        }
+        defer { _ = Darwin.close(descriptor) }
+
+        // We validate the descriptor that supplies the bytes. A parent symlink may resolve within the worktree.
+        var info = Darwin.stat()
+        guard fstat(descriptor, &info) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        guard info.st_mode & S_IFMT == S_IFREG else { throw ReviewError.unsupported }
+        // We ask both descriptors where they are now, after the open, with the
+        // same lookup, so the two paths share one namespace across APFS
+        // firmlinks. Asked before the open, the root's path would still name a
+        // folder moved aside, and an outside folder moved into its place would
+        // pass as the worktree.
+        guard let rootPath = descriptorPath(rootDescriptor),
+              let openedPath = descriptorPath(descriptor),
+              RepositoryPath.isStrictDescendant(openedPath, of: rootPath)
         else { throw ReviewError.unsupported }
-        guard (values.fileSize ?? Int.max) <= maxDiffBytes else { throw ReviewError.tooLarge }
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
+        guard info.st_size <= maxDiffBytes else { throw ReviewError.tooLarge }
+
+        try beforeRead()
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+        // The read remains bounded if the file grows after `fstat`.
         let data = try handle.read(upToCount: maxDiffBytes + 1) ?? Data()
         guard data.count <= maxDiffBytes else { throw ReviewError.tooLarge }
         return data
+    }
+
+    private static func descriptorPath(_ descriptor: Int32) -> String? {
+        var pathBuffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
+        return pathBuffer.withUnsafeMutableBufferPointer { buffer in
+            guard let base = buffer.baseAddress, fcntl(descriptor, F_GETPATH, base) == 0 else { return nil }
+            return String(validatingCString: base)
+        }
     }
 
     private static func untrackedDiff(_ file: ReviewFile, root: URL) throws -> ReviewDiff {

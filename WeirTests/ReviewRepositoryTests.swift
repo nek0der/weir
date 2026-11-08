@@ -1,6 +1,7 @@
 // ReviewRepositoryTests.swift
 // Weir — what review reads from a real repository: layers, fingerprints, the branch view, and limits.
 
+import Darwin
 import Foundation
 import Testing
 @testable import Weir
@@ -91,6 +92,113 @@ struct ReviewRepositoryTests {
             await #expect(throws: ReviewError.unsupported, "Binary accepted") { try await ReviewGit.diff(untracked, root: root) }
             try Data(repeating: 97, count: ReviewGit.maxDiffBytes + 1).write(to: newFile)
             await #expect(throws: ReviewError.tooLarge, "Oversized file accepted") { try await ReviewGit.diff(untracked, root: root) }
+        }
+    }
+
+    @Test func worktreeFileRejectsParentReplacedByExternalSymlinkBeforeOpen() throws {
+        try withTempDir { directory in
+            let root = directory.appendingPathComponent("worktree")
+            let parent = root.appendingPathComponent("parent")
+            let outside = directory.appendingPathComponent("worktree-outside")
+            try ScratchFile.write("reviewed content", to: "notes.txt", in: parent)
+            try ScratchFile.write("external content", to: "notes.txt", in: outside)
+
+            #expect(throws: ReviewError.unsupported) {
+                try ReviewGit.worktreeFile(at: parent.appendingPathComponent("notes.txt"), root: root, beforeOpen: { _ in
+                    try FileManager.default.removeItem(at: parent)
+                    try FileManager.default.createSymbolicLink(at: parent, withDestinationURL: outside)
+                })
+            }
+        }
+    }
+
+    @Test func worktreeFileRejectsRootReplacedByOutsideFolderBeforeOpen() throws {
+        try withTempDir { directory in
+            let root = directory.appendingPathComponent("worktree")
+            let parked = directory.appendingPathComponent("parked")
+            let outside = directory.appendingPathComponent("outside")
+            try ScratchFile.write("reviewed content", to: "notes.txt", in: root)
+            try ScratchFile.write("external content", to: "notes.txt", in: outside)
+
+            #expect(throws: ReviewError.unsupported) {
+                try ReviewGit.worktreeFile(at: root.appendingPathComponent("notes.txt"), root: root, beforeOpen: { _ in
+                    try FileManager.default.moveItem(at: root, to: parked)
+                    try FileManager.default.moveItem(at: outside, to: root)
+                })
+            }
+        }
+    }
+
+    @Test func worktreeFileRejectsFIFOSwappedInBeforeOpen() throws {
+        try withTempDir { root in
+            let file = root.appendingPathComponent("notes.txt")
+            try ScratchFile.write("reviewed content", to: "notes.txt", in: root)
+
+            #expect(throws: ReviewError.unsupported) {
+                try ReviewGit.worktreeFile(at: file, root: root, beforeOpen: { flags in
+                    // Stop before opening the FIFO if a regression would block waiting for a writer.
+                    try #require(flags & O_NONBLOCK != 0)
+                    try FileManager.default.removeItem(at: file)
+                    try #require(mkfifo(file.path, S_IRUSR | S_IWUSR) == 0)
+                })
+            }
+        }
+    }
+
+    @Test func worktreeFileReadsOpenedDescriptorAfterPathIsReplaced() throws {
+        try withTempDir { root in
+            let file = root.appendingPathComponent("notes.txt")
+            try ScratchFile.write("reviewed content", to: "notes.txt", in: root)
+
+            let bytes = try ReviewGit.worktreeFile(at: file, root: root, beforeRead: {
+                try FileManager.default.removeItem(at: file)
+                try ScratchFile.write("replacement content", to: "notes.txt", in: root)
+            })
+            #expect(bytes == Data("reviewed content".utf8))
+            #expect(try ScratchFile.read("notes.txt", in: root) == "replacement content")
+        }
+    }
+
+    @Test func sourceAndDiffFollowParentSymlinkInsideWorktree() async throws {
+        try await withTempDir { root in
+            try await TempGitRepo.initialize(root)
+            let target = root.appendingPathComponent("target")
+            let link = root.appendingPathComponent("link")
+            try ScratchFile.write("reviewed content", to: "notes.txt", in: target)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+            let file = ReviewFile(path: "link/notes.txt", layer: .untracked, status: .untracked)
+
+            #expect(await ReviewGit.source(file, root: root) == ["reviewed content"])
+            let diff = try await ReviewGit.diff(file, root: root)
+            #expect(diff.lines.map(\.text) == ["reviewed content"])
+        }
+    }
+
+    @Test func worktreeFileAcceptsRootReachedThroughDataVolumeAlias() throws {
+        try withTempDir { root in
+            try ScratchFile.write("reviewed content", to: "notes.txt", in: root)
+            let resolved = try #require(realpath(root.path, nil))
+            defer { free(resolved) }
+            let rootPath = String(cString: resolved)
+            let dataVolume = "/System/Volumes/Data"
+            let aliasPath = rootPath.hasPrefix(dataVolume + "/") ? rootPath : dataVolume + rootPath
+            let alias = URL(fileURLWithPath: aliasPath, isDirectory: true)
+            let file = alias.appendingPathComponent("notes.txt")
+
+            #expect(try ReviewGit.worktreeFile(at: file, root: alias) == Data("reviewed content".utf8))
+        }
+    }
+
+    @Test(.enabled(if: geteuid() != 0))
+    func worktreeFileAcceptsSearchOnlyRoot() throws {
+        try withTempDir { root in
+            try ScratchFile.write("reviewed content", to: "notes.txt", in: root)
+            defer { _ = chmod(root.path, S_IRWXU) }
+            try #require(chmod(root.path, S_IXUSR) == 0)
+            try #require(access(root.path, R_OK) != 0)
+            let file = root.appendingPathComponent("notes.txt")
+
+            #expect(try ReviewGit.worktreeFile(at: file, root: root) == Data("reviewed content".utf8))
         }
     }
 
