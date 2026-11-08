@@ -106,6 +106,30 @@ struct ReviewDiffSelectionTests {
         #expect(selection.text.isEmpty)
     }
 
+    @Test func largeBackwardDragKeepsItsStartingHunk() {
+        let lineCount = 50000
+        let diffLines = (0..<lineCount).map { index in
+            ReviewLine(
+                id: index,
+                kind: .added,
+                text: "content",
+                oldLine: nil,
+                newLine: index + 1,
+                hunkIndex: index < 10 ? 0 : 1
+            )
+        }
+        let rows = diffLines.map { ReviewRow(id: $0.id, kind: .code($0)) }
+        let text = ReviewTextSelection(
+            anchor: ReviewTextPosition(rowIndex: lineCount - 1, lineID: lineCount - 1, side: nil, utf16Offset: 1),
+            head: ReviewTextPosition(rowIndex: 0, lineID: 0, side: nil, utf16Offset: 0)
+        )
+        var selection = ReviewDiffSelection()
+        selection.selectText(text)
+        selection.takeTextAsLines(rows: rows, diffLines: diffLines)
+        #expect(selection.lines.anchorLineID == lineCount - 1)
+        #expect(selection.lines.headLineID == 10)
+    }
+
     /// Beside kept lines, the line keys act on those lines and the text only
     /// goes.
     @Test func textBesideKeptLinesOnlyGoes() {
