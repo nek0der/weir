@@ -39,6 +39,35 @@ final class ReviewStackLoader {
         case sameRange
     }
 
+    private struct Footprint {
+        var lines = 0
+        var bytes = 0
+
+        init() {}
+
+        init(_ diff: ReviewDiff?) {
+            guard let diff else { return }
+            lines = diff.lines.count
+            bytes = diff.lines.reduce(0) { $0 + $1.text.utf8.count }
+        }
+
+        static func += (lhs: inout Self, rhs: Self) {
+            lhs.lines += rhs.lines
+            lhs.bytes += rhs.bytes
+        }
+
+        static func -= (lhs: inout Self, rhs: Self) {
+            lhs.lines -= rhs.lines
+            lhs.bytes -= rhs.bytes
+        }
+    }
+
+    private struct StartedRead {
+        let serial: Int
+        let scope: ReviewScope
+        let isForSearch: Bool
+    }
+
     /// A read's result, with what the file was just before the read and
     /// which read it was.
     private struct Read {
@@ -46,9 +75,15 @@ final class ReviewStackLoader {
         /// `nil` when it could not be taken, or the file is a submodule: the
         /// change check asks the diff's fingerprint instead.
         let state: ReviewReadState?
-        let serial: Int
-        /// The comparison it was read in, for that fingerprint.
-        let scope: ReviewScope
+        let started: StartedRead
+        let footprint: Footprint
+
+        init(entry: ReviewStackEntry, state: ReviewReadState?, started: StartedRead) {
+            self.entry = entry
+            self.state = state
+            self.started = started
+            footprint = Footprint(entry.diff)
+        }
     }
 
     /// Each file's diff, or why there is none, by file id.
@@ -75,6 +110,9 @@ final class ReviewStackLoader {
     /// (`ReviewDiffParser.maxRows`); this keeps a range of many large files
     /// from holding all of them at once.
     @ObservationIgnored var lineBudget = 250_000
+    /// The UTF-8 bytes of retained diff text. The line budget also bounds the
+    /// row overhead, including for patches with very little text per line.
+    private static let byteBudget = 8 * 1024 * 1024
     /// How long results that arrive close together wait to be published
     /// together: one rebuild of the rows for a screen of small files rather
     /// than one each. The first is published at once.
@@ -95,7 +133,7 @@ final class ReviewStackLoader {
     /// `nil` inside when it could not be.
     @ObservationIgnored private var queuedStates: [String: ReviewReadState?] = [:]
     @ObservationIgnored private var running: Set<String> = []
-    @ObservationIgnored private var lineCounts: [String: Int] = [:]
+    @ObservationIgnored private var footprints: [String: Footprint] = [:]
     /// What each file read was just before its read, by file id: a staged
     /// and an unstaged diff of one path are read at different times.
     @ObservationIgnored private var states: [String: ReviewReadState?] = [:]
@@ -132,9 +170,6 @@ final class ReviewStackLoader {
     /// draws; nor does a read of the list that ends after.
     @ObservationIgnored private(set) var isReleased = false
 
-    /// What a file the list has no counts for is taken to hold.
-    static let unknownLineEstimate = 200
-
     init(git: any ReviewRepositoryReading, root: URL) {
         self.git = git
         self.root = root
@@ -151,6 +186,9 @@ final class ReviewStackLoader {
         guard !isReleased else { return }
         if ids != window {
             window = ids
+            // The old window may have held the stack past its budget; a move
+            // over files already read starts no read, which would trim.
+            trim(keeping: [])
         }
         enqueue(requests.filter { ids.contains($0.file.id) })
     }
@@ -163,31 +201,16 @@ final class ReviewStackLoader {
         return searchTicket
     }
 
-    /// Find: every file given, as far as the budget goes, in order; only
-    /// those that fit are kept from the budget. `isPartial` when files were
-    /// left out before (ones too large to read at all), so the find bar
-    /// does not say it searched every file.
-    func requestAll(_ requests: [Request], estimates: [String: Int], ticket: Int, isPartial: Bool = false) {
+    /// Reads the requested files until their measured footprint exceeds the
+    /// budget. `isPartial` means the caller already excluded unreadable files.
+    func requestAll(_ requests: [Request], ticket: Int, isPartial: Bool = false) {
         guard ticket == searchTicket, !isReleased else { return }
-        searched = []
-        var total = 0
-        var isComplete = true
-        var chosen: [Request] = []
-        for request in requests {
-            let id = request.file.id
-            let lines = needsDiff(id) ? estimates[id] ?? Self.unknownLineEstimate : lineCounts[id] ?? 0
-            guard total + lines <= lineBudget else {
-                isComplete = false
-                continue
-            }
-            total += lines
-            searched.insert(id)
-            if needsDiff(id) {
-                chosen.append(request)
-            }
+        searched = Set(requests.map(\.file.id))
+        searchCoverage = isPartial ? .loadedFilesOnly : .everyFile
+        if !searched.isEmpty, exceedsBudget(protectedFootprint()) {
+            limitSearchToLoadedFiles()
         }
-        searchCoverage = isComplete && !isPartial ? .everyFile : .loadedFilesOnly
-        enqueue(chosen)
+        enqueue(requests.filter { searched.contains($0.file.id) })
     }
 
     /// Find closed: its files are let go of again like any other, and a
@@ -239,7 +262,12 @@ final class ReviewStackLoader {
         guard !isReleased else { return }
         let id = diff.file.id
         guard (serials[id] ?? 0) <= serial else { return }
-        store([id: Read(entry: .loaded(diff), state: state, serial: serial, scope: scope)])
+        // Budget checks use the newer footprint even while publishing is held.
+        if let read = pending[id], read.started.serial < serial {
+            pending.removeValue(forKey: id)
+        }
+        let started = StartedRead(serial: serial, scope: scope, isForSearch: false)
+        store([id: Read(entry: .loaded(diff), state: state, started: started)])
         trim(keeping: [id])
     }
 
@@ -336,7 +364,7 @@ final class ReviewStackLoader {
             entries = entries.filter { order[$0.key] != nil }
             stale = stale.filter { entries[$0] != nil }
         }
-        lineCounts = lineCounts.filter { entries[$0.key] != nil }
+        footprints = footprints.filter { entries[$0.key] != nil }
         states = states.filter { entries[$0.key] != nil }
         scopes = scopes.filter { entries[$0.key] != nil }
         serials = serials.filter { entries[$0.key] != nil }
@@ -400,15 +428,17 @@ final class ReviewStackLoader {
         while true {
             await withTaskGroup(of: (String, ReviewStackEntry).self) { group in
                 var count = 0
-                var started: [String: Int] = [:]
-                var startedScopes: [String: ReviewScope] = [:]
+                var started: [String: StartedRead] = [:]
                 while true {
                     await takeQueuedStates(generation)
                     while count < concurrency, let request = next(generation) {
                         running.insert(request.file.id)
                         nextSerial += 1
-                        started[request.file.id] = nextSerial
-                        startedScopes[request.file.id] = request.scope
+                        started[request.file.id] = StartedRead(
+                            serial: nextSerial,
+                            scope: request.scope,
+                            isForSearch: !window.contains(request.file.id)
+                        )
                         group.addTask {
                             let entry = await Self.read(request, git: git, root: root)
                             return (request.file.id, entry)
@@ -417,7 +447,9 @@ final class ReviewStackLoader {
                     }
                     guard count > 0, let (id, entry) = await group.next() else { break }
                     count -= 1
-                    receive(id, entry, serial: started[id] ?? 0, scope: startedScopes[id] ?? .uncommitted, generation: generation)
+                    if let read = started.removeValue(forKey: id) {
+                        receive(id, entry, started: read, generation: generation)
+                    }
                 }
             }
             // Nothing suspends between this check and letting the task go,
@@ -430,19 +462,32 @@ final class ReviewStackLoader {
         }
     }
 
-    /// Takes the state of every queued file that has none yet, in one batch
-    /// per comparison: before the read, so a change racing it raises the
-    /// banner once too often rather than never.
+    /// Takes the state of the next batch of files before they are read.
+    /// A change racing a read can then raise the banner on the next check.
     private func takeQueuedStates(_ generation: UUID) async {
+        guard generation == self.generation else { return }
+        // Find can request the entire list. Prepare only one batch of
+        // offscreen reads ahead so files past the budget are not all hashed.
+        queue.removeAll { request in
+            let id = request.file.id
+            guard !window.contains(id), !searched.contains(id) else { return false }
+            queuedStates.removeValue(forKey: id)
+            return true
+        }
         let waiting = queue.filter { queuedStates[$0.file.id] == nil }
-        guard !waiting.isEmpty else { return }
+        var preparing = waiting.filter { window.contains($0.file.id) }
+        let hasPreparedSearch = queue.contains { !window.contains($0.file.id) && queuedStates[$0.file.id] != nil }
+        if !hasPreparedSearch {
+            preparing += waiting.lazy.filter { !self.window.contains($0.file.id) }.prefix(concurrency)
+        }
+        guard !preparing.isEmpty else { return }
         guard tracksContent else {
-            for request in waiting {
+            for request in preparing {
                 queuedStates[request.file.id] = .some(nil)
             }
             return
         }
-        let byScope = Dictionary(grouping: waiting) { $0.scope.scopeID }
+        let byScope = Dictionary(grouping: preparing) { $0.scope.scopeID }
         for requests in byScope.values {
             guard let scope = requests.first?.scope else { continue }
             let taken = await ReviewChangeCheck.take(Set(requests.map(\.file.path)), git: git, root: root, scope: scope)
@@ -481,11 +526,20 @@ final class ReviewStackLoader {
 
     /// The first result is published at once, and those that come within
     /// `publishInterval` of the last publish wait for the rest of it.
-    private func receive(_ id: String, _ entry: ReviewStackEntry, serial: Int, scope: ReviewScope, generation: UUID) {
+    private func receive(_ id: String, _ entry: ReviewStackEntry, started: StartedRead, generation: UUID) {
         guard generation == self.generation else { return }
         running.remove(id)
         let state = queuedStates.removeValue(forKey: id) ?? nil
-        pending[id] = Read(entry: entry, state: state, serial: serial, scope: scope)
+        guard (serials[id] ?? 0) <= started.serial else { return }
+        let isNeededOnScreen = window.contains(id) || openFileID() == id
+        guard !started.isForSearch || isNeededOnScreen || searched.contains(id) else { return }
+
+        let read = Read(entry: entry, state: state, started: started)
+        if !searched.isEmpty, exceedsBudget(protectedFootprint(replacing: id, with: read.footprint)) {
+            limitSearchToLoadedFiles()
+            guard !started.isForSearch || isNeededOnScreen else { return }
+        }
+        pending[id] = read
         let elapsed = lastPublish.map { ContinuousClock.now - $0 }
         guard let elapsed, elapsed < publishInterval else {
             publish()
@@ -505,12 +559,12 @@ final class ReviewStackLoader {
         guard !isHeld, !pending.isEmpty else { return }
         // A read older than what the entry holds (the open file was loaded
         // since it started) is dropped.
-        let published = pending.filter { id, read in (serials[id] ?? 0) <= read.serial }
+        let published = pending.filter { id, read in (serials[id] ?? 0) <= read.started.serial }
         pending = [:]
         lastPublish = .now
         guard !published.isEmpty else { return }
         store(published)
-        trim(keeping: Set(published.keys))
+        trim(keeping: Set(published.compactMap { id, read in read.started.isForSearch ? nil : id }))
         onPublish(published.values.compactMap(\.entry.diff))
     }
 
@@ -518,38 +572,69 @@ final class ReviewStackLoader {
         for (id, read) in published {
             entries[id] = read.entry
             states[id] = .some(read.state)
-            scopes[id] = read.scope
-            serials[id] = read.serial
+            scopes[id] = read.started.scope
+            serials[id] = read.started.serial
             stale.remove(id)
             let lines = read.entry.diff?.lines ?? []
-            lineCounts[id] = lines.count
+            footprints[id] = read.footprint
             noteLines(lines.reduce(0) { max($0, max($1.oldLine ?? 0, $1.newLine ?? 0)) })
         }
         revision += 1
     }
 
-    /// Lets go of the files farthest, in the list, from the window, once the
-    /// stack holds more than its budget. The window, the open file, Find's
-    /// files, and the files just read are never let go of: letting go of a
-    /// file on screen only had it read again, and that read let go of the
-    /// next one, for as long as the screen stayed there.
-    private func trim(keeping kept: Set<String>) {
-        var total = lineCounts.values.reduce(0, +)
-        guard total > lineBudget else { return }
-        var protected = window.union(searched).union(kept)
+    private func exceedsBudget(_ footprint: Footprint) -> Bool {
+        footprint.lines > lineBudget || footprint.bytes > Self.byteBudget
+    }
+
+    private func screenFiles() -> Set<String> {
+        var ids = window
         if let open = openFileID() {
-            protected.insert(open)
+            ids.insert(open)
         }
+        return ids
+    }
+
+    /// Includes completed reads that may still be waiting to publish, so a
+    /// hold on publishing cannot keep Find's results past the budget.
+    private func protectedFootprint(
+        keeping kept: Set<String> = [],
+        replacing replacementID: String? = nil,
+        with replacement: Footprint? = nil
+    ) -> Footprint {
+        screenFiles().union(searched).union(kept).reduce(into: Footprint()) { total, id in
+            if let footprint = id == replacementID ? replacement : pending[id]?.footprint ?? footprints[id] {
+                total += footprint
+            }
+        }
+    }
+
+    private func limitSearchToLoadedFiles() {
+        searched = []
+        searchCoverage = .loadedFilesOnly
+    }
+
+    /// Lets go of the files farthest from the window when the stack exceeds
+    /// its budget. The screen stays protected so it does not keep requesting
+    /// the same files. Find's results lose that protection on budget pressure.
+    private func trim(keeping kept: Set<String>) {
+        if !searched.isEmpty, exceedsBudget(protectedFootprint(keeping: kept)) {
+            limitSearchToLoadedFiles()
+        }
+
+        var total = footprints.values.reduce(into: Footprint()) { $0 += $1 }
+        guard exceedsBudget(total) else { return }
+        let protected = screenFiles().union(searched).union(kept)
         let anchors = (window.isEmpty ? kept : window).compactMap { order[$0] }
         let center = anchors.isEmpty ? 0 : anchors.reduce(0, +) / anchors.count
-        let candidates = lineCounts.keys
+        let candidates = footprints.keys
             .filter { !protected.contains($0) }
             .sorted { abs((order[$0] ?? 0) - center) > abs((order[$1] ?? 0) - center) }
         var hasEvictedEntries = false
-        for id in candidates where total > lineBudget {
-            total -= lineCounts[id] ?? 0
+        for id in candidates where exceedsBudget(total) {
+            if let footprint = footprints.removeValue(forKey: id) {
+                total -= footprint
+            }
             entries.removeValue(forKey: id)
-            lineCounts.removeValue(forKey: id)
             states.removeValue(forKey: id)
             scopes.removeValue(forKey: id)
             serials.removeValue(forKey: id)

@@ -62,10 +62,10 @@ struct ReviewStackLoaderTests {
         #expect(loader.searchCoverage == .none)
         let reads = repository.diffReads
         // What was worked out before, arriving after: a scroll, and Find's
-        // estimate, old ticket and new.
+        // request, old ticket and new.
         loader.request(Self.requests(files), window: [files[0].id])
-        loader.requestAll(Self.requests(files), estimates: [:], ticket: ticket)
-        loader.requestAll(Self.requests(files), estimates: [:], ticket: loader.beginSearch())
+        loader.requestAll(Self.requests(files), ticket: ticket)
+        loader.requestAll(Self.requests(files), ticket: loader.beginSearch())
         #expect(loader.window == window)
         #expect(loader.searchCoverage == .none)
         #expect(loader.entries.isEmpty)
@@ -218,28 +218,97 @@ struct ReviewStackLoaderTests {
     @Test func find_readsTheWholeRange_orSaysItSearchesWhatIsRead() async throws {
         let files = Self.files(4)
         let diffs = try Self.diffs(files)
-        let scenarios: [(estimates: [Int], expectedIndices: [Int])] = [
-            ([25, 25, 25, 25], [0, 1, 2, 3]),
-            ([60, 50, 40, 1], [0, 2])
-        ]
-        for scenario in scenarios {
+        for lineBudget in [20, 12] {
             let repository = StackReviewRepository(files: files, diffs: diffs)
             let loader = ReviewStackLoader(git: repository, root: root)
-            loader.lineBudget = 100
-            loader.requestAll(
-                Self.requests(files),
-                estimates: Dictionary(uniqueKeysWithValues: zip(files.map(\.id), scenario.estimates)),
-                ticket: loader.beginSearch()
-            )
-            #expect(loader.searchCoverage == (scenario.expectedIndices.count == files.count ? .everyFile : .loadedFilesOnly))
-            let expected = Set(scenario.expectedIndices.map { files[$0].id })
-            await pollUntilStackRead { expected.isSubset(of: loader.entries.keys) }
-            #expect(Set(loader.entries.keys) == expected)
-            #expect(repository.diffReadIDs.sorted() == expected.sorted())
+            loader.lineBudget = lineBudget
+            loader.concurrency = 1
+            loader.publishInterval = .zero
+            loader.requestAll(Self.requests(files), ticket: loader.beginSearch())
+            await pollUntilStackRead { loader.searchCoverage == .loadedFilesOnly || loader.entries.count == files.count }
+
+            let fitsRange = lineBudget == 20
+            #expect(loader.searchCoverage == (fitsRange ? .everyFile : .loadedFilesOnly))
+            #expect(Set(loader.entries.keys) == Set(files.prefix(fitsRange ? 4 : 2).map(\.id)))
+            #expect(repository.diffReadIDs == files.prefix(fitsRange ? 4 : 3).map(\.id))
 
             loader.endSearch()
             #expect(loader.searchCoverage == .none)
         }
+    }
+
+    @Test func find_boundsTheTextOfReadDiffs() async {
+        let files = Self.files(12)
+        let line = String(repeating: "é", count: 240)
+        let diffs = files.map { file in
+            ReviewDiff(file: file, fingerprint: file.path, lines: (1...3500).map { number in
+                ReviewLine(id: number, kind: .added, text: line, oldLine: nil, newLine: number)
+            })
+        }
+        let repository = StackReviewRepository(files: files, diffs: diffs)
+        let loader = ReviewStackLoader(git: repository, root: root)
+        loader.concurrency = 1
+        loader.publishInterval = .zero
+        loader.requestAll(Self.requests(files), ticket: loader.beginSearch())
+        await pollUntilStackRead { loader.searchCoverage == .loadedFilesOnly || loader.entries.count == files.count }
+
+        #expect(loader.searchCoverage == .loadedFilesOnly)
+        #expect(Set(loader.entries.keys) == Set(files.prefix(4).map(\.id)))
+        #expect(repository.diffReadIDs == files.prefix(5).map(\.id))
+        #expect(repository.indexStateReads == 5)
+        #expect(repository.lastIndexReadPaths == [files[4].path], "files beyond the budget were never prepared")
+    }
+
+    @Test func find_countsReadsWaitingToPublish() async throws {
+        let files = Self.files(4)
+        let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files))
+        let loader = ReviewStackLoader(git: repository, root: root)
+        loader.concurrency = 1
+        loader.lineBudget = 10
+        loader.hold(true)
+
+        loader.requestAll(Self.requests(files), ticket: loader.beginSearch())
+        await pollUntilStackRead { loader.searchCoverage == .loadedFilesOnly }
+
+        #expect(loader.searchCoverage == .loadedFilesOnly)
+        #expect(loader.entries.isEmpty, "publishing is still held")
+        #expect(repository.diffReadIDs == files.prefix(3).map(\.id))
+        loader.hold(false)
+        #expect(Set(loader.entries.keys) == Set(files.prefix(2).map(\.id)))
+    }
+
+    @Test func findLetsGoOfItsFarthestDiff_whenAnOnscreenReadNeedsRoom() async throws {
+        let files = Self.files(3)
+        let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files))
+        let loader = ReviewStackLoader(git: repository, root: root)
+        loader.retire(.anotherScope, listed: files)
+        loader.lineBudget = 10
+
+        loader.requestAll(Self.requests(Array(files.suffix(2))), ticket: loader.beginSearch())
+        await pollUntilStackRead { loader.entries.count == 2 }
+        try #require(Set(loader.entries.keys) == Set(files.suffix(2).map(\.id)))
+
+        loader.request(Self.requests([files[0]]), window: Set(files.prefix(2).map(\.id)))
+        await pollUntilStackRead { loader.entries[files[0].id] != nil }
+
+        #expect(loader.searchCoverage == .loadedFilesOnly)
+        #expect(Set(loader.entries.keys) == Set(files.prefix(2).map(\.id)))
+    }
+
+    @Test func movingTheWindowOverReadFiles_letsGoOfTheFarthestDiff() async throws {
+        let files = Self.files(3)
+        let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files))
+        let loader = ReviewStackLoader(git: repository, root: root)
+        loader.retire(.anotherScope, listed: files)
+        loader.lineBudget = 10
+
+        loader.request(Self.requests(files), window: Set(files.map(\.id)))
+        await pollUntilStackRead { loader.entries.count == 3 }
+        try #require(loader.entries.count == 3, "The window keeps every diff on screen past the budget")
+
+        loader.request([], window: [files[2].id])
+
+        #expect(Set(loader.entries.keys) == Set(files.suffix(2).map(\.id)))
     }
 
     @Test func otherFilesHighlights_areFoundByTheirBand() {
@@ -489,27 +558,35 @@ struct ReviewStackLoaderTests {
         #expect(!session.hasPendingChanges, "a refresh clears it")
     }
 
-    @Test func anOlderRead_neverReplacesANewerOne() async throws {
-        let files = Self.files(1)
+    @Test func anOlderRead_neverReplacesOrUndercountsANewerOne() async throws {
+        let files = Self.files(2)
+        let opened = files[0]
+        let searched = files[1]
         let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files))
         let loader = ReviewStackLoader(git: repository, root: root)
-        // We hold the loader, so the stack's read waits to be published
-        // where the test can see it ended, rather than after a guess at how
-        // long it takes.
+        loader.lineBudget = 10
+        loader.requestAll(Self.requests([searched]), ticket: loader.beginSearch())
+        await pollUntilStackRead { loader.entries[searched.id] != nil }
+        try #require(loader.entries[searched.id]?.diff != nil)
+
         loader.hold(true)
-        loader.request(Self.requests(files), window: [files[0].id])
-        await pollUntilStackRead { loader.isWaitingToPublish(files[0].id) }
-        try #require(loader.isWaitingToPublish(files[0].id))
-        // The file is opened, and its own load is kept before the stack's
-        // is published.
-        let newer = try ReviewDiffFixture.rewritten(files[0], lines: 2, fingerprint: "newer")
+        loader.request(Self.requests([opened]), window: [opened.id])
+        await pollUntilStackRead { loader.isWaitingToPublish(opened.id) }
+        try #require(loader.isWaitingToPublish(opened.id))
+
+        // Opening the file saves a newer, larger diff while the five-line
+        // background read is still waiting to publish.
+        let newer = try ReviewDiffFixture.rewritten(opened, lines: 3, fingerprint: "newer")
         loader.remember(newer, state: nil, serial: loader.beginRead(), scope: .uncommitted)
+
+        #expect(loader.searchCoverage == .loadedFilesOnly)
+        #expect(loader.entries[searched.id] == nil)
         loader.hold(false)
 
-        #expect(loader.entries[files[0].id]?.diff?.fingerprint == "newer", "the stack's read started first")
-        let older = try ReviewDiffFixture.rewritten(files[0], lines: 2, fingerprint: "older")
+        #expect(loader.entries[opened.id]?.diff?.fingerprint == "newer", "the stack's read started first")
+        let older = try ReviewDiffFixture.rewritten(opened, lines: 2, fingerprint: "older")
         loader.remember(older, state: nil, serial: 0, scope: .uncommitted)
-        #expect(loader.entries[files[0].id]?.diff?.fingerprint == "newer")
+        #expect(loader.entries[opened.id]?.diff?.fingerprint == "newer")
     }
 
     @Test func aRefresh_quietsTheBanner_forAFileOffScreen() async throws {
@@ -535,7 +612,7 @@ struct ReviewStackLoaderTests {
 
     // MARK: - Find's ticket
 
-    @Test func aFindClosedBeforeItsEstimate_readsNothing() async throws {
+    @Test func aFindClosedBeforeItsRequest_readsNothing() async throws {
         let files = Self.files(3)
         let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files))
         let loader = ReviewStackLoader(git: repository, root: root)
@@ -543,9 +620,9 @@ struct ReviewStackLoaderTests {
         let ticket = loader.beginSearch()
         loader.endSearch()
 
-        // The estimate comes back after Esc. A subsequent on-screen read
+        // The request arrives after Esc. A subsequent on-screen read
         // gives the single queue a result past any stale request.
-        loader.requestAll(Self.requests(Array(files.prefix(2))), estimates: [:], ticket: ticket)
+        loader.requestAll(Self.requests(Array(files.prefix(2))), ticket: ticket)
         let visible = files[2]
         loader.request(Self.requests([visible]), window: Set(files.map(\.id)))
         await pollUntilStackRead { loader.entries[visible.id]?.diff != nil }
@@ -557,7 +634,6 @@ struct ReviewStackLoaderTests {
         let earlier = Array(files.prefix(2))
         loader.requestAll(
             Self.requests(earlier),
-            estimates: Dictionary(uniqueKeysWithValues: earlier.map { ($0.id, 1) }),
             ticket: loader.beginSearch()
         )
         await pollUntilStackRead { Set(loader.entries.keys) == Set(files.map(\.id)) }
@@ -579,13 +655,13 @@ struct ReviewStackLoaderTests {
         let loader = session.stackLoader
         loader.concurrency = 1
 
-        // Close Find on the same main-actor turn, before its estimate starts.
+        // Close Find on the same main-actor turn, before its request starts.
         let closing = session.loadStackForSearch([searched])
         loader.endSearch()
         try await Self.requireCompletion(of: closing)
         #expect(loader.searchCoverage == .none)
 
-        // Let the same queue read a visible file after the estimate has returned.
+        // Let the same queue read a visible file after the Find request has returned.
         session.loadStacked(window: [visible.id])
         await pollUntilStackRead { loader.entries[visible.id]?.diff != nil }
         try #require(loader.entries[visible.id]?.diff != nil)
@@ -695,7 +771,7 @@ extension ReviewStackLoaderTests {
         let repository = try StackReviewRepository(files: files, diffs: Self.diffs(files))
         let loader = ReviewStackLoader(git: repository, root: root)
         loader.retire(.anotherScope, listed: initial)
-        loader.requestAll(Self.requests(initial), estimates: [:], ticket: loader.beginSearch())
+        loader.requestAll(Self.requests(initial), ticket: loader.beginSearch())
         await pollUntilStackRead { loader.entries.count == initial.count }
         try #require(Set(loader.entries.keys) == Set(initial.map(\.id)))
         let readsBefore = repository.diffReadIDs.count
@@ -703,7 +779,7 @@ extension ReviewStackLoaderTests {
         loader.retire(.sameScope, listed: updated)
         #expect(loader.searchCoverage == .everyFile, "a same-scope refresh preserves the active search coverage")
         // As the review asks when the list is read again with Find open.
-        loader.requestAll(Self.requests(updated), estimates: [:], ticket: loader.beginSearch())
+        loader.requestAll(Self.requests(updated), ticket: loader.beginSearch())
         await pollUntilStackRead { updated.allSatisfy { !loader.needsDiff($0.id) } }
 
         #expect(Set(loader.entries.keys) == Set(updated.map(\.id)))

@@ -17,95 +17,32 @@ extension ReviewSession {
         stackLoader.request(requests, window: window)
     }
 
-    /// Find searches every file of the range: reads the rest of
-    /// `files`, as far as the budget goes (`estimatedLines`). The estimate
-    /// opens untracked files, so it is worked out off the main actor; a list
-    /// read again meanwhile is asked about by the review itself.
-    /// The returned task ends once the session has handled the estimate.
+    /// Requests the rest of the range for Find, as far as the measured budget
+    /// allows. Files whose exact counts exceed the per-file limit are skipped.
     @discardableResult
     func loadStackForSearch(_ files: [ReviewFile]) -> Task<Void, Never> {
-        let stats = stats
-        let root = root
         let listRead = listReadCount
-        // Taken now, so a Find closed before the estimate is back drops it.
         let ticket = stackLoader.beginSearch()
-        let requests = files.map { ReviewStackLoader.Request(file: $0, scope: scopeForFile($0)) }
+        let unreadable = Set(files.filter { isTooLargeForSearch($0) }.map(\.id))
+        let requests = files.filter { !unreadable.contains($0.id) }
+            .map { ReviewStackLoader.Request(file: $0, scope: scopeForFile($0)) }
         return Task {
-            let estimates = await Task.detached(priority: .userInitiated) {
-                files.reduce(into: [String: Int]()) { estimates, file in
-                    if let estimate = Self.estimatedLines(file, stat: stats[file.id], root: root) {
-                        estimates[file.id] = estimate
-                    }
-                }
-            }.value
             guard listReadCount == listRead else { return }
-            // A file whose counts say it is past what a diff can hold cannot
-            // be read, and is not counted against the budget; the find bar
-            // then says it searched the files read. Only where the counts
-            // are the diff's own size (a file added or deleted whole): the
-            // estimate for the rest is rough, and they are tried.
-            let unreadable = Set(files.filter { file in
-                Self.isExactEstimate(file, stat: stats[file.id]) && (estimates[file.id] ?? 0) >= ReviewDiffParser.maxRows
-            }.map(\.id))
-            stackLoader.requestAll(
-                requests.filter { !unreadable.contains($0.file.id) },
-                estimates: estimates,
-                ticket: ticket,
-                isPartial: !unreadable.isEmpty
-            )
+            stackLoader.requestAll(requests, ticket: ticket, isPartial: !unreadable.isEmpty)
         }
     }
 
-    /// Whether a file's counts are its diff's size: it was added or deleted
-    /// whole, so every line is in the diff and nothing else is.
-    nonisolated static func isExactEstimate(_ file: ReviewFile, stat: ReviewFileStat?) -> Bool {
-        guard let stat, !stat.isBinary else { return false }
+    private func isTooLargeForSearch(_ file: ReviewFile) -> Bool {
+        guard let stat = stats[file.id], !stat.isBinary else { return false }
         switch file.status {
-        case .added, .deleted, .untracked: return true
-        default: return false
+        case .added, .deleted:
+            // The patch shows the whole file and at least two metadata rows.
+            return stat.added + stat.removed + 2 > ReviewDiffParser.maxRows
+        case .untracked:
+            return stat.added > ReviewDiffParser.maxRows
+        default:
+            return false
         }
-    }
-
-    /// About how many rows a file's diff holds before it is read, at most
-    /// `ReviewDiffParser.maxRows` (past that it is not read at all). A file
-    /// added or deleted whole is its lines and a header; a change elsewhere
-    /// adds a hunk header and its context for about every dozen changed
-    /// lines; an untracked file is its length, a line for every 32 bytes,
-    /// near what source runs to, and one row if it is not text. `nil` where
-    /// none of that is known, and the stack assumes
-    /// `ReviewStackLoader.unknownLineEstimate`.
-    nonisolated static func estimatedLines(_ file: ReviewFile, stat: ReviewFileStat?, root: URL) -> Int? {
-        let rows: Int
-        if let stat {
-            guard !stat.isBinary else { return 1 }
-            let changed = stat.added + stat.removed
-            switch file.status {
-            case .added, .deleted, .untracked:
-                rows = changed + 2
-            default:
-                rows = changed + contextPerHunk * max(1, changed / 12) + 1
-            }
-        } else {
-            guard file.layer == .untracked, let size = untrackedTextSize(root.appendingPathComponent(file.path)) else { return nil }
-            rows = size / 32 + 1
-        }
-        return min(rows, ReviewDiffParser.maxRows)
-    }
-
-    /// An untracked file's size, `0` for one that is not text (a NUL in its
-    /// first few kilobytes, as Git decides), `nil` when it cannot be read.
-    private nonisolated static func untrackedTextSize(_ url: URL) -> Int? {
-        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-              let handle = try? FileHandle(forReadingFrom: url)
-        else { return nil }
-        defer { try? handle.close() }
-        let head = (try? handle.read(upToCount: 8000)) ?? Data()
-        return head.contains(0) ? 0 : size
-    }
-
-    /// A hunk header and the three lines of context Git gives either side.
-    private nonisolated static var contextPerHunk: Int {
-        7
     }
 
     /// Keeps the open file's diff in the stack, so the file draws the same
