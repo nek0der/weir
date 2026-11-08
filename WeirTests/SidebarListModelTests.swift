@@ -325,9 +325,9 @@ struct SidebarListModelTests {
 
     // MARK: - A folded header's marks
 
-    /// A folded header shows one mark of each kind inside it, a wait first,
+    /// A folded header holds one mark of each kind inside it, a wait first,
     /// then a stop, then a turn running; an unread turn none.
-    @Test func aFoldedHeader_showsAWaitAStopAndARun_inThatOrder_butNoUnread() {
+    @Test func aFoldedHeader_holdsAWaitAStopAndARun_inThatOrder_butNoUnread() {
         let fixture = Fixture()
         var queue = AttentionQueue()
         let turn = TurnID("t")
@@ -348,7 +348,28 @@ struct SidebarListModelTests {
         #expect(folded?.marks == [.needsApproval, .stopped, .running])
         #expect(folded?.requestKeys == [first.key, second.key], "its cards stand beside the header")
         #expect(open?.marks == [], "an open header's rows show their own")
+        #expect(open?.displayedMark == nil)
         #expect(open?.requestKeys == [])
+    }
+
+    /// It draws only the wait, so every header's mark is one wide, and its
+    /// tooltip still names all three.
+    @Test func aFoldedHeader_withAWaitAStopAndARun_drawsOnlyTheWait() throws {
+        let fixture = Fixture()
+        var queue = AttentionQueue()
+        let approval = ApprovalFact.test()
+        Self.item(.approval(approval.key), .approval(approval), in: fixture.b, &queue)
+        let stopped = AttentionItemID.stop(EpisodeKey(origin: .runtime("stopped"), episodeToken: "1"))
+        Self.item(stopped, .stop(.processExited), in: fixture.b, runtimeID: "stopped", &queue)
+
+        let model = Self.model(fixture, queue: queue, running: [fixture.b.id: 1])
+        let header = try #require(model.headers.first { $0.id == fixture.b.id })
+
+        #expect(header.isCollapsed)
+        #expect(header.displayedMark == .needsApproval)
+        #expect(header.marks == [.needsApproval, .stopped, .running])
+        let names = header.marks.map { StateGlyph.Kind($0).name.resolved(in: Self.english) }
+        #expect(SidebarHeaderText.contents(names, locale: Self.english) == "Contains: Needs approval, Stopped, and Running")
     }
 
     @Test(arguments: [
@@ -356,6 +377,7 @@ struct SidebarListModelTests {
         (AttentionCounts(prompts: 1), 0, [.needsResponse]),
         (AttentionCounts(signIns: 1), 0, [.needsSignIn]),
         (AttentionCounts(approvals: 1, questions: 1), 0, [.needsApproval]),
+        (AttentionCounts(stops: 1), 1, [.stopped, .running]),
         (AttentionCounts(unread: 3), 0, []),
         (AttentionCounts(), 1, [.running]),
         (AttentionCounts(), 0, [])
