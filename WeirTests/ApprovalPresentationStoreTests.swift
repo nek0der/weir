@@ -409,16 +409,16 @@ struct ApprovalPresentationStoreTests {
     /// A stop while the observer waits for the service's reply ends the wait
     /// at once, rather than holding a thread for the subscription's minute.
     @Test(.timeLimit(.minutes(1)))
-    func observe_stoppedWhileOpening_finishesWithinOneSecond() async throws {
+    func observe_stoppedWhileOpening_releasesTheCallSynchronously() async throws {
         let service = HeldXPCService(holding: .everything)
-        try await expectStopEndsTheObserver(waitingOn: service)
+        try await expectStopEndsTheObserver(waitingOn: service, callNumber: 1)
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func observe_stoppedWhileSubscribed_finishesWithinOneSecond() async throws {
+    func observe_stoppedWhileSubscribed_releasesTheCallSynchronously() async throws {
         let artifact = try AgentIntegrationServiceArtifact.bundled(in: Bundle.main.bundleURL)
         let service = HeldXPCService(holding: .afterOpening(artifact))
-        try await expectStopEndsTheObserver(waitingOn: service)
+        try await expectStopEndsTheObserver(waitingOn: service, callNumber: 4)
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -432,17 +432,21 @@ struct ApprovalPresentationStoreTests {
         #expect(!store.isRunning)
     }
 
-    private func expectStopEndsTheObserver(waitingOn service: HeldXPCService) async throws {
-        let store = ApprovalPresentationStore(controllerClient: { try service.client() })
+    private func expectStopEndsTheObserver(waitingOn service: HeldXPCService, callNumber: Int) async throws {
+        let wait = HeldReplyWait(callNumber: callNumber)
+        let store = ApprovalPresentationStore(controllerClient: {
+            try service.client(timeoutSeconds: 30, waitForReply: wait.wait)
+        })
         store.start()
         defer { store.stop() }
-        await pollUntil(timeout: .seconds(10)) { service.heldCount == 1 }
+        await service.waitUntilHeld()
+        await wait.waitUntilWaiting()
+        let stopped = store.stop()
+        let wasReleased = wait.releaseAfterCheckingSignal()
+        await stopped?.value
+        try #require(stopped != nil)
         try #require(service.heldCount == 1)
-
-        let clock = ContinuousClock()
-        let stoppedAt = clock.now
-        let stopped = try #require(store.stop())
-        await stopped.value
-        #expect(stoppedAt.duration(to: clock.now) < .seconds(1))
+        #expect(wasReleased)
+        #expect(!store.isRunning)
     }
 }

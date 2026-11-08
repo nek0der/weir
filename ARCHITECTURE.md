@@ -631,7 +631,10 @@ queue. `Task.detached` and a `nonisolated` async function would run it on
 Swift's cooperative pool, which has one thread per core and adds none for a
 thread that blocks, so a few such waits stall every task in the app. A caller
 that blocks for long ends the wait itself on cancellation: the approval
-controller (`ApprovalPresentationStore`) invalidates its XPC connection.
+controller (`ApprovalPresentationStore`) invalidates its XPC connection. The
+client records each pending call under the same lock as its invalidated
+state and signals those calls before `invalidate()` returns. Cancellation
+therefore releases their waits without waiting for XPC's error queue.
 
 ### Forced-override Ghostty config keys
 

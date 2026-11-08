@@ -4,7 +4,7 @@
 import Foundation
 
 /// `@unchecked Sendable` because `NSXPCConnection` is not marked `Sendable`.
-/// It is safe: apart from `isInvalidated`, which is read and written only
+/// It is safe: apart from `isInvalidated` and the pending calls, which are accessed only
 /// under `lock`, the client holds only constants, `NSXPCConnection` may be
 /// messaged and invalidated from any thread, and each call keeps its result
 /// in a box of its own behind a lock. That lets the app block on a call off
@@ -12,12 +12,15 @@ import Foundation
 final class AgentIntegrationXPCClient: @unchecked Sendable {
     private let connection: NSXPCConnection
     private let timeoutSeconds: Int
+    /// The blocking wait, injected by tests to inspect a release before the
+    /// waiting thread resumes. Production uses the semaphore's deadline.
+    private let waitForReply: @Sendable (DispatchSemaphore, Int) -> DispatchTimeoutResult
     private let lock = NSLock()
-    /// Set by `invalidate()`. We keep it ourselves rather than leave a later
-    /// call to find out from XPC: XPC reports an invalidated connection by
-    /// running the call's error handler on its own queue, which on a busy
-    /// machine can take seconds.
+    /// Whether invalidation has closed admission to new calls. Protected by
+    /// `lock` together with the calls it must release.
     private var isInvalidated = false
+    /// Calls registered before invalidation, removed on completion or timeout.
+    private var pending: [UUID: AgentIntegrationResultBox<Data>] = [:]
 
     convenience init(role: AgentIntegrationRole, timeoutSeconds: Int = 5) throws {
         let machService = switch role {
@@ -34,7 +37,13 @@ final class AgentIntegrationXPCClient: @unchecked Sendable {
     /// A client on a connection whose peer the caller has already made
     /// sure of: `init(role:)` requires the service's signature, and a test
     /// connects to an anonymous listener in its own process.
-    init(connection: NSXPCConnection, timeoutSeconds: Int = 5) throws {
+    init(
+        connection: NSXPCConnection,
+        timeoutSeconds: Int = 5,
+        waitForReply: @escaping @Sendable (DispatchSemaphore, Int) -> DispatchTimeoutResult = {
+            $0.wait(timeout: .now() + .seconds($1))
+        }
+    ) throws {
         guard timeoutSeconds > 0 else {
             throw AgentIntegrationError.invalidArguments("The XPC timeout must be positive.")
         }
@@ -42,18 +51,26 @@ final class AgentIntegrationXPCClient: @unchecked Sendable {
         connection.activate()
         self.connection = connection
         self.timeoutSeconds = timeoutSeconds
+        self.waitForReply = waitForReply
     }
 
     deinit {
         connection.invalidate()
     }
 
-    /// Ends the connection. A call blocked waiting for its reply fails at
-    /// once, because invalidating runs the error handler of every
-    /// outstanding call. Any later call fails as soon as it is made, because
-    /// it checks `isInvalidated` before it asks the connection for a proxy.
+    /// Ends the connection and signals every pending call before returning.
+    /// Later calls fail locally without asking XPC for a proxy. Neither path
+    /// waits for XPC's error queue, which may be delayed under load.
     func invalidate() {
-        lock.withLock { isInvalidated = true }
+        lock.withLock {
+            isInvalidated = true
+            // Signaling inside this lock also makes concurrent invalidations
+            // wait until every admitted call has its completion signal.
+            for call in pending.values {
+                call.set(.failure(AgentIntegrationError.requestFailed("The connection was invalidated.")))
+            }
+            pending.removeAll()
+        }
         connection.invalidate()
     }
 
@@ -85,17 +102,21 @@ final class AgentIntegrationXPCClient: @unchecked Sendable {
         timeoutSeconds: Int? = nil,
         _ body: (any AgentIntegrationXPCProtocol, @escaping (Data?, NSError?) -> Void) -> Void
     ) throws -> Data {
-        // A call that passes this check just before `invalidate()` still
-        // ends at once: it is then outstanding, and XPC runs its error
-        // handler.
-        guard !lock.withLock({ isInvalidated }) else {
+        let id = UUID()
+        let result = AgentIntegrationResultBox<Data>()
+        // Registration and invalidation share a lock, so a call cannot enter
+        // between the invalidation check and the snapshot of pending calls.
+        let wasRegistered = lock.withLock {
+            guard !isInvalidated else { return false }
+            pending[id] = result
+            return true
+        }
+        guard wasRegistered else {
             throw AgentIntegrationError.requestFailed("The connection was invalidated.")
         }
-        let result = AgentIntegrationResultBox<Data>()
-        let semaphore = DispatchSemaphore(value: 0)
+        defer { _ = lock.withLock { pending.removeValue(forKey: id) } }
         guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
             result.set(.failure(AgentIntegrationError.requestFailed(error.localizedDescription)))
-            semaphore.signal()
         }) as? any AgentIntegrationXPCProtocol else {
             throw AgentIntegrationError.invalidResponse
         }
@@ -107,10 +128,9 @@ final class AgentIntegrationXPCClient: @unchecked Sendable {
             } else {
                 result.set(.failure(AgentIntegrationError.invalidResponse))
             }
-            semaphore.signal()
         }
         let timeoutSeconds = timeoutSeconds ?? self.timeoutSeconds
-        guard semaphore.wait(timeout: .now() + .seconds(timeoutSeconds)) == .success else {
+        guard waitForReply(result.semaphore, timeoutSeconds) == .success else {
             throw AgentIntegrationError.timeout
         }
         return try result.get()
@@ -119,12 +139,15 @@ final class AgentIntegrationXPCClient: @unchecked Sendable {
 
 private final class AgentIntegrationResultBox<Value>: @unchecked Sendable {
     private let lock = NSLock()
+    /// The first completion; later XPC replies cannot replace invalidation.
     private var result: Result<Value, any Error>?
+    let semaphore = DispatchSemaphore(value: 0)
 
     func set(_ result: Result<Value, any Error>) {
         lock.withLock {
             guard self.result == nil else { return }
             self.result = result
+            semaphore.signal()
         }
     }
 

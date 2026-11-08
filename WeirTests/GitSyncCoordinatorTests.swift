@@ -87,7 +87,8 @@ struct GitSyncCoordinatorTests {
     /// A listing that failed says nothing about the worktrees: every row
     /// stays as it was, none is marked missing for Remove Missing to close,
     /// and the main checkout keeps its branch.
-    @Test func aFailedListing_keepsEveryRow_andMarksNoneMissing() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func aFailedListing_keepsEveryRow_andMarksNoneMissing() async throws {
         try await withTempDir { root in
             let (session, project) = WorkspaceSessionFixture.withProject(rootURL: root)
             let index = try #require(session.projects.firstIndex { $0.id == project.id })
@@ -102,7 +103,7 @@ struct GitSyncCoordinatorTests {
                 requestedRoots.update { $0.append(root) }
                 throw GitProcessError.nonZeroExit(.failure(detail))
             }
-            await pollUntil { session.project(project.id)?.trouble == expected }
+            await untilObserved { session.project(project.id)?.trouble == expected }
             var after = try #require(session.project(project.id))
             #expect(after.trouble == expected)
             #expect(requestedRoots.value == [project.rootURL])

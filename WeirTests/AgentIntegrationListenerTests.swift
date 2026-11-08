@@ -11,7 +11,7 @@ import Testing
 /// service it withdraws from.
 struct AgentIntegrationListenerTests {
     @Test(.timeLimit(.minutes(1)))
-    func aDroppedRequester_withdrawsItsRequestsOnly() throws {
+    func aDroppedRequester_withdrawsItsRequestsOnly() async throws {
         let service = try RustApprovalService(maximumRecords: 8)
         let listener = NSXPCListener.anonymous()
         let delegate = AgentIntegrationListenerDelegate(
@@ -24,12 +24,16 @@ struct AgentIntegrationListenerTests {
         )
         listener.delegate = delegate
         listener.resume()
-        defer { listener.invalidate() }
+        defer {
+            listener.invalidate()
+            withExtendedLifetime(delegate) {}
+        }
         let controller = try service.controllerSession()
         let epoch = try completeHello(on: controller)
 
-        let dropped = try submittedRequest(on: listener, epoch: epoch)
-        let kept = try submittedRequest(on: listener, epoch: epoch)
+        let dropped = try await submittedRequest(on: listener, epoch: epoch)
+        defer { dropped.client.invalidate() }
+        let kept = try await submittedRequest(on: listener, epoch: epoch)
         defer { kept.client.invalidate() }
         #expect(try status(of: dropped.key, on: controller, epoch: epoch) == "pending")
         let sequence = try sequence(on: controller, epoch: epoch)
@@ -37,7 +41,7 @@ struct AgentIntegrationListenerTests {
         dropped.client.invalidate()
 
         // The withdrawal moves the broker's sequence, which ends the wait
-        // at once; the minute is only there if it never comes.
+        // at once; the bound only detects a missing withdrawal.
         let changed = try AgentIntegrationApprovalWire.object(from: controller.exchange(
             AgentIntegrationApprovalWire.subscribe(
                 epoch: epoch,
@@ -54,19 +58,26 @@ struct AgentIntegrationListenerTests {
     }
 
     private struct Submitted {
-        let client: AgentIntegrationXPCClient
+        let client: Requester
         let key: (runID: UUID, requestID: UUID)
     }
 
     /// A requester connection with one pending request, as a hook helper
     /// holds while it waits.
-    private func submittedRequest(on listener: NSXPCListener, epoch: UUID) throws -> Submitted {
-        let client = try AgentIntegrationXPCClient(connection: NSXPCConnection(listenerEndpoint: listener.endpoint))
-        let runID = try #require(client.openSession().runID)
+    private func submittedRequest(on listener: NSXPCListener, epoch: UUID) async throws -> Submitted {
+        let client = Requester(endpoint: listener.endpoint)
+        var wasSubmitted = false
+        defer {
+            if !wasSubmitted {
+                client.invalidate()
+            }
+        }
+        let bootstrap = try await client.openSession()
+        let runID = try #require(bootstrap.runID)
         let (hello, _) = try AgentIntegrationProbeWire.hello()
-        _ = try client.exchange(hello)
+        _ = try await client.exchange(hello)
         let requestID = UUID()
-        let submitted = try AgentIntegrationApprovalWire.object(from: client.exchange(
+        let submitted = try await AgentIntegrationApprovalWire.object(from: client.exchange(
             AgentIntegrationApprovalWire.submit(
                 epoch: epoch,
                 submission: AgentIntegrationApprovalSubmission(
@@ -77,7 +88,58 @@ struct AgentIntegrationListenerTests {
             )
         ))
         #expect(submitted["type"] as? String == "approval.result")
+        wasSubmitted = true
         return Submitted(client: client, key: (runID, requestID))
+    }
+
+    /// Uses XPC replies as events during setup. The listener's withdrawal
+    /// contract does not include the synchronous client's five-second RPC
+    /// timeout. Stream cancellation lets the suite limit end a missing reply.
+    private final class Requester {
+        private let connection: NSXPCConnection
+
+        init(endpoint: NSXPCListenerEndpoint) {
+            connection = NSXPCConnection(listenerEndpoint: endpoint)
+            connection.remoteObjectInterface = NSXPCInterface(with: (any AgentIntegrationXPCProtocol).self)
+            connection.activate()
+        }
+
+        func invalidate() {
+            connection.invalidate()
+        }
+
+        func openSession() async throws -> AgentIntegrationSessionBootstrap {
+            let data = try await call { proxy, reply in proxy.openSession(withReply: reply) }
+            return try JSONDecoder().decode(AgentIntegrationSessionBootstrap.self, from: data)
+        }
+
+        func exchange(_ data: Data) async throws -> Data {
+            try await call { proxy, reply in proxy.exchange(data, withReply: reply) }
+        }
+
+        private func call(
+            _ send: (any AgentIntegrationXPCProtocol, @escaping (Data?, NSError?) -> Void) -> Void
+        ) async throws -> Data {
+            let (responses, received) = AsyncThrowingStream<Data, any Error>.makeStream()
+            guard let proxy = connection.remoteObjectProxyWithErrorHandler({ error in
+                received.finish(throwing: error)
+            }) as? any AgentIntegrationXPCProtocol else {
+                throw AgentIntegrationError.invalidResponse
+            }
+            send(proxy) { data, error in
+                if let error {
+                    received.finish(throwing: error)
+                } else if let data {
+                    received.yield(data)
+                    received.finish()
+                } else {
+                    received.finish(throwing: AgentIntegrationError.invalidResponse)
+                }
+            }
+            var iterator = responses.makeAsyncIterator()
+            guard let response = try await iterator.next() else { throw CancellationError() }
+            return response
+        }
     }
 
     private func status(

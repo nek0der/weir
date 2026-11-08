@@ -257,7 +257,7 @@ struct ClaudeShimScriptTests {
             shell.arguments = ["-c", command]
             shell.standardInput = FileHandle.nullDevice
             try shell.run()
-            #expect(shell.waitUntilExit(within: 10))
+            try #require(shell.waitUntilExit(within: 10))
             #expect(shell.terminationStatus == 0)
             #expect(fileManager.fileExists(atPath: ran.path))
         }

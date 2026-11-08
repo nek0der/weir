@@ -242,7 +242,7 @@ enum ShimHarness {
             process.currentDirectoryURL = currentDirectory
         }
         try process.run()
-        #expect(
+        try #require(
             process.waitUntilExit(within: limit),
             "the shim did not exit within \(limit) seconds",
             sourceLocation: sourceLocation

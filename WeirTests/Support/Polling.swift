@@ -98,17 +98,19 @@ extension Process {
     /// Waits for the process to exit, at most `seconds`, and stops it when
     /// it has not: a script that hangs (a shim waiting on input) then fails
     /// its test rather than stopping the run, as `waitUntilExit` would.
-    /// Stopped with SIGTERM, then SIGKILL after two seconds more: `.timeLimit`
-    /// cannot end a test blocked here, so one that ignores SIGTERM would hold
-    /// the run until it chose to exit. Whether it exited in time.
+    /// Stopped with SIGTERM, then SIGKILL after two seconds more, with a final
+    /// two-second wait for Foundation to observe the exit. We poll throughout:
+    /// `waitUntilExit()` hung in its run loop after the child was gone during
+    /// a tmux test on macOS 27.2, outside every deadline in this helper.
+    /// Whether it exited in time.
     @discardableResult
     func waitUntilExit(within seconds: TimeInterval) -> Bool {
         guard !waitWhileRunning(seconds) else { return true }
         terminate()
         if !waitWhileRunning(2) {
             kill(processIdentifier, SIGKILL)
+            _ = waitWhileRunning(2)
         }
-        waitUntilExit()
         return false
     }
 
