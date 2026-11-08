@@ -425,10 +425,9 @@ enum WeirLayout {
         static let reviewTabScopeLabelSpacing = spaceS
         /// The "T8 finished" box's corners.
         static let reviewFollowingCornerRadius: CGFloat = 8
-        /// A file's mark in the stacked diff ("New", "Changed Outside
-        /// Turns"): a small neutral tag.
+        /// A file's neutral mark icon, shared by the file list and header.
         static let reviewFileMarkCornerRadius: CGFloat = 4
-        static let reviewFileMarkHorizontalPadding = spaceSnug
+        static let reviewFileMarkHorizontalPadding = spaceHairline
         /// The row at the foot of a column of the window: the decision bar or
         /// the review's band in the session, and the changes panel's primary
         /// action. One height, with the rule drawn inside it

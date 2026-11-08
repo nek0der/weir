@@ -395,9 +395,9 @@ enum ReviewTabText {
 
     /// A file tag's words for its tooltip and VoiceOver: "Changed
     /// during Claude #4’s T4, T6". During, not by: a turn's diff holds
-    /// whatever changed in the worktree while it ran. `isSpoken` names a
-    /// titled conversation with its kind before the title, which the
-    /// tooltip leaves to the badge it hovers over.
+    /// whatever changed in the worktree while it ran. `isSpoken` includes
+    /// the agent kind before a title; the header's tooltip also uses that
+    /// form because some badges are hidden.
     static func fileTag(_ tag: ReviewFileTag, isSpoken: Bool = false, locale: Locale) -> String {
         let name = tagName(tag, isSpoken: isSpoken, locale: locale)
         let turns = turnList(tag.turns, locale: locale)
@@ -407,22 +407,30 @@ enum ReviewTabText {
         ).resolved(in: locale)
     }
 
-    /// "2 more": the tags a header leaves out past
+    /// The compact count of conversation tags omitted from the header.
+    static func fileTagsOverflow(_ count: Int, locale: Locale) -> String {
+        LocalizedStringResource(
+            "review.fileTagsOverflow",
+            defaultValue: "+\(count)",
+            comment: "Review file header: compact count of additional conversations; argument: how many"
+        ).resolved(in: locale)
+    }
+
+    /// VoiceOver's "2 more": the tags a header leaves out past
     /// `ReviewFileTags.shownLimit`, named with their unit.
     static func moreFileTags(_ count: Int, locale: Locale) -> String {
         LocalizedStringResource(
             "review.fileTagsMore",
             defaultValue: "\(count) more",
-            comment: "Review file header: how many conversations' tags are not shown beside the first two; argument: how many"
+            comment: "Review file header: how many conversations' tags are not shown beside the first; argument: how many"
         ).resolved(in: locale)
     }
 
-    /// What a header's tags say in their tooltip and to VoiceOver: every
-    /// tag's sentence, one per line, the ones left out included, then why
-    /// a tag may be missing when some turn's files could not be read. `nil`
-    /// when there is nothing to say.
+    /// Every conversation and its turns, including the agent kinds of
+    /// hidden badges, followed by any unreadable-turn note. Used by the
+    /// header's tooltip and VoiceOver; `nil` when there is nothing to say.
     static func fileTagsHelp(_ tags: [ReviewFileTag], unreadable: [ReviewFileTag], locale: Locale) -> String? {
-        fileTagLines(tags, unreadable: unreadable, isSpoken: false, locale: locale)
+        fileTagLines(tags, unreadable: unreadable, isSpoken: true, locale: locale)
     }
 
     /// The same as VoiceOver reads it, each titled conversation with its

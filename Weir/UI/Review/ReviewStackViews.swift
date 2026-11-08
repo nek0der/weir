@@ -67,6 +67,12 @@ struct ReviewStackFileHeader: View {
     var onToggleViewed: () -> Void = {}
     var onToggleFold: () -> Void = {}
 
+    #if DEBUG
+        /// Layout observers used only by hosted geometry tests; nil in the app.
+        var onPathFrame: ((CGRect) -> Void)?
+        var onCountsFrame: ((CGRect) -> Void)?
+    #endif
+
     /// Handed over by the table, whose rows are AppKit (`ReviewHosted`).
     @Environment(\.locale) private var locale
     @Environment(\.supervisionSurfaceOpacity) private var surfaceOpacity
@@ -79,7 +85,7 @@ struct ReviewStackFileHeader: View {
 
     var body: some View {
         if let header {
-            HStack(spacing: WeirLayout.Supervision.spaceS) {
+            HStack(spacing: WeirLayout.Supervision.spaceXS) {
                 disclosure(header)
                 ReviewViewedCheckbox(path: header.file.path, isViewed: header.isViewed, onToggle: onToggleViewed)
                 Text(verbatim: PathFormatting.showingControlCharacters(header.file.path))
@@ -89,20 +95,28 @@ struct ReviewStackFileHeader: View {
                     // The middle of a deep path goes first; the start says
                     // where it is and the end which file.
                     .supervisionTruncation(.path)
+                #if DEBUG
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onPathFrame?($0) }
+                #endif
+                    .layoutPriority(1)
+                    .accessibilityLabel(Text(verbatim: header.file.path))
+                    .accessibilityHint(Text(verbatim: ReviewTabText.unreadableNote(header.unreadableTags, locale: locale) ?? ""))
                     // A header with no tag still says when some turn's files
                     // could not be read, which its tags would have named.
                     .help(Text(verbatim: [header.file.path, ReviewTabText.unreadableNote(header.unreadableTags, locale: locale)]
                             .compactMap(\.self)
                             .joined(separator: "\n")))
                 ForEach(header.marks, id: \.self) { mark in
-                    ReviewFileMarkTag(text: ReviewStackText.mark(mark, locale: locale))
-                        .help(ReviewStackText.markHelp(mark, locale: locale).map { Text(verbatim: $0) } ?? Text(verbatim: ""))
+                    ReviewFileMarkTag(mark: mark, locale: locale)
                 }
                 if !header.tags.isEmpty {
                     ReviewFileConversationTags(tags: header.tags, unreadable: header.unreadableTags, locale: locale)
                 }
-                Spacer(minLength: WeirLayout.Supervision.spaceS)
+                Spacer(minLength: WeirLayout.Supervision.spaceXS)
                 ReviewDiffCounts(stat: header.stat, size: .row)
+                #if DEBUG
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onCountsFrame?($0) }
+                #endif
             }
             .padding(.horizontal, WeirLayout.Supervision.spaceM)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
@@ -155,13 +169,14 @@ struct ReviewStackFileHeader: View {
     }
 }
 
-/// "New", "Changed by Bash", "Changed Outside Turns" on a file's header: a
-/// small tag in the hover gray with muted words, the same for all three.
+/// A file mark shared by the list and diff header, with its words in the
+/// tooltip and VoiceOver so the path keeps the row's room.
 struct ReviewFileMarkTag: View {
-    let text: String
+    let mark: ReviewFileMark
+    let locale: Locale
 
     var body: some View {
-        Text(verbatim: text)
+        Image(systemName: ReviewStackText.markSymbol(mark))
             .font(.supervision(.micro))
             .foregroundStyle(SupervisionTokens.muted.color)
             .padding(.horizontal, WeirLayout.Supervision.reviewFileMarkHorizontalPadding)
@@ -173,12 +188,15 @@ struct ReviewFileMarkTag: View {
             })
             .fixedSize()
             .contentShape(Rectangle())
+            // `help` also supplies AXHelp; an empty accessibility hint erases it.
+            .help(Text(verbatim: ReviewStackText.markTooltip(mark, locale: locale)))
+            .accessibilityLabel(Text(verbatim: ReviewStackText.mark(mark, locale: locale)))
     }
 }
 
 /// The conversations whose turns changed the file within the range, on its
-/// header: the first two as their identity bars and badges, each with its
-/// number ("#4") where its name carries one, then "2 more" for the rest, so a
+/// header: the first as its identity bar and badge, with its number ("#4")
+/// where its name carries one, then "+2" for the rest, so a
 /// file many conversations touched keeps the header's room for its path.
 /// Every one with its turns is in the tooltip and in what VoiceOver reads
 /// ("Changed during Claude #4's T4, T6"), never "by": a turn's diff is what
@@ -198,7 +216,7 @@ struct ReviewFileConversationTags: View {
                 face(tag)
             }
             if more > 0 {
-                Text(verbatim: ReviewTabText.moreFileTags(more, locale: locale))
+                Text(verbatim: ReviewTabText.fileTagsOverflow(more, locale: locale))
                     .font(.supervision(.micro))
                     .foregroundStyle(SupervisionTokens.muted.color)
             }
@@ -208,6 +226,7 @@ struct ReviewFileConversationTags: View {
         .help(Text(verbatim: help))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: spoken))
+        .accessibilityValue(Text(verbatim: more > 0 ? ReviewTabText.moreFileTags(more, locale: locale) : ""))
     }
 
     private func face(_ tag: ReviewFileTag) -> some View {
