@@ -77,6 +77,21 @@ struct AgentShimLaunchTests {
         }
     }
 
+    @Test(arguments: AgentCatalogFixture.homeEntries.map(\.kind))
+    func onDisk_shimPreservesLiteralGlobCharactersInPath(kind: AgentKind) throws {
+        try withTempDir { root in
+            let command = kind.launchCommand
+            let literal = root.appendingPathComponent("sdk[1]?*/\(command)")
+            let decoy = root.appendingPathComponent("sdk1-extra/\(command)")
+            try ShimHarness.recordingStub(at: literal, recordingIn: root)
+            try ShimHarness.recordingStub(at: decoy, recordingIn: root)
+            let path = "\(literal.deletingLastPathComponent().path):/usr/bin:/bin"
+
+            #expect(try Self.startShim(kind, home: root, scratch: root, path: path) == 0)
+            #expect(ShimHarness.launched(in: root) == [literal.path, path])
+        }
+    }
+
     /// However the `PATH` names a shim, the shim passes over it and starts the
     /// agent behind it. Each of these had a shim run itself forever: its own
     /// folder respelled, another install's shim looking for this one in turn,

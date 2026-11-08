@@ -34,6 +34,9 @@ fi
 filtered_path=""
 has_filtered_entry=0
 old_ifs="$IFS"
+path_split_flags="$-"
+# Field splitting must leave glob characters in folder names intact.
+set -f
 IFS=":"
 # The added `:` keeps a trailing empty entry, which field splitting would drop. An
 # empty entry means the current folder, so one that is not us stays.
@@ -53,6 +56,10 @@ for entry in ${PATH:-}:; do
   fi
 done
 IFS="$old_ifs"
+case "$path_split_flags" in
+  *f*) ;;
+  *) set +f ;;
+esac
 
 found_opencode="${WEIR_FOUND_OPENCODE:-}"
 unset WEIR_FOUND_OPENCODE

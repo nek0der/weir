@@ -41,9 +41,12 @@ if command -v weir_prompt_allowed_for >/dev/null 2>&1 &&
 fi
 
 # Rebuild PATH with our own dir filtered out so command -v finds the real
-# codex. POSIX-only — no awk dependency, just IFS splitting.
+# codex. The colon separates literal folder names.
 filtered_path=""
 old_ifs="$IFS"
+path_split_flags="$-"
+# Field splitting must leave glob characters in folder names intact.
+set -f
 IFS=":"
 for entry in $PATH; do
   [ "$entry" = "$self_dir" ] && continue
@@ -60,6 +63,10 @@ for entry in $PATH; do
   fi
 done
 IFS="$old_ifs"
+case "$path_split_flags" in
+  *f*) ;;
+  *) set +f ;;
+esac
 
 # What the new workspace sheet found Codex as, staged for the pane it
 # started (`WorkspaceSession.StagedLaunch`). Read once and taken out of the

@@ -555,11 +555,17 @@ actor LoginShellPath {
     private static func readLoginShell() async -> String? {
         let inherited = ProcessInfo.processInfo.environment["PATH"] ?? ""
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
+        return await readLoginShell(shell: shell, inherited: inherited)
+    }
+
+    static func readLoginShell(shell: String, inherited: String) async -> String? {
+        // A child process sees the exported PATH, including Nushell's list converted to a string.
+        let command = #"/usr/bin/awk 'BEGIN { printf "\n\#(marker)%s\#(marker)\n", ENVIRON["PATH"]; exit }'"#
         var login: String?
         if FileManager.default.isExecutableFile(atPath: shell),
            let result = await runTool(
                executable: URL(fileURLWithPath: shell),
-               arguments: ["-lc", "printf '\\n\(marker)%s\(marker)\\n' \"$PATH\""],
+               arguments: ["-lc", command],
                workingDirectory: nil,
                readsOutputFromFile: true,
                timeout: .seconds(5)
@@ -589,9 +595,9 @@ actor LoginShellPath {
     /// the person's chosen versions in front. Opened from the Dock, the
     /// app has launchd's `PATH` alone, and the login shell's order goes
     /// first, or `/usr/bin/bundle` and the system's Ruby would win over
-    /// Homebrew's and the version managers' shims. Only absolute entries
-    /// of the login shell's count: a shell that does not expand `$PATH`
-    /// in our command prints it as it is. `nil` when both are empty.
+    /// Homebrew's and the version managers' shims. Only absolute login
+    /// entries count, since a relative entry depends on the shell's working
+    /// directory. Returns `nil` when both are empty.
     static func merged(inherited: String, login: String?) -> String? {
         let inheritedEntries = inherited.split(separator: ":").map(String.init)
         let loginEntries = (login ?? "").split(separator: ":").map(String.init).filter { $0.hasPrefix("/") }

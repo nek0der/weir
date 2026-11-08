@@ -31,6 +31,9 @@ fi
 
 filtered_path=""
 old_ifs="$IFS"
+path_split_flags="$-"
+# Field splitting must leave glob characters in folder names intact.
+set -f
 IFS=":"
 for entry in $PATH; do
   [ "$entry" = "$self_dir" ] && continue
@@ -47,6 +50,10 @@ for entry in $PATH; do
   fi
 done
 IFS="$old_ifs"
+case "$path_split_flags" in
+  *f*) ;;
+  *) set +f ;;
+esac
 
 found_agy="${WEIR_FOUND_ANTIGRAVITY:-}"
 unset WEIR_FOUND_ANTIGRAVITY
