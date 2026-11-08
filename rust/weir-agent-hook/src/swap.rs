@@ -41,18 +41,6 @@ pub(crate) fn make_parents(root: &Path, relative: &Path) -> io::Result<()> {
     platform::make_parents(root, relative)
 }
 
-/// Makes every directory of `relative` under `root` that is missing, none
-/// of them through a link.
-pub(crate) fn make_directories(root: &Path, relative: &Path) -> io::Result<()> {
-    platform::make_directories(root, relative)
-}
-
-/// Whether every name of `relative` under `root` is a directory, none of
-/// them a link.
-pub(crate) fn is_plain_directory(root: &Path, relative: &Path) -> bool {
-    platform::is_plain_directory(root, relative)
-}
-
 /// Whether the volume of `path` exchanges two names and renames onto
 /// nothing in one step. Asked of the volume, not tried: FAT says it
 /// exchanges and overwrites.
@@ -60,8 +48,8 @@ pub(crate) fn can_exchange(path: &Path) -> bool {
     platform::can_exchange(path)
 }
 
-/// A directory of the worktree held open, reached from it one name at a
-/// time without following a link. What is listed and removed in it is
+/// A directory held open, reached from a root one name at a time without
+/// following a link. What is created, listed, or removed is
 /// named inside this directory, never reached through a path again: a
 /// level swapped for a link after it was opened takes nothing with it.
 pub(crate) struct HeldDirectory(held::Inner);
@@ -85,6 +73,50 @@ impl HeldDirectory {
     /// link.
     pub(crate) fn child(&self, name: &std::ffi::OsStr) -> io::Result<Self> {
         self.0.child(name).map(Self)
+    }
+
+    /// The directory reached by `relative`, making missing levels when
+    /// requested. Every level must be a directory and none may be a link.
+    pub(crate) fn descend(&self, relative: &Path, is_making: bool) -> io::Result<Self> {
+        self.0.descend(&names(relative)?, is_making).map(Self)
+    }
+
+    /// Creates and opens a new directory under this one.
+    pub(crate) fn create_directory(&self, name: &std::ffi::OsStr) -> io::Result<Self> {
+        self.0.create_directory(name).map(Self)
+    }
+
+    /// Creates a new file with checkout permissions, subject to the umask.
+    pub(crate) fn create_file(
+        &self,
+        name: &std::ffi::OsStr,
+        is_executable: bool,
+    ) -> io::Result<std::fs::File> {
+        self.0.create_file(name, is_executable)
+    }
+
+    /// Creates a link without opening its target or replacing any entry.
+    pub(crate) fn create_symlink(&self, name: &std::ffi::OsStr, target: &[u8]) -> io::Result<()> {
+        self.0.create_symlink(name, target)
+    }
+
+    /// Opens a regular file without following a link or waiting on a FIFO.
+    pub(crate) fn read_file(&self, name: &std::ffi::OsStr) -> io::Result<std::fs::File> {
+        self.0.read_file(name)
+    }
+
+    /// Whether both descriptors name the same directory.
+    pub(crate) fn is_same(&self, other: &Self) -> bool {
+        self.0.is_same(&other.0)
+    }
+
+    /// Renames an entry inside this directory only while the new name is free.
+    pub(crate) fn rename_new(
+        &self,
+        from: &std::ffi::OsStr,
+        to: &std::ffi::OsStr,
+    ) -> io::Result<()> {
+        self.0.rename_new(from, to)
     }
 
     /// The entries, without `.` and `..`.
@@ -136,9 +168,11 @@ impl HeldDirectory {
 mod held {
     use super::{EntryKind, beneath};
     use std::ffi::{CStr, OsStr, OsString};
+    use std::fs::File;
     use std::io;
-    use std::os::fd::{AsRawFd, IntoRawFd, OwnedFd};
+    use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    use std::os::unix::fs::MetadataExt;
     use std::path::Path;
 
     pub(super) struct Inner(OwnedFd);
@@ -156,6 +190,95 @@ mod held {
                 libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW,
             )
             .map(Self)
+        }
+
+        pub(super) fn descend(&self, names: &[&OsStr], is_making: bool) -> io::Result<Self> {
+            beneath::descend(self.0.try_clone()?, names, is_making).map(Self)
+        }
+
+        pub(super) fn create_directory(&self, name: &OsStr) -> io::Result<Self> {
+            beneath::mkdir(self.0.as_raw_fd(), &beneath::c_string(name.as_bytes())?)?;
+            self.child(name)
+        }
+
+        pub(super) fn create_file(&self, name: &OsStr, is_executable: bool) -> io::Result<File> {
+            let mode: libc::c_uint = if is_executable { 0o777 } else { 0o666 };
+            let name = beneath::c_string(name.as_bytes())?;
+            let flags =
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+            // SAFETY: A directory we hold and a NUL-terminated name.
+            let fd = unsafe { libc::openat(self.0.as_raw_fd(), name.as_ptr(), flags, mode) };
+            if fd < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            // SAFETY: `openat` returned a descriptor we own.
+            Ok(unsafe { File::from_raw_fd(fd) })
+        }
+
+        pub(super) fn create_symlink(&self, name: &OsStr, target: &[u8]) -> io::Result<()> {
+            let name = beneath::c_string(name.as_bytes())?;
+            let target = beneath::c_string(target)?;
+            // SAFETY: A directory we hold and two NUL-terminated strings.
+            if unsafe { libc::symlinkat(target.as_ptr(), self.0.as_raw_fd(), name.as_ptr()) } == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        }
+
+        pub(super) fn is_same(&self, other: &Self) -> bool {
+            fn identity(fd: &OwnedFd) -> io::Result<(u64, u64)> {
+                let metadata = File::from(fd.try_clone()?).metadata()?;
+                Ok((metadata.dev(), metadata.ino()))
+            }
+            identity(&self.0).is_ok_and(|ours| identity(&other.0).is_ok_and(|other| ours == other))
+        }
+
+        pub(super) fn read_file(&self, name: &OsStr) -> io::Result<File> {
+            let name = beneath::c_string(name.as_bytes())?;
+            let fd = beneath::open(
+                self.0.as_raw_fd(),
+                &name,
+                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY,
+            )?;
+            let file = File::from(fd);
+            if file.metadata()?.is_file() {
+                Ok(file)
+            } else {
+                Err(io::Error::from(io::ErrorKind::InvalidInput))
+            }
+        }
+
+        pub(super) fn rename_new(&self, from: &OsStr, to: &OsStr) -> io::Result<()> {
+            let from = beneath::c_string(from.as_bytes())?;
+            let to = beneath::c_string(to.as_bytes())?;
+            // SAFETY: Both names are NUL-terminated and the directory stays open.
+            #[cfg(target_os = "macos")]
+            let status = unsafe {
+                libc::renameatx_np(
+                    self.0.as_raw_fd(),
+                    from.as_ptr(),
+                    self.0.as_raw_fd(),
+                    to.as_ptr(),
+                    libc::RENAME_EXCL,
+                )
+            };
+            // SAFETY: Both names are NUL-terminated and the directory stays open.
+            #[cfg(all(target_os = "linux", target_env = "gnu"))]
+            let status = unsafe {
+                libc::renameat2(
+                    self.0.as_raw_fd(),
+                    from.as_ptr(),
+                    self.0.as_raw_fd(),
+                    to.as_ptr(),
+                    libc::RENAME_NOREPLACE,
+                )
+            };
+            if status == 0 {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
         }
 
         pub(super) fn entries(&self) -> io::Result<Vec<(OsString, EntryKind)>> {
@@ -274,6 +397,77 @@ mod held {
             Self::directory(self.0.join(name))
         }
 
+        pub(super) fn descend(&self, names: &[&OsStr], is_making: bool) -> io::Result<Self> {
+            let mut at = self.0.clone();
+            for name in names {
+                at.push(name);
+                if is_making
+                    && let Err(error) = fs::create_dir(&at)
+                    && error.kind() != io::ErrorKind::AlreadyExists
+                {
+                    return Err(error);
+                }
+                Self::directory(at.clone())?;
+            }
+            Ok(Self(at))
+        }
+
+        pub(super) fn create_directory(&self, name: &OsStr) -> io::Result<Self> {
+            let path = self.0.join(name);
+            fs::create_dir(&path)?;
+            Self::directory(path)
+        }
+
+        pub(super) fn create_file(
+            &self,
+            name: &OsStr,
+            is_executable: bool,
+        ) -> io::Result<fs::File> {
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(if is_executable { 0o777 } else { 0o666 });
+            }
+            #[cfg(not(unix))]
+            let _ = is_executable;
+            options.open(self.0.join(name))
+        }
+
+        pub(super) fn create_symlink(&self, name: &OsStr, target: &[u8]) -> io::Result<()> {
+            let target = crate::git::path_from_bytes(target)
+                .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
+            #[cfg(unix)]
+            return std::os::unix::fs::symlink(target, self.0.join(name));
+            #[cfg(windows)]
+            return std::os::windows::fs::symlink_file(target, self.0.join(name));
+            #[cfg(not(any(unix, windows)))]
+            {
+                let _ = (name, target);
+                Err(io::Error::from(io::ErrorKind::Unsupported))
+            }
+        }
+
+        pub(super) fn is_same(&self, other: &Self) -> bool {
+            // This implementation holds a path, not an open directory, so the
+            // most it can tell is whether both name the same folder.
+            self.0 == other.0
+        }
+
+        pub(super) fn read_file(&self, name: &OsStr) -> io::Result<fs::File> {
+            let file = fs::File::open(self.0.join(name))?;
+            if file.metadata()?.is_file() {
+                Ok(file)
+            } else {
+                Err(io::Error::from(io::ErrorKind::InvalidInput))
+            }
+        }
+
+        pub(super) fn rename_new(&self, from: &OsStr, to: &OsStr) -> io::Result<()> {
+            super::platform::rename_new(&self.0, Path::new(from), Path::new(to))
+        }
+
         pub(super) fn entries(&self) -> io::Result<Vec<(OsString, EntryKind)>> {
             Ok(fs::read_dir(&self.0)?
                 .flatten()
@@ -346,18 +540,30 @@ mod beneath {
     /// The directory `names` lead to from `root`, made where missing when
     /// `is_making`.
     pub(super) fn directory(root: &Path, names: &[&OsStr], is_making: bool) -> io::Result<OwnedFd> {
-        let mut at = self::root(root)?;
+        descend(self::root(root)?, names, is_making)
+    }
+
+    pub(super) fn mkdir(at: libc::c_int, name: &CString) -> io::Result<()> {
+        // SAFETY: A NUL-terminated name inside a directory we hold.
+        if unsafe { libc::mkdirat(at, name.as_ptr(), 0o777) } == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
+    pub(super) fn descend(
+        mut at: OwnedFd,
+        names: &[&OsStr],
+        is_making: bool,
+    ) -> io::Result<OwnedFd> {
         for name in names {
             let name = c_string(name.as_bytes())?;
-            if is_making {
-                // SAFETY: A NUL-terminated name inside a directory we hold.
-                let status = unsafe { libc::mkdirat(at.as_raw_fd(), name.as_ptr(), 0o777) };
-                if status != 0 {
-                    let error = io::Error::last_os_error();
-                    if error.kind() != io::ErrorKind::AlreadyExists {
-                        return Err(error);
-                    }
-                }
+            if is_making
+                && let Err(error) = mkdir(at.as_raw_fd(), &name)
+                && error.kind() != io::ErrorKind::AlreadyExists
+            {
+                return Err(error);
             }
             at = open(
                 at.as_raw_fd(),
@@ -419,15 +625,6 @@ mod platform {
         let names = super::names(relative)?;
         let parents = names.split_last().map_or(&[][..], |(_, parents)| parents);
         beneath::directory(root, parents, true).map(drop)
-    }
-
-    pub(super) fn make_directories(root: &Path, relative: &Path) -> io::Result<()> {
-        let names = super::names(relative)?;
-        beneath::directory(root, &names, true).map(drop)
-    }
-
-    pub(super) fn is_plain_directory(root: &Path, relative: &Path) -> bool {
-        super::names(relative).is_ok_and(|names| beneath::directory(root, &names, false).is_ok())
     }
 
     /// What `getattrlist` writes for `ATTR_VOL_CAPABILITIES`: the length
@@ -525,15 +722,6 @@ mod platform {
         beneath::directory(root, parents, true).map(drop)
     }
 
-    pub(super) fn make_directories(root: &Path, relative: &Path) -> io::Result<()> {
-        let names = super::names(relative)?;
-        beneath::directory(root, &names, true).map(drop)
-    }
-
-    pub(super) fn is_plain_directory(root: &Path, relative: &Path) -> bool {
-        super::names(relative).is_ok_and(|names| beneath::directory(root, &names, false).is_ok())
-    }
-
     /// Not asked: `renameat2` fails with `EINVAL` where a file system has
     /// neither, and that path is reported as not written.
     pub(super) fn can_exchange(_path: &Path) -> bool {
@@ -579,14 +767,6 @@ mod platform {
             Some(parent) => fs::create_dir_all(root.join(parent)),
             None => Ok(()),
         }
-    }
-
-    pub(super) fn make_directories(root: &Path, relative: &Path) -> io::Result<()> {
-        fs::create_dir_all(root.join(relative))
-    }
-
-    pub(super) fn is_plain_directory(root: &Path, relative: &Path) -> bool {
-        fs::symlink_metadata(root.join(relative)).is_ok_and(|metadata| metadata.is_dir())
     }
 
     pub(super) fn can_exchange(_path: &Path) -> bool {

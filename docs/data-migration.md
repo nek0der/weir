@@ -1174,6 +1174,15 @@ In each repository Weir works in:
     the reason (`keptAside:<place>`). They are still read, and are written
     the new way when next written. Only development builds before 0.1.10
     wrote `keptAside:<place>`; every release writes the new form.
+- `<git-dir>/weir/checkout-<op>/` holds temporary batch and retry folders
+  with checkout bytes for Restore, Undo Restore, and Discard. Git applies checkout filters
+  there, beside the private indexes, rather than writing through a staging
+  path in the worktree. The writer streams those files into its open
+  worktree staging directories and removes the temporary checkout after
+  the batch. Recovery removes any checkout left by that operation before
+  examining its worktree staging area. These files are disposable, not
+  saved edits. The Git directory remains trusted, like its configuration,
+  objects, and private indexes.
 - `<git-dir>/weir/turn-<pane>.<pid>.index` and `turn-<pane>.<pid>.end.index` are
   the private indexes the snapshots are taken through, each gone when its
   capture ends; the real index is never touched. The next capture in the pane

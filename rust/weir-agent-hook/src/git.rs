@@ -248,10 +248,8 @@ impl GitSnapshots {
         input: &[u8],
         index: Option<&Path>,
     ) -> Option<Vec<u8>> {
-        let file = input_file(input).ok()?;
         let mut command = Self::command(cwd, args, index);
-        command.stdin(std::process::Stdio::from(file));
-        let output = output(&mut command).ok()?;
+        let output = output_with_input(&mut command, input).ok()?;
         output.status.success().then_some(output.stdout)
     }
 
@@ -660,6 +658,12 @@ pub(crate) fn limit_commands_for_test(limit: Duration) {
 
 fn timed_out(what: &str) -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::TimedOut, what)
+}
+
+/// Runs a prepared command with private, unnamed input and the Git deadline.
+pub(crate) fn output_with_input(command: &mut Command, input: &[u8]) -> std::io::Result<Output> {
+    command.stdin(Stdio::from(input_file(input)?));
+    output(command)
 }
 
 /// Returns `command`'s output, as `Command::output` gives it, unless it runs

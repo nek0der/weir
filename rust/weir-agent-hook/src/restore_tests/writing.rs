@@ -87,6 +87,347 @@ fn a_save_between_the_read_and_the_swap_is_put_back() {
     );
 }
 
+/// Substituting a link after staging is opened cannot change files outside
+/// the worktree, whether the link replaces the generation or its parent.
+#[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
+#[test]
+fn replacing_a_staging_directory_cannot_redirect_checkout() {
+    for directory in ["target/gen-1", "target"] {
+        let repo = Repo::new("staging-race");
+        let worktree = repo.worktree();
+        let head = repo.git(&["rev-parse", "HEAD^{tree}"]);
+        repo.write("a.txt", "changed\n");
+        let before = worktree.capture("staging-before").unwrap();
+        let area = worktree.staging("STAGING");
+        let outside = repo.scratch.join("outside");
+        let outside_generation = if directory == "target" {
+            outside.join("gen-1")
+        } else {
+            outside.clone()
+        };
+        fs::create_dir_all(&outside_generation).unwrap();
+        let protected = outside_generation.join("a.txt");
+        fs::write(&protected, "outside\n").unwrap();
+        let replace = |moment| {
+            if moment == Moment::BeforeStageWrite {
+                let original = if directory.is_empty() {
+                    area.clone()
+                } else {
+                    area.join(directory)
+                };
+                fs::rename(&original, original.with_extension("moved")).unwrap();
+                std::os::unix::fs::symlink(&outside, &original).unwrap();
+            }
+            if moment == Moment::AfterStageWrite {
+                assert_eq!(
+                    fs::read_to_string(&protected).unwrap(),
+                    "outside\n",
+                    "{directory} during staging"
+                );
+            }
+        };
+
+        let mut writer = Writer::new(&worktree, "STAGING", &head, "target")
+            .unwrap()
+            .with_between(&replace);
+        let results = writer.write(
+            &before,
+            &[change_to_head(&repo, "a.txt", PathChangeKind::Modify)],
+        );
+
+        assert_eq!(
+            fs::read_to_string(&protected).unwrap(),
+            "outside\n",
+            "{directory}"
+        );
+        assert!(
+            matches!(results[0].1, Err(Unwritten::Failed(_))),
+            "{directory}"
+        );
+        assert_eq!(
+            repo.read("a.txt").as_deref(),
+            Some("changed\n"),
+            "{directory}"
+        );
+        assert!(writer.finish().is_empty());
+        assert!(!worktree.scratch().join("checkout-STAGING").exists());
+    }
+}
+
+/// Finishing an interrupted stage does not remove entries through a
+/// replacement link, even when the destination contains only empty folders.
+#[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
+#[test]
+fn staging_cleanup_leaves_replaced_folders_untouched() {
+    for directory in ["", "target"] {
+        let repo = Repo::new("staging-cleanup");
+        let worktree = repo.worktree();
+        let head = repo.git(&["rev-parse", "HEAD^{tree}"]);
+        repo.write("a.txt", "changed\n");
+        let before = worktree.capture("cleanup-before").unwrap();
+        let area = worktree.staging("CLEANUP");
+        let outside = repo.scratch.join("outside");
+        let empty = outside.join("target/empty");
+        fs::create_dir_all(&empty).unwrap();
+        let ignore = outside.join(".gitignore");
+        fs::write(&ignore, "outside\n").unwrap();
+        let replace = |moment| {
+            if moment == Moment::BeforeStageWrite {
+                let original = if directory.is_empty() {
+                    area.clone()
+                } else {
+                    area.join(directory)
+                };
+                fs::rename(&original, original.with_extension("moved")).unwrap();
+                std::os::unix::fs::symlink(&outside, &original).unwrap();
+            }
+        };
+        let mut writer = Writer::new(&worktree, "CLEANUP", &head, "target")
+            .unwrap()
+            .with_between(&replace);
+        let results = writer.write(
+            &before,
+            &[change_to_head(&repo, "a.txt", PathChangeKind::Modify)],
+        );
+        assert!(matches!(results[0].1, Err(Unwritten::Failed(_))));
+        writer.finish();
+
+        assert!(empty.is_dir(), "{directory}: the outside folder remains");
+        assert_eq!(fs::read_to_string(&ignore).unwrap(), "outside\n");
+        assert_eq!(repo.read("a.txt").as_deref(), Some("changed\n"));
+    }
+}
+
+/// Publishing a generation keeps the opened parent even when another
+/// directory takes its former name.
+#[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
+#[test]
+fn staging_publish_leaves_a_replacement_parent_unchanged() {
+    let repo = Repo::new("staging-publish");
+    let worktree = repo.worktree();
+    let head = repo.git(&["rev-parse", "HEAD^{tree}"]);
+    repo.write("a.txt", "changed\n");
+    let before = worktree.capture("publish-before").unwrap();
+    let side = worktree.staging("PUBLISH").join("target");
+    let replacement = side.join("gen-1/keep.txt");
+    let replace = |moment| {
+        if moment == Moment::AfterStageWrite {
+            fs::rename(&side, side.with_extension("moved")).unwrap();
+            fs::create_dir_all(replacement.parent().unwrap()).unwrap();
+            fs::write(&replacement, "replacement\n").unwrap();
+        }
+    };
+    let mut writer = Writer::new(&worktree, "PUBLISH", &head, "target")
+        .unwrap()
+        .with_between(&replace);
+    let results = writer.write(
+        &before,
+        &[change_to_head(&repo, "a.txt", PathChangeKind::Modify)],
+    );
+    assert!(matches!(results[0].1, Err(Unwritten::Failed(_))));
+    writer.finish();
+    assert_eq!(fs::read_to_string(replacement).unwrap(), "replacement\n");
+    assert_eq!(repo.read("a.txt").as_deref(), Some("changed\n"));
+}
+
+/// A saved file's matching identity does not authorize removing an entry
+/// reached through a staging folder that has become a link.
+#[cfg(any(target_os = "macos", all(target_os = "linux", target_env = "gnu")))]
+#[test]
+fn finishing_keeps_external_links_to_displaced_files() {
+    let repo = Repo::new("displaced-cleanup");
+    let worktree = repo.worktree();
+    let head = repo.git(&["rev-parse", "HEAD^{tree}"]);
+    repo.write("a.txt", "changed\n");
+    let before = worktree.capture("displaced-before").unwrap();
+    let outside = repo.scratch.join("outside");
+    fs::create_dir(&outside).unwrap();
+    let protected = outside.join("a.txt");
+    fs::hard_link(repo.path.join("a.txt"), &protected).unwrap();
+    let ready = worktree.staging("DISPLACED").join("target/ready-1");
+    let replace = |moment| {
+        if moment == Moment::AtFinish {
+            fs::rename(&ready, ready.with_extension("moved")).unwrap();
+            std::os::unix::fs::symlink(&outside, &ready).unwrap();
+        }
+    };
+    let mut writer = Writer::new(&worktree, "DISPLACED", &head, "target")
+        .unwrap()
+        .with_between(&replace);
+    let results = writer.write(
+        &before,
+        &[change_to_head(&repo, "a.txt", PathChangeKind::Modify)],
+    );
+    assert_eq!(results[0].1, Ok(()));
+    let kept = writer.finish();
+    assert_eq!(fs::read_to_string(protected).unwrap(), "changed\n");
+    assert_eq!(kept.len(), 1);
+    assert_eq!(repo.read("a.txt").as_deref(), Some("a\n"));
+}
+
+/// Distinct index paths retain their bytes when the checkout volume
+/// folds case or normalizes their names.
+#[test]
+fn private_checkout_keeps_distinct_bytes_for_aliasing_names() {
+    use super::super::write::Checkout;
+    use std::ffi::OsStr;
+    use std::io::Read;
+
+    for names in [["A.txt", "a.txt"], ["e\u{301}.txt", "é.txt"]] {
+        let repo = Repo::new("checkout-aliases");
+        let first = repo.git(&["rev-parse", "HEAD:a.txt"]);
+        let second = repo.git(&["rev-parse", "HEAD:keep.txt"]);
+        repo.git_with_input(
+            &["update-index", "--index-info"],
+            format!(
+                "100644 {first}\t{}\n100644 {second}\t{}\n",
+                names[0], names[1]
+            )
+            .as_bytes(),
+        );
+        let tree = repo.git(&["write-tree"]);
+        let worktree = repo.worktree();
+        fs::create_dir_all(worktree.scratch()).unwrap();
+        let index = worktree.index("ALIASES");
+        GitSnapshots::run(&repo.path, &["read-tree", &tree], Some(&index)).unwrap();
+        let changes: Vec<_> = names
+            .iter()
+            .zip([first, second])
+            .map(|(name, object)| Change {
+                raw: name.as_bytes().to_vec(),
+                display: (*name).to_owned(),
+                kind: PathChangeKind::Modify,
+                mode: "100644".to_owned(),
+                object,
+            })
+            .collect();
+        let mut checkout = Checkout::new(&worktree, "ALIASES", OsStr::new("target"), 1).unwrap();
+        let entries = checkout.materialize(&repo.path, &index, &changes.iter().collect::<Vec<_>>());
+        assert_eq!(entries.len(), 2);
+        for (entry, expected) in entries.iter().zip(["a\n", "keep\n"]) {
+            let path = path_from_bytes(&entry.change.raw).unwrap();
+            let mut file = entry.directory.read_file(path.as_os_str()).unwrap();
+            let mut bytes = String::new();
+            file.read_to_string(&mut bytes).unwrap();
+            assert_eq!(bytes, expected);
+        }
+        drop(checkout);
+        assert!(!worktree.scratch().join("checkout-ALIASES").exists());
+    }
+}
+
+/// Checkout reads attributes from the target index when the worktree
+/// has no attributes file, and applies the target's executable mode.
+#[cfg(unix)]
+#[test]
+fn staging_preserves_checkout_attributes_and_executable_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = Repo::new("stage-attrs");
+    repo.write(
+        ".gitattributes",
+        "a.txt text eol=crlf ident filter=prefix\n",
+    );
+    repo.write("a.txt", "$Id$\n");
+    repo.git(&["add", ".gitattributes", "a.txt"]);
+    repo.git(&["update-index", "--chmod=+x", "a.txt"]);
+    repo.commit("checkout attributes");
+    repo.git(&["config", "filter.prefix.smudge", "sed 's/^/smudged: /'"]);
+    repo.git(&["rm", "--cached", ".gitattributes"]);
+    fs::remove_file(repo.path.join(".gitattributes")).unwrap();
+    repo.write("a.txt", "before\n");
+
+    let worktree = repo.worktree();
+    let before = worktree.capture("attrs-before").unwrap();
+    let head = repo.git(&["rev-parse", "HEAD^{tree}"]);
+    let changes: Vec<_> = worktree
+        .changes(&before, &head)
+        .unwrap()
+        .into_iter()
+        .filter(|change| change.raw == b"a.txt")
+        .collect();
+
+    let mut writer = Writer::new(&worktree, "ATTRS", &head, "target").unwrap();
+    let results = writer.write(&before, &changes);
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].1, Ok(()));
+    assert!(writer.finish().is_empty());
+
+    let object = repo.git(&["rev-parse", "HEAD:a.txt"]);
+    assert_eq!(
+        fs::read(repo.path.join("a.txt")).unwrap(),
+        format!("smudged: $Id: {object} $\r\n").as_bytes()
+    );
+    let metadata = fs::metadata(repo.path.join("a.txt")).unwrap();
+    assert_ne!(metadata.permissions().mode() & 0o100, 0);
+}
+
+/// A required filter failure leaves its path untouched. Another path
+/// in the batch can still be staged and written.
+#[test]
+fn a_required_checkout_filter_failure_does_not_publish_the_file() {
+    let repo = Repo::new("stage-failed-filter");
+    repo.write(".gitattributes", "a.txt filter=refuse\n");
+    repo.git(&["add", ".gitattributes"]);
+    repo.commit("checkout filter");
+    repo.git(&["config", "filter.refuse.clean", "cat"]);
+    repo.git(&["config", "filter.refuse.smudge", "printf 'partial'; exit 1"]);
+    repo.git(&["config", "filter.refuse.required", "true"]);
+    repo.write("a.txt", "a before\n");
+    repo.write("keep.txt", "keep before\n");
+
+    let worktree = repo.worktree();
+    let before = worktree.capture("filter-before").unwrap();
+    let head = repo.git(&["rev-parse", "HEAD^{tree}"]);
+    let mut writer = Writer::new(&worktree, "FILTER", &head, "target").unwrap();
+    let results = writer.write(
+        &before,
+        &[
+            change_to_head(&repo, "a.txt", PathChangeKind::Modify),
+            change_to_head(&repo, "keep.txt", PathChangeKind::Modify),
+        ],
+    );
+
+    assert!(matches!(results[0].1, Err(Unwritten::Failed(_))));
+    assert_eq!(repo.read("a.txt").as_deref(), Some("a before\n"));
+    assert!(
+        !worktree
+            .staging("FILTER")
+            .join("target/ready-1/a.txt")
+            .exists()
+    );
+    assert_eq!(results[1].1, Ok(()));
+    assert_eq!(repo.read("keep.txt").as_deref(), Some("keep\n"));
+    assert!(writer.finish().is_empty());
+}
+
+/// When Git is configured without symlink support, the link's target
+/// becomes the contents of an ordinary file.
+#[cfg(unix)]
+#[test]
+fn staging_respects_core_symlinks() {
+    let repo = Repo::new("stage-symlink-config");
+    let link = repo.path.join("link");
+    std::os::unix::fs::symlink("keep.txt", &link).unwrap();
+    repo.git(&["add", "link"]);
+    repo.commit("symlink");
+    fs::remove_file(&link).unwrap();
+    repo.git(&["config", "core.symlinks", "false"]);
+
+    let worktree = repo.worktree();
+    let before = worktree.capture("symlink-before").unwrap();
+    let head = repo.git(&["rev-parse", "HEAD^{tree}"]);
+    let changes = worktree.changes(&before, &head).unwrap();
+    let mut writer = Writer::new(&worktree, "LINK", &head, "target").unwrap();
+    let results = writer.write(&before, &changes);
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].1, Ok(()));
+    assert!(fs::symlink_metadata(&link).unwrap().is_file());
+    assert_eq!(fs::read(link).unwrap(), b"keep.txt");
+    assert!(writer.finish().is_empty());
+}
+
 /// A write through a descriptor opened before the swap lands in the file
 /// that came out; it is kept aside, not deleted, and the journal says
 /// where.
@@ -131,7 +472,7 @@ fn a_save_on_top_of_the_swap_keeps_the_earlier_save_aside() {
     let saves = |moment| match moment {
         Moment::AfterRead => repo.write("a.txt", "first save\n"),
         Moment::AfterSwap => repo.write("a.txt", "second save, longer\n"),
-        Moment::AtFinish => {}
+        Moment::BeforeStageWrite | Moment::AfterStageWrite | Moment::AtFinish => {}
     };
 
     let mut writer = Writer::new(&worktree, "TWICE", &head, "target")
