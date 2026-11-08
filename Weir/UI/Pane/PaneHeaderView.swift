@@ -128,6 +128,16 @@ struct PaneHeaderView: View {
         )
     }
 
+    /// The width used to decide whether a form leaves the name readable.
+    static func nameFittingWidth(_ name: String, isFocused: Bool) -> CGFloat {
+        let font = NSFont.systemFont(
+            ofSize: WeirLayout.paneHeaderNameFontSize.rawValue,
+            weight: isFocused ? .semibold : .regular
+        )
+        let measured = ceil((name as NSString).size(withAttributes: [.font: font]).width)
+        return min(measured, WeirLayout.paneHeaderNameFittingMaximumWidth)
+    }
+
     var body: some View {
         let usage = usage(of: self.label)
         let label = withTokens(self.label, usage: usage)
@@ -309,7 +319,7 @@ struct PaneHeaderView: View {
                     fieldName: "Pane name"
                 )
                 .accessibilityLabel(Text("Pane name"))
-                .frame(minWidth: 0, idealWidth: WeirLayout.paneHeaderNameFittingWidth, alignment: .leading)
+                .frame(minWidth: 0, idealWidth: Self.nameFittingWidth(label.name, isFocused: isFocused), alignment: .leading)
                 // The name keeps its width longest; the detail gives way first.
                 .layoutPriority(1)
             }
@@ -320,10 +330,8 @@ struct PaneHeaderView: View {
             if form.showsSettings, let hiddenPanes {
                 hiddenPanesChip(hiddenPanes)
             }
-            // Kept for as long as the state mark is: in words while the row
-            // has room for the model, else as the symbol alone.
-            if form.showsMark, label.showsWarning {
-                warning(inWords: form.showsSettings, isAmbiguous: label.settingsAreAmbiguous)
+            if form.showsMark, let warningText = label.warningText {
+                warningIcon(warningText.resolved(in: locale))
             }
             if form.showsSettings, let settings = label.settingsText(
                 tokens: form.showsTokens ? label.tokens : nil,
@@ -379,6 +387,8 @@ struct PaneHeaderView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(Text(verbatim: PaneHiddenPanesText.line(hidden, locale: locale)))
+        .help(Text(verbatim: PaneHiddenPanesText.line(hidden, locale: locale)))
         .onHover { isHoveringHiddenPanes = $0 }
         // A narrowing pane drops the chip under the pointer with no final
         // leave, which would keep the header's tap from focusing the pane.
@@ -417,22 +427,16 @@ struct PaneHeaderView: View {
             .fixedSize()
     }
 
-    /// We pair warnings about permissions or unavailable settings with a
-    /// symbol and, when space allows, text so color never carries their
-    /// meaning alone.
-    private func warning(inWords: Bool, isAmbiguous: Bool) -> some View {
-        HStack(spacing: WeirLayout.paneHeaderItemSpacing / 2) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.supervision(WeirLayout.paneHeaderWarningFontSize, weight: .semibold))
-                .frame(width: WeirLayout.paneHeaderWarningSlot, height: WeirLayout.paneHeaderWarningSlot)
-            if inWords {
-                Text(isAmbiguous ? PaneHeaderLabel.unavailableSettings : AgentPermissionMode.bypassPermissions.spokenName)
-                    .font(.supervision(WeirLayout.paneHeaderDetailFontSize, weight: .medium))
-                    .lineLimit(1)
-            }
-        }
-        .foregroundStyle(SupervisionTokens.waitingText.color)
-        .fixedSize()
+    /// The warning keeps a distinct shape while its words remain in the
+    /// tooltip and the header's VoiceOver description, leaving room for the name.
+    private func warningIcon(_ text: String) -> some View {
+        Image(systemName: "exclamationmark.triangle.fill")
+            .font(.supervision(WeirLayout.paneHeaderWarningFontSize, weight: .semibold))
+            .frame(width: WeirLayout.paneHeaderWarningSlot, height: WeirLayout.paneHeaderWarningSlot)
+            .foregroundStyle(SupervisionTokens.waitingText.color)
+            .fixedSize()
+            .help(Text(verbatim: text))
+            .accessibilityLabel(Text(verbatim: text))
     }
 
     private func styledDetail(_ detail: String) -> some View {
@@ -452,7 +456,8 @@ struct PaneHeaderView: View {
     /// The name, the agent, the directory, then the settings in
     /// full, which the row shortens or leaves out as it narrows.
     private func hoverText(_ label: PaneHeaderLabel, usage: TurnUsage?) -> String {
-        ([label.name, label.agentName, label.detail] + settingsDescription(label, usage: usage))
+        ([label.name, label.agentName, label.detail, hiddenPanes.map { PaneHiddenPanesText.line($0, locale: locale) }]
+            + settingsDescription(label, usage: usage))
             .compactMap(\.self)
             .joined(separator: " — ")
     }
@@ -492,6 +497,9 @@ struct PaneHeaderView: View {
             pieces.append(detail)
         }
         pieces += settingsDescription(label, usage: usage)
+        if let hiddenPanes {
+            pieces.append(PaneHiddenPanesText.line(hiddenPanes, locale: locale))
+        }
         // The mark's own name, as the glyph reads it everywhere.
         if let mark {
             pieces.append(StateGlyph.Kind(mark.glyph).name.resolved(in: locale))

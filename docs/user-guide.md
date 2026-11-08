@@ -142,14 +142,15 @@ Every pane has a one-line header with the pane's name and folder. For an agent
 it adds the model, the effort, the permission mode unless it is the default, and
 the tokens its conversation's kept turns have used. When the agent runs every
 action without asking (Claude Code's bypass mode, or Codex with approvals set to
-never), the header says **Runs without asking** beside a warning sign.
+never), the header shows a warning icon. Its tooltip says **Runs without
+asking**, and VoiceOver reads the same warning with the header.
 Antigravity does not report its permission mode, so its header shows neither the
 mode nor this warning. OpenCode's header names the role you chose for the agent,
 if any, the model, and the service it goes through, whichever model it runs: the
 badge stays `Op`. A long model name is cut in the middle, and the hover text has
 it whole. As the pane narrows, the folder goes first, then the tokens with
 OpenCode's service, then the model, the effort, and the mode, then the name. The
-warning stays as its sign.
+warning icon stays visible.
 
 When tmux shows several agents in one terminal, the header gives priority to a
 visible agent that runs without asking, keeping its warning even when another
@@ -159,9 +160,10 @@ in the same tmux pane, settings follow the child while it works. The header
 returns to the parent with its next report of its settings, or when the child
 reports that its session has ended. Agents in hidden tmux windows or panes
 hidden by zoom do not supply the header settings. If older records do not
-identify which invocation is current, the header says **Agent settings
-unavailable** with a warning sign instead of guessing the model, effort, or
-permission mode. A new invocation records its launch order.
+identify which invocation is current, the header shows a warning icon with
+**Agent settings unavailable** in its tooltip and VoiceOver description,
+instead of guessing the model, effort, or permission mode. A new invocation
+records its launch order.
 
 ### Decision bar
 

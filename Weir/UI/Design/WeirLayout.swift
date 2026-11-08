@@ -151,11 +151,13 @@ enum WeirLayout {
     /// which is about where AppKit's own pull-down menus sit.
     static let popUpMenuGap = Supervision.spaceXS
 
-    /// The width a header form needs for its name, or for its directory, to
-    /// count as fitting. A few characters are enough to tell panes apart;
-    /// past that the text truncates into whatever the row gives it, and a
-    /// row that cannot spare even this drops the text instead.
-    static let paneHeaderNameFittingWidth: CGFloat = 32
+    /// The largest name width used when choosing a header form. We measure
+    /// shorter names at their actual width; 112pt keeps a useful title fragment
+    /// before tokens and settings give way without letting a long title
+    /// displace them at every width.
+    static let paneHeaderNameFittingMaximumWidth: CGFloat = 112
+
+    /// The least useful directory fragment before the header drops it.
     static let paneHeaderDetailFittingWidth: CGFloat = 40
 
     /// How far the pointer moves with the button down before a press turns

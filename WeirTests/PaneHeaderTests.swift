@@ -615,7 +615,44 @@ struct PaneHeaderTests {
 // MARK: - Forms and renaming
 
 extension PaneHeaderTests {
-    /// The warning follows the state mark and keeps words while settings fit.
+    @Test(arguments: [false, true])
+    func nameFittingWidth_measuresShortNamesAndCapsLongNames(isFocused: Bool) {
+        let short = PaneHeaderView.nameFittingWidth("i", isFocused: isFocused)
+        let medium = PaneHeaderView.nameFittingWidth("Claude", isFocused: isFocused)
+        #expect(short > 0 && short < 20)
+        #expect(medium > short && medium < 96)
+        #expect(PaneHeaderView.nameFittingWidth("WWWW", isFocused: isFocused)
+            > PaneHeaderView.nameFittingWidth("iiii", isFocused: isFocused) * 2)
+        for name in [String(repeating: "Long conversation title ", count: 10), String(repeating: "会話のタイトル", count: 10)] {
+            #expect(PaneHeaderView.nameFittingWidth(name, isFocused: isFocused) == 112)
+        }
+    }
+
+    @Test(arguments: ["en", "ja"])
+    func warningText_keepsLocalizedMeaningAndPrioritizesUnknownSettings(language: String) {
+        let locale = Locale(identifier: language)
+        var label = PaneHeaderLabel(name: "x", detail: nil, agentKind: .claude, agentName: "Claude")
+        #expect(label.warningText == nil)
+        #expect(!label.showsWarning)
+
+        label.permissionMode = .bypassPermissions
+        let bypass = language == "en" ? "Runs without asking" : "確認なしで実行"
+        #expect(label.warningText?.resolved(in: locale) == bypass)
+        #expect(label.showsWarning)
+
+        label.settingsAreAmbiguous = true
+        let unavailable = language == "en" ? "Agent settings unavailable" : "エージェントの設定を特定できません"
+        #expect(label.warningText?.resolved(in: locale) == unavailable)
+        label.permissionMode = .default
+        #expect(label.warningText?.resolved(in: locale) == unavailable)
+        #expect(label.showsWarning)
+
+        label.settingsAreAmbiguous = false
+        #expect(label.warningText == nil)
+        #expect(!label.showsWarning)
+    }
+
+    /// The warning follows the state mark in every form that keeps it.
     @Test(arguments: [false, true])
     func forms_dropDetailThenTokensThenSettingsThenNameThenMark(showsClock: Bool) {
         let forms = PaneHeaderRules.forms(isEditing: false, showsPromptCacheClock: showsClock)
