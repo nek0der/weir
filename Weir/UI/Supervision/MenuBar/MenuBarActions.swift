@@ -6,10 +6,12 @@ import WeirDomain
 
 @MainActor
 enum MenuBarActions {
-    /// The menu's own window, which SwiftUI does not hand out.
+    /// The menu's own window and the popover owner's close action.
     final class MenuWindow {
         /// `nil` until the menu's content is in its window.
         weak var window: NSWindow?
+        /// Set by the owner before the SwiftUI content opens.
+        var dismiss: (() -> Void)?
     }
 
     /// The ledger's entry for an approval or a question; `nil` for anything
@@ -107,14 +109,10 @@ enum MenuBarActions {
         NSApp.terminate(nil)
     }
 
-    /// Closes the menu the way Esc does, through its own cancel action, so
-    /// SwiftUI knows it is closed: there is no public call for it, and
-    /// closing its window behind SwiftUI's back takes two clicks to open
-    /// it again. Sent only while the menu holds the keyboard, so Esc never
-    /// reaches another window's card or sheet instead.
+    /// Closes through the popover owner, so another window never receives
+    /// a cancel action intended for the menu.
     private static func close(_ menuWindow: MenuWindow) {
-        guard let window = menuWindow.window, window.isKeyWindow else { return }
-        NSApp.sendAction(#selector(NSResponder.cancelOperation(_:)), to: nil, from: nil)
+        menuWindow.dismiss?()
     }
 
     /// "Allow Once" or "Deny", for a request the menu offers them for, read

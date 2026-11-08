@@ -854,6 +854,7 @@ final class AppState {
 struct WeirApp: App {
     @NSApplicationDelegateAdaptor(WeirAppDelegate.self) private var appDelegate
     @State private var state: AppState
+    private let menuBarItem: MenuBarItemController
 
     /// Sparkle auto-update controller. Eagerly started so the first
     /// launch check runs without waiting for a SwiftUI lifecycle event.
@@ -886,6 +887,7 @@ struct WeirApp: App {
         let state = AppState()
         _state = State(initialValue: state)
         state.presentSupervisionWindows(updaterStack: updaterStack)
+        menuBarItem = MenuBarItemController(state: state)
     }
 
     /// No scene hosts a project window: the presenter opens every one
@@ -967,24 +969,6 @@ struct WeirApp: App {
             }
         }
 
-        // The menu bar item. Removing it from the menu bar
-        // (⌘-drag) turns the setting off, as the toggle does.
-        MenuBarExtra(isInserted: menuBarExtraInserted) {
-            SupervisionMenuBarContent(state: state)
-                .environment(\.locale, state.settingsStore.appLocale)
-        } label: {
-            SupervisionMenuBarLabel(state: state)
-                .environment(\.locale, state.settingsStore.appLocale)
-        }
-        .menuBarExtraStyle(.window)
-    }
-
-    /// The setting, as a key path binding rather than a pair of closures:
-    /// a `Binding(get:set:)` made afresh on every pass left the item out of
-    /// the menu bar, with SwiftUI writing `true` back again and again (seen
-    /// on macOS 27.0.1).
-    private var menuBarExtraInserted: Binding<Bool> {
-        Bindable(state.settingsStore).settings.general.showMenuBarExtra
     }
 
     /// Stable identifier the .commands block uses to open the

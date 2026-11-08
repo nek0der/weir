@@ -214,7 +214,12 @@ request that could not come up from blocking the next or opening later.
 card (`UI/ApprovalCardHost.swift`, `ApprovalCardModel`).
 
 Outside every window is the menu bar extra
-(`MenuBar/SupervisionMenuBar.swift`, `MenuBarModel`), a scene of `WeirApp`.
+(`MenuBar/SupervisionMenuBar.swift`, `MenuBarModel`). `WeirApp` owns its
+`MenuBarItemController`: an `NSStatusItem` button opens an `NSPopover` hosting
+the SwiftUI content, through the same action for mouse presses and AXPress.
+The controller follows the visibility setting and the icon's spoken count;
+⌘-drag removal turns the setting off. The content closes through the
+popover owner rather than sending a cancel action to the app's key window.
 It draws the Needs Attention list's rows with the list's own
 `Attention/NeedsAttentionRowView.swift`. Its icon (`MenuBarLabelModel`) is a
 lamp that shows the attention state but no count: the app's mark alone, the
