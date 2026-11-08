@@ -2,8 +2,8 @@
 //! writer put there: a restore, its undo, a rollback, a discard.
 //!
 //! Each path is made first under the operation's staging area,
-//! `<root>/.weir-<op>/`, by `checkout-index` (so filters and line
-//! endings are a checkout's), and then exchanged with what the path holds
+//! `<root>/.weir-<op>/`, with Git supplying checkout bytes and Weir
+//! holding the destination open, then exchanged with what the path holds
 //! (`swap::exchange`). What comes out is compared with what the path was
 //! before git read it (a `Stamp`): a save that landed in between goes back,
 //! and one that cannot is kept aside, never deleted. A file that came out
@@ -25,10 +25,12 @@
 use super::{Change, Refusal, Worktree, remove_empty_parents};
 use crate::git::{GitSnapshots, path_from_bytes};
 use crate::swap;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{self, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use weir_agent_model::{FailedPath, FailedReason};
 
 /// Why a path the writer was given holds something other than what it
@@ -48,13 +50,14 @@ pub(super) enum Unwritten {
 /// What the staging area's own `.gitignore` says: everything in it.
 const IGNORE_ALL: &str = "*\n";
 
-/// Where a test steps into a write: after git read a group, before any
-/// of it is written; after a path was exchanged, before what came out is
-/// looked at; and at the end, before the files taken out are looked at
-/// again.
+/// Where a test steps into a write: after Git reads the group, before and
+/// after it writes the staging files, after the swap, or before the
+/// displaced files are checked at the end.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Moment {
     AfterRead,
+    BeforeStageWrite,
+    AfterStageWrite,
     AfterSwap,
     AtFinish,
 }
@@ -158,6 +161,170 @@ struct Displaced {
     expected: String,
 }
 
+/// A published generation and the paths that finished staging in it.
+struct StagedBatch {
+    ready: PathBuf,
+    directory: swap::HeldDirectory,
+    paths: HashSet<Vec<u8>>,
+}
+
+impl StagedBatch {
+    fn remove(&self, relative: &Path) {
+        if let (Some(parent), Some(name)) = (relative.parent(), relative.file_name())
+            && let Ok(directory) = self.directory.descend(parent, false)
+        {
+            let _ = directory.remove_file(name);
+        }
+    }
+}
+
+/// Checkout bytes under the Git directory, where the private index and
+/// repository configuration already require trusted writes. Worktree paths
+/// never become Git's output directories. Copies into the worktree use held
+/// descriptors, so its folders may change without redirecting a write.
+pub(super) struct Checkout {
+    store: swap::HeldDirectory,
+    operation: swap::HeldDirectory,
+    operation_name: OsString,
+    name: OsString,
+    path: PathBuf,
+    directory: Rc<swap::HeldDirectory>,
+    retries: Vec<OsString>,
+}
+
+pub(super) struct CheckoutEntry<'a> {
+    pub(super) change: &'a Change,
+    pub(super) directory: Rc<swap::HeldDirectory>,
+}
+
+impl Checkout {
+    pub(super) fn new(
+        worktree: &Worktree,
+        op_id: &str,
+        side: &OsStr,
+        batch: usize,
+    ) -> io::Result<Self> {
+        let store = swap::HeldDirectory::open(&worktree.git_dir, Path::new(""))?
+            .descend(Path::new("weir"), true)?;
+        let operation_name = OsString::from(format!("checkout-{op_id}"));
+        let operation = store.descend(Path::new(&operation_name), true)?;
+        let name = OsString::from(format!("{}-{batch}", side.to_string_lossy()));
+        let directory = Rc::new(operation.create_directory(&name)?);
+        let path = worktree.scratch().join(&operation_name).join(&name);
+        Ok(Self {
+            store,
+            operation,
+            operation_name,
+            name,
+            path,
+            directory,
+            retries: Vec::new(),
+        })
+    }
+
+    pub(super) fn materialize<'a>(
+        &mut self,
+        root: &Path,
+        index: &Path,
+        writes: &[&'a Change],
+    ) -> Vec<CheckoutEntry<'a>> {
+        let run = |path: &Path, changes: &[&Change]| {
+            let input: Vec<u8> = changes
+                .iter()
+                .flat_map(|change| change.raw.iter().copied().chain(std::iter::once(0)))
+                .collect();
+            // Links are transported as bytes so the Git volume need not
+            // support symlinks. Their worktree form follows its configuration.
+            let mut command = GitSnapshots::command(
+                root,
+                &[
+                    "-c",
+                    "core.symlinks=false",
+                    "checkout-index",
+                    "-f",
+                    "-z",
+                    "--stdin",
+                ],
+                Some(index),
+            );
+            let mut prefix = OsString::from("--prefix=");
+            prefix.push(path);
+            prefix.push("/");
+            command.arg(prefix);
+            crate::git::output_with_input(&mut command, &input)
+                .is_ok_and(|output| output.status.success())
+        };
+        let complete = run(&self.path, writes);
+        // A separate Git volume may fold case or normalize names differently.
+        // Aliased entries need separate prefixes before any bytes are copied.
+        let identities: Vec<_> = writes
+            .iter()
+            .map(|change| {
+                let relative = path_from_bytes(&change.raw)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::MetadataExt;
+                    let parent = self.directory.descend(relative.parent()?, false).ok()?;
+                    let metadata = parent
+                        .read_file(relative.file_name()?)
+                        .ok()?
+                        .metadata()
+                        .ok()?;
+                    Some(format!("{}:{}", metadata.dev(), metadata.ino()))
+                }
+                #[cfg(not(unix))]
+                {
+                    fs::canonicalize(self.path.join(relative))
+                        .ok()
+                        .map(|path| path.to_string_lossy().to_lowercase())
+                }
+            })
+            .collect();
+        let mut counts = HashMap::new();
+        for identity in identities.iter().flatten() {
+            *counts.entry(identity).or_insert(0) += 1;
+        }
+        let mut entries = Vec::new();
+        for (position, (change, identity)) in writes.iter().zip(&identities).enumerate() {
+            if complete
+                && identity
+                    .as_ref()
+                    .is_some_and(|id| counts.get(id) == Some(&1))
+            {
+                entries.push(CheckoutEntry {
+                    change,
+                    directory: Rc::clone(&self.directory),
+                });
+                continue;
+            }
+            // Retry incomplete or aliased entries independently. Failed
+            // files never become eligible for worktree publication.
+            let name = OsString::from(format!("{}-retry-{position}", self.name.to_string_lossy()));
+            if let Ok(directory) = self.operation.create_directory(&name) {
+                let path = self.path.with_file_name(&name);
+                self.retries.push(name);
+                if run(&path, &[*change]) {
+                    entries.push(CheckoutEntry {
+                        change,
+                        directory: Rc::new(directory),
+                    });
+                }
+            }
+        }
+        entries
+    }
+}
+
+impl Drop for Checkout {
+    fn drop(&mut self) {
+        for name in &self.retries {
+            let _ = self.operation.remove_tree(name);
+        }
+        let _ = self.operation.remove_tree(&self.name);
+        let _ = self.store.remove_dir(&self.operation_name);
+    }
+}
+
 /// Writes the paths of one operation from one tree (`index`), batch by
 /// batch, and settles at the end what came out of them.
 pub(super) struct Writer<'a> {
@@ -203,28 +370,18 @@ impl<'a> Writer<'a> {
         self
     }
 
-    /// Makes `under`, in the staging area, ignored by git, before anything
-    /// goes in: each directory made or opened from the worktree without
-    /// following a link, and the `.gitignore` only made new.
-    fn prepare(&self, under: &Path) -> Result<(), String> {
+    /// Opens the staging area and makes it ignored before staging files.
+    fn prepare_area(&self) -> io::Result<swap::HeldDirectory> {
         let root = &self.worktree.root;
         let area = self.worktree.staging(&self.op_id);
-        let inside = under.strip_prefix(root).map_err(|_| "staging".to_owned())?;
-        swap::make_directories(root, inside).map_err(|error| error.to_string())?;
-        let ignore = area.join(".gitignore");
-        if fs::symlink_metadata(&ignore).is_err() {
-            let made = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&ignore)
-                .and_then(|mut file| std::io::Write::write_all(&mut file, IGNORE_ALL.as_bytes()));
-            if let Err(error) = made
-                && error.kind() != ErrorKind::AlreadyExists
-            {
-                return Err(error.to_string());
-            }
+        let directory =
+            swap::HeldDirectory::open(root, Path::new(""))?.descend(&self.inside(&area), true)?;
+        match directory.create_file(OsStr::new(".gitignore"), false) {
+            Ok(mut file) => file.write_all(IGNORE_ALL.as_bytes())?,
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
         }
-        Ok(())
+        Ok(directory)
     }
 
     /// Writes `batch` where each path still holds what `expected` has
@@ -278,7 +435,7 @@ impl<'a> Writer<'a> {
                 } else {
                     match &ready {
                         Some(ready) => self.swap_in(&change, seen, ready),
-                        None => Err(Unwritten::Failed("checkout-index".to_owned())),
+                        None => Err(Unwritten::Failed("staging".to_owned())),
                     }
                 };
                 results.push((change, result));
@@ -291,55 +448,99 @@ impl<'a> Writer<'a> {
     /// in one rename, so recovery tells half-made files (in `gen-`, the
     /// writer's own, gone) from made ones. `None` when nothing could be
     /// made.
-    fn stage(&mut self, changes: &[Change]) -> Option<PathBuf> {
+    fn stage(&mut self, changes: &[Change]) -> Option<StagedBatch> {
         self.batch += 1;
-        let made = self.staging.join(format!("gen-{}", self.batch));
-        let ready = self.staging.join(format!("ready-{}", self.batch));
-        self.prepare(&made).ok()?;
-        // Made just now and gone to without a link; checked again right
-        // before git writes under it, which follows the path it is given.
-        let inside = made.strip_prefix(&self.worktree.root).ok()?;
-        if !swap::is_plain_directory(&self.worktree.root, inside) {
-            return None;
-        }
-        let prefix = format!("--prefix={}/", made.display());
-        let args = ["checkout-index", "-f", "-z", "--stdin", prefix.as_str()];
-        let paths = |changes: &[&Change]| -> Vec<u8> {
-            changes
-                .iter()
-                .flat_map(|change| {
-                    let mut path = change.raw.clone();
-                    path.push(0);
-                    path
-                })
-                .collect()
-        };
-        let writes: Vec<&Change> = changes
+        let generation = format!("gen-{}", self.batch);
+        let root = &self.worktree.root;
+        let side = self
+            .prepare_area()
+            .ok()?
+            .descend(Path::new(self.staging.file_name()?), true)
+            .ok()?;
+        let made = side.create_directory(OsStr::new(&generation)).ok()?;
+        let writes: Vec<_> = changes
             .iter()
             .filter(|change| !change.is_deletion())
             .collect();
-        let root = &self.worktree.root;
-        if GitSnapshots::run_with_input_index(root, &args, &paths(&writes), Some(&self.index))
-            .is_none()
+        let mut checkout = Checkout::new(
+            self.worktree,
+            &self.op_id,
+            self.staging.file_name()?,
+            self.batch,
+        )
+        .ok()?;
+        let has_symlinks = if writes.iter().any(|change| change.mode == "120000") {
+            GitSnapshots::git(
+                root,
+                &[
+                    "config",
+                    "--bool",
+                    "--default=true",
+                    "--get",
+                    "core.symlinks",
+                ],
+                None,
+            )? == "true"
+        } else {
+            true
+        };
+        (self.between)(Moment::BeforeStageWrite);
+        let paths = checkout
+            .materialize(root, &self.index, &writes)
+            .into_iter()
+            .filter(|entry| {
+                Self::stage_file(&entry.directory, &made, entry.change, has_symlinks).is_some()
+            })
+            .map(|entry| entry.change.raw.clone())
+            .collect();
+        (self.between)(Moment::AfterStageWrite);
+
+        if !side
+            .child(OsStr::new(&generation))
+            .is_ok_and(|entry| entry.is_same(&made))
         {
-            // One at a time, to say which. A path not made, or made only
-            // in part (a full disk), is missing from `ready-`, and
-            // `swap_in` reports it.
-            for change in &writes {
-                let is_made = GitSnapshots::run_with_input_index(
-                    root,
-                    &args,
-                    &paths(&[*change]),
-                    Some(&self.index),
-                )
-                .is_some();
-                if !is_made && let Some(relative) = path_from_bytes(&change.raw) {
-                    let _ = fs::remove_file(made.join(relative));
-                }
-            }
+            return None;
         }
-        fs::rename(&made, &ready).ok()?;
-        Some(ready)
+        let ready = self.staging.join(format!("ready-{}", self.batch));
+        let ready_inside = self.inside(&ready);
+        side.rename_new(OsStr::new(&generation), ready.file_name()?)
+            .ok()?;
+        let directory = swap::HeldDirectory::open(root, &ready_inside).ok()?;
+        directory.is_same(&made).then_some(StagedBatch {
+            ready,
+            directory,
+            paths,
+        })
+    }
+
+    fn stage_file(
+        checkout: &swap::HeldDirectory,
+        generation: &swap::HeldDirectory,
+        change: &Change,
+        has_symlinks: bool,
+    ) -> Option<()> {
+        let relative = path_from_bytes(&change.raw)?;
+        let parent = relative.parent()?;
+        let source = checkout.descend(parent, false).ok()?;
+        let destination = generation.descend(parent, true).ok()?;
+        let name = relative.file_name()?;
+        let mut input = source.read_file(name).ok()?;
+        if change.mode == "120000" && has_symlinks {
+            let mut target = Vec::new();
+            input.take(1024 * 1024 + 1).read_to_end(&mut target).ok()?;
+            if target.len() > 1024 * 1024 {
+                return None;
+            }
+            return destination.create_symlink(name, &target).ok();
+        }
+        let is_executable = change.mode == "100755";
+        let mut output = destination.create_file(name, is_executable).ok()?;
+        if io::copy(&mut input, &mut output).is_ok() {
+            Some(())
+        } else {
+            let _ = destination.remove_file(name);
+            None
+        }
     }
 
     /// Takes a path the operation deletes out to `out/`, and keeps it
@@ -359,7 +560,13 @@ impl<'a> Writer<'a> {
         }
         let parked = self.staging.join("out").join(&relative);
         if let Some(parent) = parked.parent() {
-            self.prepare(parent).map_err(Unwritten::Failed)?;
+            let area = self.worktree.staging(&self.op_id);
+            let relative = parent
+                .strip_prefix(area)
+                .map_err(|error| Unwritten::Failed(error.to_string()))?;
+            self.prepare_area()
+                .and_then(|area| area.descend(relative, true))
+                .map_err(|error| Unwritten::Failed(error.to_string()))?;
         }
         let root = &self.worktree.root;
         let inside = self.inside(&parked);
@@ -393,34 +600,37 @@ impl<'a> Writer<'a> {
         &mut self,
         change: &Change,
         seen: Option<Stamp>,
-        ready: &Path,
+        batch: &StagedBatch,
     ) -> Result<(), Unwritten> {
+        if !batch.paths.contains(&change.raw) {
+            return Err(Unwritten::Failed("staging".to_owned()));
+        }
         let relative =
             path_from_bytes(&change.raw).ok_or_else(|| Unwritten::Failed("path".to_owned()))?;
         let path = self.worktree.root.join(&relative);
-        let made = ready.join(&relative);
+        let made = batch.ready.join(&relative);
         let Some(ours) = Stamp::of(&made) else {
-            return Err(Unwritten::Failed("checkout-index".to_owned()));
+            return Err(Unwritten::Failed("staging".to_owned()));
         };
         let root = self.worktree.root.clone();
         let made_inside = self.inside(&made);
         let now = fs::symlink_metadata(&path).ok();
         if now.as_ref().is_some_and(fs::Metadata::is_dir) {
-            let _ = fs::remove_file(&made);
+            batch.remove(&relative);
             return Err(Unwritten::Failed("a directory".to_owned()));
         }
         let Some(_) = now else {
             if seen.is_some() {
                 // Deleted after it was read: the deletion stands.
-                let _ = fs::remove_file(&made);
+                batch.remove(&relative);
                 return Err(Unwritten::ChangedWhileWriting);
             }
             if let Err(error) = swap::make_parents(&root, &relative) {
-                let _ = fs::remove_file(&made);
+                batch.remove(&relative);
                 return Err(Unwritten::Failed(error.to_string()));
             }
             return swap::rename_new(&root, &made_inside, &relative).map_err(|error| {
-                let _ = fs::remove_file(&made);
+                batch.remove(&relative);
                 if error.kind() == ErrorKind::AlreadyExists {
                     Unwritten::ChangedWhileWriting
                 } else {
@@ -435,7 +645,7 @@ impl<'a> Writer<'a> {
                 // Nothing came out: the call failed (a lock flag, a link
                 // in the way), or the path went before it ran, which is
                 // another writer's deletion and stands.
-                let _ = fs::remove_file(&made);
+                batch.remove(&relative);
                 return Err(if is_path_there {
                     Unwritten::Failed(error.to_string())
                 } else {
@@ -472,7 +682,7 @@ impl<'a> Writer<'a> {
                     return Err(self.keep(&change.display, &made));
                 }
                 if Stamp::of(&made).is_some_and(|now| now.is_same(&ours)) {
-                    let _ = fs::remove_file(&made);
+                    batch.remove(&relative);
                     Err(Unwritten::ChangedWhileWriting)
                 } else {
                     Err(self.keep(&change.display, &made))
@@ -516,14 +726,31 @@ impl<'a> Writer<'a> {
         for (displaced, is_restorable) in displaced.into_iter().zip(restorable) {
             let is_unchanged =
                 Stamp::of(&displaced.parked).is_some_and(|now| now.is_same(&displaced.seen));
-            if is_restorable && is_unchanged {
-                let _ = fs::remove_file(&displaced.parked);
-            } else {
+            let removed = is_restorable
+                && is_unchanged
+                && displaced
+                    .parked
+                    .parent()
+                    .and_then(|parent| {
+                        swap::HeldDirectory::open(&self.worktree.root, &self.inside(parent)).ok()
+                    })
+                    .is_some_and(|parent| {
+                        displaced
+                            .parked
+                            .file_name()
+                            .is_some_and(|name| parent.remove_file(name).is_ok())
+                    });
+            if !removed {
                 self.keep(&displaced.display, &displaced.parked);
             }
         }
-        remove_empty_tree(&self.staging);
-        clear_area(&self.worktree.staging(&self.op_id));
+        if let Some(side) = self.staging.file_name() {
+            clear_area(
+                &self.worktree.root,
+                &self.worktree.staging(&self.op_id),
+                side,
+            );
+        }
         self.kept
     }
 }
@@ -674,6 +901,9 @@ impl Worktree {
         before: &HashMap<Vec<u8>, super::Entry>,
         after: &HashMap<Vec<u8>, super::Entry>,
     ) -> Option<Vec<FailedPath>> {
+        if let Ok(store) = swap::HeldDirectory::open(&self.git_dir, Path::new("weir")) {
+            let _ = store.remove_tree(OsStr::new(&format!("checkout-{op_id}")));
+        }
         let staging = self.staging(op_id);
         if fs::symlink_metadata(&staging).is_err() {
             return Some(Vec::new());
@@ -836,31 +1066,25 @@ fn mode_of(path: &Path) -> Option<String> {
 }
 
 /// Removes the staging area once nothing but its `.gitignore` is left.
-fn clear_area(area: &Path) {
-    let Ok(entries) = fs::read_dir(area) else {
+fn clear_area(root: &Path, area: &Path, side: &OsStr) {
+    let Ok(worktree) = swap::HeldDirectory::open(root, Path::new("")) else {
         return;
     };
-    let is_empty = entries
-        .flatten()
-        .all(|entry| entry.file_name() == ".gitignore");
+    let Some(name) = area.file_name() else {
+        return;
+    };
+    let Ok(area) = worktree.child(name) else {
+        return;
+    };
+    area.remove_empty_tree(side);
+    let Ok(entries) = area.entries() else {
+        return;
+    };
+    let is_empty = entries.iter().all(|(name, _)| name == ".gitignore");
     if is_empty {
-        let _ = fs::remove_file(area.join(".gitignore"));
-        let _ = fs::remove_dir(area);
+        let _ = area.remove_file(OsStr::new(".gitignore"));
+        let _ = worktree.remove_dir(name);
     }
-}
-
-/// Removes the directories under `dir`, and `dir`, that are empty: the
-/// staging area keeps only saves kept aside.
-pub(super) fn remove_empty_tree(dir: &Path) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-            remove_empty_tree(&entry.path());
-        }
-    }
-    let _ = fs::remove_dir(dir);
 }
 
 #[cfg(unix)]

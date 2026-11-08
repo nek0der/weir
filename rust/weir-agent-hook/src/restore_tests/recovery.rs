@@ -269,6 +269,32 @@ fn recovery_judges_what_the_staging_area_still_holds() {
     );
 }
 
+/// An interrupted checkout is disposable even before the worktree's
+/// staging area exists; another operation's checkout remains untouched.
+#[test]
+fn recovery_removes_only_its_private_checkout() {
+    let repo = Repo::new("checkout-recovery");
+    let worktree = repo.worktree();
+    let checkout = worktree.scratch().join("checkout-CRASH/target-1");
+    let other = worktree.scratch().join("checkout-OTHER/target-1");
+    for directory in [&checkout, &other] {
+        fs::create_dir_all(directory).unwrap();
+        fs::write(directory.join("a.txt"), "partial\n").unwrap();
+    }
+    assert!(!worktree.staging("CRASH").exists());
+    assert!(
+        worktree
+            .recover_staging("CRASH", &HashMap::new(), &HashMap::new())
+            .unwrap()
+            .is_empty()
+    );
+    assert!(!checkout.parent().unwrap().exists());
+    assert_eq!(
+        fs::read_to_string(other.join("a.txt")).unwrap(),
+        "partial\n"
+    );
+}
+
 /// A staging area that is a link to somewhere else is not cleared: what it
 /// points at is not the operation's, and nothing there is deleted. The
 /// journal stays unsettled, for a later recovery to look at again.

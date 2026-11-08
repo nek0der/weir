@@ -456,7 +456,14 @@ fn an_agent_of_the_worktree_without_a_snapshot_keeps_the_restore_back() {
 #[test]
 fn awkward_names_and_links_are_restored() {
     let repo = Repo::new("names");
-    let names = ["a b.txt", "*.txt", "-x", "new\nline", "e\u{301}.txt"];
+    let names = [
+        "a b.txt",
+        "*.txt",
+        "-x",
+        "0:index",
+        "new\nline",
+        "e\u{301}.txt",
+    ];
     for name in names {
         repo.write(name, "before\n");
     }
