@@ -188,6 +188,7 @@ fn prompt_start(lines: &[&[u8]], prompt_id: &str) -> Option<usize> {
             && parse(line).is_some_and(|record| {
                 string(&record, "type") == Some("user")
                     && !is_sidechain(&record)
+                    && !is_tool_result(&record)
                     && string(&record, "promptId") == Some(prompt_id)
             })
     })
@@ -365,6 +366,25 @@ mod tests {
                 ..usage(1, 2, 3, 4)
             })
         );
+    }
+
+    #[test]
+    fn a_tagged_tool_result_does_not_make_a_truncated_turn_complete() {
+        let bytes = transcript(&[
+            reply("req_1", 1, 2, 3, 4),
+            tool_result("p2", ""),
+            reply("req_2", 5, 6, 7, 8),
+        ]);
+        let reading = transcript_turn_reading(&bytes, Some("p2"));
+        assert_eq!(
+            reading.usage,
+            Some(TurnUsage {
+                is_partial: true,
+                ..usage(6, 8, 10, 12)
+            })
+        );
+        assert_eq!(reading.marker, None);
+        assert!(!reading.is_awaiting_response);
     }
 
     #[test]
