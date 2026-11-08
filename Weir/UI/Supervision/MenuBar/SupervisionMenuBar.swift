@@ -5,17 +5,6 @@ import AppKit
 import SwiftUI
 import WeirDomain
 
-/// The menu bar extra's label: the lamp lit by the attention state, in the
-/// title bar count's tone (`MenuBarLabelModel`).
-struct SupervisionMenuBarLabel: View {
-    let state: AppState
-
-    var body: some View {
-        MenuBarLampImage(model: MenuBarLabelModel(state.attentionQueue.queue.counts()))
-            .equatable()
-    }
-}
-
 /// The lamp as one image. The menu bar takes one image or text for its
 /// item, not a composed view, and draws a template in its own text color,
 /// which drops color (https://developer.apple.com/forums/thread/726565).
@@ -25,26 +14,7 @@ struct SupervisionMenuBarLabel: View {
 /// the app's mark stays whole, and a badge at its corner says the rest, a
 /// dot for unread turns and a larger filled disc for what blocks on the
 /// person. The drawing is `design/app-icons/menubar-*.svg`, in the same points.
-/// Equatable on what it draws, so the queue changing without the lamp or
-/// the count does not draw it again.
-struct MenuBarLampImage: View, Equatable {
-    let model: MenuBarLabelModel
-    @Environment(\.locale) private var locale
-
-    var body: some View {
-        let label = model.accessibilityLabel(locale: locale)
-        let image = Self.image(model.lamp)
-        // The status item reads the image's own description; the label
-        // covers SwiftUI's accessibility tree.
-        image.accessibilityDescription = label
-        return Image(nsImage: image)
-            .accessibilityLabel(Text(verbatim: label))
-    }
-
-    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.model == rhs.model
-    }
-
+enum MenuBarLampImage {
     /// The lamp, drawn by a handler rather than from a bitmap, so each
     /// screen draws it at its own scale and no menu bar shows it blurred.
     /// One size for every lamp, with room for the badge even when there is
@@ -133,7 +103,7 @@ struct SupervisionMenuBarContent: View {
     @Environment(\.locale) private var locale
     @Environment(\.openWindow) private var openWindow
     @State private var itemsHeight: CGFloat = 0
-    @State private var menuWindow = MenuBarActions.MenuWindow()
+    @State private var menuWindow: MenuBarActions.MenuWindow
     @State private var selection = NeedsAttentionListSelection(rows: [], opening: .nothing)
     /// Counts the keyboard's moves, so the list scrolls to the row the keys
     /// reached and not to the one the pointer lit: scrolling under the
@@ -142,6 +112,11 @@ struct SupervisionMenuBarContent: View {
     @State private var isSystemDark = SystemAppearance.isSystemDark()
     @State private var moreMenuOpener = PopUpMenuOpener()
     @FocusState private var isFocused: Bool
+
+    init(state: AppState, menuWindow: MenuBarActions.MenuWindow) {
+        self.state = state
+        _menuWindow = State(initialValue: menuWindow)
+    }
 
     private func model(now: Date) -> (list: NeedsAttentionListModel, menu: MenuBarModel) {
         let registry = state.windowRegistry
@@ -230,6 +205,10 @@ struct SupervisionMenuBarContent: View {
             press(control, on: item)
             return .handled
         }
+        .onKeyPress(.escape) {
+            menuWindow.dismiss?()
+            return .handled
+        }
         // The app's ⌘, and ⌘Q, which do not reach the app's menu while the
         // menu bar's window holds the keyboard and Weir is not active.
         .onKeyPress(keys: Self.appMenuKeys) { press in
@@ -253,6 +232,7 @@ struct SupervisionMenuBarContent: View {
                   window.occlusionState.contains(.visible)
             else { return }
             selection = NeedsAttentionListSelection(rows: list.rows, opening: .nothing)
+            KeyboardHandoff.afterResponderSettles { isFocused = true }
         }
         // The system can post this before it has written the new style;
         // reading on the next turn sees it written.
