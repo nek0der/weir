@@ -3,8 +3,9 @@
 //!
 //! Both are one-shot events delivered through the filesystem, so both need to
 //! be told apart from the state that was already there when the pass started.
-//! A working directory record is overwritten in place, so its timestamp is
-//! what marks it fresh; a worktree event gets its own file, so its name is.
+//! A working directory record is overwritten in place, so its revision is
+//! what marks it fresh (its timestamp for legacy records); a worktree event
+//! gets its own file, so its name is.
 //! Either way the first pass after launch only takes note. Announcing a move
 //! the user made yesterday, or re-running a sync for a worktree that already
 //! exists, would be worse than saying nothing.
@@ -40,7 +41,7 @@ fn route_cwd(
     let mut seen: BTreeMap<Uuid, String> = BTreeMap::new();
     for file in &input.cwd_events {
         let Some(content) = file.content.as_deref() else {
-            // Unreadable this pass. Carry the timestamp forward so the record
+            // Unreadable this pass. Carry the stamp forward so the record
             // is not mistaken for a new move once it can be read again.
             if let Ok(pane) = Uuid::parse_str(&file.name)
                 && let Some(previous) = state.cwd_seen.get(&pane)
@@ -59,13 +60,18 @@ fn route_cwd(
         else {
             continue;
         };
-        let updated_at = value
-            .get("updatedAt")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        let is_fresh = state.cwd_seen.get(&pane) != Some(&updated_at);
-        seen.insert(pane, updated_at);
+        let stamp = value.get("revision").and_then(Value::as_u64).map_or_else(
+            || {
+                value
+                    .get("updatedAt")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            },
+            |revision| format!("revision:{revision}"),
+        );
+        let is_fresh = state.cwd_seen.get(&pane) != Some(&stamp);
+        seen.insert(pane, stamp);
         if !is_fresh || input.is_bootstrap {
             continue;
         }

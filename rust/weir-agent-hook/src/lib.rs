@@ -45,7 +45,7 @@ pub use worktree::{
     plan as plan_worktree,
 };
 
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -1571,7 +1571,7 @@ fn perform_side_write(
                 return;
             };
             let path = directory.join(cwd_event_file_name(pane_id));
-            let body = json!({
+            let mut body = json!({
                 "schemaVersion": 1,
                 "paneId": pane_id,
                 "newCwd": new_cwd,
@@ -1579,6 +1579,30 @@ fn perform_side_write(
                 "updatedAt": now,
             });
             let written = with_record_lock(&path, || {
+                // We number replacements under the same lock as the write so
+                // concurrent hooks and a stationary clock cannot reuse a stamp.
+                let previous = match std::fs::read(&path) {
+                    Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+                        Ok(value) => value.get("revision").and_then(Value::as_u64).unwrap_or(0),
+                        Err(error) => {
+                            log.line(&format!("read {}: {error}", path.display()));
+                            return None;
+                        }
+                    },
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+                    Err(error) => {
+                        log.line(&format!("read {}: {error}", path.display()));
+                        return None;
+                    }
+                };
+                let Some(revision) = previous.checked_add(1) else {
+                    log.line(&format!(
+                        "cwd event revision exhausted for {}",
+                        path.display()
+                    ));
+                    return None;
+                };
+                body["revision"] = json!(revision);
                 atomic_write(&path, body.to_string().as_bytes())
                     .map_err(|error| log.line(&format!("write {}: {error}", path.display())))
                     .ok()
