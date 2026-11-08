@@ -36,6 +36,13 @@ struct ReviewTabTextTests {
         ConversationChoice(conversation: TurnSummaryFixture.conversation("claude"), ordinal: ordinal, unviewedCount: 1)
     }
 
+    @Test(arguments: ["en", "ja"])
+    func fileTagOverflow_usesTheCompactLocalizedCount(language: String) {
+        let locale = Locale(identifier: language)
+        #expect(ReviewTabText.fileTagsOverflow(4, locale: locale) == "+4")
+        #expect(ReviewTabText.fileTagsOverflow(12, locale: locale) == "+12")
+    }
+
     @Test func theWords_inEnglish() throws {
         let en = Locale(identifier: "en")
         let context = try Self.context([
@@ -123,8 +130,8 @@ struct ReviewTabTextTests {
 
     /// A tag whose title alone names it shows no number, its identity bar
     /// telling it apart; one whose title another has too keeps its number.
-    /// VoiceOver hears the kind before the title, which the badge shows and
-    /// the tooltip leaves to it.
+    /// The tooltip and VoiceOver name the agent kind because the badge
+    /// may be hidden by the header's conversation overflow.
     @Test func titledFileTags_disambiguateSharedTitles_andSpeakTheProvider() {
         let titled = ReviewFileTag(provider: .claude, title: "Review the fork", ordinal: nil, turns: [2], identity: 1)
         #expect(ReviewTabText.fileTagNumber(titled) == nil)
@@ -135,7 +142,9 @@ struct ReviewTabTextTests {
         #expect(ReviewTabText.fileTag(shared, locale: Self.en) == "Changed during Fix tests #2’s T3")
         #expect(ReviewTabText.unreadableNote([shared], locale: Self.en)
             == "Couldn’t read the files changed during Fix tests #2’s T3, so a tag may be missing")
-        #expect(ReviewTabText.fileTagsHelp([titled], unreadable: [], locale: Self.en) == "Changed during Review the fork’s T2")
+        #expect(ReviewTabText.fileTagsHelp([titled], unreadable: [], locale: Self.en) == "Changed during Claude, Review the fork’s T2")
+        #expect(ReviewTabText.fileTagsHelp([titled], unreadable: [], locale: Self.ja)
+            == "Claude、Review the fork の T2 の間に変更されました")
         #expect(ReviewTabText.fileTagsSpoken([titled], unreadable: [], locale: Self.en) == "Changed during Claude, Review the fork’s T2")
         #expect(ReviewTabText.fileTagsSpoken([titled], unreadable: [], locale: Self.ja)
             == "Claude、Review the fork の T2 の間に変更されました")

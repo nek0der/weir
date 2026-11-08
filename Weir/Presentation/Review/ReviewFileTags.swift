@@ -83,13 +83,11 @@ enum ReviewFileTags {
         }
     }
 
-    /// How many tags a header shows before "2 more": the conversations
-    /// that changed a file most often number one or two, and a header of
-    /// many tags ran past the window's narrowest width and took the path's
-    /// room.
-    static let shownLimit = 2
+    /// One conversation stays visible; "+N" counts the rest so the path
+    /// keeps its room even when several conversations changed the file.
+    static let shownLimit = 1
 
-    /// The tags a header shows, and how many more its "2 more" counts; the
+    /// The tags a header shows, and how many more its "+N" counts; the
     /// whole list is in its tooltip and what VoiceOver reads.
     static func shown(_ tags: [ReviewFileTag]) -> (shown: [ReviewFileTag], more: Int) {
         guard tags.count > shownLimit else { return (tags, 0) }

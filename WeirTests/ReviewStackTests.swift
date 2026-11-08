@@ -418,6 +418,22 @@ struct ReviewStackTests {
         #expect(ReviewFileMark.allCases.map { ReviewStackText.mark($0, locale: Self.ja) } == ["新規", "Bash で変更", "ターン外の変更"])
     }
 
+    @Test func fileMarks_haveDistinctSymbolsAndKeepTheirWords() {
+        let symbols = ReviewFileMark.allCases.map(ReviewStackText.markSymbol)
+        #expect(Set(symbols).count == ReviewFileMark.allCases.count)
+        #expect(Set(symbols).isDisjoint(with: ["checkmark", "chevron.right", "chevron.down", "arrow.clockwise"]))
+        for mark in ReviewFileMark.allCases {
+            #expect(NSImage(systemSymbolName: ReviewStackText.markSymbol(mark), accessibilityDescription: nil) != nil)
+            for locale in [Self.en, Self.ja] {
+                let tooltip = ReviewStackText.markTooltip(mark, locale: locale)
+                #expect(tooltip.hasPrefix(ReviewStackText.mark(mark, locale: locale)))
+                if let explanation = ReviewStackText.markHelp(mark, locale: locale) {
+                    #expect(tooltip.hasSuffix(explanation))
+                }
+            }
+        }
+    }
+
     @Test func aFilesContent_isTheVersionItsDiffShows_orNotUnfolded() throws {
         let diff = try ReviewDiff(
             file: Self.first,

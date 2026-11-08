@@ -24,6 +24,21 @@ enum ReviewStackText {
         ).resolved(in: locale)
     }
 
+    /// Distinct from the viewed checkbox, comment count, and refresh icon.
+    static func markSymbol(_ mark: ReviewFileMark) -> String {
+        switch mark {
+        case .new: "doc.badge.plus"
+        case .changedByBash: "terminal"
+        case .changedOutsideTurns: "pencil.and.outline"
+        }
+    }
+
+    static func markTooltip(_ mark: ReviewFileMark, locale: Locale) -> String {
+        [Self.mark(mark, locale: locale), markHelp(mark, locale: locale)]
+            .compactMap(\.self)
+            .joined(separator: "\n")
+    }
+
     static func mark(_ mark: ReviewFileMark, locale: Locale) -> String {
         let resource = switch mark {
         case .new:

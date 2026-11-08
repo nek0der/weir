@@ -390,22 +390,42 @@ struct ReviewScopeMenuTests {
         #expect(unreadable.map(\.title) == ["Review logs", "Fix tests"])
     }
 
-    /// A file five conversations touched shows two tags and "3 more", so its
+    /// A file five conversations touched shows one tag and "+4", so its
     /// path keeps the header's room; the tooltip and VoiceOver name every
     /// one, and say when a turn's files could not be read, which a tag may
     /// then lack.
-    @Test func aFileOfManyConversations_showsTwoTagsAndHowManyMore_andSaysWhatCouldNotBeRead() throws {
+    @Test func aFileOfManyConversations_showsOneTagAndHowManyMore_andSaysWhatCouldNotBeRead() throws {
         let tags = (1...5).map { ReviewFileTag(provider: .claude, ordinal: $0, turns: [$0]) }
 
         let (shown, more) = ReviewFileTags.shown(tags)
 
-        #expect(shown == Array(tags.prefix(2)))
-        #expect(more == 3)
-        #expect(ReviewFileTags.shown(Array(tags.prefix(2))).more == 0, "two fit whole")
+        #expect(shown == Array(tags.prefix(1)))
+        #expect(more == 4)
+        #expect(ReviewFileTags.shown([]).shown.isEmpty)
+        #expect(ReviewFileTags.shown([]).more == 0)
+        #expect(ReviewFileTags.shown([tags[0]]).more == 0, "one fits whole")
+        #expect(ReviewFileTags.shown(Array(tags.prefix(2))).more == 1)
         #expect(ReviewTabText.moreFileTags(3, locale: Self.ja) == "ほか 3 件")
         #expect(ReviewTabText.moreFileTags(3, locale: Self.en) == "3 more")
         let help = try #require(ReviewTabText.fileTagsHelp(tags, unreadable: [], locale: Self.en))
         #expect(help.components(separatedBy: "\n") == (1...5).map { "Changed during Claude #\($0)’s T\($0)" })
+
+        let spoken = try #require(ReviewTabText.fileTagsSpoken(tags, unreadable: [], locale: Self.en))
+        #expect(spoken.components(separatedBy: "\n").count == 5)
+        #expect(spoken.contains("Claude #5"))
+        let japaneseHelp = try #require(ReviewTabText.fileTagsHelp(tags, unreadable: [], locale: Self.ja))
+        let japaneseSpoken = try #require(ReviewTabText.fileTagsSpoken(tags, unreadable: [], locale: Self.ja))
+        #expect(japaneseHelp.components(separatedBy: "\n").count == 5)
+        #expect(japaneseHelp.contains("Claude #5"))
+        #expect(japaneseSpoken.components(separatedBy: "\n").count == 5)
+        #expect(japaneseSpoken.contains("Claude #5"))
+
+        let titled = [tags[0], ReviewFileTag(provider: .codex, title: "Fix tests", ordinal: 2, turns: [6])]
+        for locale in [Self.en, Self.ja] {
+            let titledHelp = try #require(ReviewTabText.fileTagsHelp(titled, unreadable: [], locale: locale))
+            #expect(titledHelp.contains("Codex"), "the hidden badge's agent stays in the tooltip")
+            #expect(titledHelp.contains("Fix tests #2"))
+        }
 
         let worktree = try Worktree()
         let turns = [worktree.codex1, worktree.claude3, worktree.claude4]

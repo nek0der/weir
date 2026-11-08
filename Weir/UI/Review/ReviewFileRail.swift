@@ -40,6 +40,7 @@ struct ReviewFileRail: View {
 
     @Environment(\.weirAccent) private var accent
     @Environment(\.locale) private var locale
+    @Environment(\.reviewPathsOutsideTurns) private var pathsOutsideTurns
     @Environment(\.supervisionSurfaceOpacity) private var surfaceOpacity
     /// Read here rather than passed in: the width changes on every frame of a
     /// divider drag, and a workspace that read it would rebuild the diff table
@@ -434,6 +435,8 @@ struct ReviewFileRail: View {
         let isSelected = file.id == selection
         let count = commentCounts[file.id] ?? 0
         let isViewed = viewed.contains(file.id)
+        let marks = ReviewFileMark.marks(for: file, changedByBash: [], changedOutsideTurns: pathsOutsideTurns)
+        let markDescriptions = marks.map { ReviewStackText.markTooltip($0, locale: locale) }
         return Button {
             onSelect(file.id)
         } label: {
@@ -442,8 +445,8 @@ struct ReviewFileRail: View {
             // single line left rows like "…tteActions.swift" that name nothing.
             VStack(alignment: .leading, spacing: WeirLayout.Supervision.spaceHairline) {
                 HStack(spacing: WeirLayout.Supervision.spaceSnug) {
-                    // The checkbox carries the mark, and the comment count
-                    // follows the name.
+                    // The checkbox carries the read mark; file marks and
+                    // the comment count follow the name.
                     Text(verbatim: name ?? ReviewFileTree.name(file.path))
                         .font(.supervision(.row))
                         .lineLimit(1)
@@ -458,6 +461,9 @@ struct ReviewFileRail: View {
                         // change counts kept their full width and the tree
                         // truncated names to a few characters.
                         .layoutPriority(1)
+                    ForEach(marks, id: \.self) { mark in
+                        ReviewFileMarkTag(mark: mark, locale: locale)
+                    }
                     if count > 0 {
                         commentCount(count)
                     }
@@ -496,18 +502,18 @@ struct ReviewFileRail: View {
         // is truncated to the rail's width and the tooltip is how the rest of
         // the path is read, and `.accessibilityElement(children: .ignore)`
         // rebuilds the element that a later `.help` would have attached to.
-        .help(Text(verbatim: file.path))
+        .help(Text(verbatim: ([file.path] + markDescriptions).joined(separator: "\n")))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: file.path))
         // Composed as one string rather than added together: `Text` addition
         // is deprecated as of macOS 26, and the parts are read as one phrase.
-        .accessibilityValue(Text(verbatim: ReviewFileTree.summary(
+        .accessibilityValue(Text(verbatim: ([ReviewFileTree.summary(
             layer: file.layer,
             stat: stats[file.id],
             comments: count,
             isViewed: isViewed,
             locale: locale
-        )))
+        )] + markDescriptions).joined(separator: "\n")))
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 

@@ -19636,8 +19636,25 @@
         }
       }
     },
+    "review.fileTagsOverflow": {
+      "comment": "Review file header: compact count of additional conversations; argument: how many",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "+%lld"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "+%lld"
+          }
+        }
+      }
+    },
     "review.fileTagsMore": {
-      "comment": "Review file header: how many conversations' tags are not shown beside the first two; argument: how many",
+      "comment": "Review file header: how many conversations' tags are not shown beside the first; argument: how many",
       "localizations": {
         "en": {
           "stringUnit": {
