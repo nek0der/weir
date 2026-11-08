@@ -485,6 +485,29 @@ struct DemoFixtureTests {
         }
     }
 
+    @Test func demoWorktrees_doNotStartLiveGitSync() throws {
+        let session = WorkspaceSession()
+        #expect(session.restore(from: DemoFixture.snapshot) == nil)
+        let before = session.projects
+        let sync = AppState.makeGitSync(session: session, readsFolders: false)
+        // With no coordinator, neither focus nor a manual sync can read
+        // the fixture's made-up folders or replace its project state.
+        #expect(sync == nil)
+        #expect(session.projects == before)
+        #expect(session.projects.allSatisfy { $0.trouble == nil })
+        let store = GitFactsStore(staged: DemoFixture.gitFacts)
+        let reminders = try #require(store.facts(for: DemoFixture.remindersContainer))
+        #expect(reminders.proposedCommits == 2)
+        #expect(reminders.uncommittedFiles == 5)
+    }
+
+    @Test func liveWorktrees_startGitSync() {
+        // An empty live session starts no repository reads in this test.
+        let session = WorkspaceSession()
+        let sync = AppState.makeGitSync(session: session, readsFolders: true)
+        #expect(sync != nil)
+    }
+
     @Test func everyStagedGitFact_namesItsSnapshotCheckout() {
         let snap = DemoFixture.snapshot
         let session = WorkspaceSession()
