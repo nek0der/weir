@@ -19,13 +19,13 @@ struct PRStatusSyncerTargetTests {
     /// A row one wake short of its interval still goes on that wake, and a
     /// finished request's row does not, however long it has waited.
     @Test func aRowIsDue_withHalfAWakeForgiven() {
-        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let now = ContinuousClock.now
         let open = PRInfoFixture.make(checks: .success)
         #expect(PRStatusSyncer.isDue(info: open, lastFetch: nil, now: now))
-        #expect(!PRStatusSyncer.isDue(info: open, lastFetch: now.addingTimeInterval(-67.49), now: now))
-        #expect(PRStatusSyncer.isDue(info: open, lastFetch: now.addingTimeInterval(-67.5), now: now))
-        #expect(!PRStatusSyncer.isDue(info: open, lastFetch: now.addingTimeInterval(-30), now: now))
-        #expect(!PRStatusSyncer.isDue(info: PRInfoFixture.make(state: .merged), lastFetch: .distantPast, now: now))
+        #expect(!PRStatusSyncer.isDue(info: open, lastFetch: now.advanced(by: .seconds(-67.49)), now: now))
+        #expect(PRStatusSyncer.isDue(info: open, lastFetch: now.advanced(by: .seconds(-67.5)), now: now))
+        #expect(!PRStatusSyncer.isDue(info: open, lastFetch: now.advanced(by: .seconds(-30)), now: now))
+        #expect(!PRStatusSyncer.isDue(info: PRInfoFixture.make(state: .merged), lastFetch: now.advanced(by: .seconds(-3600)), now: now))
     }
 
     /// A request that can still change is asked for sooner than a row with

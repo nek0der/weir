@@ -80,7 +80,7 @@ struct PRStatusSyncerLookupTests {
             await pollUntil(timeout: .seconds(5), interval: .milliseconds(1)) { clock.sleeperCount == 1 }
             try #require(clock.sleeperCount == 1)
             #expect(await lookups.lookupCount == 0)
-            #expect(clock.deadlines == [clock.now().addingTimeInterval(5)])
+            #expect(clock.deadlines == [clock.monotonicNow().advanced(by: .seconds(5))])
             clock.advance(by: 4)
             #expect(await lookups.lookupCount == 0)
             try #require(clock.sleeperCount == 1)

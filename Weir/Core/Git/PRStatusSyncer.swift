@@ -57,7 +57,10 @@ enum PRStatusSource {
 /// The time the lookups pace themselves by. A protocol so the tests step
 /// it by hand rather than wait out a debounce or an interval.
 protocol PRStatusClock: Sendable {
+    /// Returns wall time for the forge's absolute reset dates and Retry-After projection.
     func now() -> Date
+    /// Returns a monotonic instant for process-local pacing, including time spent asleep.
+    func monotonicNow() -> ContinuousClock.Instant
     /// Returns after `interval`, or throws once the task is canceled.
     func sleep(for interval: TimeInterval) async throws
 }
@@ -65,6 +68,10 @@ protocol PRStatusClock: Sendable {
 struct SystemPRStatusClock: PRStatusClock {
     func now() -> Date {
         Date()
+    }
+
+    func monotonicNow() -> ContinuousClock.Instant {
+        ContinuousClock.now
     }
 
     func sleep(for interval: TimeInterval) async throws {
@@ -133,9 +140,9 @@ final class PRStatusSyncer {
 
     /// Last attempted fetch time per row. We track attempts (not just
     /// successes) so the floors still apply when the CLI fails.
-    private var lastFetchAt: [ContainerID: Date] = [:]
+    private var lastFetchAt: [ContainerID: ContinuousClock.Instant] = [:]
     /// Last attempted lookup time per project, for `repositoryFloor`.
-    private var lastLookupAt: [UUID: Date] = [:]
+    private var lastLookupAt: [UUID: ContinuousClock.Instant] = [:]
     /// Whether each project's host was low on quota at its last lookup.
     private var lowQuotaProjects: Set<UUID> = []
 
@@ -160,8 +167,8 @@ final class PRStatusSyncer {
     /// A gathered request waiting for its project's lookup: the first and
     /// latest moment it was asked for, and the rows a turn ended in.
     private struct PendingRequest {
-        var firstAt: Date
-        var lastAt: Date
+        var firstAt: ContinuousClock.Instant
+        var lastAt: ContinuousClock.Instant
         var forced: Set<ContainerID>
     }
 
@@ -219,7 +226,7 @@ final class PRStatusSyncer {
                 fetcher: PRStatusFetcher(
                     resolver: resolver,
                     locator: locator,
-                    limiter: ForgeRateLimiter(now: now),
+                    limiter: ForgeRateLimiter(now: now, monotonicNow: { clock.monotonicNow() }),
                     now: now
                 ),
                 pullRequests: ForgePullRequests(resolver: resolver, locator: locator),
@@ -316,7 +323,7 @@ final class PRStatusSyncer {
 
     private func tick(reason: Reason) async {
         guard let session, fetcher != nil else { return }
-        let now = clock.now()
+        let now = clock.monotonicNow()
         var attempted = 0
         let projects = session.projects.map(\.id)
         for project in projects {
@@ -501,7 +508,7 @@ final class PRStatusSyncer {
     /// Ask for a lookup of `project` once the requests of the next few
     /// seconds are in (`quietPeriod`, `longestWait`).
     private func requestGathered(_ project: UUID, forcing rows: Set<ContainerID>) {
-        let now = clock.now()
+        let now = clock.monotonicNow()
         if pending[project] != nil {
             pending[project]?.lastAt = now
             pending[project]?.forced.formUnion(rows)
@@ -518,16 +525,16 @@ final class PRStatusSyncer {
     /// have come in.
     private func runGathered(_ project: UUID) async {
         while let request = pending[project] {
-            let now = clock.now()
+            let now = clock.monotonicNow()
             let gathered = min(
-                request.lastAt.addingTimeInterval(Self.quietPeriod),
-                request.firstAt.addingTimeInterval(Self.longestWait)
+                request.lastAt.advanced(by: .seconds(Self.quietPeriod)),
+                request.firstAt.advanced(by: .seconds(Self.longestWait))
             )
-            let floor = (lastLookupAt[project] ?? .distantPast).addingTimeInterval(Self.repositoryFloor)
-            let wakeAt: Date
+            let floor = lastLookupAt[project]?.advanced(by: .seconds(Self.repositoryFloor))
+            let wakeAt: ContinuousClock.Instant
             if gathered > now {
                 wakeAt = gathered
-            } else if floor > now {
+            } else if let floor, floor > now {
                 // Coming back to the app asks for what happened elsewhere,
                 // and a lookup within the floor already saw it. A turn's end
                 // waits instead: its turn may have merged the request after
@@ -543,7 +550,7 @@ final class PRStatusSyncer {
                 return
             }
             do {
-                try await clock.sleep(for: wakeAt.timeIntervalSince(now))
+                try await clock.sleep(for: now.duration(to: wakeAt) / .seconds(1))
             } catch {
                 pending[project] = nil
                 return
@@ -557,18 +564,18 @@ final class PRStatusSyncer {
     /// the other worktrees read within `occasionalInterval` and a finished
     /// request's row read within `finishedInterval`, which go at their own
     /// slower pace, unless `forcing` names them.
-    private func rowsToLookUp(_ project: UUID, forcing: Set<ContainerID>, now: Date) -> [Target] {
+    private func rowsToLookUp(_ project: UUID, forcing: Set<ContainerID>, now: ContinuousClock.Instant) -> [Target] {
         guard let session, let model = session.project(project) else { return [] }
         return Self.targets(of: model, in: session).filter { target in
             if forcing.contains(target.container) {
                 return true
             }
             guard let last = lastFetchAt[target.container] else { return true }
-            let age = now.timeIntervalSince(last)
-            if target.isOccasional, age < Self.occasionalInterval {
+            let age = last.duration(to: now)
+            if target.isOccasional, age < .seconds(Self.occasionalInterval) {
                 return false
             }
-            if let info = store?.info(for: target.container), info.state != .open, age < Self.finishedInterval {
+            if let info = store?.info(for: target.container), info.state != .open, age < .seconds(Self.finishedInterval) {
                 return false
             }
             return true
@@ -599,7 +606,7 @@ final class PRStatusSyncer {
         var forced = forcing
         var isInvalidating = invalidatesForges
         while true {
-            let now = clock.now()
+            let now = clock.monotonicNow()
             let targets = rowsToLookUp(project, forcing: forced, now: now)
             guard !targets.isEmpty else { return }
             let tokens = beginLookup(of: targets, in: project, at: now)
@@ -628,7 +635,7 @@ final class PRStatusSyncer {
 
     /// Note a lookup of `targets` starting at `now`, and answer the token of
     /// each row's lookup (`lookupTokens`).
-    private func beginLookup(of targets: [Target], in project: UUID, at now: Date) -> [ContainerID: UInt64] {
+    private func beginLookup(of targets: [Target], in project: UUID, at now: ContinuousClock.Instant) -> [ContainerID: UInt64] {
         var tokens: [ContainerID: UInt64] = [:]
         for target in targets {
             nextLookupToken &+= 1
@@ -721,7 +728,7 @@ final class PRStatusSyncer {
 
     /// Whether a recurring wake looks `project` up: whether any of the rows
     /// a lookup would ask about is due.
-    private func isDue(_ project: UUID, now: Date) -> Bool {
+    private func isDue(_ project: UUID, now: ContinuousClock.Instant) -> Bool {
         let isQuotaLow = lowQuotaProjects.contains(project)
         return rowsToLookUp(project, forcing: [], now: now).contains { target in
             Self.isDue(
@@ -737,9 +744,14 @@ final class PRStatusSyncer {
     /// the app's focus started can fall just short of a wake, so half a wake
     /// is forgiven: without it, the row would wait a whole wake more for a
     /// few seconds' difference.
-    static func isDue(info: PRInfo?, lastFetch: Date?, now: Date, isQuotaLow: Bool = false) -> Bool {
+    static func isDue(
+        info: PRInfo?,
+        lastFetch: ContinuousClock.Instant?,
+        now: ContinuousClock.Instant,
+        isQuotaLow: Bool = false
+    ) -> Bool {
         guard let interval = recurringInterval(for: info, isQuotaLow: isQuotaLow) else { return false }
         guard let lastFetch else { return true }
-        return now.timeIntervalSince(lastFetch) >= interval - pollInterval / 2
+        return lastFetch.duration(to: now) >= .seconds(interval - pollInterval / 2)
     }
 }
