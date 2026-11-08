@@ -20,6 +20,36 @@ struct GitProcessSmokeTests {
         #expect(result.stdout.contains("git version"))
     }
 
+    @Test(arguments: ["", "あ"])
+    func createWorktree_keepsTheTailOfHookDiagnostics_andLetsTheHookFinish(_ boundaryCharacter: String) async throws {
+        let repo = try await TempGitRepo.make()
+        defer { repo.cleanup() }
+        let hooks = repo.url.appendingPathComponent(".git/hooks")
+        try FileManager.default.createDirectory(at: hooks, withIntermediateDirectories: true)
+        try await repo.git(["config", "core.hooksPath", hooks.path])
+        try await repo.git(["branch", "linked"])
+        let hook = hooks.appendingPathComponent("post-checkout")
+        let expectedBytes = 65536 - max(0, boundaryCharacter.utf8.count - 1)
+        try """
+        #!/bin/sh
+        set -e
+        /usr/bin/head -c 131072 /dev/zero | /usr/bin/tr '\\000' e >&2
+        printf '\(boundaryCharacter)' >&2
+        /usr/bin/head -c \(expectedBytes - 10) /dev/zero | /usr/bin/tr '\\000' e >&2
+        printf 'stderr end' >&2
+        """.write(to: hook, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: hook.path)
+
+        let path = repo.scratch.appendingPathComponent("linked")
+        let result = try await GitProcess.createWorktree(repoRoot: repo.url, path: path, baseBranch: "linked")
+
+        try #require(result.succeeded)
+        #expect(result.stderr.hasPrefix("\u{2026}"))
+        #expect(result.stderr.dropFirst().utf8.count == expectedBytes)
+        #expect(result.stderr.hasSuffix("stderr end"))
+        #expect(try await TempGitRepo.git(["branch", "--show-current"], in: path) == "linked")
+    }
+
     @Test
     func removeWorktree_withInitializedSubmodule_requiresForce() async throws {
         let repository = try await TempGitRepo.make()

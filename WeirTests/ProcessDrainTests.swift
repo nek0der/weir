@@ -75,6 +75,28 @@ struct ProcessDrainTests {
         #expect(String(data: output.stderr, encoding: .utf8) == "oops")
     }
 
+    @Test func diagnosticTails_keepTheLastBytesOfBothPipes_andLeaveTheChildRunning() throws {
+        let child = try start("""
+        /usr/bin/head -c 32768 /dev/zero | /usr/bin/tr '\\000' o
+        /usr/bin/head -c 32768 /dev/zero | /usr/bin/tr '\\000' e >&2
+        printf 'stdout end'
+        printf 'stderr end' >&2
+        """)
+        let output = drainAndWait(
+            child.process,
+            stdout: child.stdout,
+            stderr: child.stderr,
+            timeout: .seconds(10),
+            diagnosticTailBytes: 4096
+        )
+
+        #expect(output.ending == .exited)
+        #expect(child.process.terminationStatus == 0)
+        #expect(output.isStdoutComplete)
+        #expect(output.stdout == Data((String(repeating: "o", count: 4086) + "stdout end").utf8))
+        #expect(output.stderr == Data((String(repeating: "e", count: 4086) + "stderr end").utf8))
+    }
+
     /// The grandchild holds stdout past its parent's exit. Removing the hold
     /// file releases it permanently, even when the temporary directory is
     /// removed before its next poll. Its own watchdog bounds a broken drain;

@@ -111,6 +111,10 @@ enum GitProcess {
     /// leaves a half-made worktree for the caller to clear.
     static let worktreeTimeout: Duration = .seconds(600)
 
+    /// Git and its hooks can write progress for the entire checkout. The
+    /// worktree commands need only the final diagnostics from each stream.
+    private static let worktreeDiagnosticTailBytes = 64 * 1024
+
     /// What every run starts with. A repository's own `core.fsmonitor`
     /// names a program git would start, and a folder opened from an
     /// archive brings its `.git/config` along; the review turns it off
@@ -130,12 +134,20 @@ enum GitProcess {
         cwd: URL,
         timeout: Duration = readTimeout,
         environment: [String: String] = [:],
-        executable: GitExecutable = .located
+        executable: GitExecutable = .located,
+        diagnosticTailBytes: Int? = nil
     ) async throws -> GitResult {
         try await withCheckedThrowingContinuation { cont in
             DispatchQueue.global(qos: .userInitiated).async {
                 do {
-                    let result = try runSync(args, cwd: cwd, timeout: timeout, environment: environment, executable: executable)
+                    let result = try runSync(
+                        args,
+                        cwd: cwd,
+                        timeout: timeout,
+                        environment: environment,
+                        executable: executable,
+                        diagnosticTailBytes: diagnosticTailBytes
+                    )
                     cont.resume(returning: result)
                 } catch {
                     cont.resume(throwing: error)
@@ -152,7 +164,8 @@ enum GitProcess {
         cwd: URL,
         timeout: Duration = readTimeout,
         environment: [String: String] = [:],
-        executable: GitExecutable = .located
+        executable: GitExecutable = .located,
+        diagnosticTailBytes: Int? = nil
     ) throws -> GitResult {
         let env = Self.environment(inherited: ProcessInfo.processInfo.environment, given: environment)
 
@@ -178,7 +191,13 @@ enum GitProcess {
         // See `drainAndWait` for why the pipes must be read while the
         // child is still running rather than after it exits, and how the
         // deadline is held.
-        let output = drainAndWait(process, stdout: stdoutPipe, stderr: stderrPipe, timeout: timeout)
+        let output = drainAndWait(
+            process,
+            stdout: stdoutPipe,
+            stderr: stderrPipe,
+            timeout: timeout,
+            diagnosticTailBytes: diagnosticTailBytes
+        )
         guard output.ending == .exited else {
             log.error("git \(args.first ?? "", privacy: .public) ran past its deadline and was ended")
             if output.hasProcessesLeft {
@@ -187,10 +206,21 @@ enum GitProcess {
             throw GitProcessError.timedOut(seconds: Int(timeout.components.seconds), hasProcessesLeft: output.hasProcessesLeft)
         }
 
+        func decode(_ bytes: Data, hasTrimmedTail: Bool) -> String {
+            // A trimmed tail can start with up to three UTF-8 continuation
+            // bytes. Keep strict decoding for the rest because callers match diagnostics.
+            let leadingBytes = hasTrimmedTail ? bytes.prefix(3).prefix { ($0 & 0xC0) == 0x80 }.count : 0
+            let text = String(data: bytes.dropFirst(leadingBytes), encoding: .utf8) ?? ""
+            // The error sheets show this text as Git's own words, so we mark
+            // where the kept tail starts; callers match diagnostics with
+            // `contains`, which a leading ellipsis leaves intact.
+            return hasTrimmedTail && !text.isEmpty ? "\u{2026}" + text : text
+        }
+
         let result = GitResult(
             exitCode: process.terminationStatus,
-            stdout: String(data: output.stdout, encoding: .utf8) ?? "",
-            stderr: String(data: output.stderr, encoding: .utf8) ?? ""
+            stdout: decode(output.stdout, hasTrimmedTail: output.hasTrimmedStdoutTail),
+            stderr: decode(output.stderr, hasTrimmedTail: output.hasTrimmedStderrTail)
         )
         if !result.succeeded {
             log
@@ -288,7 +318,7 @@ enum GitProcess {
         args.append("--")
         args.append(path.path)
         args.append(baseBranch)
-        return try await run(args, cwd: repoRoot, timeout: worktreeTimeout)
+        return try await runWorktree(args, cwd: repoRoot)
     }
 
     /// Remove a worktree on disk. Wraps `git worktree remove`.
@@ -309,14 +339,18 @@ enum GitProcess {
         }
         args.append("--")
         args.append(path.path)
-        return try await run(args, cwd: repoRoot, timeout: worktreeTimeout)
+        return try await runWorktree(args, cwd: repoRoot)
     }
 
     /// `git worktree prune`: forgets worktrees whose folders are gone, as
     /// one a stopped `git worktree add` registered and left without one.
     @discardableResult
     static func pruneWorktrees(repoRoot: URL) async throws -> GitResult {
-        try await run(["worktree", "prune"], cwd: repoRoot, timeout: worktreeTimeout)
+        try await runWorktree(["worktree", "prune"], cwd: repoRoot)
+    }
+
+    private static func runWorktree(_ args: [String], cwd: URL) async throws -> GitResult {
+        try await run(args, cwd: cwd, timeout: worktreeTimeout, diagnosticTailBytes: worktreeDiagnosticTailBytes)
     }
 
     /// If `url` is a linked worktree of a larger git repo, return
