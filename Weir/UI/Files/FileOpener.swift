@@ -66,6 +66,10 @@ private struct MissingEditorHelper: Error {
     let path: String
 }
 
+private struct EditorHelperFailure: Error {
+    let status: Int32
+}
+
 /// The pure resolution overloads accept dependencies as closures, which keeps
 /// the persistence contract testable without altering a user's default
 /// application or launching another process.
@@ -175,7 +179,7 @@ enum FileOpener {
         }
     }
 
-    private static func perform(_ launch: EditorLineLaunch, applicationURL: URL) async throws {
+    static func perform(_ launch: EditorLineLaunch, applicationURL: URL) async throws {
         switch launch {
         case let .url(url):
             _ = try await NSWorkspace.shared.open(
@@ -190,11 +194,23 @@ enum FileOpener {
             let process = Process()
             process.executableURL = executable
             process.arguments = arguments
-            // The helpers hand the file to the running editor and exit; we do
-            // not wait for them or read their output.
             process.standardOutput = FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
-            try process.run()
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                process.terminationHandler = { helper in
+                    if helper.terminationReason == .exit, helper.terminationStatus == 0 {
+                        continuation.resume()
+                    } else {
+                        continuation.resume(throwing: EditorHelperFailure(status: helper.terminationStatus))
+                    }
+                }
+                do {
+                    try process.run()
+                } catch {
+                    process.terminationHandler = nil
+                    continuation.resume(throwing: error)
+                }
+            }
         }
     }
 }

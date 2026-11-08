@@ -447,6 +447,24 @@ struct GhosttyConfigBridgeTests {
         #expect(config == nil)
     }
 
+    @Test func reloadConfigReportsLayerWriteFailureWithoutInstalling() throws {
+        try withTempDir { directory in
+            let blocked = directory.appendingPathComponent("not-a-directory")
+            try Data().write(to: blocked)
+            #expect(throws: GhosttyConfigReloadError.layerWriteFailed) {
+                _ = try GhosttyConfigBridge.reloadConfig(
+                    settings: .default,
+                    resourcesDir: nil,
+                    includeUserConfig: false,
+                    directory: blocked
+                ) { config in
+                    ghostty_config_free(config)
+                    Issue.record("Installed a config without Weir’s layer.")
+                }
+            }
+        }
+    }
+
     @Test func aFileInPlaceOfTheConfigDirectory_givesNoPath() throws {
         try withTempDir { directory in
             let blocked = directory.appendingPathComponent("not-a-directory")

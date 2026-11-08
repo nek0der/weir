@@ -74,7 +74,24 @@ struct PullRequestCheckoutDecodeTests {
             PullRequestHead(number: 6, title: "First MR", state: .open, headBranch: "first", headCommit: "a6", forkOwner: nil),
             PullRequestHead(number: 3, title: "Fork MR", state: .merged, headBranch: "fork", headCommit: nil, forkOwner: "lee")
         ])
-        #expect(ForgePullRequests.decodeList(stdout: "not json", forge: .gitHub).isEmpty)
+        #expect(ForgePullRequests.decodeList(stdout: "[]", forge: .gitHub) == [])
+        #expect(ForgePullRequests.decodeList(stdout: "[]", forge: .gitLab) == [])
+    }
+
+    @Test(arguments: [
+        ("printf '[]'; printf 'Could not connect\\n' >&2; exit 1", PullRequestListError.commandFailed),
+        ("printf '[invalid]'", .invalidResponse)
+    ])
+    func aListReportsProcessAndDecodeFailures(_ command: String, expected: PullRequestListError) async throws {
+        try await withTempDir { directory in
+            let executable = directory.appendingPathComponent("gh")
+            try AgentCatalogFixture.makeExecutable(executable, script: "#!/bin/sh\n\(command)\n")
+            let locator = ToolLocator(known: ["gh": executable])
+            let reader = ForgePullRequests(resolver: ForgeResolver(locator: locator), locator: locator)
+            await #expect(throws: expected) {
+                try await reader.openPullRequests(in: .fixture, repoRoot: directory)
+            }
+        }
     }
 
     struct LookupCase: Sendable, CustomTestStringConvertible {

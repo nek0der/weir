@@ -269,6 +269,30 @@ extension WindowRegistryTests {
         #expect(told?.id == news.expected.map { windows[$0].id })
     }
 
+    @Test(arguments: [false, true])
+    func reviewOpenFailureUsesTheOriginUntilItCloses(closeOrigin: Bool) throws {
+        let fixture = Fixture()
+        let origin = fixture.registry.primary
+        let front = try #require(fixture.registry.openInNewWindow(project: fixture.second.id, in: fixture.session, from: nil))
+        fixture.registry.windowBecameKey(front.id)
+        let toasts = ToastCenter()
+        toasts.frontWindow = { front.id }
+        if closeOrigin {
+            fixture.registry.close(origin.id, in: fixture.session)
+        }
+
+        ReviewFileMenuModel.reportOpenFailure(
+            .verbatim("Open failed"),
+            from: origin,
+            windows: fixture.registry,
+            session: fixture.session,
+            toasts: toasts
+        )
+
+        #expect((toasts.current(in: origin.id) != nil) == !closeOrigin)
+        #expect((toasts.current(in: front.id) != nil) == closeOrigin)
+    }
+
     @Test func aNoticeStaysInItsWindow_untilThatWindowIsHidden() throws {
         let fixture = Fixture()
         let second = try #require(fixture.registry.openInNewWindow(project: fixture.second.id, in: fixture.session, from: nil))

@@ -52,13 +52,27 @@ enum PullRequestLookup: Equatable, Sendable {
     case failed(String)
 }
 
+enum PullRequestListError: WeirLocalizedError, Equatable {
+    case commandFailed
+    case invalidResponse
+
+    var message: DisplayText {
+        switch self {
+        case .commandFailed:
+            .localized("Couldn’t list open pull requests.")
+        case .invalidResponse:
+            .localized("Couldn’t read the list of open pull requests.")
+        }
+    }
+}
+
 /// The forge side of a worktree made from a pull request: what the sheet
 /// can offer, one request by number, and the open ones to pick from. A
 /// protocol so a test gives its own answers without a CLI.
 protocol PullRequestReading: Sendable {
     func availability(repoRoot: URL) async -> PullRequestAvailability
     func pullRequest(_ number: Int, in repository: PullRequestRepository, repoRoot: URL) async -> PullRequestLookup
-    func openPullRequests(in repository: PullRequestRepository, repoRoot: URL) async -> [PullRequestHead]
+    func openPullRequests(in repository: PullRequestRepository, repoRoot: URL) async throws(PullRequestListError) -> [PullRequestHead]
 }
 
 extension ForgeKind {
@@ -118,9 +132,12 @@ struct ForgePullRequests: PullRequestReading {
         return Self.lookup(result, number: number, forge: forge)
     }
 
-    func openPullRequests(in repository: PullRequestRepository, repoRoot: URL) async -> [PullRequestHead] {
+    func openPullRequests(
+        in repository: PullRequestRepository,
+        repoRoot: URL
+    ) async throws(PullRequestListError) -> [PullRequestHead] {
         let forge = repository.forge
-        guard let executable = await locator.locate(forge.executableName) else { return [] }
+        guard let executable = await locator.locate(forge.executableName) else { throw .commandFailed }
         let arguments: [String] = switch forge {
         case .gitHub: ["pr", "list", "--limit", String(Self.listLimit), "--json", Self.gitHubFields]
         case .gitLab: ["mr", "list", "--per-page", String(Self.listLimit), "--output", "json"]
@@ -134,9 +151,10 @@ struct ForgePullRequests: PullRequestReading {
         )
         guard let result, result.isSuccess else {
             log.debug("\(forge.executableName, privacy: .public) could not list requests: \(result?.stderr ?? "", privacy: .private)")
-            return []
+            throw .commandFailed
         }
-        return Self.decodeList(stdout: result.stdout, forge: forge)
+        guard let heads = Self.decodeList(stdout: result.stdout, forge: forge) else { throw .invalidResponse }
+        return heads
     }
 
     // MARK: - Reading the answers
@@ -201,12 +219,13 @@ struct ForgePullRequests: PullRequestReading {
     }
 
     /// A list is a JSON array of what `view` gives one of.
-    static func decodeList(stdout: String, forge: ForgeKind) -> [PullRequestHead] {
-        guard let start = stdout.firstIndex(of: "["), let data = String(stdout[start...]).data(using: .utf8) else { return [] }
+    static func decodeList(stdout: String, forge: ForgeKind) -> [PullRequestHead]? {
+        guard let start = stdout.firstIndex(of: "[") else { return nil }
+        let data = Data(stdout[start...].utf8)
         let decoder = JSONDecoder()
         switch forge {
-        case .gitHub: return ((try? decoder.decode([GhHead].self, from: data)) ?? []).map(\.head)
-        case .gitLab: return ((try? decoder.decode([GlabHead].self, from: data)) ?? []).map(\.head)
+        case .gitHub: return (try? decoder.decode([GhHead].self, from: data))?.map(\.head)
+        case .gitLab: return (try? decoder.decode([GlabHead].self, from: data))?.map(\.head)
         }
     }
 }

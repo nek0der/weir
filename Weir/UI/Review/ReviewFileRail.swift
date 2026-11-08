@@ -538,6 +538,9 @@ struct ReviewFileActionsMenu: View {
 
     @Environment(SettingsStore.self) private var settingsStore
     @Environment(ToastCenter.self) private var toastCenter
+    @Environment(ProjectWindowState.self) private var window
+    @Environment(WindowRegistry.self) private var windows
+    @Environment(WorkspaceSession.self) private var session
 
     var body: some View {
         // The app as drawn names the open item; the press reads it again.
@@ -551,7 +554,9 @@ struct ReviewFileActionsMenu: View {
                     action,
                     application: { FileOpener.chosenApplication(in: settingsStore) },
                     onFailure: { message in
-                        toastCenter.showInFrontWindow(ToastItem(message: message, undo: nil))
+                        ReviewFileMenuModel.reportOpenFailure(
+                            message, from: window, windows: windows, session: session, toasts: toastCenter
+                        )
                     }
                 )
             }

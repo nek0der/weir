@@ -134,7 +134,7 @@ struct NewSessionPullRequestTests {
             var model = try await Self.pullRequestForm(fixture)
             model.setPullRequestText("12")
             let menu = await NewSessionActions.openPullRequests(for: model, stores: fixture.stores)
-            let picked = try #require(menu.first)
+            let picked = try #require(menu.get().first)
             let current = model
             let task = Task { await NewSessionActions.lookUpPullRequest(12, for: current, stores: fixture.stores) }
             do {
@@ -236,8 +236,8 @@ struct NewSessionPullRequestTests {
         try await Self.withFixture { fixture, forge in
             forge?.open = [.fixture(5, branch: "feat/five")]
             var model = try await Self.pullRequestForm(fixture)
-            model.openPullRequests = await NewSessionActions.openPullRequests(for: model, stores: fixture.stores)
-            let picked = try #require(model.openPullRequests.first)
+            let menu = await NewSessionActions.openPullRequests(for: model, stores: fixture.stores)
+            let picked = try #require(menu.get().first)
             model.choosePullRequest(picked)
             #expect(model.pullRequest == .found(picked))
             #expect(model.pullRequestNumber == 5)

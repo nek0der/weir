@@ -19,16 +19,19 @@ extension ReviewWorkspaceView {
               let fileURL = ReviewFileAction.fileURL(for: file.path, in: reviewSession.root),
               FileManager.default.fileExists(atPath: fileURL.path)
         else {
-            toastCenter.showInFrontWindow(ToastItem(message: .localized("The file doesn’t exist."), undo: nil))
+            reportOpenFailure(.localized("The file doesn’t exist."))
             return
         }
         FileOpener.open(
             fileURL,
             at: FilePosition(line: line, column: nil),
-            with: FileOpener.chosenApplication(in: settingsStore)
-        ) { message in
-            toastCenter.showInFrontWindow(ToastItem(message: message, undo: nil))
-        }
+            with: FileOpener.chosenApplication(in: settingsStore),
+            onFailure: reportOpenFailure
+        )
+    }
+
+    func reportOpenFailure(_ message: DisplayText) {
+        ReviewFileMenuModel.reportOpenFailure(message, from: window, windows: windows, session: session, toasts: toastCenter)
     }
 
     func resetSearchPosition() {

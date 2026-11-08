@@ -37,6 +37,18 @@ struct ReviewFileMenuItem {
 /// (`ReviewFileActionsMenu`) and the stacked diff's file header both draw
 /// these, so the two never offer different things for one file.
 enum ReviewFileMenuModel {
+    @MainActor
+    static func reportOpenFailure(
+        _ message: DisplayText,
+        from window: ProjectWindowState,
+        windows: WindowRegistry,
+        session: WorkspaceSession,
+        toasts: ToastCenter
+    ) {
+        let destination = windows.windowForResult(of: window, in: session)
+        toasts.show(ToastItem(message: message, undo: nil), in: destination.id)
+    }
+
     /// Copy the relative path, copy the absolute one, open it in the chosen
     /// app, and show it in Finder. A name that is not UTF-8 reaches us only
     /// as an approximation of its path (`ReviewFile.isNameUndecodable`), which

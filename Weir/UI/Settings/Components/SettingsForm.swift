@@ -25,6 +25,8 @@ struct SettingsForm<Content: View>: View {
     let section: SettingsSection
     @ViewBuilder var content: Content
 
+    @Environment(SettingsStore.self) private var settings: SettingsStore?
+    @Environment(\.settingsAppActions) private var appActions
     @Environment(\.settingsRevealRequest) private var revealRequest
     @Environment(\.accessibilityReduceMotion) private var shouldReduceMotion
     @State private var highlightedEntryID: String?
@@ -51,15 +53,19 @@ struct SettingsForm<Content: View>: View {
                         // The padding lands the title next to the triad —
                         // same affordance the main window's toolbar shows
                         // on its container sidebar.
-                        Text(title)
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .padding(.leading, 20 + SettingsScene.detailGutter)
-                            .padding(.trailing, 20)
-                            // Same space below as above, so the title sits
-                            // centered in the bar the rows scroll under.
-                            .padding(.vertical, 18)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(title)
+                                .font(.title2)
+                                .fontWeight(.semibold)
+                                .padding(.vertical, 18)
+                            if let error = settings?.ghosttyConfigReloadError {
+                                reloadWarning(error)
+                                    .padding(.bottom, 12)
+                            }
+                        }
+                        .padding(.leading, 20 + SettingsScene.detailGutter)
+                        .padding(.trailing, 20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .scrollEdgeEffectStyle(.soft, for: .top)
                     .formStyle(.grouped)
@@ -101,6 +107,31 @@ struct SettingsForm<Content: View>: View {
                     }
             }
         }
+    }
+
+    private func reloadWarning(_ error: GhosttyConfigReloadError) -> some View {
+        HStack(spacing: 12) {
+            Label {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(display: error.message)
+                    Text("The terminal still uses its previous settings.")
+                        .foregroundStyle(.secondary)
+                }
+                .fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(SupervisionTokens.stoppedText.color)
+                    .accessibilityHidden(true)
+            }
+            Spacer()
+            if let appActions {
+                Button("Retry") {
+                    appActions.reloadGhosttyConfig()
+                }
+                .accessibilityLabel(Text("Retry"))
+            }
+        }
+        .font(.caption)
     }
 }
 

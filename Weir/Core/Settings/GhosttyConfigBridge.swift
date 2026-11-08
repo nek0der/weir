@@ -12,6 +12,20 @@ import OSLog
 
 private let log = Logger.weir("ghostty.config-bridge")
 
+enum GhosttyConfigReloadError: WeirLocalizedError, Equatable {
+    case layerWriteFailed
+    case configCreationFailed
+
+    var message: DisplayText {
+        switch self {
+        case .layerWriteFailed:
+            .localized("Weir couldn’t write the terminal configuration.")
+        case .configCreationFailed:
+            .localized("Weir couldn’t create the terminal configuration.")
+        }
+    }
+}
+
 @MainActor
 enum GhosttyConfigBridge {
     /// Horizontal padding, in points, we give every surface through
@@ -301,29 +315,26 @@ enum GhosttyConfigBridge {
     /// theme, opacity, cursor) reach every running surface
     /// immediately.
     ///
-    /// Returns diagnostics copied from the finalized user config (empty
-    /// when its validation handle could not be created), or `nil` when
-    /// nothing was applied: Weir's layer could not be written, or no
-    /// config could be made. The running config then stays as it is, with
-    /// its forced overrides.
+    /// Returns diagnostics from the finalized user config. Throws if Weir's
+    /// layer could not be written or no config could be created. The running
+    /// config then retains its forced overrides.
     static func reloadConfig(
         settings: WeirSettings,
         resourcesDir: String?,
         includeUserConfig: Bool,
+        directory: URL? = nil,
         install: (ghostty_config_t) -> Void
-    ) -> [String]? {
-        let diagnostics: [String] = if includeUserConfig {
-            configDiagnostics() ?? []
-        } else {
-            []
-        }
-        let path = writeConfigFile(
+    ) throws(GhosttyConfigReloadError) -> [String] {
+        guard let path = writeConfigFile(
             settings: settings,
-            resourcesDir: resourcesDir
-        )
+            resourcesDir: resourcesDir,
+            directory: directory
+        ) else {
+            throw .layerWriteFailed
+        }
+        let diagnostics = includeUserConfig ? configDiagnostics() ?? [] : []
         guard let cfg = makeConfig(path: path, includeUserConfig: includeUserConfig) else {
-            log.error("no config to reload; keeping the running one")
-            return nil
+            throw .configCreationFailed
         }
         // Ownership moves to the caller's GhosttyApp so a later conditional-state
         // soft reload uses this exact layered config rather than the startup copy.
