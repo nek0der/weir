@@ -237,9 +237,6 @@ struct NewSessionModel {
     /// The pull request field as typed: `12`, `#12`, or a link to it.
     private(set) var pullRequestText = ""
     var pullRequest: PullRequestState = .none
-    /// The open requests the field's menu lists, newest first; empty until
-    /// asked for, or when the forge lists none.
-    var openPullRequests: [PullRequestHead] = []
     /// Whether the shown worktree's uncommitted changes move into the new
     /// one. Off each time the sheet opens, and never remembered: moving
     /// the person's work is asked for each time.

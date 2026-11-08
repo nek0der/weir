@@ -260,9 +260,19 @@ enum NewSessionActions {
     }
 
     /// The open requests the field's menu lists.
-    static func openPullRequests(for model: NewSessionModel, stores: NewSessionStores) async -> [PullRequestHead] {
-        guard let reader = stores.pullRequests, case let .available(repository) = model.context.pullRequests else { return [] }
-        return await reader.openPullRequests(in: repository, repoRoot: model.context.project.rootURL)
+    static func openPullRequests(
+        for model: NewSessionModel,
+        stores: NewSessionStores
+    ) async -> Result<[PullRequestHead], PullRequestListError> {
+        guard let reader = stores.pullRequests, case let .available(repository) = model.context.pullRequests else {
+            return .failure(.commandFailed)
+        }
+        do {
+            let heads = try await reader.openPullRequests(in: repository, repoRoot: model.context.project.rootURL)
+            return .success(heads)
+        } catch {
+            return .failure(error)
+        }
     }
 
     /// A fetch that could not run: what failed, in the reader's language,

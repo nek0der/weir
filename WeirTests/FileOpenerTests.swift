@@ -95,6 +95,26 @@ struct FileOpenerTests {
         )
     }
 
+    @Test func editorHelperWithNonzeroExitReportsFailure() async {
+        let launch = EditorLineLaunch.process(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "exit 17"]
+        )
+
+        await #expect(throws: (any Error).self) {
+            try await FileOpener.perform(launch, applicationURL: appURL)
+        }
+    }
+
+    @Test func editorHelperWithZeroExitSucceeds() async throws {
+        let launch = EditorLineLaunch.process(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            arguments: ["-c", "exit 0"]
+        )
+
+        try await FileOpener.perform(launch, applicationURL: appURL)
+    }
+
     @Test func unknownEditorHasNoLineLaunch() {
         #expect(launch("com.example.Unknown", FilePosition(line: 1, column: nil)) == nil)
     }

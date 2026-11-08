@@ -34,6 +34,10 @@ final class SettingsStore {
     /// and are refreshed after startup and every live config reload.
     var ghosttyConfigDiagnostics: [String] = []
 
+    /// Why the last live reload failed, or `nil` after a successful reload
+    /// or when no reload has failed.
+    var ghosttyConfigReloadError: GhosttyConfigReloadError?
+
     // MARK: - Language (UserDefaults / AppKit-visible)
 
     /// User-facing app language. `.system` follows the OS-wide preferred

@@ -172,6 +172,7 @@ struct ReviewWorkspaceView: View {
     @Environment(ReviewPresentation.self) var reviewPresentation
     @Environment(\.surfaceRegistry) var registry
     @Environment(ToastCenter.self) var toastCenter
+    @Environment(WindowRegistry.self) var windows
     @Environment(SettingsStore.self) var settingsStore
     @Environment(\.accessibilityReduceMotion) var reduceMotion
     @Environment(\.supervisionSurfaceOpacity) private var surfaceOpacity
@@ -857,9 +858,7 @@ struct ReviewWorkspaceView: View {
                     },
                     focusRequest: tableFocusRequest,
                     fileApplication: FileOpener.chosenApplication(in: settingsStore),
-                    onOpenFailure: { message in
-                        toastCenter.showInFrontWindow(ToastItem(message: message, undo: nil))
-                    },
+                    onOpenFailure: reportOpenFailure,
                     onOpenLine: openInEditor(line:fileID:),
                     onExpand: { reviewSession.expand($0, $1) },
                     onResolve: { reviewSession.setResolved($0.id, true) },

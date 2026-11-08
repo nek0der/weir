@@ -4,6 +4,7 @@
 // under the SwiftLint file-length warning band; the call site is
 // `AppState.init`'s `startSettingsConfigSync()`.
 
+import AppKit
 import Foundation
 
 extension AppState {
@@ -12,6 +13,11 @@ extension AppState {
     /// diff against `lastAppliedSettings` so dragging a slider that
     /// settles back to the original value doesn't churn libghostty.
     func startSettingsConfigSync() {
+        // The terminal started from these settings, so a later change that
+        // returns to them is already in effect and needs no reload.
+        if ghosttyApp != nil, lastAppliedConfigKey == nil {
+            lastAppliedConfigKey = ghosttyConfigKey(for: lastAppliedSettings)
+        }
         observeRepeatedly { [weak self] in
             guard let self else { return }
             _ = self.settingsStore.settings
@@ -40,54 +46,63 @@ extension AppState {
         settingsReloadDebounceTask?.cancel()
         settingsReloadDebounceTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: PersistenceTiming.interactive)
-            guard !Task.isCancelled, let self,
-                  let ghosttyApp = self.ghosttyApp else { return }
+            guard !Task.isCancelled, let self else { return }
             let latest = self.settingsStore.settings
             guard latest != self.lastAppliedSettings else { return }
             self.lastAppliedSettings = latest
-            let resourcesDir = GhosttyApp.resolveResourcesDir()
-            let includeUserConfig = latest.advanced.ghosttyConfig.isOn
-            // Against what libghostty is actually handed, not against the
-            // settings document. Most of that document never reaches the
-            // terminal — the review instructions are a paragraph of prose — and
-            // reloading the whole configuration on every keystroke of one is
-            // work nothing asked for. Computed with the same user-config flag
-            // the reload uses, so the two cannot disagree.
-            let key = GhosttyConfigBridge.makeConfigString(
-                settings: latest,
-                resourcesDir: resourcesDir
-            ) + "\n# includeUserConfig=\(includeUserConfig)"
-            guard key != self.lastAppliedConfigKey else { return }
-            // Recorded only once applied, so a reload that kept the running
-            // config is tried again by the next change.
-            if let diagnostics = GhosttyConfigBridge.reloadConfig(
-                settings: latest,
-                resourcesDir: resourcesDir,
-                includeUserConfig: includeUserConfig,
-                install: { ghosttyApp.replaceConfig(with: $0, surfaces: self.allSurfaceViews) }
-            ) {
-                self.lastAppliedConfigKey = key
-                self.settingsStore.ghosttyConfigDiagnostics = diagnostics
-            }
-            self.syncSecureInputPreference(from: ghosttyApp)
+            self.applyGhosttyConfig(latest)
         }
     }
 
-    /// Reads the person's own Ghostty config again now, for Integrations'
-    /// "Reload" after the file was edited: the settings did not change, so
-    /// the debounced sync above would skip it.
+    /// Reads the person's Ghostty config again after an edit to that file,
+    /// or retries a failed reload even when the settings have not changed.
     func reloadGhosttyUserConfig() {
+        applyGhosttyConfig(settingsStore.settings, isForced: true)
+    }
+
+    private func applyGhosttyConfig(_ settings: WeirSettings, isForced: Bool = false) {
         guard let ghosttyApp else { return }
-        let latest = settingsStore.settings
-        if let diagnostics = GhosttyConfigBridge.reloadConfig(
-            settings: latest,
-            resourcesDir: GhosttyApp.resolveResourcesDir(),
-            includeUserConfig: latest.advanced.ghosttyConfig.isOn,
-            install: { ghosttyApp.replaceConfig(with: $0, surfaces: allSurfaceViews) }
-        ) {
-            settingsStore.ghosttyConfigDiagnostics = diagnostics
+        let resourcesDir = GhosttyApp.resolveResourcesDir()
+        let includeUserConfig = settings.advanced.ghosttyConfig.isOn
+        let key = ghosttyConfigKey(for: settings)
+        if !isForced, key == lastAppliedConfigKey {
+            // The terminal already runs what the settings ask for, so a
+            // warning left by a reload that a later change undid is stale.
+            settingsStore.ghosttyConfigReloadError = nil
+            lastFailedConfigKey = nil
+            return
         }
-        syncSecureInputPreference(from: ghosttyApp)
+
+        do {
+            settingsStore.ghosttyConfigDiagnostics = try GhosttyConfigBridge.reloadConfig(
+                settings: settings,
+                resourcesDir: resourcesDir,
+                includeUserConfig: includeUserConfig,
+                install: { ghosttyApp.replaceConfig(with: $0, surfaces: allSurfaceViews) }
+            )
+            lastAppliedConfigKey = key
+            lastFailedConfigKey = nil
+            settingsStore.ghosttyConfigReloadError = nil
+            syncSecureInputPreference(from: ghosttyApp)
+        } catch {
+            settingsStore.ghosttyConfigReloadError = error
+            // An unrelated settings save tries the failed key again; the
+            // person has been told once, and Retry tells them again.
+            let isRepeat = !isForced && key == lastFailedConfigKey
+            lastFailedConfigKey = key
+            if !isRepeat, !NSApp.windows.contains(where: { $0.isVisible && $0.isWeirSettingsWindow }) {
+                toastCenter.showInFrontWindow(ToastItem(message: error.message, undo: nil))
+            }
+        }
+    }
+
+    /// What libghostty receives for `settings`, compared so edits to
+    /// Weir-only settings do not rebuild the terminal configuration.
+    private func ghosttyConfigKey(for settings: WeirSettings) -> String {
+        GhosttyConfigBridge.makeConfigString(
+            settings: settings,
+            resourcesDir: GhosttyApp.resolveResourcesDir()
+        ) + "\n# includeUserConfig=\(settings.advanced.ghosttyConfig.isOn)"
     }
 
     func makeGhosttyEventCoordinator() -> GhosttyEventCoordinator {

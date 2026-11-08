@@ -3,6 +3,7 @@
 
 import AppKit
 import SwiftUI
+import WeirDomain
 
 /// The new worktree sheet: a form of two columns, the labels
 /// right-aligned and muted in the leading one and the controls beside them,
@@ -36,8 +37,9 @@ struct NewSessionSheet: View {
     @State private var isFetchRunning = false
     /// Create pressed while the fetch runs: nothing is made yet.
     @State private var isWaitingForFetch = false
-    /// Whether the open pull requests were asked for: once a sheet.
-    @State private var hasListedPullRequests = false
+    /// The current list's answer. `nil` starts a read when the pull request
+    /// source is selected, including after Retry.
+    @State private var pullRequestList: Result<[PullRequestHead], PullRequestListError>?
     /// The forge side of a pull request's worktree, shared with the
     /// pull request marks; `nil` in a demo run, which offers none.
     @Environment(\.prStatusSyncer) private var prStatusSyncer
@@ -101,7 +103,7 @@ struct NewSessionSheet: View {
             }
         }
         .task(id: pullRequestLookupKey) { await lookUpPullRequest() }
-        .task(id: isListingPullRequests) { await listPullRequests() }
+        .task(id: needsPullRequestList) { await listPullRequests() }
         .onChange(of: project) { _, project in
             // The placement changes from the folder's menu, the setup and
             // the files in the project's settings in another window. Not
@@ -147,6 +149,14 @@ struct NewSessionSheet: View {
                     case .pullRequest: pullRequestField(bound)
                     }
                     branchStatusLine(model)
+                    if model.source == .pullRequest, case let .failure(error) = pullRequestList {
+                        HStack {
+                            baseLineText(error.message.resolved(in: locale), isWarning: true)
+                            retryPullRequestListButton
+                                .buttonStyle(.link)
+                        }
+                        .font(NewSessionStatusLine.font)
+                    }
                 }
             }
             formRow(Self.baseLabel, alignment: .top) {
@@ -298,17 +308,25 @@ extension NewSessionSheet {
             .focused($isBranchFocused)
             .modifier(NewSessionSheetField(isFocused: isBranchFocused) { isBranchFocused = true })
             Menu {
-                if model.openPullRequests.isEmpty {
-                    Text("No Open Pull Requests", comment: "New worktree sheet: the menu of open pull requests, with none")
-                }
-                ForEach(model.openPullRequests, id: \.number) { head in
-                    Button {
-                        bound.wrappedValue.choosePullRequest(head)
-                    } label: {
-                        Text(verbatim: MenuLine.fit("#\(head.number)  \(head.title)"))
+                switch pullRequestList {
+                case .none:
+                    Text("Loading Open Pull Requests…", comment: "New worktree sheet: the menu is waiting for open pull requests")
+                case let .failure(error):
+                    Text(display: error.message)
+                    retryPullRequestListButton
+                case let .success(heads):
+                    if heads.isEmpty {
+                        Text("No Open Pull Requests", comment: "New worktree sheet: the menu of open pull requests, with none")
                     }
-                    .help(Text(verbatim: head.title))
-                    .accessibilityLabel(Text(verbatim: "#\(head.number)  \(head.title)"))
+                    ForEach(heads, id: \.number) { head in
+                        Button {
+                            bound.wrappedValue.choosePullRequest(head)
+                        } label: {
+                            Text(verbatim: MenuLine.fit("#\(head.number)  \(head.title)"))
+                        }
+                        .help(Text(verbatim: head.title))
+                        .accessibilityLabel(Text(verbatim: "#\(head.number)  \(head.title)"))
+                    }
                 }
             } label: {
                 NewSessionMenuFace(fillsWidth: false) {
@@ -325,6 +343,15 @@ extension NewSessionSheet {
             .accessibilityLabel(Text(Self.openPullRequestsTitle))
         }
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var retryPullRequestListButton: some View {
+        Button {
+            pullRequestList = nil
+        } label: {
+            Text(CommonText.retry)
+        }
+        .accessibilityLabel(Text(CommonText.retry))
     }
 
     private static let openPullRequestsTitle = LocalizedStringResource(
@@ -882,21 +909,19 @@ extension NewSessionSheet {
         model?.setPullRequestLookup(lookup, for: number)
     }
 
-    /// Whether a pull request source a CLI can read is chosen, which lists
-    /// the open requests once.
-    private var isListingPullRequests: Bool {
-        guard let model, model.source == .pullRequest, case .available = model.context.pullRequests else { return false }
+    /// A pending list read belongs to the pull request source. Leaving the
+    /// source cancels it, while a finished answer stays until Retry.
+    private var needsPullRequestList: Bool {
+        guard pullRequestList == nil, let model, model.source == .pullRequest,
+              case .available = model.context.pullRequests else { return false }
         return true
     }
 
-    /// The open requests, once a sheet; asked again only when the person
-    /// left the source before they came.
     private func listPullRequests() async {
-        guard isListingPullRequests, !hasListedPullRequests, let current = model else { return }
-        let heads = await NewSessionActions.openPullRequests(for: current, stores: stores)
-        guard !Task.isCancelled else { return }
-        model?.openPullRequests = heads
-        hasListedPullRequests = true
+        guard needsPullRequestList, !Task.isCancelled, let current = model else { return }
+        let result = await NewSessionActions.openPullRequests(for: current, stores: stores)
+        guard !Task.isCancelled, needsPullRequestList else { return }
+        pullRequestList = result
     }
 
     /// "Create", from the button, ⌘⏎, or Return. Set before the task

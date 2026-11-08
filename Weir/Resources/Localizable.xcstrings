@@ -24278,6 +24278,102 @@
           }
         }
       }
+    },
+    "Loading Open Pull Requests…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Loading Open Pull Requests…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オープンの PR を読み込み中…"
+          }
+        }
+      }
+    },
+    "Couldn’t list open pull requests.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn’t list open pull requests."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オープンの PR を取得できませんでした。"
+          }
+        }
+      }
+    },
+    "Couldn’t read the list of open pull requests.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn’t read the list of open pull requests."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オープンの PR の一覧を読み取れませんでした。"
+          }
+        }
+      }
+    },
+    "Weir couldn’t write the terminal configuration.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weir couldn’t write the terminal configuration."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weir はターミナル設定を書き込めませんでした。"
+          }
+        }
+      }
+    },
+    "Weir couldn’t create the terminal configuration.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weir couldn’t create the terminal configuration."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weir はターミナル設定を作成できませんでした。"
+          }
+        }
+      }
+    },
+    "The terminal still uses its previous settings.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The terminal still uses its previous settings."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ターミナルは引き続き以前の設定を使用しています。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

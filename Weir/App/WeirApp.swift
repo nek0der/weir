@@ -288,6 +288,8 @@ final class AppState {
     /// the text itself: the suffix makes it a comparison key. See
     /// `scheduleSettingsReload`.
     var lastAppliedConfigKey: String?
+    /// The key whose reload failed last, so a retry does not repeat the toast.
+    var lastFailedConfigKey: String?
     /// Coalesces a burst of settings mutations into one libghostty
     /// reload. A slider drag fires `value = Int($0)` on every delta —
     /// without this debounce, dragging font-size 11 → 16 triggers five
