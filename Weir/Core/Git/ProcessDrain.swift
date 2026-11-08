@@ -80,6 +80,8 @@ enum ProcessEnding: Equatable {
 struct DrainedOutput {
     let stdout: Data
     let stderr: Data
+    let hasTrimmedStdoutTail: Bool
+    let hasTrimmedStderrTail: Bool
     let ending: ProcessEnding
     /// Whether stdout was read to its end. `false` when reading stopped
     /// with the pipe still open (something the child started still held it
@@ -279,7 +281,8 @@ struct ProcessDrainTiming {
 /// stdout passes `stdoutLimitBytes`, the child gets SIGTERM, then SIGKILL
 /// after `timing.terminationGrace`. A `nil` pipe is one the caller pointed
 /// elsewhere (a file, the null device). Blocks: call it from a background
-/// queue.
+/// queue. `diagnosticTailBytes` retains the last bytes of each pipe while
+/// continuing to drain both. A stdout limit takes precedence on that pipe.
 ///
 /// A `Process` is signaled alone: Foundation starts it in Weir's own
 /// process group, so there is no group to signal without signaling
@@ -300,11 +303,16 @@ func drainAndWait(
     timeout: Duration? = nil,
     stop: ProcessStopRequest? = nil,
     stdoutLimitBytes: Int? = nil,
+    diagnosticTailBytes: Int? = nil,
     timing: ProcessDrainTiming = .standard
 ) -> DrainedOutput {
     var streams = [
-        PipeReader(fd: stdout?.fileHandleForReading.fileDescriptor, limitBytes: stdoutLimitBytes),
-        PipeReader(fd: stderr?.fileHandleForReading.fileDescriptor, limitBytes: nil)
+        PipeReader(
+            fd: stdout?.fileHandleForReading.fileDescriptor,
+            limitBytes: stdoutLimitBytes,
+            tailBytes: stdoutLimitBytes == nil ? diagnosticTailBytes : nil
+        ),
+        PipeReader(fd: stderr?.fileHandleForReading.fileDescriptor, limitBytes: nil, tailBytes: diagnosticTailBytes)
     ]
     let clock = ContinuousClock()
     let deadline = timeout.map { clock.now + $0 }
@@ -372,6 +380,8 @@ func drainAndWait(
     return DrainedOutput(
         stdout: streams[0].bytes,
         stderr: streams[1].bytes,
+        hasTrimmedStdoutTail: streams[0].hasTrimmedTail,
+        hasTrimmedStderrTail: streams[1].hasTrimmedTail,
         ending: ending,
         isStdoutComplete: streams[0].openFD == nil && !streams[0].hasReadFailed,
         hasStdoutReadFailed: streams[0].hasReadFailed,
@@ -390,11 +400,14 @@ private struct PipeReader {
     /// Set once the pipe held more than `limitBytes`. What comes after is
     /// still read, so the writer is not left blocked, and dropped.
     private(set) var hasPassedLimit = false
+    private(set) var hasTrimmedTail = false
     private let limitBytes: Int?
+    private let tailBytes: Int?
     private var buffer = [UInt8](repeating: 0, count: 16384)
 
-    init(fd: Int32?, limitBytes: Int?) {
+    init(fd: Int32?, limitBytes: Int?, tailBytes: Int?) {
         self.limitBytes = limitBytes
+        self.tailBytes = tailBytes.map { max(0, $0) }
         if let fd, fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) == 0 {
             openFD = fd
         } else {
@@ -405,10 +418,11 @@ private struct PipeReader {
         }
     }
 
-    /// Reads what the pipe holds now, up to EOF.
+    /// Bounds each pass so a busy writer cannot starve the other pipe or
+    /// delay checking the deadline.
     mutating func readAvailable() {
         guard let fd = openFD else { return }
-        while true {
+        for _ in 0..<16 {
             let count = read(fd, &buffer, buffer.count)
             if count > 0 {
                 keep(buffer.prefix(count))
@@ -435,6 +449,17 @@ private struct PipeReader {
             hasPassedLimit = true
             return
         }
-        bytes.append(contentsOf: chunk)
+        if let tailBytes {
+            let tail = chunk.suffix(tailBytes)
+            let overflow = bytes.count - (tailBytes - tail.count)
+            hasTrimmedTail = hasTrimmedTail || overflow > 0 || tail.count < chunk.count
+            if overflow > 0 {
+                let end = bytes.startIndex + overflow
+                bytes.removeSubrange(bytes.startIndex..<end)
+            }
+            bytes.append(contentsOf: tail)
+        } else {
+            bytes.append(contentsOf: chunk)
+        }
     }
 }
