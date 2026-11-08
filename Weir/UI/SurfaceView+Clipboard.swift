@@ -6,9 +6,27 @@ import AppKit
 /// Its address, unique while retained, is a surface's `userdata`. It also
 /// carries the surface's unanswered clipboard requests, because it is the
 /// one thing a callback can reach that lives until the surface is freed,
-/// after the view itself is gone.
-final class SurfaceUserdataToken {
+/// after the view itself is gone. Deferred callbacks retain it until delivery
+/// so its address cannot be reused for another surface in the meantime.
+/// `Sendable` is safe because its only state is an immutable reference to a
+/// lock-protected, `Sendable` request tracker.
+final class SurfaceUserdataToken: Sendable {
     let clipboardRequests = ClipboardRequestTracker()
+
+    /// Acquires a strong reference while the native surface keeps its userdata
+    /// valid. Call only in the callback frame or while the view owns it;
+    /// acquiring it after an asynchronous hop could read freed memory.
+    nonisolated static func capture(userdata: UnsafeMutableRawPointer) -> SurfaceUserdataToken {
+        Unmanaged<SurfaceUserdataToken>.fromOpaque(userdata).takeUnretainedValue()
+    }
+
+    /// Resolves the original view while keeping its userdata address reserved.
+    @MainActor
+    func liveView() -> SurfaceView? {
+        withExtendedLifetime(self) {
+            SurfaceView.liveView(forUserdata: Unmanaged.passUnretained(self).toOpaque())
+        }
+    }
 }
 
 extension ClipboardRequestAnswerer {
@@ -33,6 +51,6 @@ extension SurfaceView: ClipboardRequestTarget {
     /// callbacks before then. The tracker returned is a strong reference,
     /// so it stays valid after the token is released.
     nonisolated static func clipboardRequests(forUserdata userdata: UnsafeMutableRawPointer) -> ClipboardRequestTracker {
-        Unmanaged<SurfaceUserdataToken>.fromOpaque(userdata).takeUnretainedValue().clipboardRequests
+        SurfaceUserdataToken.capture(userdata: userdata).clipboardRequests
     }
 }

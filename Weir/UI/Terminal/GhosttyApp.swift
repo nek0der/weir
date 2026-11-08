@@ -391,13 +391,13 @@ final class GhosttyApp {
             return GHOSTTY_CLIPBOARD_READ_UNSUPPORTED
         }
         guard let userdata, let state else { return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE }
-        nonisolated(unsafe) let ud = userdata
+        let token = SurfaceUserdataToken.capture(userdata: userdata)
         let request = ClipboardRequestState(pointer: state)
         // Answering READ_STARTED makes the state ours to complete or deny.
         // Tracked in this frame, so a pane that closes before the hop below
         // runs still denies it at teardown. A surface already torn down
         // cannot keep it; answering unavailable lets libghostty free it.
-        guard SurfaceView.clipboardRequests(forUserdata: ud).track(request) else {
+        guard token.clipboardRequests.track(request) else {
             return GHOSTTY_CLIPBOARD_READ_UNAVAILABLE
         }
         // Taken here rather than after the hop. This callback runs inline on
@@ -410,7 +410,7 @@ final class GhosttyApp {
         // either.
         let staged: (text: String, receipt: ReviewPasteReceipt?)? = if !isListing, Thread.isMainThread {
             MainActor.assumeIsolated {
-                guard let view = SurfaceView.liveView(forUserdata: ud),
+                guard let view = token.liveView(),
                       let text = view.takeStagedPaste()
                 else { return nil }
                 // Taken with the text it belongs to: the two are one delivery,
@@ -432,7 +432,7 @@ final class GhosttyApp {
                 defer { delivery.failIfUnsettled() }
                 // A pane that is gone leaves the request tracked, and its
                 // teardown denies it while the surface is still live.
-                guard let view = SurfaceView.liveView(forUserdata: ud),
+                guard let view = token.liveView(),
                       let surface = view.surface,
                       view.clipboardRequests.claim(request)
                 else { return }
@@ -483,7 +483,7 @@ final class GhosttyApp {
         // libghostty always passes the request it wants confirmed; without
         // one there is nothing we could answer.
         guard let userdata, let confirm, let state else { return }
-        nonisolated(unsafe) let ud = userdata
+        let token = SurfaceUserdataToken.capture(userdata: userdata)
         let tracked = ClipboardRequestState(pointer: state)
         // Tracked in this frame, as in the read above, so a pane that closes
         // before the hop runs still denies it at teardown. Teardown that has
@@ -492,7 +492,7 @@ final class GhosttyApp {
         // teardown both run on the main thread and teardown frees the
         // surface in the same job; leaking the state is the safe way to be
         // wrong, where answering could touch a freed surface.
-        guard SurfaceView.clipboardRequests(forUserdata: ud).track(tracked) else {
+        guard token.clipboardRequests.track(tracked) else {
             log.fault("clipboard confirmation arrived after its surface was torn down")
             return
         }
@@ -527,7 +527,7 @@ final class GhosttyApp {
                 defer { delivery.failIfUnsettled() }
                 // A pane that is gone leaves the request tracked, and its
                 // teardown denies it while the surface is still live.
-                guard let view = SurfaceView.liveView(forUserdata: ud) else { return }
+                guard let view = token.liveView() else { return }
                 guard let coordinator = ClipboardConfirmationCoordinator.shared,
                       let kind = ClipboardConfirmationKind(rawRequest)
                 else {
@@ -565,7 +565,7 @@ final class GhosttyApp {
     /// `confirm == false` is the historical "trust" path — write at
     /// once, through the same `ClipboardRequestAnswerer.system` an
     /// approved write uses.
-    private static let writeClipboardCallback: ghostty_runtime_write_clipboard_cb = { userdata, _, contents, count, confirm in
+    static let writeClipboardCallback: ghostty_runtime_write_clipboard_cb = { userdata, _, contents, count, confirm in
         guard let contents, let text = GhosttyFFI.clipboardWriteText(contents, count: count) else { return }
         if !confirm {
             DispatchQueue.main.async {
@@ -583,10 +583,10 @@ final class GhosttyApp {
         // `.osc52Write`: allow() writes the text through the answerer's
         // `writePasteboard`, and a refusal just drops the text.
         guard let userdata else { return }
-        nonisolated(unsafe) let ud = userdata
+        let token = SurfaceUserdataToken.capture(userdata: userdata)
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
-                guard let view = SurfaceView.liveView(forUserdata: ud) else { return }
+                guard let view = token.liveView() else { return }
                 ClipboardConfirmationCoordinator.shared?.enqueue(
                     .osc52Write,
                     contents: text,
@@ -604,18 +604,18 @@ final class GhosttyApp {
     /// can remove the pane from the SplitTree.
     private static let closeSurfaceCallback: ghostty_runtime_close_surface_cb = { userdata, processAlive in
         guard let userdata else { return }
-        nonisolated(unsafe) let ud = userdata
-        let alive = processAlive
-        DispatchQueue.main.async {
-            MainActor.assumeIsolated {
-                // The SurfaceView may have deinited between this
-                // callback firing on libghostty's thread and the hop
-                // landing on MainActor. `liveView(forUserdata:)`
-                // returns nil when the weak entry is gone, so we
-                // dereference into freed memory exactly never.
-                guard let view = SurfaceView.liveView(forUserdata: ud) else { return }
-                GhosttyActionRouter.emit(.closeSurface(view, processAlive: alive))
-            }
+        DispatchQueue.main.async(execute: closeSurfaceDelivery(userdata: userdata, processAlive: processAlive))
+    }
+
+    /// Prepares the close event before its main-queue delivery.
+    nonisolated static func closeSurfaceDelivery(
+        userdata: UnsafeMutableRawPointer,
+        processAlive: Bool
+    ) -> @MainActor @Sendable () -> Void {
+        let token = SurfaceUserdataToken.capture(userdata: userdata)
+        return {
+            guard let view = token.liveView() else { return }
+            GhosttyActionRouter.emit(.closeSurface(view, processAlive: processAlive))
         }
     }
 

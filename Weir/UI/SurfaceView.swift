@@ -26,8 +26,9 @@ final class SurfaceView: NSView {
 
     /// What libghostty hands back as `userdata`: a token of this view's own
     /// (`SurfaceUserdataToken`), retained until `ghostty_surface_free` has
-    /// returned. Not the view's address: the view is freed before its
-    /// surface, and a new view at the same address would receive the old
+    /// returned, and by each deferred callback until delivery. Not the view's
+    /// address: the view is freed before its surface, and a new view at the
+    /// same address would receive the old
     /// surface's last callbacks. `nonisolated(unsafe)` for `deinit`; never written.
     nonisolated(unsafe) let userdata: UnsafeMutableRawPointer =
         Unmanaged.passRetained(SurfaceUserdataToken()).toOpaque()
@@ -576,6 +577,8 @@ final class SurfaceView: NSView {
         // The token is this view's alone and stays retained until the
         // surface is freed, so its entry is ours to remove, and the
         // surface's last callbacks find no view rather than another one.
+        // Each deferred callback retains the token beyond this release, so
+        // another view cannot reuse its address before that callback lands.
         let userdata = userdata
         let clipboardRequests = Self.clipboardRequests(forUserdata: userdata)
         Task { @MainActor in
