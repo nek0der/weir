@@ -74,9 +74,18 @@ struct ReviewDiffSelection: Equatable {
         }
         guard let first = lineIDs.first else { return }
         lines.select(first, on: side)
-        for lineID in lineIDs.dropFirst() where ReviewRunBounds.canExtend(diffLines, from: first, to: lineID) {
-            lines.extend(to: lineID)
+        guard lineIDs.count > 1 else { return }
+
+        let hunkByLineID = Dictionary(uniqueKeysWithValues: diffLines.lazy.compactMap { line in
+            line.hunkIndex.map { (line.id, $0) }
+        })
+        let firstHunk = hunkByLineID[first]
+        let last = lineIDs.last { lineID in
+            // Stacked rows can name lines outside the open diff.
+            guard let firstHunk, let hunk = hunkByLineID[lineID] else { return true }
+            return hunk == firstHunk
         }
+        lines.extend(to: last ?? first)
     }
 
     /// Re-resolves the text after cards or expanded context move the rows,
