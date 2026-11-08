@@ -404,10 +404,12 @@ final class WeirNotificationManager {
 /// within the trailing one-second window.
 struct RateLimiter {
     let maxPerSecond: Int
-    private var recentEvents: [UUID: [Date]] = [:]
+    private var recentEvents: [UUID: [ContinuousClock.Instant]] = [:]
+    private let clock: () -> ContinuousClock.Instant
 
-    init(maxPerSecond: Int) {
+    init(maxPerSecond: Int, clock: @escaping () -> ContinuousClock.Instant = { .now }) {
         self.maxPerSecond = maxPerSecond
+        self.clock = clock
     }
 
     /// How many keys have an event inside the window, for tests.
@@ -415,8 +417,9 @@ struct RateLimiter {
         recentEvents.count
     }
 
-    mutating func allow(key: UUID, now: Date = Date()) -> Bool {
-        let threshold = now.addingTimeInterval(-1)
+    mutating func allow(key: UUID) -> Bool {
+        let now = clock()
+        let threshold = now - .seconds(1)
         // Every key whose window has emptied goes, not only this one: a pane
         // or run that never notifies again would otherwise keep its entry for
         // the life of the app.

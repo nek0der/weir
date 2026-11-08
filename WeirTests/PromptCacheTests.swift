@@ -161,6 +161,39 @@ struct PromptCacheMonitorTests {
         #expect(monitor.nextFire == nil)
     }
 
+    @Test func clockChange_refreshesExpiryAndRearmsUnchangedWindows() {
+        var clock = anchor
+        let center = NotificationCenter()
+        let monitor = PromptCacheMonitor(clock: { clock }, notificationCenter: center)
+        let windows = ["claude:A": window(observedAt: anchor)]
+        monitor.update(windows: windows)
+        #expect(monitor.nextFire == anchor.addingTimeInterval(3300))
+
+        clock = anchor.addingTimeInterval(7200)
+        center.post(name: .NSSystemClockDidChange, object: nil)
+        monitor.update(windows: windows)
+        #expect(monitor.now == clock)
+        #expect(monitor.nextFire == nil)
+
+        clock = anchor.addingTimeInterval(-3600)
+        center.post(name: .NSSystemClockDidChange, object: nil)
+        #expect(monitor.now == clock)
+        #expect(monitor.nextFire == anchor.addingTimeInterval(3300))
+        monitor.update(windows: [:])
+    }
+
+    @Test func clockObservation_doesNotRetainTheMonitor() {
+        let center = NotificationCenter()
+        weak var released: PromptCacheMonitor?
+        do {
+            let monitor = PromptCacheMonitor(clock: { anchor }, notificationCenter: center)
+            monitor.update(windows: ["claude:A": window(observedAt: anchor)])
+            released = monitor
+        }
+        #expect(released == nil)
+        center.post(name: .NSSystemClockDidChange, object: nil)
+    }
+
     @Test func answerAndPresentation_holdForTheSameWindowAndLapseForALaterOne() {
         let now = anchor
         let monitor = PromptCacheMonitor(clock: { now })

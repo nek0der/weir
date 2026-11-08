@@ -51,7 +51,7 @@ struct PRStatusSyncerPacingTests {
         try #require(clock.sleeperCount == count, sourceLocation: sourceLocation)
     }
 
-    private func waitForDeadline(_ deadline: Date, sourceLocation: SourceLocation = #_sourceLocation) async throws {
+    private func waitForDeadline(_ deadline: ContinuousClock.Instant, sourceLocation: SourceLocation = #_sourceLocation) async throws {
         await pollUntil(timeout: .seconds(5), interval: .milliseconds(1)) { clock.deadlines.contains(deadline) }
         try #require(clock.deadlines.contains(deadline), sourceLocation: sourceLocation)
     }
@@ -101,18 +101,18 @@ struct PRStatusSyncerPacingTests {
     @Test("turn ends that keep coming are looked up at the longest wait")
     func turnEnds_keepComing_areLookedUpAtTheLongestWait() async throws {
         try await withPRStatusCleanup(clock: clock, lookups: lookups) {
-            let start = clock.now()
+            let start = clock.monotonicNow()
             syncer.turnEnded(in: first)
-            try await waitForDeadline(start.addingTimeInterval(5))
+            try await waitForDeadline(start.advanced(by: .seconds(5)))
             for (beforeTurn, deadline) in [(4.0, 9.0), (3, 13), (3, 15)] {
                 clock.advance(by: beforeTurn)
                 syncer.turnEnded(in: first)
                 clock.advance(by: 1)
-                try await waitForDeadline(start.addingTimeInterval(deadline))
+                try await waitForDeadline(start.advanced(by: .seconds(deadline)))
             }
             clock.advance(by: 1)
-            #expect(clock.now() == start.addingTimeInterval(14))
-            #expect(clock.deadlines == [start.addingTimeInterval(15)])
+            #expect(clock.monotonicNow() == start.advanced(by: .seconds(14)))
+            #expect(clock.deadlines == [start.advanced(by: .seconds(15))])
             #expect(await lookups.lookupCount == 0)
 
             clock.advance(by: 1)
@@ -127,22 +127,22 @@ struct PRStatusSyncerPacingTests {
     @Test("activation is dropped before the repository floor and accepted at it", arguments: [59.0, 60.0])
     func activation_withinTheFloor_isDropped(gatheredAt: TimeInterval) async throws {
         try await withPRStatusCleanup(clock: clock, lookups: lookups) {
-            let initial = clock.now()
+            let initial = clock.monotonicNow()
             try await start(answering: Self.open())
             clock.advance(by: gatheredAt - 5)
-            try await waitForDeadline(clock.now().addingTimeInterval(45))
+            try await waitForDeadline(clock.monotonicNow().advanced(by: .seconds(45)))
             #expect(await lookups.lookupCount == 1)
 
             syncer.appDidBecomeActive()
-            try await waitForDeadline(initial.addingTimeInterval(gatheredAt))
+            try await waitForDeadline(initial.advanced(by: .seconds(gatheredAt)))
             clock.advance(by: 5)
             await pollUntil { syncer.gatheringProjects.isEmpty }
             try #require(syncer.gatheringProjects.isEmpty)
             if gatheredAt < 60 {
                 #expect(await lookups.lookupCount == 1)
-                #expect(clock.deadlines == [initial.addingTimeInterval(gatheredAt + 40)])
+                #expect(clock.deadlines == [initial.advanced(by: .seconds(gatheredAt + 40))])
                 syncer.appDidBecomeActive()
-                try await waitForDeadline(clock.now().addingTimeInterval(5))
+                try await waitForDeadline(clock.monotonicNow().advanced(by: .seconds(5)))
                 clock.advance(by: 5)
             }
 
@@ -157,7 +157,7 @@ struct PRStatusSyncerPacingTests {
     @Test("a turn's end waits until the repository floor and forces its own row")
     func turnEnd_withinTheFloor_waitsForIt() async throws {
         try await withPRStatusCleanup(clock: clock, lookups: lookups) {
-            let initial = clock.now()
+            let initial = clock.monotonicNow()
             async let refresh: Void = syncer.refresh(container: root)
             try await waitForLookups(1)
             let merged = PRStatusFetcher.Lookup(forge: .gitHub, info: PRInfoFixture.make(state: .merged))
@@ -165,12 +165,12 @@ struct PRStatusSyncerPacingTests {
             await refresh
             #expect(store.info(for: first)?.state == .merged)
             syncer.turnEnded(in: first)
-            try await waitForDeadline(initial.addingTimeInterval(5))
+            try await waitForDeadline(initial.advanced(by: .seconds(5)))
             clock.advance(by: 5)
-            try await waitForDeadline(initial.addingTimeInterval(60))
+            try await waitForDeadline(initial.advanced(by: .seconds(60)))
             clock.advance(by: 54)
             #expect(await lookups.lookupCount == 1)
-            #expect(clock.deadlines == [initial.addingTimeInterval(60)])
+            #expect(clock.deadlines == [initial.advanced(by: .seconds(60))])
 
             clock.advance(by: 1)
             try await waitForLookups(1)
@@ -184,7 +184,7 @@ struct PRStatusSyncerPacingTests {
     @Test("a merged row joins again at one hour, or sooner after its own turn", arguments: [3599.0, 3600.0])
     func mergedRow_isAskedAboutHourly(gatheredAt: TimeInterval) async throws {
         try await withPRStatusCleanup(clock: clock, lookups: lookups) {
-            let initial = clock.now()
+            let initial = clock.monotonicNow()
             async let refresh: Void = syncer.refresh(container: root)
             try await waitForLookups(1)
             let merged = PRStatusFetcher.Lookup(forge: .gitHub, info: PRInfoFixture.make(state: .merged))
@@ -194,7 +194,7 @@ struct PRStatusSyncerPacingTests {
 
             clock.advance(by: gatheredAt - 5)
             syncer.turnEnded(in: first)
-            try await waitForDeadline(initial.addingTimeInterval(gatheredAt))
+            try await waitForDeadline(initial.advanced(by: .seconds(gatheredAt)))
             clock.advance(by: 5)
             try await waitForLookups(1)
             #expect(await lookups.asked.last == (gatheredAt < 3600 ? [first, second] : [root, first, second]))
@@ -211,9 +211,9 @@ struct PRStatusSyncerPacingTests {
             // A new lookup below the next hourly boundary still forces the
             // merged checkout when its own turn ends.
             syncer.turnEnded(in: root)
-            try await waitForDeadline(clock.now().addingTimeInterval(5))
+            try await waitForDeadline(clock.monotonicNow().advanced(by: .seconds(5)))
             clock.advance(by: 5)
-            try await waitForDeadline(initial.addingTimeInterval(gatheredAt + 60))
+            try await waitForDeadline(initial.advanced(by: .seconds(gatheredAt + 60)))
             clock.advance(by: 55)
             try await waitForLookups(1)
             #expect(await lookups.asked.last == [root, first, second])
@@ -244,13 +244,102 @@ struct PRStatusSyncerPacingTests {
         }
     }
 
+    @Test("clock changes do not delay recurring lookups", arguments: [-3600.0, 3600.0])
+    func recurring_clockChange_usesElapsedTime(wallChange: TimeInterval) async throws {
+        try await withPRStatusCleanup(clock: clock, lookups: lookups) {
+            try await start(answering: Self.open(.pending))
+            clock.changeWallClock(by: wallChange)
+            clock.advance(by: 45)
+            await pollUntil(timeout: .seconds(5), interval: .milliseconds(1)) {
+                await lookups.waitingCount == 1 || clock.sleeperCount == 1
+            }
+            try #require(await lookups.waitingCount == 1)
+            #expect(await lookups.asked == [[root, first, second], [root, first, second]])
+        }
+    }
+
+    @Test("clock changes preserve the repository floor", arguments: [-3600.0, 3600.0])
+    func turnEnd_clockChange_waitsForElapsedFloor(wallChange: TimeInterval) async throws {
+        try await withPRStatusCleanup(clock: clock, lookups: lookups) {
+            async let refresh: Void = syncer.refresh(container: root)
+            try await waitForLookups(1)
+            await lookups.answer(Self.open())
+            await refresh
+            let initial = clock.monotonicNow()
+            clock.changeWallClock(by: wallChange)
+            syncer.turnEnded(in: first)
+            try await waitForDeadline(initial.advanced(by: .seconds(5)))
+            clock.advance(by: 5)
+            try await waitForDeadline(initial.advanced(by: .seconds(60)))
+            #expect(await lookups.lookupCount == 1)
+            clock.advance(by: 55)
+            try await waitForLookups(1)
+            #expect(await lookups.lookupCount == 2)
+        }
+    }
+
+    @Test("clock changes during gathering preserve the quiet period", arguments: [-3600.0, 3600.0])
+    func gathering_clockChange_usesElapsedTime(wallChange: TimeInterval) async throws {
+        try await withPRStatusCleanup(clock: clock, lookups: lookups) {
+            let initial = clock.monotonicNow()
+            syncer.turnEnded(in: first)
+            try await waitForDeadline(initial.advanced(by: .seconds(5)))
+            clock.changeWallClock(by: wallChange)
+            clock.advance(by: 3)
+            syncer.turnEnded(in: second)
+            clock.advance(by: 2)
+            try await waitForDeadline(initial.advanced(by: .seconds(8)))
+            #expect(await lookups.lookupCount == 0)
+            clock.advance(by: 3)
+            try await waitForLookups(1)
+            #expect(await lookups.asked == [[root, first, second]])
+        }
+    }
+
+    @Test("clock changes during a burst preserve the longest gathering wait", arguments: [-3600.0, 3600.0])
+    func gathering_clockChange_keepsLongestWait(wallChange: TimeInterval) async throws {
+        try await withPRStatusCleanup(clock: clock, lookups: lookups) {
+            let initial = clock.monotonicNow()
+            syncer.turnEnded(in: first)
+            try await waitForDeadline(initial.advanced(by: .seconds(5)))
+            clock.changeWallClock(by: wallChange)
+            for (beforeTurn, deadline) in [(4.0, 9.0), (3, 13), (3, 15)] {
+                clock.advance(by: beforeTurn)
+                syncer.turnEnded(in: first)
+                clock.advance(by: 1)
+                try await waitForDeadline(initial.advanced(by: .seconds(deadline)))
+            }
+            clock.advance(by: 2)
+            try await waitForLookups(1)
+            #expect(await lookups.asked == [[root, first, second]])
+        }
+    }
+
+    @Test("clock changes do not bypass a finished row's hourly interval", arguments: [-3600.0, 3600.0])
+    func finishedRow_clockChange_keepsElapsedInterval(wallChange: TimeInterval) async throws {
+        try await withPRStatusCleanup(clock: clock, lookups: lookups) {
+            async let refresh: Void = syncer.refresh(container: root)
+            try await waitForLookups(1)
+            let merged = PRStatusFetcher.Lookup(forge: .gitHub, info: PRInfoFixture.make(state: .merged))
+            await lookups.answer([root: merged, first: Self.open(), second: Self.open()])
+            await refresh
+            clock.changeWallClock(by: wallChange)
+            clock.advance(by: 60)
+            syncer.turnEnded(in: first)
+            try await waitForSleepers(1)
+            clock.advance(by: 5)
+            try await waitForLookups(1)
+            #expect(await lookups.asked.last == [first, second])
+        }
+    }
+
     @Test("a finished row is never due on a recurring wake, and pending checks are due sooner with quota")
     func recurringDuePolicyUsesTheRowsStateAndQuota() {
-        let now = Date()
+        let now = ContinuousClock.now
         let merged = PRInfoFixture.make(state: .merged)
         #expect(!PRStatusSyncer.isDue(info: merged, lastFetch: nil, now: now))
         let running = PRInfoFixture.make(checks: .pending)
-        #expect(PRStatusSyncer.isDue(info: running, lastFetch: now.addingTimeInterval(-45), now: now))
-        #expect(!PRStatusSyncer.isDue(info: running, lastFetch: now.addingTimeInterval(-45), now: now, isQuotaLow: true))
+        #expect(PRStatusSyncer.isDue(info: running, lastFetch: now.advanced(by: .seconds(-45)), now: now))
+        #expect(!PRStatusSyncer.isDue(info: running, lastFetch: now.advanced(by: .seconds(-45)), now: now, isQuotaLow: true))
     }
 }

@@ -11,12 +11,13 @@ import Foundation
 final class ManualPRStatusClock: PRStatusClock, @unchecked Sendable {
     private struct Sleeper {
         let id: Int
-        let deadline: Date
+        let deadline: ContinuousClock.Instant
         let continuation: CheckedContinuation<Void, any Error>
     }
 
     private let lock = NSLock()
     private var current: Date
+    private var monotonic = ContinuousClock.now
     private var sleepers: [Sleeper] = []
     private var nextID = 0
     private var isFinished = false
@@ -29,13 +30,22 @@ final class ManualPRStatusClock: PRStatusClock, @unchecked Sendable {
         lock.withLock { current }
     }
 
+    func monotonicNow() -> ContinuousClock.Instant {
+        lock.withLock { monotonic }
+    }
+
+    /// Changes the wall clock without changing elapsed time or waking sleepers.
+    func changeWallClock(by interval: TimeInterval) {
+        lock.withLock { current = current.addingTimeInterval(interval) }
+    }
+
     /// How many tasks are asleep on this clock.
     var sleeperCount: Int {
         lock.withLock { sleepers.count }
     }
 
     /// The deadlines of the tasks asleep, earliest first.
-    var deadlines: [Date] {
+    var deadlines: [ContinuousClock.Instant] {
         lock.withLock { sleepers.map(\.deadline).sorted() }
     }
 
@@ -50,8 +60,8 @@ final class ManualPRStatusClock: PRStatusClock, @unchecked Sendable {
                     if isFinished || Task.isCancelled {
                         return .failure(CancellationError())
                     }
-                    let deadline = current.addingTimeInterval(interval)
-                    guard deadline > current else { return .success(()) }
+                    let deadline = monotonic.advanced(by: .seconds(interval))
+                    guard deadline > monotonic else { return .success(()) }
                     sleepers.append(Sleeper(id: id, deadline: deadline, continuation: continuation))
                     return nil
                 }
@@ -86,8 +96,9 @@ final class ManualPRStatusClock: PRStatusClock, @unchecked Sendable {
     func advance(by interval: TimeInterval) {
         let woken: [Sleeper] = lock.withLock {
             current = current.addingTimeInterval(interval)
-            let due = sleepers.filter { $0.deadline <= current }
-            sleepers.removeAll { $0.deadline <= current }
+            monotonic = monotonic.advanced(by: .seconds(interval))
+            let due = sleepers.filter { $0.deadline <= monotonic }
+            sleepers.removeAll { $0.deadline <= monotonic }
             return due
         }
         for sleeper in woken {

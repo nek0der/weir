@@ -7,7 +7,7 @@
 // re-render every tab row sixty times a minute for a change that happens
 // twice an hour, so we keep one timer aimed at the soonest of those
 // instants across all windows and move `now` only when it fires or the
-// windows change.
+// windows or the system clock change.
 
 import Foundation
 
@@ -42,15 +42,28 @@ final class PromptCacheMonitor {
     /// when no window has a transition left.
     @ObservationIgnored private(set) var nextFire: Date?
     @ObservationIgnored private var windows: [String: AgentCacheWindow] = [:]
-    /// The single pending wake-up. It captures `self` weakly, so a monitor
-    /// that goes away leaves at most one sleeping task that finds nothing to
-    /// do when it wakes; there is no `deinit` cleanup to perform.
+    /// The single pending wake-up, canceled when the monitor goes away.
     @ObservationIgnored private var timer: Task<Void, Never>?
     @ObservationIgnored private let clock: () -> Date
+    /// The clock-change observer, removed when the monitor goes away.
+    @ObservationIgnored private var clockObservation: (center: NotificationCenter, token: any NSObjectProtocol)?
 
-    init(clock: @escaping () -> Date = { Date() }) {
+    init(clock: @escaping () -> Date = { Date() }, notificationCenter: NotificationCenter = .default) {
         self.clock = clock
         now = clock()
+        let token = notificationCenter.addObserver(forName: .NSSystemClockDidChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.advance()
+            }
+        }
+        clockObservation = (notificationCenter, token)
+    }
+
+    isolated deinit {
+        timer?.cancel()
+        if let clockObservation {
+            clockObservation.center.removeObserver(clockObservation.token)
+        }
     }
 
     /// Replaces the windows, keyed by runtime id, and re-aims the timer.

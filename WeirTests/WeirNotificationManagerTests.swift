@@ -29,31 +29,53 @@ struct WeirNotificationManagerTests {
     }
 
     @Test func allow_dropsEveryKeyWhoseWindowHasEmptied() {
-        var limiter = RateLimiter(maxPerSecond: 5)
-        _ = limiter.allow(key: UUID(), now: Self.start)
-        _ = limiter.allow(key: UUID(), now: Self.start)
+        var now = ContinuousClock.now
+        var limiter = RateLimiter(maxPerSecond: 5, clock: { now })
+        _ = limiter.allow(key: UUID())
+        _ = limiter.allow(key: UUID())
         #expect(limiter.trackedKeyCount == 2)
 
         // Neither of the first keys is asked about again; their entries go
         // when any key is asked about after their window.
-        _ = limiter.allow(key: UUID(), now: Self.start.addingTimeInterval(2))
+        now += .seconds(2)
+        _ = limiter.allow(key: UUID())
         #expect(limiter.trackedKeyCount == 1)
     }
 
     @Test func allow_refusesBeyondTheLimitWithinASecond() {
-        var limiter = RateLimiter(maxPerSecond: 2)
+        let start = ContinuousClock.now
+        var now = start
+        var limiter = RateLimiter(maxPerSecond: 2, clock: { now })
         let key = UUID()
-        let answers = [
-            limiter.allow(key: key, now: Self.start),
-            limiter.allow(key: key, now: Self.start.addingTimeInterval(0.1)),
-            limiter.allow(key: key, now: Self.start.addingTimeInterval(0.2)),
-            // Another key has a window of its own.
-            limiter.allow(key: UUID(), now: Self.start.addingTimeInterval(0.2)),
-            // The first event leaves exactly one second after it arrived.
-            limiter.allow(key: key, now: Self.start.addingTimeInterval(1)),
-            limiter.allow(key: key, now: Self.start.addingTimeInterval(1.05))
-        ]
+        var answers = [limiter.allow(key: key)]
+        now = start + .milliseconds(100)
+        answers.append(limiter.allow(key: key))
+        now = start + .milliseconds(200)
+        answers.append(limiter.allow(key: key))
+        answers.append(limiter.allow(key: UUID()))
+        // The first event leaves exactly one second after it arrived.
+        now = start + .seconds(1)
+        answers.append(limiter.allow(key: key))
+        now = start + .milliseconds(1050)
+        answers.append(limiter.allow(key: key))
         #expect(answers == [true, true, false, true, true, false])
+    }
+
+    @Test(arguments: [-3600.0, 3600.0])
+    func allow_usesElapsedTimeAcrossWallClockChanges(jump: TimeInterval) {
+        let clock = ManualPRStatusClock(start: Self.start)
+        var limiter = RateLimiter(maxPerSecond: 1, clock: { clock.monotonicNow() })
+        let key = UUID()
+        let first = limiter.allow(key: key)
+        #expect(first)
+
+        clock.changeWallClock(by: jump)
+        #expect(clock.now() == Self.start.addingTimeInterval(jump))
+        let duringWindow = limiter.allow(key: key)
+        #expect(!duringWindow)
+        clock.advance(by: 1)
+        let afterWindow = limiter.allow(key: key)
+        #expect(afterWindow)
     }
 
     @Test func theObservedNotification_holdsTheAgentsBanners() throws {

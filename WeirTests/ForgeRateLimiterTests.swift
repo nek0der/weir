@@ -15,7 +15,11 @@ struct ForgeRateLimiterTests {
     }
 
     private func limiter() -> ForgeRateLimiter {
-        ForgeRateLimiter(now: { [clock] in clock.now() }, jitter: { 1 })
+        ForgeRateLimiter(
+            now: { [clock] in clock.now() },
+            monotonicNow: { [clock] in clock.monotonicNow() },
+            jitter: { 1 }
+        )
     }
 
     private func quota(
@@ -51,6 +55,7 @@ struct ForgeRateLimiterTests {
         let read = quota(exitCode: 1, output: output)
         #expect(read.isRateLimited)
         #expect(read.resetAt == now.addingTimeInterval(30))
+        #expect(read.retryAfter == 30)
     }
 
     @Test("HTTP 403 is a rate limit only when it says so; otherwise it is a repository the token may not read")
@@ -136,7 +141,11 @@ struct ForgeRateLimiterTests {
 
     @Test("jitter shortens a backoff, never lengthens it past the step")
     func backoff_jitterScalesTheStep() async {
-        let limiter = ForgeRateLimiter(now: { [clock] in clock.now() }, jitter: { 0.75 })
+        let limiter = ForgeRateLimiter(
+            now: { [clock] in clock.now() },
+            monotonicNow: { [clock] in clock.monotonicNow() },
+            jitter: { 0.75 }
+        )
         await limiter.record(ForgeQuota(isRateLimited: true), host: host, admission: .open)
         clock.advance(by: 44)
         #expect(await limiter.admit(host: host) == .held)
@@ -189,6 +198,109 @@ struct ForgeRateLimiterTests {
         clock.advance(by: 1)
         #expect(await limiter.admit(host: host) == .probe)
         #expect(await limiter.admit(host: host) == .held)
+    }
+
+    @Test("clock changes preserve elapsed backoff", arguments: [-3600.0, 3600.0])
+    func backoff_clockChange_usesElapsedTime(wallChange: TimeInterval) async {
+        let limiter = limiter()
+        await limiter.record(ForgeQuota(isRateLimited: true), host: host, admission: .open)
+        clock.changeWallClock(by: wallChange)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 59)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 1)
+        #expect(await limiter.admit(host: host) == .probe)
+    }
+
+    @Test("Retry-After remains an elapsed wait after clock changes", arguments: [-3600.0, 3600.0])
+    func retryAfter_clockChange_usesElapsedTime(wallChange: TimeInterval) async {
+        let limiter = limiter()
+        let response = quota(
+            exitCode: 1,
+            output: "HTTP/1.1 429 Too Many Requests\nRetry-After: 30\nRateLimit-Reset: 1800009999\n\n{}"
+        )
+        await limiter.record(response, host: host, admission: .open)
+        clock.changeWallClock(by: wallChange)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 29)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 1)
+        #expect(await limiter.admit(host: host) == .probe)
+    }
+
+    @Test("clock changes preserve an unanswered probe's backoff", arguments: [-3600.0, 3600.0])
+    func unansweredProbe_clockChange_usesElapsedBackoff(wallChange: TimeInterval) async {
+        let limiter = limiter()
+        await limiter.record(ForgeQuota(isRateLimited: true), host: host, admission: .open)
+        clock.advance(by: 60)
+        #expect(await limiter.admit(host: host) == .probe)
+        await limiter.record(ForgeQuota(hasAnswer: false), host: host, admission: .probe)
+        clock.changeWallClock(by: wallChange)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 59)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 1)
+        #expect(await limiter.admit(host: host) == .probe)
+    }
+
+    @Test("clock changes preserve a probe's elapsed lifetime", arguments: [-3600.0, 3600.0])
+    func lostProbe_clockChange_usesElapsedTime(wallChange: TimeInterval) async {
+        let limiter = limiter()
+        await limiter.record(ForgeQuota(isRateLimited: true), host: host, admission: .open)
+        clock.advance(by: 60)
+        #expect(await limiter.admit(host: host) == .probe)
+        clock.changeWallClock(by: wallChange)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 119)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 1)
+        #expect(await limiter.admit(host: host) == .probe)
+    }
+
+    @Test("an invalid relative wait uses the fallback backoff", arguments: ["0", "-1", "nan", "inf"])
+    func retryAfter_invalidWait_usesBackoff(value: String) async {
+        let limiter = limiter()
+        let response = quota(exitCode: 1, output: "HTTP/1.1 429 Too Many Requests\nRetry-After: \(value)\n\n{}")
+        await limiter.record(response, host: host, admission: .open)
+        clock.advance(by: 59)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 1)
+        #expect(await limiter.admit(host: host) == .probe)
+    }
+
+    @Test("a fractional Retry-After preserves its subsecond boundary")
+    func retryAfter_fractionalWait_keepsItsBoundary() async {
+        let limiter = limiter()
+        let response = quota(exitCode: 1, output: "HTTP/1.1 429 Too Many Requests\nRetry-After: 0.5\n\n{}")
+        await limiter.record(response, host: host, admission: .open)
+        clock.changeWallClock(by: 3600)
+        clock.advance(by: 0.49)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 0.01)
+        #expect(await limiter.admit(host: host) == .probe)
+    }
+
+    @Test("a large finite Retry-After does not overflow its deadline or log")
+    func retryAfter_largeFiniteWait_staysHeld() async {
+        let limiter = limiter()
+        let response = quota(exitCode: 1, output: "HTTP/1.1 429 Too Many Requests\nRetry-After: 1e20\n\n{}")
+        await limiter.record(response, host: host, admission: .open)
+        clock.changeWallClock(by: 3600)
+        clock.advance(by: 3600)
+        #expect(await limiter.admit(host: host) == .held)
+    }
+
+    @Test("an absolute reset becomes an elapsed wait when received", arguments: [-3600.0, 3600.0])
+    func reset_clockChange_usesRemainingElapsedTime(wallChange: TimeInterval) async {
+        let limiter = limiter()
+        let reset = now.addingTimeInterval(120)
+        await limiter.record(ForgeQuota(isRateLimited: true, resetAt: reset), host: host, admission: .open)
+        clock.changeWallClock(by: wallChange)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 119)
+        #expect(await limiter.admit(host: host) == .held)
+        clock.advance(by: 1)
+        #expect(await limiter.admit(host: host) == .probe)
     }
 
     @Test("a host whose quota runs low is told apart until it recovers")

@@ -25,6 +25,9 @@ struct ForgeQuota: Equatable {
     var isRateLimited = false
     /// When the forge said the limit lifts; `nil` when it did not say.
     var resetAt: Date?
+    /// A relative Retry-After wait, absent when the response gave none.
+    /// Admission uses elapsed time for it, ahead of `resetAt`'s wall-clock projection.
+    var retryAfter: TimeInterval?
     var remaining: Int?
     var limit: Int?
     /// Whether the forge answered at all. A run that timed out, was
@@ -40,9 +43,17 @@ struct ForgeQuota: Equatable {
         return remaining * 10 < limit
     }
 
-    init(isRateLimited: Bool = false, resetAt: Date? = nil, remaining: Int? = nil, limit: Int? = nil, hasAnswer: Bool = true) {
+    init(
+        isRateLimited: Bool = false,
+        resetAt: Date? = nil,
+        retryAfter: TimeInterval? = nil,
+        remaining: Int? = nil,
+        limit: Int? = nil,
+        hasAnswer: Bool = true
+    ) {
         self.isRateLimited = isRateLimited
         self.resetAt = resetAt
+        self.retryAfter = retryAfter
         self.remaining = remaining
         self.limit = limit
         self.hasAnswer = hasAnswer
@@ -58,7 +69,7 @@ struct ForgeQuota: Equatable {
         let headers = http.headers
         remaining = rateLimit?.remaining ?? (headers["x-ratelimit-remaining"] ?? headers["ratelimit-remaining"]).flatMap { Int($0) }
         limit = rateLimit?.limit ?? (headers["x-ratelimit-limit"] ?? headers["ratelimit-limit"]).flatMap { Int($0) }
-        let retryAfter = headers["retry-after"].flatMap { TimeInterval($0) }
+        retryAfter = headers["retry-after"].flatMap { TimeInterval($0) }
         let saysRateLimit = !result.isSuccess && ["rate limit", "too many requests"].contains {
             result.stderr.localizedCaseInsensitiveContains($0)
         }
@@ -98,9 +109,12 @@ actor ForgeRateLimiter {
         case held
     }
 
+    /// An elapsed pause. We retain seconds because server values can exceed
+    /// the range of `Duration`.
     private struct Pause {
-        var until: Date
-        var probeStartedAt: Date?
+        var startedAt: ContinuousClock.Instant
+        var interval: TimeInterval
+        var probeStartedAt: ContinuousClock.Instant?
     }
 
     private var pauses: [String: Pause] = [:]
@@ -110,6 +124,7 @@ actor ForgeRateLimiter {
     private var lowHosts: Set<String> = []
 
     private let now: @Sendable () -> Date
+    private let monotonicNow: @Sendable () -> ContinuousClock.Instant
     private let jitter: @Sendable () -> Double
 
     static let firstBackoff: TimeInterval = 60
@@ -124,22 +139,24 @@ actor ForgeRateLimiter {
     /// account, do not all come back in the same second.
     init(
         now: @escaping @Sendable () -> Date = { Date() },
+        monotonicNow: @escaping @Sendable () -> ContinuousClock.Instant = { ContinuousClock.now },
         jitter: @escaping @Sendable () -> Double = { Double.random(in: 0.75...1) }
     ) {
         self.now = now
+        self.monotonicNow = monotonicNow
         self.jitter = jitter
     }
 
     func admit(host: String) -> Admission {
         guard var pause = pauses[host] else { return .open }
-        let now = now()
-        if now < pause.until {
+        let instant = monotonicNow()
+        if pause.startedAt.duration(to: instant) / .seconds(1) < pause.interval {
             return .held
         }
-        if let started = pause.probeStartedAt, now.timeIntervalSince(started) < Self.lostProbe {
+        if let started = pause.probeStartedAt, started.duration(to: instant) < .seconds(Self.lostProbe) {
             return .held
         }
-        pause.probeStartedAt = now
+        pause.probeStartedAt = instant
         pauses[host] = pause
         return .probe
     }
@@ -149,17 +166,20 @@ actor ForgeRateLimiter {
     /// says nothing about the limit now.
     func record(_ quota: ForgeQuota, host: String, admission: Admission) {
         let now = now()
+        let instant = monotonicNow()
         if quota.isRateLimited {
-            let until: Date
-            if let reset = quota.resetAt, reset > now {
-                until = reset
+            let wait: TimeInterval
+            if let retryAfter = quota.retryAfter, retryAfter.isFinite, retryAfter > 0 {
+                wait = retryAfter
+            } else if quota.retryAfter == nil, let reset = quota.resetAt, reset > now, reset.timeIntervalSince(now).isFinite {
+                wait = reset.timeIntervalSince(now)
             } else {
                 let step = backoffSteps[host, default: 0]
-                until = now.addingTimeInterval(Self.backoff(step: step) * jitter())
+                wait = Self.backoff(step: step) * jitter()
                 backoffSteps[host] = step + 1
             }
-            pauses[host] = Pause(until: until)
-            log.info("rate limited on \(host, privacy: .private); lookups wait \(Int(until.timeIntervalSince(now)), privacy: .public)s")
+            pauses[host] = Pause(startedAt: instant, interval: wait)
+            log.info("rate limited on \(host, privacy: .private); lookups wait \(wait, privacy: .public)s")
             return
         }
         guard quota.hasAnswer else {
@@ -168,7 +188,7 @@ actor ForgeRateLimiter {
             // forge said nothing more about the limit.
             if admission == .probe, pauses[host] != nil {
                 let step = max(backoffSteps[host, default: 0] - 1, 0)
-                pauses[host] = Pause(until: now.addingTimeInterval(Self.backoff(step: step) * jitter()))
+                pauses[host] = Pause(startedAt: instant, interval: Self.backoff(step: step) * jitter())
             }
             return
         }

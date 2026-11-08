@@ -76,7 +76,7 @@ struct PRStatusFetcherTests {
         return PRStatusFetcher(
             resolver: ForgeResolver(locator: locator, git: remotes ?? run),
             locator: locator,
-            limiter: ForgeRateLimiter(now: now, jitter: { 1 }),
+            limiter: ForgeRateLimiter(now: now, monotonicNow: { [clock] in clock.monotonicNow() }, jitter: { 1 }),
             now: now,
             git: run,
             forgeCLI: { _, arguments, _, _ in await cli.run(arguments) }
