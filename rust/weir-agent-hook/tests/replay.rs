@@ -490,6 +490,71 @@ fn claude_session_basic_writes_a_version_three_record_and_drops_the_hint() {
 }
 
 #[test]
+fn cwd_changes_in_the_same_second_reach_the_projection_once_each() {
+    use weir_agent_model::{
+        CommandOp, Instants, ProjectionInput, ProjectionState, ProviderId, RecordFile, TabPanes,
+    };
+
+    let scratch = Scratch::new("cwd-same-second");
+    let env = scratch.env("claude");
+    let mut runtime = HookRuntime::new(&env, &NoSnapshots);
+    // Freeze the injected hook clock: ordering must not depend on its precision.
+    runtime.now = "2026-09-14T12:01:00Z".to_owned();
+    let now = Instants {
+        wall: runtime.now.clone(),
+        monotonic_ms: 0,
+    };
+    let pane = PANE.parse().expect("pane");
+    let mut input = ProjectionInput {
+        tabs: vec![TabPanes {
+            id: uuid::Uuid::new_v4(),
+            panes: vec![pane],
+        }],
+        ..ProjectionInput::default()
+    };
+    let mut state = ProjectionState::default();
+    // Returning to the first path is another move, not a replay of the first event.
+    for (old_cwd, new_cwd) in [
+        ("/tmp/start", "/tmp/first"),
+        ("/tmp/first", "/tmp/second"),
+        ("/tmp/second", "/tmp/first"),
+    ] {
+        let payload = serde_json::json!({
+            "hook_event_name": "CwdChanged", "session_id": "s1",
+            "cwd": new_cwd, "new_cwd": new_cwd, "old_cwd": old_cwd,
+        });
+        assert_eq!(
+            run_hook("claude", payload.to_string().as_bytes(), &runtime),
+            HookOutcome::Applied
+        );
+        let content = fs::read_to_string(scratch.root.join("cwd").join(cwd_event_file_name(PANE)))
+            .expect("cwd event");
+        input.cwd_events = vec![RecordFile {
+            provider: ProviderId::new("claude").expect("provider"),
+            name: PANE.to_owned(),
+            content: Some(content),
+        }];
+        let (next, _, commands) = weir_agent_core::project(&state, &input, &now);
+        let moves: Vec<_> = commands
+            .iter()
+            .filter_map(|command| match &command.op {
+                CommandOp::CwdChanged { pane, new_cwd, .. } => Some((*pane, new_cwd.as_str())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(moves, vec![(pane, new_cwd)]);
+        state = next;
+        let (next, _, commands) = weir_agent_core::project(&state, &input, &now);
+        assert!(
+            !commands
+                .iter()
+                .any(|command| matches!(command.op, CommandOp::CwdChanged { .. }))
+        );
+        state = next;
+    }
+}
+
+#[test]
 fn claude_cwd_change_writes_the_cwd_event_and_no_record() {
     let scratch = Scratch::new("claude-cwd");
     let payloads = fixture_case("claude", "cwd-changed");

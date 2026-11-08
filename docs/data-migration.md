@@ -793,6 +793,22 @@ that reads it does. Earlier releases wrote such a record over from revision 1,
 and the app, which had already taken a higher revision, then passed over every
 later write of the run.
 
+### Working-directory events
+
+The hook replaces `cwd-events/<pane>.cwd.json` for each working-directory change.
+Schema 1 now includes an optional unsigned `revision`, incremented under the
+file's lock on each write. The projection identifies a replacement by its
+revision, so two changes within the same second remain distinct. Records
+without a revision still use `updatedAt`. The first write over such a record
+starts at revision 1; no existing file is rewritten at launch, and no backup
+or migration step is needed.
+
+The build before ignores `revision` and still identifies events by
+`updatedAt`, so the same-second limitation returns on rollback. Its next
+write omits `revision`; the current build reads that record using its
+timestamp and resumes numbering at the next hook write. Launch records
+existing events without offering a move, in either build.
+
 ### Turn records
 
 New. Each agent's hook writes one record per turn in the provider's state

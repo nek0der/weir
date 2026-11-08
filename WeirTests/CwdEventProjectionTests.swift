@@ -51,17 +51,50 @@ struct CwdEventProjectionTests {
         _ harness: Harness,
         pane: UUID,
         newCwd: String = "/tmp/after",
-        updatedAt: String
+        updatedAt: String,
+        revision: Int? = nil
     ) throws {
-        let record: [String: Any] = [
+        var record: [String: Any] = [
             "schemaVersion": 1,
             "paneId": pane.uuidString,
             "newCwd": newCwd,
             "oldCwd": "/tmp/before",
             "updatedAt": updatedAt
         ]
-        try JSONSerialization.data(withJSONObject: record)
-            .write(to: harness.events.appendingPathComponent(AgentRecordFixtures.cwdEventFileName(pane.uuidString)))
+        record["revision"] = revision
+        try SecureFileWrite.writeAtomic(
+            JSONSerialization.data(withJSONObject: record),
+            to: harness.events.appendingPathComponent(AgentRecordFixtures.cwdEventFileName(pane.uuidString))
+        )
+    }
+
+    @Test("revisions distinguish same-second moves through the host and Rust bridge")
+    func sameSecondMoves_dispatchOnceEach() throws {
+        try withTempDir { root in
+            let harness = try harness(in: root)
+            let clock = { "2026-09-14T12:01:00Z" }
+            // A legacy record at launch is remembered without announcing a move.
+            try write(harness, pane: harness.pane, updatedAt: clock())
+            harness.adapter.bootstrap(into: harness.session, attention: AttentionState())
+            #expect(harness.moves.value.isEmpty)
+
+            for (index, path) in ["/tmp/first", "/tmp/second", "/tmp/first"].enumerated() {
+                try write(harness, pane: harness.pane, newCwd: path, updatedAt: clock(), revision: index + 1)
+                harness.adapter.refresh()
+                #expect(harness.moves.value.count == index + 1)
+                #expect(harness.moves.value.last?.newCwd == path)
+                #expect(harness.moves.value.last?.pane == harness.pane)
+                harness.adapter.refresh()
+                #expect(harness.moves.value.count == index + 1)
+            }
+            // An older helper can replace a revisioned record after a rollback.
+            try write(harness, pane: harness.pane, newCwd: "/tmp/legacy", updatedAt: clock())
+            harness.adapter.refresh()
+            #expect(harness.moves.value.count == 4)
+            #expect(harness.moves.value.last?.newCwd == "/tmp/legacy")
+            harness.adapter.refresh()
+            #expect(harness.moves.value.count == 4)
+        }
     }
 
     private func exists(_ harness: Harness, pane: UUID) throws -> Bool {
@@ -97,13 +130,13 @@ struct CwdEventProjectionTests {
         }
     }
 
-    @Test("a pass drops the files of panes that are no longer open")
-    func scan_cleansUpRecordsForClosedPanes() throws {
+    @Test("a pass drops closed panes' files and remembers live panes' moves", arguments: [nil, 1] as [Int?])
+    func scan_cleansUpRecordsForClosedPanes(revision: Int?) throws {
         try withTempDir { root in
             let harness = try harness(in: root)
             let closed = UUID()
-            try write(harness, pane: closed, updatedAt: "2026-09-14T12:00:00Z")
-            try write(harness, pane: harness.pane, updatedAt: "2026-09-14T12:00:00Z")
+            try write(harness, pane: closed, updatedAt: "2026-09-14T12:00:00Z", revision: revision)
+            try write(harness, pane: harness.pane, updatedAt: "2026-09-14T12:00:00Z", revision: revision)
 
             harness.adapter.bootstrap(into: harness.session, attention: AttentionState())
 
