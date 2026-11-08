@@ -61,6 +61,12 @@ is used up. A click outside the panel or Escape closes it.
 
 ### Sidebar
 
+State marks keep the same meaning throughout the app. Waiting for approval, an answer, a response, or sign-in is an amber disc with a question mark; stopped is a red disc with an exclamation mark. Running is a gray arc, stationary beside list counts. Unread is a dotted ring in fixed blue, independent of the accent color.
+
+The **Needs Attention** count is amber when any item needs a response or has stopped, and blue when only unread turns remain. The menu bar uses a large filled disc for items that need a response or have stopped, and a small dot for unread turns alone. An overlapping-window icon marks a project shown in another window; its tooltip and VoiceOver keep the location in words.
+
+Errors use a red filled octagon with an X; cautions use an amber filled triangle. Plan usage uses an hourglass, gray normally and red at the limit. Its normal bar is gray, with amber near the limit and red at the limit. A clock means a deadline or time left, and a timer means elapsed turn time. Restoring code uses a red backward arrow; deleting files or history uses a trash can, while closing or removing a row without deleting uses an X.
+
 - Every project sits under its own header, in the order you give them (drag
   a header, or ⌥⌘↑ ⌥⌘↓ while the sidebar has focus). Under a header comes
   the project's own folder first, marked with a house after its name, then its
@@ -242,7 +248,7 @@ and a **Conversation** filter.
   scratch tab, show no bar. A file tag still shows the number ("#2") when the
   conversation's name carries one.
 - An unviewed turn's number ("T7") stands in a blue pill; a viewed turn's
-  number is gray. The card open in the review is ringed in blue.
+  number is gray. The card open in the review has a strong neutral outline.
 - The viewed turns at the top of the list fold into one line, **Show 12
   earlier viewed turns** (in each section, by conversation). Click it and
   the cards come back in its place; they fold again when you switch

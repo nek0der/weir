@@ -263,7 +263,7 @@ struct SidebarProjectHeaderView: View {
             case .otherWindow:
                 if let bringForward = actions.bringOtherWindowForward {
                     Button(action: bringForward) {
-                        Image(systemName: Self.otherWindowSymbol)
+                        Image(systemName: ContainerSymbol.otherWindow)
                             .font(.supervision(.detail))
                             .frame(height: Layout.sidebarHeadingButtonHeight)
                             .accessibilityLabel(Text(
@@ -298,11 +298,7 @@ struct SidebarProjectHeaderView: View {
         }
     }
 
-    /// The icon a header shows in place of its count when another window
-    /// shows the project.
-    private static let otherWindowSymbol = "macwindow.on.rectangle"
-
-    private static let trailingSymbols = [otherWindowSymbol] + [
+    private static let trailingSymbols = [ContainerSymbol.otherWindow] + [
         ProjectTrouble.folderMissing, .gitUnavailable, .listingFailed(detail: nil)
     ].map(ProjectTroubleText.symbol)
 
@@ -330,7 +326,7 @@ struct SidebarProjectHeaderView: View {
     /// A folded header's mark, at the compact size a tab's mark shares,
     /// which is also the width every header keeps for it.
     static func mark(_ glyph: SessionRowFact.Glyph) -> SessionStateGlyph {
-        SessionStateGlyph(glyph: glyph, size: Layout.sidebarHeaderMarkSize)
+        SessionStateGlyph(glyph: glyph, size: Layout.sidebarHeaderMarkSize, allowsAnimation: false)
     }
 
     /// Whether the click being handled held ⌥ alone: the one that opens or

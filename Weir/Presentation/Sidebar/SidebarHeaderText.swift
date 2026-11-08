@@ -83,13 +83,10 @@ enum SidebarHeaderText {
 /// icon's accessible label, and the explanation in its tooltip and the
 /// header's VoiceOver hint.
 enum ProjectTroubleText {
-    /// Returns a distinct shape for each kind, so color is not the only cue.
-    static func symbol(_ trouble: ProjectTrouble) -> String {
-        switch trouble {
-        case .folderMissing: "folder.badge.questionmark"
-        case .gitUnavailable: "exclamationmark.triangle"
-        case .listingFailed: "list.bullet.rectangle"
-        }
+    /// Returns the shared error shape. We keep the kind in the tooltip and
+    /// VoiceOver words, so an error cannot be mistaken for a caution.
+    static func symbol(_: ProjectTrouble) -> String {
+        "xmark.octagon.fill"
     }
 
     static func label(_ trouble: ProjectTrouble) -> LocalizedStringResource {

@@ -283,7 +283,7 @@ private struct EmptyWindowProjectRow: View {
 
     @ViewBuilder private var mark: some View {
         if row.isInOtherWindow {
-            Image(systemName: "macwindow.on.rectangle")
+            Image(systemName: ContainerSymbol.otherWindow)
                 .font(.supervision(.meta))
                 .foregroundStyle(SupervisionTokens.muted.color)
                 .accessibilityLabel(Text("Other Window"))

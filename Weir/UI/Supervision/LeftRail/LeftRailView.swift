@@ -48,10 +48,11 @@ struct LeftRailView: View {
     var body: some View {
         RailColumn {
             let highlight = highlight
-            // A list, as the sidebar is, rather than the menu's sidebar
-            // symbol, which says where a panel goes, not what it holds.
+            // We use `sidebar.left` for Toggle Sidebar everywhere. We dropped
+            // `list.bullet.rectangle` because it also meant Needs Attention
+            // and the review's file list.
             IconControlButton(
-                systemImage: "list.bullet.rectangle",
+                systemImage: WeirShortcutAction.toggleSidebar.iconName,
                 name: WorktreeText.railEntry,
                 shortcut: shortcut(.toggleSidebar),
                 isSelected: window.isSidebarPresented,
@@ -166,8 +167,7 @@ struct RailColumn<Top: View, Bottom: View>: View {
     }
 }
 
-/// The rail's update icon, drawn in the accent color, opening the
-/// update popover beside the rail.
+/// The rail's update icon, opening the update popover beside the rail.
 private struct RailUpdateButton: View {
     @Binding var isOpen: Bool
     /// Whether this is the one button the rail lights (`RailHighlight`).

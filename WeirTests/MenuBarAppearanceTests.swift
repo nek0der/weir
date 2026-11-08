@@ -68,13 +68,11 @@ struct MenuBarAppearanceTests {
         #expect(PopoverInk.tokens.warningText == SupervisionTokens.waitingText.color)
     }
 
-    /// On the menu's glass words in the stop color and the unread ring take
-    /// the system's label; Weir's own panels keep the red and the accent.
-    @Test func aStopsWordsAndTheUnreadRing_takeTheSurfacesInk() {
+    /// Stop words take the system's label on menu glass, while Weir's own
+    /// panels keep red. Unread glyphs use fixed blue on either surface.
+    @Test func aStopsWords_takeTheSurfacesInk() {
         #expect(PopoverInk.vibrant.stoppedText == .primary)
-        #expect(PopoverInk.vibrant.unreadMark == .primary)
         #expect(PopoverInk.tokens.stoppedText == SupervisionTokens.stoppedText.color)
-        #expect(PopoverInk.tokens.unreadMark == nil)
     }
 
     /// The menu's content draws in the system's scheme, the one its window

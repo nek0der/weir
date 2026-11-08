@@ -17,7 +17,7 @@ struct ReviewUnplacedCommentBanner: View {
     var body: some View {
         if let text = reviewSession.unplacedComment {
             ReviewBanner(
-                systemImage: "exclamationmark.triangle.fill",
+                systemImage: "xmark.octagon.fill",
                 message: Text("The comment you were writing couldn’t be put back where it was. Copy it to write it again."),
                 tone: .error,
                 actionTitle: "Copy",

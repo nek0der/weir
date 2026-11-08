@@ -6,7 +6,7 @@ import SwiftUI
 /// A pull request's mark, attached on the right of a session beside its
 /// agent badge: one line drawing per state, in `muted`, a draft the
 /// open mark dashed, and its checks on its corner: a small red ✕ while a
-/// check fails, an amber dot while one runs, and a thin green check once
+/// check fails, a gray dot while one runs, and a thin green check once
 /// they pass.
 /// Lines rather than filled Octicons: a filled shape cannot be dashed, and
 /// a 1.3pt line holds the weight of the glyphs and badges beside it.
@@ -98,9 +98,8 @@ private struct ChecksFailedBadge: View {
     }
 }
 
-/// A running check: the failing badge's disc in the waiting color, with no
-/// glyph inside. A run is something to wait on, so it takes the waiting
-/// color, and it has nothing to say until it settles.
+/// A running check: a gray disc with no glyph inside. We reserve amber
+/// for work that needs the person's response, rather than checks in progress.
 private struct ChecksRunningBadge: View {
     let color: Color
 

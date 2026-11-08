@@ -8,7 +8,7 @@ import WeirDomain
 /// in the title bar count's tone, and no count, since the menu bar is
 /// shared with every other app and the popover's heading says the number.
 /// Something that blocks on the person (an approval, a question, a wait
-/// at the prompt, a stop) puts an exclamation mark at the mark's corner;
+/// at the prompt, a stop) puts a filled disc at the mark's corner;
 /// unread turns alone put a dot there; nothing leaves the mark alone.
 struct MenuBarLabelModel: Equatable {
     /// Which lamp is lit. The menu bar takes one image for its item and
@@ -22,9 +22,8 @@ struct MenuBarLabelModel: Equatable {
         /// as the title bar's count turns blue, so the shape says it without the
         /// color the template drops.
         case unread
-        /// Something blocks on the person: a larger badge with an
-        /// exclamation mark cut out of it, so it does not read as the dot
-        /// at a glance.
+        /// Something blocks on the person: a larger filled disc, so we
+        /// distinguish it from unread without borrowing the stopped "!".
         case blocking
     }
 

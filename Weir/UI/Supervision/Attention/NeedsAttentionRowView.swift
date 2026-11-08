@@ -64,7 +64,7 @@ struct NeedsAttentionRowView: View {
 
     private var rowFace: some View {
         HStack(alignment: .top, spacing: WeirLayout.Supervision.popoverRowColumnSpacing) {
-            StateGlyph(kind: glyph, unreadInkOverride: ink.unreadMark)
+            StateGlyph(kind: glyph)
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: WeirLayout.Supervision.popoverRowLineSpacing) {
                 HStack(spacing: WeirLayout.Supervision.spaceSnug) {
@@ -88,6 +88,12 @@ struct NeedsAttentionRowView: View {
                         .fixedSize()
                 }
                 HStack(spacing: WeirLayout.Supervision.spaceSnug) {
+                    if row.isInAnotherWindow {
+                        Image(systemName: ContainerSymbol.otherWindow)
+                            .font(.supervision(.meta))
+                            .foregroundStyle(ink.muted)
+                            .accessibilityHidden(true)
+                    }
                     Text(detail)
                         .font(.supervision(.meta))
                         .lineLimit(1)

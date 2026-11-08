@@ -119,7 +119,7 @@ struct SettingsForm<Content: View>: View {
                 }
                 .fixedSize(horizontal: false, vertical: true)
             } icon: {
-                Image(systemName: "exclamationmark.triangle.fill")
+                Image(systemName: "xmark.octagon.fill")
                     .foregroundStyle(SupervisionTokens.stoppedText.color)
                     .accessibilityHidden(true)
             }

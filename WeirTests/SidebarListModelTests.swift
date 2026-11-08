@@ -568,11 +568,11 @@ struct SidebarListModelTests {
         #expect(header.trailingMark == (isInOtherWindow ? .otherWindow : .count))
     }
 
-    @Test func troubleKinds_haveDistinctSymbols() {
-        #expect(ProjectTroubleText.symbol(.folderMissing) == "folder.badge.questionmark")
-        #expect(ProjectTroubleText.symbol(.gitUnavailable) == "exclamationmark.triangle")
-        #expect(ProjectTroubleText.symbol(.listingFailed(detail: nil)) == "list.bullet.rectangle")
-        #expect(ProjectTroubleText.symbol(.listingFailed(detail: "fatal")) == "list.bullet.rectangle")
+    @Test func troubleKinds_shareTheErrorSymbol() {
+        #expect(ProjectTroubleText.symbol(.folderMissing) == "xmark.octagon.fill")
+        #expect(ProjectTroubleText.symbol(.gitUnavailable) == "xmark.octagon.fill")
+        #expect(ProjectTroubleText.symbol(.listingFailed(detail: nil)) == "xmark.octagon.fill")
+        #expect(ProjectTroubleText.symbol(.listingFailed(detail: "fatal")) == "xmark.octagon.fill")
     }
 
     @Test(arguments: [false, true])

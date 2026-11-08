@@ -35,6 +35,15 @@ struct CommandPaletteTests {
 
     // MARK: - Catalog
 
+    @Test("Recent projects use the recent-history symbol")
+    func catalog_recentProjects_haveTheirOwnHistorySymbol() throws {
+        let (session, _, _) = WorkspaceSessionFixture.withLooseTab()
+        let recent = URL(fileURLWithPath: "/tmp/weir-recent-project")
+        session.recentProjectPaths = [recent]
+        let item = try #require(Self.items(session).first { $0.action == .openRecentProject(recent) })
+        #expect(item.icon == "clock.arrow.trianglehead.counterclockwise.rotate.90")
+    }
+
     /// The palette moves the project the window shows; with none shown
     /// (the project chooser, or a scratch tab only), the moves are off; at
     /// either end of the window's order, the move off that end is off too,
@@ -445,6 +454,7 @@ struct CommandPaletteTests {
         #expect(five.isEnabled)
         #expect(five.subtitle == "T5")
         #expect(five.action == .restoreTurn)
+        #expect(five.icon == "gobackward")
     }
 
     @Test("catalog includes all shortcut actions")

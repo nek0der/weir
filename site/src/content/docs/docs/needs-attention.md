@@ -9,6 +9,10 @@ sidebar:
 
 **Needs Attention** holds what is waiting for you across every project, in the order it arrived: approvals, questions, stops, and unviewed turns.
 
+Waiting for approval, an answer, a response, or sign-in has an amber disc with a question mark. Stopped has a red disc with an exclamation mark. Running has a gray arc; beside list counts it stays still. Unread has a dotted ring in fixed blue, independent of the accent color. The **Needs Attention** count is amber when any item needs a response or has stopped, and blue when only unread turns remain. The menu bar uses a large filled disc for the former and a small dot for unread turns alone. An overlapping-window icon and a location label identify items in another window.
+
+Errors have a red filled octagon with an X; cautions have an amber filled triangle. Plan usage has an hourglass, gray normally and red at the limit. A clock means a deadline or time left; a timer means elapsed turn time.
+
 | Key | What it does |
 |---|---|
 | <kbd>⌘J</kbd> | Go to the next item |

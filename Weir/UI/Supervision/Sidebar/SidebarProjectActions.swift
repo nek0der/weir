@@ -176,7 +176,7 @@ struct SidebarProjectActionsMenu: View {
         }
         if let bringForward = actions.bringOtherWindowForward {
             Button(action: bringForward) {
-                Label { Text(SidebarProjectActionText.bringForward) } icon: { Image(systemName: "macwindow.on.rectangle") }
+                Label { Text(SidebarProjectActionText.bringForward) } icon: { Image(systemName: ContainerSymbol.otherWindow) }
             }
             .tint(Color.primary)
         }

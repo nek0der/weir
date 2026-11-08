@@ -68,6 +68,9 @@ struct NeedsAttentionListModel: Equatable {
         /// action say (`NewWindowText`). Choosing any other row goes
         /// where it would without ⌘.
         var opensInNewWindow = false
+        /// Whether we draw the shared other-window mark beside the place.
+        /// The place and spoken detail retain the location in words.
+        var isInAnotherWindow = false
 
         /// Where the second line is cut (`factTruncation(of:request:)`).
         var factTruncation = SupervisionTruncation.sentence
@@ -165,6 +168,7 @@ struct NeedsAttentionListModel: Equatable {
                     projectsInWindows: projectsInWindows,
                     isInAnotherWindow: isInAnotherWindow
                 ),
+                isInAnotherWindow: isInAnotherWindow,
                 factTruncation: Self.factTruncation(of: item, request: request),
                 spokenDetail: AgentStatusText.spokenList(
                     [place.map { AgentStatusText.spokenPlace($0, locale: locale) } ?? "", worded.spoken(in: locale)],

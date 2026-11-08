@@ -110,13 +110,13 @@ struct PRMarkPresentationTests {
     }
 
     /// Only the checks are colored: a failure in the stopped glyph's red,
-    /// since both are failures; a run in the waiting color, since it is
-    /// something to wait on; and a pass in the hover card's green.
+    /// since both are failures; a run in running gray; and a pass in the
+    /// hover card's green.
     @Test(
         "each outcome of the checks takes its own color",
         arguments: [
             (PRChecksConclusion.failure, SupervisionTokens.stopped),
-            (.pending, SupervisionTokens.waiting),
+            (.pending, SupervisionTokens.running),
             (.success, SupervisionTokens.added)
         ]
     )

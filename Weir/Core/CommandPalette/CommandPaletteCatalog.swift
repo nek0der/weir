@@ -301,7 +301,7 @@ enum CommandPaletteCatalog {
                 category: .reopen,
                 title: PathFormatting.name(of: url),
                 subtitle: PathFormatting.abbreviateHome(url.path),
-                icon: "clock",
+                icon: "clock.arrow.trianglehead.counterclockwise.rotate.90",
                 shortcutDisplay: nil,
                 action: .openRecentProject(url)
             ))
@@ -342,7 +342,7 @@ enum CommandPaletteCatalog {
         items.append(row(
             RestoreGate.entryTitle,
             subtitle: facts.restoreTurnNumber.map { "T\($0)" },
-            icon: "arrow.uturn.backward",
+            icon: "gobackward",
             action: .restoreTurn,
             isEnabled: facts.restoreTurnNumber != nil,
             locale: locale

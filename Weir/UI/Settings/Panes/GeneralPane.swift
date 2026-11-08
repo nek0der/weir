@@ -102,8 +102,8 @@ private struct SavingSuspendedSection: View {
                     } icon: {
                         // The sentence carries the meaning; the symbol only
                         // draws the eye to it.
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(SupervisionTokens.waiting.color)
+                        Image(systemName: "xmark.octagon.fill")
+                            .foregroundStyle(SupervisionTokens.stoppedText.color)
                             .accessibilityHidden(true)
                     }
                 }

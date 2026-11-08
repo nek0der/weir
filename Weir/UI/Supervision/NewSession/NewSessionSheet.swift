@@ -486,7 +486,7 @@ extension NewSessionSheet {
             Label {
                 statusText([.plain(text)], color: SupervisionTokens.muted.color)
             } icon: {
-                Image(systemName: "exclamationmark.triangle")
+                Image(systemName: "exclamationmark.triangle.fill")
                     .foregroundStyle(SupervisionTokens.waiting.color)
                     .accessibilityHidden(true)
             }

@@ -74,6 +74,11 @@ struct ApprovalCardHost: View {
                     card: window.approvalCard,
                     model: model,
                     place: place(of: approval),
+                    isInAnotherWindow: attentionQueue.item(for: approval.key).map {
+                        NeedsAttentionListModel.isInAnotherWindow(
+                            $0, projectsInOtherWindows: windowRegistry.projectsShown(besides: window.id, in: session)
+                        )
+                    } ?? false,
                     onClose: { [window] in window.approvalCard.dismiss() },
                     onAnswerInTerminal: { answerInTerminal(approval) },
                     movesToPane: openPaneAction(for: approval) != nil,
@@ -217,6 +222,7 @@ private struct ApprovalCard: View {
     let model: ApprovalCardModel
     /// "{session} · {project}", or `nil` while the request is in no pane.
     let place: String?
+    var isInAnotherWindow = false
     let onClose: () -> Void
     let onAnswerInTerminal: () -> Void
     /// Whether Answer in terminal takes the keyboard to the request's pane.
@@ -422,6 +428,11 @@ private struct ApprovalCard: View {
                 .font(.supervision(.body, weight: .bold))
                 .fixedSize()
             if let place {
+                if isInAnotherWindow {
+                    Image(systemName: ContainerSymbol.otherWindow)
+                        .foregroundStyle(SupervisionTokens.muted.color)
+                        .accessibilityHidden(true)
+                }
                 Text(verbatim: place)
                     .font(.supervision(.row))
                     .foregroundStyle(SupervisionTokens.muted.color)

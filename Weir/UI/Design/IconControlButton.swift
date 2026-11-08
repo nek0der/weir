@@ -10,6 +10,8 @@ struct IconControlButton: View {
     var placement = HoverChipPlacement.beside
     let systemImage: String
     let name: LocalizedStringResource
+    /// A semantic icon color, or nil for the normal hover and selection ink.
+    var symbolColor: Color?
     /// The key that does the same, shown in the chip; `nil` when none is bound.
     let shortcut: String?
     /// Whether what it opens is open, as VoiceOver hears it.
@@ -34,6 +36,7 @@ struct IconControlButton: View {
         Button(action: action) {
             IconControlFace(
                 systemImage: systemImage,
+                symbolColor: symbolColor,
                 isLit: isLit ?? isSelected,
                 isHovering: isHovering,
                 badge: badge,
@@ -54,6 +57,8 @@ struct IconControlButton: View {
 /// icon in `iconControlFrame`'s frame, its mark on the corner, cut into the icon.
 struct IconControlFace: View {
     let systemImage: String
+    /// A semantic icon color, or nil when the control's state sets its ink.
+    var symbolColor: Color?
     let isLit: Bool
     let isHovering: Bool
     var badge: IconBadge?
@@ -64,7 +69,7 @@ struct IconControlFace: View {
     var body: some View {
         let outset = standsOnCorner ? WeirLayout.Supervision.spaceXS : 0
         Image(systemName: systemImage)
-            .foregroundStyle(isLit || isHovering ? SupervisionTokens.text.color : SupervisionTokens.muted.color)
+            .foregroundStyle(symbolColor ?? (isLit || isHovering ? SupervisionTokens.text.color : SupervisionTokens.muted.color))
             .iconControlFrame(isLit: isLit, isHovering: isHovering)
             .overlay(alignment: .topTrailing) {
                 if let badge {

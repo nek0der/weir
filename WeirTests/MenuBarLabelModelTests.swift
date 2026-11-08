@@ -13,9 +13,9 @@ struct MenuBarLabelModelTests {
     private static let japanese = Locale(identifier: "ja")
 
     /// One rule with the title bar count: anything that blocks lights
-    /// the amber disc, a stop alone or a stop with unread turns included;
-    /// unread turns alone are the ring with its dot; nothing is the empty
-    /// ring.
+    /// the large filled disc, a stop alone or a stop with unread turns
+    /// included; unread turns alone are a small dot; nothing leaves the
+    /// app mark alone.
     @Test(arguments: [
         (AttentionCounts(approvals: 1), MenuBarLabelModel.Lamp.blocking),
         (AttentionCounts(questions: 1), .blocking),
@@ -84,7 +84,7 @@ struct MenuBarLampImageTests {
 
     /// The shape alone carries the meaning: every lamp keeps the mark, the
     /// corner is clear with nothing to say, a dot fills it for unread turns,
-    /// and the blocking badge has a cutout surrounded by opaque pixels.
+    /// and the blocking badge is a larger filled disc.
     /// Sample these features in an offscreen bitmap at 1x and 2x.
     @Test(arguments: [CGFloat(1), 2])
     func theBadges_differAtTheCorner_andShareTheMark(_ scale: CGFloat) throws {
@@ -106,10 +106,13 @@ struct MenuBarLampImageTests {
         let onTheDot = CGPoint(x: 17, y: 13.5)
         let onTheStem = CGPoint(x: 16.5, y: 11)
         let besideTheStem = CGPoint(x: 14.5, y: 12.5)
+        let outsideTheDot = CGPoint(x: 12.5, y: 12.5)
         #expect(try alpha(.off, at: onTheDot) == 0)
         #expect(try alpha(.unread, at: onTheDot) == 1)
-        #expect(try alpha(.blocking, at: onTheStem) == 0)
+        #expect(try alpha(.blocking, at: onTheStem) == 1)
         #expect(try alpha(.unread, at: onTheStem) == 1)
         #expect(try alpha(.blocking, at: besideTheStem) == 1)
+        #expect(try alpha(.unread, at: outsideTheDot) == 0)
+        #expect(try alpha(.blocking, at: outsideTheDot) == 1)
     }
 }

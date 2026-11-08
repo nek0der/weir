@@ -111,7 +111,7 @@ struct IntegrationsPane: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Label(
                             "Ghostty config errors",
-                            systemImage: "exclamationmark.triangle.fill"
+                            systemImage: "xmark.octagon.fill"
                         )
                         .foregroundStyle(SupervisionTokens.stoppedText.color)
                         ForEach(Array(store.ghosttyConfigDiagnostics.enumerated()), id: \.offset) { _, diagnostic in
@@ -240,7 +240,7 @@ struct IntegrationsPane: View {
                 Label {
                     Text(display: shellCommandError)
                 } icon: {
-                    Image(systemName: "exclamationmark.triangle.fill")
+                    Image(systemName: "xmark.octagon.fill")
                         .foregroundStyle(SupervisionTokens.stoppedText.color)
                 }
                 .font(.caption)

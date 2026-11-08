@@ -385,17 +385,6 @@ enum PopoverInk: Equatable, Sendable {
         }
     }
 
-    /// What the unread ring and dot are drawn in instead of the accent:
-    /// the menu's words are all the system's labels and its lamp is the
-    /// bar's ink, so a ring in the accent would be the one colored thing
-    /// on a calm row, and reads as a selected radio button. `nil` keeps the
-    /// accent on Weir's own panels.
-    var unreadMark: Color? {
-        switch self {
-        case .tokens: nil
-        case .vibrant: .primary
-        }
-    }
 }
 
 /// Which surface a view is drawn on: one of Weir's own floating panels,
@@ -429,7 +418,7 @@ enum PopoverSurface: Equatable, Sendable {
         }
     }
 
-    /// What the words are drawn in. The state colors (amber, red) stay
+    /// What the words are drawn in. The state colors (amber, red, blue) stay
     /// tokens on either.
     var ink: PopoverInk {
         switch self {
@@ -546,12 +535,11 @@ enum SupervisionTokens {
 
     // MARK: States
 
-    /// Unread's blue: the counts, chips, rules, and dots that say unread
-    /// beside words. A fixed blue rather than the person's accent, so they
-    /// read the same whatever accent was picked. The unread state glyph is
-    /// the exception: its ring and dot take the accent (`accentIcon`), told
-    /// from the stopped and waiting discs by being a ring, not by its
-    /// color, so a red or orange accent still reads as unread.
+    /// Unread's fixed blue for rings, dots, counts, and rules on every
+    /// surface, including the menu's material. We keep it independent of
+    /// the accent so unread never takes the waiting or stopped color.
+    /// `StateGlyphTests` holds it to 3:1 on every `AccentIconRule` ground
+    /// in both appearances.
     static let unread = ThemedColor(light: 0x2C6EE0, dark: 0x5B93F0)
     /// Text in that blue (an unread count): a step darker in light and
     /// lighter in dark, so it reads at 4.5:1 on the window, a hovered fill,

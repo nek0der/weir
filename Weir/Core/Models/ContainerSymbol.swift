@@ -1,11 +1,12 @@
 // ContainerSymbol.swift
-// Weir — the symbol each kind of container is drawn with.
+// Weir — shared symbols for containers and their window location.
 
-/// SF Symbol per container kind, read by every surface that names a
-/// container, the command palette catalog among them, so each draws the same
-/// glyph. A name rather than an image, as the catalog's other icons are. The
-/// set divides containers by what they own: a repository, a branch.
+/// Symbols shared by every surface that names a container or its window
+/// location. We share names rather than images because menus and palettes
+/// construct their own views.
 enum ContainerSymbol {
     static let project = "book.closed"
     static let worktree = "arrow.triangle.branch"
+    /// A project shown by another window, independent of where it is named.
+    static let otherWindow = "macwindow.on.rectangle"
 }

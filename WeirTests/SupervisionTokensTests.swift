@@ -158,8 +158,8 @@ struct SupervisionTokensTests {
         Pair("stopped disc on window", Tokens.stopped, Tokens.window),
         Pair("stopped disc on sidebar", Tokens.stopped, Tokens.sidebar),
         // The fixed unread blue where it marks without words (a count's
-        // ring, the decision bar's rule, a history row's dot). The unread
-        // state glyph takes the accent instead (`StateGlyphTests`).
+        // ring, the decision bar's rule, a history row's dot, and the unread
+        // state glyph). Every icon ground is covered in `StateGlyphTests`.
         Pair("unread blue mark on window", Tokens.unread, Tokens.window),
         Pair("unread blue mark on sidebar", Tokens.unread, Tokens.sidebar),
         Pair("unread blue mark on selection", Tokens.unread, Tokens.selection),

@@ -14,6 +14,40 @@ import Testing
 @MainActor
 struct KeyboardShortcutTests {
 
+    @Test("Command symbols distinguish unrelated actions")
+    func iconNames_areUniqueOutsideTheReviewScopeVariants() {
+        // We treat the Review command's two scope variants as one command.
+        // Focusing and toggling the sidebar remain different commands.
+        let sharedFamilies: [Set<WeirShortcutAction>] = [
+            [.review, .reviewLatestTurn]
+        ]
+        let grouped = Dictionary(grouping: WeirShortcutAction.allCases, by: \.iconName)
+        for (symbol, actions) in grouped where actions.count > 1 {
+            #expect(sharedFamilies.contains(Set(actions)), "Unexpected shared symbol \(symbol): \(actions)")
+        }
+    }
+
+    @Test("Command symbols identify their destinations and navigation directions", arguments: [
+        (WeirShortcutAction.showNeedsAttention, "tray"),
+        (.planUsage, "hourglass"),
+        (.toggleSidebar, "sidebar.left"),
+        (.focusSidebar, "sidebar.squares.left"),
+        (.toggleChangesPanel, "plus.forwardslash.minus"),
+        (.showScratch, "note.text"),
+        (.previousTab, "arrow.backward.square"),
+        (.nextTab, "arrow.forward.square"),
+        (.previousSession, "backward.end"),
+        (.nextSession, "forward.end"),
+        (.showProjectMenu, "book.closed"),
+        (.showWorktreeMenu, "list.bullet"),
+        (.newWorktree, "arrow.triangle.branch"),
+        (.openFolder, "folder"),
+        (.splitRight, "rectangle.split.2x1")
+    ])
+    func iconName_identifiesTheCommand(action: WeirShortcutAction, symbol: String) {
+        #expect(action.iconName == symbol)
+    }
+
     // MARK: - Modifiers
 
     @Test("Ghostty token order is super, ctrl, alt, shift")

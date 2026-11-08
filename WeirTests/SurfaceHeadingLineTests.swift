@@ -102,7 +102,7 @@ struct SurfaceHeadingLineTests {
         let book = NamedFrameRecorder(space: Self.space)
         let view = HStack(spacing: 0) {
             RailColumn {
-                IconControlButton(systemImage: "list.bullet.rectangle", name: "Worktrees", shortcut: nil) {}
+                IconControlButton(systemImage: WeirShortcutAction.toggleSidebar.iconName, name: "Worktrees", shortcut: nil) {}
                     .recordFrame(in: book, as: "first")
                 IconControlButton(systemImage: "bell", name: "Notification History", shortcut: nil) {}
             } bottom: {

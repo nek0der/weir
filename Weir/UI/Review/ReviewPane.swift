@@ -532,7 +532,7 @@ struct ReviewWorkspaceView: View {
             ReviewUnplacedCommentBanner(reviewSession: reviewSession)
             if let error = reviewSession.errorMessage {
                 ReviewBanner(
-                    systemImage: "exclamationmark.triangle.fill",
+                    systemImage: "xmark.octagon.fill",
                     message: Text(display: error),
                     tone: .error
                 )
@@ -541,7 +541,7 @@ struct ReviewWorkspaceView: View {
             // about to appear.
             if reviewSession.hasPendingChanges {
                 ReviewBanner(
-                    systemImage: "arrow.trianglehead.2.clockwise",
+                    systemImage: "arrow.clockwise",
                     message: Text("Files in the worktree changed after this was loaded."),
                     tone: .notice,
                     actionTitle: "Refresh",
