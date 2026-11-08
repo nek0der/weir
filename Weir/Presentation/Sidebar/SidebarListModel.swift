@@ -23,7 +23,8 @@ struct SidebarProjectHeader: Identifiable, Equatable {
     /// (`SidebarHeaderText`).
     let moreCount: Int
     /// What waits or runs inside a folded header (`marks(counts:running:)`);
-    /// none on an open one, whose rows show it.
+    /// none on an open one, whose rows show it. The header draws only the
+    /// first (`displayedMark`); VoiceOver and the tooltip read them all.
     let marks: [SessionRowFact.Glyph]
     /// The requests waiting inside a folded header: the approval card
     /// opened for one stands beside the header, as its row is not drawn.
@@ -40,7 +41,14 @@ struct SidebarProjectHeader: Identifiable, Equatable {
         let folder: URL
     }
 
-    /// The marks a folded header shows, one of each kind, in this order:
+    /// The one mark the header draws: the most urgent of `marks`. One at
+    /// most keeps the mark the same width on every header, so the marks and
+    /// counts of the projects line up down the sidebar.
+    var displayedMark: SessionRowFact.Glyph? {
+        marks.first
+    }
+
+    /// The marks a folded header holds, one of each kind, in this order:
     /// a wait on the person, a stop, then a turn running. Unread turns get
     /// none: they ask for nothing, and the count of the attention button
     /// already says they are there.

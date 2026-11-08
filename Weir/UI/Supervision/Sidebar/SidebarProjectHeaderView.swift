@@ -7,12 +7,15 @@ import WeirDomain
 
 /// A project's header, 28pt: `[mark] name ─── count ▼`. The rule
 /// runs from the name to the count, so where one project ends and the next
-/// begins reads at a glance. A folded header shows what waits or runs
-/// inside it before its count; one another window shows says so in place
-/// of the count, and pressing that brings the window forward. Its ＋ makes
-/// a new worktree in the project, and is always shown: the sidebar
-/// heading's ＋ opens a folder as a project, so this is the one in view
-/// for a worktree.
+/// begins reads at a glance, and it gives way first in a narrow sidebar. A
+/// folded header shows the most urgent of what waits or runs inside it
+/// before its count, and the tooltip and VoiceOver name all of it; one
+/// another window shows carries a window icon in place of the count, and
+/// pressing that brings the window forward. The mark and the count each
+/// keep a width of their own on every header, open or folded, so they line
+/// up down the sidebar whatever each project holds. Its ＋ makes a new
+/// worktree in the project, and is always shown: the sidebar heading's ＋
+/// opens a folder as a project, so this is the one in view for a worktree.
 ///
 /// Pressing anywhere on it opens or folds it, ⌥ held for every header; it
 /// never switches the window's project, which a row does. It is dragged
@@ -111,8 +114,8 @@ struct SidebarProjectHeaderView: View {
         )
         return HStack(spacing: Layout.spaceSnug) {
             ProjectAvatar(name: header.name, paletteIndex: header.paletteIndex, size: .header)
-            // The name is what a narrow sidebar cuts first, then the count,
-            // then the marks; the ＋ and the fold stay.
+            // A narrow sidebar takes the rule first, then cuts the name; the
+            // mark, the count, the ＋, and the fold keep their widths.
             Text(verbatim: header.name)
                 .font(.supervision(.label, weight: header.isCollapsed ? .medium : .bold))
                 .foregroundStyle(nameColor)
@@ -122,23 +125,26 @@ struct SidebarProjectHeaderView: View {
             Rectangle()
                 .fill(isCarriedOverProject ? accent : SupervisionTokens.line.color)
                 .frame(height: 1)
-                .frame(minWidth: Layout.spaceM)
+                .frame(minWidth: 0)
                 .accessibilityHidden(true)
-            if !header.marks.isEmpty {
-                HStack(spacing: Layout.spaceXS) {
-                    ForEach(Array(header.marks.enumerated()), id: \.offset) { _, mark in
-                        Self.mark(mark)
-                    }
+            ZStack {
+                if let mark = header.displayedMark {
+                    Self.mark(mark)
                 }
-                .help(Text(verbatim: contents ?? ""))
-                .layoutPriority(3)
             }
+            .frame(width: Layout.sidebarHeaderMarkSize, height: Layout.sidebarHeaderMarkSize)
+            .help(Text(verbatim: contents ?? ""))
+            .layoutPriority(3)
             if let trouble = header.trouble {
                 troubleMark(trouble)
                     .layoutPriority(3)
             }
-            trailingMark
-                .layoutPriority(2)
+            // A header that shows trouble has no count to line up, and the
+            // words already take room, so it gives the empty slot to the name.
+            if header.trouble == nil || header.isInOtherWindow {
+                trailingMark
+                    .layoutPriority(2)
+            }
             // The sidebar heading's ＋ in its header's size: muted at rest,
             // and filled under the pointer, so it reads as a click of its
             // own rather than part of the header's fold. It keeps less room
@@ -179,7 +185,7 @@ struct SidebarProjectHeaderView: View {
             isHovering: isHovering,
             isKeyboardSelected: isKeyboardSelected
         ))
-        // Below the ＋ and the Other Window mark, which take their own
+        // Below the ＋ and the other window's icon, which take their own
         // clicks rather than also folding the header. A ⌘-click opens a
         // project no window shows in a new window, as its menu's Open in
         // New Window does; on any other project it folds, as a click does.
@@ -237,32 +243,54 @@ struct SidebarProjectHeaderView: View {
         return header.isCollapsed ? SupervisionTokens.muted.color : SupervisionTokens.text.color
     }
 
-    /// The count, or "Other Window" for a project another window shows,
-    /// which brings that window forward.
-    @ViewBuilder private var trailingMark: some View {
-        if header.isInOtherWindow, let bringForward = actions.bringOtherWindowForward {
-            Button(action: bringForward) {
-                Text("Other Window", comment: "Another window shows this project: choosing it brings that window forward")
-                    .font(.supervision(.micro))
-                    .foregroundStyle(SupervisionTokens.muted.color)
-                    .lineLimit(1)
-                    .padding(.horizontal, Layout.spaceXS)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Layout.spaceXS, style: .continuous)
-                            .strokeBorder(SupervisionTokens.line.color, lineWidth: 1)
-                    )
-            }
-            .buttonStyle(.plain)
-            .focusable(false)
-            .help(Text(SidebarHeaderText.otherWindowHelp(header.name)))
-        } else if header.trouble == nil, let count = SidebarHeaderText.count(header, locale: locale) {
-            Text(verbatim: count)
+    /// The count, or a window icon for a project another window shows,
+    /// which brings that window forward. Either ends at the right of a
+    /// two-digit count's width, so the mark before it stands in the same
+    /// place on every header; a longer count widens it rather than being cut.
+    private var trailingMark: some View {
+        ZStack(alignment: .trailing) {
+            // We hold the width of the wider of a two-digit count and the
+            // window icon, so a header with the icon keeps the width of one
+            // with a count.
+            Text(verbatim: "88")
                 .font(.supervision(.detail))
                 .monospacedDigit()
-                .foregroundStyle(SupervisionTokens.muted.color)
-                .lineLimit(1)
+                .hidden()
+                .accessibilityHidden(true)
+            Image(systemName: Self.otherWindowSymbol)
+                .font(.supervision(.detail))
+                .hidden()
+                .accessibilityHidden(true)
+            if header.isInOtherWindow, let bringForward = actions.bringOtherWindowForward {
+                Button(action: bringForward) {
+                    Image(systemName: Self.otherWindowSymbol)
+                        .font(.supervision(.detail))
+                        .frame(height: Layout.sidebarHeadingButtonHeight)
+                        .accessibilityLabel(Text(
+                            "Other Window",
+                            comment: "Another window shows this project: choosing it brings that window forward"
+                        ))
+                }
+                // We give it the ＋'s face rather than a border, so a glyph
+                // alone reads as a click, and no room either side, so it ends
+                // where a count does.
+                .buttonStyle(.supervisionIcon(horizontalPadding: 0))
+                .focusable(false)
+                .help(Text(SidebarHeaderText.otherWindowHelp(header.name)))
+            } else if header.trouble == nil, let count = SidebarHeaderText.count(header, locale: locale) {
+                Text(verbatim: count)
+                    .font(.supervision(.detail))
+                    .monospacedDigit()
+                    .foregroundStyle(SupervisionTokens.muted.color)
+                    .lineLimit(1)
+            }
         }
+        .fixedSize(horizontal: true, vertical: false)
     }
+
+    /// The icon a header shows in place of its count when another window
+    /// shows the project.
+    private static let otherWindowSymbol = "macwindow.on.rectangle"
 
     /// What kept the last sync from reading the project's folder, in place
     /// of the count: a glyph and words, so it does not rest on the color,
@@ -289,8 +317,8 @@ struct SidebarProjectHeaderView: View {
         return contents.map { Text(verbatim: $0) } ?? Text(verbatim: "")
     }
 
-    /// One of a folded header's marks, at the compact size a tab's mark
-    /// shares, so they keep their gaps beside the count.
+    /// A folded header's mark, at the compact size a tab's mark shares,
+    /// which is also the width every header keeps for it.
     static func mark(_ glyph: SessionRowFact.Glyph) -> SessionStateGlyph {
         SessionStateGlyph(glyph: glyph, size: Layout.sidebarHeaderMarkSize)
     }
