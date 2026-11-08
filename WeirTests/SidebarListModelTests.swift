@@ -555,6 +555,42 @@ struct SidebarListModelTests {
         )
     }
 
+    @Test(arguments: [false, true], [false, true])
+    func trouble_replacesTheCountAndOtherWindowIcon(collapsed: Bool, isInOtherWindow: Bool) {
+        var header = Self.header(collapsed: collapsed, isInOtherWindow: isInOtherWindow)
+        #expect(header.trailingMark == (isInOtherWindow ? .otherWindow : .count))
+        for kind in [ProjectTrouble.folderMissing, .gitUnavailable, .listingFailed(detail: nil), .listingFailed(detail: "fatal")] {
+            let trouble = SidebarProjectHeader.Trouble(kind: kind, folder: URL(fileURLWithPath: "/tmp/gone"))
+            header.trouble = trouble
+            #expect(header.trailingMark == .trouble(trouble))
+        }
+        header.trouble = nil
+        #expect(header.trailingMark == (isInOtherWindow ? .otherWindow : .count))
+    }
+
+    @Test func troubleKinds_haveDistinctSymbols() {
+        #expect(ProjectTroubleText.symbol(.folderMissing) == "folder.badge.questionmark")
+        #expect(ProjectTroubleText.symbol(.gitUnavailable) == "exclamationmark.triangle")
+        #expect(ProjectTroubleText.symbol(.listingFailed(detail: nil)) == "list.bullet.rectangle")
+        #expect(ProjectTroubleText.symbol(.listingFailed(detail: "fatal")) == "list.bullet.rectangle")
+    }
+
+    @Test(arguments: [false, true])
+    func voiceOver_namesTrouble_evenWhenAnotherWindowShowsTheProject(isInOtherWindow: Bool) {
+        var header = Self.header(isInOtherWindow: isInOtherWindow)
+        header.trouble = SidebarProjectHeader.Trouble(kind: .folderMissing, folder: URL(fileURLWithPath: "/tmp/gone"))
+        let english = SidebarHeaderText.accessibilityLabel(header, locale: Self.english)
+        let japanese = SidebarHeaderText.accessibilityLabel(header, locale: Self.japanese)
+        #expect(english.contains("Folder Missing"))
+        #expect(japanese.contains(ProjectTroubleText.label(.folderMissing).resolved(in: Self.japanese)))
+        #expect(english.contains("weir"))
+        #expect(japanese.contains("weir"))
+        if isInOtherWindow {
+            #expect(english.contains("shown in another window"))
+            #expect(japanese.contains("別のウインドウで表示中"))
+        }
+    }
+
     @Test func theContents_listTheMarksInWords() {
         #expect(SidebarHeaderText.contents([], locale: Self.english) == nil)
         #expect(SidebarHeaderText.contents(["Needs approval", "Running"], locale: Self.english) == "Contains: Needs approval and Running")

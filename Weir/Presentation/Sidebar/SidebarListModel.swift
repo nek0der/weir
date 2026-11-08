@@ -41,6 +41,23 @@ struct SidebarProjectHeader: Identifiable, Equatable {
         let folder: URL
     }
 
+    /// The contents of the count slot, shared by open and folded headers.
+    enum TrailingMark: Equatable {
+        case count
+        case otherWindow
+        case trouble(Trouble)
+    }
+
+    /// The count slot's content, with trouble taking priority in either window.
+    var trailingMark: TrailingMark {
+        // Trouble needs attention first. The other window remains reachable
+        // through the header's menu and VoiceOver actions.
+        if let trouble {
+            return .trouble(trouble)
+        }
+        return isInOtherWindow ? .otherWindow : .count
+    }
+
     /// The one mark the header draws: the most urgent of `marks`. One at
     /// most keeps the mark the same width on every header, so the marks and
     /// counts of the projects line up down the sidebar.

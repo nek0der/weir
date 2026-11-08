@@ -11,7 +11,10 @@ import WeirDomain
 /// folded header shows the most urgent of what waits or runs inside it
 /// before its count, and the tooltip and VoiceOver name all of it; one
 /// another window shows carries a window icon in place of the count, and
-/// pressing that brings the window forward. The mark and the count each
+/// pressing that brings the window forward. Trouble replaces the count or
+/// window icon with a red symbol whose shape identifies the kind. Its
+/// tooltip and VoiceOver hint explain what happened and what to do, and
+/// VoiceOver names the kind. The mark and the count each
 /// keep a width of their own on every header, open or folded, so they line
 /// up down the sidebar whatever each project holds. Its ＋ makes a new
 /// worktree in the project, and is always shown: the sidebar heading's ＋
@@ -135,16 +138,8 @@ struct SidebarProjectHeaderView: View {
             .frame(width: Layout.sidebarHeaderMarkSize, height: Layout.sidebarHeaderMarkSize)
             .help(Text(verbatim: contents ?? ""))
             .layoutPriority(3)
-            if let trouble = header.trouble {
-                troubleMark(trouble)
-                    .layoutPriority(3)
-            }
-            // A header that shows trouble has no count to line up, and the
-            // words already take room, so it gives the empty slot to the name.
-            if header.trouble == nil || header.isInOtherWindow {
-                trailingMark
-                    .layoutPriority(2)
-            }
+            trailingMark
+                .layoutPriority(2)
             // The sidebar heading's ＋ in its header's size: muted at rest,
             // and filled under the pointer, so it reads as a click of its
             // own rather than part of the header's fold. It keeps less room
@@ -243,68 +238,83 @@ struct SidebarProjectHeaderView: View {
         return header.isCollapsed ? SupervisionTokens.muted.color : SupervisionTokens.text.color
     }
 
-    /// The count, or a window icon for a project another window shows,
-    /// which brings that window forward. Either ends at the right of a
-    /// two-digit count's width, so the mark before it stands in the same
-    /// place on every header; a longer count widens it rather than being cut.
+    /// The count, a trouble icon, or a button for another window.
+    /// The slot fits a two-digit count or any of the icons, so the mark
+    /// before it stands in the same place on every header; a longer count
+    /// widens it rather than being cut.
     private var trailingMark: some View {
         ZStack(alignment: .trailing) {
-            // We hold the width of the wider of a two-digit count and the
-            // window icon, so a header with the icon keeps the width of one
-            // with a count.
+            // We reserve every icon's width even when absent, so trouble
+            // keeps the same columns as a count or another window's icon.
             Text(verbatim: "88")
                 .font(.supervision(.detail))
                 .monospacedDigit()
                 .hidden()
                 .accessibilityHidden(true)
-            Image(systemName: Self.otherWindowSymbol)
-                .font(.supervision(.detail))
-                .hidden()
-                .accessibilityHidden(true)
-            if header.isInOtherWindow, let bringForward = actions.bringOtherWindowForward {
-                Button(action: bringForward) {
-                    Image(systemName: Self.otherWindowSymbol)
-                        .font(.supervision(.detail))
-                        .frame(height: Layout.sidebarHeadingButtonHeight)
-                        .accessibilityLabel(Text(
-                            "Other Window",
-                            comment: "Another window shows this project: choosing it brings that window forward"
-                        ))
-                }
-                // We give it the ＋'s face rather than a border, so a glyph
-                // alone reads as a click, and no room either side, so it ends
-                // where a count does.
-                .buttonStyle(.supervisionIcon(horizontalPadding: 0))
-                .focusable(false)
-                .help(Text(SidebarHeaderText.otherWindowHelp(header.name)))
-            } else if header.trouble == nil, let count = SidebarHeaderText.count(header, locale: locale) {
-                Text(verbatim: count)
+            ForEach(Self.trailingSymbols, id: \.self) { symbol in
+                Image(systemName: symbol)
                     .font(.supervision(.detail))
-                    .monospacedDigit()
-                    .foregroundStyle(SupervisionTokens.muted.color)
-                    .lineLimit(1)
+                    .hidden()
+                    .accessibilityHidden(true)
+            }
+            switch header.trailingMark {
+            case let .trouble(trouble):
+                troubleMark(trouble)
+            case .otherWindow:
+                if let bringForward = actions.bringOtherWindowForward {
+                    Button(action: bringForward) {
+                        Image(systemName: Self.otherWindowSymbol)
+                            .font(.supervision(.detail))
+                            .frame(height: Layout.sidebarHeadingButtonHeight)
+                            .accessibilityLabel(Text(
+                                "Other Window",
+                                comment: "Another window shows this project: choosing it brings that window forward"
+                            ))
+                    }
+                    // We give it the ＋'s face rather than a border, so a glyph
+                    // alone reads as a click, and no room either side, so it ends
+                    // where a count does.
+                    .buttonStyle(.supervisionIcon(horizontalPadding: 0))
+                    .focusable(false)
+                    .help(Text(SidebarHeaderText.otherWindowHelp(header.name)))
+                } else {
+                    countMark
+                }
+            case .count:
+                countMark
             }
         }
         .fixedSize(horizontal: true, vertical: false)
+    }
+
+    @ViewBuilder
+    private var countMark: some View {
+        if let count = SidebarHeaderText.count(header, locale: locale) {
+            Text(verbatim: count)
+                .font(.supervision(.detail))
+                .monospacedDigit()
+                .foregroundStyle(SupervisionTokens.muted.color)
+                .lineLimit(1)
+        }
     }
 
     /// The icon a header shows in place of its count when another window
     /// shows the project.
     private static let otherWindowSymbol = "macwindow.on.rectangle"
 
-    /// What kept the last sync from reading the project's folder, in place
-    /// of the count: a glyph and words, so it does not rest on the color,
-    /// and the sentence that says what to do in its tooltip.
+    private static let trailingSymbols = [otherWindowSymbol] + [
+        ProjectTrouble.folderMissing, .gitUnavailable, .listingFailed(detail: nil)
+    ].map(ProjectTroubleText.symbol)
+
+    /// The trouble's shape and accessible label, with its explanation in
+    /// the tooltip. The header repeats the label because it hides children
+    /// from VoiceOver.
     private func troubleMark(_ trouble: SidebarProjectHeader.Trouble) -> some View {
-        HStack(spacing: Layout.spaceXS) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .accessibilityHidden(true)
-            Text(ProjectTroubleText.label(trouble.kind))
-                .lineLimit(1)
-        }
-        .font(.supervision(.micro))
-        .foregroundStyle(SupervisionTokens.stoppedText.color)
-        .help(Text(ProjectTroubleText.explanation(trouble.kind, folder: trouble.folder)))
+        Image(systemName: ProjectTroubleText.symbol(trouble.kind))
+            .font(.supervision(.detail))
+            .foregroundStyle(SupervisionTokens.stoppedText.color)
+            .accessibilityLabel(Text(ProjectTroubleText.label(trouble.kind)))
+            .help(Text(ProjectTroubleText.explanation(trouble.kind, folder: trouble.folder)))
     }
 
     /// What VoiceOver says after the header's name: the trouble and what to
