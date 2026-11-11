@@ -29,7 +29,7 @@ struct AgentWorktreeSettingsModelTests {
 
     @Test func theRealDescriptorsListEveryAgentButOpenCode() {
         let model = AgentWorktreeSettingsModel()
-        #expect(model.routed == [.claude, .codex, .antigravity])
+        #expect(model.routed == [.claude, .codex, .antigravity, .kiro])
         #expect(model.unrouted == [.opencode])
         #expect(model.provenAfterward == [.opencode])
     }
@@ -95,7 +95,7 @@ struct AgentWorktreeSettingsModelTests {
             session.setProjectRoutesWorktrees(project.id, for: kind, to: false)
         }
         let saved = try #require(session.projects.first { $0.id == project.id })
-        let expected: [AgentKind: Bool] = [.claude: false, .codex: false, .antigravity: false, .opencode: true]
+        let expected: [AgentKind: Bool] = [.claude: false, .codex: false, .antigravity: false, .opencode: true, .kiro: false]
         #expect(Set(expected.keys) == Set(AgentKind.allCases), "a new agent says whether it had a toggle")
         for kind in AgentKind.allCases {
             #expect(saved.routesWorktrees(for: kind) == expected[kind], "\(kind)")

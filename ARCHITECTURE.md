@@ -21,8 +21,8 @@ Weir/
   UI/            SwiftUI views, NSViewRepresentable bridges, design system
     Supervision/ the supervision window: title bar, rail, sidebar, session area, panels
   FFI/           libghostty C ABI wrapper (GhosttyFFI)
-  Resources/     Info.plist, xcstrings, claude-shim / codex-shim / antigravity-shim / opencode-shim (sharing agent-shim/runtime-common.sh),
-                 antigravity-plugin and opencode-plugin (the plugins those shims place in each agent's folder),
+  Resources/     Info.plist, xcstrings, claude-shim / codex-shim / antigravity-shim / opencode-shim / kiro-shim (sharing agent-shim/runtime-common.sh),
+                 antigravity-plugin, opencode-plugin, and kiro-hooks (what those shims place in each agent's folder),
                  ghostty/ (shell integration, themes), terminfo, cli/ (the `weir` shell command)
 AgentIntegrationService/
   Service/        launchd-managed macOS XPC host for the Rust approval broker
@@ -45,6 +45,7 @@ rust/
   weir-provider-codex/  Codex adapter and approval translation
   weir-provider-antigravity/ Antigravity CLI adapter; it answers no approvals
   weir-provider-opencode/ OpenCode adapter; its report comes from a plugin in the pane's interface
+  weir-provider-kiro/   Kiro CLI adapter; it answers no approvals and reads turns from Kiro's session log
   weir-agent-protocol/  versioned wire messages and authenticated sessions
   weir-rust-bridge/     Rust entry points exposed through a stable C ABI
 ```
@@ -470,9 +471,10 @@ the turns, and the commands for the app to perform.
   projection shows the run waiting on a question or a sign-in until the next
   report, without writing its record, and leaves a wait a hook announced as
   it is. A sign-in reads "Needs sign-in" in the row, the list, the decision
-  bar, and the notification, and is counted on its own. Antigravity has no
-  permission hook, so its permission prompts arrive this way too, as `blocked`
-  with the kind `permission` (`Capability::ProgramStatusAnnouncesPermission`).
+  bar, and the notification, and is counted on its own. Antigravity and Kiro
+  have no permission hook, so their permission prompts arrive this way too, as
+  `blocked` with the kind `permission`
+  (`Capability::ProgramStatusAnnouncesPermission`).
 - **Restore Code** ("Restore Code to Before This Turn…" on a changes panel
   row and in the decision bar's ⋯ menu) runs through `RestoreCoordinator` into
   Rust (`WeirRestoreBridge`). Rust journals each operation under the
@@ -833,8 +835,8 @@ build that reads a newer file degrades cleanly.
      the recipes the app asks for all read. The rules (`project`,
      `on_launch`, `on_terminate`) branch on capabilities, so they need no
      change unless the agent behaves in a way no capability describes yet, as
-     Antigravity and OpenCode did (`docs/provider-adapters.md`, "Providers
-     that needed more than the contract").
+     Antigravity, OpenCode, and Kiro did (`docs/provider-adapters.md`,
+     "Providers that needed more than the contract").
   2. Swift: a case in `AgentKind` (`Core/Domain/AgentKind.swift`). The
      compiler then asks for its launch command and the option its resume
      names the session by there, and its badge's letters and colors in

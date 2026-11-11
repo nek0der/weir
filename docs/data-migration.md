@@ -145,6 +145,7 @@ there.
 | Run records (`agent-states/`, `codex-agent-states/`) | still schema 3, optional fields only (`RunRecord`) | none |
 | Antigravity's run records and resume hints (`antigravity-agent-states/`, `antigravity-sessions/`) | new | — |
 | OpenCode's run records and resume hints (`opencode-agent-states/`, `opencode-sessions/`) | new | — |
+| Kiro's run records and resume hints (`kiro-agent-states/`, `kiro-sessions/`) | new | — |
 | Saved turn starts (`opencode-agent-states/turn-preparations/`) | new: at most one per run, gone once a turn takes it | — |
 | Turn records and counters (`<state>/turns/`) | new | — |
 | `turn-reads.json`, `viewed-lines.json` | new | — |
@@ -159,6 +160,7 @@ there.
 | Codex's `~/.codex/config.toml` (the person's own) | no longer written; what earlier builds left stays | none |
 | Antigravity's plugin (`~/.gemini/config/plugins/weir`) | new | — |
 | OpenCode's plugin (`~/.config/opencode/plugins/weir`) | new | — |
+| Kiro's hook file (`~/.kiro/hooks/weir.json`) and the checksum of what Weir wrote there (`~/.kiro/hooks/.weir.json.cksum`) | new | — |
 | Refs and files in each repository's Git directory | new, and one no longer written | — |
 
 ### `state.json`: version 5 to 6
@@ -429,8 +431,9 @@ Some keys of version 6 are still written but no longer read:
     so dropping them needs no version bump. They then move to the list
     above, as keys passed over and not written again.
 
-A saved `antigravity` or `opencode` agent adds no version either. The build
-before opens a file that names it and loses only what belongs to that agent:
+A saved `antigravity`, `opencode`, or `kiro` agent adds no version either. The
+build before opens a file that names it and loses only what belongs to that
+agent:
 
 - A tab's `agentSessions` and `agentBadges` skip the provider they do not know
   (`Tab.decodeByProvider`), and the next save drops those entries. The tab's
@@ -439,8 +442,8 @@ before opens a file that names it and loses only what belongs to that agent:
   drops it. An entry of `conversationTabNames` of that agent is passed over,
   and the next save drops it too.
 - `settings.json` keeps `newSession.lastOpen` and a project's `open` as strings.
-  A value of `antigravity` or `opencode` reads as no choice there, and is
-  written back only until the sheet records another.
+  A value of `antigravity`, `opencode`, or `kiro` reads as no choice there, and
+  is written back only until the sheet records another.
 
 0.1.9 reads version 5 only. A version 6 file fails to decode
 there before its version is even compared, because version 6 drops keys that
@@ -693,8 +696,9 @@ file and ignores them.
 Each project's `routing` also gains `antigravity`, from the project's
 `routeAntigravityWorktrees` (`WorktreeRouting.swift`). The hook of a build
 before looks up only its own agents. The keys are the agents whose descriptor
-declares `worktree_placement` (Claude, Codex, and Antigravity), and any agent
-the project turned off. Builds up to 0.1.15 named only `claude` and `codex`.
+declares `worktree_placement` (Claude, Codex, Antigravity, and Kiro), and any
+agent the project turned off. Builds up to 0.1.17 pass Kiro's key over. Builds
+up to 0.1.15 named only `claude` and `codex`.
 
 ### Run records
 
@@ -1144,6 +1148,21 @@ every file in the folder is its own.
 The plugin stays when you go back. An earlier build places nothing and does not
 run this shim, so `WEIR_OPENCODE_HOOK_DIR` is unset in its panes, as it is
 outside Weir, and the plugin does nothing.
+
+### Kiro's hook file
+
+Not in the Application Support folder: `kiro-cli` takes no hooks on its command
+line, so the shim of a Weir pane places `~/.kiro/hooks/weir.json`
+(`Weir/Resources/kiro-shim/kiro-cli`), and keeps the checksum of what it wrote
+in `~/.kiro/hooks/.weir.json.cksum`. The shim replaces the file only while it
+matches that checksum, so a file the person wrote or edited is left alone.
+Weir takes no copy, as the file is its own until the person edits it.
+
+The file stays when you go back. An earlier build places nothing and does not
+run this shim, so `WEIR_KIRO_HOOK_DIR` is unset in its panes, as it is outside
+Weir, and every hook in the file exits 0 without output, which Kiro ignores.
+Removing the file stops it, until the next `kiro-cli` run in a pane of the
+current build.
 
 ### New fields on a run record and a stop
 

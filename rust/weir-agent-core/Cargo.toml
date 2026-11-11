@@ -20,6 +20,7 @@ weir-agent-model = { path = "../weir-agent-model", features = ["conformance"] }
 weir-provider-antigravity = { path = "../weir-provider-antigravity" }
 weir-provider-claude = { path = "../weir-provider-claude" }
 weir-provider-codex = { path = "../weir-provider-codex" }
+weir-provider-kiro = { path = "../weir-provider-kiro" }
 
 [lints]
 workspace = true

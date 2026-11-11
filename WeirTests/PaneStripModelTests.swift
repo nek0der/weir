@@ -383,6 +383,8 @@ struct PaneStripModelTests {
         (.codex, "codex"),
         (.antigravity, "agy"),
         (.opencode, "opencode"),
+        // Kiro's hooks load only under its v3 engine, which Weir asks for.
+        (.kiro, "kiro-cli --v3"),
         (nil, nil)
     ])
     func newTabAction_stagesOnlyTheNewTabInTheRequestingWindow(agent: AgentKind?, command: String?) throws {

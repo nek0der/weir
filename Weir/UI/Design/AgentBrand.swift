@@ -55,6 +55,13 @@ struct AgentBrand: Equatable, Sendable {
                 foreground: SupervisionTokens.badgeForeground,
                 edge: SupervisionTokens.opencodeEdge
             )
+        case .kiro:
+            Self(
+                letters: "Ki",
+                fill: .solid(SupervisionTokens.kiro),
+                foreground: SupervisionTokens.badgeForeground,
+                edge: SupervisionTokens.kiroEdge
+            )
         }
     }
 }

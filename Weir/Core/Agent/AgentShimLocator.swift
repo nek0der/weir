@@ -1,7 +1,7 @@
 // AgentShimLocator.swift
 // Weir — one agent's in-bundle shim directory and the variables a pane's shell needs for it.
 //
-// A `claude` (or `codex`, `agy`, `opencode`) typed in a Weir pane finds the
+// A `claude` (or `codex`, `agy`, `opencode`, `kiro-cli`) typed in a Weir pane finds the
 // shim first on the `PATH`, which installs the hooks and then runs the real
 // agent; its hook writes into the record directories the provider's
 // descriptor names, which these variables carry.

@@ -14,8 +14,8 @@ only when every check passed. It never touches the person's Weir Dev session.
              from outside, which need the Accessibility grant for this
              terminal), and captures of the window and of Settings (which
              need Screen Recording)
-  --agents   Claude Code, Codex, OpenCode, and Antigravity, each started in a
-             pane of its own, prompted, waited on, and quit; each costs a
+  --agents   Claude Code, Codex, OpenCode, Antigravity, and Kiro, each started
+             in a pane of its own, prompted, waited on, and quit; each costs a
              little model use. `--agents claude,codex` checks only those, for
              a day one agent's plan has no use left
   --keep     leave the run open at the end, to look at it
@@ -322,7 +322,7 @@ def commands(run, checks):
 
 # The rows the palette offers for controls with no keyboard shortcut, which
 # the channel reaches through `command` (ADR 0005, "Adding an operation").
-AGENT_ROWS = ["newTab.claude", "newTab.codex", "newTab.antigravity", "newTab.opencode"]
+AGENT_ROWS = ["newTab.claude", "newTab.codex", "newTab.antigravity", "newTab.opencode", "newTab.kiro"]
 SETTINGS_SECTIONS = ["general", "appearance", "font", "terminal", "tabsAndPanes", "quickTerminal",
                      "keyboard", "integrations", "review", "advanced"]
 
@@ -664,7 +664,10 @@ def tmux(run, checks):
 
 
 # Each agent's command and its own quit command, sent as a line at its prompt.
-AGENTS = {"claude": "/exit", "codex": "/quit", "opencode": "/exit", "agy": "/quit"}
+AGENTS = {"claude": "/exit", "codex": "/quit", "opencode": "/exit", "agy": "/quit", "kiro-cli": "/quit"}
+# What an agent's command needs to report to Weir, as Weir's own launches pass
+# it (`AgentKind.startCommand`): Kiro loads hooks only under its v3 engine.
+LAUNCH_ARGUMENTS = {"kiro-cli": " --v3"}
 
 
 def agents(run, checks):
@@ -705,7 +708,7 @@ def agents(run, checks):
 def _agent(run, checks, ref, command, work):
     """Starts the agent, sends it a typed and a pasted prompt, and quits it."""
     quit_line = AGENTS[command]
-    run.type("typeLine", ref, f"cd {shlex.quote(work)} && {command}")
+    run.type("typeLine", ref, f"cd {shlex.quote(work)} && {command}{LAUNCH_ARGUMENTS.get(command, '')}")
     if not checks.check(f"{command} comes to the front", run.in_front(ref, command), run.pane(ref)):
         return
     time.sleep(4)

@@ -261,6 +261,8 @@ targets:
           - "Resources/antigravity-plugin"
           - "Resources/opencode-shim"
           - "Resources/opencode-plugin"
+          - "Resources/kiro-shim"
+          - "Resources/kiro-hooks"
           - "Resources/agent-shim"
           - "Resources/cli"
       - path: AgentIntegrationService/Shared
@@ -318,6 +320,12 @@ targets:
       - path: Weir/Resources/opencode-shim
         type: folder
       - path: Weir/Resources/opencode-plugin
+        type: folder
+      # The kiro-cli shim on the same terms, and the hook file it places in
+      # Kiro's folder, since Kiro takes no hooks on its command line.
+      - path: Weir/Resources/kiro-shim
+        type: folder
+      - path: Weir/Resources/kiro-hooks
         type: folder
       # Shared POSIX helpers sourced by both agent integrations. Kept as a
       # folder resource so the relative path from each hook stays stable.

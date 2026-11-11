@@ -89,11 +89,11 @@ struct AgentResumeCommandBuilderTests {
 
     /// The restored pane's resume walks the agents in the order the chain
     /// named them by hand before it walked `AgentKind`: Claude, Codex,
-    /// Antigravity, OpenCode. With every one named, each in turn wins once
-    /// those before it are taken away.
+    /// Antigravity, OpenCode, and then Kiro, which came after it. With every
+    /// one named, each in turn wins once those before it are taken away.
     @Test("a pane with several named resumes takes them in the chain's old order")
     func firstResume_keepsTheChainsOrder() {
-        let order: [AgentKind] = [.claude, .codex, .antigravity, .opencode]
+        let order: [AgentKind] = [.claude, .codex, .antigravity, .opencode, .kiro]
         #expect(Set(order) == Set(AgentKind.allCases), "a new agent takes its place in this order")
         let (staged, paneID) = AgentResumeFixture.tab(Set(order))
         var tab = staged
@@ -194,6 +194,8 @@ struct AgentResumeCommandBuilderTests {
         case .codex: "codex resume \(id)"
         case .antigravity: "agy --conversation \(id)"
         case .opencode: "opencode --session \(id)"
+        // Weir's resume asks for the v3 engine, the one Kiro's hooks load in.
+        case .kiro: "kiro-cli --v3 --resume-id \(id)"
         }
     }
 

@@ -195,7 +195,7 @@ covers its type's whole area, such as a change to every CI job.
 
 | Scope | Covers |
 | --- | --- |
-| `agent` | Behavior shared by every agent, such as hooks, shims, turns, and agent state, and agents with no scope of their own, such as Antigravity and OpenCode. With `docs`, the contributor and agent instructions. |
+| `agent` | Behavior shared by every agent, such as hooks, shims, turns, and agent state, and agents with no scope of their own, such as Antigravity, OpenCode, and Kiro. With `docs`, the contributor and agent instructions. |
 | `claude` | Behavior specific to Claude Code. |
 | `codex` | Behavior specific to Codex. |
 | `app` | The app as a whole: launch, its name and icon, the `weir` command, and logging. |

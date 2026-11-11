@@ -108,6 +108,26 @@ pub fn parse_utc_seconds(value: &str) -> Option<u64> {
     u64::try_from(total).ok()
 }
 
+/// Returns whole seconds since the Unix epoch for a timestamp an agent writes in its
+/// transcript: UTC, with or without a fraction of a second
+/// (`2026-10-07T12:34:56.789Z`). The fraction is dropped, which moves the time
+/// earlier by under a second. Any other shape, including an offset or a
+/// fraction with no digits, is `None` rather than guessed at.
+#[must_use]
+pub fn parse_utc_seconds_with_fraction(value: &str) -> Option<u64> {
+    let whole = value.get(..19)?;
+    let rest = value.get(19..)?;
+    let is_utc = rest == "Z"
+        || rest
+            .strip_prefix('.')
+            .and_then(|fraction| fraction.strip_suffix('Z'))
+            .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()));
+    if !is_utc {
+        return None;
+    }
+    parse_utc_seconds(&format!("{whole}Z"))
+}
+
 /// Seconds between two record timestamps, or `None` when either is unreadable.
 /// Negative differences clamp to zero: a record stamped in the future is a
 /// clock that moved, not an event that has not happened yet.
@@ -122,6 +142,28 @@ pub fn seconds_between(earlier: &str, later: &str) -> Option<u64> {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn transcript_timestamps_parse_with_and_without_a_fraction() {
+        assert_eq!(
+            parse_utc_seconds_with_fraction("1970-01-01T00:01:00.5Z"),
+            Some(60),
+            "the fraction is dropped"
+        );
+        assert_eq!(
+            parse_utc_seconds_with_fraction("1970-01-01T00:01:00Z"),
+            Some(60)
+        );
+        for value in [
+            "1970-01-01T00:01:00.Z",
+            "1970-01-01T00:01:00.oopsZ",
+            "1970-01-01T00:01:00",
+            "1970-01-01T00:01:00.5+09:00",
+            "",
+        ] {
+            assert_eq!(parse_utc_seconds_with_fraction(value), None, "{value}");
+        }
+    }
 
     #[test]
     fn formats_known_instants() {

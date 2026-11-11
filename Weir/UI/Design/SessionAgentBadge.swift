@@ -6,10 +6,10 @@ import WeirDomain
 
 /// One agent, wherever one is named by a mark: a tab, a pane's header, a
 /// card, or a row (`AgentBadgeStrip` for a place with several):
-/// "Cl", "Ag", and "Op" in white on Claude's, Antigravity's, and OpenCode's
-/// brand colors, and "Cx" in black on white, as Codex's icon draws its
-/// mark. OpenCode's stays "Op" whichever model it runs: the
-/// badge names the agent, and the header names the model. A session
+/// "Cl", "Ag", "Op", and "Ki" in white on Claude's, Antigravity's,
+/// OpenCode's, and Kiro's brand colors, and "Cx" in black on white, as
+/// Codex's icon draws its mark. OpenCode's stays "Op" whichever model it
+/// runs: the badge names the agent, and the header names the model. A session
 /// with only a shell has none: its state glyph is the terminal's mark
 /// already, and a boxed word beside it would only say it again. The letters
 /// are always the same width, so the column the badge sits in lines up from

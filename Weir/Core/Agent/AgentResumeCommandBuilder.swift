@@ -87,7 +87,7 @@ extension AgentKind {
     /// stop's "Start New Conversation" types. Refused, as the resume
     /// is, for a folder with a control character in its name.
     func newConversationCommand(cwd: String?) -> String? {
-        Self.typed(launchCommand, in: cwd)
+        Self.typed(startCommand, in: cwd)
     }
 
     /// The strict resume of this agent, in `cwd` when one is known: the

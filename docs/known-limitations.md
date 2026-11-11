@@ -570,11 +570,74 @@ These describe OpenCode 2.2.5.
   route; a note there says why, and that its worktrees get the setup only in the
   project's location.
 
+## Kiro
+
+These describe the Kiro CLI (`kiro-cli`) 2.37.1, checked again on 3.2.0 for the
+engine it runs, the hooks, the session log, and the permission wait.
+
+- **Only Kiro's v3 engine reports to Weir.** Kiro loads hooks only under v3. A
+  Kiro tab Weir opens, and a resume, run `kiro-cli --v3`. A `kiro-cli` you type
+  keeps Kiro's own choice, and Weir shows no turns for one that runs v2. Since
+  3.0, an interactive chat runs v3 when nothing chooses another engine; one
+  started with `--no-interactive` runs v2 unless it trusts every tool. Weir
+  reads that rule from the launch, so a Kiro that runs v2 anyway shows as a
+  Kiro at rest: one before 3.0, or one you answer "Stay on V2" when Kiro asks
+  once after updating from Kiro 2. Choose v3 with `--v3`,
+  `KIRO_AGENT_ENGINE=v3`, or `chat.agentEngine` in Kiro's settings.
+- **Weir places a hook file in Kiro's own folder.** Kiro takes no hooks on its
+  command line, so the first `kiro-cli` run in a Weir pane places
+  `~/.kiro/hooks/weir.json`. Its hooks do nothing outside a Weir pane. A file
+  there that Weir did not write is left alone, and Kiro then reports nothing to
+  Weir. Once you edit Weir's file (turn a hook off, say), it is yours and Weir
+  no longer updates it. Removing the file stops the reporting until the next
+  `kiro-cli` run in a Weir pane. Weir always places the file under `~/.kiro`,
+  whatever `KIRO_HOME` says, so a Kiro that reads its hooks from another home
+  reports nothing.
+- **A folder Kiro does not trust reports nothing.** Kiro asks whether to trust a
+  folder the first time it runs there, and in one you do not trust it runs no
+  hooks, Weir's included.
+- **No approval card.** Kiro's `PreToolUse` hook can refuse a tool or make Kiro
+  ask, but not allow one, and Kiro asks after every hook anyway. A card would
+  only add a second question. Kiro's own prompt asks, and the decision bar
+  shows that it waits.
+- **`--trust-all-tools` shows only as it was at launch.** No hook says whether
+  Kiro trusts every tool, so the pane header shows the mode the launch gave, and
+  a change in the session does not show.
+- **No plan usage.** Kiro keeps what a turn used only in its own session files,
+  which it does not document, so the Plan Usage panel has no Kiro section.
+- **A stop is read from Kiro's status report.** Esc sends no hook, so the turn
+  ends when Kiro reports itself idle. Inside your own tmux that report does not
+  reach Weir, so a permission wait does not show and a stopped turn stays at
+  work until the next one. Weir never hosts Kiro in tmux.
+- **A failure shows without its reason.** No hook of Kiro's carries an error,
+  so a failed turn is read from Kiro's status report. Weir shows the run as
+  failed until Kiro's next report; Kiro's own screen says why.
+- **A usage limit is not told apart.** Kiro's hooks carry no error, so Weir
+  offers no notification for when the limit resets. What Kiro reports at a
+  real limit has not been seen.
+- **A turn is read from Kiro's session log.** No hook says a turn began, so
+  Weir finds its start and your words in the log Kiro keeps under
+  `~/.kiro/sessions/`. A turn whose start has scrolled more than 4 MiB back in
+  that log by the time Weir first hears of it, after a very long answer, gets
+  no turn record, though its tools still show.
+- **A turn's changes are counted from its first tool.** No hook comes when you
+  send a prompt, so Weir first hears of a turn at its first tool, or at its end
+  when it runs none. What you change yourself before that is not counted, nor
+  what work the turn left running (a background command) changes after Kiro
+  stops. A turn whose log shows nothing run reads as changing nothing; one
+  whose log shows a tool or a subagent that reached no hook of Weir's (a hook
+  you turned off, say) shows "Couldn’t get the changes".
+- **A subagent's own tools do not show.** Kiro 3.2.0 runs a subagent's tools
+  without hooks, so the run shows only the call that started the subagent.
+  What the subagent changes still counts in the turn that started it.
+
 ## For contributors: not yet confirmed on a real machine
 
 These need a signed approval service, sleep, or physical input that the
 automated checks cannot provide. They still have to be checked by hand:
 
+- for Kiro: a real usage limit, and a `--cloud` session, which runs in Kiro's
+  sandbox;
 - that each agent's own prompt, after an update, still behaves as described
   under "Claude Code shows its own prompt while Weir holds its request"
   above (last checked with Claude Code 2.1.316, Codex 0.166, and OpenCode

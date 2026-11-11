@@ -175,7 +175,8 @@ struct ProjectWorktreeRoutingStorageTests {
             #expect(routing == [
                 "claude": !optOuts.contains(.claude),
                 "codex": !optOuts.contains(.codex),
-                "antigravity": !optOuts.contains(.antigravity)
+                "antigravity": !optOuts.contains(.antigravity),
+                "kiro": !optOuts.contains(.kiro)
             ], "\(optOuts)")
         }
     }

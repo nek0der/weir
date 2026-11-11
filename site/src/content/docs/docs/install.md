@@ -9,7 +9,7 @@ sidebar:
 
 - macOS 26 or later, on Apple Silicon.
 - Git.
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), the Antigravity CLI (`agy`), [OpenCode](https://opencode.ai), or any of them together. Weir runs the copies you already have, signed in as you.
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), the Antigravity CLI (`agy`), [OpenCode](https://opencode.ai), the [Kiro CLI](https://kiro.dev/cli/) (`kiro-cli`), or any of them together. Weir runs the copies you already have, signed in as you.
 
 To see pull request status in the sidebar, also install `gh` or `glab` and sign in. Weir works without them.
 
@@ -36,6 +36,7 @@ Weir checks for updates once a day and installs one when you choose to. To check
 3. If **Login Items & Extensions** still lists Weir, turn it off there.
 4. If you ran Antigravity in Weir and `~/.gemini/config/plugins/weir` holds a file named `.weir-managed`, delete that folder. Without that file, the folder is not Weir's.
 5. If you ran OpenCode in Weir and `~/.config/opencode/plugins/weir` holds a file named `.weir-managed`, delete that folder too.
+6. If you ran Kiro in Weir, compare the output of `cksum < ~/.kiro/hooks/weir.json` with the contents of `~/.kiro/hooks/.weir.json.cksum`. If they match, delete both files. If not, you edited `weir.json`, so keep it and delete only `.weir.json.cksum`.
 
 Each repository also keeps Weir's turn snapshots. To delete them, run this in the repository:
 

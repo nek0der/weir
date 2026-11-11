@@ -210,7 +210,7 @@ struct PlanUsagePanel: View {
             PlanUsageText.codexSection(store.codex, last: store.lastCodexUsage, now: now, locale: locale)
         case .antigravity:
             PlanUsageText.antigravitySection(store.antigravity, now: now, locale: locale)
-        case .opencode:
+        case .opencode, .kiro:
             nil
         }
     }

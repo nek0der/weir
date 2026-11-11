@@ -1,0 +1,291 @@
+#!/bin/sh
+# Weir kiro-cli shim: intercepts `kiro-cli` invocations inside a Weir pty.
+# Kiro takes no hooks on its command line, so we keep a hook file in its
+# folder whose hooks report only for a launch through here, and name this
+# launch's run for them.
+#
+# Locate the real kiro-cli: WEIR_REAL_KIRO (an explicit override, a test's
+# stub, taken outside an app bundle only), then the PATH without our own
+# directory, then WEIR_FOUND_KIRO (the one the new workspace sheet found),
+# then the agent catalog's known locations.
+
+set -u
+
+self="$(command -v -- "$0" 2>/dev/null || printf '%s\n' "$0")"
+case "$self" in
+  /*) ;;
+  *) self="$PWD/$self" ;;
+esac
+self_dir="$(cd -- "$(dirname -- "$self")" && pwd -P)"
+# The overrides the test suites use (the real kiro-cli, the Hook Helper) are
+# taken only outside an app bundle, where they run this script from the source
+# tree. A bundle carries its own of each, and nothing in the environment
+# chooses another.
+case "$self_dir" in
+  *.app/Contents/Resources/*) unset WEIR_REAL_KIRO WEIR_HOOK_HELPER ;;
+esac
+runtime_common="$self_dir/../agent-shim/runtime-common.sh"
+if [ -r "$runtime_common" ]; then
+  . "$runtime_common"
+  weir_ensure_run_id
+fi
+
+# Rebuild PATH with our own dir filtered out so command -v finds the real
+# kiro-cli. The colon separates literal folder names.
+filtered_path=""
+old_ifs="$IFS"
+path_split_flags="$-"
+# Field splitting must leave glob characters in folder names intact.
+set -f
+IFS=":"
+for entry in $PATH; do
+  [ "$entry" = "$self_dir" ] && continue
+  # A folder is spelled many ways (a link to it, a trailing slash, a relative
+  # or empty entry), and another Weir's shim would look for us in turn, so we
+  # go by what an entry holds: a shim folder's mark, or this very file under
+  # another name.
+  [ -e "${entry:-.}/weir-hook" ] && continue
+  [ "${entry:-.}/kiro-cli" -ef "$self" ] && continue
+  if [ -z "$filtered_path" ]; then
+    filtered_path="$entry"
+  else
+    filtered_path="$filtered_path:$entry"
+  fi
+done
+IFS="$old_ifs"
+case "$path_split_flags" in
+  *f*) ;;
+  *) set +f ;;
+esac
+
+found_kiro="${WEIR_FOUND_KIRO:-}"
+unset WEIR_FOUND_KIRO
+
+real_kiro="${WEIR_REAL_KIRO:-}"
+found_off_path=0
+if [ -z "$real_kiro" ]; then
+  real_kiro=$(PATH="$filtered_path" command -v kiro-cli 2>/dev/null || true)
+fi
+if [ -z "$real_kiro" ] && [ -n "$found_kiro" ] && [ -f "$found_kiro" ] && [ -x "$found_kiro" ] &&
+  [ ! "$found_kiro" -ef "$self" ] && [ ! -e "${found_kiro%/*}/weir-hook" ]; then
+  real_kiro="$found_kiro"
+  found_off_path=1
+fi
+if [ -z "$real_kiro" ] && command -v weir_find_known_agent >/dev/null 2>&1 &&
+  weir_find_known_agent "${WEIR_KIRO_KNOWN_LOCATIONS:-}" "$self"; then
+  real_kiro="$weir_known_agent"
+  found_off_path=1
+fi
+
+if [ -z "$real_kiro" ]; then
+  printf 'weir: kiro-cli not found in PATH or the usual install folders (searched without %s)\n' "$self_dir" >&2
+  exit 127
+fi
+
+# Set when kiro-cli is a script for the node beside it, found off the PATH
+# (`weir_add_agent_folder`), as every shim takes one. Kiro's own install is a
+# native binary, which gets none.
+kiro_node=""
+if [ "$found_off_path" = 1 ] && command -v weir_add_agent_folder >/dev/null 2>&1 &&
+  weir_add_agent_folder "$real_kiro"; then
+  kiro_node="$weir_agent_node"
+fi
+
+# Kiro's own folder. We do not follow KIRO_HOME: Kiro refuses some values of
+# it (a relative path, the home folder or one above it) and falls back to
+# this one, so reading it here could put our hooks where Kiro never looks.
+kiro_hooks="${HOME:-}/.kiro/hooks"
+hook_file="$kiro_hooks/weir.json"
+# The checksum of the file as we last wrote it, which tells our file apart
+# from one the person has edited since (`enabled: false`, a timeout).
+hook_sum="$kiro_hooks/.weir.json.cksum"
+
+# Places the hook file when it is missing, or when it is the one we wrote, left
+# as we wrote it, and an older version. A file the person wrote or edited is
+# theirs, and a link is followed by no one. A new file goes in by a hard link,
+# which fails when one appeared meanwhile, and a replacement by rename after
+# its contents are read once more, so a Kiro starting now reads the old file
+# or the new one, never half of one, and an edit is lost only if it lands in
+# the instant between that read and the rename. The checksum goes last: a run
+# cut short between the two leaves our current file, which the next launch
+# knows by its contents. A failure leaves Kiro to start, unwatched.
+weir_place_hooks() {
+  source_file="$self_dir/../kiro-hooks/weir.json"
+  [ -n "${HOME:-}" ] && [ -r "$source_file" ] || return 0
+  [ ! -L "$hook_file" ] || return 0
+  wanted=$(cksum <"$source_file") || return 0
+  mkdir -p "$kiro_hooks" 2>/dev/null || return 0
+  staged="$hook_file.staged-$$"
+  if [ -e "$hook_file" ]; then
+    [ -f "$hook_file" ] || return 0
+    current=$(cksum <"$hook_file") || return 0
+    if [ "$current" != "$wanted" ]; then
+      [ -f "$hook_sum" ] && [ "$(cat -- "$hook_sum" 2>/dev/null)" = "$current" ] || return 0
+      cp "$source_file" "$staged" 2>/dev/null || {
+        rm -f "$staged"
+        return 0
+      }
+      if [ "$(cksum <"$hook_file" 2>/dev/null)" != "$current" ] || ! mv -f "$staged" "$hook_file" 2>/dev/null; then
+        rm -f "$staged"
+        return 0
+      fi
+    fi
+  else
+    cp "$source_file" "$staged" 2>/dev/null && ln "$staged" "$hook_file" 2>/dev/null
+    placed=$?
+    rm -f "$staged"
+    [ "$placed" = 0 ] || return 0
+  fi
+  [ "$(cat -- "$hook_sum" 2>/dev/null)" = "$wanted" ] && return 0
+  [ ! -L "$hook_sum" ] || return 0
+  printf '%s\n' "$wanted" >"$hook_sum.staged-$$" 2>/dev/null && mv -f "$hook_sum.staged-$$" "$hook_sum" 2>/dev/null ||
+    rm -f "$hook_sum.staged-$$"
+}
+
+# Whether Kiro will run our hooks as this build wrote them: a hook file that
+# was edited, or is another build's, may report nothing, and a run that could
+# only sit at rest is not begun.
+weir_hooks_in_place() {
+  [ -f "$hook_file" ] && [ ! -L "$hook_file" ] &&
+    [ "$(cksum <"$hook_file" 2>/dev/null)" = "$(cksum <"$self_dir/../kiro-hooks/weir.json" 2>/dev/null)" ]
+}
+
+# Whether this launch runs Kiro's v3 engine, the only one that loads our
+# hooks: by its arguments, then KIRO_AGENT_ENGINE, then the settings, the
+# folder's before the person's. With none of them, kiro-cli 3.2.0 runs v3 in
+# an interactive chat and v2 in one that is not (`--no-interactive`,
+# `--output-format stream-json`, a stdin that is not a terminal) unless it
+# trusts every tool. Weir's own launches pass `--v3`.
+weir_runs_v3() {
+  engine=""
+  previous=""
+  is_interactive=true
+  [ -t 0 ] || is_interactive=false
+  trusts_every_tool=false
+  for arg in "$@"; do
+    case "$arg" in
+      --v3) engine=v3 ;;
+      --v2 | --v1 | --legacy-ui | --classic) engine=other ;;
+      --agent-engine=*) engine="${arg#--agent-engine=}" ;;
+      --no-interactive | --output-format=stream-json) is_interactive=false ;;
+      -a | --trust-all-tools | -[!-]*a*) trusts_every_tool=true ;;
+    esac
+    [ "$previous" = "--agent-engine" ] && engine="$arg"
+    [ "$previous" = "--output-format" ] && [ "$arg" = stream-json ] && is_interactive=false
+    previous="$arg"
+  done
+  if [ -z "$engine" ]; then
+    engine="${KIRO_AGENT_ENGINE:-}"
+  fi
+  for settings in "$PWD/.kiro/settings/cli.json" "${HOME:-}/.kiro/settings/cli.json"; do
+    [ -z "$engine" ] || break
+    [ -r "$settings" ] || continue
+    # JSON may put the value on a line of its own, so the file is read as one
+    # line.
+    settings_text=$(tr '\r\n' '  ' <"$settings" 2>/dev/null) || continue
+    if printf '%s' "$settings_text" | grep -Eq '"chat\.agentEngine"[[:space:]]*:[[:space:]]*"v3"'; then
+      engine=v3
+    elif printf '%s' "$settings_text" | grep -Eq '"chat\.agentEngine"'; then
+      engine=other
+    fi
+  done
+  if [ -z "$engine" ]; then
+    if [ "$is_interactive" = true ] || [ "$trusts_every_tool" = true ]; then
+      engine=v3
+    fi
+  fi
+  [ "$engine" = v3 ]
+}
+
+# Reports this launch to the same receiver as Kiro's hooks, since Kiro sends
+# `SessionStart` only with the first prompt, and none for a resume. A run then
+# shows from the start, and has a record for a failure before any hook to show
+# on. A subcommand, or a question about Kiro itself, starts no agent. A folder
+# whose name has a line break is not reported, as this JSON cannot carry it;
+# the first hook gives the run its folder. A failure here leaves Kiro to start.
+weir_report_launch() {
+  weir_hooks_in_place || return 0
+  weir_runs_v3 "$@" || return 0
+  # The subcommand is the first argument that is neither a flag nor a flag's
+  # value, wherever the flags put it (`kiro-cli --v3 settings list`). The flags
+  # that take a value before a subcommand are `kiro-cli --help`'s (3.2.0);
+  # `chat`'s own come after it, where the search has already stopped.
+  command=""
+  previous=""
+  for arg in "$@"; do
+    case "$previous" in
+      --agent | --resume-id | --repo | --agent-engine)
+        previous=""
+        continue
+        ;;
+    esac
+    previous="$arg"
+    case "$arg" in
+      -*) ;;
+      *)
+        command="$arg"
+        break
+        ;;
+    esac
+  done
+  case "$command" in
+    "" | chat) ;;
+    *) return 0 ;;
+  esac
+  session=""
+  trusts_all=false
+  previous=""
+  for arg in "$@"; do
+    case "$arg" in
+      -h | --help | -V | --version | -l | --list-sessions | --list-models | -d | --delete-session) return 0 ;;
+      # A cloud session runs in Kiro's sandbox, where no hook of ours runs.
+      --cloud) return 0 ;;
+      --resume-id=*) session="${arg#--resume-id=}" ;;
+      -a | --trust-all-tools) trusts_all=true ;;
+      # Short flags written together (`-ra`).
+      -[!-]*a*) trusts_all=true ;;
+    esac
+    [ "$previous" = "--resume-id" ] && session="$arg"
+    previous="$arg"
+  done
+  # The `.` keeps a line break at the end of the folder's name, which command
+  # substitution would drop, leaving another folder's name to report.
+  workspace=$(pwd -P && printf .) || return 0
+  workspace=${workspace%?.}
+  case "$workspace" in
+    *"
+"*) return 0 ;;
+  esac
+  json_escape='s/\\/\\\\/g; s/"/\\"/g'
+  workspace=$(printf '%s' "$workspace" | sed "$json_escape")
+  session=$(printf '%s' "$session" | sed "$json_escape")
+  printf '{"hook_event_name":"WeirLaunch","session_id":"%s","cwd":"%s","trust_all_tools":%s}' \
+    "$session" "$workspace" "$trusts_all" | /bin/sh "$self_dir/weir-hook" >/dev/null 2>&1 || true
+}
+
+# Tells a pane with records apart from a demo's, whose directories are blank:
+# a demo run reports nothing and changes nothing of the person's.
+if [ -n "${WEIR_KIRO_AGENT_STATES_DIR:-}" ]; then
+  weir_place_hooks
+  export WEIR_KIRO_HOOK_DIR="$self_dir"
+fi
+
+# `$$` becomes the agent's pid at the exec, which the host's liveness sweep
+# watches.
+export WEIR_KIRO_PID="$$"
+
+# Never hosted in tmux: Kiro's status report is our only sign of a permission
+# wait or a stopped turn, and it reaches us only outside tmux.
+if [ -n "${TMUX:-}" ]; then
+  WEIR_AGENT_TMUX_HOST_MODE="manual"
+  export WEIR_AGENT_TMUX_HOST_MODE
+fi
+
+if [ -n "${WEIR_KIRO_AGENT_STATES_DIR:-}" ]; then
+  weir_report_launch "$@"
+fi
+
+if [ -n "$kiro_node" ]; then
+  exec "$kiro_node" "$real_kiro" "$@"
+fi
+exec "$real_kiro" "$@"

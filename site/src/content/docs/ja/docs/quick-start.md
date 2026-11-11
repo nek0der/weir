@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-1 つのタスクを最初から最後まで進めます。[インストール済みの Weir](/ja/docs/install/)、Git リポジトリ、サインイン済みの Claude Code、Codex、Antigravity、OpenCode のいずれかが必要です。
+1 つのタスクを最初から最後まで進めます。[インストール済みの Weir](/ja/docs/install/)、Git リポジトリ、サインイン済みの Claude Code、Codex、Antigravity、OpenCode、Kiro のいずれかが必要です。
 
 ## 1. プロジェクトを開く
 
@@ -29,7 +29,7 @@ sidebar:
 
 エージェントが承認を求めたとき、質問したとき、止まったとき、ターンを終えたときは、**要対応** に入ります。<kbd>⌘J</kbd> で移動します。
 
-承認と質問は、ペインの下のバーにある **回答…** か <kbd>⌘⏎</kbd> で承認カードを開いて答えます。Codex と OpenCode の質問と、Antigravity の承認と質問には、エージェントのプロンプトで答えます。他の答え方は[要対応と承認](/ja/docs/needs-attention/)を見てください。
+承認と質問は、ペインの下のバーにある **回答…** か <kbd>⌘⏎</kbd> で承認カードを開いて答えます。Codex と OpenCode の質問と、Antigravity と Kiro の承認と質問には、エージェントのプロンプトで答えます。他の答え方は[要対応と承認](/ja/docs/needs-attention/)を見てください。
 
 ## 5. ターンをレビューする
 

@@ -182,28 +182,34 @@ struct SupervisionTokensTests {
         // The two letters on Claude's orange are a mark, not words to read
         // (`SupervisionTokens.badgeForeground`).
         Pair("Claude badge letters", Tokens.badgeForeground, Tokens.claude),
+        Pair("Kiro badge letters", Tokens.badgeForeground, Tokens.kiro),
         // A badge is told apart by its shape as much as its letters: where
         // a brand fill stands too close to a surface, its edge carries it.
         Pair("Claude badge's edge on window", Tokens.claudeEdge, Tokens.window),
         Pair("Codex badge's edge on window", Tokens.codexEdge, Tokens.window),
         Pair("Antigravity badge's blue on window", Tokens.antigravity, Tokens.window),
         Pair("OpenCode badge's edge on window", Tokens.opencodeEdge, Tokens.window),
+        Pair("Kiro badge's edge on window", Tokens.kiroEdge, Tokens.window),
         Pair("Claude badge's edge on sidebar", Tokens.claudeEdge, Tokens.sidebar),
         Pair("Codex badge's edge on sidebar", Tokens.codexEdge, Tokens.sidebar),
         Pair("Antigravity badge's blue on sidebar", Tokens.antigravity, Tokens.sidebar),
         Pair("OpenCode badge's edge on sidebar", Tokens.opencodeEdge, Tokens.sidebar),
+        Pair("Kiro badge's edge on sidebar", Tokens.kiroEdge, Tokens.sidebar),
         Pair("Claude badge's edge on selection", Tokens.claudeEdge, Tokens.selection),
         Pair("Codex badge's edge on selection", Tokens.codexEdge, Tokens.selection),
         Pair("Antigravity badge's blue on selection", Tokens.antigravity, Tokens.selection),
         Pair("OpenCode badge's edge on selection", Tokens.opencodeEdge, Tokens.selection),
+        Pair("Kiro badge's edge on selection", Tokens.kiroEdge, Tokens.selection),
         Pair("Claude badge's edge on hover", Tokens.claudeEdge, Tokens.hover),
         Pair("Codex badge's edge on hover", Tokens.codexEdge, Tokens.hover),
         Pair("Antigravity badge's blue on hover", Tokens.antigravity, Tokens.hover),
         Pair("OpenCode badge's edge on hover", Tokens.opencodeEdge, Tokens.hover),
+        Pair("Kiro badge's edge on hover", Tokens.kiroEdge, Tokens.hover),
         Pair("Claude badge's edge on popover", Tokens.claudeEdge, Tokens.popover),
         Pair("Codex badge's edge on popover", Tokens.codexEdge, Tokens.popover),
         Pair("Antigravity badge's blue on popover", Tokens.antigravity, Tokens.popover),
         Pair("OpenCode badge's edge on popover", Tokens.opencodeEdge, Tokens.popover),
+        Pair("Kiro badge's edge on popover", Tokens.kiroEdge, Tokens.popover),
         Pair("unread blue mark on popover", Tokens.unread, Tokens.popover),
         Pair("stopped disc on popover", Tokens.stopped, Tokens.popover),
         Pair("needs-input disc's edge on popover", Tokens.waitingGlyphEdge, Tokens.popover)
@@ -345,6 +351,7 @@ struct SupervisionTokensTests {
         #expect(Tokens.codexBadgeForeground.value(isDark: isDark) == SRGB(0x000000))
         #expect(Tokens.antigravity.value(isDark: isDark) == SRGB(0x2B7BEF))
         #expect(Tokens.opencode.value(isDark: isDark) == SRGB(0x211E1E))
+        #expect(Tokens.kiro.value(isDark: isDark) == SRGB(0x9046FF))
         #expect(Tokens.badgeForeground.value(isDark: isDark) == SRGB(0xFFFFFF))
         #expect(AgentBrand.of(.claude) == AgentBrand(
             letters: "Cl", fill: .solid(Tokens.claude), foreground: Tokens.badgeForeground, edge: Tokens.claudeEdge
@@ -357,6 +364,9 @@ struct SupervisionTokensTests {
         ))
         #expect(AgentBrand.of(.opencode) == AgentBrand(
             letters: "Op", fill: .solid(Tokens.opencode), foreground: Tokens.badgeForeground, edge: Tokens.opencodeEdge
+        ))
+        #expect(AgentBrand.of(.kiro) == AgentBrand(
+            letters: "Ki", fill: .solid(Tokens.kiro), foreground: Tokens.badgeForeground, edge: Tokens.kiroEdge
         ))
     }
 
@@ -383,6 +393,16 @@ struct SupervisionTokensTests {
         #expect((ContrastRatio.between(fill, selection) < 3.0) == isDark, "OpenCode badge")
         #expect(ContrastRatio.between(edge, selection) >= 3.0, "OpenCode badge")
         #expect((edge == fill) == !isDark, "OpenCode badge")
+        // Kiro's purple stands under 3:1 off a selected row only in dark,
+        // where its edge is the selection rule's.
+        let kiroFill = Tokens.kiro.value(isDark: isDark)
+        let kiroEdge = Tokens.kiroEdge.value(isDark: isDark)
+        #expect((ContrastRatio.between(kiroFill, selection) < 3.0) == isDark, "Kiro badge")
+        #expect(ContrastRatio.between(kiroEdge, selection) >= 3.0, "Kiro badge")
+        #expect((kiroEdge == kiroFill) == !isDark, "Kiro badge")
+        if isDark {
+            #expect(kiroEdge.hexBytes == SelectionEdgeRule.color(kiroFill, on: selection).hexBytes, "Kiro badge")
+        }
     }
 
     @Test(arguments: [false, true])

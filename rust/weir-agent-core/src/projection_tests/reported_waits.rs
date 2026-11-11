@@ -337,12 +337,28 @@ fn antigravity_badge(status: (ProgramState, Option<BlockedKind>), wall: &str) ->
     let descriptor = weir_provider_antigravity::AntigravityAdapter
         .descriptor()
         .clone();
+    badge_under(descriptor, "antigravity", status, wall)
+}
+
+/// `antigravity_badge` for the real Kiro adapter, whose status reports carry
+/// `kiro-cli` as their app.
+fn kiro_badge(status: (ProgramState, Option<BlockedKind>), wall: &str) -> Badge {
+    let descriptor = weir_provider_kiro::KiroAdapter.descriptor().clone();
+    badge_under(descriptor, "kiro-cli", status, wall)
+}
+
+fn badge_under(
+    descriptor: weir_agent_model::ProviderDescriptor,
+    app: &str,
+    status: (ProgramState, Option<BlockedKind>),
+    wall: &str,
+) -> Badge {
     let mut input = working();
     input.records[0].provider = descriptor.id.clone();
     input.program_status.insert(
         PANE.parse().expect("pane"),
         ProgramStatus {
-            app: "antigravity".to_owned(),
+            app: app.to_owned(),
             state: status.0,
             kind: status.1,
             observed_at: "2026-09-14T12:03:10Z".to_owned(),
@@ -379,6 +395,22 @@ fn antigravitys_own_descriptor_reads_its_status_reports() {
     assert_eq!(
         antigravity_badge(blocked(BlockedKind::Auth), "2026-09-14T12:03:15Z").wait_kind,
         Some(WaitKind::SignIn)
+    );
+}
+
+/// Kiro's permission prompts and failures reach Weir only as status reports
+/// (kiro-cli 3.2.0), so its descriptor has to read both. It declares no
+/// settling of `auth`, which it has not been seen to send.
+#[test]
+fn kiros_own_descriptor_reads_its_status_reports() {
+    let wall = "2026-09-14T12:03:10Z";
+    assert_eq!(
+        kiro_badge((ProgramState::Blocked, Some(BlockedKind::Permission)), wall).wait_kind,
+        Some(WaitKind::Approval)
+    );
+    assert_eq!(
+        kiro_badge((ProgramState::Error, None), wall).state,
+        RunState::Error
     );
 }
 

@@ -1,0 +1,11 @@
+{
+  "session_id": "sess_00000000-0000-4000-8000-000000000001",
+  "hook_event_name": "PostToolUse",
+  "cwd": "/Users/person/project",
+  "tool_name": "fs_write",
+  "tool_input": {
+    "path": "/Users/person/project/notes.txt",
+    "text": "hello\n"
+  },
+  "tool_response": "Created the /Users/person/project/notes.txt file."
+}

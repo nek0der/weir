@@ -22,6 +22,7 @@ struct AgentFactsTests {
         case .codex: "Codex"
         case .antigravity: "Antigravity"
         case .opencode: "OpenCode"
+        case .kiro: "Kiro"
         }
         #expect(rowName == expected)
         #expect(rowName == AgentCatalog.entry(for: kind).displayName)
@@ -38,14 +39,20 @@ struct AgentFactsTests {
         case .codex: "codex"
         case .antigravity: "agy"
         case .opencode: "opencode"
+        case .kiro: "kiro-cli"
         }
+        // Kiro's hooks load only under its v3 engine, which a person who
+        // used Kiro 2 may not have chosen yet, so a conversation Weir starts
+        // asks for it.
+        let start = kind == .kiro ? "kiro-cli --v3" : launch
         #expect(kind.launchCommand == launch)
+        #expect(kind.startCommand == start)
         for cwd in [nil, ""] as [String?] {
-            #expect(kind.newConversationCommand(cwd: cwd) == launch)
+            #expect(kind.newConversationCommand(cwd: cwd) == start)
         }
-        #expect(kind.newConversationCommand(cwd: "/tmp/repo") == "cd '/tmp/repo' && \(launch)")
+        #expect(kind.newConversationCommand(cwd: "/tmp/repo") == "cd '/tmp/repo' && \(start)")
         #expect(kind.newConversationCommand(cwd: "/Users/foo/Weir Dev/bar's repo")
-            == "cd '/Users/foo/Weir Dev/bar'\\''s repo' && \(launch)")
+            == "cd '/Users/foo/Weir Dev/bar'\\''s repo' && \(start)")
         #expect(kind.newConversationCommand(cwd: "/tmp/a\nb") == nil)
     }
 
@@ -58,11 +65,13 @@ struct AgentFactsTests {
         case .codex: "codex"
         case .antigravity: "agy"
         case .opencode: "opencode"
+        case .kiro: "kiro-cli"
         }
         let folders = switch kind {
         case .claude: ["~/.claude/local", "~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
         case .codex, .antigravity: ["/opt/homebrew/bin", "/usr/local/bin", "~/.local/bin"]
         case .opencode: ["/opt/homebrew/bin", "/usr/local/bin", "~/.opencode/bin", "~/.local/bin"]
+        case .kiro: ["~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
         }
         let managers = [
             "~/.nvm/versions/node/*/bin/\(name)",
@@ -86,6 +95,7 @@ struct AgentFactsTests {
         case .codex: "/Users/someone/.codex"
         case .antigravity: "/Users/someone/.antigravity"
         case .opencode: "/Users/someone/.opencode"
+        case .kiro: "/Users/someone/.kiro"
         }
         #expect(AgentProviderRegistry.defaultHome(of: kind.rawValue, under: "/Users/someone") == expected)
         let url = AgentProviderRegistry.defaultHome(of: kind, under: URL(fileURLWithPath: "/Users/someone", isDirectory: true))
@@ -158,6 +168,13 @@ struct AgentFactsTests {
                 fill: .solid(SupervisionTokens.opencode),
                 foreground: SupervisionTokens.badgeForeground,
                 edge: SupervisionTokens.opencodeEdge
+            )
+        case .kiro:
+            AgentBrand(
+                letters: "Ki",
+                fill: .solid(SupervisionTokens.kiro),
+                foreground: SupervisionTokens.badgeForeground,
+                edge: SupervisionTokens.kiroEdge
             )
         }
         #expect(brand == expected)

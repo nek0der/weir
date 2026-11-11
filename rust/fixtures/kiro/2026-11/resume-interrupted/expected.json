@@ -1,0 +1,15 @@
+[
+  [
+    {
+      "type": "turn_finished",
+      "reply": "resumed"
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "execute_bash",
+      "detail": "execute_bash: sleep 30"
+    }
+  ]
+]

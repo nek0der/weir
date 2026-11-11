@@ -439,6 +439,7 @@ dependencies = [
  "weir-provider-antigravity",
  "weir-provider-claude",
  "weir-provider-codex",
+ "weir-provider-kiro",
 ]
 
 [[package]]
@@ -455,6 +456,7 @@ dependencies = [
  "weir-provider-antigravity",
  "weir-provider-claude",
  "weir-provider-codex",
+ "weir-provider-kiro",
  "weir-provider-opencode",
 ]
 
@@ -502,6 +504,14 @@ dependencies = [
  "serde_json",
  "tempfile",
  "uuid",
+ "weir-agent-model",
+]
+
+[[package]]
+name = "weir-provider-kiro"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
  "weir-agent-model",
 ]
 

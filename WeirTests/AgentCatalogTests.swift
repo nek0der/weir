@@ -12,7 +12,7 @@ struct AgentCatalogTests {
         #expect(AgentCatalog.entries.map(\.kind) == AgentKind.allCases)
         // The menu's order as people see it, so a reorder of either list
         // fails here rather than only moving both.
-        #expect(AgentKind.allCases == [.claude, .codex, .antigravity, .opencode])
+        #expect(AgentKind.allCases == [.claude, .codex, .antigravity, .opencode, .kiro])
         for kind in AgentKind.allCases {
             let entry = AgentCatalog.entry(for: kind)
             // What a pane types is the first name looked up.
@@ -25,6 +25,8 @@ struct AgentCatalogTests {
         #expect(AgentKind.antigravity.launchCommand == "agy")
         #expect(AgentCatalog.entry(for: .opencode).displayName == "OpenCode")
         #expect(AgentKind.opencode.launchCommand == "opencode")
+        #expect(AgentCatalog.entry(for: .kiro).displayName == "Kiro")
+        #expect(AgentKind.kiro.launchCommand == "kiro-cli")
     }
 
     // MARK: - The rules, with the file system given
@@ -192,7 +194,8 @@ struct AgentCatalogTests {
             "WEIR_CLAUDE_KNOWN_LOCATIONS",
             "WEIR_CODEX_KNOWN_LOCATIONS",
             "WEIR_ANTIGRAVITY_KNOWN_LOCATIONS",
-            "WEIR_OPENCODE_KNOWN_LOCATIONS"
+            "WEIR_OPENCODE_KNOWN_LOCATIONS",
+            "WEIR_KIRO_KNOWN_LOCATIONS"
         ])
         for entry in AgentCatalog.entries {
             let lines = environment[entry.knownLocationsVariable]?.components(separatedBy: "\n")

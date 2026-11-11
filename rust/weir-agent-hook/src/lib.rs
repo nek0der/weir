@@ -62,6 +62,7 @@ use weir_agent_model::{
 use weir_provider_antigravity::AntigravityAdapter;
 use weir_provider_claude::ClaudeAdapter;
 use weir_provider_codex::CodexAdapter;
+use weir_provider_kiro::KiroAdapter;
 use weir_provider_opencode::OpenCodeAdapter;
 use worktree_lock::{Shared, WorktreeLockPaths};
 
@@ -125,10 +126,11 @@ impl HookOutcome {
 /// descriptors, and the recipes are all read from it, so a provider added here
 /// is added to every one of them, and one left out is missing from all three
 /// rather than from one.
-static ADAPTERS: [&dyn ProviderAdapter; 4] = [
+static ADAPTERS: [&dyn ProviderAdapter; 5] = [
     &AntigravityAdapter,
     &ClaudeAdapter,
     &CodexAdapter,
+    &KiroAdapter,
     &OpenCodeAdapter,
 ];
 
@@ -222,20 +224,13 @@ pub fn run_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>) -> Hook
         records::record_raw_payload(&record_dir, stdin);
     }
 
-    let transcript = adapter
-        .transcript_path(RawHookInput {
-            bytes: stdin,
-            transcript: None,
-        })
-        .ok()
-        .flatten()
-        .and_then(|path| records::read_bounded_tail(Path::new(&path), MAX_TRANSCRIPT_BYTES));
+    let (context, mut apply_context) = identity(runtime.env, adapter, &pane_id);
+    let transcript = call_transcript(adapter, stdin, &context);
     let input = RawHookInput {
         bytes: stdin,
         transcript: transcript.as_deref(),
     };
 
-    let (context, mut apply_context) = identity(runtime.env, adapter, &pane_id);
     if let Some(preparation) = adapter.turn_preparation(input) {
         prepare_turn(
             &preparation,
@@ -283,6 +278,7 @@ pub fn run_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>) -> Hook
         &HookCall {
             adapter,
             input,
+            context: &context,
             events: &events,
             id: call_id.as_ref(),
         },
@@ -473,6 +469,26 @@ fn check_with(run: &weir_agent_model::CommandRun, patterns: &[String]) -> Option
     })
 }
 
+/// The transcript the adapter names for the call, read under the runtime's
+/// limit; `None` when it names none or it cannot be read.
+fn call_transcript(
+    adapter: &dyn ProviderAdapter,
+    stdin: &[u8],
+    context: &HookContext,
+) -> Option<Vec<u8>> {
+    adapter
+        .transcript_path(
+            RawHookInput {
+                bytes: stdin,
+                transcript: None,
+            },
+            context,
+        )
+        .ok()
+        .flatten()
+        .and_then(|path| records::read_bounded_tail(Path::new(&path), MAX_TRANSCRIPT_BYTES))
+}
+
 /// One hook call's transcript, as the turns it begins or ends read it.
 struct CallTranscript<'a> {
     call: &'a HookCall<'a>,
@@ -495,10 +511,13 @@ impl turn::TurnTranscript for CallTranscript<'_> {
         let path = (reading.is_awaiting_response || !reading.subagents.is_empty())
             .then(|| {
                 adapter
-                    .transcript_path(RawHookInput {
-                        bytes: self.call.input.bytes,
-                        transcript: None,
-                    })
+                    .transcript_path(
+                        RawHookInput {
+                            bytes: self.call.input.bytes,
+                            transcript: None,
+                        },
+                        self.call.context,
+                    )
                     .ok()
                     .flatten()
             })
@@ -568,10 +587,13 @@ fn settled_settings(
 ) -> SessionSettings {
     let settings = adapter.session_settings(input, context);
     let path = adapter
-        .transcript_path(RawHookInput {
-            bytes: input.bytes,
-            transcript: None,
-        })
+        .transcript_path(
+            RawHookInput {
+                bytes: input.bytes,
+                transcript: None,
+            },
+            context,
+        )
         .ok()
         .flatten();
     let Some(path) = path.filter(|_| settings.is_awaiting_answer) else {
@@ -857,6 +879,9 @@ fn write_record(path: &Path, record: &RunRecord, log: &HookLog) -> bool {
 struct HookCall<'a> {
     adapter: &'a dyn ProviderAdapter,
     input: RawHookInput<'a>,
+    /// Where the call runs, for a provider whose transcript lies where it
+    /// keeps its sessions rather than where the payload says.
+    context: &'a HookContext,
     events: &'a [AgentEvent],
     /// Identifies the call, for the turn records.
     id: Option<&'a EventId>,
@@ -889,7 +914,8 @@ fn call_events<'a>(
 /// nothing in the call begins one. Applied as a prompt is, it takes the
 /// turn's begin snapshot before the call's tool runs, so the turn shows what
 /// it changed; a call that ends the turn comes too late for one
-/// (`UnpromptedStart::is_from_end`). A call of the turn the run last had,
+/// (`UnpromptedStart::is_from_end`), unless the transcript shows the turn ran
+/// no tool (`UnpromptedPrompt::has_run_no_tool`). A call of the turn the run last had,
 /// which comes after its end, is that turn's, as before. A call that names
 /// no folder for the turn (a tool's, whose `cwd` is the tool's own) begins it
 /// in `hook_directory`, where the provider runs the hook: the session's.
@@ -914,10 +940,13 @@ fn unprompted_start(
     let bytes = call.input.bytes;
     let transcript = call
         .adapter
-        .unprompted_turn_transcript_path(RawHookInput {
-            bytes,
-            transcript: None,
-        })
+        .unprompted_turn_transcript_path(
+            RawHookInput {
+                bytes,
+                transcript: None,
+            },
+            call.context,
+        )
         .ok()
         .flatten()
         .and_then(|path| records::read_bounded_tail(Path::new(&path), MAX_TRANSCRIPT_BYTES));
@@ -945,6 +974,8 @@ fn unprompted_start(
                     | AgentEvent::Interrupted
             )
         }),
+        has_run_no_tool: begun.has_run_no_tool,
+        started_at: begun.started_at,
         marker,
     })
 }
@@ -958,6 +989,13 @@ struct UnpromptedStart {
     /// before it). Whatever the turn changed happened before the call, so a
     /// begin snapshot taken now would show it changing nothing.
     is_from_end: bool,
+    /// The transcript shows the turn ran no tool, and the provider's tools all
+    /// report before they run: nothing of the agent's changed before the call,
+    /// so a begin taken now is the turn's.
+    has_run_no_tool: bool,
+    /// When the turn began, as the transcript records it
+    /// (`UnpromptedPrompt::started_at`).
+    started_at: Option<String>,
 }
 
 impl UnpromptedStart {
@@ -969,9 +1007,22 @@ impl UnpromptedStart {
     }
 
     /// Why the begin takes no snapshot: a turn first seen at its end began
-    /// before anything could be taken.
+    /// before anything could be taken, unless it ran no tool.
     fn begin_skip_reason(&self) -> Option<&'static str> {
-        self.is_from_end.then_some(turn::BEGIN_MISSING)
+        (self.is_from_end && !self.has_run_no_tool).then_some(turn::BEGIN_MISSING)
+    }
+
+    /// Returns when the turn began, as the transcript records it, for a turn
+    /// whose begin is taken at its end because it ran no tool; `None` for any
+    /// other. A turn's start also orders it against other conversations' for
+    /// a restore (`restore_made`), which assumes the start is when the begin
+    /// snapshot was taken. A turn that ran no tool made nothing, so an earlier
+    /// start moves no file in or out of a restore; one begun at its first
+    /// tool keeps that call's time.
+    fn started_at(&self) -> Option<&str> {
+        (self.is_from_end && self.has_run_no_tool)
+            .then_some(self.started_at.as_deref())
+            .flatten()
     }
 }
 
@@ -1284,15 +1335,14 @@ impl EventWriter<'_> {
         // `git add -A` can take long in a large repository, so the snapshot
         // is taken before the record lock; the result is written under the
         // lock.
+        let (record, started_at) = (
+            before.as_ref(),
+            judged.start.and_then(UnpromptedStart::started_at),
+        );
         let prepared = step.map(|step| {
-            turns.prepare(
-                step,
-                event,
-                event_id,
-                before.as_ref(),
-                runtime.snapshots,
-                begin,
-            )
+            turns
+                .prepare(step, event, event_id, record, runtime.snapshots, begin)
+                .began_at(started_at, now)
         });
         // A prompt's record is what a restore reads to see the agent at
         // work, so it waits longer for a busy lock than other events: lost,
@@ -1685,11 +1735,20 @@ pub fn run_worktree_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>
     match worktree::plan(&intent, provider_id, &directories.state) {
         InterceptResult::Passthrough => HookOutcome::Applied,
         InterceptResult::Reroute { path, command } => {
-            match adapter.worktree_reroute_output(input, &command) {
-                Some(output) => HookOutcome::Intercepted {
+            if let Some(output) = adapter.worktree_reroute_output(input, &command) {
+                return HookOutcome::Intercepted {
                     code: 0,
                     message: format!("Weir routes this worktree to {}.", path.display()),
                     stdout: output.stdout,
+                };
+            }
+            // A provider that takes no reply on its standard output refuses
+            // the call by its exit status, with the words on standard error.
+            match adapter.worktree_reroute_refusal(input, &command) {
+                Some(refusal) => HookOutcome::Intercepted {
+                    code: refusal.exit_code,
+                    message: refusal.message,
+                    stdout: None,
                 },
                 None => HookOutcome::Applied,
             }
@@ -1978,6 +2037,8 @@ mod start_tests {
             },
             marker: "t2".into(),
             is_from_end: false,
+            has_run_no_tool: false,
+            started_at: None,
         };
         let at_rest =
             record(r#"{"schemaVersion":3,"paneId":"P","state":"finished","updatedAt":"t"}"#);
@@ -2051,6 +2112,7 @@ mod registry_tests {
                 weir_provider_antigravity::PROVIDER_ID,
                 weir_provider_claude::PROVIDER_ID,
                 weir_provider_codex::PROVIDER_ID,
+                weir_provider_kiro::PROVIDER_ID,
                 weir_provider_opencode::PROVIDER_ID,
             ]
         );

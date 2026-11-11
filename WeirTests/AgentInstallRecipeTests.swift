@@ -38,6 +38,14 @@ struct AgentInstallRecipeTests {
             "WEIR_CODEX_AGENT_STATES_DIR": "/states",
             "WEIR_CODEX_SESSIONS_DIR": "/sessions"
         ])
+
+        let kiro = AgentProviderRegistry.environment(
+            for: "kiro", state: state, sessions: sessions, cwdEvents: cwd, usage: usage
+        )
+        #expect(kiro == [
+            "WEIR_KIRO_AGENT_STATES_DIR": "/states",
+            "WEIR_KIRO_SESSIONS_DIR": "/sessions"
+        ])
     }
 
     /// A pane's agent variables are merged locator by locator in `AgentKind`'s

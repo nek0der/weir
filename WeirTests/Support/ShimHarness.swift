@@ -48,7 +48,7 @@ enum ShimHarness {
         try fileManager.createDirectory(at: resources, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: contents.appendingPathComponent("MacOS"), withIntermediateDirectories: true)
         for name in try fileManager.contentsOfDirectory(atPath: source.path)
-            where name == "agent-shim" || name.hasSuffix("-shim") || name.hasSuffix("-plugin")
+            where name == "agent-shim" || name.hasSuffix("-shim") || name.hasSuffix("-plugin") || name.hasSuffix("-hooks")
         {
             try fileManager.copyItem(at: source.appendingPathComponent(name), to: resources.appendingPathComponent(name))
         }

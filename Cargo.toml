@@ -8,6 +8,7 @@ members = [
     "rust/weir-provider-opencode",
     "rust/weir-provider-claude",
     "rust/weir-provider-codex",
+    "rust/weir-provider-kiro",
     "rust/weir-rust-bridge",
 ]
 resolver = "3"

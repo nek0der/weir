@@ -84,7 +84,11 @@ impl ProviderAdapter for ClaudeAdapter {
         normalize::event_id(input, context, &self.descriptor().id)
     }
 
-    fn transcript_path(&self, input: RawHookInput<'_>) -> Result<Option<String>, NormalizeError> {
+    fn transcript_path(
+        &self,
+        input: RawHookInput<'_>,
+        _context: &HookContext,
+    ) -> Result<Option<String>, NormalizeError> {
         normalize::transcript_path(input)
     }
 
