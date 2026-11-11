@@ -111,7 +111,7 @@ struct PaletteExecuteRoutingTests {
         #expect(added.container == .loose)
         #expect(session.primarySelection.activeTabID == added.id)
         let pane = try #require(added.splitTree.effectiveFocusedLeafID)
-        #expect(added.initialCommands == [pane: AgentKind.codex.launchCommand])
+        #expect(added.initialCommands == [pane: AgentKind.codex.startCommand])
     }
 
     @Test func moveToNewTab_movesTheFocusedPane_andSelectsItsTab() throws {

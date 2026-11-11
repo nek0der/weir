@@ -9,7 +9,7 @@ sidebar:
 
 - macOS 26 以降、Apple Silicon
 - Git
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) か [Codex](https://github.com/openai/codex)、Antigravity CLI（`agy`）、[OpenCode](https://opencode.ai) のいずれか。複数でもかまいません。Weir はお使いのものを、そのアカウントのまま動かします。
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) か [Codex](https://github.com/openai/codex)、Antigravity CLI（`agy`）、[OpenCode](https://opencode.ai)、[Kiro CLI](https://kiro.dev/cli/)（`kiro-cli`）のいずれか。複数でもかまいません。Weir はお使いのものを、そのアカウントのまま動かします。
 
 サイドバーに PR の状態を出したい場合は、`gh` か `glab` を入れてサインインしてください。なくても Weir は動きます。
 
@@ -36,6 +36,7 @@ Weir は 1 日に 1 回アップデートを確認します。インストール
 3. **ログイン項目と機能拡張** に Weir が残っていたら、オフにします。
 4. Weir で Antigravity を動かしたことがあり、`~/.gemini/config/plugins/weir` に `.weir-managed` というファイルがあれば、そのフォルダーも削除します。このファイルがないフォルダーは Weir のものではありません。
 5. Weir で OpenCode を動かしたことがあり、`~/.config/opencode/plugins/weir` に `.weir-managed` というファイルがあれば、そのフォルダーも削除します。
+6. Weir で Kiro を動かしたことがあれば、`cksum < ~/.kiro/hooks/weir.json` の出力と `~/.kiro/hooks/.weir.json.cksum` の中身を比べます。同じなら両方を削除します。違うときは `weir.json` をご自身で編集しているので、それは残して `.weir.json.cksum` だけを削除します。
 
 各リポジトリには、ターンのスナップショットも残っています。消すには、リポジトリで次を実行します。
 

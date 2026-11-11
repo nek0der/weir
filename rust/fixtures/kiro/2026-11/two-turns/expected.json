@@ -1,0 +1,36 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "sess_00000000-0000-4000-8000-000000000001",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "ok"
+    }
+  ],
+  [
+    {
+      "type": "tool_started",
+      "tool": "fs_write",
+      "detail": "fs_write: /Users/person/project/notes.txt"
+    }
+  ],
+  [
+    {
+      "type": "tool_finished",
+      "tool": "fs_write"
+    }
+  ],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "done"
+    }
+  ]
+]

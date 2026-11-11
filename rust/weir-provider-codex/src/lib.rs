@@ -105,7 +105,11 @@ impl ProviderAdapter for CodexAdapter {
         Some(finished_hook_output(message))
     }
 
-    fn transcript_path(&self, input: RawHookInput<'_>) -> Result<Option<String>, NormalizeError> {
+    fn transcript_path(
+        &self,
+        input: RawHookInput<'_>,
+        _context: &HookContext,
+    ) -> Result<Option<String>, NormalizeError> {
         normalize::transcript_path(input)
     }
 
@@ -139,6 +143,7 @@ impl ProviderAdapter for CodexAdapter {
     fn unprompted_turn_transcript_path(
         &self,
         input: RawHookInput<'_>,
+        _context: &HookContext,
     ) -> Result<Option<String>, NormalizeError> {
         transcript_path_for_events(input, &normalize::TURN_EVENTS)
     }
@@ -325,9 +330,12 @@ mod tests {
             );
             assert!(
                 CodexAdapter
-                    .transcript_path(input(&format!(
-                        r#"{{"hook_event_name":"{event}","transcript_path":"/tmp/example/rollout.jsonl"}}"#
-                    )))
+                    .transcript_path(
+                        input(&format!(
+                            r#"{{"hook_event_name":"{event}","transcript_path":"/tmp/example/rollout.jsonl"}}"#
+                        )),
+                        &HookContext::fixture()
+                    )
                     .expect("an object")
                     .is_some(),
                 "{event}"
@@ -336,9 +344,12 @@ mod tests {
         // A prompt's turn begins without a reading of its own.
         assert_eq!(
             CodexAdapter
-                .transcript_path(input(
-                    r#"{"hook_event_name":"UserPromptSubmit","transcript_path":"/tmp/example/rollout.jsonl"}"#
-                ))
+                .transcript_path(
+                    input(
+                        r#"{"hook_event_name":"UserPromptSubmit","transcript_path":"/tmp/example/rollout.jsonl"}"#
+                    ),
+                    &HookContext::fixture()
+                )
                 .expect("an object"),
             None
         );

@@ -1,6 +1,6 @@
 ---
 name: verify-in-app
-description: Checks a change to Weir in a real run of the Debug app without taking over the person's screen, through the verification channel (scripts/weir-automation.py, ADR 0005). Use when asked to verify, try, or see a change in the running app, to send a prompt to Claude Code, Codex, OpenCode, or Antigravity in a pane and wait for its turn, to open a layer such as Needs Attention or review, to run a menu or palette command, to change a setting and see it, or to capture the window; to check an approval card's round trip in a signed build, which has no channel, through accessibility; and to run make check-automation after changing Weir/Automation.
+description: Checks a change to Weir in a real run of the Debug app without taking over the person's screen, through the verification channel (scripts/weir-automation.py, ADR 0005). Use when asked to verify, try, or see a change in the running app, to send a prompt to Claude Code, Codex, OpenCode, Antigravity, or Kiro in a pane and wait for its turn, to open a layer such as Needs Attention or review, to run a menu or palette command, to change a setting and see it, or to capture the window; to check an approval card's round trip in a signed build, which has no channel, through accessibility; and to run make check-automation after changing Weir/Automation.
 ---
 
 # Verify a change in the running app
@@ -70,8 +70,8 @@ its own data. Several worktrees can each have one at once.
      run now; `$A command splitRight` runs one. `--new-window` commits a row
      as ⌘Return does, which opens another project's row in a new window.
    - Controls with no shortcut have palette rows too: `newTab.claude` (and
-     `.codex`, `.antigravity`, `.opencode`, for each agent the pane strip's
-     "+" offers on this Mac) adds a tab as "+" does,
+     `.codex`, `.antigravity`, `.opencode`, `.kiro`, for each agent the pane
+     strip's "+" offers on this Mac) adds a tab as "+" does,
      `settings.section.keyboard` (any `SettingsSection`) opens Settings
      there, and `pane.moveToNewTab` and `view.toggleIconBars` are rows too.
    - What a check opened shows in `state`: each window's `dropdown` (the

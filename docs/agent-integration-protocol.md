@@ -356,8 +356,8 @@ and the application share their shape, which `weir-agent-model`
 (`turn.rs`, `TurnRecord`) owns.
 
 A provider whose descriptor has the `turn_snapshot` capability (Claude Code,
-Codex, Antigravity, and OpenCode today) records turns. Its hook events map to
-provider-neutral events, and those decide what is written (`turn_step` in
+Codex, Antigravity, OpenCode, and Kiro today) records turns. Its hook events map
+to provider-neutral events, and those decide what is written (`turn_step` in
 `weir-agent-core`):
 
 | Provider hook | Event | Effect on the turn |
@@ -392,6 +392,28 @@ approval capability and its own prompt asks. Its hook always exits 0 with valid
 JSON, since `agy` fails the tool on any other result. A `git worktree add` aimed
 at another folder gets a `deny` whose reason gives the command to run instead
 (`ProviderAdapter::worktree_reroute_output`).
+
+Kiro (`kiro-cli` 2.37.1, its v3 engine) has no hook of ours for a prompt, and
+names no transcript or turn in its payloads. Its adapter reads the turn from
+Kiro's session log, which it names from the payload's session and folder.
+
+| Kiro signal | Event | Effect |
+|---|---|---|
+| the shim's `WeirLaunch`, sent before a v3 launch | `SessionStarted`, `resume` with `--resume-id` and `startup` otherwise | a run rests from the launch, with the permission mode `--trust-all-tools` gives |
+| `SessionStart`, with the first prompt | `SessionStarted` | names the session |
+| `PreToolUse` | `ToolStarted` | names the tool and its `command` or `path`; the first of a turn begins it, kept as Kiro's `turnId`, with the person's words from the log |
+| `PostToolUse` | `ToolFinished` | ends the tool, and records a check from the `Exit Code:` at the end of a shell command's response |
+| `Stop` | `TurnFinished` | ends the turn with its last answer from the log; a turn with no tool is begun here, at the log's `turn_start` time, with its begin snapshot taken now when its lines in the log are all of kinds that run nothing, and none otherwise |
+| OSC 7501 `idle` | none (`Capability::ProgramStatusIdleStopsTurn`) | ends a turn stopped with Esc, which sends no hook, as `interrupted` |
+| OSC 7501 `blocked kind=permission` | none (`Capability::ProgramStatusAnnouncesPermission`) | shows the run waiting on permission, without writing its record |
+| OSC 7501 `error` | none (`Capability::ProgramStatusAnnouncesFailure`) | shows the run failed until the next report, without writing its record |
+
+Kiro answers no approvals through the service: its `PreToolUse` cannot allow a
+call, and Kiro asks after every hook. Every hook command but the worktree
+route's exits 0 whatever Weir returned, since Kiro continues a turn whose `Stop`
+exits 1. A `git worktree add`
+aimed at another folder is refused with exit 2, and standard error gives the
+command to run instead (`ProviderAdapter::worktree_reroute_refusal`).
 
 OpenCode (2.2.5) reports through a plugin in the pane's terminal interface, as
 its sessions run on a shared service where no hook knows the pane. The plugin

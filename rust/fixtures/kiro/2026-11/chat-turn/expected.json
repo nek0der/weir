@@ -1,0 +1,17 @@
+[
+  [
+    {
+      "type": "session_started",
+      "compact": false,
+      "source": "startup",
+      "session_id": "sess_00000000-0000-4000-8000-000000000001",
+      "cwd": "/Users/person/project"
+    }
+  ],
+  [
+    {
+      "type": "turn_finished",
+      "reply": "ok"
+    }
+  ]
+]

@@ -649,6 +649,10 @@ mod tests {
             request("antigravity", CODEX_PERMISSION),
             (PROVIDER_NOT_APPROVAL, None)
         );
+        assert_eq!(
+            request("kiro", CODEX_PERMISSION),
+            (PROVIDER_NOT_APPROVAL, None)
+        );
     }
 
     #[test]

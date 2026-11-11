@@ -56,6 +56,14 @@ Weir places a plugin at `~/.config/opencode/plugins/weir` the first time `openco
 
 Weir saves a turn's start when you press Enter, or before OpenCode starts for a `--prompt` launch. A slash command chosen from OpenCode's menu, a rebound submit key, and a turn the agent goes on to by itself have no start, so they show no change summary or **Restore Code**. If the save takes more than ten seconds, as it can in a very large repository, Weir sends your input without a start.
 
+## Kiro reports nothing to Weir
+
+Weir watches only Kiro's v3 engine, which loads hooks. A Kiro tab Weir opens runs `kiro-cli --v3`. A `kiro-cli` you type runs v3 on Kiro 3.0 or later, unless you chose to stay on v2 or started it with `--no-interactive`. Add `--v3`, or choose v3 in Kiro's settings. Weir places a hook file at `~/.kiro/hooks/weir.json` the first time `kiro-cli` runs in a pane. If a file of that name was already there, or you edited Weir's, Weir leaves it alone, so move it aside. Kiro runs no hooks in a folder you did not trust, and none from `~/.kiro` while `KIRO_HOME` points elsewhere. A cloud session (`--cloud`) runs in Kiro's sandbox, so Weir does not watch it.
+
+## Kiro keeps saying it is at work
+
+This can happen inside a tmux you started yourself, where `kiro-cli` does not report its status. A turn you stopped with Esc stays at work until your next prompt, and a permission prompt does not show as a wait. Weir does not host `kiro-cli` in tmux, so running it directly in the pane avoids this.
+
 ## A row has no pull request status
 
 Install `gh` or `glab` and sign in to the project's remote. **Create PR** needs `gh`, so Weir does not create GitLab merge requests.

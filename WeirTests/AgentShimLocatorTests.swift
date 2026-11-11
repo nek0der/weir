@@ -15,6 +15,7 @@ struct AgentShimLocatorTests {
         case .codex: "WEIR_CODEX_SHIM_DIR"
         case .antigravity: "WEIR_ANTIGRAVITY_SHIM_DIR"
         case .opencode: "WEIR_OPENCODE_SHIM_DIR"
+        case .kiro: "WEIR_KIRO_SHIM_DIR"
         }
     }
 
@@ -53,7 +54,7 @@ struct AgentShimLocatorTests {
             writesRecords: writesRecords
         )
         switch kind {
-        case .claude, .antigravity, .opencode:
+        case .claude, .antigravity, .opencode, .kiro:
             expected.merge(records) { _, new in new }
         case .codex:
             break
@@ -104,20 +105,24 @@ struct AgentShimLocatorTests {
     /// gets them back.
     @Test(.disabled(if: !RepoFixture.hasLocalRepo, "the zdotdir is in the source tree"))
     func theShimList_putsTheShimsBackInTheOrderTheVariablesDid() throws {
+        // The agents whose variable `.zshrc` names when there is no list:
+        // those of the builds before the list. An agent added since has no
+        // such variable, as no earlier build exported one.
+        let earlier: [AgentKind] = [.claude, .codex, .antigravity, .opencode]
         try withTempDir { root in
             var directories: [AgentKind: URL] = [:]
-            for kind in AgentKind.allCases {
+            for kind in earlier {
                 let directory = root.appendingPathComponent("\(kind.rawValue)-shim")
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
                 directories[kind] = directory
             }
-            let ordered = AgentKind.allCases.compactMap { directories[$0] }
+            let ordered = earlier.compactMap { directories[$0] }
             let paneVariables = PaneShellEnvironment.variables(
                 paneID: nil, shimDirectories: ordered, zdotdir: nil, basePath: "/usr/bin:/bin"
             )
             let panePath = try #require(paneVariables["PATH"])
             var perKind = ["PATH": panePath]
-            for kind in AgentKind.allCases {
+            for kind in earlier {
                 perKind[Self.historicalShimVariable(kind)] = directories[kind]?.path
             }
             var withList = perKind

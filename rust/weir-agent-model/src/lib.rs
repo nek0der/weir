@@ -31,10 +31,10 @@ mod worktree;
 pub mod conformance;
 
 pub use adapter::{
-    CommandRun, FailureReport, FailureWatch, FileEntry, FileKind, HookContext, LaunchVariables,
-    ListDirectory, MAX_HOOK_INPUT_BYTES, NormalizeError, ProviderAdapter, QuestionTurn,
-    QuestionTurnPhase, RawHookInput, SettingsFiles, SettingsSource, StatusLineAdapter,
-    TmuxEndpoint, TurnPreparation, TurnReading, UnpromptedPrompt, parse_object,
+    CommandRun, FailureReport, FailureWatch, FileEntry, FileKind, HookContext, HookRefusal,
+    LaunchVariables, ListDirectory, MAX_HOOK_INPUT_BYTES, NormalizeError, ProviderAdapter,
+    QuestionTurn, QuestionTurnPhase, RawHookInput, SettingsFiles, SettingsSource,
+    StatusLineAdapter, TmuxEndpoint, TurnPreparation, TurnReading, UnpromptedPrompt, parse_object,
     transcript_path_for_events,
 };
 pub use approval::{
@@ -80,7 +80,8 @@ pub use restore::{
 };
 pub use session_settings::{PermissionMode, SessionSettings};
 pub use timestamp::{
-    days_from_civil, format_utc_seconds, parse_utc_seconds, seconds_between, unix_seconds,
+    days_from_civil, format_utc_seconds, parse_utc_seconds, parse_utc_seconds_with_fraction,
+    seconds_between, unix_seconds,
 };
 pub use turn::{
     ChangeSummary, CheckMark, CheckResult, ConversationKey, ConversationTurns, DeniedAction,

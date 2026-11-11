@@ -1,0 +1,75 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "weir-session-start",
+      "description": "Weir 1: reports what kiro-cli does to the Weir pane it runs in, and does nothing outside Weir.",
+      "trigger": "SessionStart",
+      "action": {
+        "type": "command",
+        "command": "[ -z \"${WEIR_KIRO_HOOK_DIR:-}\" ] || /bin/sh \"$WEIR_KIRO_HOOK_DIR/weir-hook\"; exit 0"
+      },
+      "timeout": 30,
+      "enabled": true
+    },
+    {
+      "name": "weir-tool-start",
+      "description": "Weir 1: reports what kiro-cli does to the Weir pane it runs in, and does nothing outside Weir.",
+      "trigger": "PreToolUse",
+      "matcher": "*",
+      "action": {
+        "type": "command",
+        "command": "[ -z \"${WEIR_KIRO_HOOK_DIR:-}\" ] || /bin/sh \"$WEIR_KIRO_HOOK_DIR/weir-hook\"; exit 0"
+      },
+      "timeout": 30,
+      "enabled": true
+    },
+    {
+      "name": "weir-worktree-route",
+      "description": "Weir 1: reports what kiro-cli does to the Weir pane it runs in, and does nothing outside Weir.",
+      "trigger": "PreToolUse",
+      "matcher": "shell",
+      "action": {
+        "type": "command",
+        "command": "[ -z \"${WEIR_KIRO_HOOK_DIR:-}\" ] || { /bin/sh \"$WEIR_KIRO_HOOK_DIR/weir-hook\" worktree; [ \"$?\" -ne 2 ] || exit 2; }; exit 0"
+      },
+      "timeout": 30,
+      "enabled": true
+    },
+    {
+      "name": "weir-tool-end",
+      "description": "Weir 1: reports what kiro-cli does to the Weir pane it runs in, and does nothing outside Weir.",
+      "trigger": "PostToolUse",
+      "matcher": "*",
+      "action": {
+        "type": "command",
+        "command": "[ -z \"${WEIR_KIRO_HOOK_DIR:-}\" ] || /bin/sh \"$WEIR_KIRO_HOOK_DIR/weir-hook\"; exit 0"
+      },
+      "timeout": 30,
+      "enabled": true
+    },
+    {
+      "name": "weir-worktree-setup",
+      "description": "Weir 1: reports what kiro-cli does to the Weir pane it runs in, and does nothing outside Weir.",
+      "trigger": "PostToolUse",
+      "matcher": "shell",
+      "action": {
+        "type": "command",
+        "command": "[ -z \"${WEIR_KIRO_HOOK_DIR:-}\" ] || /bin/sh \"$WEIR_KIRO_HOOK_DIR/weir-hook\" worktree; exit 0"
+      },
+      "timeout": 86400,
+      "enabled": true
+    },
+    {
+      "name": "weir-stop",
+      "description": "Weir 1: reports what kiro-cli does to the Weir pane it runs in, and does nothing outside Weir.",
+      "trigger": "Stop",
+      "action": {
+        "type": "command",
+        "command": "[ -z \"${WEIR_KIRO_HOOK_DIR:-}\" ] || /bin/sh \"$WEIR_KIRO_HOOK_DIR/weir-hook\"; exit 0"
+      },
+      "timeout": 30,
+      "enabled": true
+    }
+  ]
+}

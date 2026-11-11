@@ -1,0 +1,14 @@
+{
+  "session_id": "sess_00000000-0000-4000-8000-000000000002",
+  "hook_event_name": "PostToolUse",
+  "cwd": "/Users/person/project",
+  "tool_name": "execute_bash",
+  "tool_input": {
+    "command": "git worktree add ../wt-fixture -b fixture-branch",
+    "description": null,
+    "cwd": null,
+    "run_in_background": false,
+    "timeout": null
+  },
+  "tool_response": "Output:\nThe tool call was cancelled before it was approved.\n\nExit Code: -1"
+}

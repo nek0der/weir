@@ -364,15 +364,21 @@ pub trait ProviderAdapter: Send + Sync {
     /// Names the transcript the runtime should read alongside this payload,
     /// when the provider keeps one and this event's normalization uses it.
     /// Reading the transcript costs a file read per hook, so adapters answer
-    /// only for the events that need it. The path comes from the payload and
-    /// is opened by the runtime under its own limits.
+    /// only for the events that need it. The path comes from the payload,
+    /// or, for a provider whose payload names none (Kiro), from where it
+    /// keeps its sessions under `context.provider_home`; the runtime opens it
+    /// under its own limits.
     ///
     /// # Errors
     ///
     /// Returns `NormalizeError` only for input that is too large or is not a
     /// JSON object.
-    fn transcript_path(&self, input: RawHookInput<'_>) -> Result<Option<String>, NormalizeError> {
-        let _ = input;
+    fn transcript_path(
+        &self,
+        input: RawHookInput<'_>,
+        context: &HookContext,
+    ) -> Result<Option<String>, NormalizeError> {
+        let _ = (input, context);
         Ok(None)
     }
 
@@ -493,6 +499,21 @@ pub trait ProviderAdapter: Send + Sync {
         None
     }
 
+    /// Returns the exit status and the words on standard error that refuse the
+    /// `git worktree add` in `input` and tell the model to run `command`
+    /// instead, for a provider whose `PreToolUse` takes no reply on standard
+    /// output and refuses a tool only by its exit status (Kiro's 2). Asked
+    /// only when `worktree_reroute_output` has none. `None` lets the agent's
+    /// command run as written.
+    fn worktree_reroute_refusal(
+        &self,
+        input: RawHookInput<'_>,
+        command: &str,
+    ) -> Option<HookRefusal> {
+        let _ = (input, command);
+        None
+    }
+
     /// The `PostToolUse` reply that tells the model where the worktree it
     /// asked for went, for a provider whose model did not write that folder
     /// itself. `None` says nothing.
@@ -607,8 +628,9 @@ pub trait ProviderAdapter: Send + Sync {
     fn unprompted_turn_transcript_path(
         &self,
         input: RawHookInput<'_>,
+        context: &HookContext,
     ) -> Result<Option<String>, NormalizeError> {
-        let _ = input;
+        let _ = (input, context);
         Ok(None)
     }
 
@@ -673,6 +695,16 @@ pub trait ProviderAdapter: Send + Sync {
     }
 }
 
+/// A hook's refusal of the tool it was called for, said by its exit status
+/// (`ProviderAdapter::worktree_reroute_refusal`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HookRefusal {
+    /// The status the provider reads as a refusal.
+    pub exit_code: i32,
+    /// What the provider hands the model, from standard error.
+    pub message: String,
+}
+
 /// What began a turn no prompt began, for the record of that turn
 /// (`ProviderAdapter::unprompted_prompt`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -685,6 +717,19 @@ pub struct UnpromptedPrompt {
     /// The folder the turn runs in, as the payload names it, where its
     /// begin snapshot is taken (`PromptSubmitted`'s `cwd`).
     pub cwd: Option<String>,
+    /// When the turn began, as the transcript records it, in the record
+    /// timestamp format; `None` when it does not say. The runtime records it
+    /// only for a turn whose begin it takes at the turn's end
+    /// (`has_run_no_tool`): a turn's start also orders it for a restore,
+    /// which assumes the start is when its begin snapshot was taken.
+    pub started_at: Option<String>,
+    /// Whether the transcript shows the turn has run no tool, for a provider
+    /// whose every tool reports to a hook before it runs. A call that ends
+    /// such a turn is then the first moment anything of the agent's could have
+    /// changed, so its begin snapshot is taken there, and the turn reads as
+    /// changing nothing rather than as missing its begin. `false` covers both
+    /// a turn that ran a tool and one the transcript cannot vouch for.
+    pub has_run_no_tool: bool,
 }
 
 /// What a provider's transcript says of the turn a payload ends. Each part

@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-This walks through one task from start to finish. You need [Weir installed](/docs/install/), a Git repository, and Claude Code, Codex, Antigravity, or OpenCode signed in.
+This walks through one task from start to finish. You need [Weir installed](/docs/install/), a Git repository, and Claude Code, Codex, Antigravity, OpenCode, or Kiro signed in.
 
 ## 1. Open your project
 
@@ -29,7 +29,7 @@ The sidebar row and the bar under the pane now show what the agent is doing. Not
 
 When the agent asks for approval, asks a question, stops, or finishes a turn, the item joins **Needs Attention**. Press <kbd>⌘J</kbd> to go to it.
 
-To answer an approval or a question, choose **Answer…** on the bar under the pane, or press <kbd>⌘⏎</kbd>, and answer on the card that opens. Codex and OpenCode questions and everything Antigravity asks are answered in the agent's prompt. See [Needs Attention and approvals](/docs/needs-attention/) for the other ways.
+To answer an approval or a question, choose **Answer…** on the bar under the pane, or press <kbd>⌘⏎</kbd>, and answer on the card that opens. Codex and OpenCode questions and everything Antigravity and Kiro ask are answered in the agent's prompt. See [Needs Attention and approvals](/docs/needs-attention/) for the other ways.
 
 ## 5. Review the turn
 

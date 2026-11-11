@@ -8,6 +8,8 @@
   methods, the capability table, the turn rules, and what each provider needed
   moved to [`docs/provider-adapters.md`](../provider-adapters.md). The
   decision is unchanged.
+- Amended: 2026-11-04. Kiro joins the providers that changed the model
+  crate's contract (Consequences). The decision is unchanged.
 
 ## Context
 
@@ -70,9 +72,9 @@ had no recorded contract to test against.
 
 - A provider is added as one crate, its fixtures, a shim, and an `AgentKind`
   case. `ARCHITECTURE.md` lists every step. The goal is that adding a provider
-  changes no source file in `weir-agent-model` or `weir-agent-core`. Antigravity
-  and OpenCode did not meet it: each behaved in a way the vocabulary did not
-  yet describe, and each added capabilities and optional adapter methods.
+  changes no source file in `weir-agent-model` or `weir-agent-core`.
+  Antigravity, OpenCode, and Kiro did not meet it: each behaved in a way the
+  vocabulary did not yet describe, and each changed the contract.
   The goal holds for a provider whose behavior the vocabulary already covers.
 - Every hook event starts the signed Hook Helper and runs Rust in process.
   The accepted latency is a p95 of 50 ms or less per hook, measured over 200

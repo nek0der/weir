@@ -43,7 +43,7 @@ pub(crate) fn unprompted_prompt(rollout: &[u8], turn_id: &str) -> UnpromptedProm
                     Some("goal") => UnpromptedPrompt {
                         prompt: objective.unwrap_or_default(),
                         kind: Some(PromptKind::Goal),
-                        cwd: None,
+                        ..UnpromptedPrompt::default()
                     },
                     // The person began it, though their prompt reached no
                     // hook (a call lost to a busy lock, Weir started
@@ -54,7 +54,7 @@ pub(crate) fn unprompted_prompt(rollout: &[u8], turn_id: &str) -> UnpromptedProm
                     Some(_) => UnpromptedPrompt {
                         prompt: String::new(),
                         kind: Some(PromptKind::Injected),
-                        cwd: None,
+                        ..UnpromptedPrompt::default()
                     },
                 };
             }
@@ -107,7 +107,7 @@ mod tests {
                 UnpromptedPrompt {
                     prompt: "Create a.txt, then b.txt".into(),
                     kind: Some(PromptKind::Goal),
-                    cwd: None,
+                    ..UnpromptedPrompt::default()
                 },
                 "{turn}"
             );
@@ -126,7 +126,7 @@ mod tests {
                 UnpromptedPrompt {
                     prompt: objective.into(),
                     kind: Some(PromptKind::Goal),
-                    cwd: None
+                    ..UnpromptedPrompt::default()
                 },
                 "{turn}"
             );
@@ -141,7 +141,7 @@ mod tests {
             UnpromptedPrompt {
                 prompt: String::new(),
                 kind: Some(PromptKind::Goal),
-                cwd: None,
+                ..UnpromptedPrompt::default()
             }
         );
     }
@@ -154,7 +154,7 @@ mod tests {
             UnpromptedPrompt {
                 prompt: String::new(),
                 kind: Some(PromptKind::Injected),
-                cwd: None
+                ..UnpromptedPrompt::default()
             }
         );
     }

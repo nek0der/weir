@@ -88,7 +88,9 @@ struct SessionRestoreResumeE2ETests {
         (AgentKind.claude, "f47ac10b-58cc-4372-a567-0e02b2c3d479", "claude --resume f47ac10b-58cc-4372-a567-0e02b2c3d479"),
         (.codex, "01963d6b-c0e9-7c4e-9bce-e4d6f2c1c000", "codex resume 01963d6b-c0e9-7c4e-9bce-e4d6f2c1c000"),
         (.antigravity, "2842b64f-6f5a-4d28-948c-b2156ab731f8", "agy --conversation 2842b64f-6f5a-4d28-948c-b2156ab731f8"),
-        (.opencode, "ses_e6811df99ffec906Lvdn0geRZZ", "opencode --session ses_e6811df99ffec906Lvdn0geRZZ")
+        (.opencode, "ses_e6811df99ffec906Lvdn0geRZZ", "opencode --session ses_e6811df99ffec906Lvdn0geRZZ"),
+        // The resume asks for the v3 engine, the one Kiro's hooks load in.
+        (.kiro, "sess_6972654a-ef00-47b4-9cfd-d5047d8f9ef0", "kiro-cli --v3 --resume-id sess_6972654a-ef00-47b4-9cfd-d5047d8f9ef0")
     ])
     func aResume_survivesSnapshotRoundTrip(kind: AgentKind, sessionId: String, resume: String) throws {
         try withTempDir { root in

@@ -73,7 +73,8 @@ enum AgentCatalog {
             .opencode,
             displayName: "OpenCode",
             installFolders: ["/opt/homebrew/bin", "/usr/local/bin", "~/.opencode/bin", "~/.local/bin"]
-        )
+        ),
+        makeEntry(.kiro, displayName: "Kiro", installFolders: ["~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"])
     ]
 
     /// `kind`'s entry, every name in it the one a pane types

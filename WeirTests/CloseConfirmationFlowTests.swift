@@ -282,7 +282,7 @@ struct CloseConfirmationFlowTests {
             let session = WorkspaceSession()
             let pane = try #require(TabActions.newTab(session, in: .loose, running: kind))
             let tab = try #require(session.tab(containing: pane))
-            #expect(tab.initialCommands == [pane: kind.launchCommand])
+            #expect(tab.initialCommands == [pane: kind.startCommand])
             #expect(tab.agentsInFront == [pane: PaneAgentInFront(kind: kind, isStaged: true)])
             #expect(tab.agentBadges.isEmpty)
             #expect(try asksAboutAnAgent(closing: tab, in: session, gate: gate))

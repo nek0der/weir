@@ -53,6 +53,8 @@ Codex questions are always answered in the terminal.
 
 Antigravity has no approval card. Its approvals and questions are always answered in its own prompt, and Weir shows that it waits. A subagent's approval does not always show as a wait: `agy` shows it as Blocked, and `ctrl+k` there approves it.
 
+Kiro has no approval card either. Its approvals are answered in its own prompt, and Weir shows that it waits.
+
 For OpenCode, **Allow always** and answers to its questions are only at its own prompt.
 
 Each of OpenCode's tabs is watched on its own, so a wait or a failure in a tab behind the one on screen still reaches you here. Going to it, or choosing **Answer in terminal** for its request, brings its tab forward. The pane's badge shows the most urgent of its tabs.

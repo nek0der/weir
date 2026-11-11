@@ -23,7 +23,7 @@ use weir_agent_core::{
 use weir_agent_model::{
     AgentEvent, CheckResult, ConversationKey, DeniedAction, DiffStat, EventApplication, EventId,
     PromptKind, ProviderDescriptor, RunRecord, SnapshotStatus, TurnCounter, TurnPhase, TurnRecord,
-    TurnUsage, turn_record_file_name,
+    TurnUsage, parse_utc_seconds, turn_record_file_name,
 };
 
 /// What a prepared begin carries into its record.
@@ -31,6 +31,7 @@ struct Begun {
     taken: SnapshotTaken,
     provider_turn_id: Option<String>,
     prompt_kind: Option<PromptKind>,
+    started_at: Option<String>,
 }
 
 /// Where a begin's snapshot comes from.
@@ -58,6 +59,10 @@ pub(crate) enum Prepared {
         /// Who wrote the prompt, when the provider said so
         /// (`PromptSubmitted`'s `kind`).
         prompt_kind: Option<PromptKind>,
+        /// When the turn began, when its transcript says so and that is no
+        /// later than the call (`Prepared::began_at`); `None` takes the
+        /// call's time.
+        started_at: Option<String>,
     },
     /// A turn ends. `turn_id` is the run's current turn, which an end may
     /// close again when the provider says the turn went on after another
@@ -142,6 +147,37 @@ pub(crate) trait TurnTranscript {
 }
 
 impl Prepared {
+    /// Returns this begin with the time its turn began, as the provider's transcript
+    /// records it. A time that cannot be read, or that comes after `now` (a
+    /// clock that moved), keeps the call's time. Any other preparation is
+    /// returned as it is.
+    pub(crate) fn began_at(self, at: Option<&str>, now: &str) -> Self {
+        match self {
+            Self::Begin {
+                turn_id,
+                event,
+                taken,
+                provider_turn_id,
+                prompt_kind,
+                ..
+            } => Self::Begin {
+                turn_id,
+                event,
+                taken,
+                provider_turn_id,
+                prompt_kind,
+                started_at: at
+                    .filter(|at| {
+                        parse_utc_seconds(at)
+                            .zip(parse_utc_seconds(now))
+                            .is_some_and(|(at, now)| at <= now)
+                    })
+                    .map(str::to_owned),
+            },
+            other => other,
+        }
+    }
+
     /// The begin snapshot this event took, or `None` when it took none (an
     /// end, or a retried prompt), so the run record's own fields keep what
     /// they had.
@@ -335,6 +371,7 @@ impl Turns<'_> {
                     AgentEvent::PromptSubmitted { kind, .. } => *kind,
                     _ => None,
                 },
+                started_at: None,
                 taken: match begin {
                     // Nothing could be taken in time: the record reads as
                     // missing its begin, as an end-only record does.
@@ -480,6 +517,7 @@ impl Turns<'_> {
                 taken,
                 provider_turn_id,
                 prompt_kind,
+                started_at,
             } => self.begin(
                 turn_id,
                 event,
@@ -487,6 +525,7 @@ impl Turns<'_> {
                     taken,
                     provider_turn_id,
                     prompt_kind,
+                    started_at,
                 },
                 previous,
                 run?,
@@ -545,6 +584,7 @@ impl Turns<'_> {
             taken,
             provider_turn_id,
             prompt_kind,
+            started_at,
         } = begun;
         if let Some(event) = &event
             && self
@@ -575,7 +615,7 @@ impl Turns<'_> {
             display_number,
             prompt: &prompt,
             prompt_kind,
-            now: self.now,
+            now: started_at.as_deref().unwrap_or(self.now),
             begin: taken,
             event: &event,
             provider_turn_id,
@@ -893,4 +933,56 @@ fn pin_for(status: &SnapshotStatus, turn_id: &str, side: TurnSide) -> Option<Pin
 /// directory of its own happened.
 pub(crate) fn current_directory() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Prepared, not_taken};
+
+    fn begin() -> Prepared {
+        Prepared::Begin {
+            turn_id: "T".to_owned(),
+            event: None,
+            taken: not_taken("test"),
+            provider_turn_id: None,
+            prompt_kind: None,
+            started_at: None,
+        }
+    }
+
+    fn started_at(prepared: &Prepared) -> Option<&str> {
+        match prepared {
+            Prepared::Begin { started_at, .. } => started_at.as_deref(),
+            _ => panic!("not a begin"),
+        }
+    }
+
+    /// The transcript's start is kept only when it is a record time no later
+    /// than the call: a clock that moved, or a time in another form, keeps the
+    /// call's.
+    #[test]
+    fn a_begin_takes_the_transcripts_start_only_when_it_is_no_later_than_the_call() {
+        let now = "2026-11-11T04:38:47Z";
+        assert_eq!(
+            started_at(&begin().began_at(Some("2026-11-11T04:38:29Z"), now)),
+            Some("2026-11-11T04:38:29Z")
+        );
+        assert_eq!(started_at(&begin().began_at(Some(now), now)), Some(now));
+        assert_eq!(
+            started_at(&begin().began_at(Some("2026-11-11T04:39:00Z"), now)),
+            None
+        );
+        assert_eq!(
+            started_at(&begin().began_at(Some("2026-11-11T04:38:29.097Z"), now)),
+            None
+        );
+        assert_eq!(started_at(&begin().began_at(None, now)), None);
+    }
+
+    #[test]
+    fn only_a_begin_takes_a_start() {
+        let skipped = Prepared::Skip("event already applied")
+            .began_at(Some("2026-11-11T04:38:29Z"), "2026-11-11T04:38:47Z");
+        assert!(matches!(skipped, Prepared::Skip("event already applied")));
+    }
 }

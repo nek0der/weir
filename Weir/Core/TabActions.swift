@@ -45,7 +45,7 @@ enum TabActions {
         selects: Bool
     ) -> UUID? {
         if let agent {
-            let paneID = newTab(session, in: container, typing: agent.launchCommand, window: window, intent: intent, selects: selects)
+            let paneID = newTab(session, in: container, typing: agent.startCommand, window: window, intent: intent, selects: selects)
             stageAgentInFront(agent, paneID: paneID, in: session)
             return paneID
         }

@@ -686,6 +686,11 @@ enum SupervisionTokens {
     /// otherwise black and white. White letters are far over the 3:1 a mark is
     /// held to; it stands too close to the dark surfaces, which its edge is for.
     static let opencode = ThemedColor(light: 0x211E1E, dark: 0x211E1E)
+    /// The Kiro badge's ground, the purple of its ghost mark, the same in both
+    /// appearances. White letters reach 4.66:1, and it stands at least 3.72:1
+    /// off every light surface; in dark it stands too close to a selected row
+    /// (2.71:1), which its edge is for.
+    static let kiro = ThemedColor(light: 0x9046FF, dark: 0x9046FF)
     /// The edge inside each badge, for a fill that stands under 3:1 off a
     /// surface it sits on. Claude's orange does in light (2.49:1 on a
     /// selected row), so there it takes its own color darkened just far
@@ -707,6 +712,7 @@ enum SupervisionTokens {
     static let claudeEdge = ThemedColor(light: 0xC36B4E, dark: 0xD97757)
     static let codexEdge = ThemedColor(light: 0x7F7F7F, dark: 0xFFFFFF)
     static let opencodeEdge = ThemedColor(light: 0x211E1E, dark: 0x8E8989)
+    static let kiroEdge = ThemedColor(light: 0x9046FF, dark: 0x9955FF)
     /// The letters on an agent badge but Codex's: white, in both
     /// appearances, so the fill reads as the brand's color rather than one
     /// muddied by dark letters. On Claude's orange it is 3.12:1: the two

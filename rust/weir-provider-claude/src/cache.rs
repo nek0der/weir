@@ -28,7 +28,7 @@ use crate::transcript::{contains, is_sidechain, parse, request_usage, string};
 use serde_json::{Map, Value};
 use std::time::{Duration, UNIX_EPOCH};
 use weir_agent_model::{
-    CachePrecision, CacheWindow, TurnUsage, format_utc_seconds, parse_utc_seconds,
+    CachePrecision, CacheWindow, TurnUsage, format_utc_seconds, parse_utc_seconds_with_fraction,
 };
 
 /// The one-hour bucket, used by the main conversation on a subscription.
@@ -131,7 +131,7 @@ fn observe(line: &[u8]) -> Option<Observation> {
         return None;
     }
     let (request, usage) = request_usage(&record)?;
-    let started_at = string(&record, "timestamp").and_then(transcript_seconds)?;
+    let started_at = string(&record, "timestamp").and_then(parse_utc_seconds_with_fraction)?;
     let creation = record
         .get("message")
         .and_then(|message| message.get("usage"))
@@ -176,24 +176,6 @@ fn merge(later: Observation, earlier: &Observation) -> Observation {
         usage: later.usage.fuller(earlier.usage),
         ttl: later.ttl.or(earlier.ttl),
     }
-}
-
-/// Whole seconds for a transcript timestamp such as
-/// `2026-10-07T12:34:56.789Z`. The fraction is dropped, which moves the
-/// anchor earlier by under a second; any other shape, including an offset,
-/// is not something Claude Code writes and is ignored rather than guessed at.
-fn transcript_seconds(value: &str) -> Option<u64> {
-    let whole = value.get(..19)?;
-    let rest = value.get(19..)?;
-    let is_utc = rest == "Z"
-        || rest
-            .strip_prefix('.')
-            .and_then(|fraction| fraction.strip_suffix('Z'))
-            .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()));
-    if !is_utc {
-        return None;
-    }
-    parse_utc_seconds(&format!("{whole}Z"))
 }
 
 #[cfg(test)]
@@ -462,17 +444,5 @@ mod tests {
         let window = transcript_cache_window(&bytes).expect("window");
         assert_eq!(window.observed_at, "2026-10-07T12:00:00Z");
         assert_eq!(window.ttl_seconds, 3600);
-    }
-
-    #[test]
-    fn transcript_timestamps_parse_with_and_without_a_fraction() {
-        assert_eq!(
-            transcript_seconds("1970-01-01T00:01:00.5Z"),
-            Some(60),
-            "the fraction is dropped"
-        );
-        assert_eq!(transcript_seconds("1970-01-01T00:01:00Z"), Some(60));
-        assert_eq!(transcript_seconds("1970-01-01T00:01:00.Z"), None);
-        assert_eq!(transcript_seconds("1970-01-01T00:01:00"), None);
     }
 }

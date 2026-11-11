@@ -13,6 +13,7 @@ weir-provider-antigravity = { path = "../weir-provider-antigravity" }
 weir-provider-opencode = { path = "../weir-provider-opencode" }
 weir-provider-claude = { path = "../weir-provider-claude" }
 weir-provider-codex = { path = "../weir-provider-codex" }
+weir-provider-kiro = { path = "../weir-provider-kiro" }
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true

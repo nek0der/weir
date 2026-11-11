@@ -10,14 +10,28 @@ package enum AgentKind: String, Codable, CaseIterable, Equatable, Sendable {
     case codex
     case antigravity
     case opencode
+    case kiro
 
-    /// What a pane types to start the agent. The name resolves to Weir's
-    /// shim on the pane's `PATH`, which installs the hooks and finds the
-    /// real binary.
+    /// The agent's command name, which resolves to Weir's shim on the
+    /// pane's `PATH`; the shim installs the hooks and finds the real binary.
+    /// What Weir types to start a conversation is `startCommand`.
     package var launchCommand: String {
         switch self {
         case .claude, .codex, .opencode: rawValue
         case .antigravity: "agy"
+        case .kiro: "kiro-cli"
+        }
+    }
+
+    /// What Weir types to start a new conversation: the "+" menu, the
+    /// palette, and "Start New Conversation". Kiro's hooks load only under
+    /// its v3 engine, which a person who used Kiro 2 may not have chosen
+    /// yet, so Weir's own launches ask for it; a `kiro-cli` the person types
+    /// keeps Kiro's own choice.
+    package var startCommand: String {
+        switch self {
+        case .claude, .codex, .antigravity, .opencode: launchCommand
+        case .kiro: "kiro-cli --v3"
         }
     }
 
@@ -55,6 +69,9 @@ package enum AgentKind: String, Codable, CaseIterable, Equatable, Sendable {
         case .codex: "resume"
         case .antigravity: "--conversation"
         case .opencode: "--session"
+        // We ask for v3 because Kiro loads our hooks only under that engine
+        // (`startCommand`).
+        case .kiro: "--v3 --resume-id"
         }
     }
 }

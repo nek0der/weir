@@ -68,7 +68,7 @@ struct ProviderCapabilityTableTests {
 
     @Test("a provider this build does not have has no capability")
     func unknownProvider_hasNone() {
-        #expect(RustProviderBridge.capabilities(provider: "kiro").isEmpty)
+        #expect(RustProviderBridge.capabilities(provider: "later-agent").isEmpty)
         #expect(RustProviderBridge.capabilities(provider: "").isEmpty)
     }
 
@@ -82,6 +82,7 @@ struct ProviderCapabilityTableTests {
         case .codex: "Codex"
         case .antigravity: "Antigravity"
         case .opencode: "OpenCode"
+        case .kiro: "Kiro"
         }
         #expect(AgentProviderRegistry.displayName(for: kind) == expected)
     }
@@ -95,6 +96,7 @@ struct ProviderCapabilityTableTests {
         case .codex: "Codex"
         case .antigravity: "Antigravity"
         case .opencode: "OpenCode"
+        case .kiro: "Kiro"
         }
         #expect(AgentCatalog.entry(for: kind).displayName == expected)
     }

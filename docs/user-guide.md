@@ -58,6 +58,8 @@ is used up. A click outside the panel or Escape closes it.
   `--settings` shows no usage.
 - **OpenCode** has no section: its limits belong to whoever serves the model
   rather than to OpenCode.
+- **Kiro** has no section: it keeps what a turn used only in its own session
+  files, which it does not document.
 
 ### Sidebar
 
@@ -151,12 +153,14 @@ action without asking (Claude Code's bypass mode, or Codex with approvals set to
 never), the header shows a warning icon. Its tooltip says **Runs without
 asking**, and VoiceOver reads the same warning with the header.
 Antigravity does not report its permission mode, so its header shows neither the
-mode nor this warning. OpenCode's header names the role you chose for the agent,
-if any, the model, and the service it goes through, whichever model it runs: the
-badge stays `Op`. A long model name is cut in the middle, and the hover text has
-it whole. As the pane narrows, the folder goes first, then the tokens with
-OpenCode's service, then the model, the effort, and the mode, then the name. The
-warning icon stays visible.
+mode nor this warning. Kiro's header shows the warning when Kiro was started
+with `--trust-all-tools`; a change made during the session does not show.
+OpenCode's header names the role you chose for the agent, if any, the model, and
+the service it goes through, whichever model it runs: the badge stays `Op`. A
+long model name is cut in the middle, and the hover text has it whole. As the
+pane narrows, the folder goes first, then the tokens with OpenCode's service,
+then the model, the effort, and the mode, then the name. The warning icon stays
+visible.
 
 When tmux shows several agents in one terminal, the header gives priority to a
 visible agent that runs without asking, keeping its warning even when another
@@ -289,9 +293,9 @@ encoding.
 1. **Start.** **New Worktree** (⌘N) makes a worktree on a new or existing
    branch, fetching a remote base first and copying in the ignored files the
    project names, such as `.env`, then opens Claude Code, Codex, Antigravity,
-   OpenCode, a shell, or nothing in it. The sheet only makes the worktree; you
-   give the agent its first instruction in its own prompt. **Create** (⌘⏎) makes
-   it; ⌥⌘N makes one at once with the last choices, without the sheet.
+   OpenCode, Kiro, a shell, or nothing in it. The sheet only makes the worktree;
+   you give the agent its first instruction in its own prompt. **Create** (⌘⏎)
+   makes it; ⌥⌘N makes one at once with the last choices, without the sheet.
 2. **It works.** The sidebar row and the decision bar show what the agent is
    doing. Nothing moves or takes focus on its own.
 3. **It needs you.** An approval, a question, a stop, or a finished turn joins
@@ -301,7 +305,8 @@ encoding.
    list, or on the sidebar row opens the approval card, and **Answer in
    terminal** hands it to the agent's own prompt. While another app is in front,
    the menu bar can answer a short, low-impact shell command. Codex questions
-   are always answered in the terminal, and so is everything Antigravity asks.
+   are always answered in the terminal, and so is everything Antigravity and
+   Kiro ask.
    OpenCode's questions are answered in the terminal too, and its own prompt
    stays up while Weir holds an approval: answer at either one.
 4. **You review.** **Review Unviewed**, **Review All Unviewed**, or ⌥⌘R opens
@@ -329,6 +334,8 @@ encoding.
   [CONTRIBUTING.md](../CONTRIBUTING.md#native-approvals-in-a-debug-build).
   Antigravity always asks in its own prompt, in any build, and Weir shows that
   it waits; [Known limitations](known-limitations.md#antigravity) says why.
+  So does Kiro ([Known limitations](known-limitations.md#kiro)). Weir opens
+  Kiro with its v3 engine, the only one that reports to Weir.
   [OpenCode](known-limitations.md#opencode) uses the card too, with its own
   prompt up beside it.
 - **Worktrees.** Create, switch, and delete worktrees from **New Worktree**,
