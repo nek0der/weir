@@ -92,6 +92,27 @@ struct AgentShimLaunchTests {
         }
     }
 
+    /// An empty `PATH` entry names the current folder, first or last alike, so
+    /// an agent installed only there is the one the shim starts, and the
+    /// `PATH` it is handed keeps the entry where it was.
+    @Test(arguments: AgentCatalogFixture.homeEntries.map(\.kind), [":/usr/bin:/bin", "/usr/bin:/bin:"])
+    func onDisk_shimKeepsAnEmptyPathEntry_asTheCurrentFolder(kind: AgentKind, path: String) throws {
+        try withTempDir { root in
+            let tools = root.appendingPathComponent("tools")
+            let agent = tools.appendingPathComponent(kind.launchCommand)
+            try ShimHarness.recordingStub(at: agent, recordingIn: root)
+
+            #expect(try Self.startShim(kind, home: root, scratch: root, path: path, directory: tools) == 0)
+            let launched = ShimHarness.launched(in: root)
+            try #require(launched.count == 2)
+            #expect(
+                URL(fileURLWithPath: launched[0], relativeTo: tools).resolvingSymlinksInPath().path
+                    == agent.resolvingSymlinksInPath().path
+            )
+            #expect(launched[1] == path)
+        }
+    }
+
     /// However the `PATH` names a shim, the shim passes over it and starts the
     /// agent behind it. Each of these had a shim run itself forever: its own
     /// folder respelled, another install's shim looking for this one in turn,

@@ -310,6 +310,43 @@ weir_ensure_run_id() {
   fi
 }
 
+# The PATH without the shim's own folder `$1`, so that `command -v` finds the
+# real agent rather than the shim `$2`, named `$3` on the PATH. The colon
+# separates literal folder names. Sets weir_filtered_path.
+weir_filter_path() {
+  weir_filtered_path=""
+  lfp_has_entry=0
+  lfp_ifs="$IFS"
+  lfp_flags="$-"
+  # Field splitting must leave glob characters in folder names intact.
+  set -f
+  IFS=":"
+  # The added `:` keeps a trailing empty entry, which field splitting would
+  # drop, and `lfp_has_entry` keeps a leading one, which an empty result
+  # would hide. An empty entry means the current folder, so one that is not
+  # us stays.
+  for lfp_entry in ${PATH:-}:; do
+    [ "$lfp_entry" = "$1" ] && continue
+    # A folder is spelled many ways (a link to it, a trailing slash, a
+    # relative or empty entry), and another Weir's shim would look for us in
+    # turn, so we go by what an entry holds: a shim folder's mark, or this
+    # very file under another name.
+    [ -e "${lfp_entry:-.}/weir-hook" ] && continue
+    [ "${lfp_entry:-.}/$3" -ef "$2" ] && continue
+    if [ "$lfp_has_entry" = 0 ]; then
+      weir_filtered_path="$lfp_entry"
+      lfp_has_entry=1
+    else
+      weir_filtered_path="$weir_filtered_path:$lfp_entry"
+    fi
+  done
+  IFS="$lfp_ifs"
+  case "$lfp_flags" in
+    *f*) ;;
+    *) set +f ;;
+  esac
+}
+
 # The paths a known location names, one a line. A `/*/` stands for each
 # folder there, newest version first (`sort -V`: v22.3.0 before v18.20.0,
 # which a plain sort would reverse); only the star is a pattern, so a home

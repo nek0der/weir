@@ -80,7 +80,7 @@ truth for the values Weir sets.
 
 | Variable | Meaning |
 |---|---|
-| `PATH` | Original `PATH` with this directory prepended. Looking for the real `kiro-cli`, the shim passes over any entry holding a `weir-hook` (a shim folder, however it is spelled, this Weir's or another's) or a link to the shim itself |
+| `PATH` | Original `PATH` with this directory prepended. Looking for the real `kiro-cli`, the shim passes over any entry holding a `weir-hook` (a shim folder, however it is spelled, this Weir's or another's) or a link to the shim itself, and keeps every other entry where it was, an empty one (the current folder) included (`weir_filter_path` in `agent-shim/runtime-common.sh`). Without that file the shim does not search the `PATH` |
 | `WEIR_KIRO_SHIM_DIR` | This directory, so `claude-shim/zdotdir/.zshrc` can re-prepend it |
 | `WEIR_KIRO_SESSIONS_DIR` | Directory to write session records into |
 | `WEIR_KIRO_AGENT_STATES_DIR` | Directory to write agent-state records into; blank in a demo |

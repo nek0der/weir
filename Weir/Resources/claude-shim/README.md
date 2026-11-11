@@ -61,7 +61,7 @@ sets them:
 
 | Variable | Meaning |
 |---|---|
-| `PATH` | Original `PATH` with this directory prepended. Looking for the real `claude`, the shim passes over any entry holding a `weir-hook` (a shim folder, however it is spelled, this Weir's or another's) or a link to the shim itself |
+| `PATH` | Original `PATH` with this directory prepended. Looking for the real `claude`, the shim passes over any entry holding a `weir-hook` (a shim folder, however it is spelled, this Weir's or another's) or a link to the shim itself, and keeps every other entry where it was, an empty one (the current folder) included (`weir_filter_path` in `agent-shim/runtime-common.sh`). Without that file the shim does not search the `PATH` |
 | `ZDOTDIR` | Redirected to `zdotdir/` so the `PATH` edit survives the user's rc |
 | `WEIR_PANE_ID` | UUID of the launching split-tree leaf; not current ownership inside tmux |
 | `WEIR_AGENT_RUN_ID` | Minted by the shim: UUID of this Claude invocation; lifecycle-state filename key |
