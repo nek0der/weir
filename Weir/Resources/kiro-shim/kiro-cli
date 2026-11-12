@@ -82,54 +82,88 @@ hook_file="$kiro_hooks/weir.json"
 # from one the person has edited since (`enabled: false`, a timeout).
 hook_sum="$kiro_hooks/.weir.json.cksum"
 
-# Places the hook file when it is missing, or when it is the one we wrote, left
-# as we wrote it, and an older version. A file the person wrote or edited is
-# theirs, and a link is followed by no one. A new file goes in by a hard link,
-# which fails when one appeared meanwhile, and a replacement by rename after
-# its contents are read once more, so a Kiro starting now reads the old file
-# or the new one, never half of one, and an edit is lost only if it lands in
-# the instant between that read and the rename. The checksum goes last: a run
-# cut short between the two leaves our current file, which the next launch
-# knows by its contents. A failure leaves Kiro to start, unwatched.
+# Kiro has no separate numeric mark: the hook descriptions carry its version.
+# Keeping that version in the file lets a launch compare generations even when
+# termination left the ownership checksum behind the file replacement.
+weir_kiro_hook_version() {
+  sed -n 's/.*"description": "Weir \([0-9][0-9]*\):.*/\1/p' "$1" 2>/dev/null | head -n 1
+}
+
 weir_place_hooks() {
+  [ -n "${HOME:-}" ] || return 0
+  command -v weir_with_placement_lock >/dev/null 2>&1 || return 0
+  [ ! -L "$kiro_hooks" ] || return 0
+  weir_with_placement_lock "$HOME/.kiro/.weir-placement.lock" weir_place_hooks_locked
+}
+
+# The checksum protects the person's edits, while the embedded version prevents
+# Debug and Release from downgrading each other, as for the shared plugins.
+# A pending checksum identifies our file after an interrupted rename; otherwise
+# the old checksum would make that file look like a person's edit forever.
+weir_place_hooks_locked() {
   source_file="$self_dir/../kiro-hooks/weir.json"
-  [ -n "${HOME:-}" ] && [ -r "$source_file" ] || return 0
-  [ ! -L "$hook_file" ] || return 0
-  wanted=$(cksum <"$source_file") || return 0
+  pending_sum="$kiro_hooks/.weir.json.pending"
+  [ -r "$source_file" ] && [ ! -L "$hook_file" ] &&
+    [ ! -L "$hook_sum" ] && [ ! -L "$pending_sum" ] || return 0
+  for sidecar in "$hook_sum" "$pending_sum"; do
+    [ ! -e "$sidecar" ] || [ -f "$sidecar" ] || return 0
+  done
   mkdir -p "$kiro_hooks" 2>/dev/null || return 0
-  staged="$hook_file.staged-$$"
+  wanted=$(cksum <"$source_file") || return 0
+  shipped_version=$(weir_kiro_hook_version "$source_file")
+  [ -n "$shipped_version" ] || return 0
   if [ -e "$hook_file" ]; then
     [ -f "$hook_file" ] || return 0
     current=$(cksum <"$hook_file") || return 0
     if [ "$current" != "$wanted" ]; then
-      [ -f "$hook_sum" ] && [ "$(cat -- "$hook_sum" 2>/dev/null)" = "$current" ] || return 0
-      cp "$source_file" "$staged" 2>/dev/null || {
-        rm -f "$staged"
-        return 0
-      }
-      if [ "$(cksum <"$hook_file" 2>/dev/null)" != "$current" ] || ! mv -f "$staged" "$hook_file" 2>/dev/null; then
-        rm -f "$staged"
-        return 0
+      if [ "$(cat "$hook_sum" 2>/dev/null)" != "$current" ]; then
+        [ "$(cat "$pending_sum" 2>/dev/null)" = "$current" ] || return 0
+        # Preserve recovered ownership before another upgrade overwrites the
+        # pending checksum, even if that upgrade is itself interrupted.
+        weir_place_file "$pending_sum" "$hook_sum" || return 0
       fi
+      placed_version=$(weir_kiro_hook_version "$hook_file")
+      # Files predating versioned descriptions are generation zero.
+      [ "${placed_version:-0}" -lt "$shipped_version" ] 2>/dev/null || return 0
+    fi
+  fi
+  pending=$(mktemp "${placement_lock%/*}/.weir-pending.XXXXXXXX" 2>/dev/null) || return 0
+  printf '%s\n' "$wanted" >"$pending" && mv -f "$pending" "$pending_sum" 2>/dev/null || {
+    rm -f "$pending"
+    return 0
+  }
+  if [ -e "$hook_file" ]; then
+    if [ "$current" != "$wanted" ]; then
+      # Re-read before rename to preserve edits saved while we staged the file.
+      # Only an edit between this read and the rename can still be lost.
+      staged=$(mktemp "${placement_lock%/*}/.weir-hook.XXXXXXXX" 2>/dev/null) || return 0
+      cp "$source_file" "$staged" 2>/dev/null && [ ! -L "$hook_file" ] &&
+        [ "$(cksum <"$hook_file" 2>/dev/null)" = "$current" ] &&
+        mv -f "$staged" "$hook_file" 2>/dev/null || { rm -f "$staged"; return 0; }
     fi
   else
+    # A hard link publishes the complete file only if the path is still absent;
+    # rename would overwrite a personal file created while we staged our copy.
+    staged=$(mktemp "${placement_lock%/*}/.weir-hook.XXXXXXXX" 2>/dev/null) || return 0
     cp "$source_file" "$staged" 2>/dev/null && ln "$staged" "$hook_file" 2>/dev/null
     placed=$?
     rm -f "$staged"
     [ "$placed" = 0 ] || return 0
   fi
-  [ "$(cat -- "$hook_sum" 2>/dev/null)" = "$wanted" ] && return 0
-  [ ! -L "$hook_sum" ] || return 0
-  printf '%s\n' "$wanted" >"$hook_sum.staged-$$" 2>/dev/null && mv -f "$hook_sum.staged-$$" "$hook_sum" 2>/dev/null ||
-    rm -f "$hook_sum.staged-$$"
+  weir_place_file "$pending_sum" "$hook_sum" || return 0
+  rm -f "$pending_sum"
 }
 
-# Whether Kiro will run our hooks as this build wrote them: a hook file that
-# was edited, or is another build's, may report nothing, and a run that could
-# only sit at rest is not begun.
+# A newer managed hook is compatible with this launch's wrapper too. Comparing
+# only with the bundled bytes would suppress launch reporting in older builds.
 weir_hooks_in_place() {
   [ -f "$hook_file" ] && [ ! -L "$hook_file" ] &&
-    [ "$(cksum <"$hook_file" 2>/dev/null)" = "$(cksum <"$self_dir/../kiro-hooks/weir.json" 2>/dev/null)" ]
+    [ -f "$hook_sum" ] && [ ! -L "$hook_sum" ] || return 1
+  [ "$(cksum <"$hook_file" 2>/dev/null)" = "$(cat "$hook_sum" 2>/dev/null)" ] || return 1
+  placed_version=$(weir_kiro_hook_version "$hook_file")
+  shipped_version=$(weir_kiro_hook_version "$self_dir/../kiro-hooks/weir.json")
+  [ -n "$placed_version" ] && [ -n "$shipped_version" ] &&
+    [ "$placed_version" -ge "$shipped_version" ] 2>/dev/null
 }
 
 # Whether this launch runs Kiro's v3 engine, the only one that loads our

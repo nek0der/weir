@@ -44,6 +44,21 @@ same without it is the person's, and a link is left alone. A failure leaves the 
 version or none, and `opencode` starts either way, unwatched. A demo run, whose record
 directories are blank, places nothing.
 
+Placement uses the shared `agent-shim/runtime-common.sh` helpers and a persistent
+`.weir-placement.lock` in the config root (`${target%/plugins/weir}`, including
+when `OPENCODE_CONFIG_DIR` is set). macOS `lockf` holds an exclusive
+kernel lock while the shim re-reads ownership and version, stages files in that
+root, renames them into place, and writes the completed mark last. It waits at
+most one second; a timeout skips placement and starts the agent. A `placing:<version>` mark lets a later
+launch finish an interrupted update without allowing an older build to overwrite
+it. The kernel releases the lock when its holders exit, including after termination.
+
+The lock and temporary staging folders and files stay outside `plugins/` so no
+plugin loader can see them. Marks only increase: running an older Weir does not
+downgrade the shared plugin. To reinstall an older bundled plugin on purpose,
+quit every Weir build, remove the configured `plugins/weir` folder only if it
+carries `.weir-managed`, then launch the older Weir and run `opencode` in a pane.
+
 Outside a Weir pane `WEIR_OPENCODE_HOOK_DIR` is unset, and the plugin does nothing. The
 folder holds only `tui.js`: the service's plugin loader looks for `server` and `index`,
 and no pane's environment reaches it there.

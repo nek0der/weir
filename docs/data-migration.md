@@ -1119,14 +1119,34 @@ the flags takes its place (`CodexHookInjectionSmokeTests`).
 Going back to 0.1.11 or earlier writes the tables again at its next launch.
 That is harmless here for the same reason.
 
+### Shared agent placement
+
+The plugin and hook folders below are shared by Release, Debug, and worktree
+builds. Their shims use `agent-shim/runtime-common.sh` to hold a macOS `lockf`
+lock while re-reading ownership and version, replacing files, and publishing the
+completed mark or checksum last. A launch waits at most one second for the lock;
+on timeout it starts the agent without placement. Each `.weir-placement.lock`
+persists in the config root: `${target%/plugins/weir}` for OpenCode (including
+`OPENCODE_CONFIG_DIR`), `~/.gemini/config` for Antigravity, and `~/.kiro` for
+Kiro. Temporary staging folders and files also go in those roots, outside the
+scanned `plugins/` and `hooks/` folders and on the same filesystem for atomic
+rename. Kiro creates `hooks/` before writing. The kernel releases the locks
+when their holders exit. Plugin marks record `placing:<version>` during an
+update, so a later launch can finish it and an older build cannot overwrite it.
+
+Plugin generations 15 for OpenCode and 4 for Antigravity also replace installations
+whose previous unlocked writers may have left code and marks inconsistent. An
+already-running older Weir build does not honor the new locks; quit those builds
+before relying on placement serialization.
+
 ### Antigravity's plugin
 
 Not in the Application Support folder: `agy` takes no hooks on its command line,
 so the shim of a Weir pane places a plugin at `~/.gemini/config/plugins/weir`
 (`Weir/Resources/antigravity-shim/agy`), marked by a `.weir-managed` file inside
-it. The shim places it again when the mark differs from the one this build
-ships, and leaves alone a folder without the mark. Weir takes no copy, as every
-file in the folder is its own.
+it. The shim places it again only when the mark is lower than the one this
+build ships, and leaves alone a folder without the mark. Weir takes no copy,
+as every file in the folder is its own.
 
 The plugin stays when you go back. An earlier build places nothing and does
 not run this shim, so `WEIR_ANTIGRAVITY_HOOK_DIR` is unset in its panes, as it
@@ -1156,7 +1176,10 @@ line, so the shim of a Weir pane places `~/.kiro/hooks/weir.json`
 (`Weir/Resources/kiro-shim/kiro-cli`), and keeps the checksum of what it wrote
 in `~/.kiro/hooks/.weir.json.cksum`. The shim replaces the file only while it
 matches that checksum, so a file the person wrote or edited is left alone.
-Weir takes no copy, as the file is its own until the person edits it.
+Weir takes no copy, as the file is its own until the person edits it. The
+version in each hook description prevents an older build from replacing a
+newer file. `.weir.json.pending` retains the incoming checksum until the final
+checksum is written, so a launch can finish an interrupted replacement.
 
 The file stays when you go back. An earlier build places nothing and does not
 run this shim, so `WEIR_KIRO_HOOK_DIR` is unset in its panes, as it is outside

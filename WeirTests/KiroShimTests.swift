@@ -97,6 +97,8 @@ struct KiroShimTests {
             // Nothing staged is left behind.
             let left = try FileManager.default.contentsOfDirectory(atPath: home.appendingPathComponent(".kiro/hooks").path)
             #expect(Set(left) == ["weir.json", ".weir.json.cksum"])
+            let config = home.appendingPathComponent(".kiro")
+            #expect(try FileManager.default.contentsOfDirectory(atPath: config.path).sorted() == [".weir-placement.lock", "hooks"])
             // The checksum kept is the placed file's, so the next launch knows
             // the file as ours.
             #expect(try storedChecksum(in: home) == Self.cksum(of: placedHooks(in: home)))

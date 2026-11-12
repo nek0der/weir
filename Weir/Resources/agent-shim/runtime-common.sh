@@ -3,6 +3,96 @@
 # instruction, and locating the agent, for every agent shim; and what a hook
 # wrapper says when the Hook Helper is missing.
 
+# Serializes shared placements without leaving a stale lock after a killed shim.
+# lockf is part of macOS. Its BSD lock stays on descriptor 9 in this subshell
+# after lockf exits, and the kernel releases it when the last holder exits.
+# We keep the lock file: unlinking it could let waiters lock different inodes.
+# A busy placement delays a launch by at most one second, then skips placement.
+weir_with_placement_lock() (
+  placement_lock=$1
+  shift
+  [ ! -L "$placement_lock" ] || return 0
+  mkdir -p "${placement_lock%/*}" 2>/dev/null || return 0
+  if [ ! -e "$placement_lock" ]; then
+    (umask 077; set -C; : >"$placement_lock") 2>/dev/null || true
+  fi
+  [ -f "$placement_lock" ] && [ ! -L "$placement_lock" ] || return 0
+  weir_run_placement_locked "$@" 9<>"$placement_lock" 2>/dev/null
+)
+
+weir_run_placement_locked() {
+  /usr/bin/lockf -s -t 1 9 2>/dev/null || return 0
+  [ ! -L "$placement_lock" ] || return 0
+  "$@"
+}
+
+# Replaces each file by rename so readers never see a partially copied file.
+# Stage in the config root so plugin and hook loaders cannot see partial files.
+# mktemp avoids following a staged-file link, and rename stays on the same filesystem.
+weir_place_file() {
+  [ ! -L "$2" ] && { [ ! -e "$2" ] || [ -f "$2" ]; } || return 1
+  placement_staged=$(mktemp "${placement_lock%/*}/.weir-file.XXXXXXXX" 2>/dev/null) || return 1
+  if cp "$1" "$placement_staged" 2>/dev/null && mv -f "$placement_staged" "$2" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$placement_staged"
+  return 1
+}
+
+# Places a managed plugin under the caller's lock. Debug, Release, and worktree
+# builds share these folders, so only lower marks are replaced: overwriting each
+# other's plugin would reload it in every running pane. A pending mark retains
+# the requested version: an interrupted upgrade must not let an older build
+# install over its files. The completed numeric mark is always written last.
+# $1 is the source, $2 the destination, and the rest are relative file names.
+weir_place_managed_plugin() {
+  source_dir=$1
+  target=$2
+  shift 2
+  [ -r "$source_dir/.weir-managed" ] && [ ! -L "$target" ] || return 0
+  shipped_mark=$(cat "$source_dir/.weir-managed" 2>/dev/null)
+  case "$shipped_mark" in "" | *[!0-9]*) return 0 ;; esac
+  if [ -e "$target" ]; then
+    [ -d "$target" ] && [ -f "$target/.weir-managed" ] && [ ! -L "$target/.weir-managed" ] || return 0
+    placed_mark=$(cat "$target/.weir-managed" 2>/dev/null)
+    case "$placed_mark" in
+      placing:*)
+        pending_mark=${placed_mark#placing:}
+        case "$pending_mark" in "" | *[!0-9]*) ;; *)
+          [ "$pending_mark" -le "$shipped_mark" ] 2>/dev/null || return 0 ;;
+        esac ;;
+      "" | *[!0-9]*) ;;
+      *) [ "$placed_mark" -lt "$shipped_mark" ] 2>/dev/null || return 0 ;;
+    esac
+  else
+    mkdir -p "${target%/*}" 2>/dev/null || return 0
+    # Publish the ownership mark with the folder, so termination between mkdir
+    # and the first file cannot strand an unmarked folder we must not touch.
+    initial=$(mktemp -d "${placement_lock%/*}/.weir-plugin.XXXXXXXX" 2>/dev/null) || return 0
+    initial_folder="$initial/${target##*/}"
+    mkdir "$initial_folder" 2>/dev/null &&
+      printf 'placing:%s\n' "$shipped_mark" >"$initial_folder/.weir-managed" &&
+      mv -n "$initial_folder" "${target%/*}/" 2>/dev/null || { rm -rf "$initial"; return 0; }
+    # Moving a same-named child into its parent skips a target that appeared
+    # meanwhile; moving the temporary folder to the target would nest it there.
+    [ ! -d "$initial_folder" ] || { rm -rf "$initial"; return 0; }
+    rmdir "$initial" 2>/dev/null
+  fi
+  for file in "$@"; do
+    [ ! -L "$target/$file" ] || return 0
+    case "$file" in */*)
+      [ ! -L "$target/${file%/*}" ] || return 0
+      mkdir -p "$target/${file%/*}" 2>/dev/null || return 0 ;;
+    esac
+  done
+  pending=$(mktemp "${placement_lock%/*}/.weir-mark.XXXXXXXX" 2>/dev/null) || return 0
+  printf 'placing:%s\n' "$shipped_mark" >"$pending" &&
+    mv -f "$pending" "$target/.weir-managed" 2>/dev/null || { rm -f "$pending"; return 0; }
+  for file in "$@" .weir-managed; do
+    weir_place_file "$source_dir/$file" "$target/$file" || return 0
+  done
+}
+
 # The new session's first instruction. Weir no longer writes these
 # files; an earlier build wrote it to a 0600 file and named the file in
 # WEIR_INITIAL_PROMPT_FILE, and we still consume a file a restored tab

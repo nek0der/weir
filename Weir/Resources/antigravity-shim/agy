@@ -71,37 +71,16 @@ if [ "$found_off_path" = 1 ] && command -v weir_add_agent_folder >/dev/null 2>&1
   agy_node="$weir_agent_node"
 fi
 
-# Places the plugin when it is missing or an older version. Only a folder that
-# carries our mark is ours to change: one named the same without it is the
-# person's, and a link is followed by no one.
-#
-# Each file goes in by rename, in place, so another `agy` starting or a hook
-# running now finds the old file or the new one, and never a gap: a hook that
-# cannot start fails the agent's tool. The mark goes last with the version, and
-# first as a word no version is, so a run cut short is ours and is finished by
-# the next launch. A failure leaves `agy` to start, unwatched.
+# Serializes the ownership check, file replacements, and final version mark.
+# A missing runtime or a busy lock leaves the agent to start without placement.
 weir_place_plugin() {
   source_dir="$self_dir/../antigravity-plugin"
-  target="${HOME:-}/.gemini/config/plugins/weir"
-  [ -n "${HOME:-}" ] && [ -r "$source_dir/.weir-managed" ] || return 0
-  [ -L "$target" ] && return 0
-  if [ -e "$target" ]; then
-    [ -f "$target/.weir-managed" ] && [ ! -L "$target/.weir-managed" ] || return 0
-    cmp -s "$source_dir/.weir-managed" "$target/.weir-managed" && return 0
-  else
-    mkdir -p "$target" 2>/dev/null || return 0
-    printf 'placing\n' >"$target/.weir-managed" 2>/dev/null || return 0
-  fi
-  [ ! -L "$target/scripts" ] || return 0
-  mkdir -p "$target/scripts" 2>/dev/null || return 0
-  # The script before the hooks that run it, and the mark after everything.
-  for file in scripts/weir-dispatch plugin.json hooks.json .weir-managed; do
-    staged="$target/$file.staged-$$"
-    cp "$source_dir/$file" "$staged" 2>/dev/null && mv -f "$staged" "$target/$file" 2>/dev/null || {
-      rm -f "$staged"
-      return 0
-    }
-  done
+  [ -n "${HOME:-}" ] || return 0
+  target="$HOME/.gemini/config/plugins/weir"
+  command -v weir_with_placement_lock >/dev/null 2>&1 || return 0
+  [ ! -L "${target%/*}" ] || return 0
+  weir_with_placement_lock "$HOME/.gemini/config/.weir-placement.lock" weir_place_managed_plugin \
+    "$source_dir" "$target" scripts/weir-dispatch plugin.json hooks.json
 }
 
 # Reports this launch to the same receiver as agy's hooks, since agy sends
