@@ -468,6 +468,9 @@ impl InRepo {
             invocation_id: None,
             provider_home: Some(self.scratch.root.join("home/.kiro")),
             hook_directory: None,
+            resolved_provider_home: None,
+            resolved_hook_directory: None,
+            received_at: std::time::UNIX_EPOCH,
         };
         weir_agent_hook::adapter_for(PROVIDER)
             .expect("kiro")

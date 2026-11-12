@@ -25,8 +25,11 @@ pub struct RawHookInput<'a> {
     pub transcript: Option<&'a [u8]>,
 }
 
-/// Where the hook runs. Everything here comes from the environment the shim
-/// set, never from the payload.
+/// Where and when the hook runs. Everything here comes from the host (the
+/// environment the shim set, the file system, the clock), never from the
+/// payload. The runtime reads those facts once and hands them over, so an
+/// adapter reads nothing of the host itself (ADR 0004) and a recorded payload
+/// with its context normalizes the same way on any machine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HookContext {
     pub run_id: Uuid,
@@ -53,6 +56,19 @@ pub struct HookContext {
     /// not read it or its environment names none (a `HookEnv` built from
     /// pairs alone, as the fixtures' replays are).
     pub hook_directory: Option<PathBuf>,
+    /// `provider_home` with its symlinks resolved, as the runtime found it
+    /// on disk; `None` when it is not set, is relative, or does not exist. A
+    /// provider that resolves a path itself (Codex canonicalizes a
+    /// `CODEX_HOME` the environment sets) reports the real one, which only
+    /// this compares equal to. The path as written stays in
+    /// `provider_home`, for what is read and reported by it.
+    pub resolved_provider_home: Option<PathBuf>,
+    /// `hook_directory` with its symlinks resolved, on the same terms as
+    /// `resolved_provider_home`.
+    pub resolved_hook_directory: Option<PathBuf>,
+    /// When the runtime received the call. A delay a payload states without
+    /// its own time (a usage limit's "try again in 5 hours") counts from it.
+    pub received_at: SystemTime,
 }
 
 /// The tmux server and pane hosting the agent, captured from `TMUX` and
@@ -279,8 +295,9 @@ pub trait ProviderAdapter: Send + Sync {
     /// it to fill `HookContext::provider_home`, falling back to the
     /// descriptor's `default_home`. Hooks run in the agent's own environment,
     /// so the variable the agent honors is the one the hook sees. The value
-    /// is handed over as written: an adapter that compares paths resolves
-    /// symlinks itself. A relative value, which the agent resolves against
+    /// is handed over as written, and with its symlinks resolved in
+    /// `HookContext::resolved_provider_home`; an adapter compares those and
+    /// never resolves a path itself. A relative value, which the agent resolves against
     /// the directory it starts in, cannot be resolved here, where the hook
     /// runs in the session's `cwd`; the provider's shim makes it absolute
     /// before the agent starts.

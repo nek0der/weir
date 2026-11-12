@@ -56,7 +56,12 @@ fn owned(value: Option<&str>) -> Option<String> {
     value.map(str::to_owned)
 }
 
-pub(crate) fn normalize(input: RawHookInput<'_>) -> Result<Vec<AgentEvent>, NormalizeError> {
+/// `received_at` is when the runtime received the call, which a failure the
+/// plugin made up without a time counts its limit's delay from.
+pub(crate) fn normalize(
+    input: RawHookInput<'_>,
+    received_at: SystemTime,
+) -> Result<Vec<AgentEvent>, NormalizeError> {
     let object = parse_object(input.bytes, MAX_HOOK_INPUT_BYTES)?;
     let Some(name) = event_name(&object) else {
         return Ok(Vec::new());
@@ -143,7 +148,7 @@ pub(crate) fn normalize(input: RawHookInput<'_>) -> Result<Vec<AgentEvent>, Norm
             reply: owned(string(&object, "reply").filter(|reply| !reply.is_empty())),
             background_work: None,
         }],
-        "session.execution.failed" => vec![failed(&object)],
+        "session.execution.failed" => vec![failed(&object, received_at)],
         "session.execution.interrupted" => vec![AgentEvent::Interrupted],
         // Says nothing of the run; the call's settings are what it brings
         // (`session_settings`).
@@ -232,13 +237,14 @@ fn form_detail(object: &Map<String, Value>) -> Option<String> {
 }
 
 /// A limit's delay counts from when the failure was recorded, which the event's
-/// envelope says; a report the plugin made up has none, and counts from now.
-fn failed(object: &Map<String, Value>) -> AgentEvent {
+/// envelope says; a report the plugin made up has none, and counts from when
+/// the runtime received it.
+fn failed(object: &Map<String, Value>, received_at: SystemTime) -> AgentEvent {
     let now = object
         .get("created")
         .and_then(Value::as_u64)
         .and_then(|created| UNIX_EPOCH.checked_add(Duration::from_millis(created)))
-        .unwrap_or_else(SystemTime::now);
+        .unwrap_or(received_at);
     let error = data(object)
         .and_then(|data| data.get("error"))
         .and_then(Value::as_object);

@@ -165,6 +165,8 @@ lint: rust-lint
 	swiftlint lint --strict
 	scripts/check-localization.sh
 	scripts/test-check-localization.sh
+	scripts/check-adapter-purity.sh
+	scripts/test-check-adapter-purity.sh
 	scripts/test-check-module-strings.sh
 	scripts/test-check-automation.sh
 	scripts/test-screenshot-app.sh

@@ -92,6 +92,18 @@ pub trait ProviderAdapter: Send + Sync {
   `<provider_id>-agent-states`, `<provider_id>-sessions`, and
   `<provider_id>-cwd-events`; Claude alone declares the legacy names
   `agent-states`, `sessions`, and `cwd-events` so no data moves.
+- An adapter reads nothing of the host directly: no file, clock,
+  environment, or other process. For a hook call, the runtime hands it the
+  provider's home and the hook's directory in `HookContext`, both as written
+  and with their symlinks resolved (`resolved_provider_home`,
+  `resolved_hook_directory`), and the time it received the call
+  (`received_at`). A usage limit's delay that the payload states without a
+  time of its own counts from `received_at`. The same payload and context
+  then give the same events on any machine. Where an adapter needs more of
+  the disk, it asks through an interface the runtime implements, such as
+  `ListDirectory` or `SettingsFiles`. `scripts/check-adapter-purity.sh`, part
+  of `make lint`, refuses the usual spellings of a host read in an adapter
+  crate's production code.
 - `normalize` turns one raw hook payload into neutral events. Unknown event
   names become `AgentEvent::Extension { name, payload }` with the original
   payload, so a provider's new event is visible before the core understands

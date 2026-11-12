@@ -10,6 +10,8 @@
   decision is unchanged.
 - Amended: 2026-11-04. Kiro joins the providers that changed the model
   crate's contract (Consequences). The decision is unchanged.
+- Amended: 2026-11-12. An adapter reads no clock either, and the runtime
+  hands it the host's facts. The decision is unchanged.
 
 ## Context
 
@@ -33,8 +35,10 @@ had no recorded contract to test against.
 - **One crate per provider.** A provider implements one adapter trait and
   publishes a descriptor (id, display name, capabilities, directory names,
   process names). It turns a raw hook payload into neutral events and renders
-  the provider's approval output. An adapter never touches the file system;
-  it declares what the platform must install as a recipe.
+  the provider's approval output. An adapter never touches the file system
+  or reads the clock; the runtime reads those facts of the host and hands
+  them over, so a recorded payload normalizes the same way on any machine.
+  It declares what the platform must install as a recipe.
 - **The rules branch on capabilities, never on provider ids.** How a
   provider differs (whether it reports cwd changes, answers approvals by a
   hook, or reports its status over OSC 7501, and so on) is a named

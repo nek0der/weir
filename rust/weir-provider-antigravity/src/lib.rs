@@ -41,9 +41,9 @@ impl ProviderAdapter for AntigravityAdapter {
     fn normalize(
         &self,
         input: RawHookInput<'_>,
-        _context: &HookContext,
+        context: &HookContext,
     ) -> Result<Vec<AgentEvent>, NormalizeError> {
-        normalize::normalize(input)
+        normalize::normalize(input, context.received_at)
     }
 
     fn approval_request(
