@@ -10,9 +10,9 @@ only when every check passed. It never touches the person's Weir Dev session.
   (always)   connection and authentication, state, layers, commands, the
              palette rows the channel leans on, settings, typing, the channel's own unsent text, paste, waiting,
              disconnects, the command line, tmux (when installed), quitting
-  --keys     the person's unsent text and the client's posted keys (keys sent
-             from outside, which need the Accessibility grant for this
-             terminal), and captures of the window and of Settings (which
+  --keys     the person's unsent text and the client's posted keys, also
+             while a sheet is up (keys sent from outside, which need the
+             Accessibility grant for this terminal), and captures of the window and of Settings (which
              need Screen Recording)
   --agents   Claude Code, Codex, OpenCode, Antigravity, and Kiro, each started
              in a pane of its own, prompted, waited on, and quit; each costs a
@@ -508,6 +508,9 @@ def posted_keys(run, checks):
     def post(*names):
         return client.post_keys(run.info, run.channel, list(names))
 
+    def posted_keys():
+        return run.call({"op": "state"})["state"]["postedKeys"]
+
     checks.check("a fresh run's keyboard is on its pane", (window().get("keyboard") or {}).get("kind") == "pane", window().get("keyboard"))
     checks.refused("a key is not posted while a pane holds the keyboard", post("return"), "terminal pane")
     # Past the client's check, as a key would arrive after the keyboard moved
@@ -516,9 +519,13 @@ def posted_keys(run, checks):
     run.call({"op": "focus", "pane": ref})
     marker = run.marker("posted-return")
     run.type("typeLine", ref, f"touch {shlex.quote(marker)}", submit=False)
+    before = posted_keys()
     client.post_key(run.info["pid"], client.KEY_CODES["return"])
-    time.sleep(1)
+    run.until(lambda: posted_keys()["seen"] > before["seen"], 5)
     checks.check("the app drops a posted Return bound for a pane, past the client's check", not os.path.exists(marker))
+    after = posted_keys()
+    checks.check("...and counts it as seen and dropped, which the client reads",
+                 (after["seen"] - before["seen"], after["dropped"] - before["dropped"]) == (1, 1), (before, after))
     run.type("submit", ref)
     checks.check("the line it was dropped on is intact, and the channel's own submit runs it", run.until(lambda: os.path.exists(marker), 5))
     run.call({"op": "command", "name": "newTab"})
@@ -765,6 +772,31 @@ def held_paste(run, checks):
     checks.refused("submit does not send a held paste as the channel's", run.type("submit", ref, expect="cat"), "person")
 
 
+def posted_keys_on_a_sheet(run, checks):
+    """After `held_paste`, whose paste confirmation is the sheet a posted
+    Return must never answer: Allow would paste into the program."""
+    checks.section("posted keys while a sheet is up (--keys)")
+    snapshot = run.call({"op": "state"})["state"]
+    window = snapshot["windows"][0]
+    checks.check("the paste confirmation is up as a sheet, which holds the keyboard",
+                 window["hasSheet"] and (window.get("keyboard") or {}).get("kind") == "sheet", window)
+    checks.check("state says a posted key would be dropped there",
+                 snapshot["postedKeys"].get("refusal") == "sheet", snapshot["postedKeys"])
+    checks.refused("a key is not posted while a sheet is up", client.post_keys(run.info, run.channel, ["return"]), "sheet")
+    before = snapshot["postedKeys"]
+    client.post_key(run.info["pid"], client.KEY_CODES["return"])
+
+    def seen():
+        keys = run.call({"op": "state"})["state"]["postedKeys"]
+        return keys if keys["seen"] > before["seen"] else None
+
+    after = run.until(seen, 5)
+    checks.check("the app drops a posted Return bound for the sheet, past the client's check",
+                 bool(after) and after["dropped"] - before["dropped"] == 1, (before, after))
+    time.sleep(1)
+    checks.check("...and the confirmation is still up, unanswered", run.call({"op": "state"})["state"]["windows"][0]["hasSheet"])
+
+
 def quitting(run, checks, keep):
     checks.section("quitting")
     if keep:
@@ -838,8 +870,14 @@ def selected_sections(args, parser):
         sections += [agents]
     # Last: it leaves the paste confirmation up, which only quitting clears.
     sections += [held_paste]
+    if args.keys:
+        # It needs that confirmation up.
+        sections += [posted_keys_on_a_sheet]
     if args.only is not None:
         wanted = set(args.only.split(","))
+        if "posted_keys_on_a_sheet" in wanted:
+            # It needs the confirmation that section leaves up.
+            wanted.add("held_paste")
         available = {section.__name__ for section in sections}
         unknown = wanted - available
         if unknown:

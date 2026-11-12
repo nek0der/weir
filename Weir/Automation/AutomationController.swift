@@ -120,7 +120,10 @@
                     tabs: tabs
                 )
             }
-            return AutomationSnapshot(run: runID, projects: projects, windows: windows, settings: settingsSnapshot())
+            return AutomationSnapshot(
+                run: runID, projects: projects, windows: windows,
+                settings: settingsSnapshot(), postedKeys: postedKeys(in: state)
+            )
         }
 
         private func pane(of id: UUID, in state: AppState) -> AutomationSnapshot.Pane {

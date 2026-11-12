@@ -59,9 +59,31 @@
         /// A terminal pane, where Return runs code: keys go there through
         /// `typeLine`, `paste`, and `submit`, never posted (ADR 0006).
         case pane
-        /// One of Weir's own controls: a dropdown, a sheet's field, the
-        /// restore strip, a search field.
+        /// One of Weir's own controls: a dropdown, the restore strip, a
+        /// search field.
         case control
+        /// A sheet or an alert attached to the window, whatever holds the
+        /// keyboard inside it. Return there can answer it for the person, so
+        /// keys are never posted to it (ADR 0006).
+        case sheet
+    }
+
+    /// Why the client must not post a key now (`AutomationPostedKeys`), as
+    /// `state` reports it in `postedKeys`.
+    enum AutomationPostedKeyRefusal: String, Codable, Sendable {
+        /// Settings is open, and a key could land there.
+        case settingsShown
+        /// The quick terminal is shown, and a key could land in its pane.
+        case quickTerminalShown
+        /// The run shows no project window or several, and a key could land
+        /// in any of them.
+        case notOneWindow
+        /// A sheet or an alert is attached to the window.
+        case sheet
+        /// A terminal pane holds the window's keyboard.
+        case pane
+        /// Nothing in the window holds the keyboard.
+        case nothingHoldsKeyboard
     }
 
     /// What `wait` waits for.
@@ -198,6 +220,21 @@
             let tabs: [Tab]
         }
 
+        /// Where a key posted to the run now would land, and what became of
+        /// the keys posted so far (ADR 0006).
+        struct PostedKeys: Codable, Equatable, Sendable {
+            /// The window a key would land in, when the run shows exactly one.
+            let window: UUID?
+            /// Why the client must not post a key now; left out when a key
+            /// would land on one of Weir's own controls in `window`.
+            let refusal: AutomationPostedKeyRefusal?
+            /// Posted key presses the app's gate has seen since the run
+            /// started.
+            let seen: Int
+            /// Those of them the gate dropped.
+            let dropped: Int
+        }
+
         struct Keyboard: Codable, Equatable, Sendable {
             let kind: AutomationKeyboardHolder
             /// The pane, when `kind` is `pane`.
@@ -256,6 +293,7 @@
         let projects: [Project]
         let windows: [Window]
         let settings: Settings?
+        let postedKeys: PostedKeys
     }
 
 #endif

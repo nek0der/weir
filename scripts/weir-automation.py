@@ -24,8 +24,9 @@ Usage: scripts/weir-automation.py [--run SHORT_ID] COMMAND ...
                                           commits it as ⌘Return does
   setting KEY [VALUE] [--unset]           read a setting, set it to VALUE (JSON: '"Menlo"', 14, true), or clear it
   keys KEY ... [--window ID]              post named keys (escape, down, return, cmd+return) to the run, only
-                                          while it shows one window and one of Weir's own controls there holds
-                                          the keyboard (ADR 0006); needs the Accessibility grant for this terminal
+                                          while `state` says they would land on one of Weir's own controls,
+                                          never a pane or a sheet (ADR 0006); fails if the app dropped one;
+                                          needs the Accessibility grant for this terminal
 
 With several runs live, --run names the one to drive (the short ID `launch`
 prints). A pane is named by its UUID, or a unique prefix of it; the run and
@@ -239,7 +240,7 @@ MODIFIER_FLAGS = {"cmd": 0x100000, "shift": 0x20000, "option": 0x80000, "ctrl": 
 
 # The marker the app tells a posted key by (`AutomationPostedKeys.marker`),
 # "WEIRKEYS": a key that carries it is dropped unless one of Weir's own
-# controls in a project window is where it lands.
+# controls in a project window, with no sheet up, is where it lands.
 POSTED_KEY_MARKER = 0x5745_4952_4B45_5953
 
 # One key down and up, posted to a process: PID CODE FLAGS MARKER [TEXT]. A
@@ -324,50 +325,76 @@ def post_key(pid, code, flags=0, marked=True, text=None):
         raise ChannelError(f"could not post the key: {done.stdout}{done.stderr}")
 
 
-def keyboard_window(channel):
-    """The one window a posted key can reach, as `state` reads it now, or why
-    there is none to name. While the run is behind the person's windows it has
-    no key window it can report (`NSApp.keyWindow` is nil), yet a posted key
-    still lands in one of its windows; with one project window shown and
-    Settings closed, that is the only place it can land."""
+# Why the app would drop a key posted now (`AutomationPostedKeyRefusal`), as
+# `state` reports it in `postedKeys`, in the words a failed reply gives.
+REFUSALS = {
+    "settingsShown": "Settings is open, and a key could land there; close it first",
+    "quickTerminalShown": "the quick terminal is shown, and a key could land in its pane; hide it first",
+    "notOneWindow": "the run shows no window or several, and a key could land in any of them; keys need exactly one",
+    "sheet": "a sheet or an alert is up, and Return could answer it for the person; keys are never posted there",
+    "pane": "a terminal pane holds the keyboard; send Return there with submit and text with typeLine",
+    "nothingHoldsKeyboard": "nothing in the window holds the keyboard; open the control the key is for first",
+}
+
+
+def posted_keys_state(channel):
+    """`state`'s `postedKeys`, with the window's `keyboard` beside it."""
     snapshot = channel.call({"op": "state"})["state"]
-    if snapshot.get("settings"):
-        return None, "Settings is open, and a key could land there; close it first"
-    shown = [w for w in snapshot["windows"] if w["isOnScreen"]]
-    if len(shown) != 1:
-        return None, f"the run shows {len(shown)} windows, and a key could land in any of them; keys need exactly one"
-    return shown[0], None
+    target = snapshot["postedKeys"]
+    window = next((w for w in snapshot["windows"] if w["id"] == target.get("window")), None)
+    return target, (window or {}).get("keyboard")
 
 
 def post_keys(run, channel, names, window_id=None):
-    """Posts each key in turn, reading `state` before each one. The run must
-    show one window (`window_id`, when given), and one of Weir's own controls
-    must hold its keyboard, never a terminal pane, where Return runs code
-    (ADR 0006). The app checks the same again as each key arrives
-    (`AutomationPostedKeys.mayDeliver`), since the keyboard can move between
-    this read and the key; the two checks change together.
-    The run reports nothing back, so the caller
-    reads the result with `state` or `capture`."""
+    """Posts the keys, one request to a run at a time: the counts it reads
+    back are the run's, not the request's, so two at once would read each
+    other's keys."""
+    with open(os.path.join(runs_folder(), run["folder"], "posted-keys.lock"), "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _post_keys(run, channel, names, window_id)
+
+
+def _post_keys(run, channel, names, window_id):
+    """Posts each key in turn, after `state` says before each one that it
+    would land on one of Weir's own controls in the window shown, never a
+    terminal pane, where Return runs code, or a sheet, where Return answers
+    for the person (ADR 0006). The app judges the window as it judges each
+    key again on arrival (`AutomationPostedKeys`), since the keyboard can move
+    between this read and the key, and counts the keys its gate sees and
+    drops. So after posting, this waits until the gate has seen every key, or
+    a second at most, and fails if it dropped one. The counts say nothing of
+    what a key did, so the caller reads its effect with `state` or
+    `capture`."""
     keys = [(name, *parse_key(name)) for name in names]
     posted = []
+    first = None
+    keyboard = None
     for name, code, flags in keys:
-        window, refusal = keyboard_window(channel)
-        if window is None:
-            return {"status": "failed", "posted": posted, "reason": refusal}
-        if window_id and not window["id"].lower().startswith(window_id.lower()):
-            return {"status": "failed", "posted": posted, "reason": f"the window shown is {window['id']}, not {window_id}"}
-        holder = window.get("keyboard")
-        if not holder:
-            return {"status": "failed", "posted": posted,
-                    "reason": "nothing in the window holds the keyboard; open the control the key is for first"}
-        if holder["kind"] != "control":
-            return {"status": "failed", "posted": posted, "keyboard": holder,
-                    "reason": "a terminal pane holds the keyboard; send Return there with submit and text with typeLine"}
+        target, keyboard = posted_keys_state(channel)
+        first = first or target
+        refusal = target.get("refusal")
+        if refusal:
+            return {"status": "failed", "posted": posted, "keyboard": keyboard,
+                    "reason": REFUSALS.get(refusal, f"the app would drop the key ({refusal})")}
+        if window_id and not target["window"].lower().startswith(window_id.lower()):
+            return {"status": "failed", "posted": posted, "reason": f"the window shown is {target['window']}, not {window_id}"}
         post_key(run["pid"], code, flags)
         posted.append(name)
         time.sleep(0.05)
-    window, _ = keyboard_window(channel)
-    return {"status": "done", "posted": posted, "keyboard": (window or {}).get("keyboard")}
+    # A key a control's own monitor takes first (a dropdown's Esc) never
+    # reaches the gate, so a key the gate has not seen is not a failure; the
+    # wait ends early once it has seen them all.
+    deadline = time.monotonic() + 1
+    while True:
+        target, keyboard = posted_keys_state(channel)
+        if target["seen"] - first["seen"] >= len(posted) or time.monotonic() >= deadline:
+            break
+        time.sleep(0.05)
+    dropped = target["dropped"] - first["dropped"]
+    if dropped:
+        return {"status": "failed", "posted": posted, "keyboard": keyboard,
+                "reason": f"the app dropped {dropped} of the {len(posted)} keys posted, since the keyboard moved before they arrived"}
+    return {"status": "done", "posted": posted, "keyboard": keyboard}
 
 
 def repository_root():
