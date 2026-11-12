@@ -49,14 +49,14 @@ struct AntigravityShimTests {
         let helper = root.appendingPathComponent("helper")
         try AgentCatalogFixture.makeExecutable(
             helper,
-            script: "#!/bin/sh\n[ \"$1\" = hook ] && cat > \"\(report.path)\"\nexit 0\n"
+            script: "#!/bin/sh\n[ \"$1\" = hook ] && printf '%s\\0' \"$@\" > \(ShellQuote.single(report.path))\nexit 0\n"
         )
         let process = try runShim(root: root, home: home, args: args, states: states, environment: [
             "WEIR_HOOK_HELPER": helper.path
         ])
         #expect(process.terminationStatus == 0)
         guard let data = try? Data(contentsOf: report) else { return nil }
-        return try JSONObjectFixture.object(data)
+        return try HookReportFixture.object(data)
     }
 
     private func dispatch(
@@ -177,7 +177,7 @@ struct AntigravityShimTests {
             let helper = root.appendingPathComponent("helper")
             try AgentCatalogFixture.makeExecutable(
                 helper,
-                script: "#!/bin/sh\ncat > \"\(called.path)\"\nexit 3\n"
+                script: "#!/bin/sh\nprintf '%s\\0' \"$@\" > \(ShellQuote.single(called.path))\nexit 3\n"
             )
             let process = try runShim(
                 root: root,
@@ -185,11 +185,28 @@ struct AntigravityShimTests {
                 args: ["--conversation", "a"],
                 environment: ["WEIR_HOOK_HELPER": helper.path]
             )
-            let report = try JSONObjectFixture.object(Data(contentsOf: called))
+            let report = try HookReportFixture.object(Data(contentsOf: called))
             #expect(report["hook_event_name"] as? String == "WeirLaunch")
             #expect(report["conversationId"] as? String == "a")
             #expect(process.terminationStatus == 0)
             #expect(ShimHarness.recordedArgv(root.appendingPathComponent("args")) == ["--conversation", "a"])
+        }
+    }
+
+    @Test func shim_preservesControlCharactersInLaunchValues() throws {
+        try withTempDir { root in
+            let folder = root.appendingPathComponent("tab\tquote\"backslash\\end\n")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let conversation = "id\t\"\\\n"
+            let report = try #require(try launchReport(
+                root: folder, home: root.appendingPathComponent("home"), args: ["--conversation", conversation]
+            ))
+            #expect(report["conversationId"] as? String == conversation)
+            let paths = try #require(report["workspacePaths"] as? [String])
+            #expect(paths.count == 1)
+            // The temporary folder lies under `/private`, which Foundation
+            // leaves off and the shell's own folder keeps.
+            #expect(try [folder.path, "/private" + folder.path].contains(#require(paths.first)))
         }
     }
 
@@ -217,7 +234,8 @@ struct AntigravityShimTests {
         }
     }
 
-    @Test func dispatch_addsTheEventName_andPassesTheHooksReplyThrough() throws {
+    @Test(arguments: ["{}", " \n\t{}", #"{"conversationId":"a"}"#])
+    func dispatch_passesTheEventOutOfBand_andPassesTheHooksReplyThrough(input: String) throws {
         try withTempDir { root in
             let seen = root.appendingPathComponent("seen")
             let arguments = root.appendingPathComponent("arguments")
@@ -229,15 +247,15 @@ struct AntigravityShimTests {
             )
             let result = try dispatch(
                 ["PreToolUse", "worktree"],
-                input: #"{"conversationId":"a"}"#,
+                input: input,
                 environment: ["WEIR_ANTIGRAVITY_HOOK_DIR": root.path]
             )
             #expect(result.status == 0)
             #expect(result.output == "{\"decision\":\"deny\",\"reason\":\"routed\"}\n")
-            let payload = try JSONSerialization.jsonObject(with: Data(contentsOf: seen)) as? [String: String]
-            #expect(payload == ["hook_event_name": "PreToolUse", "conversationId": "a"])
-            // What sends the call to the worktree hook rather than the lifecycle one.
-            #expect(try String(contentsOf: arguments, encoding: .utf8) == "worktree")
+            #expect(try String(contentsOf: seen, encoding: .utf8) == input)
+            // The `worktree` argument sends the call to the intercept rather than
+            // to the lifecycle hook.
+            #expect(try String(contentsOf: arguments, encoding: .utf8) == "event PreToolUse worktree")
         }
     }
 }

@@ -9,8 +9,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
 use std::slice;
 use weir_agent_hook::{
-    GitSnapshots, HookEnv, HookLog, HookOutcome, HookRuntime, NoSnapshots, SnapshotRunner,
-    adapter_for, run_hook, run_worktree_hook,
+    GitSnapshots, HookEnv, HookLog, HookOutcome, HookRuntime, MAX_INVOCATION_BYTES, NoSnapshots,
+    SnapshotRunner, adapter_for, run_hook, run_hook_invocation, run_worktree_hook,
 };
 use weir_agent_model::{
     ApprovalDecision, FailureWatch, MAX_HOOK_INPUT_BYTES, NormalizeError, ProviderAdapter,
@@ -63,6 +63,8 @@ const MAX_TRANSCRIPT_LINE_BYTES: usize = 8 * 1024 * 1024;
 pub const WEIR_HOOK_KIND_LIFECYCLE: u32 = 0;
 /// The worktree intercept the providers call on their shell tool.
 pub const WEIR_HOOK_KIND_WORKTREE: u32 = 1;
+/// An envelope containing helper arguments and the original provider payload.
+pub const WEIR_HOOK_KIND_INVOCATION: u32 = 2;
 
 /// Runs one lifecycle or worktree hook call and reports the outcome as JSON:
 /// `{"outcome":"applied","exit_code":0}` or, after a worktree intercept,
@@ -75,6 +77,10 @@ pub const WEIR_HOOK_KIND_WORKTREE: u32 = 1;
 /// the Hook Helper makes this call in the process the provider started for
 /// the hook, in the directory it started it in
 /// (`HookContext::hook_directory`).
+/// `WEIR_HOOK_KIND_INVOCATION` takes an object with `arguments` (string array)
+/// and `payload` (the original UTF-8 JSON text). Its envelope is bounded at
+/// 8 MiB to allow JSON escaping; the runtime bounds the original and completed
+/// payloads at 1 MiB. Other kinds take the provider payload directly.
 /// This call opens no approval service connection. On success, ownership
 /// of `*out` transfers to the caller, which must release it with
 /// `weir_approval_bytes_free_v1`.
@@ -106,7 +112,12 @@ pub unsafe extern "C" fn weir_hook_run_v1(
     let status = provider_boundary(|| {
         let provider = unsafe { input_bytes(provider, provider_len) }?;
         let provider = std::str::from_utf8(provider).map_err(|_| PROVIDER_INVALID_INPUT)?;
-        let input = unsafe { input_bytes(input, input_len) }?;
+        let input_limit = if kind == WEIR_HOOK_KIND_INVOCATION {
+            MAX_INVOCATION_BYTES
+        } else {
+            MAX_HOOK_INPUT_BYTES
+        };
+        let input = unsafe { bounded_input_bytes(input, input_len, input_limit) }?;
         let env_json = unsafe { input_bytes(env_json, env_len) }?;
         let variables: std::collections::BTreeMap<String, String> =
             serde_json::from_slice(env_json).map_err(|_| PROVIDER_INVALID_INPUT)?;
@@ -126,6 +137,7 @@ pub unsafe extern "C" fn weir_hook_run_v1(
         let outcome = match kind {
             WEIR_HOOK_KIND_LIFECYCLE => run_hook(provider, input, &runtime),
             WEIR_HOOK_KIND_WORKTREE => run_worktree_hook(provider, input, &runtime),
+            WEIR_HOOK_KIND_INVOCATION => run_hook_invocation(provider, input, &runtime),
             _ => return Err(PROVIDER_INVALID_INPUT),
         };
         let body = serde_json::to_vec(&outcome_json(&outcome)).map_err(|_| PROVIDER_INTERNAL)?;
@@ -458,13 +470,22 @@ unsafe fn resolve_adapter<'a>(
 }
 
 unsafe fn input_bytes<'a>(pointer: *const u8, length: usize) -> Result<&'a [u8], i32> {
+    // SAFETY: The caller supplies the same readable region to the bounded reader.
+    unsafe { bounded_input_bytes(pointer, length, MAX_HOOK_INPUT_BYTES) }
+}
+
+unsafe fn bounded_input_bytes<'a>(
+    pointer: *const u8,
+    length: usize,
+    limit: usize,
+) -> Result<&'a [u8], i32> {
     if length == 0 {
         return Ok(&[]);
     }
     if pointer.is_null() {
         return Err(PROVIDER_NULL_POINTER);
     }
-    if length > MAX_HOOK_INPUT_BYTES {
+    if length > limit {
         return Err(PROVIDER_INPUT_TOO_LARGE);
     }
     // SAFETY: The caller guarantees a readable input region of this length.
@@ -784,6 +805,157 @@ mod tests {
             )
         };
         (status, take(out, out_len))
+    }
+
+    #[test]
+    fn invocation_abi_preserves_launch_fields_in_the_session_hint() {
+        for (provider, session) in [
+            ("kiro", "session"),
+            ("antigravity", "session"),
+            ("kiro", "id\t\"\\\n"),
+            ("antigravity", "id\t\"\\\n"),
+        ] {
+            let scratch = tempfile::tempdir().unwrap();
+            let pane = "6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F10";
+            let folder = "/tmp/tab\tquote\"backslash\\end\n";
+            let prefix = provider.to_ascii_uppercase();
+            let env = serde_json::to_vec(&serde_json::json!({
+                "WEIR_PANE_ID": pane,
+                "WEIR_AGENT_RUN_ID": "6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F11",
+                format!("WEIR_{prefix}_AGENT_STATES_DIR"): scratch.path().join("states"),
+                format!("WEIR_{prefix}_SESSIONS_DIR"): scratch.path().join("sessions"),
+                "WEIR_TURN_SNAPSHOT": "0",
+            }))
+            .unwrap();
+            let arguments = if provider == "kiro" {
+                vec![
+                    "report",
+                    "WeirLaunch",
+                    "--string",
+                    "session_id",
+                    session,
+                    "--string",
+                    "cwd",
+                    folder,
+                    "--boolean",
+                    "trust_all_tools",
+                    "true",
+                ]
+            } else {
+                vec![
+                    "report",
+                    "WeirLaunch",
+                    "--string",
+                    "conversationId",
+                    session,
+                    "--string-array",
+                    "workspacePaths",
+                    folder,
+                ]
+            };
+            let input =
+                serde_json::to_vec(&serde_json::json!({"arguments": arguments, "payload": ""}))
+                    .unwrap();
+            let (status, outcome) = hook(provider, WEIR_HOOK_KIND_INVOCATION, &input, &env);
+            assert_eq!(status, PROVIDER_OK);
+            assert_eq!(outcome.unwrap()["outcome"], "applied");
+            if session == "session" {
+                let hint: Value = serde_json::from_slice(
+                    &std::fs::read(
+                        scratch
+                            .path()
+                            .join("sessions")
+                            .join(weir_agent_model::session_hint_file_name(pane)),
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+                assert_eq!(hint["cwd"], folder);
+                assert_eq!(hint["sessionId"], session);
+            }
+            let record = weir_agent_model::RunRecord::decode(
+                &std::fs::read(scratch.path().join("states").join(
+                    weir_agent_model::run_record_file_name("6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F11"),
+                ))
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(record.session_id.as_deref(), Some(session));
+        }
+    }
+
+    #[test]
+    fn invocation_abi_completes_empty_events_before_normalization() {
+        for payload in ["{}", " \n\t{}"] {
+            let scratch = tempfile::tempdir().unwrap();
+            let run = "6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F11";
+            let env = serde_json::to_vec(&serde_json::json!({
+                "WEIR_PANE_ID": "6F1D6A1E-0E34-4A1A-9A8E-2F2B6C1D7F10",
+                "WEIR_AGENT_RUN_ID": run,
+                "WEIR_ANTIGRAVITY_AGENT_STATES_DIR": scratch.path().join("states"),
+                "WEIR_ANTIGRAVITY_SESSIONS_DIR": scratch.path().join("sessions"),
+                "WEIR_TURN_SNAPSHOT": "0",
+            }))
+            .unwrap();
+            let input = serde_json::to_vec(&serde_json::json!({
+                "arguments": ["event", "SessionStart"], "payload": payload
+            }))
+            .unwrap();
+            let (status, outcome) = hook("antigravity", WEIR_HOOK_KIND_INVOCATION, &input, &env);
+            assert_eq!(status, PROVIDER_OK);
+            assert_eq!(outcome.unwrap()["outcome"], "applied");
+            let record = weir_agent_model::RunRecord::decode(
+                &std::fs::read(
+                    scratch
+                        .path()
+                        .join("states")
+                        .join(weir_agent_model::run_record_file_name(run)),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(record.last_hook_event.as_deref(), Some("session_started"));
+        }
+    }
+
+    #[test]
+    fn invocation_abi_bounds_the_envelope_and_rejects_non_object_events() {
+        for payload in ["{}", " \n\t{}", "[]"] {
+            let input = serde_json::to_vec(&serde_json::json!({
+                "arguments": ["event", "SessionStart"], "payload": payload
+            }))
+            .unwrap();
+            let (status, outcome) = hook("antigravity", WEIR_HOOK_KIND_INVOCATION, &input, b"{}");
+            assert_eq!(status, PROVIDER_OK);
+            assert_eq!(
+                outcome.unwrap()["outcome"],
+                if payload == "[]" {
+                    "rejected"
+                } else {
+                    "not_in_weir"
+                }
+            );
+        }
+        // A payload just under the payload limit makes an envelope over it,
+        // since the envelope escapes the payload: the envelope's own limit
+        // applies, not the payload's.
+        let payload = format!("{}{{}}", "\t".repeat(MAX_HOOK_INPUT_BYTES - 2));
+        let input = serde_json::to_vec(&serde_json::json!({
+            "arguments": ["event", "SessionStart"], "payload": payload
+        }))
+        .unwrap();
+        assert!(input.len() > MAX_HOOK_INPUT_BYTES);
+        let (status, outcome) = hook("antigravity", WEIR_HOOK_KIND_INVOCATION, &input, b"{}");
+        assert_eq!(status, PROVIDER_OK);
+        assert_eq!(outcome.unwrap()["outcome"], "not_in_weir");
+        let (status, outcome) = hook(
+            "antigravity",
+            WEIR_HOOK_KIND_INVOCATION,
+            &vec![b' '; MAX_INVOCATION_BYTES + 1],
+            b"{}",
+        );
+        assert_eq!(status, PROVIDER_INPUT_TOO_LARGE);
+        assert!(outcome.is_none());
     }
 
     #[test]

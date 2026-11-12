@@ -243,23 +243,21 @@ weir_prepare_launch_prompt() {
   prepare_dir="$PWD"
   if [ -n "$launch_directory" ]; then
     [ -d "$launch_directory" ] || return 0
-    prepare_dir=$(CDPATH='' cd -- "$launch_directory" 2>/dev/null && pwd)
+    # The sentinel preserves trailing newlines through command substitution.
+    prepare_dir=$(CDPATH='' cd -- "$launch_directory" 2>/dev/null && pwd && printf .) || return 0
+    prepare_dir=${prepare_dir%?.}
   fi
-  case "$prepare_dir" in
-    "" | *[[:cntrl:]]*) return 0 ;;
-  esac
+  [ -n "$prepare_dir" ] || return 0
   prepare_generation=$(/usr/bin/uuidgen 2>/dev/null | tr 'A-F' 'a-f')
   [ -n "$prepare_generation" ] || return 0
-  prepare_cwd=$(printf '%s' "$prepare_dir" | sed 's/\\/\\\\/g; s/"/\\"/g')
-  [ -n "$prepare_cwd" ] || return 0
   # The plugin's limits: the hook is told 8 s (`hookTimeLimit` of 10 s), which stops
   # its git, and is killed at 10 s, as a wait for the worktree lock does not heed the
   # first. OpenCode starts no later than that, with no start named. The shell's own
   # notes on the jobs it reaps go nowhere; the hook's errors still reach the pane.
   (
-    printf '{"hook_event_name":"weir.prepare","preparation":"%s","cwd":"%s","data":{}}' \
-      "$prepare_generation" "$prepare_cwd" |
-      WEIR_HOOK_TIME_LIMIT_MS=8000 "$self_dir/weir-hook" >/dev/null 2>&3 &
+    WEIR_HOOK_TIME_LIMIT_MS=8000 "$self_dir/weir-hook" report weir.prepare \
+      --string preparation "$prepare_generation" --string cwd "$prepare_dir" \
+      --empty-object data >/dev/null 2>&3 &
     prepare_pid=$!
     (
       sleep 10

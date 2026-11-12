@@ -234,15 +234,9 @@ weir_report_launch() {
   # substitution would drop, leaving another folder's name to report.
   workspace=$(pwd -P && printf .) || return 0
   workspace=${workspace%?.}
-  case "$workspace" in
-    *"
-"*) return 0 ;;
-  esac
-  json_escape='s/\\/\\\\/g; s/"/\\"/g'
-  workspace=$(printf '%s' "$workspace" | sed "$json_escape")
-  session=$(printf '%s' "$session" | sed "$json_escape")
-  printf '{"hook_event_name":"WeirLaunch","session_id":"%s","cwd":"%s","trust_all_tools":%s}' \
-    "$session" "$workspace" "$trusts_all" | /bin/sh "$self_dir/weir-hook" >/dev/null 2>&1 || true
+  /bin/sh "$self_dir/weir-hook" report WeirLaunch \
+    --string session_id "$session" --string cwd "$workspace" \
+    --boolean trust_all_tools "$trusts_all" >/dev/null 2>&1 || true
 }
 
 # Tells a pane with records apart from a demo's, whose directories are blank:

@@ -315,7 +315,7 @@ struct OpenCodeShimTests {
             script: """
             #!/bin/sh
             [ "$1" = hook ] || exit 0
-            cat > "\(root.path)/hook-body"
+            printf '%s\\0' "$@" > "\(root.path)/hook-body"
             printf '%s\\n' "$*" "${WEIR_HOOK_TIME_LIMIT_MS:-}" "${WEIR_AGENT_RUN_ID:-}" > "\(root.path)/hook-call"
             [ -e "\(root.path)/args" ] && touch "\(root.path)/ran-after-opencode"
             \(hangs ? "echo $$ > \"\(root.path)/helper-pid\"; exec sleep 20" : "exit \(status)")
@@ -325,7 +325,26 @@ struct OpenCodeShimTests {
     }
 
     private func hookBody(in root: URL) throws -> [String: Any] {
-        try JSONObjectFixture.object(Data(contentsOf: root.appendingPathComponent("hook-body")))
+        try HookReportFixture.object(Data(contentsOf: root.appendingPathComponent("hook-body")))
+    }
+
+    @Test(arguments: [false, true])
+    func shim_preservesControlCharactersInPreparationFolder(selectsDirectory: Bool) throws {
+        try withTempDir { root in
+            let folder = root.appendingPathComponent("tab\tquote\"backslash\\end\n")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let helper = try stubHelper(in: root)
+            let args = (selectsDirectory ? [folder.path] : []) + ["--prompt", "fix it"]
+            let process = try runShim(
+                root: selectsDirectory ? root : folder, home: root.appendingPathComponent("home"),
+                args: args, environment: ["WEIR_HOOK_HELPER": helper.path]
+            )
+            #expect(process.terminationStatus == 0)
+            let report = try hookBody(in: root)
+            // The temporary folder lies under `/private`, which Foundation
+            // leaves off and the shell's own folder keeps.
+            #expect(try [folder.path, "/private" + folder.path].contains(#require(report["cwd"] as? String)))
+        }
     }
 
     /// OpenCode sends a `--prompt` input by itself as its interface comes up, with
@@ -349,7 +368,9 @@ struct OpenCodeShimTests {
                     .first { $0.hasPrefix("WEIR_AGENT_RUN_ID=") }?
                     .dropFirst("WEIR_AGENT_RUN_ID=".count)
             )
-            #expect(try ScratchFile.read("hook-call", in: root) == "hook opencode\n8000\n\(run)\n")
+            let call = try ScratchFile.read("hook-call", in: root)
+            #expect(call.hasPrefix("hook opencode report weir.prepare --string preparation "))
+            #expect(call.hasSuffix("\n8000\n\(run)\n"))
             #expect(!exists("ran-after-opencode", in: root))
             #expect(try paneEnvironment(in: root).contains("WEIR_OPENCODE_LAUNCH_PREPARATION=\(generation)"))
             #expect(try !ScratchFile.read("env", in: root).contains("WEIR_OPENCODE_LAUNCH_PREPARATION"))

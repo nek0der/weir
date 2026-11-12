@@ -50,6 +50,73 @@ struct HookHelperLifecycleTests {
         return output
     }
 
+    @Test func namedLaunchFields_reachTheSessionHintIntact() throws {
+        try withTempDir { directory in
+            let folder = directory.appendingPathComponent("tab\tquote\"backslash\\end\n").path
+            let env = IsolatedProcessEnvironment.make([
+                "WEIR_PANE_ID": Self.paneID,
+                "WEIR_AGENT_RUN_ID": Self.runID,
+                "WEIR_KIRO_AGENT_STATES_DIR": directory.appendingPathComponent("states").path,
+                "WEIR_KIRO_SESSIONS_DIR": directory.appendingPathComponent("sessions").path,
+                "WEIR_KIRO_PID": "4242",
+                "WEIR_TURN_SNAPSHOT": "0"
+            ])
+            let result = try runHelper(
+                [
+                    "hook",
+                    "kiro",
+                    "report",
+                    "WeirLaunch",
+                    "--string",
+                    "session_id",
+                    "session",
+                    "--string",
+                    "cwd",
+                    folder,
+                    "--boolean",
+                    "trust_all_tools",
+                    "true"
+                ],
+                payload: Data(), environment: env
+            )
+            #expect(result.status == 0)
+            let hintURL = try directory.appendingPathComponent("sessions/\(AgentRecordFixtures.hintFileName(Self.paneID))")
+            let hint = try JSONObjectFixture.object(Data(contentsOf: hintURL))
+            #expect(hint["cwd"] as? String == folder)
+        }
+    }
+
+    /// agy names no event in its payloads, so its dispatch passes the name as
+    /// an argument, and the helper hands it to the runtime with the payload as
+    /// agy wrote it, whitespace before the object included.
+    @Test func aNamedEvent_reachesTheRecord() throws {
+        try withTempDir { directory in
+            let root = try #require(RepoFixture.weirRoot)
+            let fixture = try Data(contentsOf: root.appendingPathComponent(
+                "rust/fixtures/antigravity/2026-11/background-command/0001-SessionStart.json"
+            ))
+            var object = try JSONObjectFixture.object(fixture)
+            object.removeValue(forKey: "hook_event_name")
+            let payload = try Data(" \n\t".utf8) + JSONSerialization.data(withJSONObject: object)
+            let env = IsolatedProcessEnvironment.make([
+                "WEIR_PANE_ID": Self.paneID,
+                "WEIR_AGENT_RUN_ID": Self.runID,
+                "WEIR_ANTIGRAVITY_AGENT_STATES_DIR": directory.appendingPathComponent("states").path,
+                "WEIR_ANTIGRAVITY_SESSIONS_DIR": directory.appendingPathComponent("sessions").path,
+                "WEIR_TURN_SNAPSHOT": "0",
+                "WEIR_HOOK_LOG": directory.appendingPathComponent("hook.log").path
+            ])
+            let result = try runHelper(
+                ["hook", "antigravity", "event", "SessionStart"], payload: payload, environment: env
+            )
+            #expect(result.status == 0)
+            let recordURL = try directory.appendingPathComponent("states/\(AgentRecordFixtures.recordFileName(Self.runID))")
+            let typed = try AgentRecordFixtures.decode(AgentStateRecordFixture.self, at: recordURL)
+            #expect(typed.runId == Self.runID)
+            #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("hook.log").path))
+        }
+    }
+
     @Test("writes a version 3 record and a resume hint for a submitted prompt", arguments: HookAgent.allCases)
     func lifecycleHook_writesTheRecord(agent: HookAgent) throws {
         try withTempDir { directory in

@@ -17,7 +17,7 @@ shim. This is the one place Weir writes into an agent's own folder.
   places the plugin, names this launch's run, reports the launch, adds `--settings` for the status
   line relay, and execs the real binary in its place.
 - `weir-hook` — a wrapper that execs the Hook Helper's `hook antigravity`
-  subcommand, with `worktree` passed on for the intercept.
+  subcommand, forwarding event and report arguments to the Rust runtime.
 - `../antigravity-plugin/` — the plugin (`plugin.json`, `hooks.json`,
   `scripts/weir-dispatch`), copied to `~/.gemini/config/plugins/weir`.
 
@@ -32,7 +32,10 @@ are blank, places nothing.
 
 `scripts/weir-dispatch` is what each hook runs. Outside a Weir pane
 `WEIR_ANTIGRAVITY_HOOK_DIR` is unset, and it only gives the default reply.
-`agy`'s payloads name no event, so it adds `hook_event_name` from its argument.
+`agy`'s payloads name no event, so the dispatch passes the event name separately
+with `event <name> [worktree]`. The Rust runtime parses the bounded payload as
+a JSON object and sets `hook_event_name` with serde. Empty objects and leading
+whitespace do not change this behavior.
 
 `agy plugin disable weir` or removing the folder stops the reporting. A removed
 folder returns on the next launch through the shim.
@@ -40,8 +43,10 @@ folder returns on the next launch through the shim.
 ## The launch report
 
 `agy` sends `SessionStart` only with the first prompt, and none for
-`--conversation`. So the shim sends `weir-hook` a `WeirLaunch` payload before
-`agy` starts, with the conversation a resume names. A run then shows from the
+`--conversation`. So the shim calls `weir-hook report WeirLaunch` before
+`agy` starts, passing the conversation as `--string conversationId` and the
+folder as `--string-array workspacePaths`. The Rust runtime serializes these
+named values with serde, preserving control characters and trailing newlines. A run then shows from the
 start, and a failure before any hook has a record to show on. It sends none for
 a subcommand, help or version, in a demo, or while the plugin folder is not
 ours. `--continue` names no conversation, so the first request supplies it.
@@ -89,6 +94,11 @@ other result as the tool failing and its model retries the call, contrary to
 its documentation, so a broken Weir must never reach it. A missing helper
 makes `weir-hook` exit `1` as the other shims do, and the dispatch script turns
 that into the default reply.
+
+The installed plugin is shared by every Weir build that uses the same home
+folder. Its `weir-dispatch` hands each call to the copy bundled with the pane's
+own build, beside that build's helper, so a pane started by an older build still
+gets the arguments its helper understands.
 
 `agy` has no way we know of to change a tool's input, so a `git worktree add`
 aimed at another folder gets a `deny` whose reason gives the command to run

@@ -24,14 +24,21 @@ if [ -z "${WEIR_ANTIGRAVITY_HOOK_DIR:-}" ] || [ ! -r "$hook" ]; then
   exit 0
 fi
 
+# Every Weir build on the Mac shares this plugin, but each pane's helper is the
+# one its own build bundles, and builds pass the helper different arguments.
+# So we hand the call to the dispatch script bundled beside that helper, which
+# speaks its language; the bundled copy is this one and goes on below.
+bundled_dispatch="$WEIR_ANTIGRAVITY_HOOK_DIR/../antigravity-plugin/scripts/weir-dispatch"
+if [ -r "$bundled_dispatch" ] && [ ! "$bundled_dispatch" -ef "$0" ]; then
+  exec /bin/sh "$bundled_dispatch" "$@"
+fi
+
 # Hooks run in the plugin's folder; the session's is where a turn is recorded.
 cd -- "${WEIR_ANTIGRAVITY_WORKSPACE:-.}" 2>/dev/null || :
 
-# `agy`'s payload names no event, so we add the name as the object's first key.
-reply=$(
-  { printf '{"hook_event_name":"%s",' "$event"; tail -c +2; } |
-    /bin/sh "$hook" $kind 2>/dev/null
-) || reply=""
+# We pass the event separately because agy's payload names none, and the
+# runtime adds it to the parsed object, so the payload's spelling cannot break it.
+reply=$(/bin/sh "$hook" event "$event" "$kind" 2>/dev/null) || reply=""
 if [ -n "$reply" ]; then
   printf '%s\n' "$reply"
 else

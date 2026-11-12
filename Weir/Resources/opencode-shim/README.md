@@ -121,3 +121,8 @@ interface lacks part of the API it needs, every report is caught, and Enter send
 input whatever became of the save before it. The shim likewise starts `opencode` within ten
 seconds, whatever became of a `--prompt` input's save. It exits `127` with a
 diagnostic when it cannot find a real `opencode` to hand over to.
+
+Launch preparation calls `weir-hook report weir.prepare` with `--string`
+arguments for `preparation` and `cwd`, and `--empty-object data`. The Rust hook
+runtime builds the JSON with serde. Folder names retain control characters
+and trailing newlines, including when a launch selects another directory.

@@ -711,7 +711,14 @@ fragments do not apply. The shim places a plugin at
 `~/.gemini/config/plugins/weir`, marked by `.weir-managed`, and replaces only
 a folder with that mark. The plugin's dispatch script does nothing unless the
 shim named a hook directory for the run, because every `agy` reads that
-folder. It always exits 0 with valid JSON: on any other result, `agy` fails the
+folder. It forwards the original payload and the event name separately to the
+Hook Helper; the Rust runtime parses the bounded object and sets
+`hook_event_name` with serde. Launch reports use `report <event>` with typed
+named fields (`--string`, `--boolean`, `--string-array`, `--empty-object`) so
+the shell does not escape or assemble JSON. The helper transports arguments
+and the original UTF-8 payload in the invocation envelope of `weir_hook_run_v1`;
+the runtime bounds both the provider input and the completed payload at 1 MiB.
+The dispatch always exits 0 with valid JSON: on any other result, `agy` fails the
 tool and its model retries the call, contrary to its documentation.
 
 It declares neither approval capability. `agy` has no `PermissionRequest`, and

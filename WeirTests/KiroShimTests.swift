@@ -31,7 +31,11 @@ struct KiroShimTests {
         let stub = root.appendingPathComponent("real-kiro")
         try AgentCatalogFixture.makeExecutable(
             stub,
-            script: "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"\(root.path)/args\"\nenv > \"\(root.path)/env\"\n"
+            script: """
+            #!/bin/sh
+            printf '%s\\n' "$@" > \(ShellQuote.single(root.appendingPathComponent("args").path))
+            env > \(ShellQuote.single(root.appendingPathComponent("env").path))
+            """
         )
         var base = [
             "HOME": home.path,
@@ -69,14 +73,14 @@ struct KiroShimTests {
         let helper = root.appendingPathComponent("helper")
         try AgentCatalogFixture.makeExecutable(
             helper,
-            script: "#!/bin/sh\n[ \"$1\" = hook ] && cat > \"\(report.path)\"\nexit 0\n"
+            script: "#!/bin/sh\n[ \"$1\" = hook ] && printf '%s\\0' \"$@\" > \(ShellQuote.single(report.path))\nexit 0\n"
         )
         let process = try runShim(
             root: root, home: home, args: args, states: states, environment: environment, helper: helper, underPTY: underPTY
         )
         #expect(process.terminationStatus == 0)
         guard let data = try? Data(contentsOf: report) else { return nil }
-        return try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return try HookReportFixture.object(data)
     }
 
     // MARK: - The hook file
@@ -270,13 +274,15 @@ struct KiroShimTests {
         }
     }
 
-    /// A folder whose name ends in a line break is not reported as another
-    /// folder: the report is left to the first hook.
-    @Test func shim_inAFolderWithALineBreak_reportsNoLaunch() throws {
+    @Test(arguments: ["project\n", "tab\tquote\"backslash\\end\n"])
+    func shim_preservesControlCharactersInTheLaunchFolder(name: String) throws {
         try withTempDir { root in
-            let folder = root.appendingPathComponent("project\n")
+            let folder = root.appendingPathComponent(name)
             try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            #expect(try launchReport(root: folder, home: root.appendingPathComponent("home"), args: ["--v3"]) == nil)
+            let report = try #require(try launchReport(root: folder, home: root.appendingPathComponent("home"), args: ["--v3"]))
+            // The temporary folder lies under `/private`, which Foundation
+            // leaves off and the shell's own folder keeps.
+            #expect(["/private" + folder.path, folder.path].contains(report["cwd"] as? String ?? ""))
             #expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent("args").path))
         }
     }

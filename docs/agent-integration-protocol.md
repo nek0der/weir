@@ -371,7 +371,9 @@ to provider-neutral events, and those decide what is written (`turn_step` in
 
 Antigravity (`agy` 1.4.12) maps onto the same events differently, because it
 has no hook for a prompt and names no event in its payloads. `weir-dispatch`
-adds `hook_event_name` from the argument each plugin hook passes.
+passes the event name separately as `event <name> [worktree]`. The Rust hook
+runtime parses the bounded payload as an object, an empty one or one that
+starts with whitespace included, and sets `hook_event_name` with serde.
 
 | `agy` signal | Event | Effect |
 |---|---|---|

@@ -60,7 +60,7 @@ the hook use `~/.kiro` whatever it says.
 ## The launch report
 
 Kiro sends `SessionStart` only with the first prompt, and none for
-`--resume-id`. So the shim sends `weir-hook` a `WeirLaunch` payload before Kiro
+`--resume-id`. So the shim calls `weir-hook report WeirLaunch` before Kiro
 starts, with the session a resume names and whether `--trust-all-tools` (`-a`)
 was given. A run then shows from the start, and a failure before any hook has a
 record to show on. It sends none for a subcommand other than `chat`, help,
@@ -115,3 +115,7 @@ the model runs that command, which meets Kiro's own prompt like any other.
 
 The `kiro-cli` shim exits `127` with a diagnostic when it cannot find a real
 `kiro-cli` to hand over to.
+
+The launch report passes `session_id` and `cwd` as `--string` arguments and
+`trust_all_tools` as `--boolean`. The Rust hook runtime builds the JSON with
+serde, preserving control characters and trailing newlines in folder names.
