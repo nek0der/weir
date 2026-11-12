@@ -129,7 +129,7 @@ what it returns when it cannot act.
 | Operation | Effect |
 |---|---|
 | `hello` | Checks the token and the protocol marker. Every connection starts with it. |
-| `state` | Projects, and per window its open layers and the tabs of the worktree it shows, with each pane's identity triple, agent state, and foreground process. Per window also the dropdown open on the title bar or the pane strip (`dropdown`), whether a sheet or an alert is attached (`hasSheet`, which the channel cannot answer), whether the sidebar, the icon bars, and the Changes panel show, its review tab with the pane and the scope it compares, and what holds its keyboard (`keyboard`: a terminal pane, with its ID, or one of Weir's own controls). While Settings is open, `settings` names the section it shows. A field with no value is left out of the reply. |
+| `state` | Projects, and per window its open layers and the tabs of the worktree it shows, with each pane's identity triple, agent state, and foreground process. Per window also the dropdown open on the title bar or the pane strip (`dropdown`), whether a sheet or an alert is attached (`hasSheet`, which the channel cannot answer), whether the sidebar, the icon bars, and the Changes panel show, its review tab with the pane and the scope it compares, and what holds its keyboard (`keyboard`: a terminal pane, with its ID, one of Weir's own controls, or a sheet). While Settings is open, `settings` names the section it shows. `postedKeys` says where a key posted now would land (`window`), or why the app would drop it (`refusal`), and how many posted key presses its gate has seen and dropped so far. A field with no value is left out of the reply. |
 | `open` | Opens Needs Attention, All Projects, the notification history, the keyboard shortcuts, the plan usage panel, or review of a named pane's uncommitted changes. Each but review opens through the palette row of the action that opens it, as `command` runs a row, so a layer whose row is disabled now (the plan usage panel with the icon bars hidden) is refused at once. Review is opened for the named pane, not for whatever the window has selected, in the window that shows that pane, and another pane's review already up does not count as open, for `open` or for `wait`. |
 | `typeLine` | One line of text, with `submit` true or false. Same character rules as `typeAgentCommand(_:)`. |
 | `paste` | Text that may span lines, through Ghostty's own paste action as review sends it. A program that asked for bracketed paste gets one block and nothing is submitted; any other program meets the paste confirmation, so its lines are not run unseen. |
@@ -270,19 +270,25 @@ leave the run behind the person's windows.
 
 `keys` posts named keys and modifiers to the run with `CGEventPostToPid`
 (ADR 0006): Esc, Return, Tab, the arrows, Home, End, and those with ⌘, ⇧,
-⌥, or ⌃. It posts nothing that types text, and it reads `state` before each
-key. It posts only while the run shows one window and Settings is closed,
-since a run behind other apps has no key window it can report
-(`NSApp.keyWindow` is nil) and a key could land in any window it shows,
-and only while one of Weir's own controls holds that window's keyboard,
-never a terminal pane. The keyboard can move between that read and the
-key's arrival, so the app checks again as each posted key arrives
-(`AutomationPostedKeys`, which tells one by the marker the client sets in its
-source's user data) and drops one bound for a terminal pane, a window with a
-sheet up, the quick terminal, Settings, or a window whose keyboard nothing
-holds; a terminal pane refuses one too. The run reports nothing back, so the
-check reads the result with `state` or `capture`. The terminal that runs it
-needs the Accessibility grant.
+⌥, or ⌃. It posts nothing that types text. Before each key it reads
+`postedKeys` from `state` and posts only when that has no `refusal`: the
+run shows one project window, and one of Weir's own controls holds its
+keyboard, not a terminal pane, and no sheet or alert is up there, where
+Return could answer for the person. Settings and the quick terminal must be
+closed too, since a run behind other apps has no key window it can report
+(`NSApp.keyWindow` is nil) and a key could land in them. The keyboard can
+move between that read and the key's arrival, so the app checks each posted
+key again as it arrives (`AutomationPostedKeys`, which tells one by the
+marker the client sets in its source's user data). That check judges the
+window the key is bound for by the same rule as `state` and drops a key
+bound for a terminal pane, a window with a sheet up, the quick terminal,
+Settings, or a window whose keyboard nothing holds; a terminal pane refuses
+one too. The check counts the posted key presses it sees and drops. After
+posting, the client waits until `seen` has grown by the keys it posted, or a
+second at most, since a control's own monitor can take a key before the
+check sees it (a dropdown's Esc), and fails when `dropped` grew. The counts say nothing of what a key
+did, so the check reads its effect with `state` or `capture`. The terminal
+that runs it needs the Accessibility grant.
 
 `scripts/check-automation.py` (`make check-automation`) launches a fresh run,
 checks the channel against it section by section, and quits it; `--keys`

@@ -9,13 +9,13 @@ Use this when a change has to be seen in the app itself: what a pane shows,
 what an agent does with a prompt, whether a layer opens, how a setting looks.
 Unit tests come first; this is for what they cannot show.
 
-A key a check is about (Esc, Return, Tab, the arrows, ⌘⏎ and the like)
-can be posted to the run behind the person's windows with `keys` (ADR 0006),
-as long as one of Weir's own controls holds the keyboard: a dropdown, a
-sheet's field, the restore strip. Input methods, a standard macOS menu
-opening on screen, and the active window's look still need full-screen
-control or a manual check: ask the person for the first, or say which you
-left to the second.
+A key a check is about (Esc, Return, Tab, the arrows, and the like) can be
+posted to the run behind the person's windows with `keys` (ADR 0006), as
+long as one of Weir's own controls holds the keyboard: a dropdown, the
+restore strip, a search field. A terminal pane or a sheet never gets one.
+Input methods, a standard macOS menu opening on screen, and the active
+window's look still need full-screen control or a manual check: ask the
+person for the first, or say which you left to the second.
 
 When a check needs something no operation or palette row reaches, add an
 operation as ADR 0005's "Adding an operation" says, rather than reaching for
@@ -82,13 +82,14 @@ its own data. Several worktrees can each have one at once.
    - A key: open the control first, then `$A keys down return` (names:
      `escape`, `return`, `tab`, the arrows, `home`, `end`, with `cmd+`,
      `shift+`, `option+`, `ctrl+` before one), then read the result with
-     `state` or `capture`. A key that arrives anywhere but a control of a
-     project window is dropped by the app, so a dropped key shows as no
-     change. The client posts nothing while a terminal pane holds the
-     keyboard (`keyboard` in `state`: Return there is `submit`, text is
-     `type-line`), while Settings is open, or while the run shows more than
-     one window, since the key could land in another. It needs this
-     terminal's Accessibility grant.
+     `state` or `capture`. The client posts only while `postedKeys` in
+     `state` has no `refusal`: never while a terminal pane holds the
+     keyboard (Return there is `submit`, text is `type-line`), a sheet or an
+     alert is up (Return could answer it for the person), Settings or the
+     quick terminal is shown, or the run shows more than one window. The app
+     checks each key again as it arrives, and a key it dropped there,
+     because the keyboard moved on the way, makes the reply `failed`. It
+     needs this terminal's Accessibility grant.
    - A setting: `$A setting font.family '"Menlo"'` (the value is JSON). It is
      refused where the Settings control would refuse or ask first: a
      binding another action holds, a quick terminal hotkey the recorder
@@ -124,7 +125,7 @@ and the reason is what to act on.
   End it with `tmux -L weir-check kill-server`.
 - A sheet or an alert a row opened (`hasSheet` in `state`: New Worktree…,
   Project Settings…, Close Project…) cannot be answered or closed through
-  the channel yet, and it covers the window until the run quits. Open one
+  the channel, `keys` included, and it covers the window until the run quits. Open one
   only when the check is about it, and last.
 - A paste into a program without bracketed paste raises the paste
   confirmation (`notObservable`), which only the person can answer; `quit`
