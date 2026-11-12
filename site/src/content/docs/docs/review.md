@@ -18,8 +18,6 @@ Use the scope menu to choose what the review shows: one conversation's unviewed 
 
 ![A review tab showing a file's diff, with a saved comment under one of its lines](../../../assets/captures/docs/review-en.png)
 
-The turn card shown in review has a strong neutral outline. **Restore Code to Before This Turn…** uses a red backward arrow on the card and in the command palette. Deleting files or history uses a trash can; closing or removing a row without deleting uses an X.
-
 ## Send comments to the agent
 
 Click the number of a line you want changed, press <kbd>C</kbd>, write your comment, and choose **Add**. Then choose **Insert *n* Comments**. Weir puts the comments into the agent's input as one message, and you press <kbd>Return</kbd> to send it.

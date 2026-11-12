@@ -542,11 +542,9 @@ These describe OpenCode 2.2.5.
   A cost of 0 in its reports can mean free, unpriced, or not reported, so Weir
   shows none. Tokens are the sum of each step, a subagent's and an automatic
   compaction's included; a title's are not.
-- **Your data goes where its model is.** OpenCode's free models may use what
-  they receive to improve the model (its [Zen
-  documentation](https://opencode.ai/docs/zen/) has the list), and
-  `OPENCODE_DISABLE_FREE_MODELS=1` hides them. Review pastes repository content
-  into the pane's agent, which sends it to whatever model that agent runs.
+- **Review comments reach the pane's model.** Inserting review comments
+  pastes them, with excerpts of the code, into the agent's input, and sending
+  that input sends them to the model the agent runs.
 - **A limit is read only from what OpenCode names.** Its error's type says which
   limit it is, and the reset comes only when it gives a delay. Only its free
   tier's limit has been seen for real; the others come from its source. A limit

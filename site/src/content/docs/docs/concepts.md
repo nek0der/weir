@@ -9,7 +9,7 @@ sidebar:
 
 ## Project
 
-A Git repository you opened in Weir. Each window shows one project at a time, and the sidebar lists all of them. Choosing a project another window shows brings that window forward. To open a project no window shows in a window of its own, ⌘-click it.
+A Git repository you opened in Weir. Each window shows one project at a time, and the sidebar lists all of them. Choosing a project that another window already shows brings that window forward. To open a project that no window shows in a new window, ⌘-click it.
 
 ## Worktree
 

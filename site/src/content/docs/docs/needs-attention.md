@@ -9,9 +9,7 @@ sidebar:
 
 **Needs Attention** holds what is waiting for you across every project, in the order it arrived: approvals, questions, stops, and unviewed turns.
 
-Waiting for approval, an answer, a response, or sign-in has an amber disc with a question mark. Stopped has a red disc with an exclamation mark. Running has a gray arc; beside list counts it stays still. Unread has a dotted ring in fixed blue, independent of the accent color. The **Needs Attention** count is amber when any item needs a response or has stopped, and blue when only unread turns remain. The menu bar uses a large filled disc for the former and a small dot for unread turns alone. An overlapping-window icon and a location label identify items in another window.
-
-Errors have a red filled octagon with an X; cautions have an amber filled triangle. Plan usage has an hourglass, gray normally and red at the limit. A clock means a deadline or time left; a timer means elapsed turn time.
+An agent waiting for approval, an answer, a response, or a sign-in shows an amber disc with a question mark. A stopped agent shows a red disc with an exclamation mark, a running one shows a gray arc, and an unread turn shows a blue ring with a dot in the center. The **Needs Attention** count is amber when any item needs a response or has stopped, and blue when only unread turns remain. The menu bar uses a large filled disc for the former and a small dot for unread turns alone. An overlapping-window icon and a location label identify items in another window.
 
 | Key | What it does |
 |---|---|
@@ -51,25 +49,25 @@ Weir adds no "always allow" option and writes nothing to an agent's settings. To
 
 Codex questions are always answered in the terminal.
 
-Antigravity has no approval card. Its approvals and questions are always answered in its own prompt, and Weir shows that it waits. A subagent's approval does not always show as a wait: `agy` shows it as Blocked, and `ctrl+k` there approves it.
+Antigravity has no approval card. Its approvals and questions are always answered in its own prompt, and Weir shows that it waits. A subagent's approval does not always show as a wait: `agy` shows it as Blocked, and <kbd>⌃K</kbd> there approves it.
 
 Kiro has no approval card either. Its approvals are answered in its own prompt, and Weir shows that it waits.
 
-For OpenCode, **Allow always** and answers to its questions are only at its own prompt.
+For OpenCode, you choose **Allow always** and answer its questions only at its own prompt.
 
 Each of OpenCode's tabs is watched on its own, so a wait or a failure in a tab behind the one on screen still reaches you here. Going to it, or choosing **Answer in terminal** for its request, brings its tab forward. The pane's badge shows the most urgent of its tabs.
 
 ## After a stop
 
-When an agent stops on an API error, a usage limit, or by exiting, the bar under its pane offers:
+When an agent stops on an API error or a usage limit, or exits, the bar under its pane offers:
 
 - **Resume Same Conversation**, to pick up where it left off
 - **Show Partial Changes** and **Start New Conversation**, in its **⋯** menu
 
-If a usage limit stopped it, Weir can also notify you when the limit resets. Antigravity reports a limit only in the words of its error, so a limit in words Weir does not recognize stops like any other error, and one with no readable reset time offers no notification.
+If a usage limit stopped it, Weir can also notify you when the limit resets. Antigravity reports a limit only in its error message. If Weir does not recognize the wording, the stop looks like any other error. If the message has no reset time Weir can read, no notification is offered.
 
 OpenCode reaches many services and models, so a limit on one of them does not mark your other OpenCode panes. Its stop offers **Resume** rather than the notification, since changing the model may be all it takes.
 
 ## An agent that runs without asking
 
-When an agent is set to run every action without asking, its pane header shows a warning icon. Its tooltip says **Runs without asking**, and VoiceOver reads the same warning with the header.
+When an agent is set to run every action without asking, its pane header shows a warning icon. Its tooltip says **Runs without asking**, and VoiceOver reads the same warning with the header. For OpenCode, the icon shows only when you start OpenCode with `--auto`. Weir cannot see auto-approval set in OpenCode's config file, so that setting shows no icon.
