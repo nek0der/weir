@@ -109,9 +109,7 @@ weir_place_plugin() {
 # run then shows from the start, and has a record for a failure before any hook
 # to show on. A subcommand or a question about agy itself starts no agent. With
 # a plugin that is not ours no hook would ever follow, so a run that could only
-# sit at rest is not begun. A path JSON cannot carry this way (a newline) is
-# refused by the receiver, which leaves the run to the first hook. A failure
-# here leaves agy to start.
+# sit at rest is not begun. A failure here leaves agy to start.
 weir_report_launch() {
   [ -f "${HOME:-}/.gemini/config/plugins/weir/.weir-managed" ] || return 0
   case "${1:-}" in
@@ -128,11 +126,8 @@ weir_report_launch() {
     [ "$previous" = "--conversation" ] && conversation="$arg"
     previous="$arg"
   done
-  json_escape='s/\\/\\\\/g; s/"/\\"/g'
-  workspace=$(printf '%s' "$PWD" | sed "$json_escape")
-  conversation=$(printf '%s' "$conversation" | sed "$json_escape")
-  printf '{"hook_event_name":"WeirLaunch","conversationId":"%s","workspacePaths":["%s"]}' \
-    "$conversation" "$workspace" | /bin/sh "$self_dir/weir-hook" >/dev/null 2>&1 || true
+  /bin/sh "$self_dir/weir-hook" report WeirLaunch \
+    --string conversationId "$conversation" --string-array workspacePaths "$PWD" >/dev/null 2>&1 || true
 }
 
 # Tells a pane with records apart from a demo's, whose directories are blank:

@@ -4,10 +4,11 @@
 //
 // Separate subcommands: `permission-request <provider>`
 // opens the approval service and waits for a decision. `hook <provider>
-// [worktree]` runs the Rust hook runtime in-process without opening an XPC
-// connection, so lifecycle hooks remain independent of approval-service
-// availability. `question-turn-ended [provider]` records a turn end without
-// XPC so a terminal answer remains observable across controller startup
+// [worktree | event <name> [worktree] | report <name> <typed fields>]` runs
+// the Rust hook runtime in-process without opening an XPC connection, so
+// lifecycle hooks remain independent of approval-service availability.
+// `question-turn-ended [provider]` records a turn end without XPC so a
+// terminal answer remains observable across controller startup
 // delays; the provider defaults to Claude, whose settings call it bare.
 // `watch-codex-failures <codex pid> <offset> <session> <rollout>` runs the watcher a Codex
 // session start leaves (`CodexTurnFailureWatch`).
@@ -71,14 +72,28 @@ func readBoundedStandardInput() throws -> Data {
     throw AgentIntegrationError.invalidArguments("The provider approval request is too large.")
 }
 
+private struct HookInvocation: Encodable {
+    let arguments: [String]
+    let payload: String
+}
+
 /// Runs a lifecycle or worktree hook and exits the process with the
 /// runtime's status. Only a successful worktree intercept exits non-zero;
 /// every failure is logged by the runtime and exits zero so the agent is
 /// never blocked by Weir.
-func runLifecycleHook(provider: String, kind: RustProviderBridge.HookKind) -> Never {
+func runLifecycleHook(provider: String, kind: RustProviderBridge.HookKind, arguments: [String] = []) -> Never {
     let input: Data
     do {
-        input = try readBoundedStandardInput()
+        if kind == .invocation {
+            // Launch reports have no stdin; reading it would wait on the pane's terminal.
+            let payload = arguments.first == "report" ? Data() : try readBoundedStandardInput()
+            guard let text = String(data: payload, encoding: .utf8) else {
+                throw AgentIntegrationError.invalidArguments("The hook payload is not UTF-8.")
+            }
+            input = try JSONEncoder().encode(HookInvocation(arguments: arguments, payload: text))
+        } else {
+            input = try readBoundedStandardInput()
+        }
     } catch {
         logHookDiagnostic("Weir hook helper: \(error)")
         exit(0)
@@ -275,10 +290,13 @@ if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == StatusLineRelay
 }
 
 if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "hook" {
-    let kind: RustProviderBridge.HookKind = CommandLine.arguments.dropFirst(3).first == "worktree"
-        ? .worktree
-        : .lifecycle
-    runLifecycleHook(provider: CommandLine.arguments[2], kind: kind)
+    let arguments = Array(CommandLine.arguments.dropFirst(3))
+    let kind: RustProviderBridge.HookKind = switch arguments.first {
+    case "worktree": .worktree
+    case "event", "report": .invocation
+    default: .lifecycle
+    }
+    runLifecycleHook(provider: CommandLine.arguments[2], kind: kind, arguments: arguments)
 }
 
 var input: Data?

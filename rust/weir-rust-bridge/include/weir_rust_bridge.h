@@ -12,6 +12,9 @@
 // The worktree intercept the providers call on their shell tool.
 #define WEIR_HOOK_KIND_WORKTREE 1
 
+// An envelope containing helper arguments and the original provider payload.
+#define WEIR_HOOK_KIND_INVOCATION 2
+
 // Status codes returned by the approval ABI functions.
 //
 // Every approval function reports its status as a plain `int32_t` so the C
@@ -448,6 +451,10 @@ int32_t weir_projection_on_terminate_v1(const uint8_t *input,
 // the Hook Helper makes this call in the process the provider started for
 // the hook, in the directory it started it in
 // (`HookContext::hook_directory`).
+// `WEIR_HOOK_KIND_INVOCATION` takes an object with `arguments` (string array)
+// and `payload` (the original UTF-8 JSON text). Its envelope is bounded at
+// 8 MiB to allow JSON escaping; the runtime bounds the original and completed
+// payloads at 1 MiB. Other kinds take the provider payload directly.
 // This call opens no approval service connection. On success, ownership
 // of `*out` transfers to the caller, which must release it with
 // `weir_approval_bytes_free_v1`.

@@ -3,6 +3,7 @@
 
 import Foundation
 import Testing
+@testable import Weir
 
 /// What the shim suites share: where a shim and its settings template are in
 /// the source tree, the stub that records its argv, the environment it runs
@@ -79,14 +80,14 @@ enum ShimHarness {
     /// these files, so a test of which of two agents a shim started reads one record.
     static func recordingStub(at url: URL, recordingIn dir: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let launched = launchRecord(in: dir).path
-        let environment = dir.appendingPathComponent("env").path
+        let launched = ShellQuote.single(launchRecord(in: dir).path)
+        let environment = ShellQuote.single(dir.appendingPathComponent("env").path)
         try writeExecutable(
             argvRecorder(
                 into: argvRecord(in: dir),
                 // By its full path: the `PATH` a test hands the shim need
                 // not lead to `env`.
-                then: "printf '%s\\n%s\\n' \"$0\" \"$PATH\" > \"\(launched)\"\n/usr/bin/env > \"\(environment)\""
+                then: "printf '%s\\n%s\\n' \"$0\" \"$PATH\" > \(launched)\n/usr/bin/env > \(environment)"
             ),
             at: url
         )
@@ -120,10 +121,11 @@ enum ShimHarness {
     /// `then`. NUL-separated, so an argument carrying spaces or newlines (a
     /// settings payload, a `-c` value, a prompt) stays one argument.
     static func argvRecorder(into argvFile: URL, then: String = "exit 0") -> String {
-        """
+        let path = ShellQuote.single(argvFile.path)
+        return """
         #!/bin/sh
-        : > "\(argvFile.path)"
-        for a in "$@"; do printf '%s\\000' "$a" >> "\(argvFile.path)"; done
+        : > \(path)
+        for a in "$@"; do printf '%s\\000' "$a" >> \(path); done
         \(then)
         """
     }

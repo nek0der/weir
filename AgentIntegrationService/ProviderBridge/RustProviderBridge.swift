@@ -142,12 +142,14 @@ enum RustProviderBridge {
     enum HookKind {
         case lifecycle
         case worktree
+        case invocation
 
         /// The `WEIR_HOOK_KIND_*` constant the C ABI expects.
         var abiValue: UInt32 {
             switch self {
             case .lifecycle: UInt32(WEIR_HOOK_KIND_LIFECYCLE)
             case .worktree: UInt32(WEIR_HOOK_KIND_WORKTREE)
+            case .invocation: UInt32(WEIR_HOOK_KIND_INVOCATION)
             }
         }
     }
