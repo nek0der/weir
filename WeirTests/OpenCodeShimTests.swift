@@ -115,6 +115,10 @@ struct OpenCodeShimTests {
             let process = try runShim(root: root, home: home, environment: environment)
             try #require(process.terminationStatus == 0)
             try expectShippedPlugin(at: candidates[selected])
+            let plugins = candidates[selected].deletingLastPathComponent()
+            #expect(try FileManager.default.contentsOfDirectory(atPath: plugins.path) == ["weir"])
+            let config = plugins.deletingLastPathComponent()
+            #expect(try FileManager.default.contentsOfDirectory(atPath: config.path).sorted() == [".weir-placement.lock", "plugins"])
             for index in candidates.indices where index != selected {
                 #expect(!FileManager.default.fileExists(atPath: candidates[index].path))
             }

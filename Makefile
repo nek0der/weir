@@ -172,6 +172,7 @@ lint: rust-lint
 	scripts/test-screenshot-app.sh
 	scripts/test-derive-expected-events.sh
 	scripts/test-shell-integration-pwd.sh
+	scripts/test-agent-placement.sh
 
 # The bridge's build script writes the header from the exported Rust items, so
 # a drifted commit shows up as a diff rather than as a Swift link failure.

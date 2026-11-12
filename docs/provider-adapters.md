@@ -701,6 +701,20 @@ describes, and begins nothing.
 
 ## Providers that needed more than the contract
 
+Shared plugin and hook placements use `agent-shim/runtime-common.sh` to take a
+macOS `lockf` lock, re-read ownership and version, replace files, and publish the
+completed mark or checksum last. A launch waits at most one second, then starts
+the agent without placing. Debug and Release share these folders, so a completed
+higher version is never replaced. Plugins keep a `placing:<version>` mark during
+updates; Kiro keeps an incoming checksum beside the hook file until its final
+checksum is written. Both let a later launch finish an interrupted placement.
+Each build shares a persistent `.weir-placement.lock` in the config root:
+`${target%/plugins/weir}` for OpenCode (including `OPENCODE_CONFIG_DIR`),
+`~/.gemini/config` for Antigravity, and `~/.kiro` for Kiro. Temporary staging
+folders and files also go in those roots so plugin and hook loaders cannot
+see them; rename stays atomic on the same filesystem. Kiro creates `hooks/`
+before writing.
+
 ### Antigravity
 
 The Antigravity CLI (`agy`, 1.4.12) is the third provider, and the first added
@@ -709,9 +723,9 @@ after the contract. It fits the contract except where listed here.
 `agy` takes no hooks on its command line, so the recipe's flags and settings
 fragments do not apply. The shim places a plugin at
 `~/.gemini/config/plugins/weir`, marked by `.weir-managed`, and replaces only
-a folder with that mark. The plugin's dispatch script does nothing unless the
-shim named a hook directory for the run, because every `agy` reads that
-folder. It forwards the original payload and the event name separately to the
+a folder with that mark and a lower version. The plugin's dispatch script does
+nothing unless the shim named a hook directory for the run, because every `agy`
+reads that folder. It forwards the original payload and the event name separately to the
 Hook Helper; the Rust runtime parses the bounded object and sets
 `hook_event_name` with serde. Launch reports use `report <event>` with typed
 named fields (`--string`, `--boolean`, `--string-array`, `--empty-object`) so

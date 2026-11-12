@@ -23,12 +23,29 @@ shim. This is the one place Weir writes into an agent's own folder.
 
 ## The plugin
 
-The shim copies the plugin when it is missing or its `.weir-managed` differs
-from the bundle's, through a staged folder and a rename. Only a folder that
-carries that mark is ours to replace: a folder named the same without it is the
+The shim copies the plugin when it is missing or its `.weir-managed` is lower
+than the bundle's. Debug and Release share this folder, so a higher version is
+left alone to avoid repeatedly reloading the plugin in running panes. Only a
+folder that carries that mark is ours to replace: a folder named the same without it is the
 person's, and a link is left alone. A failure leaves the old version or none,
 and `agy` starts either way, unwatched. A demo run, whose record directories
 are blank, places nothing.
+
+The shared `agent-shim/runtime-common.sh` helpers hold a macOS `lockf` lock on
+`~/.gemini/config/.weir-placement.lock` in the config root. Ownership and
+version are re-read under the lock, then each file is staged in the config root
+and renamed into place, with the dispatch script before its hook definitions
+and the completed mark last. A `placing:<version>`
+mark lets the next launch finish an interrupted update and prevents a lower
+version from overwriting it. The persistent lock file is not an ownership mark;
+the kernel releases its lock when its holders exit. A launch waits at most one
+second before skipping placement and starting the agent.
+
+The lock and temporary staging folders and files stay outside `plugins/` so the
+plugin loader cannot see them. Marks only increase: running an older Weir does
+not downgrade the shared plugin. To reinstall an older bundled plugin on
+purpose, quit every Weir build, remove `~/.gemini/config/plugins/weir` only if
+it carries `.weir-managed`, then launch the older Weir and run `agy` in a pane.
 
 `scripts/weir-dispatch` is what each hook runs. Outside a Weir pane
 `WEIR_ANTIGRAVITY_HOOK_DIR` is unset, and it only gives the default reply.

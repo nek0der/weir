@@ -113,7 +113,9 @@ struct AntigravityShimTests {
             _ = try runShim(root: root, home: home)
             #expect(FileManager.default.fileExists(atPath: ours.appendingPathComponent("hooks.json").path))
             let left = try FileManager.default.contentsOfDirectory(atPath: ours.deletingLastPathComponent().path)
-            #expect(left == ["weir"])
+            #expect(Set(left) == ["weir"])
+            let config = home.appendingPathComponent(".gemini/config")
+            #expect(try FileManager.default.contentsOfDirectory(atPath: config.path).sorted() == [".weir-placement.lock", "plugins"])
         }
     }
 

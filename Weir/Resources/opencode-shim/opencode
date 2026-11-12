@@ -75,21 +75,12 @@ if [ "$found_off_path" = 1 ] && command -v weir_add_agent_folder >/dev/null 2>&1
   opencode_node="$weir_agent_node"
 fi
 
-# Places the plugin when it is missing or its mark is lower than the one this build
-# ships. Never when it is higher: the Debug and release apps share this folder, and
-# each overwriting the other's would reload the plugin in every running pane. Only a
-# folder that carries our mark is ours to change: one named the same without it is
-# the person's, and a link is followed by no one.
-#
-# Each file goes in by rename, in place, so another `opencode` starting now finds
-# the old file or the new one, and never a gap. The mark goes last with the
-# version, and first as a word no version is, so a run cut short is ours and is
-# finished by the next launch. A failure leaves `opencode` to start, unwatched.
+# Serializes the ownership check, file replacements, and final version mark.
+# A missing runtime or a busy lock leaves the agent to start without placement.
 weir_place_plugin() {
   source_dir="$self_dir/../opencode-plugin"
-  [ -r "$source_dir/.weir-managed" ] || return 0
-  # A folder `OPENCODE_CONFIG_DIR` names replaces the XDG one: OpenCode then
-  # loads no plugin from the other.
+  # OPENCODE_CONFIG_DIR replaces the XDG folder: OpenCode then loads no plugin
+  # from the other folder, so placing there would leave this launch unwatched.
   if [ -n "${OPENCODE_CONFIG_DIR:-}" ]; then
     target="$OPENCODE_CONFIG_DIR/plugins/weir"
   else
@@ -97,27 +88,10 @@ weir_place_plugin() {
     [ "$config_home" != "/.config" ] || return 0
     target="$config_home/opencode/plugins/weir"
   fi
-  [ -L "$target" ] && return 0
-  if [ -e "$target" ]; then
-    [ -f "$target/.weir-managed" ] && [ ! -L "$target/.weir-managed" ] || return 0
-    placed_mark=$(cat "$target/.weir-managed" 2>/dev/null)
-    shipped_mark=$(cat "$source_dir/.weir-managed" 2>/dev/null)
-    # A mark that is no number is a placement cut short, which this one finishes.
-    case "$placed_mark" in
-      "" | *[!0-9]*) ;;
-      *) [ "$placed_mark" -lt "$shipped_mark" ] 2>/dev/null || return 0 ;;
-    esac
-  else
-    mkdir -p "$target" 2>/dev/null || return 0
-    printf 'placing\n' >"$target/.weir-managed" 2>/dev/null || return 0
-  fi
-  for file in tui.js .weir-managed; do
-    staged="$target/$file.staged-$$"
-    cp "$source_dir/$file" "$staged" 2>/dev/null && mv -f "$staged" "$target/$file" 2>/dev/null || {
-      rm -f "$staged"
-      return 0
-    }
-  done
+  command -v weir_with_placement_lock >/dev/null 2>&1 || return 0
+  [ ! -L "${target%/*}" ] || return 0
+  weir_with_placement_lock "${target%/plugins/weir}/.weir-placement.lock" weir_place_managed_plugin \
+    "$source_dir" "$target" tui.js
 }
 
 # Whether these arguments start the terminal interface rather than a subcommand,

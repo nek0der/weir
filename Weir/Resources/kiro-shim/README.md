@@ -26,7 +26,7 @@ launches pass `--v3`.
 ## The hook file
 
 The shim copies the file when it is missing, or when it is one we wrote, left
-as we wrote it, and differs from the bundle's. It keeps the `cksum` of what it
+as we wrote it, and has a lower version than the bundle's. It keeps the `cksum` of what it
 wrote in `~/.kiro/hooks/.weir.json.cksum` to tell the two apart: a file the
 person wrote, or ours after they edited it (a hook set to `"enabled": false`, a
 timeout), is theirs, and is left alone. A link is left alone too. A new file
@@ -34,6 +34,24 @@ goes in by a hard link to a staged copy, which fails if a file appeared
 meanwhile; a replacement by a rename, after the file is read once more, so only
 an edit saved in that instant could be lost. A failure leaves Kiro to start,
 unwatched. A demo run, whose record directories are blank, places nothing.
+
+The shared `agent-shim/runtime-common.sh` helper holds a macOS `lockf` lock on
+`~/.kiro/.weir-placement.lock` across the ownership check, replacement,
+and checksum update. Temporary staging files also go in `~/.kiro/`, outside the
+scanned `hooks/` folder, on the same filesystem for atomic rename. The shim
+creates `hooks/` before writing. The lock file persists, but the kernel releases
+the lock when its holders exit. A launch waits at most one second, then skips placement
+and starts Kiro. The hook descriptions' `Weir <number>:` prefix is the version;
+bump it in every description when changing the hook file. As with the plugins,
+a completed higher version is left alone because Debug and Release share it.
+Older hook files without a versioned description count as version zero.
+
+Kiro uses a checksum rather than a folder ownership mark because the person may
+edit individual hooks. Before replacing the file, the shim records the incoming
+checksum in `.weir.json.pending`. If interrupted after replacement, the next
+launch recognizes that checksum as ours and finishes writing `.weir.json.cksum`
+last, then removes the pending file. An older build also reports its launch when
+a newer managed hook is installed; its commands use that launch's own wrapper.
 
 Every hook's command runs `weir-hook` only when `WEIR_KIRO_HOOK_DIR` names it,
 which the shim sets for its own launch. Outside a Weir pane the variable is
