@@ -21,7 +21,7 @@ Files Git ignores, such as `.env`, are not copied unless you choose them in **Pr
 
 ## 3. Give the agent its first instruction
 
-Weir opens the agent in a terminal. In a folder it has not seen, the agent may first ask whether you trust it. Then type your instruction in its prompt, as you would anywhere else.
+Weir opens the agent in a terminal. In a folder it has not seen, the agent may first ask whether you trust the folder. Then type your instruction in its prompt, as you would anywhere else.
 
 The sidebar row and the bar under the pane now show what the agent is doing. Nothing moves or takes focus on its own, so you can leave it running and do something else.
 

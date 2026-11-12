@@ -9,9 +9,9 @@ sidebar:
 
 - macOS 26 以降、Apple Silicon
 - Git
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) か [Codex](https://github.com/openai/codex)、Antigravity CLI（`agy`）、[OpenCode](https://opencode.ai)、[Kiro CLI](https://kiro.dev/cli/)（`kiro-cli`）のいずれか。複数でもかまいません。Weir はお使いのものを、そのアカウントのまま動かします。
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code)、[Codex](https://github.com/openai/codex)、Antigravity CLI（`agy`）、[OpenCode](https://opencode.ai)、[Kiro CLI](https://kiro.dev/cli/)（`kiro-cli`）のいずれか。複数でもかまいません。Weir はお使いのものを、そのアカウントのまま動かします。
 
-サイドバーに PR の状態を出したい場合は、`gh` か `glab` を入れてサインインしてください。なくても Weir は動きます。
+サイドバーに PR の状態を出したい場合は、`gh` か `glab` をインストールしてサインインしてください。なくても Weir は動きます。
 
 ## インストールする
 
@@ -19,7 +19,7 @@ sidebar:
 2. DMG を開いて、`Weir.app` を `/Applications` にドラッグします。
 3. Weir を開きます。
 
-リリース版は署名と公証を受けているので、開発元が不明なアプリとして macOS に止められることはありません。初回は、ダウンロードしたアプリを開くかどうかの確認が出ます。
+リリース版は署名と公証を受けているので、開発元が不明なアプリとして macOS に止められることはありません。初回は、ダウンロードしたアプリを開くかどうかの確認が表示されます。
 
 Weir は承認のための小さなバックグラウンドサービスを登録します。**システム設定 → 一般 → ログイン項目と機能拡張** に表示されます。オフにすると、承認にはすべて各エージェントのプロンプトで答えます。
 
@@ -35,15 +35,15 @@ Weir は 1 日に 1 回アップデートを確認します。インストール
 2. `~/Library/Application Support/Weir/` と `~/Library/Preferences/com.nekoder.Weir.plist` を削除します。
 3. **ログイン項目と機能拡張** に Weir が残っていたら、オフにします。
 4. Weir で Antigravity を動かしたことがあり、`~/.gemini/config/plugins/weir` に `.weir-managed` というファイルがあれば、そのフォルダーも削除します。このファイルがないフォルダーは Weir のものではありません。
-5. Weir で OpenCode を動かしたことがあり、`~/.config/opencode/plugins/weir` に `.weir-managed` というファイルがあれば、そのフォルダーも削除します。
-6. Weir で Kiro を動かしたことがあれば、`cksum < ~/.kiro/hooks/weir.json` の出力と `~/.kiro/hooks/.weir.json.cksum` の中身を比べます。同じなら両方を削除します。違うときは `weir.json` をご自身で編集しているので、それは残して `.weir.json.cksum` だけを削除します。
+5. Weir で OpenCode を動かしたことがあり、`~/.config/opencode/plugins/weir` に `.weir-managed` というファイルがあれば、そのフォルダーも削除します。`OPENCODE_CONFIG_DIR` を設定している場合は、そのフォルダーの中の `plugins/weir` が対象です。`OPENCODE_CONFIG_DIR` は設定せず `XDG_CONFIG_HOME` だけを設定している場合は、`$XDG_CONFIG_HOME/opencode/plugins/weir` が対象です。
+6. Weir で Kiro を動かしたことがあれば、`cksum < ~/.kiro/hooks/weir.json` の出力と `~/.kiro/hooks/.weir.json.cksum` の中身を比べます。一致すれば両方を削除します。一致しなければ `weir.json` はご自身で編集したものなので、`weir.json` は残して `.weir.json.cksum` だけを削除します。
 
-各リポジトリには、ターンのスナップショットも残っています。消すには、リポジトリで次を実行します。
+各リポジトリには、ターンのスナップショットも残っています。削除するには、リポジトリで次を実行します。
 
 ```bash
 git for-each-ref --format='%(refname)' refs/weir/ | xargs -n1 git update-ref -d
 ```
 
-続けて、`git rev-parse --git-common-dir` が表示するディレクトリと、その `worktrees/` の下の各フォルダにある `weir` フォルダを削除します。
+続けて、`git rev-parse --git-common-dir` が表示するディレクトリの中と、その `worktrees/` の下の各フォルダーの中にある `weir` フォルダーを削除します。
 
-Weir で作ったワークツリーは普通の Git のワークツリーです。不要なものは `git worktree remove` で削除してください。
+Weir で作成したワークツリーは通常の Git のワークツリーです。不要なものは `git worktree remove` で削除してください。
