@@ -30,40 +30,22 @@ if [ -r "$runtime_common" ]; then
   weir_ensure_run_id
 fi
 
-# Rebuild PATH with our own dir filtered out so command -v finds the real
-# kiro-cli. The colon separates literal folder names.
-filtered_path=""
-old_ifs="$IFS"
-path_split_flags="$-"
-# Field splitting must leave glob characters in folder names intact.
-set -f
-IFS=":"
-for entry in $PATH; do
-  [ "$entry" = "$self_dir" ] && continue
-  # A folder is spelled many ways (a link to it, a trailing slash, a relative
-  # or empty entry), and another Weir's shim would look for us in turn, so we
-  # go by what an entry holds: a shim folder's mark, or this very file under
-  # another name.
-  [ -e "${entry:-.}/weir-hook" ] && continue
-  [ "${entry:-.}/kiro-cli" -ef "$self" ] && continue
-  if [ -z "$filtered_path" ]; then
-    filtered_path="$entry"
-  else
-    filtered_path="$filtered_path:$entry"
-  fi
-done
-IFS="$old_ifs"
-case "$path_split_flags" in
-  *f*) ;;
-  *) set +f ;;
-esac
+# The PATH without our own folder (`weir_filter_path`). Without the shared
+# runtime there is none, and the PATH is not searched: it would find us.
+filtered_path="${PATH:-}"
+has_filtered_path=0
+if command -v weir_filter_path >/dev/null 2>&1; then
+  weir_filter_path "$self_dir" "$self" kiro-cli
+  filtered_path="$weir_filtered_path"
+  has_filtered_path=1
+fi
 
 found_kiro="${WEIR_FOUND_KIRO:-}"
 unset WEIR_FOUND_KIRO
 
 real_kiro="${WEIR_REAL_KIRO:-}"
 found_off_path=0
-if [ -z "$real_kiro" ]; then
+if [ -z "$real_kiro" ] && [ "$has_filtered_path" = 1 ]; then
   real_kiro=$(PATH="$filtered_path" command -v kiro-cli 2>/dev/null || true)
 fi
 if [ -z "$real_kiro" ] && [ -n "$found_kiro" ] && [ -f "$found_kiro" ] && [ -x "$found_kiro" ] &&
