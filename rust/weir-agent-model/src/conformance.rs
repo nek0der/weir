@@ -46,6 +46,13 @@ impl fmt::Display for ConformanceFailure {
 }
 
 impl HookContext {
+    /// When every fixture is replayed: 2026-11-01T00:00:00Z, fixed so a delay
+    /// counted from it gives the same `expected.json` on every run.
+    #[must_use]
+    pub fn fixture_time() -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_hours(498_192)
+    }
+
     /// The context every fixture is replayed under. Stable ids keep
     /// `expected.json` independent of the machine that runs the test.
     #[must_use]
@@ -58,6 +65,9 @@ impl HookContext {
             invocation_id: Some(Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_0030)),
             provider_home: None,
             hook_directory: None,
+            resolved_provider_home: None,
+            resolved_hook_directory: None,
+            received_at: Self::fixture_time(),
         }
     }
 

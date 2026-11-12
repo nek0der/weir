@@ -662,6 +662,10 @@ jobs:
         run: scripts/test-check-localization.sh
       - name: Self-test the check of strings in a static module
         run: scripts/test-check-module-strings.sh
+      - name: Check that provider adapters read only their input (ADR 0004)
+        run: scripts/check-adapter-purity.sh
+      - name: Self-test the check of provider adapters
+        run: scripts/test-check-adapter-purity.sh
       - name: Self-test the fixture golden script against the adapters' rules
         run: scripts/test-derive-expected-events.sh
       - name: Self-test that make screenshot shoots the app this checkout built

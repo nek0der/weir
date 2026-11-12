@@ -135,6 +135,9 @@ mod tests {
             invocation_id: None,
             provider_home: Some(Path::new("/Users/example/.codex").to_path_buf()),
             hook_directory: None,
+            resolved_provider_home: None,
+            resolved_hook_directory: None,
+            received_at: HookContext::fixture_time(),
         };
         let path = |event: &str| {
             title_index_path(

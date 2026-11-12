@@ -88,7 +88,12 @@ fn is_unprompted(object: &Map<String, Value>, input: RawHookInput<'_>) -> bool {
             .is_some_and(|ends_with_person| !ends_with_person)
 }
 
-pub(crate) fn normalize(input: RawHookInput<'_>) -> Result<Vec<AgentEvent>, NormalizeError> {
+/// `received_at` is when the runtime received the call: a limit's delay that
+/// an error states counts from it.
+pub(crate) fn normalize(
+    input: RawHookInput<'_>,
+    received_at: SystemTime,
+) -> Result<Vec<AgentEvent>, NormalizeError> {
     let object = parse_object(input.bytes, MAX_HOOK_INPUT_BYTES)?;
     if is_subagents(&object) {
         return Ok(Vec::new());
@@ -159,7 +164,7 @@ pub(crate) fn normalize(input: RawHookInput<'_>) -> Result<Vec<AgentEvent>, Norm
             tool: Some(tool().to_owned()),
             caller: Caller::Agent,
         }],
-        Some("Stop") => stop_events(&object, input),
+        Some("Stop") => stop_events(&object, input, received_at),
         Some(name) => vec![AgentEvent::Extension {
             name: name.to_owned(),
             payload: Value::Object(object.clone()),
@@ -173,11 +178,15 @@ fn is_invisible(object: &Map<String, Value>) -> bool {
     event_name(object) == Some("PostInvocation") || is_daemon(object)
 }
 
-fn stop_events(object: &Map<String, Value>, input: RawHookInput<'_>) -> Vec<AgentEvent> {
+fn stop_events(
+    object: &Map<String, Value>,
+    input: RawHookInput<'_>,
+    received_at: SystemTime,
+) -> Vec<AgentEvent> {
     if let Some(error) = string(object, "error").filter(|error| !error.is_empty()) {
         return vec![AgentEvent::Failed {
             error: error.to_owned(),
-            usage_limit: usage::usage_limit(error, SystemTime::now()),
+            usage_limit: usage::usage_limit(error, received_at),
             kind: None,
         }];
     }
@@ -447,10 +456,13 @@ mod tests {
 
     fn normalized(payload: &Value) -> Vec<AgentEvent> {
         let bytes = payload.to_string().into_bytes();
-        normalize(RawHookInput {
-            bytes: &bytes,
-            transcript: None,
-        })
+        normalize(
+            RawHookInput {
+                bytes: &bytes,
+                transcript: None,
+            },
+            weir_agent_model::HookContext::fixture_time(),
+        )
         .expect("normalizes")
     }
 

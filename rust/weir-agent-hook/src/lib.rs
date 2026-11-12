@@ -802,6 +802,17 @@ fn indexed_titles(
     adapter.indexed_titles(input, &index)
 }
 
+/// `path` with its symlinks resolved, when it is absolute and exists
+/// (`HookContext::resolved_provider_home`). A relative path would be taken
+/// against the hook's own working directory, which for Codex's memory agent
+/// is the memories directory itself.
+fn resolved(path: &Path) -> Option<PathBuf> {
+    if !path.is_absolute() {
+        return None;
+    }
+    std::fs::canonicalize(path).ok()
+}
+
 /// The identity fields every record carries, resolved from the environment.
 fn identity(
     env: &HookEnv,
@@ -822,14 +833,18 @@ fn identity(
         env.exported_pid(descriptor.id.as_str())
             .or_else(|| process::find_ancestor_named(&descriptor.process_names))
     };
+    let provider_home = env.provider_home(adapter.home_directory_variable(), descriptor);
     let context = HookContext {
         run_id: uuid::Uuid::parse_str(&run_id).unwrap_or_default(),
         pane_id: uuid::Uuid::parse_str(pane_id).unwrap_or_default(),
         tmux: tmux.clone(),
         pid,
         invocation_id: env.invocation_id(),
-        provider_home: env.provider_home(adapter.home_directory_variable(), descriptor),
+        provider_home: provider_home.clone(),
         hook_directory: env.directory().map(Path::to_path_buf),
+        resolved_provider_home: provider_home.as_deref().and_then(resolved),
+        resolved_hook_directory: env.directory().and_then(resolved),
+        received_at: SystemTime::now(),
     };
     let apply_context = ApplyContext {
         run_id,
@@ -1775,6 +1790,35 @@ pub fn tmux_endpoint_from(env: &HookEnv) -> Option<TmuxEndpoint> {
 #[must_use]
 pub fn read_record(path: &Path) -> Option<RunRecord> {
     records::read_record(path)
+}
+
+#[cfg(test)]
+mod resolved_tests {
+    use super::resolved;
+    use std::path::Path;
+
+    /// The runtime resolves the paths an adapter compares, so a home named
+    /// through a symlink reaches the adapter as its real path (Codex reports
+    /// the memory agent's directory under the real one).
+    #[cfg(unix)]
+    #[test]
+    fn a_path_through_a_symlink_resolves_to_the_real_one() {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let real = scratch.path().join("real").join("codex");
+        std::fs::create_dir_all(&real).expect("real home");
+        let link = scratch.path().join("codex-link");
+        std::os::unix::fs::symlink(&real, &link).expect("symlink");
+
+        let real_path = std::fs::canonicalize(&real).expect("real path");
+        assert_eq!(resolved(&link), Some(real_path.clone()));
+        assert_eq!(resolved(&real), Some(real_path));
+    }
+
+    #[test]
+    fn a_path_that_is_relative_or_missing_is_not_resolved() {
+        assert_eq!(resolved(Path::new(".codex")), None);
+        assert_eq!(resolved(Path::new("/no/such/weir/home")), None);
+    }
 }
 
 #[cfg(test)]

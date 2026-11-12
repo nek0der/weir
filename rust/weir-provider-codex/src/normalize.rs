@@ -27,7 +27,6 @@
 use crate::failure::{RolloutFailure, USAGE_LIMIT_KIND, rollout_failure};
 use crate::json::{contains, parse, string};
 use serde_json::{Map, Value};
-use std::borrow::Cow;
 use std::path::Path;
 use std::time::{Duration, UNIX_EPOCH};
 use weir_agent_model::{
@@ -281,21 +280,28 @@ pub(crate) fn transcript_path(input: RawHookInput<'_>) -> Result<Option<String>,
 /// Codex canonicalizes a `CODEX_HOME` the environment sets and leaves the
 /// default `~/.codex` as written, so the directory may be the real path of
 /// a home the environment names through a symlink (or `/tmp` for
-/// `/private/tmp`). Both sides are resolved the same way when they exist on
-/// disk, and compared as written when they do not (the fixtures' paths).
+/// `/private/tmp`). The directory is compared, as the runtime resolved it
+/// where it could, with the home both as written and as resolved. That
+/// covers the payload's `cwd` too, which no one resolves: Codex reports it
+/// under the home as Codex itself took it, written or canonicalized.
 fn is_internal_agent(object: &Map<String, Value>, context: &HookContext) -> bool {
-    let Some(home) = context.provider_home.as_deref() else {
-        return false;
-    };
+    let homes = [
+        context.resolved_provider_home.as_deref(),
+        context.provider_home.as_deref(),
+    ];
     let Some(thread_directory) = context
-        .hook_directory
+        .resolved_hook_directory
         .as_deref()
+        .or(context.hook_directory.as_deref())
         .or_else(|| string(object, "cwd").map(Path::new))
     else {
         return false;
     };
-    crate::descriptor::descriptor()
-        .is_internal_agent_directory(&resolved(home), &resolved(thread_directory))
+    let descriptor = crate::descriptor::descriptor();
+    homes
+        .into_iter()
+        .flatten()
+        .any(|home| descriptor.is_internal_agent_directory(home, thread_directory))
 }
 
 /// What the call says of the session's settings. Codex sends the model and
@@ -366,17 +372,6 @@ fn is_subagents_own(object: &Map<String, Value>, event_name: &str) -> bool {
             event_name,
             "PreToolUse" | "PostToolUse" | "PermissionRequest"
         )
-}
-
-/// `path` with its symlinks resolved when it exists, else as written. Only
-/// an absolute path is resolved: a relative one would be taken against the
-/// hook's own working directory, which for the memory agent is the memories
-/// directory itself.
-fn resolved(path: &Path) -> Cow<'_, Path> {
-    if !path.is_absolute() {
-        return Cow::Borrowed(path);
-    }
-    std::fs::canonicalize(path).map_or(Cow::Borrowed(path), Cow::Owned)
 }
 
 fn pre_tool_use(object: &Map<String, Value>) -> AgentEvent {
@@ -675,44 +670,94 @@ mod tests {
         );
     }
 
-    /// Codex canonicalizes a set `CODEX_HOME`, so the `cwd` it reports is
-    /// the real path even when the environment names the home through a
-    /// symlink; the default home is not canonicalized, so the opposite
-    /// shape (a real home, a `cwd` through a link) is covered as well.
-    #[cfg(unix)]
+    /// Codex canonicalizes a set `CODEX_HOME`, so the directory it runs the
+    /// memory agent in is the real path even when the environment names the
+    /// home through a symlink; the default home is not canonicalized, so the
+    /// opposite shape (a real home, a directory through a link) is covered as
+    /// well. The adapter compares the paths the runtime resolved and never
+    /// reads the disk itself (ADR 0004).
     #[test]
     fn a_home_named_through_a_symlink_still_finds_the_memory_agent() {
-        let scratch_dir = tempfile::tempdir().expect("scratch");
-        let scratch = scratch_dir.path().to_path_buf();
-        let real_home = scratch.join("real").join("codex");
-        std::fs::create_dir_all(real_home.join("memories")).expect("memories directory");
-        let linked_home = scratch.join("codex-link");
-        std::os::unix::fs::symlink(&real_home, &linked_home).expect("symlink");
-        let real_memories = std::fs::canonicalize(real_home.join("memories"))
-            .expect("canonical memories")
-            .display()
-            .to_string();
-        let linked_memories = linked_home.join("memories").display().to_string();
+        let real_home = "/private/scratch/real/codex";
+        let linked_home = "/scratch/codex-link";
+        let real_memories = "/private/scratch/real/codex/memories";
+        let linked_memories = "/scratch/codex-link/memories";
+        let run = |home: &str, directory: &str, payload: &str| {
+            normalize(
+                RawHookInput {
+                    bytes: payload.as_bytes(),
+                    transcript: None,
+                },
+                &HookContext {
+                    provider_home: Some(home.into()),
+                    hook_directory: Some(directory.into()),
+                    resolved_provider_home: Some(real_home.into()),
+                    resolved_hook_directory: Some(directory.replace(linked_home, real_home).into()),
+                    ..HookContext::fixture()
+                },
+            )
+            .expect("normalizes")
+        };
 
-        for (home, cwd) in [
-            (linked_home.display().to_string(), real_memories.clone()),
-            (real_home.display().to_string(), linked_memories.clone()),
-            (linked_home.display().to_string(), linked_memories.clone()),
+        for (home, directory) in [
+            (linked_home, real_memories),
+            (real_home, linked_memories),
+            (linked_home, linked_memories),
         ] {
-            for payload in memory_agent_payloads(&cwd) {
+            for payload in memory_agent_payloads(directory) {
                 assert_eq!(
-                    events_under(Some(&home), &payload),
+                    run(home, directory, &payload),
                     Vec::new(),
-                    "home {home}, cwd {cwd}: {payload}"
+                    "home {home}, directory {directory}: {payload}"
                 );
             }
         }
         // A memories directory outside the linked home belongs to the person.
-        let other = scratch.join("real").join("other").join("memories");
-        std::fs::create_dir_all(&other).expect("other directory");
-        for payload in memory_agent_payloads(&other.display().to_string()) {
+        let other = "/private/scratch/real/other/memories";
+        for payload in memory_agent_payloads(other) {
+            assert_eq!(run(linked_home, other, &payload).len(), 1, "{payload}");
+        }
+    }
+
+    /// Where the runtime could not read the directory, the payload's `cwd`
+    /// is compared as Codex wrote it: under the real home for a `CODEX_HOME`
+    /// named through a symlink, which Codex canonicalizes, and under the
+    /// home as written for the default one, which it does not.
+    #[test]
+    fn the_payloads_cwd_finds_the_memory_agent_under_either_form_of_the_home() {
+        let run = |home: &str, resolved_home: &str, payload: &str| {
+            normalize(
+                RawHookInput {
+                    bytes: payload.as_bytes(),
+                    transcript: None,
+                },
+                &HookContext {
+                    provider_home: Some(home.into()),
+                    resolved_provider_home: Some(resolved_home.into()),
+                    ..HookContext::fixture()
+                },
+            )
+            .expect("normalizes")
+            .len()
+        };
+        let set_through_a_link = (
+            "/tmp/codex",
+            "/private/tmp/codex",
+            "/private/tmp/codex/memories",
+        );
+        let default_home = (
+            "/Users/example/.codex",
+            "/Volumes/Data/example/.codex",
+            "/Users/example/.codex/memories",
+        );
+        for (home, resolved_home, cwd) in [set_through_a_link, default_home] {
+            for payload in memory_agent_payloads(cwd) {
+                assert_eq!(run(home, resolved_home, &payload), 0, "{home}: {payload}");
+            }
+        }
+        for payload in memory_agent_payloads("/private/tmp/other/memories") {
             assert_eq!(
-                events_under(Some(&linked_home.display().to_string()), &payload).len(),
+                run("/tmp/codex", "/private/tmp/codex", &payload),
                 1,
                 "{payload}"
             );
