@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.1.20](https://github.com/nek0der/weir/compare/v0.1.19...v0.1.20) (2026-11-13)
+
+
+### Features
+
+* **agent:** support the Kiro CLI ([#394](https://github.com/nek0der/weir/issues/394)) ([4f531fb](https://github.com/nek0der/weir/commit/4f531fb09e0d8dea4567e8531033ff8b63ab5ba4))
+
+
+### Bug Fixes
+
+* **agent:** build hook payloads in the runtime, so any agy payload or folder name reaches the record ([#400](https://github.com/nek0der/weir/issues/400)) ([03541b2](https://github.com/nek0der/weir/commit/03541b255744b53aeb55c70f0a4e3dd1868e0f41))
+* **agent:** keep empty PATH entries when a shim looks for its agent ([#396](https://github.com/nek0der/weir/issues/396)) ([88890fb](https://github.com/nek0der/weir/commit/88890fbf535bc474cf9a776cc7150577384c7a2a))
+* **agent:** place each agent's shared plugin and hooks under one lock, so launches never mix versions ([#401](https://github.com/nek0der/weir/issues/401)) ([45daf61](https://github.com/nek0der/weir/commit/45daf6128b5c5d7b21808e5bbed67ee98b2c6369))
+* **support:** keep the agent check from answering trust prompts, and refuse typing while an agent waits ([#402](https://github.com/nek0der/weir/issues/402)) ([a1a7837](https://github.com/nek0der/weir/commit/a1a783797d5be082e00303a5f1d26c04bb0e1598))
+* **support:** let the app decide where a posted key may land, and report one it dropped ([#398](https://github.com/nek0der/weir/issues/398)) ([c289974](https://github.com/nek0der/weir/commit/c2899748a2ffbd07e95d180e64a62b2ac5ae7381))
+
+
+### Refactors
+
+* **agent:** have the hook runtime read the host for the adapters, and check that no adapter does ([#399](https://github.com/nek0der/weir/issues/399)) ([12ffb1b](https://github.com/nek0der/weir/commit/12ffb1b30f244f6e68f4c7d28ec684c1644f074a))
+
+
+### Documentation
+
+* **site:** correct the OpenCode pages, keep to what Weir does, and match the app's wording ([#397](https://github.com/nek0der/weir/issues/397)) ([61b9a19](https://github.com/nek0der/weir/commit/61b9a199b058758032e8e8604c40c76457d77ab0))
+
 ## [0.1.19](https://github.com/nek0der/weir/compare/v0.1.18...v0.1.19) (2026-11-08)
 
 
