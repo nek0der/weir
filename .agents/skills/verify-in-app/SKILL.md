@@ -115,7 +115,14 @@ and the reason is what to act on.
 - What a Copy put on the clipboard can be read with `pbpaste`; the
   clipboard is the person's, so put back what was there.
 - An agent's first start in a folder may ask whether to trust it. Do not
-  answer yes on the person's behalf: it writes to their agent's settings. Ask.
+  answer yes on the person's behalf: it writes to their agent's settings. Ask,
+  or start the agent with an option that trusts the folder for that launch
+  only and saves nothing: `kiro-cli chat --v3 --trust-workspace`, and
+  `agy --settings '{"trustedWorkspaces":["/path/to/folder"]}'`. Codex can offer
+  to update itself at launch, with **Update now** first; start it with
+  `codex -c check_for_update_on_startup=false`. The channel refuses to type
+  while an agent waits for the person (`agentState` `needsInput`), but the
+  Kiro CLI shows as at rest while it asks about trust, so look before typing.
 - tmux needs no full-screen control. Start it with the channel, on a server
   and session of the run's own so the person's sessions are never touched:
   `$A type-line PANE "tmux -L weir-check new -s check" --expect zsh`.

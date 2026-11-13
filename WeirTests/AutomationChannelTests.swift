@@ -290,6 +290,15 @@
             }
         }
 
+        @Test func anAgentWaitingOnThePerson_isTypedIntoByNoOperation() {
+            var waiting = facts()
+            waiting.isAgentWaitingOnPerson = true
+            let reason = "the pane's agent waits for the person to answer it, and typing would answer it for them"
+            for op in [AutomationRequest.Operation.typeLine, .paste, .submit] {
+                #expect(AutomationController.typingRefusal(waiting, ref: ref, expect: expect, op: op) == reason)
+            }
+        }
+
         @Test func theChannelsOwnText_mayBeSubmittedButNotTypedInto() {
             var pasted = facts(hasUnsubmittedInput: true)
             pasted.isChannelDraft = true

@@ -672,9 +672,28 @@ def tmux(run, checks):
 
 # Each agent's command and its own quit command, sent as a line at its prompt.
 AGENTS = {"claude": "/exit", "codex": "/quit", "opencode": "/exit", "agy": "/quit", "kiro-cli": "/quit"}
-# What an agent's command needs to report to Weir, as Weir's own launches pass
-# it (`AgentKind.startCommand`): Kiro loads hooks only under its v3 engine.
-LAUNCH_ARGUMENTS = {"kiro-cli": " --v3"}
+
+
+def launch_arguments(command, folder):
+    """What each agent's command needs for the check, after its name.
+
+    Kiro loads hooks only under its v3 engine, as Weir's own launches pass it
+    (`AgentKind.startCommand`). The rest keeps away the questions these
+    agents ask at launch: whether to trust a folder, which Kiro and `agy` ask
+    in each new worktree, and Codex's offer to update itself. The check's
+    first prompt would otherwise land in the question, and its Return would
+    pick the default answer for the person. Each option holds for this launch
+    only and saves nothing in the person's settings.
+    """
+    if command == "kiro-cli":
+        # `--trust-workspace` is `chat`'s option, which `kiro-cli` alone
+        # refuses; the shim reports a `chat` launch as it does a bare one.
+        return " chat --v3 --trust-workspace"
+    if command == "agy":
+        return " --settings " + shlex.quote(json.dumps({"trustedWorkspaces": [folder]}))
+    if command == "codex":
+        return " -c check_for_update_on_startup=false"
+    return ""
 
 
 def agents(run, checks):
@@ -715,7 +734,7 @@ def agents(run, checks):
 def _agent(run, checks, ref, command, work):
     """Starts the agent, sends it a typed and a pasted prompt, and quits it."""
     quit_line = AGENTS[command]
-    run.type("typeLine", ref, f"cd {shlex.quote(work)} && {command}{LAUNCH_ARGUMENTS.get(command, '')}")
+    run.type("typeLine", ref, f"cd {shlex.quote(work)} && {command}{launch_arguments(command, work)}")
     if not checks.check(f"{command} comes to the front", run.in_front(ref, command), run.pane(ref)):
         return
     time.sleep(4)
