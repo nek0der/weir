@@ -593,7 +593,8 @@ engine it runs, the hooks, the session log, and the permission wait.
   reports nothing.
 - **A folder Kiro does not trust reports nothing.** Kiro asks whether to trust a
   folder the first time it runs there, and in one you do not trust it runs no
-  hooks, Weir's included.
+  hooks, Weir's included. While Kiro asks, no hook has run yet, so Weir shows
+  Kiro at rest rather than waiting for you.
 - **No approval card.** Kiro's `PreToolUse` hook can refuse a tool or make Kiro
   ask, but not allow one, and Kiro asks after every hook anyway. A card would
   only add a second question. Kiro's own prompt asks, and the decision bar

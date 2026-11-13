@@ -191,11 +191,16 @@ rules, and it still cannot promise that text never reaches a shell.
 - A request names the agent and, when Weir knows it, the agent's session it
   expects in the pane. It is refused when the pane's foreground process or
   session differs, when the pane runs inside tmux (whose client the channel
-  does not resolve yet), or when the pane holds an unsent draft of the
-  person's.
-- The same checks run again just before the Return. If they fail, the
-  Return is not sent and the reply says the text was typed but not
-  submitted.
+  does not resolve yet), when the pane holds an unsent draft of the
+  person's, or when the pane's agent waits for the person to answer it (a
+  permission, a question, or whether to trust the folder). Return in that
+  question would pick an answer for the person, often the default one, and
+  the text would be lost. Only an agent that reports the wait is caught: the
+  Kiro CLI shows as at rest while it asks whether to trust a folder.
+- The same checks run again just before the Return, on the agent state the
+  app holds then. If they fail, the Return is not sent and the reply says
+  the text was typed but not submitted. A wait the agent has reported but
+  the app has not taken in yet is not caught.
 - A process can still exit between a check and the write that follows. The
   reply reports what was checked and when; it does not claim more.
 - A request reaches the terminal at once, as a fast typist's keys would. Text

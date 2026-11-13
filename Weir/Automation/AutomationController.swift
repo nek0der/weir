@@ -407,6 +407,10 @@
             var hasUnsubmittedInput: Bool
             /// The unsent text is the channel's own, typed or pasted.
             var isChannelDraft = false
+            /// Whether the pane's agent reports that it waits for the person
+            /// to answer it: a permission, a question, or whether to trust
+            /// the folder.
+            var isAgentWaitingOnPerson = false
         }
 
         static func typingRefusal(
@@ -426,6 +430,12 @@
             }
             if let session = expect.session, facts.agentSession != session {
                 return "the pane's agent session is not \(session)"
+            }
+            // Return in the agent's own question picks an answer, often its
+            // default (Allow, Trust this folder), and the typed text is lost.
+            // Only the person may answer it, as only they may answer a sheet.
+            if facts.isAgentWaitingOnPerson {
+                return "the pane's agent waits for the person to answer it, and typing would answer it for them"
             }
             // Only `submit` may send the channel's own paste; anything else
             // would type into it.
@@ -449,15 +459,17 @@
 
         private func facts(of ref: AutomationPaneRef, in state: AppState) -> PaneFacts {
             let view = state.registry.view(for: ref.id)
+            let runtime = state.attention.headerRuntime(inPane: ref.id)
             return PaneFacts(
                 isSameRun: ref.run == runID,
                 hasTerminal: view != nil,
                 generation: state.registry.generations[ref.id],
                 isInTmux: Self.isInTmux(ref.id, view: view, in: state),
                 processNames: [view?.foregroundProcessName].compactMap(\.self) + (view?.foregroundGroupProcessNames ?? []),
-                agentSession: state.attention.headerRuntime(inPane: ref.id)?.sessionID,
+                agentSession: runtime?.sessionID,
                 hasUnsubmittedInput: view?.hasUnsubmittedInput ?? false,
-                isChannelDraft: view.map { isChannelDraft(in: $0, ref: ref) } ?? false
+                isChannelDraft: view.map { isChannelDraft(in: $0, ref: ref) } ?? false,
+                isAgentWaitingOnPerson: runtime?.badge.state == .needsInput
             )
         }
 
