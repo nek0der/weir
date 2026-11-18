@@ -111,7 +111,14 @@ release-check: $(PBXPROJ)
 run:
 	@scripts/run-dev-app.sh "$(APP_PATH)"
 
-dev: build run
+# `run` waits for `build` only when `dev` asked for both: as two
+# prerequisites of `dev`, `make -j` started them together and opened the
+# build before this one, or nothing on a first build. `make run` alone still
+# opens what is there.
+dev: run
+ifneq ($(filter dev,$(MAKECMDGOALS)),)
+run: build
+endif
 
 test: rust-test plugin-test $(PBXPROJ)
 	$(debug_signing_guard)

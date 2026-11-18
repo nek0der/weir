@@ -18,10 +18,14 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
+REPO_ROOT="$(CDPATH='' cd -P -- "$(dirname "$0")/.." && pwd -P)"
 
-TMP="$(cd "$(mktemp -d)" && pwd -P)"
-trap 'rm -rf "$TMP"' EXIT
+# Two steps, so a failed `mktemp` stops the script here: nested inside the
+# `cd`, its failure would leave `cd ""` in the current directory, and the trap
+# would remove the checkout.
+MADE_TMP="$(mktemp -d)"
+trap 'rm -rf -- "$MADE_TMP"' EXIT
+TMP="$(CDPATH='' cd -P -- "$MADE_TMP" && pwd -P)"
 
 # A checkout holds the script, the lookup it asks, and (unless told not to) a
 # generated project, as the lookup refuses to ask xcodebuild without one.
@@ -69,6 +73,7 @@ chmod +x "$TMP/bin/xcodebuild"
 STUB_PATH="$TMP/bin:$PATH"
 
 failures=0
+passes=0
 
 # Runs the checkout's script ($1) from a scratch directory (it creates
 # `.github/assets` and `build/` relative to where it runs) and prints
@@ -88,6 +93,7 @@ check() {
   local name="$1" expected="$2" actual="$3"
   if [[ "$actual" == "$expected" ]]; then
     echo "  ✓ $name"
+    passes=$((passes + 1))
   else
     echo "  ✗ $name: got '$actual', expected '$expected'" >&2
     failures=$((failures + 1))
@@ -96,6 +102,10 @@ check() {
 
 check "the app handed over wins over a newer one in DerivedData" \
   "$HANDED" "$(selected_app FAKE_PRODUCTS="$TMP/products" WEIR_SCREENSHOT_APP="$HANDED")"
+# The script starts the app from another folder, so a relative path is
+# resolved against the caller's folder first.
+check "an app handed over by a relative path is used by its absolute path" \
+  "$HANDED" "$(selected_app FAKE_PRODUCTS="$TMP/products" WEIR_SCREENSHOT_APP="../project/Build/Products/Release/Weir.app")"
 check "without one, this checkout's Release app wins over a newer one in DerivedData" \
   "$CHECKOUT_RELEASE" "$(selected_app FAKE_PRODUCTS="$TMP/products")"
 check "without a Release build, this checkout's Debug app is used" \
@@ -113,4 +123,4 @@ if ((failures > 0)); then
   echo "✗ test-screenshot-app: $failures case(s) failed." >&2
   exit 1
 fi
-echo "✓ test-screenshot-app: 5 case(s) passed."
+echo "✓ test-screenshot-app: $passes case(s) passed."

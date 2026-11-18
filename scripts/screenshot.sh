@@ -66,6 +66,9 @@ if [ -z "${APP_PATH}" ]; then
   echo "       Build first: make build-release" >&2
   exit 1
 fi
+# The app starts from another folder below, where a relative path would name
+# nothing.
+APP_PATH="$(CDPATH='' cd -P -- "${APP_PATH}" && pwd -P)"
 
 echo "Launching: ${APP_PATH}"
 echo "         WEIR_DEMO=1 → using DemoFixture, persistence disabled"
