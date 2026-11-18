@@ -25,15 +25,26 @@ extension SessionLaunchFixture {
     /// A fixture whose one setup step writes its pid to `dir/pid` and runs
     /// until it is stopped, begun with `request`; returns once the step
     /// runs, with its pid. One that `ignoresTERM` runs on until the SIGKILL
-    /// that follows a stop's SIGTERM.
+    /// that follows a stop's SIGTERM, `runningSteps.killAfter` later. The
+    /// step never ends by itself, so a test that sees it gone saw it
+    /// stopped, however late the test looked; it waits on a file in `dir`,
+    /// so a test that leaves early still ends it when `withTempDir` removes
+    /// the folder.
     static func startBlockingSetup(
         in dir: URL,
         ignoresTERM: Bool = false,
-        request: SessionLaunchRequest = SessionLaunchFixture.claude
+        request: SessionLaunchRequest = SessionLaunchFixture.claude,
+        runningSteps: WorktreeSetup.RunningSteps = WorktreeSetup.RunningSteps()
     ) async throws -> (fixture: SessionLaunchFixture, pid: pid_t) {
         let pidFile = dir.appendingPathComponent("pid")
+        let hold = dir.appendingPathComponent("hold")
+        try Data().write(to: hold)
         let trap = ignoresTERM ? "trap '' TERM; " : ""
-        let fixture = try await make(in: dir, bootstrap: [.shorthand("\(trap)echo $$ > '\(pidFile.path)'; exec sleep 30")])
+        let fixture = try await make(
+            in: dir,
+            bootstrap: [.shorthand("\(trap)echo $$ > '\(pidFile.path)'; while [ -e '\(hold.path)' ]; do sleep 0.1; done")],
+            runningSteps: runningSteps
+        )
         fixture.begin(request)
         await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) { pid(in: pidFile) != nil }
         guard let pid = pid(in: pidFile) else { throw StepDidNotStart() }

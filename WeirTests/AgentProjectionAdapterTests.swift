@@ -11,7 +11,7 @@ import Testing
 @testable import Weir
 
 @MainActor
-@Suite("AgentProjectionAdapter")
+@Suite("AgentProjectionAdapter", .timeLimit(.minutes(1)))
 struct AgentProjectionAdapterTests {
     private static let run = "AAAAAAAA-1111-4111-8111-AAAAAAAAAAA1"
 
@@ -657,10 +657,22 @@ extension AgentProjectionAdapterTests {
                 writesFiles: writesFiles
             )
             let session = WorkspaceSession()
+            // The catch-up pass reads files off the main actor and the event
+            // arrives through a kqueue source, so we wait on the callbacks
+            // themselves rather than on a clock a loaded runner outlasts. The
+            // suite's time limit ends a wait for one that never comes.
             var requested: [String] = []
             var applied = 0
-            adapter.onGitSyncRequested = { requested.append($0) }
-            adapter.onProjectionApplied = { _ in applied += 1 }
+            let (passes, passApplied) = AsyncStream.makeStream(of: Void.self)
+            let (syncs, syncRequested) = AsyncStream.makeStream(of: Void.self)
+            adapter.onGitSyncRequested = {
+                requested.append($0)
+                syncRequested.yield()
+            }
+            adapter.onProjectionApplied = { _ in
+                applied += 1
+                passApplied.yield()
+            }
             adapter.bootstrap(into: session)
             try #require(paths.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
 
@@ -678,11 +690,15 @@ extension AgentProjectionAdapterTests {
             if writesFiles {
                 // Let the catch-up pass finish before writing the event. The
                 // fixture has no runtime records to arm the sweep timer.
-                await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) { applied >= 2 }
+                for await _ in passes where applied >= 2 {
+                    break
+                }
                 try #require(applied >= 2)
                 try #require(adapter.sweepInterval == nil)
                 let event = try Self.writeWorktreeEvent(in: events)
-                await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) { !requested.isEmpty }
+                for await _ in syncs {
+                    break
+                }
                 #expect(requested == ["/example/repo"])
                 #expect(!FileManager.default.fileExists(atPath: event.path))
                 #expect(adapter.lastFailure == nil)

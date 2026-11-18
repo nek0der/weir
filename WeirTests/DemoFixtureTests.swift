@@ -40,7 +40,9 @@ struct DemoFixtureTests {
                     "/bin/sh", "-c", #"printf '\n' | /bin/zsh -f -c "$1""#, "scene", command
                 ],
                 workingDirectory: directory,
-                timeout: .seconds(5)
+                // Every slot's scene runs at once, each a shell and a zsh: the
+                // timeout only backstops a scene that hangs.
+                timeout: .seconds(30)
             ))
             #expect(result.exitCode == 0, "\(result.stderr)")
             let markers = try FileManager.default.contentsOfDirectory(atPath: ready.path)

@@ -22,13 +22,15 @@ struct SessionLaunchFixture {
     let git: FakeGit
 
     /// The fixture, its worktree made in `dir`, the project's setup
-    /// `bootstrap`, its folder `rootURL` (one no test writes in when `nil`).
+    /// `bootstrap`, its folder `rootURL` (one no test writes in when `nil`),
+    /// and the store's list of running setup steps, `runningSteps`.
     static func make(
         in dir: URL,
         bootstrap: [BootstrapItem],
         startTimeout: Duration = .seconds(30),
         copyByteLimit: Int64 = IgnoredFileCopier.byteLimit,
-        rootURL: URL? = nil
+        rootURL: URL? = nil,
+        runningSteps: WorktreeSetup.RunningSteps = WorktreeSetup.RunningSteps()
     ) async throws -> SessionLaunchFixture {
         let (session, project) = WorkspaceSessionFixture.withProject(name: "demo", rootURL: rootURL)
         let index = session.projects.firstIndex { $0.id == project.id } ?? 0
@@ -43,7 +45,13 @@ struct SessionLaunchFixture {
             openTab: false,
             git: git
         )
-        let store = SessionLaunchStore(path: { Self.path }, git: git, startTimeout: startTimeout, copyByteLimit: copyByteLimit)
+        let store = SessionLaunchStore(
+            path: { Self.path },
+            git: git,
+            startTimeout: startTimeout,
+            copyByteLimit: copyByteLimit,
+            runningSteps: runningSteps
+        )
         return SessionLaunchFixture(session: session, project: session.projects[index], worktree: worktree, store: store, git: git)
     }
 

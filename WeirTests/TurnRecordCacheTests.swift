@@ -12,7 +12,7 @@ import Testing
 @testable import WeirDomain
 
 @MainActor
-@Suite("Turn records")
+@Suite("Turn records", .timeLimit(.minutes(1)))
 struct TurnRecordCacheTests {
     private static let run = "AAAAAAAA-1111-4111-8111-AAAAAAAAAAA1"
     private static let first = "00000000-0000-4000-8000-000000000001"
@@ -427,18 +427,42 @@ extension TurnRecordCacheTests {
         let commits = Recorded(0)
         let failure = Recorded<FailurePoint?>(nil)
         let release = DispatchSemaphore(value: 0)
+        /// One element for each input recorded, so a test waits on the pass
+        /// reaching the engine, which runs off the main actor, rather than
+        /// on a clock a loaded runner outlasts.
+        let passes: AsyncStream<Void>
+        private let passReached: AsyncStream<Void>.Continuation
         private let engine = WeirProjectionBridge.Engine()
         private let heldRevision: Int?
 
         init(heldRevision: Int? = nil) {
             self.heldRevision = heldRevision
+            (passes, passReached) = AsyncStream.makeStream(of: Void.self)
+        }
+
+        /// Waits until the recorded inputs satisfy `condition`. Every input
+        /// leaves an element behind, so one recorded before the wait began
+        /// is still checked. The suite's time limit ends a wait for a pass
+        /// that never comes.
+        func untilInputs(
+            isolation _: isolated (any Actor)? = #isolation,
+            _ condition: ([ObservedInput]) -> Bool
+        ) async {
+            for await _ in passes where condition(inputs.value) {
+                break
+            }
         }
 
         func pass(input: Data, now: Data) throws -> WeirProjectionPass {
             let observed = try JSONDecoder().decode(ObservedInput.self, from: input)
             inputs.update { $0.append(observed) }
+            passReached.yield()
+            // The test releases the pass, or its `defer` does when it leaves
+            // early. The backstop only frees this thread after a test the
+            // suite's limit ended, so it is longer than that limit: a slow
+            // main actor must not time the hold out before the test releases it.
             if let heldRevision, observed.revision == heldRevision,
-               release.wait(timeout: .now() + 10) != .success
+               release.wait(timeout: .now() + 120) != .success
             {
                 throw WeirProjectionError.rust(-2)
             }
@@ -581,7 +605,9 @@ extension TurnRecordCacheTests {
 
             adapter.startWatching()
             defer { adapter.stopWatching() }
-            await pollUntil { adapter.turnHistory.turn(TurnID(Self.first)) != nil }
+            // The catch-up pass reads and decodes off the main actor, so we
+            // wait on the history changing rather than on a clock.
+            await untilObserved { adapter.turnHistory.turn(TurnID(Self.first)) != nil }
             await adapter.passesSettled()
 
             #expect(adapter.turnHistory.turn(TurnID(Self.first))?.displayNumber == 1)
@@ -637,7 +663,7 @@ extension TurnRecordCacheTests {
 
             try writeRun(session: "s1", currentTurn: nil, revision: 5, in: state)
             adapter.requestPass()
-            await pollUntil { engine.inputs.value.map(\.revision) == [4, 5] }
+            await engine.untilInputs { $0.map(\.revision) == [4, 5] }
             try #require(engine.inputs.value.map(\.revision) == [4, 5])
             try writeRun(session: "s1", currentTurn: nil, state: "running", revision: 6, in: state)
             adapter.requestPass()
@@ -668,7 +694,7 @@ extension TurnRecordCacheTests {
 
             try writeRun(session: "s1", currentTurn: nil, revision: 5, in: state)
             adapter.requestPass()
-            await pollUntil { engine.inputs.value.map(\.revision) == [4, 5] }
+            await engine.untilInputs { $0.map(\.revision) == [4, 5] }
             try #require(engine.inputs.value.map(\.revision) == [4, 5])
             #expect(engine.inputs.value.last?.turnFiles == [ObservedFile(name: Self.first)])
             try AgentRecordFixtures.writeTurn(id: Self.second, number: 2, session: "s1", runID: Self.run, in: state)

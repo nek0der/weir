@@ -60,7 +60,12 @@ final class Gate<Value: Sendable>: @unchecked Sendable {
     /// Waits for callers to reach the gate, failing when the deadline passes
     /// or this task is canceled. Callers still own releasing held responses,
     /// including when this prerequisite fails.
-    func waitUntilRequested(_ count: Int = 1, timeout: Duration = .seconds(2)) async throws {
+    ///
+    /// The deadline only ends a wait for a call that never comes. The call is
+    /// the code under test reaching the gate, which a loaded runner can delay
+    /// for seconds, so the default stands far past any such delay: at two
+    /// seconds, a slow run failed as if the call were missing.
+    func waitUntilRequested(_ count: Int = 1, timeout: Duration = .seconds(30)) async throws {
         let deadline = SuspendingClock.now + timeout
         try Task.checkCancellation()
         lock.withLock { observerCount += 1 }

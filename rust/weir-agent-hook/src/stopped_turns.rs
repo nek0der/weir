@@ -18,7 +18,7 @@
 use crate::declined_waits::{is_transcript_path, reads_declined};
 use crate::git::SnapshotRunner;
 use crate::records::{HookLog, atomic_write};
-use crate::{TranscriptFile, adapter_for, records, turn};
+use crate::{ResponseWait, TranscriptFile, adapter_for, records, turn};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use weir_agent_core::{end_stopped_turn as ended_record, turn_step};
@@ -121,6 +121,19 @@ pub fn end_stopped_turn(
     now: &str,
     log: &HookLog,
 ) -> StoppedTurnEnd {
+    end_stopped_turn_waiting(request, snapshots, now, log, ResponseWait::HOOK)
+}
+
+/// `end_stopped_turn`, waiting for the turn's last lines to reach the
+/// transcript as `wait` says.
+#[must_use]
+pub fn end_stopped_turn_waiting(
+    request: &StoppedTurnRequest,
+    snapshots: &dyn SnapshotRunner,
+    now: &str,
+    log: &HookLog,
+    wait: ResponseWait<'_>,
+) -> StoppedTurnEnd {
     let Some(adapter) = adapter_for(request.provider.as_str()) else {
         return StoppedTurnEnd::Failed;
     };
@@ -151,6 +164,7 @@ pub fn end_stopped_turn(
         adapter,
         path: transcript,
         state: &request.state_directory,
+        wait,
     };
     let turns = turn::Turns {
         directory: request.state_directory.join(TURNS_DIRECTORY),

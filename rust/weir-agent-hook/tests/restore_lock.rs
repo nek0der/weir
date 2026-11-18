@@ -161,7 +161,11 @@ fn run_started_at(states: &Path) -> Option<String> {
 /// Runs the prompt hook, called at `CALLED_AT`, on another thread while a
 /// restore holds the worktree lock. Lets the restore go once the hook asks
 /// it to stop (waiting, or past `snapshot` giving up its snapshot), and
-/// returns the second the restore let go in.
+/// returns the second the restore let go in. Only whether `snapshot` is under
+/// a second matters to what the hook asks, so a test that expects it waiting
+/// gives it far longer than a loaded machine takes to see that. The hook's
+/// release limit and our deadline are as generous, so a slow look fails the
+/// test here rather than as a hook that gave up.
 fn prompt_waiting_on_a_restore(repo: &Repo, states: &Path, snapshot: Duration) -> String {
     let paths = WorktreeLockPaths::new(&repo.git_dir());
     let restore = ExclusiveLock::acquire(&paths, Duration::ZERO, Duration::from_millis(1))
@@ -175,7 +179,7 @@ fn prompt_waiting_on_a_restore(repo: &Repo, states: &Path, snapshot: Duration) -
             CALLED_AT.clone_into(&mut runtime.now);
             runtime.lock_limits = Limits {
                 snapshot,
-                release: Duration::from_secs(10),
+                release: Duration::from_secs(120),
                 poll: Duration::from_millis(5),
             };
             run_hook("claude", &prompt(&cwd), &runtime)
@@ -186,7 +190,7 @@ fn prompt_waiting_on_a_restore(repo: &Repo, states: &Path, snapshot: Duration) -
     } else {
         Interruption::AgentWaiting
     };
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     while restore.interruption() != Some(asked) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -215,7 +219,7 @@ fn a_prompt_kept_waiting_by_a_restore_starts_once_the_restore_lets_go() {
         SESSION_START,
         &HookRuntime::new(&env, &NoSnapshots),
     );
-    let released = prompt_waiting_on_a_restore(&repo, &states, Duration::from_secs(5));
+    let released = prompt_waiting_on_a_restore(&repo, &states, Duration::from_secs(60));
     let turn = only_turn(&states);
     assert!(
         matches!(turn.begin, SnapshotStatus::Captured { .. }),

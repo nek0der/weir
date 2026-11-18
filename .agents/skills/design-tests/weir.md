@@ -47,6 +47,12 @@ Look in `WeirTests/Support/` before adding a helper:
   same file: it waits for observed changes rather than polling. It has no
   deadline, so give the test or suite a `.timeLimit` and assert the condition
   after the wait, because cancellation also ends the wait.
+  A deadline on real work (a Git or shell process, a file watcher, a read off
+  the main actor) only ends a broken path. A loaded CI runner stretches that
+  work by seconds, so wait on the event itself where the code exposes one,
+  and otherwise leave tens of seconds. Keep an elapsed-time bound well under
+  the sleep or timeout it tells apart, and have a script write its marker only
+  after the trap or state the test depends on is in place.
 
 Inspect `AgentPassCoalescerTests.swift` for manually controlled scheduling
 with a separate real-timer check, and `UncommittedChangesCarrierTests+Rollback.swift`

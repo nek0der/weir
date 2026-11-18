@@ -7,7 +7,7 @@ import Testing
 @testable import Weir
 
 @MainActor
-@Suite(.tags(.persistence))
+@Suite(.tags(.persistence), .timeLimit(.minutes(1)))
 struct SessionStoreTests {
     /// A migrator whose one step turns the previous version into an empty
     /// current snapshot: what the store does around a step, apart from what
@@ -261,7 +261,11 @@ struct SessionStoreTests {
             try manager.setAttributes([.immutable: false], ofItemAtPath: file.path)
             let changed = SessionSnapshot(projects: [], tabs: [], recentProjectPaths: [dir.appendingPathComponent("saved-after-debounce")])
             store.scheduleSave(changed)
-            await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) {
+            // The ledger file is part of the signal, so we poll. The deadline
+            // is only for a save that never comes: the debounced write runs on
+            // the save queue and comes back through the main queue, which a
+            // parallel run can stall.
+            await pollUntil(timeout: .seconds(30), interval: .milliseconds(20)) {
                 MigrationBackup.readLedger(for: file)?.stage == .written && !store.hasFailedToSave
             }
 
@@ -632,7 +636,10 @@ extension SessionStoreTests {
             defer { try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path) }
 
             store.scheduleSave(SessionSnapshot(projects: [], tabs: []))
-            await pollUntil(timeout: .seconds(5)) { store.hasFailedToSave }
+            // Woken by the store's own change, so a stalled save queue only
+            // makes the wait longer; the suite's time limit ends one that
+            // never reports.
+            await untilObserved { store.hasFailedToSave }
             #expect(store.hasFailedToSave)
             #expect(!store.isSavingSuspended)
             #expect(try Self.sessionFiles(in: dir).isEmpty)

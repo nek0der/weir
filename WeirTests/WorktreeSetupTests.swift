@@ -213,7 +213,7 @@ struct WorktreeSetupTests {
                 )
             }
             defer { task.cancel() }
-            await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) {
+            await pollUntil(timeout: .seconds(30), interval: .milliseconds(20)) {
                 (try? String(contentsOf: pidFile, encoding: .utf8))?.isEmpty == false
             }
             let text = try String(contentsOf: pidFile, encoding: .utf8)
@@ -303,7 +303,7 @@ struct WorktreeSetupTests {
 
             // The synchronous signal can precede Foundation's observation
             // of exit. Inspect the reason once Foundation reaps the child.
-            await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) { !process.isRunning }
+            await pollUntil(timeout: .seconds(30), interval: .milliseconds(20)) { !process.isRunning }
             try #require(!process.isRunning)
             #expect(process.terminationReason == .uncaughtSignal)
             #expect(process.terminationStatus == SIGKILL)

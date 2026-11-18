@@ -6,7 +6,9 @@ import Testing
 @testable import Weir
 @testable import WeirDomain
 
+/// A confirmation that never returns fails the suite rather than hanging it.
 @MainActor
+@Suite(.timeLimit(.minutes(1)))
 struct AgentSiblingTabsTests {
     private static let pane = UUID()
 
@@ -189,10 +191,12 @@ struct AgentSiblingTabsTests {
         let url = AgentTabFocus.requestURL(channel: channel, under: root)
         let earliest = FocusRequest.timestamp()
         let result = Recorded<Bool?>(nil)
-        let task = Task { result.value = await confirm(.seconds(6)) }
+        // Both waits only backstop a broken exchange; together they stay
+        // short of the confirmation's limit.
+        let task = Task { result.value = await confirm(.seconds(90)) }
         let files = FileManager.default
         do {
-            await pollUntil(timeout: .seconds(2), interval: .milliseconds(5)) {
+            await pollUntil(timeout: .seconds(30), interval: .milliseconds(5)) {
                 files.fileExists(atPath: url.path)
             }
             try #require(files.fileExists(atPath: url.path), "no request at the process channel")
@@ -210,7 +214,7 @@ struct AgentSiblingTabsTests {
             ]
             try JSONSerialization.data(withJSONObject: fields).write(to: answer, options: .atomic)
 
-            await pollUntil(timeout: .seconds(2), interval: .milliseconds(5)) { result.value != nil }
+            await pollUntil(timeout: .seconds(30), interval: .milliseconds(5)) { result.value != nil }
             let confirmed = try #require(result.value as Bool?, "confirmation did not consume its answer")
             await task.value
             #expect(!files.fileExists(atPath: answer.path))
@@ -519,17 +523,26 @@ struct AgentSiblingTabsTests {
             let clock = ContinuousClock()
             let start = clock.now
             let limit = Duration.milliseconds(100)
+            // The confirmation is the real one; only the limit it is handed is
+            // seen, which a busy runner cannot blur as it can a measured wait.
+            let handedLimit = Recorded<Duration?>(nil)
             let shown = await ReviewSessionFocus.show(
                 conversation: nil,
                 destination: Self.destination(pane),
                 runtimes: { [run] },
                 limit: limit,
-                under: root
+                under: root,
+                confirm: { sessionID, channel, limit, root in
+                    handedLimit.value = limit
+                    return await AgentTabFocus.confirm(sessionID: sessionID, channel: channel, limit: limit, under: root)
+                }
             )
 
             #expect(!shown)
+            #expect(handedLimit.value == limit)
             #expect(clock.now - start >= limit)
-            #expect(clock.now - start < .seconds(3))
+            // Only a refusal that never comes runs this long.
+            #expect(clock.now - start < .seconds(30))
             // An untaken request stays for the plugin or the stale-file sweep.
             let url = AgentTabFocus.requestURL(channel: channel, under: root)
             let request = try FocusRequest(at: url)

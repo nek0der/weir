@@ -109,7 +109,10 @@ struct ProcessDrainTests {
             try Data().write(to: hold)
             defer { try? FileManager.default.removeItem(at: hold) }
             let timing = ProcessDrainTiming(terminationGrace: .milliseconds(200), drainGrace: .milliseconds(200), pollMilliseconds: 10)
-            let script = "(i=0; while [ -e hold ] && [ $i -lt 600 ]; do sleep 0.05; i=$((i+1)); done; : > finished) & exit 0"
+            // The loop's own cap, a minute at least, stands past the wait for
+            // `finished` below, so a `finished` within that wait is the hold's
+            // removal, not the cap.
+            let script = "(i=0; while [ -e hold ] && [ $i -lt 1200 ]; do sleep 0.05; i=$((i+1)); done; : > finished) & exit 0"
             let child = try start(script, workingDirectory: directory)
             child.process.waitUntilExit()
             try #require(child.process.terminationStatus == 0)
@@ -125,7 +128,7 @@ struct ProcessDrainTests {
             #expect(!output.hasStdoutReadFailed)
 
             try FileManager.default.removeItem(at: hold)
-            await pollUntil(timeout: .seconds(5), interval: .milliseconds(10)) {
+            await pollUntil(timeout: .seconds(30), interval: .milliseconds(20)) {
                 FileManager.default.fileExists(atPath: finished.path)
             }
             #expect(FileManager.default.fileExists(atPath: finished.path), "the grandchild left its hold loop")

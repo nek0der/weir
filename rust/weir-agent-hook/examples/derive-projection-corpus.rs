@@ -150,6 +150,7 @@ pub(crate) fn derive(case: &Path, fixtures: &Path, into: &Path) -> Result<(), St
                 snapshots: &NoSnapshots,
                 now: step.now.clone(),
                 lock_limits: weir_agent_hook::worktree_lock::Limits::HOOK,
+                response_wait: weir_agent_hook::ResponseWait::HOOK,
             };
             match run_hook(&run.provider, &payload, &runtime) {
                 HookOutcome::Applied => {}

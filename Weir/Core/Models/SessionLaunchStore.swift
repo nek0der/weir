@@ -176,20 +176,24 @@ final class SessionLaunchStore {
     @ObservationIgnored private let copyByteLimit: Int64
     /// The setup steps this store has running, which `cancelAll` stops
     /// when Weir quits, and no other store's.
-    @ObservationIgnored private let runningSteps = WorktreeSetup.RunningSteps()
+    @ObservationIgnored private let runningSteps: WorktreeSetup.RunningSteps
 
+    /// `runningSteps` is the store's own list; a test gives one with its own
+    /// escalation timing.
     init(
         path: @escaping WorktreeSetup.PathSource = WorktreeSetup.loginShellPath,
         git: any GitRunning = LiveGit(),
         now: @escaping () -> Date = Date.init,
         startTimeout: Duration = .seconds(30),
-        copyByteLimit: Int64 = IgnoredFileCopier.byteLimit
+        copyByteLimit: Int64 = IgnoredFileCopier.byteLimit,
+        runningSteps: WorktreeSetup.RunningSteps = WorktreeSetup.RunningSteps()
     ) {
         self.path = path
         self.git = git
         self.now = now
         self.startTimeout = startTimeout
         self.copyByteLimit = copyByteLimit
+        self.runningSteps = runningSteps
     }
 
     func launch(in container: ContainerID) -> SessionLaunch? {

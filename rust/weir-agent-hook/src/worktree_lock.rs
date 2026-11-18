@@ -415,8 +415,9 @@ mod tests {
 
     const POLL: Duration = Duration::from_millis(5);
 
-    /// A deadline already past still gets one try, and a lock still held at
-    /// the deadline times out rather than failing.
+    /// A deadline already past still gets one try, a lock still held at the
+    /// deadline times out rather than failing, and a busy lock is tried
+    /// again until it comes free.
     #[test]
     fn waiting_tries_once_past_the_deadline_and_times_out_while_held() {
         let past = Instant::now();
@@ -428,12 +429,25 @@ mod tests {
         assert_eq!((held, tries.get()), (Waited::Held, 1));
 
         let tries = std::cell::Cell::new(0);
-        let busy = wait_for_lock(Instant::now() + POLL * 3, POLL, || {
+        let busy = wait_for_lock(past, POLL, || {
             tries.set(tries.get() + 1);
             Err(TryLockError::WouldBlock)
         });
-        assert_eq!(busy, Waited::TimedOut);
-        assert!(tries.get() >= 2, "it polls until the deadline");
+        assert_eq!((busy, tries.get()), (Waited::TimedOut, 1));
+
+        // The lock comes free on the third try, not at a time: the deadline
+        // is far enough off that no stall of this thread reaches it, so the
+        // count of tries depends only on the retry loop.
+        let tries = std::cell::Cell::new(0);
+        let freed = wait_for_lock(Instant::now() + Duration::from_secs(60), POLL, || {
+            tries.set(tries.get() + 1);
+            if tries.get() < 3 {
+                Err(TryLockError::WouldBlock)
+            } else {
+                Ok(())
+            }
+        });
+        assert_eq!((freed, tries.get()), (Waited::Held, 3), "it polls again");
 
         let failed = wait_for_lock(past, POLL, || {
             Err(TryLockError::Error(std::io::Error::other("no locks here")))

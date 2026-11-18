@@ -187,7 +187,7 @@ struct NewSessionActionsTests {
             #expect(outcome == .created(branch: "feat/try"))
             let row = try #require(fixture.shownWorktree)
             // The launch goes on in the row: with no setup, the shell's tab.
-            await pollUntil { !fixture.session.tabs(in: row).isEmpty }
+            await untilObserved { !fixture.session.tabs(in: row).isEmpty }
             #expect(fixture.session.tabs(in: row).count == 1)
             #expect(fixture.git.branchCalls.map(\.name) == ["feat/try"])
             #expect(fixture.settings.settings.newSession.memory(forProjectAt: fixture.project.rootURL)?.open == "shell")
@@ -214,7 +214,7 @@ struct NewSessionActionsTests {
             let worktree = try #require(fixture.session.project(other.id)?.worktrees.first)
             let row = ContainerID.worktree(projectID: other.id, worktreeID: worktree.id)
             #expect(fixture.window.selection.activeContainerID == row)
-            await pollUntil { !fixture.session.tabs(in: row).isEmpty }
+            await untilObserved { !fixture.session.tabs(in: row).isEmpty }
             let tab = try #require(fixture.session.tabs(in: row).first)
             #expect(fixture.window.selection.activeTabID == tab.id)
             #expect(tab.workingDirectory == worktree.workingDirectory.path)
@@ -255,7 +255,7 @@ struct NewSessionActionsTests {
             let worktree = try #require(fixture.session.project(other.id)?.worktrees.first)
             let row = ContainerID.worktree(projectID: other.id, worktreeID: worktree.id)
             #expect(second.activeContainerID == row)
-            await pollUntil { !fixture.session.tabs(in: row).isEmpty }
+            await untilObserved { !fixture.session.tabs(in: row).isEmpty }
             let tab = try #require(fixture.session.tabs(in: row).first)
             #expect(second.activeTabID == tab.id)
             #expect(tab.workingDirectory == worktree.workingDirectory.path)

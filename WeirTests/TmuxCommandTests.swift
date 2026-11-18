@@ -23,12 +23,17 @@ struct TmuxCommandTests {
             let start = ProcessInfo.processInfo.systemUptime
             let result = TmuxCommand().run(
                 executable: "/bin/sh",
-                arguments: ["-c", #"trap '' TERM; : > "$1"; exec /bin/sleep 30"#, "sh", armed.path],
-                timeout: 1
+                arguments: ["-c", #"trap '' TERM; : > "$1"; exec /bin/sleep 60"#, "sh", armed.path],
+                timeout: 10
             )
+            // The marker is written once the trap is set. The timeout leaves a
+            // loaded runner ample time for that, so the SIGTERM meets a client
+            // that ignores it and only the SIGKILL after the grace ends it.
             #expect(FileManager.default.fileExists(atPath: armed.path))
             #expect(result == .timedOut)
-            #expect(ProcessInfo.processInfo.systemUptime - start < 10)
+            // The 10-second timeout and the 0.2-second grace, well short of the
+            // 60 seconds the client sleeps.
+            #expect(ProcessInfo.processInfo.systemUptime - start < 40)
         }
     }
 
@@ -41,15 +46,16 @@ struct TmuxCommandTests {
             // its client and must not signal arbitrary descendant processes.
             let result = TmuxCommand().run(
                 executable: "/bin/sh",
-                arguments: ["-c", "sleep 30 & echo $! > \"$1\"; exit 0", "sh", descendant.path],
-                timeout: 1
+                arguments: ["-c", "sleep 60 & echo $! > \"$1\"; exit 0", "sh", descendant.path],
+                timeout: 30
             )
             #expect(FileManager.default.fileExists(atPath: descendant.path))
             #expect(result == .timedOut)
-            // The exit and the 0.2-second drain grace, against the 30 seconds
-            // the descendant holds the pipe. The bound is well short of that
-            // and leaves room for a busy CI runner.
-            #expect(ProcessInfo.processInfo.systemUptime - start < 10, "the drain grace, not the descendant's own end")
+            // The exit and the 0.2-second drain grace. The 20-second bound
+            // leaves room for a busy CI runner and catches a regression that
+            // waits for the descendant, which holds the pipe for 60 seconds, to
+            // exit on its own.
+            #expect(ProcessInfo.processInfo.systemUptime - start < 20, "the drain grace, not the descendant's own end")
         }
     }
 

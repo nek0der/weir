@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 use std::os::unix::net::UnixStream;
-use std::sync::{Arc, mpsc};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
@@ -21,7 +21,7 @@ fn start_connection(
 ) -> (UnixStream, thread::JoinHandle<()>) {
     let (client, mut server) = UnixStream::pair().unwrap();
     // A stalled peer must fail a test rather than leave its socket read blocked.
-    let timeout = Some(Duration::from_secs(10));
+    let timeout = Some(PROMPTLY);
     client.set_read_timeout(timeout).unwrap();
     client.set_write_timeout(timeout).unwrap();
     server.set_write_timeout(timeout).unwrap();
@@ -34,6 +34,29 @@ fn start_connection(
 fn exchange(stream: &mut UnixStream, request: &WireRequest) -> WireResponse {
     write_frame(stream, request, MAXIMUM_REQUEST_BYTES).unwrap();
     read_frame(stream, MAXIMUM_RESPONSE_BYTES).unwrap().unwrap()
+}
+
+/// How long a held request, and the approval it waits on, may last in the
+/// wakeup tests: far past `PROMPTLY`, so a waiter the service never wakes
+/// is answered only at this limit.
+const HELD_MS: u64 = 60_000;
+
+/// How soon a woken waiter answers. It is one-sided and wide: a loaded
+/// machine answers well within it, and a waiter left to its `HELD_MS` limit
+/// never does. The streams' read timeout is the same, so an unwoken waiter
+/// fails its read here rather than waiting out `HELD_MS`.
+const PROMPTLY: Duration = Duration::from_secs(10);
+
+/// Reads the answer to a request the service holds, and asserts that the
+/// service was woken for it rather than the hold running out.
+fn read_woken(stream: &mut UnixStream, what: &str) -> WireResponse {
+    let started = Instant::now();
+    let response = read_frame(stream, MAXIMUM_RESPONSE_BYTES)
+        .unwrap_or_else(|error| panic!("{what} was not woken within {PROMPTLY:?}: {error}"))
+        .expect("a response frame");
+    let elapsed = started.elapsed();
+    assert!(elapsed < PROMPTLY, "{what} was not woken: {elapsed:?}");
+    response
 }
 
 fn hello(stream: &mut UnixStream) -> Uuid {
@@ -86,6 +109,8 @@ fn requester_receives_controller_answer_over_real_streams() {
     assert_eq!(requester_epoch, controller_epoch);
 
     let mut request = approval(run_id, request_id);
+    // The approval's own deadline also ends a wait, so it lasts as long.
+    request.timeout_ms = HELD_MS;
     request.tool_name = "AskUserQuestion".into();
     request.input = json!({});
     let questions = json!([{
@@ -129,26 +154,13 @@ fn requester_receives_controller_answer_over_real_streams() {
         questions
     );
 
-    let decision = json!({"decision": "answer", "answers": {"Which color?": "Red"}});
-    let resolve_decision: ApprovalDecisionWire = serde_json::from_value(decision.clone()).unwrap();
-    let resolver = thread::spawn(move || {
-        let response = exchange(
-            &mut controller,
-            &WireRequest {
-                version: PROTOCOL_VERSION,
-                message_id: Uuid::new_v4(),
-                service_epoch: Some(controller_epoch),
-                body: RequestBody::ApprovalResolve {
-                    key: ApprovalKeyWire { run_id, request_id },
-                    decision: resolve_decision,
-                },
-            },
-        );
-        assert!(matches!(response.body, ResponseBody::ApprovalResult(_)));
-        drop(controller);
-    });
-
-    let response = exchange(
+    // The wait goes out before the resolution. A wait the service reads
+    // only after the resolution returns at once and passes with or without
+    // the wakeup; that lowers what a run detects but never fails one that
+    // should pass. The service's own test
+    // (`a_pending_wait_releases_the_broker_for_a_controller_resolution`)
+    // orders the two for certain.
+    write_frame(
         &mut requester,
         &WireRequest {
             version: PROTOCOL_VERSION,
@@ -156,10 +168,31 @@ fn requester_receives_controller_answer_over_real_streams() {
             service_epoch: Some(requester_epoch),
             body: RequestBody::ApprovalWait {
                 key: ApprovalKeyWire { run_id, request_id },
-                maximum_wait_ms: 5_000,
+                maximum_wait_ms: HELD_MS,
+            },
+        },
+        MAXIMUM_REQUEST_BYTES,
+    )
+    .unwrap();
+
+    let decision = json!({"decision": "answer", "answers": {"Which color?": "Red"}});
+    let resolve_decision: ApprovalDecisionWire = serde_json::from_value(decision.clone()).unwrap();
+    let resolved = exchange(
+        &mut controller,
+        &WireRequest {
+            version: PROTOCOL_VERSION,
+            message_id: Uuid::new_v4(),
+            service_epoch: Some(controller_epoch),
+            body: RequestBody::ApprovalResolve {
+                key: ApprovalKeyWire { run_id, request_id },
+                decision: resolve_decision,
             },
         },
     );
+    assert!(matches!(resolved.body, ResponseBody::ApprovalResult(_)));
+    drop(controller);
+
+    let response = read_woken(&mut requester, "the requester's wait");
     let ResponseBody::ApprovalResult(snapshot) = response.body else {
         panic!("expected approval result");
     };
@@ -169,7 +202,6 @@ fn requester_receives_controller_answer_over_real_streams() {
     assert_eq!(snapshot["request"]["questions"], questions);
 
     drop(requester);
-    resolver.join().unwrap();
     requester_task.join().unwrap();
     controller_task.join().unwrap();
 }
@@ -193,29 +225,29 @@ fn controller_subscription_observes_a_concurrent_submit() {
 
     // The subscription is on the wire before the submit goes out. Whether
     // the service is already waiting on it by then is not something it
-    // shows, so the assertions hold either way: a subscription that starts
-    // after the submit reads the same snapshot at once. This checks snapshot
-    // delivery, not the condition variable wakeup itself.
-    let (sent, subscription_sent) = mpsc::channel();
-    let subscriber = thread::spawn(move || {
-        write_frame(
-            &mut controller,
-            &WireRequest {
-                version: PROTOCOL_VERSION,
-                message_id: Uuid::new_v4(),
-                service_epoch: Some(controller_epoch),
-                body: RequestBody::ApprovalSubscribe {
-                    after_sequence: 0,
-                    maximum_wait_ms: 5_000,
-                },
+    // shows: a subscription read after the submit returns the same snapshot
+    // at once and passes with or without the wakeup. That lowers what a run
+    // detects but never fails one that should pass. The service's own test
+    // (`a_subscription_wakes_when_a_requester_submits`) orders the two for
+    // certain.
+    // Written here rather than on the subscriber's thread, so the frame is
+    // on the wire before the submit however late that thread starts.
+    write_frame(
+        &mut controller,
+        &WireRequest {
+            version: PROTOCOL_VERSION,
+            message_id: Uuid::new_v4(),
+            service_epoch: Some(controller_epoch),
+            body: RequestBody::ApprovalSubscribe {
+                after_sequence: 0,
+                maximum_wait_ms: HELD_MS,
             },
-            MAXIMUM_REQUEST_BYTES,
-        )
-        .unwrap();
-        sent.send(()).unwrap();
-        let response: WireResponse = read_frame(&mut controller, MAXIMUM_RESPONSE_BYTES)
-            .unwrap()
-            .unwrap();
+        },
+        MAXIMUM_REQUEST_BYTES,
+    )
+    .unwrap();
+    let subscriber = thread::spawn(move || {
+        let response = read_woken(&mut controller, "the controller's subscription");
         let ResponseBody::ApprovalSnapshotResult {
             sequence,
             requests,
@@ -233,16 +265,17 @@ fn controller_subscription_observes_a_concurrent_submit() {
         drop(controller);
     });
 
-    subscription_sent
-        .recv_timeout(Duration::from_secs(5))
-        .expect("the subscription is sent");
+    let mut request = approval(run_id, request_id);
+    // The approval outlives a subscriber that reads the snapshot late, so
+    // its deadline is still ahead of the service clock the snapshot gives.
+    request.timeout_ms = HELD_MS;
     let submit = exchange(
         &mut requester,
         &WireRequest {
             version: PROTOCOL_VERSION,
             message_id: Uuid::new_v4(),
             service_epoch: Some(requester_epoch),
-            body: RequestBody::ApprovalSubmit(approval(run_id, request_id)),
+            body: RequestBody::ApprovalSubmit(request),
         },
     );
     assert!(matches!(submit.body, ResponseBody::ApprovalResult(_)));

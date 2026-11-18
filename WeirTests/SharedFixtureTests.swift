@@ -51,13 +51,16 @@ struct SharedFixtureTests {
         let started = ContinuousClock.now
         let output = try TestProcess.run(
             URL(fileURLWithPath: "/bin/sh"),
-            arguments: ["-c", "printf 'started' >&2; exec /bin/sleep 30"],
+            arguments: ["-c", "printf 'started' >&2; exec /bin/sleep 60"],
             stdin: payload,
-            timeout: .seconds(1)
+            timeout: .seconds(5)
         )
-        #expect(ContinuousClock.now - started < .seconds(10))
+        // The deadline leaves a loaded runner ample time to start the shell
+        // and print, so the child the deadline ends is the one that never reads.
+        // The upper bound is well short of the 60 seconds it sleeps.
+        #expect(ContinuousClock.now - started < .seconds(40))
         #expect(output.stderrText == "started")
-        #expect(ContinuousClock.now - started >= .seconds(1))
+        #expect(ContinuousClock.now - started >= .seconds(5))
         #expect(output.ending == .timedOut)
         #expect(output.status == SIGTERM || output.status == SIGKILL)
         #expect(kill(output.pid, 0) == -1 && errno == ESRCH)

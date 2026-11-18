@@ -4,8 +4,10 @@
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
-use support::{PANE, RUN, recipe_variable};
-use weir_agent_hook::{HookEnv, HookOutcome, HookRuntime, NoSnapshots, TURNS_DIRECTORY, run_hook};
+use support::{PANE, RUN, appended_while_waiting, recipe_variable};
+use weir_agent_hook::{
+    HookEnv, HookOutcome, HookRuntime, NoSnapshots, ResponseWait, TURNS_DIRECTORY, run_hook,
+};
 use weir_agent_model::{
     ChangeSummary, DeniedAction, LOCK_FILE_SUFFIX, PermissionMode, PromptKind, RecipePlaceholder,
     RecordedPromptKind, RunRecord, RunState, SnapshotStatus, TurnPhase, TurnRecord, TurnUsage,
@@ -100,6 +102,18 @@ impl Scratch {
         call: Option<&str>,
         payload: &[u8],
     ) -> HookOutcome {
+        self.call_waiting(provider, run, call, payload, ResponseWait::HOOK)
+    }
+
+    /// Does what `call_as` does, waiting for the transcript as `wait` says.
+    fn call_waiting(
+        &self,
+        provider: &str,
+        run: &str,
+        call: Option<&str>,
+        payload: &[u8],
+        wait: ResponseWait<'_>,
+    ) -> HookOutcome {
         let mut pairs = self.pairs(provider);
         pairs.retain(|(name, _)| name != "WEIR_AGENT_RUN_ID");
         pairs.push(("WEIR_AGENT_RUN_ID".to_owned(), run.to_owned()));
@@ -107,7 +121,9 @@ impl Scratch {
             pairs.push(("WEIR_HOOK_INVOCATION_ID".to_owned(), call.to_owned()));
         }
         let env = HookEnv::from_pairs(pairs);
-        run_hook(provider, payload, &HookRuntime::new(&env, &NoSnapshots))
+        let mut runtime = HookRuntime::new(&env, &NoSnapshots);
+        runtime.response_wait = wait;
+        run_hook(provider, payload, &runtime)
     }
 
     /// Every turn on disk, in display order.
@@ -2218,30 +2234,22 @@ fn a_stop_waits_for_the_last_response_to_reach_the_transcript() {
         .as_bytes(),
     );
     // The last response lands a moment after Stop begins, as an interactive
-    // Claude Code writes it.
-    let late = session.clone();
-    let writer = std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let mut file = fs::OpenOptions::new()
-            .append(true)
-            .open(late)
-            .expect("open");
-        std::io::Write::write_all(
-            &mut file,
-            transcript_line(
-                r#"{"type":"assistant","isSidechain":false,"requestId":"r2","message":{"usage":{"input_tokens":3,"output_tokens":7}}}"#,
-            )
-            .as_bytes(),
-        )
-        .expect("append");
-    });
-    scratch.call(
-        RUN,
-        Some(&new_call()),
-        format!(r#"{{"hook_event_name":"Stop","session_id":"s1","transcript_path":"{path}"}}"#)
-            .as_bytes(),
+    // Claude Code writes it. It names its model, as Claude Code's do, which
+    // ends the wait for the session's settings too: without it that wait
+    // would run to the test's generous limit.
+    let response = transcript_line(
+        r#"{"type":"assistant","isSidechain":false,"requestId":"r2","message":{"model":"claude-opus-5-5","usage":{"input_tokens":3,"output_tokens":7}}}"#,
     );
-    writer.join().expect("writer");
+    appended_while_waiting(&session, response, |wait| {
+        scratch.call_waiting(
+            "claude",
+            RUN,
+            Some(&new_call()),
+            format!(r#"{{"hook_event_name":"Stop","session_id":"s1","transcript_path":"{path}"}}"#)
+                .as_bytes(),
+            wait,
+        )
+    });
 
     assert_eq!(
         scratch.turns().remove(0).usage,
@@ -2276,29 +2284,21 @@ fn a_stop_waits_for_a_turns_only_response() {
         )
         .as_bytes(),
     );
-    let late = session.clone();
-    let writer = std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let mut file = fs::OpenOptions::new()
-            .append(true)
-            .open(late)
-            .expect("open");
-        std::io::Write::write_all(
-            &mut file,
-            transcript_line(
-                r#"{"type":"assistant","isSidechain":false,"requestId":"r1","message":{"usage":{"input_tokens":3,"output_tokens":7}}}"#,
-            )
-            .as_bytes(),
-        )
-        .expect("append");
-    });
-    scratch.call(
-        RUN,
-        Some(&new_call()),
-        format!(r#"{{"hook_event_name":"Stop","session_id":"s1","transcript_path":"{path}"}}"#)
-            .as_bytes(),
+    // Named with its model, as in the test above, so the settings' wait ends
+    // with the turn's.
+    let response = transcript_line(
+        r#"{"type":"assistant","isSidechain":false,"requestId":"r1","message":{"model":"claude-opus-5-5","usage":{"input_tokens":3,"output_tokens":7}}}"#,
     );
-    writer.join().expect("writer");
+    appended_while_waiting(&session, response, |wait| {
+        scratch.call_waiting(
+            "claude",
+            RUN,
+            Some(&new_call()),
+            format!(r#"{{"hook_event_name":"Stop","session_id":"s1","transcript_path":"{path}"}}"#)
+                .as_bytes(),
+            wait,
+        )
+    });
 
     assert_eq!(
         scratch.turns().remove(0).usage,

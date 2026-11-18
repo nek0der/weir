@@ -180,14 +180,19 @@ struct ToolProcessTests {
                 executable: URL(fileURLWithPath: "/bin/sh"),
                 arguments: ["-c", "trap '' TERM; sleep 60 & echo $! > \"$1\"; wait", "sh", sleeper.path],
                 workingDirectory: nil,
-                timeout: .milliseconds(400)
+                timeout: .seconds(10)
             )
+            // The shell writes the file only once its trap is set, so a file
+            // here means the SIGTERM met a shell that ignores it. The timeout
+            // leaves a loaded runner ample time to get that far; the shell
+            // does not end on its own within the 40-second bound below, so
+            // only the timeout ends the run.
             try #require(FileManager.default.fileExists(atPath: sleeper.path))
             #expect(result == nil)
-            // The timeout, the two seconds' grace, and the read that stops once
-            // the shell is gone come to under 3 seconds. The bound is well short
-            // of the 60 the script sleeps and leaves room for a busy CI runner.
-            #expect(clock.now - started < .seconds(15), "the timeout and the grace, not the script's own end")
+            // The 10-second timeout, the two seconds' grace, and the read that
+            // stops once the shell is gone. The bound is well short of the 60
+            // the script sleeps and leaves room for a busy CI runner.
+            #expect(clock.now - started < .seconds(40), "the timeout and the grace, not the script's own end")
         }
     }
 

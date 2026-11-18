@@ -322,7 +322,7 @@ struct OpenCodeShimTests {
             printf '%s\\0' "$@" > "\(root.path)/hook-body"
             printf '%s\\n' "$*" "${WEIR_HOOK_TIME_LIMIT_MS:-}" "${WEIR_AGENT_RUN_ID:-}" > "\(root.path)/hook-call"
             [ -e "\(root.path)/args" ] && touch "\(root.path)/ran-after-opencode"
-            \(hangs ? "echo $$ > \"\(root.path)/helper-pid\"; exec sleep 20" : "exit \(status)")
+            \(hangs ? "echo $$ > \"\(root.path)/helper-pid\"; exec sleep 60" : "exit \(status)")
             """
         )
         return helper
@@ -470,9 +470,12 @@ struct OpenCodeShimTests {
                 home: home,
                 args: ["--prompt", "fix it"],
                 environment: ["WEIR_HOOK_HELPER": helper.path],
-                limit: 18
+                limit: 50
             )
-            #expect(ContinuousClock.now - started < .seconds(15))
+            // The shim kills the hook 10 seconds in. The bound is well short
+            // of the 60 seconds the hook sleeps, which a shim that waited it
+            // out would take, and leaves room for a busy CI runner.
+            #expect(ContinuousClock.now - started < .seconds(40))
             #expect(process.terminationStatus == 0)
             let raw = try ScratchFile.read("helper-pid", in: root)
             let pid = try #require(Int32(raw.trimmingCharacters(in: .whitespacesAndNewlines)))

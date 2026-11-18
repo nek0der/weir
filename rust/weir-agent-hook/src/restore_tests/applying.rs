@@ -715,23 +715,61 @@ fn an_edit_before_the_turn_to_an_assumed_unchanged_file_stays() {
 /// is free again.
 #[test]
 fn a_filter_that_never_answers_ends_the_restore_at_the_limit() {
-    let repo = Repo::new("hung-filter");
-    let turn = repo.turn(|repo| repo.write("a.txt", "changed\n"));
-    repo.git(&["config", "filter.hang.clean", "cat"]);
-    // The marker is only written by the smudge process, before it blocks.
-    repo.git(&[
-        "config",
-        "filter.hang.smudge",
-        "printf started > smudge-started; exec /bin/sleep 30",
-    ]);
-    repo.write(".gitattributes", "a.txt filter=hang\n");
-    crate::git::limit_commands_for_test(Duration::from_millis(500));
-
-    let started = std::time::Instant::now();
-    let journal = finished(repo.restore(&turn));
+    // The limit holds every git command of the restore, not only the
+    // filtered checkout, so on a busy machine an earlier one can run out of
+    // time first and the filter never starts. We then start over in a new
+    // repository with twice the limit, which stays short of the filter's
+    // sleep, so a stopped checkout is still told from one that ended.
+    let mut limit = Duration::from_millis(500);
+    let (repo, outcome) = loop {
+        let repo = Repo::new("hung-filter");
+        let turn = repo.turn(|repo| repo.write("a.txt", "changed\n"));
+        repo.git(&["config", "filter.hang.clean", "cat"]);
+        // The marker is only written by the smudge process, before it blocks.
+        repo.git(&[
+            "config",
+            "filter.hang.smudge",
+            "printf started > smudge-started; exec /bin/sleep 30",
+        ]);
+        repo.write(".gitattributes", "a.txt filter=hang\n");
+        // The limit is the thread's, so the restore runs on a thread of its
+        // own: the setup of a next attempt and the recovery below keep git's
+        // own limit.
+        let outcome = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    crate::git::limit_commands_for_test(limit);
+                    repo.restore(&turn)
+                })
+                .join()
+                .unwrap()
+        });
+        let ended = std::time::SystemTime::now();
+        if repo.read("smudge-started").is_some() {
+            // Timed from the filter's start, the marker's write, so the git
+            // commands that prepare the checkout, each with a limit of its
+            // own, do not count against the one that runs the filter.
+            let filter_started = std::fs::metadata(repo.path.join("smudge-started"))
+                .and_then(|marker| marker.modified())
+                .expect("the marker's time");
+            let held = ended
+                .duration_since(filter_started)
+                .unwrap_or(Duration::ZERO);
+            assert!(
+                held < limit + Duration::from_secs(10),
+                "the filter held the restore for {held:?}"
+            );
+            break (repo, outcome);
+        }
+        limit *= 2;
+        assert!(
+            limit < Duration::from_secs(20),
+            "git never started the filter"
+        );
+    };
+    let journal = finished(outcome);
 
     assert_eq!(repo.read("smudge-started").as_deref(), Some("started"));
-    assert!(started.elapsed() < Duration::from_secs(10));
     assert_eq!(journal.stage, RestoreStage::Planned);
     assert_eq!(repo.read("a.txt").as_deref(), Some("changed\n"));
     let worktree = repo.worktree();
