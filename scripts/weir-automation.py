@@ -293,19 +293,19 @@ def key_poster(root):
         os.makedirs(folder, exist_ok=True)
         # Built under names of this call's own and moved into place whole, so
         # two first runs at once never read each other's half-written files.
-        work = tempfile.mkdtemp(dir=folder)
-        source = os.path.join(work, "post-key.swift")
-        with open(source, "w") as f:
-            f.write(POST_KEY_SWIFT)
-        try:
-            built = subprocess.run(["swiftc", "-O", source, "-o", os.path.join(work, "post-key")],
-                                   capture_output=True, text=True, timeout=300)
-        except (OSError, subprocess.TimeoutExpired) as error:
-            raise ChannelError(f"could not build the key poster: {error}") from error
-        if built.returncode != 0:
-            raise ChannelError("could not build the key poster: " + built.stderr)
-        os.replace(os.path.join(work, "post-key"), binary)
-        shutil.rmtree(work, ignore_errors=True)
+        # A failed build removes it too, so each retry does not leave another.
+        with tempfile.TemporaryDirectory(dir=folder) as work:
+            source = os.path.join(work, "post-key.swift")
+            with open(source, "w") as f:
+                f.write(POST_KEY_SWIFT)
+            try:
+                built = subprocess.run(["swiftc", "-O", source, "-o", os.path.join(work, "post-key")],
+                                       capture_output=True, text=True, timeout=300)
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise ChannelError(f"could not build the key poster: {error}") from error
+            if built.returncode != 0:
+                raise ChannelError("could not build the key poster: " + built.stderr)
+            os.replace(os.path.join(work, "post-key"), binary)
     return binary
 
 

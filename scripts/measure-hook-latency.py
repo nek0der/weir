@@ -67,6 +67,10 @@ def main():
         source = "WEIR_HOOK_HELPER" if configured_helper else "this checkout's Debug build"
         print(f"error: no executable Hook Helper found from {source}; run make build first", file=sys.stderr)
         return 1
+    if args.turn_repo and args.provider != "claude":
+        # The prompt and stop payloads below are Claude's.
+        print("error: --turn-repo measures the claude hooks only", file=sys.stderr)
+        return 1
     shim_dir = os.path.join(repo, "Weir", "Resources", f"{args.provider}-shim")
     wrapper = os.path.join(shim_dir, "weir-hook")
 
@@ -88,10 +92,6 @@ def main():
         "rust (wrapper)": (["/bin/sh", wrapper], {}),
     }
     if args.turn_repo:
-        if args.provider != "claude":
-            # The prompt and stop payloads below are Claude's.
-            print("error: --turn-repo measures the claude hooks only", file=sys.stderr)
-            return 1
         try:
             return measure_turns(args, base_env, wrapper, scratch)
         finally:

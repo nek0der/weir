@@ -62,7 +62,10 @@ echo "    FULL_PRODUCT_NAME = Weir.app"
   printf '#!/bin/sh\nprintf "%%s: " "$5"\ncat "%s/spctl-output"\n' "$root" > "$root/bin/spctl"
   printf 'accepted\nsource=Notarized Developer ID\norigin=Developer ID Application: Example (ABCDE12345)\n' \
     > "$root/spctl-output"
-  printf '#!/bin/sh\necho REACHED-CREATE-DMG >&2\nexit 1\n' > "$root/bin/create-dmg"
+  # The fake create-dmg records the staging folder it was given, its last
+  # argument, and fails, so each case can check the folder was under TMPDIR,
+  # held the app, and is gone once the run stops.
+  printf '#!/bin/sh\nfor last; do :; done\nprintf "%%s" "$last" > "%s/staging"\n[ -d "$last/Weir.app" ] && echo STAGED-APP >&2\necho REACHED-CREATE-DMG >&2\nexit 1\n' "$root" > "$root/bin/create-dmg"
   chmod +x "$root/bin/"*
 }
 
@@ -87,12 +90,21 @@ run_case() {
   else
     actual="stops"
   fi
-  if [[ "$actual" == "$expect" && "$exit_status" == 1 && "$matches" == true ]]; then
+  # The fake create-dmg fails, so a case that reaches it also proves the
+  # staging copy of the app is removed when a run stops part way.
+  local leftovers=0 staging
+  if [[ "$actual" == reaches ]]; then
+    staging="$(cat "$root/staging" 2>/dev/null || true)"
+    [[ "$staging" == "$root/tmp/"* && "$output" == *STAGED-APP* ]] || leftovers="staging outside TMPDIR or without the app: '$staging'"
+    [[ ! -e "$staging" ]] || leftovers="$staging"
+  fi
+  [[ -z "$(ls -A "$root/tmp")" ]] || leftovers="$(ls -A "$root/tmp")"
+  if [[ "$actual" == "$expect" && "$exit_status" == 1 && "$matches" == true && "$leftovers" == 0 ]]; then
     printf '  ok   %s\n' "$name"
     passes=$((passes + 1))
   else
-    printf '  FAIL %s (expected %s and diagnostics %s, got %s, exit %s)\n%s\n' \
-      "$name" "$expect" "$diagnostics" "$actual" "$exit_status" "$output" >&2
+    printf '  FAIL %s (expected %s and diagnostics %s, got %s, exit %s, %s left in TMPDIR)\n%s\n' \
+      "$name" "$expect" "$diagnostics" "$actual" "$exit_status" "$leftovers" "$output" >&2
     fails=$((fails + 1))
   fi
 }

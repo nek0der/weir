@@ -9,9 +9,9 @@
 # credentials, because a fresh HOME would not be logged in. Everything Weir
 # writes goes to a scratch directory instead: the state, session, and cwd
 # directories are temporary, and the raw payloads land in
-# <record-root>/<provider>/<case-name>/. The working directory is a throwaway git
-# repository with one commit so turn snapshots and worktree creation have
-# something to act on.
+# <record-root>/<provider>/<case-name>/, which may be relative to the caller's
+# directory. The working directory is a throwaway git repository with one
+# commit so turn snapshots and worktree creation have something to act on.
 #
 # tmux is only the transport for send-keys. `TMUX` and `TMUX_PANE` are removed
 # from the agent's environment so the hooks record the ordinary non-hosted
@@ -67,7 +67,7 @@ case "$case_name" in
   '' | *[!A-Za-z0-9_-]*) echo "error: case name must be [A-Za-z0-9_-]+" >&2; exit 2 ;;
 esac
 
-repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+repo_root="$(CDPATH='' cd -P -- "$(dirname "$0")/.." && pwd -P)"
 # This checkout's Debug build: another worktree's would record another
 # branch's hooks.
 app="$("$repo_root/scripts/built-app-path.sh" Debug || true)"
@@ -83,10 +83,27 @@ if [[ -e "$record_dir" ]]; then
   echo "error: $record_dir already exists; choose another case name or remove it" >&2
   exit 1
 fi
-# Recordings hold unscrubbed prompts until the scrub step runs.
-(umask 077 && mkdir -p "$record_dir")
+# Recordings hold unscrubbed prompts until the scrub step runs. The case
+# folder is made without -p, which fails when it exists, so two runs given the
+# same case name cannot both take it.
+(umask 077 && mkdir -p "$(dirname "$record_dir")")
+if ! (umask 077 && mkdir "$record_dir"); then
+  echo "error: could not create $record_dir" >&2
+  exit 1
+fi
+# Until the session starts, a failure removes the folders this run made, by
+# the paths it made them at, so the same case name can be tried again.
+made_record_dir="$record_dir"
+made_scratch=""
+trap 'rm -rf -- "$made_record_dir" ${made_scratch:+"$made_scratch"}' EXIT
+# The hooks run in the scratch repository below, where a relative path would
+# name nothing (and `weir-hook` takes only an absolute one), so each folder is
+# passed by its absolute path from here on. `-P` resolves a link before a
+# `..` after it, as the folder itself does.
+record_dir="$(CDPATH='' cd -P -- "$record_dir" && pwd -P)"
 
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/weir-record-$case_name.XXXXXX")"
+made_scratch="$(mktemp -d "${TMPDIR:-/tmp}/weir-record-$case_name.XXXXXX")"
+scratch="$(CDPATH='' cd -P -- "$made_scratch" && pwd -P)"
 workdir="$scratch/repo"
 mkdir -p "$workdir"
 git -C "$workdir" init -q -b main
@@ -143,6 +160,8 @@ fi
 
 tmux new-session -d -s "$session" -x 140 -y 40 -c "$workdir" \
   /usr/bin/env "${unset_args[@]}" "${env_args[@]}" "$provider" "$@"
+# The session now writes into both folders, and the caller removes them.
+trap - EXIT
 
 cat <<INFO
 session:    $session

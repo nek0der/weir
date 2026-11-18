@@ -202,11 +202,14 @@ impl HookEnv {
     }
 
     /// The directory raw payloads are copied into for fixture recording.
+    /// A hook runs in the agent's working directory, so a relative path
+    /// would name a folder in the person's repository rather than the one
+    /// the recording was started with; only an absolute one is taken.
     #[must_use]
     pub fn record_dir(&self) -> Option<PathBuf> {
         self.get("WEIR_HOOK_RECORD_DIR")
             .map(PathBuf::from)
-            .filter(|path| path.is_dir())
+            .filter(|path| path.is_absolute() && path.is_dir())
     }
 
     /// Whether the agent runs inside tmux, hosted or manual.
@@ -372,5 +375,21 @@ mod tests {
         assert_eq!(env.exported_pid("claude"), None);
         assert_eq!(env.exported_pid("gemini-cli"), Some(73));
         assert_eq!(env.exported_pid("opencode"), None);
+    }
+
+    #[test]
+    fn record_dir_takes_only_an_absolute_existing_folder() {
+        // The test's own working directory is absolute whatever `TMPDIR` says.
+        let folder = std::env::current_dir().expect("the test has a working directory");
+        let absolute = folder.to_string_lossy().into_owned();
+        assert_eq!(
+            HookEnv::from_pairs([("WEIR_HOOK_RECORD_DIR", absolute.as_str())]).record_dir(),
+            Some(folder)
+        );
+        // `.` always exists, so only the relative check can refuse it.
+        assert_eq!(
+            HookEnv::from_pairs([("WEIR_HOOK_RECORD_DIR", ".")]).record_dir(),
+            None
+        );
     }
 }

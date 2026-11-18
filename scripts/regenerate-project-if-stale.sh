@@ -58,5 +58,7 @@ xcodegen --spec "$spec"
 # each other's rename.
 mkdir -p "$(dirname "$record")"
 tmp="$(mktemp "$record.XXXXXX")"
+# Removed when the write or the rename fails; after the rename, it names nothing.
+trap 'rm -f -- "$tmp"' EXIT
 printf '%s\n%s\n' "$inputs" "$(project_line)" > "$tmp"
 mv "$tmp" "$record"

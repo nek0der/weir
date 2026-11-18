@@ -85,7 +85,10 @@ echo "→ Creating dmg..."
 # opening the .app bundle. The files also ride along inside the app
 # (`Contents/Resources/`), but surfacing them at the root matches
 # the convention most open-source Mac apps follow.
-DMG_STAGING="$(mktemp -d)"
+DMG_STAGING="$(mktemp -d "${TMPDIR:-/tmp}/weir-dmg.XXXXXX")"
+# The staging folder holds a whole copy of the app, so a run that stops at
+# any later step must not leave it behind for every retry to add another.
+trap 'rm -rf -- "${DMG_STAGING}"' EXIT
 # `cp -R` preserves the .app bundle structure end-to-end; plain `cp`
 # would refuse it as a directory. APFS clones the bytes on the same
 # volume so the copy is effectively free.
@@ -106,7 +109,8 @@ create-dmg \
   "${DMG_PATH}" \
   "${DMG_STAGING}" \
   >/dev/null
-rm -rf "${DMG_STAGING}"
+# Freed now rather than at exit, since notarization below can take minutes.
+rm -rf -- "${DMG_STAGING}"
 
 echo "✓ dmg created: ${DMG_PATH}"
 
