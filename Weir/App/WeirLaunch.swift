@@ -57,8 +57,22 @@ private final class TestHost: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // `try?`: a host without libghostty skips the FFI tests rather than
-        // failing the whole run.
-        ghosttyApp = try? GhosttyApp()
+        // A host without libghostty skips the FFI tests rather than failing
+        // the whole run. The error is kept, so a run that requires them can
+        // fail with it instead (`GhosttyAvailabilityTests`).
+        do {
+            ghosttyApp = try GhosttyApp()
+        } catch {
+            TestHostDiagnostics.ghosttyStartFailure = String(describing: error)
+            Logger.weir("app.test-host").error("libghostty did not start: \(error, privacy: .private)")
+        }
     }
+}
+
+/// What the test host saw while it started, for the tests that check it.
+@MainActor
+enum TestHostDiagnostics {
+    /// Why libghostty did not start in the test host. `nil` when it started,
+    /// or when this process is not the test host.
+    static var ghosttyStartFailure: String?
 }

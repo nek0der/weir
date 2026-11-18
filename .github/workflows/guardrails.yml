@@ -47,6 +47,9 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: Project regeneration decides from file lists, not mtimes
         run: scripts/test-regenerate-project-if-stale.sh
+      # Here rather than in ci.yml's lint job, which the release pull request skips.
+      - name: Only release metadata lets CI skip the builds
+        run: scripts/test-release-metadata-only.sh
 
   notices-coverage:
     name: Attribution coverage (THIRD-PARTY-NOTICES)

@@ -7,9 +7,10 @@ on:
   # The release pull request skips the builds, tests, and Swift lint below. It
   # changes only version numbers and the changelog on top of code `main` already
   # checked, and every merge to `main` updates it, so its runs kept other pull
-  # requests waiting for a runner. Dispatching this workflow on its branch runs
-  # everything. GitHub shows those results only in the Actions tab: they do not
-  # appear among the pull request's checks or count as its required checks.
+  # requests waiting for a runner. Scope tells it apart by what it changes, not
+  # by its branch name alone. Dispatching this workflow on its branch runs everything.
+  # GitHub shows those results only in the Actions tab: they do not appear among
+  # the pull request's checks or count as its required checks.
   workflow_dispatch:
 
 permissions:
@@ -39,6 +40,14 @@ jobs:
   # that a filter skipped stays pending and blocks the merge, while a skipped job
   # counts as passed. Anything this job cannot read counts as the app's: a job
   # that ran for nothing costs time, and one skipped by mistake lets a change in.
+  #
+  # It also decides whether this is the release pull request, whose builds and
+  # tests are skipped: one on release-please's branch whose every change is
+  # release metadata (scripts/release-metadata-only.py). A commit pushed to that
+  # branch by hand gets the full run. The script and the config come from the
+  # base commit, so a pull request cannot change the rule that judges it.
+  # `main-ci-passed` and `stop-on-failure` still go by the branch: the first
+  # holds every merge that creates the tag, whatever the pull request carries.
   scope:
     name: Scope
     runs-on: ubuntu-24.04
@@ -46,22 +55,34 @@ jobs:
     continue-on-error: true
     permissions:
       contents: read
-      pull-requests: read
     outputs:
       app: ${{ steps.files.outputs.app }}
       site: ${{ steps.files.outputs.site }}
+      release: ${{ steps.release.outputs.release }}
     steps:
       - name: Read the changed files
         id: files
         env:
           GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           files=""
-          if [ -n "${PR}" ]; then
-            # The API names both ends of a rename, so moving a file out of the app
-            # counts as the app's change. `gh pr diff --name-only` gives only the new path.
-            files="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${PR}/files" --jq '.[] | .filename, (.previous_filename // empty)')" || files=""
+          if [ -n "${HEAD}" ]; then
+            # The comparison is of the commits this run checks, which a re-run
+            # keeps, rather than of the pull request as it stands now. It lists at
+            # most 300 files, so a list that long may leave one out and counts as
+            # unread. The list is kept outside the workspace, which the checkout
+            # below replaces.
+            list="${RUNNER_TEMP}/files.jsonl"
+            if gh api "repos/${GITHUB_REPOSITORY}/compare/${BASE}...${HEAD}" \
+                --jq '.files[] | {filename, status, previous_filename, patch}' > "${list}" &&
+              [ "$(wc -l < "${list}")" -lt 300 ]; then
+              # The API names both ends of a rename, so moving a file out of the app
+              # counts as the app's change.
+              files="$(jq -r '.filename, (.previous_filename // empty)' "${list}")" || files=""
+            fi
+            [ -n "${files}" ] || rm -f "${list}"
           fi
           if [ -n "${files}" ] && ! grep -qv '^site/' <<<"${files}"; then
             echo "app=false" >> "${GITHUB_OUTPUT}"
@@ -72,6 +93,28 @@ jobs:
             echo "site=true" >> "${GITHUB_OUTPUT}"
           else
             echo "site=false" >> "${GITHUB_OUTPUT}"
+          fi
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        if: github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release-please--')
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          sparse-checkout: |
+            scripts/release-metadata-only.py
+            .github/release-please-config.json
+          sparse-checkout-cone-mode: false
+      # It reads the list the step above kept. Anything it cannot read counts as
+      # code, so the run is the full one.
+      - name: Decide whether this is the release pull request
+        id: release
+        if: github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release-please--')
+        run: |
+          if [ -f "${RUNNER_TEMP}/files.jsonl" ] &&
+            python3 -I scripts/release-metadata-only.py .github/release-please-config.json \
+              .github/.release-please-manifest.json < "${RUNNER_TEMP}/files.jsonl"; then
+            echo "release=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "::notice::This pull request changes more than release metadata, so it gets the full run."
+            echo "release=false" >> "${GITHUB_OUTPUT}"
           fi
 
   site:
@@ -191,7 +234,7 @@ jobs:
     # not the job: a skipped matrix job reports under its unexpanded name, and
     # the required checks for each OS would then wait forever.
     env:
-      SKIPS_STEPS: ${{ needs.scope.outputs.app == 'false' || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'release-please--')) }}
+      SKIPS_STEPS: ${{ needs.scope.outputs.app == 'false' || needs.scope.outputs.release == 'true' }}
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -237,7 +280,7 @@ jobs:
   build:
     name: Build (macOS 27)
     needs: scope
-    if: needs.scope.outputs.app != 'false' && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--'))
+    if: needs.scope.outputs.app != 'false' && needs.scope.outputs.release != 'true'
     runs-on: xcode-27
     # The slowest run so far took 23 minutes. A cold libghostty build adds to
     # that, and the limit stays under the 90 minutes `main-ci-passed` waits.
@@ -428,12 +471,15 @@ jobs:
       # job's, fails a hung test run here, and the steps after it still upload
       # the result bundle and the coverage. xcodebuild hands a TEST_RUNNER_
       # variable to the test process without the prefix, and no other, so the
-      # tmux tests fail here rather than skip when tmux is missing.
+      # tmux tests fail here rather than skip when tmux is missing, and a run
+      # whose test host could not start libghostty fails rather than skips the
+      # FFI tests.
       - name: Test with coverage
         timeout-minutes: 15
         env:
           TEST_RUNNER_WEIR_REQUIRE_TMUX_TESTS: "1"
           TEST_RUNNER_WEIR_REQUIRE_CASE_FOLDING_TESTS: "1"
+          TEST_RUNNER_WEIR_REQUIRE_GHOSTTY_TESTS: "1"
         run: |
           set -o pipefail
           xcodebuild \
@@ -511,7 +557,7 @@ jobs:
   release-archive:
     name: Release archive (macOS 27)
     needs: scope
-    if: needs.scope.outputs.app != 'false' && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--'))
+    if: needs.scope.outputs.app != 'false' && needs.scope.outputs.release != 'true'
     runs-on: xcode-27
     # The slowest run so far took 20 minutes; a cold libghostty build adds to it.
     timeout-minutes: 60
@@ -588,7 +634,7 @@ jobs:
   format:
     name: SwiftFormat
     needs: scope
-    if: needs.scope.outputs.app != 'false' && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--'))
+    if: needs.scope.outputs.app != 'false' && needs.scope.outputs.release != 'true'
     runs-on: xcode-27
     # Under a minute with the Mint cache. Without it, Mint builds SwiftFormat
     # from source first.
@@ -644,7 +690,7 @@ jobs:
   lint:
     name: SwiftLint
     needs: scope
-    if: needs.scope.outputs.app != 'false' && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'release-please--'))
+    if: needs.scope.outputs.app != 'false' && needs.scope.outputs.release != 'true'
     runs-on: xcode-27
     # Under a minute so far.
     timeout-minutes: 15
