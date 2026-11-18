@@ -411,6 +411,12 @@ impl ApprovalService {
             if remaining_ms == 0 {
                 continue;
             }
+            // As in `wait`, the broker guard is still held when the test
+            // sees this signal.
+            #[cfg(test)]
+            if let Some(entered) = self.wait_entered.lock().unwrap().take() {
+                let _ = entered.send(());
+            }
             let waited = self
                 .changed
                 .wait_timeout(broker, Duration::from_millis(remaining_ms))
@@ -567,6 +573,31 @@ mod tests {
     use std::{sync::mpsc, thread};
     use weir_agent_core::{ProviderId, RunId};
 
+    /// How long a held request, and the approval it waits on, may last: far
+    /// past `PROMPTLY`, so a waiter the service never wakes answers only at
+    /// this limit.
+    const HELD_MS: u64 = 60_000;
+
+    /// How soon a woken waiter answers. It is one-sided and wide, so a loaded
+    /// machine stays well within it and a waiter left to `HELD_MS` never does.
+    const PROMPTLY: Duration = Duration::from_secs(10);
+
+    fn approval(run_id: Uuid, request_id: Uuid) -> ApprovalRequestWire {
+        ApprovalRequestWire {
+            run_id,
+            request_id,
+            provider: ProviderId::new("claude").unwrap(),
+            session_id: None,
+            operation_id: None,
+            tool_name: "Bash".into(),
+            summary: None,
+            input: json!({"command": "pwd"}),
+            timeout_ms: HELD_MS,
+            questions: Vec::new(),
+            agent_run_id: None,
+        }
+    }
+
     #[test]
     fn a_pending_wait_releases_the_broker_for_a_controller_resolution() {
         let service = ApprovalService::new(8);
@@ -579,19 +610,7 @@ mod tests {
         let submitted = service
             .handle_authenticated(
                 &principal,
-                RequestBody::ApprovalSubmit(ApprovalRequestWire {
-                    run_id,
-                    request_id,
-                    provider: ProviderId::new("claude").unwrap(),
-                    session_id: None,
-                    operation_id: None,
-                    tool_name: "Bash".into(),
-                    summary: None,
-                    input: json!({"command": "pwd"}),
-                    timeout_ms: 10_000,
-                    questions: Vec::new(),
-                    agent_run_id: None,
-                }),
+                RequestBody::ApprovalSubmit(approval(run_id, request_id)),
             )
             .unwrap();
         let ResponseBody::ApprovalResult(submitted) = submitted else {
@@ -609,17 +628,18 @@ mod tests {
                     &principal,
                     RequestBody::ApprovalWait {
                         key: key.clone(),
-                        maximum_wait_ms: 4_000,
+                        maximum_wait_ms: HELD_MS,
                     },
                 );
                 let _ = reply.send(result);
             });
 
             // A signaled wait holds the guard and has already read Pending.
-            // Start the controller only then, with a shorter deadline than
-            // the waiter, so finishing after the wait cannot pass the test.
+            // Start the controller only then, with a far shorter deadline
+            // than the waiter, so finishing after the wait cannot pass the
+            // test.
             entered
-                .recv_timeout(Duration::from_secs(1))
+                .recv_timeout(PROMPTLY)
                 .expect("requester entered wait");
             let controller = scope.spawn(|| {
                 let result = service.handle_authenticated(
@@ -631,8 +651,8 @@ mod tests {
                 );
                 let _ = resolved.send(result);
             });
-            let controller_result = controller_response.recv_timeout(Duration::from_secs(1));
-            let waiter_result = requester_response.recv_timeout(Duration::from_secs(1));
+            let controller_result = controller_response.recv_timeout(PROMPTLY);
+            let waiter_result = requester_response.recv_timeout(PROMPTLY);
             // Join both workers even on a missed response deadline. The
             // wait and its request both have finite deadlines.
             waiter.join().expect("requester worker");
@@ -656,6 +676,62 @@ mod tests {
                     }
                 ));
             }
+        });
+    }
+
+    #[test]
+    fn a_subscription_wakes_when_a_requester_submits() {
+        let service = ApprovalService::new(8);
+        let run_id = Uuid::from_u128(1);
+        let request_id = Uuid::from_u128(2);
+        let principal = Principal::Requester {
+            run_id: RunId::new(run_id),
+        };
+        let (signal, entered) = mpsc::channel();
+        *service.wait_entered.lock().unwrap() = Some(signal);
+        let (reply, subscriber_response) = mpsc::channel();
+        thread::scope(|scope| {
+            let subscriber = scope.spawn(|| {
+                let result = service.handle_authenticated(
+                    &Principal::Controller,
+                    RequestBody::ApprovalSubscribe {
+                        after_sequence: 0,
+                        maximum_wait_ms: HELD_MS,
+                    },
+                );
+                let _ = reply.send(result);
+            });
+
+            // A signaled subscription holds the guard and has already read
+            // sequence 0, so the submit below can only reach it by waking it.
+            entered
+                .recv_timeout(PROMPTLY)
+                .expect("controller entered its subscription");
+            let submitted = service
+                .handle_authenticated(
+                    &principal,
+                    RequestBody::ApprovalSubmit(approval(run_id, request_id)),
+                )
+                .unwrap();
+            assert!(matches!(submitted, ResponseBody::ApprovalResult(_)));
+            let subscriber_result = subscriber_response.recv_timeout(PROMPTLY);
+            // Join the worker even on a missed response deadline; its wait
+            // is finite.
+            subscriber.join().expect("controller worker");
+            let response = subscriber_result
+                .expect("subscription woke before its own deadline")
+                .unwrap();
+            let ResponseBody::ApprovalSnapshotResult {
+                sequence, requests, ..
+            } = response
+            else {
+                panic!("expected approval snapshot result, got {response:?}");
+            };
+            assert_eq!(sequence, 1);
+            let [indexed] = requests.as_slice() else {
+                panic!("expected exactly the submitted request");
+            };
+            assert_eq!(indexed.request_id, request_id);
         });
     }
 }

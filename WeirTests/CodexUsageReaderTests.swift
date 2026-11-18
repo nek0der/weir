@@ -7,7 +7,7 @@ import Testing
 @testable import Weir
 @testable import WeirDomain
 
-@Suite("Codex usage reader")
+@Suite("Codex usage reader", .timeLimit(.minutes(2)))
 struct CodexUsageReaderTests {
     /// A stand-in for `codex app-server`: it reads the handshake and the
     /// request, answers the request, and leaves when its input closes, as the
@@ -130,9 +130,12 @@ struct CodexUsageReaderTests {
 
             let hasStarted = OSAllocatedUnfairLock(initialState: false)
             let didTimeOut = OSAllocatedUnfairLock(initialState: false)
+            // The exchange's own timeout stands far past the wait below: the
+            // test is about the cancellation, which a late cancel must still
+            // be, not the timer's ending that comes back empty as well.
             let canceledAfterStart = Task {
                 await CodexUsageReader
-                    .exchange(executable: server.path, path: ShimHarness.systemPath, timeout: .seconds(2)) { delay, fire in
+                    .exchange(executable: server.path, path: ShimHarness.systemPath, timeout: .seconds(60)) { delay, fire in
                         hasStarted.withLock { $0 = true }
                         CodexUsageReader.dispatchTimer(delay) {
                             didTimeOut.withLock { $0 = true }
@@ -140,7 +143,9 @@ struct CodexUsageReaderTests {
                         }
                     }
             }
-            await pollUntil(interval: .milliseconds(10)) { hasStarted.withLock { $0 } }
+            // The timer starts once the server runs and has its requests, so
+            // the cancel below comes while it runs, however long its start takes.
+            await pollUntil(timeout: .seconds(30), interval: .milliseconds(10)) { hasStarted.withLock { $0 } }
             canceledAfterStart.cancel()
             #expect(await canceledAfterStart.value == nil)
             #expect(hasStarted.withLock { $0 })

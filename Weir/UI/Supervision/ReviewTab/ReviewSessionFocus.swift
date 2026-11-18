@@ -43,14 +43,17 @@ enum ReviewSessionFocus {
     /// another agent's run there, or a process gone since, has no say. A
     /// conversation named in this pane requires a live run of that conversation.
     /// An agent with no tabs, or a pane with no run of one, has nothing to ask.
-    /// The run gives both channel and session, as one pair.
+    /// The run gives both channel and session, as one pair. `confirm` asks the
+    /// pane; a test sees what it is handed.
     static func show(
         conversation: ConversationKey?,
         destination: ReviewDestination,
         runtimes: () -> [AgentRuntimePresentation],
         limit: Duration = limit,
         isAlive: (pid_t) -> Bool = ProcessLiveness.isLive,
-        under root: URL? = AgentTabFocus.defaultRoot
+        under root: URL? = AgentTabFocus.defaultRoot,
+        confirm: (_ sessionID: String?, _ channel: UUID, _ limit: Duration, _ root: URL?) async -> Bool
+            = AgentTabFocus.confirm(sessionID:channel:limit:under:)
     ) async -> Bool {
         // A run with a channel is one of an agent with tabs; no other has one.
         guard let agent = destination.agent else { return true }
@@ -69,11 +72,6 @@ enum ReviewSessionFocus {
         // With none named, the latest of a live family: a closed tab may be all that is left.
         let latest = receivers.max { $0.badge.updatedAt < $1.badge.updatedAt }
         guard let channel = (wanted ?? latest)?.tabChannel else { return true }
-        return await AgentTabFocus.confirm(
-            sessionID: wanted?.sessionID,
-            channel: channel,
-            limit: limit,
-            under: root
-        )
+        return await confirm(wanted?.sessionID, channel, limit, root)
     }
 }

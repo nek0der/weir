@@ -1761,13 +1761,18 @@ test("reloading the plugin preserves the active turn and reports the launch only
   const deliver = (type, data) => {
     for (const handler of listeners) handler({ details: { type, data } })
   }
+  // Each report is a real /bin/sh the plugin spawns, which a loaded runner can
+  // keep waiting for seconds, so the deadline is only for one that never
+  // comes. The text after the last newline is a line still being written.
   const reports = async (name, count) => {
-    for (let tries = 0; tries < 200; tries += 1) {
-      const lines = existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : []
+    const deadline = Date.now() + 30_000
+    for (;;) {
+      const text = existsSync(log) ? readFileSync(log, "utf8") : ""
+      const lines = text.split("\n").slice(0, -1).filter(Boolean).map((line) => JSON.parse(line))
       if (lines.filter((line) => line.hook_event_name === name).length >= count) return lines
+      if (Date.now() >= deadline) assert.fail(`no ${name}`)
       await new Promise((resolve) => setTimeout(resolve, 25))
     }
-    assert.fail(`no ${name}`)
   }
   const first = context()
   const deactivate = await plugin.setup(first)

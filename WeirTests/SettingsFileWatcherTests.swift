@@ -197,7 +197,7 @@ struct SettingsFileWatcherTests {
         // The cancel handler runs on the source's main queue: wait until
         // the descriptor no longer names what it watched, rather than a
         // fixed turn.
-        await pollUntil(interval: .milliseconds(10)) {
+        await pollUntil(timeout: .seconds(10), interval: .milliseconds(10)) {
             var now = stat()
             return fstat(fd, &now) == -1 || now.st_dev != watched.st_dev || now.st_ino != watched.st_ino
         }

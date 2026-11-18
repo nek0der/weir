@@ -14,7 +14,11 @@ private struct ChangingRepositoryState {
     var didReleaseFirstListing = false
 }
 
+/// A sync runs Git, which a loaded runner can keep past any fixed deadline, so
+/// the tests wait on the session's state changing (`untilObserved`) and the
+/// suite's limit ends a sync that never comes.
 @MainActor
+@Suite(.timeLimit(.minutes(1)))
 struct GitSyncCoordinatorTests {
     /// A repository whose listing changes while a listing runs: each
     /// listing describes it as it was when that listing began. The first
@@ -87,8 +91,7 @@ struct GitSyncCoordinatorTests {
     /// A listing that failed says nothing about the worktrees: every row
     /// stays as it was, none is marked missing for Remove Missing to close,
     /// and the main checkout keeps its branch.
-    @Test(.timeLimit(.minutes(1)))
-    func aFailedListing_keepsEveryRow_andMarksNoneMissing() async throws {
+    @Test func aFailedListing_keepsEveryRow_andMarksNoneMissing() async throws {
         try await withTempDir { root in
             let (session, project) = WorkspaceSessionFixture.withProject(rootURL: root)
             let index = try #require(session.projects.firstIndex { $0.id == project.id })
@@ -125,13 +128,13 @@ struct GitSyncCoordinatorTests {
         try FileManager.default.moveItem(at: repo.url, to: renamed)
         let (session, project) = WorkspaceSessionFixture.withProject(rootURL: repo.url)
         let coordinator = GitSyncCoordinator(session: session)
-        await pollUntil { session.project(project.id)?.trouble == .folderMissing }
+        await untilObserved { session.project(project.id)?.trouble == .folderMissing }
         try #require(session.project(project.id)?.trouble == .folderMissing)
         #expect(session.isFolderMissing(.project(project.id)))
 
         try FileManager.default.moveItem(at: renamed, to: repo.url)
         coordinator.appDidBecomeActive()
-        await pollUntil { session.project(project.id)?.mainHeadSHA == head }
+        await untilObserved { session.project(project.id)?.mainHeadSHA == head }
         let restored = try #require(session.project(project.id))
         #expect(restored.trouble == nil)
         #expect(restored.mainBranchName == "main")
@@ -162,7 +165,7 @@ struct GitSyncCoordinatorTests {
         row.gitRef = GitRef(branchName: "deleted")
         session.projects[index].worktrees.append(row)
         let coordinator = GitSyncCoordinator(session: session)
-        await pollUntil { session.projects[index].mainHeadSHA != nil }
+        await untilObserved { session.projects[index].mainHeadSHA != nil }
         let synced = session.projects[index]
         let missing = try #require(synced.worktree(row.id))
         #expect(missing.missingSince != nil)
@@ -192,7 +195,7 @@ struct GitSyncCoordinatorTests {
         try await TempGitRepo.git(["worktree", "add", "-q", "-b", "feat-x", "--", feature.path], in: bare)
         let (session, project) = WorkspaceSessionFixture.withProject(rootURL: checkout)
         let coordinator = GitSyncCoordinator(session: session)
-        await pollUntil { session.project(project.id)?.mainHeadSHA == head }
+        await untilObserved { session.project(project.id)?.mainHeadSHA == head }
         let synced = try #require(session.project(project.id))
         #expect(synced.mainBranchName == "main")
         #expect(synced.mainHeadSHA == head)
@@ -219,7 +222,7 @@ struct GitSyncCoordinatorTests {
 
             NotificationCenter.default.post(name: .weirGitSyncRequested, object: project.id)
             // The second listing has answered while the first still waits.
-            await pollUntil(timeout: .seconds(3), interval: .milliseconds(10)) {
+            await untilObserved {
                 session.projects.first { $0.id == project.id }?.mainHeadSHA == "new-head"
             }
             try #require(session.projects.first { $0.id == project.id }?.mainHeadSHA == "new-head")
@@ -252,7 +255,7 @@ struct GitSyncCoordinatorTests {
         let index = try #require(session.projects.firstIndex { $0.id == project.id })
         session.projects[index].mainBranchName = "main"
         let coordinator = GitSyncCoordinator(session: session)
-        await pollUntil { session.projects[index].mainHeadSHA == head }
+        await untilObserved { session.projects[index].mainHeadSHA == head }
         let synced = session.projects[index]
         #expect(synced.mainBranchName == nil)
         #expect(synced.mainHeadSHA == head)
@@ -281,7 +284,7 @@ struct GitSyncCoordinatorTests {
             session.projects[index].worktrees = [removed, surviving]
             let info = Self.listed(surviving.workingDirectory, headSHA: "fresh", branch: "shared")
             let coordinator = GitSyncCoordinator(session: session, listWorktrees: { _ in [info] })
-            await pollUntil(timeout: .seconds(3)) {
+            await untilObserved {
                 session.projects[index].worktrees.contains { $0.gitRef?.headSHA == "fresh" }
             }
             let rows = session.projects[index].worktrees
@@ -323,7 +326,7 @@ struct GitSyncCoordinatorTests {
                 }
                 let infos = (0..<newCount).map { Self.listed(root.appendingPathComponent("new-\($0)"), headSHA: "fresh", branch: "shared") }
                 let coordinator = GitSyncCoordinator(session: session, listWorktrees: { _ in infos })
-                await pollUntil(timeout: .seconds(3)) {
+                await untilObserved {
                     session.projects[index].worktrees.filter { $0.gitRef?.headSHA == "fresh" }.count == newCount
                 }
                 let rows = session.projects[index].worktrees
@@ -372,7 +375,7 @@ struct GitSyncCoordinatorTests {
             let current = rows()
             return current.count == paths.count && current.allSatisfy { $0.gitRef?.headSHA == "abc" && $0.admission != nil }
         }
-        await pollUntil { hasSynced() }
+        await untilObserved { hasSynced() }
         try #require(hasSynced())
         withExtendedLifetime(coordinator) {}
         return rows()
@@ -494,7 +497,7 @@ struct GitSyncCoordinatorTests {
             }
             try #require(session.worktreeMutationsInFlight.contains(row.id))
             let coordinator = GitSyncCoordinator(session: session, listWorktrees: { _ in infos }, homePath: "/Users/someone")
-            await pollUntil {
+            await untilObserved {
                 session.projects.first { $0.id == project.id }?.mainHeadSHA == "synced-head"
             }
             try #require(session.projects.first { $0.id == project.id }?.mainHeadSHA == "synced-head")
@@ -502,7 +505,7 @@ struct GitSyncCoordinatorTests {
             change.open()
             await changing.value
             NotificationCenter.default.post(name: .weirGitSyncRequested, object: project.id)
-            await pollUntil { session.worktree(projectID: project.id, worktreeID: row.id)?.admission != nil }
+            await untilObserved { session.worktree(projectID: project.id, worktreeID: row.id)?.admission != nil }
             let updated = try #require(session.worktree(projectID: project.id, worktreeID: row.id))
             #expect(updated.admission == .discovered)
             #expect(updated.gitRef?.branchName == "x")
@@ -528,7 +531,7 @@ struct GitSyncCoordinatorTests {
                 requestedRoots.update { $0.append(root) }
                 return [listed]
             }
-            await pollUntil { session.project(project.id)?.worktrees.count == 1 }
+            await untilObserved { session.project(project.id)?.worktrees.count == 1 }
             let synced = try #require(session.project(project.id))
             let worktree = try #require(synced.worktrees.first)
             #expect(requestedRoots.value == [project.rootURL])

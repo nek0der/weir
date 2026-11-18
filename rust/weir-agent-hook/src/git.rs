@@ -584,6 +584,12 @@ thread_local! {
     /// This holds a shorter `COMMAND_LIMIT` for the tests on this thread.
     #[cfg(test)]
     static TEST_LIMIT: Cell<Option<Duration>> = const { Cell::new(None) };
+
+    /// This counts the git processes `output` started on this thread, so a
+    /// test sees whether a command started rather than guessing it from how
+    /// long the command took.
+    #[cfg(test)]
+    static TEST_STARTED: Cell<usize> = const { Cell::new(0) };
 }
 
 /// This groups the git commands of one operation (a restore, an undo, a
@@ -684,6 +690,8 @@ pub(crate) fn output(command: &mut Command) -> std::io::Result<Output> {
     std::os::unix::process::CommandExt::process_group(command, 0);
     command.stdout(Stdio::piped());
     let child = command.spawn()?;
+    #[cfg(test)]
+    TEST_STARTED.set(TEST_STARTED.get() + 1);
     let group = child.id();
     let (sender, receiver) = mpsc::channel();
     // `wait_with_output` reads the output to its end and then reaps git; a
@@ -1073,12 +1081,12 @@ mod tests {
                 None
             );
             assert!(started.elapsed() < limit + Duration::from_secs(10));
-            let again = Instant::now();
+            let before = super::TEST_STARTED.get();
             assert_eq!(
                 GitSnapshots::run(scratch.path(), &["--version"], None),
                 None
             );
-            assert!(again.elapsed() < Duration::from_millis(100), "not started");
+            assert_eq!(super::TEST_STARTED.get(), before, "not started");
         });
         // A git that ends is not held to the short limit, which a busy
         // machine can spend before git answers.

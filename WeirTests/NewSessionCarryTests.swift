@@ -226,7 +226,7 @@ struct NewSessionCarryTests {
             // A move that went as asked leaves no note to close: the launch
             // ends and is gone, where one with a note stays to be read.
             let launches = form.stores.launches
-            await pollUntil { launches.launches[worktree.id] == nil }
+            await untilObserved { launches.launches[worktree.id] == nil }
             #expect(launches.launches[worktree.id] == nil)
         }
     }

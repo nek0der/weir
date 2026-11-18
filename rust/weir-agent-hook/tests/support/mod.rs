@@ -8,7 +8,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use weir_agent_hook::{
-    GitSnapshots, HookEnv, HookOutcome, HookRuntime, NoSnapshots, TURNS_DIRECTORY, run_hook,
+    GitSnapshots, HookEnv, HookOutcome, HookRuntime, NoSnapshots, ResponseWait, TURNS_DIRECTORY,
+    run_hook,
 };
 use weir_agent_model::{RecipePlaceholder, TurnRecord};
 
@@ -205,4 +206,44 @@ pub fn turn_ref(repo: &Repo, turn_id: &str, side: &str) -> Option<String> {
             &format!("refs/weir/turns/{turn_id}/{side}"),
         ],
     )
+}
+
+/// Runs `call` with a wait for the transcript, and appends `text` to
+/// `transcript` from another thread once that wait has begun: after the
+/// call's first look found the line missing, and long before its limit. A
+/// writer on a fixed delay could land before that look, and the wait would
+/// go untested, or after a limit a loaded machine outran. A call that never
+/// waits fails the test, as the writer is never told to write.
+pub fn appended_while_waiting<T>(
+    transcript: &Path,
+    text: String,
+    call: impl FnOnce(ResponseWait<'_>) -> T,
+) -> T {
+    let (waiting, began) = std::sync::mpsc::channel();
+    let writer = {
+        let transcript = transcript.to_owned();
+        std::thread::spawn(move || {
+            began
+                .recv()
+                .expect("the call never waited for the transcript");
+            fs::OpenOptions::new()
+                .append(true)
+                .open(&transcript)
+                .and_then(|mut file| std::io::Write::write_all(&mut file, text.as_bytes()))
+                .expect("append");
+        })
+    };
+    let pause = move |step| {
+        // Only the first send is read; the writer is gone by the later ones.
+        let _ = waiting.send(());
+        std::thread::sleep(step);
+    };
+    let result = call(ResponseWait {
+        limit: std::time::Duration::from_secs(30),
+        pause: &pause,
+    });
+    // The pause holds the only sender, so a writer still waiting stops.
+    drop(pause);
+    writer.join().expect("writer");
+    result
 }

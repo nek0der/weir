@@ -69,13 +69,25 @@ struct SessionLaunchSetupStopTests {
         try await withTempDir { dir in
             let leaderFile = dir.appendingPathComponent("leader")
             let childFile = dir.appendingPathComponent("child")
-            // The setup shell takes SIGTERM. Its child keeps the ignored signal through exec.
+            let hold = dir.appendingPathComponent("hold")
+            try Data().write(to: hold)
+            // The setup shell takes SIGTERM. Its child ignores it, as do the
+            // `sleep`s it starts, and runs while `hold` is there: until the
+            // test removes it, or `withTempDir` removes the folder when the
+            // test leaves early.
             let command = """
             echo $$ > "\(leaderFile.path)"
-            sh -c 'trap "" TERM; echo $$ > "$1"; exec sleep 30' sh "\(childFile.path)" &
+            sh -c 'trap "" TERM; echo $$ > "$1"; while [ -e "$2" ]; do sleep 0.05; done' sh "\(childFile.path)" "\(hold.path)" &
             wait
             """
-            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand(command)])
+            // The escalation's SIGKILL comes long after the test has seen the
+            // stop wait for the child, however long a busy runner takes to
+            // look, and removing `hold` ends the child well before it.
+            let isWaitingForGroup = Recorded(false)
+            let steps = WorktreeSetup.RunningSteps(killAfter: .seconds(60)) { _ in
+                isWaitingForGroup.value = true
+            }
+            let fixture = try await Fixture.make(in: dir, bootstrap: [.shorthand(command)], runningSteps: steps)
             fixture.begin()
             await pollUntil(timeout: .seconds(10), interval: .milliseconds(20)) {
                 Fixture.pid(in: leaderFile) != nil && Fixture.pid(in: childFile) != nil
@@ -90,17 +102,22 @@ struct SessionLaunchSetupStopTests {
             }
             try #require(Fixture.isRunning(leader) && Fixture.isRunning(child))
 
+            let hasCancellationReturned = Recorded(false)
             let cancellation = Task {
                 await fixture.store.cancelSetup(worktreeID: fixture.worktree.id)
+                hasCancellationReturned.value = true
                 return Fixture.isRunning(child)
             }
-            var observedChildWithoutLeader = false
-            await pollUntil(timeout: .seconds(5), interval: .milliseconds(20)) {
-                observedChildWithoutLeader = !Fixture.isRunning(leader) && Fixture.isRunning(child)
-                return observedChildWithoutLeader
-            }
+            // A stop that only returned late, without waiting for the group,
+            // would also leave the shell dead and its child alive for a while;
+            // the wait's own word tells the two apart.
+            await pollUntil(timeout: .seconds(30), interval: .milliseconds(20)) { isWaitingForGroup.value }
 
-            #expect(observedChildWithoutLeader)
+            #expect(isWaitingForGroup.value, "the stop did not wait for the shell's group")
+            #expect(!Fixture.isRunning(leader))
+            #expect(Fixture.isRunning(child))
+            #expect(!hasCancellationReturned.value, "the stop returned while the child still ran")
+            try FileManager.default.removeItem(at: hold)
             #expect(await cancellation.value == false)
             #expect(!Fixture.isRunning(leader))
             #expect(!Fixture.isRunning(child))
@@ -201,18 +218,24 @@ struct SessionLaunchSetupStopTests {
     /// worktree no one watches. So the quit sends it before it returns.
     @Test func cancellingAll_endsTheStepWithoutWaitingForItsCancellationEscalation() async throws {
         try await withTempDir { dir in
-            let (fixture, pid) = try await Fixture.startBlockingSetup(in: dir, ignoresTERM: true)
+            // The task's own cancellation escalates only after 60 seconds, and
+            // the step never ends by itself, so an end before that is the quit's.
+            let (fixture, pid) = try await Fixture.startBlockingSetup(
+                in: dir,
+                ignoresTERM: true,
+                runningSteps: WorktreeSetup.RunningSteps(killAfter: .seconds(60))
+            )
 
             try #require(Fixture.isRunning(pid))
             let clock = ContinuousClock()
             let started = clock.now
             fixture.store.cancelAll()
 
-            // Kernel exit can follow signal delivery. The task's own cancellation escalates
-            // after three seconds. WorktreeSetupTests checks the quit signal itself.
-            await pollUntil(timeout: .seconds(2), interval: .milliseconds(20)) { !Fixture.isRunning(pid) }
+            // Kernel exit can follow signal delivery. WorktreeSetupTests
+            // checks the quit signal itself.
+            await pollUntil(timeout: .seconds(20), interval: .milliseconds(20)) { !Fixture.isRunning(pid) }
             #expect(!Fixture.isRunning(pid))
-            #expect(clock.now - started < .seconds(3))
+            #expect(clock.now - started < .seconds(20))
             #expect(fixture.tabs.isEmpty)
         }
     }

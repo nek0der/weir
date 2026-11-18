@@ -110,6 +110,23 @@ enum WorktreeSetup {
         /// Whether the quit has stopped the steps (`stopBeforeExit`): from
         /// then on no step of this owner starts.
         private var isClosed = false
+        /// How long a canceled step of this owner has after SIGTERM before
+        /// SIGKILL. A test lengthens it to tell the escalation apart from
+        /// what it checks, however long a busy runner takes.
+        let killAfter: Duration
+        /// Told a canceled step's group once the stop's wait
+        /// (`waitForGroup`) first finds a process of it left. Nothing in the
+        /// app listens; a test holds that process until it is told, to know
+        /// the stop waits for it rather than merely returning late.
+        let onWaitingForGroup: @Sendable (pid_t) -> Void
+
+        init(
+            killAfter: Duration = WorktreeSetup.killAfter,
+            onWaitingForGroup: @escaping @Sendable (pid_t) -> Void = { _ in }
+        ) {
+            self.killAfter = killAfter
+            self.onWaitingForGroup = onWaitingForGroup
+        }
 
         /// Starts `process` and puts its group on the list, under the lock
         /// the quit's stop takes. A step is then either on the list the quit
@@ -183,12 +200,22 @@ enum WorktreeSetup {
     /// still be running when the setup was reported stopped. A second
     /// SIGKILL costs nothing, and the group's id is still ours while a
     /// member is left. On `SuspendingClock`, which stands still while the
-    /// Mac sleeps, as the `DispatchTime` of that timer does.
-    static func waitForGroup(_ group: pid_t) async {
+    /// Mac sleeps, as the `DispatchTime` of that timer does. `onWaiting` is
+    /// told once, when the wait first finds a process of the group left.
+    static func waitForGroup(
+        _ group: pid_t,
+        killAfter: Duration = WorktreeSetup.killAfter,
+        onWaiting: @Sendable (pid_t) -> Void = { _ in }
+    ) async {
         let clock = SuspendingClock()
         let killAt = clock.now + killAfter
         var killedAt: SuspendingClock.Instant?
+        var hasToldWaiting = false
         while isRunning(group: group) {
+            if !hasToldWaiting {
+                hasToldWaiting = true
+                onWaiting(group)
+            }
             let now = clock.now
             if let killedAt {
                 if now >= killedAt + killGrace {
@@ -209,8 +236,9 @@ enum WorktreeSetup {
         }
     }
 
-    /// How long a step has to end after SIGTERM before SIGKILL.
-    fileprivate static let killAfter: Duration = .seconds(3)
+    /// How long a step has to end after SIGTERM before SIGKILL, unless its
+    /// owner's list (`RunningSteps.killAfter`) gives another.
+    static let killAfter: Duration = .seconds(3)
 
     /// How long a group sent SIGKILL is waited for.
     private static let killGrace: Duration = .seconds(2)
@@ -362,7 +390,7 @@ enum WorktreeSetup {
             running.terminate()
         }
         if Task.isCancelled, process.processIdentifier > 0 {
-            await waitForGroup(process.processIdentifier)
+            await waitForGroup(process.processIdentifier, killAfter: steps.killAfter, onWaiting: steps.onWaitingForGroup)
         }
         // Past here the step is no quit's to stop: it ended, or what it
         // left behind is what a step that ends leaves anyway.
@@ -445,7 +473,7 @@ private final class RunningStep: @unchecked Sendable {
             isCancelled ? process : nil
         }
         if let target {
-            Self.stop(target)
+            Self.stop(target, killAfter: steps.killAfter)
         }
     }
 
@@ -465,7 +493,7 @@ private final class RunningStep: @unchecked Sendable {
             return process
         }
         if let target {
-            Self.stop(target)
+            Self.stop(target, killAfter: steps.killAfter)
         }
     }
 
@@ -480,7 +508,7 @@ private final class RunningStep: @unchecked Sendable {
     /// sequential pids wrap around, far longer than those seconds. A leader
     /// that already ended with children left in its group still has them
     /// stopped.
-    private static func stop(_ process: Process) {
+    private static func stop(_ process: Process, killAfter: Duration) {
         let group = process.processIdentifier
         guard group > 0, process.isRunning || WorktreeSetup.isRunning(group: group) else { return }
         // The leader too, in case it is not the group's: `Process` makes it
@@ -490,7 +518,7 @@ private final class RunningStep: @unchecked Sendable {
             process.terminate()
         }
         kill(-group, SIGTERM)
-        WorktreeSetup.stopQueue.asyncAfter(deadline: .now() + .milliseconds(Int(WorktreeSetup.killAfter / .milliseconds(1)))) {
+        WorktreeSetup.stopQueue.asyncAfter(deadline: .now() + .milliseconds(Int(killAfter / .milliseconds(1)))) {
             if WorktreeSetup.isRunning(group: group) {
                 kill(-group, SIGKILL)
             }

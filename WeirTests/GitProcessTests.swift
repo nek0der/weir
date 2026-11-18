@@ -161,35 +161,51 @@ struct GitProcessSmokeTests {
 /// A git run has a deadline, and the deadline holds whatever git does.
 struct GitProcessDeadlineTests {
     /// A `git` that ignores SIGTERM and never finishes, as one waiting in a
-    /// hook does.
-    private func writeHangingGit(in directory: URL) throws -> GitExecutable {
+    /// hook does. It writes its pid to `armed` once its trap is set, so a test
+    /// can tell that the deadline's SIGTERM met a process that ignores it, and
+    /// that the process is gone after.
+    private func writeHangingGit(in directory: URL, armed: URL) throws -> GitExecutable {
         let script = directory.appendingPathComponent("git")
-        try "#!/bin/sh\ntrap '' TERM\nsleep 30\n".write(to: script, atomically: true, encoding: .utf8)
+        try """
+        #!/bin/sh
+        trap '' TERM
+        echo $$ > '\(armed.path).tmp'
+        mv '\(armed.path).tmp' '\(armed.path)'
+        sleep 60
+        """.write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
         return GitExecutable(url: script, leadingArguments: [])
     }
 
     @Test func aRunPastItsDeadline_isEndedAndThrows() async throws {
         try await withTempDir { directory in
-            let git = try writeHangingGit(in: directory)
+            let armed = directory.appendingPathComponent("armed")
+            let git = try writeHangingGit(in: directory, armed: armed)
             let clock = SuspendingClock()
             let started = clock.now
             var thrown: (any Error)?
             do {
-                _ = try await GitProcess.run(["status"], cwd: directory, timeout: .seconds(1), executable: git)
+                _ = try await GitProcess.run(["status"], cwd: directory, timeout: .seconds(10), executable: git)
             } catch {
                 thrown = error
             }
-            // The run gives up 1 second for the deadline plus twice the
-            // 2-second grace, 5 seconds, when something of the group outlives
-            // SIGKILL. The bound is well short of the 30 the script sleeps
+            // The deadline leaves a loaded runner ample time to set the trap,
+            // and the marker shows it was set: the SIGTERM met a git that
+            // ignores it, so the grace's SIGKILL is what ended the run.
+            try #require(FileManager.default.fileExists(atPath: armed.path), "the deadline came before the trap")
+            // The run gives up 10 seconds for the deadline plus twice the
+            // 2-second grace, 14 seconds, when something of the group outlives
+            // SIGKILL. The bound is well short of the 60 the script sleeps
             // and leaves room for a busy CI runner.
-            #expect(clock.now - started < .seconds(15), "the deadline and the grace, not the script's own end")
-            guard case let .timedOut(seconds, _)? = thrown as? GitProcessError else {
+            #expect(clock.now - started < .seconds(40), "the deadline and the grace, not the script's own end")
+            guard case let .timedOut(seconds, hasProcessesLeft)? = thrown as? GitProcessError else {
                 Issue.record("expected a timeout, got \(String(describing: thrown))")
                 return
             }
-            #expect(seconds == 1)
+            #expect(seconds == 10)
+            #expect(!hasProcessesLeft)
+            let pid = try #require(pid_t(String(contentsOf: armed, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+            #expect(!ProcessLiveness.isLive(pid), "git is gone once the run returns")
         }
     }
 
@@ -202,15 +218,19 @@ struct GitProcessDeadlineTests {
             let script = directory.appendingPathComponent("git")
             try """
             #!/bin/sh
-            sh -c 'trap "" TERM; echo $$ > "$1.tmp"; mv "$1.tmp" "$1"; sleep 30; :' hook '\(pidFile.path)' &
-            sleep 30
+            sh -c 'trap "" TERM; echo $$ > "$1.tmp"; mv "$1.tmp" "$1"; sleep 60; :' hook '\(pidFile.path)' &
+            sleep 60
             """.write(to: script, atomically: true, encoding: .utf8)
             try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
             let git = GitExecutable(url: script, leadingArguments: [])
 
             var thrown: (any Error)?
             do {
-                _ = try await GitProcess.run(["worktree", "add"], cwd: directory, timeout: .seconds(1), executable: git)
+                // The hook writes its pid only once its trap is set, and the
+                // pid is required below: the deadline leaves a loaded runner
+                // ample time for that, so the SIGTERM meets a hook that
+                // ignores it, not one that has yet to set its trap.
+                _ = try await GitProcess.run(["worktree", "add"], cwd: directory, timeout: .seconds(10), executable: git)
             } catch {
                 thrown = error
             }

@@ -38,7 +38,9 @@ pub use invocation::{MAX_INVOCATION_BYTES, run_hook_invocation};
 pub use leftovers::{LeftoverSweep, sweep_leftovers};
 pub use records::{HookLog, atomic_write, ensure_user_only_directory, with_record_lock};
 pub use status_line::{run_status_line, status_line_setting};
-pub use stopped_turns::{StoppedTurnEnd, StoppedTurnRequest, end_stopped_turn};
+pub use stopped_turns::{
+    StoppedTurnEnd, StoppedTurnRequest, end_stopped_turn, end_stopped_turn_waiting,
+};
 pub use turn_gc::{TurnDeletion, delete_turns, delete_turns_waiting};
 pub use weir_agent_model::TURNS_DIRECTORY;
 pub use weir_agent_model::format_utc_seconds;
@@ -182,6 +184,9 @@ pub struct HookRuntime<'a> {
     pub now: String,
     /// How long a prompt waits for a restore (`worktree_lock`).
     pub lock_limits: worktree_lock::Limits,
+    /// How long a turn's end waits for its last response to reach the
+    /// transcript (`ResponseWait`).
+    pub response_wait: ResponseWait<'a>,
 }
 
 impl<'a> HookRuntime<'a> {
@@ -193,8 +198,28 @@ impl<'a> HookRuntime<'a> {
             snapshots,
             now: format_utc_seconds(SystemTime::now()),
             lock_limits: worktree_lock::Limits::HOOK,
+            response_wait: ResponseWait::HOOK,
         }
     }
+}
+
+/// How long a call waits for the transcript to take what it awaits, and how
+/// it pauses between looks. A test sets a limit no loaded machine reaches and
+/// learns from `pause` that the wait has begun, so a line it writes then
+/// always reaches the wait rather than the first look or the end of it.
+#[derive(Clone, Copy)]
+pub struct ResponseWait<'a> {
+    pub limit: std::time::Duration,
+    /// Called between looks with the pause to take.
+    pub pause: &'a dyn Fn(std::time::Duration),
+}
+
+impl ResponseWait<'static> {
+    /// The wait a hook call and the app's end of a stopped turn take.
+    pub const HOOK: Self = Self {
+        limit: AWAIT_RESPONSE,
+        pause: &std::thread::sleep,
+    };
 }
 
 /// Runs one lifecycle hook call for `provider` with `stdin` as the payload.
@@ -249,7 +274,7 @@ pub fn run_hook(provider: &str, stdin: &[u8], runtime: &HookRuntime<'_>) -> Hook
     // it ends a turn the person stopped (`stopped_turns`), so this call
     // costs no read.
     apply_context.transcript_path = adapter.turn_transcript_path(input).ok().flatten();
-    apply_context.settings = settled_settings(adapter, input, &context);
+    apply_context.settings = settled_settings(adapter, input, &context, runtime.response_wait);
     // A subagent's hook may advance the parent's lifecycle, but it does not
     // prove that the parent has resumed control of the terminal.
     if apply_context.settings.is_empty() {
@@ -495,6 +520,7 @@ fn call_transcript(
 struct CallTranscript<'a> {
     call: &'a HookCall<'a>,
     directories: &'a ResolvedDirectories,
+    wait: ResponseWait<'a>,
 }
 
 impl turn::TurnTranscript for CallTranscript<'_> {
@@ -525,7 +551,7 @@ impl turn::TurnTranscript for CallTranscript<'_> {
             })
             .flatten();
         let reading = match path.as_deref().filter(|_| reading.is_awaiting_response) {
-            Some(path) => awaited(reading, Path::new(path), |transcript| {
+            Some(path) => awaited(reading, Path::new(path), self.wait, |transcript| {
                 adapter.turn_reading(
                     RawHookInput {
                         bytes: self.call.input.bytes,
@@ -555,6 +581,8 @@ pub(crate) struct TranscriptFile<'a> {
     /// This is the provider's state directory, under the data folder whose
     /// project settings name the check patterns.
     pub state: &'a Path,
+    /// How long the reading waits for the turn's last lines.
+    pub wait: ResponseWait<'a>,
 }
 
 impl turn::TurnTranscript for TranscriptFile<'_> {
@@ -573,19 +601,20 @@ impl turn::TurnTranscript for TranscriptFile<'_> {
             return turn::EndReading::default();
         };
         let read = |transcript: &[u8]| self.adapter.transcript_turn_reading(transcript, marker);
-        let reading = awaited(read(&transcript), self.path, read);
+        let reading = awaited(read(&transcript), self.path, self.wait, read);
         end_reading(self.adapter, reading, Some(self.path), self.state)
     }
 }
 
 /// What the call says of the session's settings, read again from the
-/// transcript while they await the turn's answer, for at most `AWAIT_RESPONSE`.
+/// transcript while they await the turn's answer, for at most `wait.limit`.
 /// The wait is one the turn's end would otherwise make (`awaited`), so a `Stop`
 /// takes no longer for it.
 fn settled_settings(
     adapter: &dyn ProviderAdapter,
     input: RawHookInput<'_>,
     context: &HookContext,
+    wait: ResponseWait<'_>,
 ) -> SessionSettings {
     let settings = adapter.session_settings(input, context);
     let path = adapter
@@ -614,51 +643,67 @@ fn settled_settings(
                 context,
             )
         },
-        &SystemWaitClock::start(),
+        &SystemWaitClock::start(wait),
     )
 }
 
 /// Returns `reading`, read again from the transcript at `path` with `read`
-/// while it awaits the turn's last response, for at most `AWAIT_RESPONSE`;
-/// past that the reading stays partial.
-fn awaited(reading: TurnReading, path: &Path, read: impl Fn(&[u8]) -> TurnReading) -> TurnReading {
+/// while it awaits the turn's last response, for at most `wait.limit`; past
+/// that the reading stays partial.
+fn awaited(
+    reading: TurnReading,
+    path: &Path,
+    wait: ResponseWait<'_>,
+    read: impl Fn(&[u8]) -> TurnReading,
+) -> TurnReading {
     read_while_awaiting(
         reading,
         |reading| reading.is_awaiting_response,
         path,
         read,
-        &SystemWaitClock::start(),
+        &SystemWaitClock::start(wait),
     )
 }
 
 /// The clock a wait for the transcript reads. Its tests pass a clock of their
 /// own, so what they say of the bound does not rest on how busy the machine is.
 trait WaitClock {
+    fn limit(&self) -> std::time::Duration;
     fn elapsed(&self) -> std::time::Duration;
     fn sleep(&self, step: std::time::Duration);
 }
 
-struct SystemWaitClock(std::time::Instant);
+struct SystemWaitClock<'a> {
+    started: std::time::Instant,
+    wait: ResponseWait<'a>,
+}
 
-impl SystemWaitClock {
-    fn start() -> Self {
-        Self(std::time::Instant::now())
+impl<'a> SystemWaitClock<'a> {
+    fn start(wait: ResponseWait<'a>) -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            wait,
+        }
     }
 }
 
-impl WaitClock for SystemWaitClock {
+impl WaitClock for SystemWaitClock<'_> {
+    fn limit(&self) -> std::time::Duration {
+        self.wait.limit
+    }
+
     fn elapsed(&self) -> std::time::Duration {
-        self.0.elapsed()
+        self.started.elapsed()
     }
 
     fn sleep(&self, step: std::time::Duration) {
-        std::thread::sleep(step);
+        (self.wait.pause)(step);
     }
 }
 
 /// Returns `value`, read again from the transcript at `path` with `read` while
-/// `is_awaiting` holds of it, until `AWAIT_RESPONSE` has gone by on `clock` or
-/// the file cannot be read.
+/// `is_awaiting` holds of it, until the clock's limit has gone by on `clock`
+/// or the file cannot be read.
 fn read_while_awaiting<T>(
     mut value: T,
     is_awaiting: impl Fn(&T) -> bool,
@@ -666,7 +711,7 @@ fn read_while_awaiting<T>(
     read: impl Fn(&[u8]) -> T,
     clock: &impl WaitClock,
 ) -> T {
-    while is_awaiting(&value) && clock.elapsed() < AWAIT_RESPONSE {
+    while is_awaiting(&value) && clock.elapsed() < clock.limit() {
         clock.sleep(AWAIT_RESPONSE_STEP);
         let Some(transcript) = records::read_bounded_tail(path, MAX_TRANSCRIPT_BYTES) else {
             break;
@@ -1123,7 +1168,11 @@ fn write_events(
     let run_id = &apply_context.run_id;
     let pane_id = &apply_context.pane_id;
     let record_path = directories.state.join(run_record_file_name(run_id));
-    let transcript = CallTranscript { call, directories };
+    let transcript = CallTranscript {
+        call,
+        directories,
+        wait: runtime.response_wait,
+    };
     let turns = turn::Turns {
         directory: directories.state.join(TURNS_DIRECTORY),
         descriptor,
@@ -1866,6 +1915,10 @@ mod await_response_tests {
     }
 
     impl WaitClock for FakeClock {
+        fn limit(&self) -> Duration {
+            AWAIT_RESPONSE
+        }
+
         fn elapsed(&self) -> Duration {
             self.now.get()
         }
@@ -1980,6 +2033,7 @@ mod subagent_tests {
                 transcript: Some(user.as_bytes()),
             },
             &HookContext::fixture(),
+            super::ResponseWait::HOOK,
         );
         assert_eq!(settings.answered_model.as_deref(), Some("Opus 5.5"));
         assert!(!settings.is_awaiting_answer);
