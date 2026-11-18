@@ -412,11 +412,18 @@ enum DemoFixture {
     // pane strip reads; a worktree of shells alone has no conversation.
     // Badge times sit 20 seconds past a whole minute, so the rows' minutes
     // do not tick over in the seconds before the capture.
+    //
+    // The hero's rows show each agent Weir supports, and each row's state is
+    // one its agent's hooks can report (`docs/known-limitations.md`): an
+    // approval with its command from Codex, a stop with its reason in words
+    // from OpenCode, and Antigravity and Kiro where a row needs no words
+    // from them. The proration agent stays Claude, as the staged approval
+    // card is its (`stagedApproval`).
 
     private static func duesmithTabs() -> [Tab] {
         let review = agentTab(
             .prReview,
-            .codex,
+            .antigravity,
             in: .project(duesmithProjectID),
             badge: badge(
                 .finished,
@@ -453,11 +460,10 @@ enum DemoFixture {
         )
 
         // A permission request at Codex's own prompt, which demo mode leaves
-        // to the agent (it runs no approval service). Codex's hook records
-        // only the tool's name; the demo stages the "Tool: argument" words
-        // Claude's hook records instead, so the row has a command to show.
-        // The record says it is an approval of that tool, as a wait's
-        // record does.
+        // to the agent (it runs no approval service). The wait takes the
+        // "Tool: argument" words of the tool call just before it, and the
+        // record says it is an approval of that tool, as a wait's record
+        // does.
         var tax = agentTab(
             .taxRounding,
             .codex,
@@ -488,9 +494,11 @@ enum DemoFixture {
             )
         )
 
+        // OpenCode reports a failure in its own words; Claude reports only
+        // an error code, which would read "Stopped: server_error".
         let webhook = agentTab(
             .webhook,
-            .claude,
+            .opencode,
             in: duesmith(webhookWorktreeID),
             badge: badge(
                 .error,
@@ -503,12 +511,12 @@ enum DemoFixture {
 
         let docs = agentTab(
             .docs,
-            .codex,
+            .kiro,
             in: docsContainer,
             badge: badge(
                 .idle,
                 secondsAgo: 1940,
-                prompt: "Document the invoices API and open a pull request",
+                prompt: docsPrompt,
                 root: folder("duesmith-docs-invoices-api")
             )
         )
@@ -575,7 +583,7 @@ enum DemoFixture {
             in: marginOverflowContainer,
             badge: badge(
                 .running,
-                detail: "Editing crates/layout/src/margin.rs",
+                detail: "Bash: cargo test -p layout margin",
                 secondsAgo: 20,
                 prompt: "Keep long addresses inside the page margins",
                 runningFor: 75,
@@ -697,17 +705,20 @@ enum DemoFixture {
     // MARK: - Helpers
 
     /// Returns what each agent's first conversation is called, as its
-    /// provider titled it, which names the agent's tab. It is
+    /// provider titled it or, for an agent that titles none, its first
+    /// prompt, which names the agent's tab. It is
     /// `nil` for a shell's slot.
     static func conversationTitle(of slot: Slot) -> String? {
         switch slot {
-        case .prReview: "Review PR #318"
+        // Antigravity and Kiro title no conversation, so a real one is
+        // named by its first prompt.
+        case .prReview: prReviewFirstPrompt
+        case .docs: docsPrompt
         case .reminders: "Send overdue reminders"
         case .remindersCodex: "Migrate the schedules"
         case .taxRounding: "Fix tax rounding on line items"
         case .proration: "Add proration to plan changes"
         case .webhook: "Retry webhooks on timeout"
-        case .docs: "Document the invoices API"
         case .pageBreaks: "Fix page breaks in long invoices"
         case .batchRender: "Render invoices in batches"
         case .embedFonts: "Embed the invoice fonts"
@@ -730,17 +741,19 @@ enum DemoFixture {
         let name = conversationTitle(of: slot) ?? agent.rawValue
         var badge = titled(staged, slot: slot, agent: agent)
         // What every agent pane's header shows beside its name, as a hook
-        // would have said it.
+        // would have said it. Kiro's hooks name no model, and Antigravity
+        // reports an effort only for a model id that ends in one.
         badge.model = switch agent {
         case .claude: "Opus 5.5"
         case .codex: "gpt-5.5"
         case .antigravity: "Gemini 3.8 Flash"
         case .opencode: "GPT-5.5"
-        case .kiro: "Claude Sonnet 5.5"
+        case .kiro: nil
         }
         badge.effort = switch agent {
-        case .claude, .antigravity, .opencode, .kiro: "high"
+        case .claude, .opencode: "high"
         case .codex: "medium"
+        case .antigravity, .kiro: nil
         }
         var tab = Tab(
             id: slot.tabID,
@@ -763,8 +776,9 @@ enum DemoFixture {
     /// `badge` as a run that has reported its conversation holds it, for a
     /// slot whose conversation the fixture stages turns for
     /// (`conversation(forPane:)`): the conversation's ID and its title
-    /// where the provider keeps it, Claude's generated title and Codex's
-    /// thread name. The tab's name, the pane header, the turns' recorded
+    /// where the provider keeps it (Claude's generated title, Codex's thread
+    /// name, OpenCode's session title), or the first prompt that names a
+    /// conversation of an agent that keeps none. The tab's name, the pane header, the turns' recorded
     /// title, and the changes panel then call the conversation the same.
     private static func titled(_ badge: AgentBadge, slot: Slot, agent: AgentKind) -> AgentBadge {
         guard let conversation = conversation(forPane: slot.paneID) else { return badge }
@@ -772,7 +786,8 @@ enum DemoFixture {
         badge.conversationID = conversation.conversationID
         switch agent {
         case .claude: badge.providerGeneratedTitle = conversationTitle(of: slot)
-        case .codex, .antigravity, .opencode, .kiro: badge.providerSessionTitle = conversationTitle(of: slot)
+        case .codex, .opencode: badge.providerSessionTitle = conversationTitle(of: slot)
+        case .antigravity, .kiro: badge.firstPrompt = conversationTitle(of: slot)
         }
         return badge
     }

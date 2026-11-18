@@ -13,12 +13,12 @@ extension DemoFixture {
     /// unread, started between Claude's T4 and T5, so the panel's timeline
     /// shows the two conversations' turns in one list.
     static let remindersCodexConversation = ConversationKey(provider: .codex, conversationID: "demo-reminders-codex", isFallback: false)
-    /// Codex's review on duesmith's main folder: two answers, the second
-    /// unread.
-    static let prReviewConversation = ConversationKey(provider: .codex, conversationID: "demo-pr-review", isFallback: false)
-    /// The stopped Claude's: one interrupted turn, viewed, so the row's stop
-    /// is its only item.
-    static let webhookConversation = ConversationKey(provider: .claude, conversationID: "demo-webhook", isFallback: false)
+    /// Antigravity's review on duesmith's main folder: two answers, the
+    /// second unread.
+    static let prReviewConversation = ConversationKey(provider: .antigravity, conversationID: "demo-pr-review", isFallback: false)
+    /// The stopped OpenCode's: one failed turn, viewed, so the row's
+    /// stop is its only item.
+    static let webhookConversation = ConversationKey(provider: .opencode, conversationID: "demo-webhook", isFallback: false)
 
     /// The last viewed turn of each conversation. No other agent has turns:
     /// each would add an unread answer to the list.
@@ -56,11 +56,15 @@ extension DemoFixture {
     /// worktree's first and names its row.
     static let remindersCodexSessionStartedSecondsAgo = 440
 
-    /// The prompts of those last turns, which the badges show.
+    /// The prompts the badges and the scenes show: each conversation's
+    /// last, and the first prompts that name the conversations of the agents
+    /// that title none.
     static let remindersLastPrompt = "Skip reminders for invoices that are paid or disputed"
     static let remindersCodexLastPrompt = "Add a migration for the reminder schedules table"
+    static let prReviewFirstPrompt = "Summarize what PR #318 changes"
     static let prReviewLastPrompt = "Review PR #318 and list problems by priority"
     static let webhookLastPrompt = "Retry a payment webhook once when the receiver times out"
+    static let docsPrompt = "Document the invoices API and open a pull request"
 
     /// The staged turns, as a projection pass would report them. Times are
     /// relative to now, as the badges' are, so the rows read as fresh on
@@ -89,7 +93,9 @@ extension DemoFixture {
                 $0.summary(
                     in: prReviewConversation,
                     pane: Slot.prReview.paneID,
-                    title: conversationTitle(of: .prReview),
+                    // Antigravity titles no conversation, so its turns
+                    // record none; the first prompt names it.
+                    title: nil,
                     root: duesmithRoot,
                     now: now
                 )
@@ -205,9 +211,10 @@ extension DemoFixture {
                 number: 1,
                 endedSecondsAgo: 1770,
                 seconds: 90,
-                prompt: "Summarize what PR #318 changes",
+                prompt: prReviewFirstPrompt,
                 reply: "It moves credit notes onto invoices and formats money per account.",
-                changes: nil
+                changes: nil,
+                usage: TurnUsage(inputTokens: 900, cacheWriteTokens: 12000, cacheReadTokens: 0, outputTokens: 600)
             ),
             StagedTurn(
                 number: 2,
@@ -217,13 +224,15 @@ extension DemoFixture {
                 reply: "Three problems. Major: reopening an invoice applies its credit note twice. applyCredits "
                     + "runs again on reopen and does not check whether the credit was already applied. · Minor: formatMoney ignores "
                     + "the account's currency setting. · Nit: two tests in invoices.test.ts share a name.",
-                changes: nil
+                changes: nil,
+                usage: TurnUsage(inputTokens: 1400, cacheWriteTokens: 9000, cacheReadTokens: 12000, outputTokens: 1900)
             )
         ]
     }
 
-    /// Interrupted by the error that stopped the agent, with what it had
-    /// changed by then, which "Show Partial Changes" opens.
+    /// Ended by the error that stopped the agent, which records the turn as
+    /// failed, with what it had changed by then, which "Show Partial
+    /// Changes" opens.
     private static var webhookTurns: [StagedTurn] {
         [
             StagedTurn(
@@ -232,7 +241,8 @@ extension DemoFixture {
                 seconds: 250,
                 prompt: webhookLastPrompt,
                 changes: Changes(files: 2, added: 18, removed: 3),
-                phase: .interrupted
+                usage: TurnUsage(inputTokens: 2100, cacheWriteTokens: 18000, cacheReadTokens: 46000, outputTokens: 2600),
+                phase: .failed
             )
         ]
     }
@@ -265,7 +275,8 @@ extension DemoFixture {
         /// Read through the same decoder a pass's turns go through, so the
         /// scene shows what a real turn would. `title` is the conversation's,
         /// as the hook records it on each turn once the provider has named
-        /// the conversation, which it has by every staged turn's end.
+        /// the conversation, which it has by every staged turn's end; it is
+        /// `nil` for an agent that names none.
         func summary(in conversation: ConversationKey, pane paneID: UUID, title: String?, root: URL, now: Date) -> TurnSummary? {
             let finished = now.addingTimeInterval(TimeInterval(-endedSecondsAgo))
             let started = finished.addingTimeInterval(TimeInterval(-seconds))
