@@ -229,20 +229,22 @@ extension DemoFixture {
 
     // MARK: - The other workspaces
 
-    // Not in the hero, but opened by hand they agree with their rows.
+    // Not in the hero, but opened by hand they agree with their rows. The
+    // screens of Antigravity, OpenCode, and Kiro are plain transcripts in
+    // the words their records use, not a copy of each agent's own layout.
 
     private static var prReviewScreen: [Line] {
         [
-            Line(.plain, "› Summarize what PR #318 changes"),
+            Line(.plain, "> \(prReviewFirstPrompt)"),
             Line(),
-            Line(.dim, "• It moves credit notes onto invoices and formats money per account."),
+            Line(.dim, "It moves credit notes onto invoices and formats money per account."),
             Line(),
-            Line(.plain, "› \(prReviewLastPrompt)"),
+            Line(.plain, "> \(prReviewLastPrompt)"),
             Line(),
-            Line(.accent, "• Ran gh pr diff 318"),
-            Line(.dim, "  └ +214 -37, 6 files"),
+            Line(.accent, "run_command: gh pr diff 318"),
+            Line(.dim, "  +214 -37, 6 files"),
             Line(),
-            Line(.plain, "• Three problems, most serious first:"),
+            Line(.plain, "Three problems, most serious first:"),
             Line(),
             Line(.plain, "  1. Major: reopening an invoice applies its credit note twice."),
             Line(.plain, "     applyCredits runs again on reopen and does not check"),
@@ -252,7 +254,7 @@ extension DemoFixture {
             Line(),
             Line(.dim, "  No files changed."),
             Line(),
-            Line(.plain, "› ")
+            Line(.plain, "> ")
         ]
     }
 
@@ -282,34 +284,36 @@ extension DemoFixture {
         ]
     }
 
-    /// The agent stopped on the error and exited, so the pane is back at its
-    /// shell's prompt.
+    /// The agent stopped on the error and was quit, so the pane is back at
+    /// its shell's prompt.
     private static var webhookScreen: [Line] {
         [
             Line(.plain, "> \(webhookLastPrompt)"),
             Line(),
-            Line(.accent, "⏺ Update(apps/api/src/webhooks/deliver.ts)"),
-            Line(.dim, "  ⎿  Updated with 15 additions and 3 removals"),
+            Line(.accent, "edit: apps/api/src/webhooks/deliver.ts"),
+            Line(.dim, "  +15 -3"),
             Line(),
-            Line(.accent, "⏺ Update(apps/api/src/webhooks/deliver.test.ts)"),
-            Line(.dim, "  ⎿  Updated with 3 additions"),
-            Line(.failure, "  ⎿  API timed out."),
+            Line(.accent, "edit: apps/api/src/webhooks/deliver.test.ts"),
+            Line(.dim, "  +3"),
+            Line(),
+            Line(.failure, "API timed out."),
             Line()
         ]
     }
 
     private static var docsScreen: [Line] {
         [
-            Line(.plain, "› Document the invoices API and open a pull request"),
+            Line(.plain, "> \(docsPrompt)"),
             Line(),
-            Line(.accent, "• Edited docs/api/invoices.md (+86 -4)"),
+            Line(.accent, "fs_write: docs/api/invoices.md"),
+            Line(.dim, "  +86 -4"),
             Line(),
-            Line(.accent, "• Ran gh pr create --fill"),
-            Line(.dim, "  └ #324"),
+            Line(.accent, "execute_bash: gh pr create --fill"),
+            Line(.dim, "  #324"),
             Line(),
-            Line(.plain, "• Opened #324 with the invoices endpoints documented."),
+            Line(.plain, "Opened #324 with the invoices endpoints documented."),
             Line(),
-            Line(.plain, "› ")
+            Line(.plain, "> ")
         ]
     }
 
@@ -338,7 +342,9 @@ extension DemoFixture {
             Line(.plain, "› Keep long addresses inside the page margins"),
             Line(),
             Line(.accent, "• Read crates/layout/src/margin.rs"),
-            Line(.accent, "• Editing crates/layout/src/margin.rs")
+            Line(.accent, "• Edited crates/layout/src/margin.rs (+9 -3)"),
+            Line(),
+            Line(.accent, "• Running cargo test -p layout margin")
         ]
     }
 

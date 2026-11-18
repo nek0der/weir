@@ -587,14 +587,14 @@ struct DemoFixtureTests {
     }
 
     /// The other staged conversations: the review's two answers, and the
-    /// stopped agent's interrupted turn with what it had changed.
+    /// stopped agent's failed turn with what it had changed.
     @Test func theOtherConversations_areTheReviewsAnswers_andTheStoppedAgentsTurn() throws {
         let review = try DemoFixture.stagedTurns(of: DemoFixture.prReviewConversation)
         #expect(review.map(\.displayNumber) == [1, 2])
         #expect(review.map(\.phase) == [.finished, .finished])
         #expect(review.map(\.changes) == [.unchanged, .unchanged])
         #expect(review.allSatisfy { $0.conversation == DemoFixture.prReviewConversation })
-        #expect(review.allSatisfy { $0.conversation.provider == .codex && $0.paneID == DemoFixture.Slot.prReview.paneID.uuidString })
+        #expect(review.allSatisfy { $0.conversation.provider == .antigravity && $0.paneID == DemoFixture.Slot.prReview.paneID.uuidString })
         #expect(review
             .allSatisfy { $0.beginTree?.root == DemoFixture.duesmithRoot.path && $0.endTree?.root == DemoFixture.duesmithRoot.path })
         let replies = review.compactMap(\.reply)
@@ -602,7 +602,7 @@ struct DemoFixtureTests {
         #expect(replies.first?.hasPrefix("It moves credit notes") == true)
         #expect(replies.last?.hasPrefix("Three problems.") == true)
         let webhook = try DemoFixture.stagedTurns(of: DemoFixture.webhookConversation)
-        #expect(webhook.map(\.phase) == [.interrupted])
+        #expect(webhook.map(\.phase) == [.failed])
         let stopped = try #require(webhook.first)
         #expect(stopped.changes == .changed(files: 2, added: 18, removed: 3))
         #expect(stopped.conversation == DemoFixture.webhookConversation)
@@ -692,9 +692,16 @@ struct DemoFixtureTests {
                 name: name, provider: conversation.key.provider, paneID: pane,
                 conversationID: conversation.key.conversationID, startedAt: badge.sessionStartedAt
             ))
-            let providerTitle = conversation.key.provider == .claude ? badge.providerGeneratedTitle : badge.providerSessionTitle
+            let providerTitle = switch conversation.key.provider {
+            case .claude: badge.providerGeneratedTitle
+            case .codex, .opencode: badge.providerSessionTitle
+            // Antigravity and Kiro title no conversation: the first prompt names it.
+            case .antigravity, .kiro: badge.firstPrompt
+            }
             #expect(providerTitle == name)
-            #expect(conversation.turns.allSatisfy { $0.conversationTitle == name }, "\(name)")
+            // A turn records only a title the provider gave.
+            let recordedTitle = [.antigravity, .kiro].contains(conversation.key.provider) ? nil : name
+            #expect(conversation.turns.allSatisfy { $0.conversationTitle == recordedTitle }, "\(name)")
             let agent = ChangesPanelModel.Agent(conversation: conversation.key, turns: conversation.turns)
             #expect(ChangesPanelModel.title(of: agent, liveTab: nil, rememberedTabName: nil) == name)
         }

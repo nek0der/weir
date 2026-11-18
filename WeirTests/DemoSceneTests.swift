@@ -137,7 +137,9 @@ struct DemoSceneTests {
             "PR #324 · Open"
         ])
         #expect(rows.map(\.fact.glyph) == [.unread, .unread, .needsApproval, .running, .stopped, .idle])
-        let agents: [AgentKind] = [.codex, .claude, .codex, .claude, .claude, .codex]
+        // Every agent Weir supports, each in a state its hooks can report.
+        let agents: [AgentKind] = [.antigravity, .claude, .codex, .claude, .opencode, .kiro]
+        #expect(Set(agents) == Set(AgentKind.allCases))
         #expect(rows.map(\.fact.badge) == agents.map(SessionRowFact.Badge.agent))
         #expect(rows.map(\.fact.fact) == [
             .unread(.unchanged),
@@ -219,7 +221,7 @@ struct DemoSceneTests {
             "Waiting for approval: cargo test -p layout",
             "PR #57 · Merged",
             "Bash: cargo build -p render",
-            "Editing crates/layout/src/margin.rs"
+            "Bash: cargo test -p layout margin"
         ])
         #expect(pdf.allSatisfy { $0.checkout == nil })
         let dotfiles = try scene.rows(DemoFixture.dotfilesProjectID)
