@@ -20,20 +20,24 @@ package enum WorktreeTimeline {
     /// place is said to be unknown (`hasStart`). Every turn is kept: the
     /// caller leaves out what it does not list.
     package static func ordered(_ turns: [TurnSummary]) -> [TurnSummary] {
+        // Each turn's key is made once, before the sort: made in the
+        // comparison, it read the record's time and looked the
+        // conversation up again on every comparison, and the panel and the
+        // review sort on every reading.
+        let starts = turns.map(sortStart)
         var firstStarts: [ConversationKey: Date] = [:]
-        for turn in turns {
-            let start = sortStart(turn)
+        for (turn, start) in zip(turns, starts) {
             firstStarts[turn.conversation] = min(firstStarts[turn.conversation] ?? start, start)
         }
-        func key(_ turn: TurnSummary) -> Key {
-            Key(
-                start: sortStart(turn),
+        let keyed = zip(turns, starts).map { turn, start in
+            (key: Key(
+                start: start,
                 conversationStart: firstStarts[turn.conversation] ?? .distantPast,
                 conversationID: turn.conversation.conversationID,
                 number: turn.displayNumber
-            )
+            ), turn: turn)
         }
-        return turns.sorted { key($0) < key($1) }
+        return keyed.sorted { $0.key < $1.key }.map(\.turn)
     }
 
     /// The timeline the changes panel lists and the review reads its

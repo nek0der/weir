@@ -144,7 +144,19 @@ enum ReviewScopeCatalog {
         isViewed: (TurnSummary) -> Bool,
         isRestored: (TurnSummary) -> Bool = { _ in false }
     ) -> ReviewUnviewedTurns {
-        let ended = WorktreeTimeline.ordered(turns).filter { $0.phase != .started }
+        unviewedTurns(timeline: WorktreeTimeline.ordered(turns), isViewed: isViewed, isRestored: isRestored)
+    }
+
+    /// `unviewedTurns(turns:isViewed:isRestored:)` for turns already in the
+    /// timeline's order (`WorktreeTimeline.ordered`), as the changes panel
+    /// holds them: ordering them again would give the same list, at the
+    /// cost of a sort on every reading of the panel.
+    static func unviewedTurns(
+        timeline: [TurnSummary],
+        isViewed: (TurnSummary) -> Bool,
+        isRestored: (TurnSummary) -> Bool = { _ in false }
+    ) -> ReviewUnviewedTurns {
+        let ended = timeline.filter { $0.phase != .started }
         let unviewed = ended.filter { isUnviewed($0, isViewed: isViewed, isRestored: isRestored) }
         guard let first = unviewed.first, let firstIndex = ended.firstIndex(where: { $0.turnID == first.turnID }) else {
             return .none

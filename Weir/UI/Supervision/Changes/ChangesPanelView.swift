@@ -65,7 +65,7 @@ struct ChangesPanelView: View {
             folder: ChangesPanelActions.folder(window: window, stores: state.changesPanelStores),
             turns: ChangesPanelActions.turnsKey(window: window, stores: state.changesPanelStores),
             deleted: state.viewedLines.deletedTurns,
-            totals: ChangesPanelActions.totalsComparison(window: window, stores: state.changesPanelStores),
+            totals: Self.totalsComparison(content),
             isWatching: ChangesPanelActions.isWatching(window: window, stores: state.changesPanelStores)
         )) {
             guard ChangesPanelActions.isWatching(window: window, stores: state.changesPanelStores) else { return }
@@ -92,6 +92,14 @@ struct ChangesPanelView: View {
         /// The unviewed range the totals count, which a mark moves.
         let totals: WorktreeChanges.Comparison?
         let isWatching: Bool
+    }
+
+    /// The comparison the totals count, from the list this pass made, which
+    /// read the same agents and lines as `ChangesPanelActions.totalsComparison`;
+    /// none without a list, where there are no agents to read.
+    private static func totalsComparison(_ content: ChangesPanelModel.Content) -> WorktreeChanges.Comparison? {
+        guard case let .turns(list) = content else { return nil }
+        return list.totalsComparison
     }
 
     private var rule: some View {
