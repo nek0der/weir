@@ -164,6 +164,10 @@ enum ChangesPanelModel {
         /// the window lists it: the panel offers "Timeline | By
         /// Conversation" only then (`groupable`).
         let canGroup: Bool
+        /// The comparison the totals read (`ChangesPanelModel.totalsComparison`),
+        /// taken from the reading that made the list, so the panel asks Git
+        /// to count it without reading the agents and their timeline again.
+        let totalsComparison: WorktreeChanges.Comparison?
 
         /// How many digits the list's highest turn number has: every card's
         /// first column is that wide, so the prompts start at one x.
@@ -352,7 +356,8 @@ enum ChangesPanelModel {
         } else {
             false
         }
-        if case let .changed(files, lines, gone)? = range.map(comparison).flatMap(input.counts) {
+        let totalsComparison = range.map(comparison)
+        if case let .changed(files, lines, gone)? = totalsComparison.flatMap(input.counts) {
             fileCount = files
             added = lines
             removed = gone
@@ -392,7 +397,8 @@ enum ChangesPanelModel {
             line: sections == nil ? line(rows, conversations: agents.map(\.conversation), line: input.line) : nil,
             scrollTarget: scrollTarget(rows, focused: input.focused),
             sections: sections,
-            canGroup: groupable != nil
+            canGroup: groupable != nil,
+            totalsComparison: totalsComparison
         ))
     }
 
@@ -459,7 +465,7 @@ enum ChangesPanelModel {
 
     private static func unviewedTurns(of timeline: [TurnSummary], input: Input) -> ReviewUnviewedTurns {
         ReviewScopeCatalog.unviewedTurns(
-            turns: timeline,
+            timeline: timeline,
             isViewed: { input.line($0.conversation)?.isViewed($0) ?? false },
             isRestored: input.isRestored
         )
