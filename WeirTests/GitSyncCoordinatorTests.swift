@@ -204,6 +204,58 @@ struct GitSyncCoordinatorTests {
         withExtendedLifetime(coordinator) {}
     }
 
+    /// A sync whose listing names the same branch, folder, and commit for a
+    /// row keeps the row as it was, its fetch time included: a row
+    /// rewritten on every sync wrote the projects each time Weir came to the
+    /// front, and woke every view and save that reads them.
+    @Test func aSyncThatListsNothingNewForARow_keepsTheRowAsItWas() async throws {
+        try await withTempDir { root in
+            let (session, project) = WorkspaceSessionFixture.withProject(rootURL: root)
+            let feature = root.appendingPathComponent("feat-x")
+            try FileManager.default.createDirectory(at: feature, withIntermediateDirectories: true)
+            let row = Self.listed(feature, headSHA: "b2", branch: "feat-x")
+            let listing = Recorded([Self.listed(root, headSHA: "a1", branch: "main"), row])
+            let coordinator = GitSyncCoordinator(session: session) { _ in listing.value }
+            await untilObserved {
+                session.project(project.id)?.mainHeadSHA == "a1" && session.project(project.id)?.worktrees.isEmpty == false
+            }
+            let before = try #require(session.project(project.id)?.worktrees)
+            // Only the main folder's commit moves: the project's head says
+            // the second sync has run, and it wrote its rows before it.
+            listing.value = [Self.listed(root, headSHA: "c3", branch: "main"), row]
+            coordinator.appDidBecomeActive()
+            await untilObserved { session.project(project.id)?.mainHeadSHA == "c3" }
+            #expect(session.project(project.id)?.worktrees == before)
+            withExtendedLifetime(coordinator) {}
+        }
+    }
+
+    /// Git names a ref by its bytes, so a branch renamed to another spelling
+    /// of the same accented name is a new name, which the row takes; the same
+    /// bytes keep the row's ref.
+    @Test func aRowsRef_followsABranchRenamedToAnotherSpellingOfItsName() {
+        let path = URL(fileURLWithPath: "/repo/feat-x")
+        let composed = "caf\u{00E9}"
+        let decomposed = "cafe\u{0301}"
+        let existing = GitRef(branchName: composed, worktreePath: path, headSHA: "b2", lastFetched: Date(timeIntervalSince1970: 1))
+        let now = Date(timeIntervalSince1970: 2)
+        let kept = GitSyncCoordinator.gitRef(
+            reading: Self.listed(path, headSHA: "b2", branch: composed),
+            at: path,
+            existing: existing,
+            now: now
+        )
+        #expect(kept == existing)
+        let renamed = GitSyncCoordinator.gitRef(
+            reading: Self.listed(path, headSHA: "b2", branch: decomposed),
+            at: path,
+            existing: existing,
+            now: now
+        )
+        #expect(renamed.branchName.map { Array($0.utf8) } == Array(decomposed.utf8))
+        #expect(renamed.lastFetched == now)
+    }
+
     /// A sync started later describes the repository as it is later, so an
     /// earlier one that a later one replaced must not write over it when it
     /// finally returns.

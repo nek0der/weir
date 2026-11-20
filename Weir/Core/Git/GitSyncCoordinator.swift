@@ -31,6 +31,34 @@ extension Notification.Name {
 /// Lists a repository's worktrees: `git worktree list`, or a test's own.
 typealias WorktreeLister = @Sendable (URL) async throws -> [GitWorktreeInfo]
 
+extension GitSyncCoordinator {
+    /// The row's Git state as the listing reads it. A listing that names
+    /// the branch, folder, and commit the row already holds keeps the
+    /// row's ref, fetch time included: a new time would make the row
+    /// differ, and every sync, which runs each time Weir comes to the
+    /// front, would write the projects and wake each view and save that
+    /// reads them.
+    nonisolated static func gitRef(reading info: GitWorktreeInfo, at path: URL, existing: GitRef?, now: Date) -> GitRef {
+        if let existing, isSameBranch(existing.branchName, info.branch),
+           existing.worktreePath == path, existing.headSHA == info.headSHA
+        {
+            return existing
+        }
+        return GitRef(branchName: info.branch, worktreePath: path, headSHA: info.headSHA, lastFetched: now)
+    }
+
+    /// Branch names compared byte for byte, as Git compares refs: `==` on
+    /// strings takes two spellings of one accented name as the same, and a
+    /// rename between them would leave the row naming a ref that is gone.
+    private nonisolated static func isSameBranch(_ lhs: String?, _ rhs: String?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil): true
+        case let (lhs?, rhs?): lhs.utf8.elementsEqual(rhs.utf8)
+        default: false
+        }
+    }
+}
+
 @MainActor
 final class GitSyncCoordinator {
     private weak var session: WorkspaceSession?
@@ -353,12 +381,7 @@ private final class ProjectSync {
         info: GitWorktreeInfo
     ) -> Worktree {
         let path = info.path.standardizedFileURL
-        let gitRef = GitRef(
-            branchName: info.branch,
-            worktreePath: path,
-            headSHA: info.headSHA,
-            lastFetched: Date()
-        )
+        let gitRef = GitSyncCoordinator.gitRef(reading: info, at: path, existing: existing?.gitRef, now: Date())
         // Fall back through branch → folder basename → a literal
         // marker so we never write a blank label even if both upstream
         // sources happen to be empty (e.g. a freshly initialized
