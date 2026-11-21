@@ -91,6 +91,7 @@ struct WindowChromeHost: ViewModifier {
     private func covered(_ content: Content) -> some View {
         content
             .allowsHitTesting(!window.isContentCovered)
+            .environment(\.isContentCovered, window.isContentCovered)
             .background { AttachedSheetObserver(window: window) }
             // While a panel lies over the whole window, VoiceOver reads the
             // panel alone.

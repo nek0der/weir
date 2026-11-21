@@ -634,6 +634,10 @@ enum WeirLayout {
         static let sidebarListInset = spaceS
         static let sessionRowHorizontalInset = spaceS
         static let sessionRowHeight: CGFloat = 44
+        /// How far a press may move and still show the row's fill: AppKit
+        /// starts a drag after about three points. It decides only the
+        /// fill; the tap decides whether the row opens.
+        static let sessionRowPressSlop: CGFloat = 3
         /// The line a sidebar section folds into ("Other Worktrees 52"):
         /// one line of meta text, lower than a two-line row, so the folded
         /// lists read as below the rows rather than among them.
