@@ -46,9 +46,20 @@ struct SessionRowView: View {
     /// A dragged tab or pane would land here: the name takes the accent.
     @Environment(\.isDropTarget) private var isDropTarget
     @Environment(\.weirAccent) private var accent
+    @Environment(\.isContentCovered) private var isContentCovered
     @State private var isHovering = false
+    /// Whether the pointer holds the row down where it pressed. The row
+    /// takes the open row's fill while it does, as a list's row does on
+    /// the press, while it opens only when the press ends (the tap below):
+    /// a row opened on the press would also open when a drag of it starts.
+    @State private var isPressed = false
+    /// Where Answer… lies over the row, so a press of it is not the row's;
+    /// `nil` before it is laid out.
+    @State private var answerFrame: CGRect?
 
     private typealias Layout = WeirLayout.Supervision
+    /// The row's own coordinates, which the press monitor behind it reads.
+    private nonisolated static let rowSpace = "sessionRow"
 
     var body: some View {
         // Two concrete chains rather than one through a helper: a
@@ -144,10 +155,19 @@ struct SessionRowView: View {
         }
         .modifier(SessionRowFace(
             height: Layout.sessionRowHeight,
-            isActive: row.isActive,
+            isActive: row.isActive || isPressed,
             isHovering: isHovering || isCardSource,
             isKeyboardSelected: isKeyboardSelected
         ))
+        // The press shows before the click ends: a click is held for
+        // about 80 ms, which the keyboard's selection never waits out.
+        .background {
+            PointerPressMonitor(
+                isEnabled: !isRenaming && !isContentCovered,
+                slop: Layout.sessionRowPressSlop,
+                excludedRect: isShowingAnswer ? answerFrame : nil
+            ) { isPressed = $0 }
+        }
         // Not `.onTapGesture`: it waits out the double-click window that
         // the rename field's double-click opens, and the row would feel
         // slow to open.
@@ -174,9 +194,11 @@ struct SessionRowView: View {
                 .buttonStyle(.supervisionSecondary(size: .rowLine))
                 // It shows only on a hovered row, whose fill is opaque.
                 .environment(\.supervisionSurfaceOpacity, 1)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.rowSpace)) } action: { answerFrame = $0 }
                 .padding(Layout.sessionRowAnswerInsets)
             }
         }
+        .coordinateSpace(.named(Self.rowSpace))
         // After the overlay, so the pointer on Answer… still counts as on
         // the row; inside it, the button would hide itself as it is reached.
         .onHover { isHovering = $0 }

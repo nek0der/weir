@@ -76,6 +76,13 @@ extension EnvironmentValues {
     /// `nil` in Previews and tests, where no records are known and there is
     /// no terminal to reload.
     @Entry var settingsAppActions: SettingsAppActions?
+
+    /// Whether an overlay lies over the window's content, which then takes
+    /// no pointer (`ProjectWindowState.isContentCovered`). A view that
+    /// watches the window's mouse events itself, as a sidebar row's press
+    /// does, reads it, since such a watch sees the events before the overlay
+    /// takes them.
+    @Entry var isContentCovered = false
 }
 
 /// What Settings asks of the app, as one object `AppState` makes once.
