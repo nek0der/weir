@@ -37,21 +37,16 @@ extension AppState {
     /// that asks about many turns at once (`RestoreGateLookup`).
     func restoreGateLookup() -> RestoreGateLookup {
         RestoreGateLookup(
-            tabs: session.tabs.map { tab in
+            // The outlines and the gate's runs rather than the tabs and the
+            // runs, which a hook changes: the changes panel reads this as it
+            // draws, and would be drawn again on every hook.
+            tabs: session.tabOutlines.map { tab in
                 RestoreGateLookup.Tab(
                     directory: ReviewAgents.directory(for: tab.container, in: session),
-                    panes: tab.splitTree.allLeafIDs()
+                    panes: tab.panes
                 )
             },
-            runtimes: attention.allRuntimes.map {
-                RestoreGate.Runtime(
-                    provider: $0.kind,
-                    state: $0.badge.state,
-                    conversation: $0.conversation,
-                    paneIDs: $0.paneIDs,
-                    roots: [$0.badge.worktreeRoot, $0.badge.turnRoot].compactMap(\.self)
-                )
-            },
+            runtimes: attention.restoreGateRuntimes,
             waitingPanes: Set(attentionQueue.queue.items.compactMap { item in
                 item.kind.asksPerson ? item.subject.paneID : nil
             }),

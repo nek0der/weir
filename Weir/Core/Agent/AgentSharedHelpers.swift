@@ -104,8 +104,15 @@ extension WorkspaceSession {
     /// each tab should hold and applies the whole answer at once, so the shape
     /// of the iteration does not belong at that call site.
     func applyAcrossTabs(_ transform: (inout Tab) -> Void) {
-        for tab in tabs {
-            update(tab.id, transform: transform)
+        var next = tabs
+        for index in next.indices {
+            transform(&next[index])
+        }
+        // One write, and none when nothing changed: each write of `tabs`
+        // makes every tab's outline again (`tabOutlines`) and wakes every
+        // reader of the tabs, so a write per tab would do both once per tab.
+        if next != tabs {
+            tabs = next
         }
     }
 }

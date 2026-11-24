@@ -18,7 +18,28 @@ import WeirDomain
 @Observable
 final class AttentionState {
     /// Runtime facts are transient; native session snapshots stay compatible.
-    var runtimesByKind: [AgentKind: [AgentRuntimePresentation]] = [:]
+    var runtimesByKind: [AgentKind: [AgentRuntimePresentation]] = [:] {
+        didSet {
+            let places = ConversationPlaces(runtimes: allRuntimes)
+            // Assigned only on a change, so a reader of the places is not
+            // drawn again for a run's activity.
+            if places != conversationPlaces {
+                conversationPlaces = places
+            }
+            let gate = allRuntimes.map(RestoreGate.Runtime.init)
+            if gate != restoreGateRuntimes {
+                restoreGateRuntimes = gate
+            }
+        }
+    }
+
+    /// The runs as the restore gate weighs them (`RestoreGate.Runtime`),
+    /// kept with the runtimes and assigned only on a change, so a reader of
+    /// the gate is not drawn again for a run's activity.
+    private(set) var restoreGateRuntimes: [RestoreGate.Runtime] = []
+    /// Where each conversation runs, apart from what its run is doing
+    /// (`ConversationPlaces`), kept with the runtimes.
+    private(set) var conversationPlaces = ConversationPlaces()
     /// The episode each finished run was viewed in, by runtime id: the read
     /// state of a run no turn record stands for (`isViewed`).
     var viewedRuntimeTokens: [String: String] = [:]

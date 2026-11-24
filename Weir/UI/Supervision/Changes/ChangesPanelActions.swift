@@ -173,7 +173,7 @@ enum ChangesPanelActions {
             agents: agents(answer: answer, running: running, stores: stores),
             running: running,
             chosen: window.selection.changesPanelFilter,
-            focused: focused.flatMap { stores.attention.headerRuntime(inPane: $0)?.conversation },
+            focused: focused.flatMap { stores.attention.conversationPlaces.headerConversation[$0] },
             line: { stores.viewedLines.line(of: $0) },
             isRestored: { restored.contains($0.turnID) },
             tabName: tabName(stores: stores)
@@ -333,7 +333,7 @@ enum ChangesPanelActions {
     static func reviewUnviewed(window: ProjectWindowState, stores: ChangesPanelStores) {
         guard let root = root(window: window, stores: stores) else { return }
         let focused = stores.session.focusedPaneID(in: window.id)
-            .flatMap { stores.attention.headerRuntime(inPane: $0)?.conversation }
+            .flatMap { stores.attention.conversationPlaces.headerConversation[$0] }
         let restored = stores.restoredTurnIDs()
         let conversation = ChangesPanelModel.reviewConversation(
             timeline(root: root, stores: stores),
@@ -418,9 +418,11 @@ enum ChangesPanelActions {
     }
 
     /// Which conversations `container`'s tabs run, and where each runs
-    /// (`ConversationTabs`): the one mapping the strip reads too.
+    /// (`ConversationTabs`): the one mapping the strip reads too, read from
+    /// the tabs' outlines and the places rather than the tabs and the runs,
+    /// which change on every hook (`TabOutline`, `ConversationPlaces`).
     static func tabs(in container: ContainerID, stores: ChangesPanelStores) -> ConversationTabs {
-        ConversationTabs(tabs: stores.session.tabs(in: container), runtimes: stores.attention.allRuntimes)
+        ConversationTabs(outlines: stores.session.tabOutlines(in: container), places: stores.attention.conversationPlaces)
     }
 
     /// The tab that runs each conversation, read from every tab of the app
@@ -431,19 +433,15 @@ enum ChangesPanelActions {
     /// pane's agent holds.
     static func liveTab(in container: ContainerID, stores: ChangesPanelStores) -> (ConversationKey) -> ConversationChoice.LiveTab? {
         let session = stores.session
-        let runtimes = stores.attention.allRuntimes
-        let here = session.tabs(in: container)
-        let elsewhere = session.tabs.filter { $0.container != container }
+        let places = stores.attention.conversationPlaces
+        let here = session.tabOutlines(in: container)
+        let elsewhere = session.tabOutlines.filter { $0.container != container }
         let tabsByID = Dictionary((here + elsewhere).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        func panes(of tabs: [Tab], isInSession: Bool) -> [ChangesPanelModel.LivePane] {
-            let mapping = ConversationTabs(tabs: tabs, runtimes: runtimes)
+        func panes(of tabs: [TabOutline], isInSession: Bool) -> [ChangesPanelModel.LivePane] {
+            let mapping = ConversationTabs(outlines: tabs, places: places)
             return mapping.running.compactMap { conversation in
                 guard let place = mapping.place(of: conversation), let tab = tabsByID[place.tabID] else { return nil }
-                let runtime = runtimes
-                    .filter {
-                        $0.conversation == conversation && $0.paneIDs.contains(place.paneID) && $0.badge.state != .unknown
-                    }
-                    .max { $0.badge.updatedAt < $1.badge.updatedAt }
+                let titles = places.providerTitles[.init(paneID: place.paneID, conversation: conversation)]
                 let isTitled = mapping.conversations(of: tab.id)?.titled == conversation
                 let live = ConversationChoice.LiveTab(
                     title: tab.shownTitle,
@@ -451,7 +449,7 @@ enum ChangesPanelActions {
                     checkoutPlace: isInSession ? nil : CheckoutName.place(of: tab.container, in: session),
                     titleOverride: isTitled ? tab.titleOverride : nil,
                     position: isInSession ? place.position : nil,
-                    providerTitle: runtime.flatMap(Self.providerTitle)
+                    providerTitle: titles.flatMap(Self.providerTitle)
                 )
                 return ChangesPanelModel.LivePane(conversation: conversation, tab: live)
             }
@@ -460,14 +458,14 @@ enum ChangesPanelActions {
         return { tabs[$0] }
     }
 
-    /// The title `runtime`'s provider gives its conversation, as the tab's
+    /// The title the provider gives a conversation (`titles`), as the tab's
     /// title and each turn's recorded title take it (`conversation_title` on
     /// the Rust side): the session's name, else the generated title, cleaned
     /// of line breaks and control characters, without the opening prompt.
-    private static func providerTitle(_ runtime: AgentRuntimePresentation) -> String? {
+    private static func providerTitle(_ titles: ConversationPlaces.ProviderTitles) -> String? {
         WeirRustTitleResolver.resolve(
-            providerSessionTitle: runtime.badge.providerSessionTitle,
-            providerGeneratedTitle: runtime.badge.providerGeneratedTitle,
+            providerSessionTitle: titles.session,
+            providerGeneratedTitle: titles.generated,
             firstPrompt: nil
         )
     }

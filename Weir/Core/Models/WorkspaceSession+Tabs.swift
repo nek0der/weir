@@ -298,6 +298,12 @@ extension WorkspaceSession {
         }
     }
 
+    /// The outlines of the tabs in `container`, in the order `tabs(in:)`
+    /// gives the tabs (`TabOutline`).
+    func tabOutlines(in container: ContainerID) -> [TabOutline] {
+        tabOutlines.filter { $0.container == container }
+    }
+
     /// The panes of every tab in `container`.
     func paneIDs(in container: ContainerID) -> Set<UUID> {
         Set(tabs(in: container).flatMap { $0.splitTree.allLeafIDs() })
