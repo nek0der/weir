@@ -47,7 +47,9 @@ extension PaneStripModel {
         let tabs = session.tabs(in: container)
         // None for a scratch tab: it has no worktree whose cards the tab
         // could be matched with.
-        let conversations = ConversationTabs(tabs: container == .loose ? [] : tabs, runtimes: runtimes)
+        let conversations = container == .loose
+            ? ConversationTabs(outlines: []) { _ in nil }
+            : ConversationTabs(tabs: tabs, runtimes: runtimes)
         let inputs = tabs.map { tab in
             let panes = tab.splitTree.allLeafIDs()
             let runs = conversations.conversations(of: tab.id)

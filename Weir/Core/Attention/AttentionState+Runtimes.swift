@@ -83,3 +83,16 @@ extension AttentionState {
         }
     }
 }
+
+extension RestoreGate.Runtime {
+    /// `runtime` as the restore gate weighs it.
+    init(_ runtime: AgentRuntimePresentation) {
+        self.init(
+            provider: runtime.kind,
+            state: runtime.badge.state,
+            conversation: runtime.conversation,
+            paneIDs: runtime.paneIDs,
+            roots: [runtime.badge.worktreeRoot, runtime.badge.turnRoot].compactMap(\.self)
+        )
+    }
+}

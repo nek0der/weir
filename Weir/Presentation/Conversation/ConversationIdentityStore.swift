@@ -101,7 +101,12 @@ final class ConversationIdentityStore {
               let answer = sources.repositoryRoots.answer(for: folder),
               case let .repository(root) = answer
         else { return [:] }
-        let running = ConversationTabs(tabs: sources.session.tabs(in: container), runtimes: sources.attention.allRuntimes).running
+        // Through the outlines and the places, which a hook leaves alone, so
+        // a reader of the colors is not drawn again on every hook.
+        let running = ConversationTabs(
+            outlines: sources.session.tabOutlines(in: container),
+            places: sources.attention.conversationPlaces
+        ).running
         let restored = sources.restoredTurnIDs()
         let key = Key(
             root: root,

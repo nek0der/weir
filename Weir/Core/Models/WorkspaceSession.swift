@@ -19,7 +19,20 @@ final class WorkspaceSession {
     /// All open tabs as a flat list. A row's tabs are derived by
     /// filtering on `Tab.container`. Array order = user-visible order
     /// (drag-reorder mutates the array in place).
-    var tabs: [Tab]
+    var tabs: [Tab] {
+        didSet {
+            let outlines = tabs.map(TabOutline.init)
+            // Assigned only on a change, so a reader of the outlines is not
+            // drawn again for a badge.
+            if outlines != tabOutlines {
+                tabOutlines = outlines
+            }
+        }
+    }
+
+    /// The tabs without their agents' badges, in the same order
+    /// (`TabOutline`), kept with the tabs.
+    private(set) var tabOutlines: [TabOutline]
 
     /// The primary window's selection. Held here as well as in
     /// `selections` so what stands for the primary by name (the launch, a
@@ -582,6 +595,7 @@ final class WorkspaceSession {
     ) {
         self.projects = projects
         self.tabs = tabs
+        tabOutlines = tabs.map(TabOutline.init)
         let primary = WindowSelection(
             activeTabID: activeTabID,
             activeContainerID: activeContainerID,
@@ -603,7 +617,10 @@ final class WorkspaceSession {
     /// the split tree reads it (`SplitTree.effectiveFocusedLeafID`). `nil`
     /// for a window that shows no tab.
     func focusedPaneID(in window: WindowID) -> UUID? {
-        activeTab(in: window)?.splitTree.effectiveFocusedLeafID
+        // Read from the outlines, which a badge leaves alone, so a view that
+        // asks is not drawn again on every hook.
+        guard let id = selection(window)?.activeTabID else { return nil }
+        return tabOutlines.first { $0.id == id }?.focusedPaneID
     }
 
     // MARK: - Container lookups (shared across views)
