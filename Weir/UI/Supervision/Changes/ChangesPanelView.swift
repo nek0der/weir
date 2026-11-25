@@ -45,9 +45,16 @@ struct ChangesPanelView: View {
                 // sections open again as it is drawn anew. Keyed on that
                 // choice, not on whether the model made sections: a second
                 // conversation's first turn adds sections within the same
-                // list rather than resetting its place and folds.
+                // list rather than resetting its place and folds. So is
+                // another conversation chosen in the filter: it folds again
+                // and opens on its own first unviewed turn, with no history
+                // opened above it, and no section closed earlier hiding it.
                 ChangesTurnList(list: list, state: state)
-                    .id(ListIdentity(container: window.selection.activeContainerID, grouping: window.selection.changesPanelGrouping))
+                    .id(ListIdentity(
+                        container: window.selection.activeContainerID,
+                        grouping: window.selection.changesPanelGrouping,
+                        filter: list.filter
+                    ))
             }
             // Below the turns, where the work ends; only for a Git
             // work tree, which is all it can speak of.
@@ -83,6 +90,7 @@ struct ChangesPanelView: View {
     private struct ListIdentity: Hashable {
         let container: ContainerID
         let grouping: ChangesPanelGrouping
+        let filter: ConversationKey?
     }
 
     private struct RefreshKey: Equatable {
@@ -402,8 +410,8 @@ struct ChangesConversationFilter: View {
 /// The turns, oldest at the top as in the terminal, the viewed ones at the
 /// top folded, and "Viewed up to here" under the last once every row is
 /// viewed; or, grouped by conversation, a section per conversation, each
-/// with its own fold and line (`ChangesTurnSection`). Opens on the latest
-/// unviewed turn.
+/// with its own fold and line (`ChangesTurnSection`). Opens with the first
+/// unviewed turn at its top (`ChangesPanelModel.TurnList.scrollTarget`).
 private struct ChangesTurnList: View {
     let list: ChangesPanelModel.TurnList
     let state: AppState
@@ -489,19 +497,19 @@ private struct ChangesTurnList: View {
                     .padding(.top, Layout.changesListTopInset)
                 }
             }
+            // On the turn the review reads, else on the list's own target
+            // (`ProjectScrollMemory.selectedTurn`): either has only the
+            // fold above it, where the first unviewed turn below a ringed
+            // viewed one would have every viewed card between them built.
             .onAppear {
-                guard !restoreScroll(selected: selected, drawn: drawn, proxy: proxy), let target = list.scrollTarget else { return }
-                proxy.scrollTo(target, anchor: .bottom)
+                guard !restoreScroll(selected: selected, drawn: drawn, proxy: proxy), let selected else { return }
+                proxy.scrollTo(selected, anchor: .top)
             }
-            // Another conversation's rows are another list; it opens where
-            // that one has its own unviewed turns. The window switching to
-            // its project brings the list back instead, the filter with it,
-            // in the one handler, so the two never take turns at the list.
-            .onChange(of: Place(conversation: list.filter, restore: window.scrollRestore?.id)) { old, new in
-                guard !restoreScroll(selected: selected, drawn: drawn, proxy: proxy), old.conversation != new.conversation,
-                      let target = list.scrollTarget
-                else { return }
-                proxy.scrollTo(target, anchor: .bottom)
+            // The window switching to its project in place brings the list
+            // back. Another filter is another list (`ListIdentity`), which
+            // takes the restore as it appears.
+            .onChange(of: window.scrollRestore?.id) {
+                _ = restoreScroll(selected: selected, drawn: drawn, proxy: proxy)
             }
             // Where the list stands, kept beside the window so its project
             // keeps it as the window leaves (`WindowRegistry.scrollMemories`):
@@ -517,11 +525,6 @@ private struct ChangesTurnList: View {
                 window.scrollPlace.changesSelected = selected
             }
         }
-    }
-
-    private struct Place: Equatable {
-        let conversation: ConversationKey?
-        let restore: UUID?
     }
 
     /// One conversation's section of the list grouped by conversation.
@@ -645,7 +648,8 @@ private struct ChangesTurnList: View {
                 // heard from again, and leaving once more would lose it.
                 report(top: turn, selected: selected)
             case let .selected(turn):
-                proxy.scrollTo(turn, anchor: .bottom)
+                // At the top, as the list opens on its own target.
+                proxy.scrollTo(turn, anchor: .top)
             case nil:
                 break
             }

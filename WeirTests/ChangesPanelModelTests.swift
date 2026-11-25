@@ -88,7 +88,7 @@ struct ChangesPanelModelTests {
         #expect(list.unviewedCount == 1)
         #expect(list.conversations.isEmpty, "one conversation needs no filter")
         #expect(list.rows.allSatisfy { $0.conversation == nil }, "and no badge on its rows")
-        #expect(list.scrollTarget == turns[2].turnID, "the latest unviewed turn")
+        #expect(list.scrollTarget == turns[2].turnID, "the first unviewed turn")
     }
 
     private typealias Fold = ChangesPanelModel.Fold
@@ -816,23 +816,21 @@ extension ChangesPanelModelTests {
         #expect(all.line != nil)
     }
 
-    @Test func thePanelOpens_onTheFocusedConversationsLatestUnviewedTurn() throws {
+    /// The panel opens on the timeline's first turn not viewed, of any conversation or state.
+    @Test func thePanelOpens_onTheFirstTurnNotViewed() throws {
         let claude1 = try TurnSummaryFixture.timed(1, conversation: "claude", start: 0, end: 10)
         let codex1 = try TurnSummaryFixture.timed(1, conversation: "codex", start: 20, end: 30)
         let codex2 = try TurnSummaryFixture.timed(2, conversation: "codex", start: 31, end: 39)
         let claude2 = try TurnSummaryFixture.timed(2, conversation: "claude", start: 40, end: 50)
         let agents = Panel.agents([claude1, claude2, codex1, codex2])
 
-        let focused = try Panel.list(ChangesPanelModel.make(Panel.input(agents, focused: codex1.conversation)))
-        #expect(focused.scrollTarget == codex2.turnID)
-        let unfocused = try Panel.list(ChangesPanelModel.make(Panel.input(agents)))
-        #expect(unfocused.scrollTarget == claude2.turnID, "the latest unviewed")
-        let viewedCodex = try Panel.list(ChangesPanelModel.make(Panel.input(
-            agents,
-            lines: [Panel.line(through: codex2).line],
-            focused: codex1.conversation
-        )))
-        #expect(viewedCodex.scrollTarget == claude2.turnID, "nothing of the focused one is unviewed")
+        let unviewed = try Panel.list(ChangesPanelModel.make(Panel.input(agents)))
+        #expect(unviewed.scrollTarget == claude1.turnID)
+        let viewedClaude1 = try Panel.list(ChangesPanelModel.make(Panel.input(agents, lines: [Panel.line(through: claude1).line])))
+        #expect(viewedClaude1.scrollTarget == codex1.turnID, "the next turn of the timeline, of another conversation")
+        let answer = try Panel.turn(1, changes: #"{"kind":"unchanged"}"#)
+        let afterAnswer = try Panel.list(ChangesPanelModel.make(Panel.input([Panel.agent([answer, Panel.turn(2)])])))
+        #expect(afterAnswer.scrollTarget == answer.turnID, "the first not viewed, though it changed no file")
     }
 
     // MARK: - Mark as Viewed up to Here, across conversations
