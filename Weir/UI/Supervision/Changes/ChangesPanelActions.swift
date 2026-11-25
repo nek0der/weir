@@ -166,14 +166,12 @@ enum ChangesPanelActions {
         window: ProjectWindowState,
         stores: ChangesPanelStores
     ) -> ChangesPanelModel.Input {
-        let focused = stores.session.focusedPaneID(in: window.id)
         let running = tabs(in: window.selection.activeContainerID, stores: stores).running
         let restored = stores.restoredTurnIDs()
         return ChangesPanelModel.Input(
             agents: agents(answer: answer, running: running, stores: stores),
             running: running,
             chosen: window.selection.changesPanelFilter,
-            focused: focused.flatMap { stores.attention.conversationPlaces.headerConversation[$0] },
             line: { stores.viewedLines.line(of: $0) },
             isRestored: { restored.contains($0.turnID) },
             tabName: tabName(stores: stores)

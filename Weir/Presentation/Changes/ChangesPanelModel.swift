@@ -39,8 +39,6 @@ enum ChangesPanelModel {
         /// The conversation the panel's filter narrows the timeline to;
         /// `nil` for every conversation ("All"), the default.
         var chosen: ConversationKey?
-        /// The focused pane's agent, if it runs one: where the panel opens.
-        var focused: ConversationKey?
         /// How the window lists the turns (`WindowSelection.changesPanelGrouping`).
         var grouping = ChangesPanelGrouping.timeline
         /// Each conversation's viewed line, the one source of which turns
@@ -151,9 +149,9 @@ enum ChangesPanelModel {
         /// The line below the latest turn, `nil` while a row is unviewed,
         /// and in sections, where each draws its own.
         let line: Line?
-        /// Where the panel scrolls when it opens: among the rows as drawn,
-        /// the focused pane's conversation's last unviewed turn, else the
-        /// last unviewed, else the last.
+        /// Where the panel scrolls when it opens, put at the top of the
+        /// list: among the rows as drawn, the first not viewed, else the
+        /// last row (`scrollTarget(_:)`).
         let scrollTarget: TurnID?
         /// A section per conversation, when the window groups the list by
         /// conversation; `nil` for the timeline. Also `nil` while the
@@ -395,7 +393,7 @@ enum ChangesPanelModel {
             rows: rows,
             fold: sections == nil ? fold(rows) : nil,
             line: sections == nil ? line(rows, conversations: agents.map(\.conversation), line: input.line) : nil,
-            scrollTarget: scrollTarget(rows, focused: input.focused),
+            scrollTarget: scrollTarget(rows),
             sections: sections,
             canGroup: groupable != nil,
             totalsComparison: totalsComparison
@@ -535,7 +533,7 @@ enum ChangesPanelModel {
 
     /// The viewed rows at the top of the list, folded: the run of viewed
     /// rows from the first, two or more of them, and never the last row,
-    /// which is what the panel opens on. Below the first unviewed row the
+    /// which the panel opens on when nothing is unviewed. Below the first unviewed row the
     /// rows stay as they are, viewed or not: another conversation's viewed
     /// turn between two unviewed ones is part of the story.
     static func fold(_ rows: [Row]) -> Fold? {
@@ -543,25 +541,27 @@ enum ChangesPanelModel {
         return count >= 2 ? Fold(count: count) : nil
     }
 
-    /// The fold as its line offers it: only while it hides its rows. Once
-    /// opened the line leaves the list, and while the review reads a row it
-    /// holds the rows stay shown, where a line offering to show them would
-    /// be wrong. `hidden` is what the list hides
+    /// The fold as its line offers it: only while it hides its rows, and
+    /// counting those it still hides. Once opened the line leaves the list.
+    /// `hidden` is what the list hides
     /// (`hiddenRows(fold:isUnfolded:shownInReview:rows:)`); a closed
     /// section hides its rows too, and draws no line, so its caller asks
     /// only for an open one.
     static func foldLine(_ fold: Fold?, rows: [Row], hidden: Set<TurnID>) -> Fold? {
-        guard let fold, let first = rows.first, hidden.contains(first.id) else { return nil }
-        return fold
+        guard let fold else { return nil }
+        let count = rows.prefix(fold.count).prefix { hidden.contains($0.id) }.count
+        return count > 0 ? Fold(count: count) : nil
     }
 
     /// The rows the fold hides: those it holds, until the person opens
-    /// it, and none while the review tab reads a turn among them, which the
-    /// list rings and must show.
+    /// it. While the review tab reads a turn among them, which the list
+    /// rings and must show, it shows that turn and those below it, and
+    /// still hides the ones above: opened whole, a long history would all
+    /// be built as the list scrolls to the ringed turn.
     static func hiddenRows(fold: Fold?, isUnfolded: Bool, shownInReview: Set<TurnID>, rows: [Row]) -> Set<TurnID> {
         guard let fold, !isUnfolded else { return [] }
-        let folded = Set(rows.prefix(fold.count).map(\.id))
-        return folded.isDisjoint(with: shownInReview) ? folded : []
+        let folded = rows.prefix(fold.count).prefix { !shownInReview.contains($0.id) }
+        return Set(folded.map(\.id))
     }
 
     /// The rows the list draws, in order: what a remembered scroll place
@@ -623,11 +623,19 @@ enum ChangesPanelModel {
         return Line(undo: undo)
     }
 
-    /// Where the panel opens, among the rows as drawn: the focused pane's
-    /// conversation's last unviewed turn, else the last unviewed, else the last.
-    private static func scrollTarget(_ rows: [Row], focused: ConversationKey?) -> TurnID? {
-        let unviewed = rows.filter { $0.status == .unviewed }
-        return (unviewed.last { $0.turn.conversation == focused } ?? unviewed.last ?? rows.last)?.id
+    /// Where the panel opens, among the rows as drawn: the first row not
+    /// viewed, whatever its state (a running turn, one with no file
+    /// changes), else the last row, either put at the top of the list.
+    /// Scrolling a lazy list to a row builds every card drawn above it, so
+    /// the list opens on the row where its fold, the run of viewed rows
+    /// from the first, ends (`fold(_:)`). Opened on the last unviewed turn,
+    /// a long run of unviewed turns was all built before the panel showed.
+    /// For the same reason it does not prefer the focused pane's
+    /// conversation, whose first unviewed turn can have many of another
+    /// conversation's above it. Where the rows from the target on fit in
+    /// sight, the list still ends at its foot.
+    private static func scrollTarget(_ rows: [Row]) -> TurnID? {
+        (rows.first { !$0.isViewed } ?? rows.last)?.id
     }
 
     /// The list's last card with moves shows them at rest (each section's,

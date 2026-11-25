@@ -107,8 +107,9 @@ struct ChangesPanelMarkTests {
     }
 
     /// The fold hides what it holds until opened, and never a row the
-    /// review reads; a scroll place on a row it hides is no place.
-    @Test func theFold_hidesItsRows_saveOneTheReviewReads_andAHiddenRowIsNoScrollPlace() throws {
+    /// review reads or one below it; a scroll place on a row it hides is no
+    /// place.
+    @Test func theFold_hidesItsRows_aboveOneTheReviewReads_andAHiddenRowIsNoScrollPlace() throws {
         let turns = try (1...4).map { try TurnSummaryFixture.timed($0, start: $0 * 100, end: $0 * 100 + 10) }
         let viewed = Panel.line(through: turns[2], at: Date(), markID: nil, sequence: nil).line
         let list = try Self.list(turns, lines: [viewed])
@@ -119,13 +120,18 @@ struct ChangesPanelMarkTests {
         #expect(hidden == folded)
         #expect(ChangesPanelModel.hiddenRows(fold: fold, isUnfolded: true, shownInReview: [], rows: list.rows).isEmpty)
         #expect(
-            ChangesPanelModel.hiddenRows(fold: fold, isUnfolded: false, shownInReview: [turns[1].turnID], rows: list.rows).isEmpty,
-            "the review reads T2: the fold stays open"
+            ChangesPanelModel.hiddenRows(fold: fold, isUnfolded: false, shownInReview: [turns[1].turnID], rows: list.rows)
+                == [turns[0].turnID],
+            "the review reads T2: T2 and T3 are shown, T1 above them stays folded"
+        )
+        #expect(
+            ChangesPanelModel.hiddenRows(fold: fold, isUnfolded: false, shownInReview: [turns[0].turnID], rows: list.rows).isEmpty,
+            "the review reads T1: nothing is above it to fold"
         )
         #expect(ChangesPanelModel.hiddenRows(fold: nil, isUnfolded: false, shownInReview: [], rows: list.rows).isEmpty)
 
         // The list was left with T2 at its top, unfolded; it comes back
-        // folded, so it opens where it would, on the latest unviewed.
+        // folded, so it opens where it would, on the first unviewed.
         let drawn = ChangesPanelModel.drawnRows(list.rows, hidden: hidden)
         #expect(drawn == [turns[3].turnID])
         let remembered = ProjectScrollMemory.ChangesPlace(
@@ -146,9 +152,9 @@ struct ChangesPanelMarkTests {
         )
     }
 
-    /// The fold's line shows only while the fold hides its rows: once
-    /// opened it leaves the list, and while the review reads a row it holds
-    /// it is gone too, since the rows are already shown.
+    /// The fold's line shows only while the fold hides rows, and counts
+    /// those it still hides: once opened it leaves the list, and while the
+    /// review reads a row it holds it counts the rows above that one.
     @Test func theFoldsLine_showsOnlyWhileItHidesItsRows() throws {
         let turns = try (1...4).map { try TurnSummaryFixture.timed($0, start: $0 * 100, end: $0 * 100 + 10) }
         let viewed = Panel.line(through: turns[2], at: Date(), markID: nil, sequence: nil).line
@@ -161,7 +167,11 @@ struct ChangesPanelMarkTests {
 
         #expect(line(isUnfolded: false, shownInReview: []) == fold)
         #expect(line(isUnfolded: true, shownInReview: []) == nil, "opened: the line has left the list")
-        #expect(line(isUnfolded: false, shownInReview: [turns[1].turnID]) == nil, "the review reads T2, so its rows are shown")
+        #expect(
+            line(isUnfolded: false, shownInReview: [turns[1].turnID]) == ChangesPanelModel.Fold(count: 1),
+            "the review reads T2: T1 alone is folded"
+        )
+        #expect(line(isUnfolded: false, shownInReview: [turns[0].turnID]) == nil, "the review reads T1: nothing is folded")
         #expect(ChangesPanelModel.foldLine(nil, rows: list.rows, hidden: []) == nil)
     }
 }

@@ -37,6 +37,7 @@ extension ChangesPanelModelTests {
         let sections = try #require(list.sections)
         #expect(sections.map(\.id) == [running, newer, older, done].map(\.conversation))
         #expect(sections.map(\.choice.section) == [.running, .unviewed, .unviewed, .viewed])
+        #expect(list.scrollTarget == newer.turnID, "the first not viewed as drawn, where the timeline has the older one first")
         #expect(list.rows.map(\.id) == sections.flatMap(\.rows).map(\.id), "the rows in the order drawn")
     }
 
@@ -55,7 +56,7 @@ extension ChangesPanelModelTests {
         try #require(sections.map(\.id) == [a1.conversation, b1.conversation], "a ended last")
         #expect(sections[0].rows.map(\.id) == [a1, a2, a3].map(\.turnID))
         #expect(sections[1].rows.map(\.id) == [b1, b2].map(\.turnID))
-        #expect(list.scrollTarget == b2.turnID, "the last unviewed row as drawn, not the one that ended last")
+        #expect(list.scrollTarget == a1.turnID, "the first unviewed row as drawn")
     }
 
     /// Narrowed to one conversation, the list is the timeline: no

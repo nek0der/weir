@@ -69,10 +69,9 @@ enum ChangesPanelFixture {
         _ agents: [ChangesPanelModel.Agent],
         lines: [ViewedLine] = [],
         chosen: ConversationKey? = nil,
-        focused: ConversationKey? = nil,
         running: [ConversationKey] = []
     ) -> ChangesPanelModel.Input {
-        ChangesPanelModel.Input(agents: agents, running: running, chosen: chosen, focused: focused, line: { conversation in
+        ChangesPanelModel.Input(agents: agents, running: running, chosen: chosen, line: { conversation in
             lines.first { $0.conversation == conversation }
         })
     }
