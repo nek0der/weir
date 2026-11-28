@@ -46,11 +46,11 @@ struct SupervisionIconButtonStyle: ButtonStyle {
                 .onHover { isHovering = $0 }
         }
 
-        private func fill(isLit: Bool) -> Color {
+        private func fill(isLit: Bool) -> AnyShapeStyle {
             if configuration.isPressed {
-                return SupervisionTokens.selection.color
+                return AnyShapeStyle(SupervisionTokens.selection.color)
             }
-            return isLit ? SupervisionTokens.hover.color : .clear
+            return isLit ? AnyShapeStyle(SupervisionTokens.hover.color) : AnyShapeStyle(Color.clear)
         }
     }
 }

@@ -71,6 +71,7 @@ struct SupervisionSegmentedTrack<Segment: View, SelectedLabel: View>: View {
     /// The store is optional so a view hosted without it (a test, a preview)
     /// draws the default accent rather than stopping.
     @Environment(SettingsStore.self) private var settings: SettingsStore?
+    @Environment(\.weirWindowColors) private var windowColors
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// This holds where the pill is and where it is going; only a change of
     /// the selection changes it (`SegmentPillSlide.after`).
@@ -173,7 +174,7 @@ struct SupervisionSegmentedTrack<Segment: View, SelectedLabel: View>: View {
                     .fill(colors.fill)
                     // A light accent's fill differs from the track by a
                     // shade; the edge holds 3:1 against it.
-                    .overlay(pillShape.strokeBorder(SupervisionTokens.segmentedPillEdge(accent), lineWidth: 1)),
+                    .overlay(pillShape.strokeBorder(SupervisionTokens.segmentedPillEdge(accent, windowColors: windowColors), lineWidth: 1)),
                 position: position
             )
         }

@@ -71,6 +71,7 @@ final class GhosttyApp {
             settings: settings,
             resourcesDir: resourcesDir
         )
+        let themePaths = GhosttyConfigBridge.writtenThemePaths
         guard let cfg = GhosttyConfigBridge.makeConfig(
             path: path,
             includeUserConfig: settings.advanced.ghosttyConfig.isOn
@@ -124,6 +125,9 @@ final class GhosttyApp {
 
         ghostty_app_set_color_scheme(handle, colorScheme)
         ghostty_app_update_config(handle, config)
+        // A process that had this ID before may have left copies; the
+        // config now in use names only the ones just written.
+        GhosttyConfigBridge.removeStaleThemeCopies(keeping: themePaths)
 
         keyboardSelectionObserver = NotificationCenter.default.addObserver(
             forName: NSTextInputContext.keyboardSelectionDidChangeNotification,

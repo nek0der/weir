@@ -97,7 +97,7 @@ struct ReviewTabBand: View {
         // list while it loads is not "No changes". A tab with no comparison
         // says so at once.
         let shownStatus = isReady || tab.scope == nil ? status : nil
-        SupervisionFootBar(fill: ReviewTabBandRow.fill(tone), rule: ReviewTabBandRow.rule(tone)) {
+        SupervisionFootBar(fill: AnyShapeStyle(ReviewTabBandRow.fill(tone)), rule: AnyShapeStyle(ReviewTabBandRow.rule(tone))) {
             ReviewTabBandRow(
                 tone: tone,
                 status: shownStatus,
@@ -287,11 +287,11 @@ struct ReviewTabBandRow: View {
 
     /// The band's ground: the blue of unread turns while they are what it
     /// is on, the sidebar's color otherwise.
-    static func fill(_ tone: DecisionBarModel.Tone) -> Color {
+    static func fill(_ tone: DecisionBarModel.Tone) -> ThemedStyle {
         tone == .unread ? SupervisionTokens.unreadFill.color : SupervisionTokens.sidebar.color
     }
 
-    static func rule(_ tone: DecisionBarModel.Tone) -> Color {
+    static func rule(_ tone: DecisionBarModel.Tone) -> ThemedStyle {
         (tone == .unread ? SupervisionTokens.unread : SupervisionTokens.line).color
     }
 
@@ -622,19 +622,13 @@ struct ReviewTabDestinationMenu: View {
 
     /// "Claude Code · claude", each part in the look it has apart.
     private static func joined(name: String, foreground: String?) -> Text {
-        var text = AttributedString(name)
-        text.font = .supervision(.row, weight: .medium)
-        if let foreground {
-            var separator = AttributedString(" · ")
-            separator.font = .supervision(.row)
-            separator.foregroundColor = SupervisionTokens.muted.color
-            var process = AttributedString(foreground)
-            process.font = .supervision(.caption).monospaced()
-            process.foregroundColor = SupervisionTokens.muted.color
-            text += separator
-            text += process
-        }
-        return Text(text)
+        let text = Text(verbatim: name).font(.supervision(.row, weight: .medium))
+        guard let foreground else { return text }
+        let separator = Text(verbatim: " · ").font(.supervision(.row)).foregroundStyle(SupervisionTokens.muted.color)
+        let process = Text(verbatim: foreground)
+            .font(.supervision(.caption).monospaced())
+            .foregroundStyle(SupervisionTokens.muted.color)
+        return Text("\(text)\(separator)\(process)")
     }
 }
 

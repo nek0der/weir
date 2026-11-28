@@ -249,7 +249,7 @@ struct ReviewFileRail: View {
             } label: {
                 Image(systemName: hidesViewed ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
                     .font(.supervision(.caption))
-                    .foregroundStyle(hidesViewed ? accent : SupervisionTokens.muted.color)
+                    .foregroundStyle(hidesViewed ? AnyShapeStyle(accent) : AnyShapeStyle(SupervisionTokens.muted.color))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(Text(hidesViewed ? "Show Viewed Files" : "Hide Viewed Files"))
@@ -423,7 +423,7 @@ struct ReviewFileRail: View {
         }
         // Read files keep their place and fade only their name
         // (`rowButton`), so the checkbox and the counts stay legible.
-        .background(isSelected ? SupervisionTokens.selection.color.opacity(surfaceOpacity) : .clear)
+        .background(isSelected ? AnyShapeStyle(SupervisionTokens.selection.color.opacity(surfaceOpacity)) : AnyShapeStyle(Color.clear))
     }
 
     private func rowButton(
@@ -520,7 +520,7 @@ struct ReviewFileRail: View {
     /// A read file's name steps back to `muted`, which still reads at 4.5:1,
     /// unless it is the file selected, which is in the text color
     /// like every unread one.
-    private func nameColor(isSelected: Bool, isViewed: Bool) -> Color {
+    private func nameColor(isSelected: Bool, isViewed: Bool) -> ThemedStyle {
         isViewed && !isSelected ? SupervisionTokens.muted.color : SupervisionTokens.text.color
     }
 

@@ -18,6 +18,23 @@
         }
       }
     },
+    "%@ (Missing)": {
+      "comment": "A terminal theme picker row: the chosen theme's name, when no theme folder holds it now",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ (Missing)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@（見つかりません）"
+          }
+        }
+      }
+    },
     "%@ isn’t listed because Weir can’t step in before it runs a command.": {
       "localizations": {
         "en": {
@@ -46,6 +63,40 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ は、コマンドの実行前に Weir が処理できないため表示していません。"
+          }
+        }
+      }
+    },
+    "%@%@": {
+      "comment": "Two pieces of one line in their own colors, joined with nothing between them",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@%2$@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@%2$@"
+          }
+        }
+      }
+    },
+    "%@%@%@": {
+      "comment": "Three pieces of one line in their own looks, joined with nothing between them",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@%2$@%3$@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@%2$@%3$@"
           }
         }
       }
@@ -128,6 +179,153 @@
           "stringUnit": {
             "state": "translated",
             "value": "Antigravity の値は最後の返答時点のものです。"
+          }
+        }
+      }
+    },
+    "Color the window with the theme": {
+      "comment": "Settings → Appearance → Terminal Colors: a switch that gives the window's surfaces, lines, and text the terminal theme's colors",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Color the window with the theme"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ウインドウの色をテーマに合わせる"
+          }
+        }
+      }
+    },
+    "Color theme": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Color theme"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "配色テーマ"
+          }
+        }
+      }
+    },
+    "Dark theme": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dark theme"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ダーク用テーマ"
+          }
+        }
+      }
+    },
+    "Light theme": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Light theme"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ライト用テーマ"
+          }
+        }
+      }
+    },
+    "Terminal Colors": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terminal Colors"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ターミナルの配色"
+          }
+        }
+      }
+    },
+    "Terminal theme": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terminal theme"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ターミナルのテーマ"
+          }
+        }
+      }
+    },
+    "The window keeps its own colors for “%@”: its colors can’t keep every text and mark readable.": {
+      "comment": "Settings → Appearance → Terminal Colors footnote; %@ is a terminal theme's name, or several joined by commas",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The window keeps its own colors for “%@”: its colors can’t keep every text and mark readable."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "テーマ「%@」の色では文字や印を読みやすく保てないため、ウインドウは元の色のままです。"
+          }
+        }
+      }
+    },
+    "Themes are read from %@ and from Ghostty.app.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Themes are read from %@ and from Ghostty.app."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "テーマは %@ と Ghostty.app から読み込みます。"
+          }
+        }
+      }
+    },
+    "Window theme": {
+      "comment": "Settings search keyword for the switch that colors the window with the terminal theme",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Window theme"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ウインドウのテーマ"
           }
         }
       }
@@ -24356,6 +24554,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Weir はターミナル設定を書き込めませんでした。"
+          }
+        }
+      }
+    },
+    "Weir couldn’t use the terminal theme “%@”, so it uses the default.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weir couldn’t use the terminal theme “%@”, so it uses the default."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ターミナルのテーマ「%@」を使えないため、標準のテーマを使います。"
           }
         }
       }

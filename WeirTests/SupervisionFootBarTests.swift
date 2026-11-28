@@ -128,7 +128,10 @@ struct SupervisionFootBarTests {
         try withTempDir { directory in
             let settings = SettingsStore(directory: directory)
             for row in Self.bandRows() {
-                let bar = SupervisionFootBar(fill: ReviewTabBandRow.fill(row.tone), rule: ReviewTabBandRow.rule(row.tone)) {
+                let bar = SupervisionFootBar(
+                    fill: AnyShapeStyle(ReviewTabBandRow.fill(row.tone)),
+                    rule: AnyShapeStyle(ReviewTabBandRow.rule(row.tone))
+                ) {
                     row
                 }
                 let size = Self.size(of: bar, proposing: width, language: language, settings: settings)

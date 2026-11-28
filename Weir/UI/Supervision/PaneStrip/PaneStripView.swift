@@ -332,11 +332,11 @@ struct PaneStripRule: View {
         // The same three stretches whether the rule opens or not, so a tab
         // selected or let go changes widths, never which views are drawn.
         HStack(spacing: 0) {
-            SupervisionTokens.line.color
+            Rectangle().fill(SupervisionTokens.line.color)
                 .frame(width: opening?.lowerBound ?? 0)
             Color.clear
                 .frame(width: opening.map { $0.upperBound - $0.lowerBound } ?? 0)
-            SupervisionTokens.line.color
+            Rectangle().fill(SupervisionTokens.line.color)
         }
         .frame(height: lineWidth)
         // From the leading edge: an opening past the strip's end runs off
@@ -529,7 +529,7 @@ private extension View {
     /// a control never reads as a tab growing out of it. It stands against
     /// the strip's inset, so its edge is on the column the session's title
     /// and the pane's header start on.
-    func paneStripControlFace(fill: Color, alignment: Alignment) -> some View {
+    func paneStripControlFace(fill: some ShapeStyle, alignment: Alignment) -> some View {
         let layout = WeirLayout.Supervision.self
         return frame(width: layout.openTabsButtonSize, height: layout.openTabsButtonSize)
             .background(
@@ -558,7 +558,10 @@ private struct AddTabButton: View {
             Image(systemName: "plus")
                 .font(.supervision(.label, weight: .medium))
                 .foregroundStyle(isLit ? SupervisionTokens.text.color : SupervisionTokens.muted.color)
-                .paneStripControlFace(fill: isLit ? SupervisionTokens.selection.color : .clear, alignment: .trailing)
+                .paneStripControlFace(
+                    fill: isLit ? AnyShapeStyle(SupervisionTokens.selection.color) : AnyShapeStyle(Color.clear),
+                    alignment: .trailing
+                )
         }
         // Off while the row's folder is gone, as New Tab is: the shell
         // would start somewhere else.

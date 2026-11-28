@@ -101,7 +101,10 @@ struct ChangesTurnRow: View {
         .animation(reduceMotion ? nil : WeirMotion.hoverReveal, value: showsMoves)
         // No fill at rest: the card is the panel's own `window` surface,
         // edged, so it is as see-through as the panel with transparency on.
-        .background(isHovering && row.isSelectable ? SupervisionTokens.hover.color.opacity(surfaceOpacity) : .clear)
+        .background(
+            isHovering && row.isSelectable
+                ? AnyShapeStyle(SupervisionTokens.hover.color.opacity(surfaceOpacity)) : AnyShapeStyle(Color.clear)
+        )
         .clipShape(shape)
         .overlay {
             shape

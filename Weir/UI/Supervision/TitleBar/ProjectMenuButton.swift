@@ -135,7 +135,7 @@ private struct OtherProjectsMark: View {
         }
     }
 
-    private func dot(_ color: Color) -> some View {
+    private func dot(_ color: some ShapeStyle) -> some View {
         Circle()
             .fill(color)
             .frame(width: WeirLayout.Supervision.otherProjectsDotSize, height: WeirLayout.Supervision.otherProjectsDotSize)
@@ -163,6 +163,7 @@ struct ProjectDropdown: View {
     @Environment(ProjectWindowState.self) private var window
     @Environment(WindowRegistry.self) private var registry
     @Environment(SettingsStore.self) private var settings
+    @Environment(\.weirWindowColors) private var windowColors
     @Environment(\.frecencyStore) private var frecencyStore
     @Environment(\.supervisionWindowHandler) private var actions
     @Environment(\.popoverSurface.ground) private var ground
@@ -230,7 +231,10 @@ struct ProjectDropdown: View {
                                 ProjectDropdownRow(
                                     row: row,
                                     isSelected: row.id == selectedID,
-                                    checkColor: SupervisionTokens.accentIcon(settings.settings.appearance.accentColor),
+                                    checkColor: SupervisionTokens.accentIcon(
+                                        settings.settings.appearance.accentColor,
+                                        windowColors: windowColors
+                                    ),
                                     action: { open(row.id, opensInNewWindow: $0) }
                                 )
                                 .id(row.id)

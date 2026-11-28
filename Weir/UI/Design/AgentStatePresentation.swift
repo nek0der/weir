@@ -13,7 +13,7 @@ import WeirDomain
 extension SessionRowFact.Glyph? {
     /// The words beside a state: amber for a wait, red for a stop, and muted
     /// for anything that does not ask for the person, or for no state at all.
-    var textColor: Color {
+    var textColor: ThemedStyle {
         switch self {
         case .needsAnswer?, .needsApproval?, .needsResponse?, .needsSignIn?: SupervisionTokens.waitingText.color
         case .stopped?: SupervisionTokens.stoppedText.color

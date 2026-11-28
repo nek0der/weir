@@ -427,7 +427,7 @@ final class ReviewHunkRowView: NSView {
         // In the supervision window's tokens: its words in `muted`, which
         // reads at 4.5:1 on the header's ground.
         label.font = MonospacedSystemFont.font(ofSize: WeirFont.Supervision.Size.detail.rawValue, weight: .regular)
-        label.textColor = SupervisionTokens.muted.nsColor
+        label.textColor = ReviewRowPainter.themed(SupervisionTokens.muted)
         label.lineBreakMode = .byTruncatingTail
         addSubview(label)
         actions.translatesAutoresizingMaskIntoConstraints = false
@@ -474,7 +474,7 @@ final class ReviewHunkRowView: NSView {
     /// state. A step lighter than the file's header (`sidebar`) so the
     /// two levels read apart, and as see-through as the surface.
     private var background: NSColor {
-        (isDiscarded ? SupervisionTokens.hover : SupervisionTokens.column).nsColor
+        ReviewRowPainter.themed(isDiscarded ? SupervisionTokens.hover : SupervisionTokens.column)
             .withAlphaComponent(surfaceOpacity)
     }
 

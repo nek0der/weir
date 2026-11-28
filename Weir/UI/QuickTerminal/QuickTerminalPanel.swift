@@ -4,6 +4,7 @@
 
 import AppKit
 import SwiftUI
+import WeirDomain
 
 /// Thin AppKit boundary: a borderless, non-activating panel that can
 /// still take keyboard focus. Everything it shows is SwiftUI, apart from
@@ -195,16 +196,21 @@ final class QuickTerminalContentModel {
     @ObservationIgnored let settingsStore: SettingsStore
     @ObservationIgnored let reduceTransparencyResolver: ReduceTransparencyResolver
     @ObservationIgnored let clipboard: ClipboardConfirmationCoordinator
+    /// The panel sits outside the main windows' environment, so it carries
+    /// the terminal colors itself.
+    @ObservationIgnored let terminalThemeStore: TerminalThemeStore
     @ObservationIgnored weak var panel: NSWindow?
 
     init(
         settingsStore: SettingsStore,
         reduceTransparencyResolver: ReduceTransparencyResolver,
-        clipboard: ClipboardConfirmationCoordinator
+        clipboard: ClipboardConfirmationCoordinator,
+        terminalThemeStore: TerminalThemeStore
     ) {
         self.settingsStore = settingsStore
         self.reduceTransparencyResolver = reduceTransparencyResolver
         self.clipboard = clipboard
+        self.terminalThemeStore = terminalThemeStore
     }
 
     /// The pending clipboard request, when it comes from a view in this
@@ -224,17 +230,22 @@ final class QuickTerminalContentModel {
 
 struct QuickTerminalContent: View {
     let model: QuickTerminalContentModel
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack {
             QuickTerminalBackdrop(
                 appearance: model.settingsStore.settings.appearance,
-                reducesTransparency: model.reduceTransparencyResolver.shouldReduceTransparency
+                reducesTransparency: model.reduceTransparencyResolver.shouldReduceTransparency,
+                ground: ground
             )
             if let surfaceView = model.surfaceView {
-                QuickTerminalSurfaceRepresentable(surfaceView: surfaceView)
-                    .padding(.horizontal, QuickTerminalLayout.terminalInsetHorizontal)
-                    .padding(.vertical, QuickTerminalLayout.terminalInsetVertical)
+                QuickTerminalSurfaceRepresentable(
+                    surfaceView: surfaceView,
+                    knobStyle: TerminalGround.knobStyle(on: ground).scrollerKnobStyle
+                )
+                .padding(.horizontal, QuickTerminalLayout.terminalInsetHorizontal)
+                .padding(.vertical, QuickTerminalLayout.terminalInsetVertical)
                 if surfaceView.creation.hasFailed {
                     PaneCreationFailureCard(surfaceView: surfaceView)
                 }
@@ -257,26 +268,40 @@ struct QuickTerminalContent: View {
                 onDeny: { model.clipboard.deny() }
             )
             .environment(\.locale, model.settingsStore.appLocale)
-            .weirAccentPropagated(accent)
+            .weirAppearancePropagated(accent: accent, windowColors: model.terminalThemeStore.windowColors)
         }
         .environment(\.locale, model.settingsStore.appLocale)
-        .weirAccentPropagated(accent)
+        .environment(model.terminalThemeStore)
+        .weirAppearancePropagated(accent: accent, windowColors: model.terminalThemeStore.windowColors)
     }
 
     private var accent: Color {
         WeirColor.accent(for: model.settingsStore.settings.appearance.accentColor)
     }
+
+    /// The theme's background for the panel's appearance, or `nil` over the
+    /// bundled default theme.
+    private var ground: RGB8? {
+        model.terminalThemeStore.paintedGround(for: TerminalThemeBrightness(colorScheme))
+    }
 }
 
 /// Same fill the main window's terminal column paints, because the forced
 /// `background-opacity=0` leaves the surface itself transparent. The
-/// behind-window vibrancy under it is `QuickTerminalRootView`.
+/// behind-window vibrancy under it is `QuickTerminalRootView`. A theme
+/// other than the bundled default paints its own background instead, by
+/// the same rule: half the background opacity while translucent, opaque
+/// under Reduce Transparency.
 private struct QuickTerminalBackdrop: View {
     let appearance: AppearanceSettings
     let reducesTransparency: Bool
+    /// The theme's background; `nil` keeps the tokens.
+    let ground: RGB8?
 
     var body: some View {
-        if reducesTransparency {
+        if let ground {
+            ground.color.opacity(reducesTransparency ? 1 : appearance.backgroundOpacity * 0.5)
+        } else if reducesTransparency {
             Color(nsColor: .windowBackgroundColor)
         } else {
             WeirColor.terminalColumnBackground.opacity(appearance.backgroundOpacity * 0.5)
@@ -291,9 +316,12 @@ private struct QuickTerminalBackdrop: View {
 /// before it has one.
 struct QuickTerminalSurfaceRepresentable: NSViewRepresentable {
     let surfaceView: SurfaceView
+    /// The terminal scroller's knob, for the ground under it.
+    let knobStyle: NSScroller.KnobStyle
 
     func makeNSView(context: Context) -> PaneContainerNSView {
         let container = PaneContainerNSView(frame: .zero)
+        container.knobStyle = knobStyle
         container.mount(surfaceView)
         DispatchQueue.main.async { [surfaceView] in
             if surfaceView.surface == nil, surfaceView.window != nil {
@@ -304,6 +332,7 @@ struct QuickTerminalSurfaceRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ container: PaneContainerNSView, context: Context) {
+        container.knobStyle = knobStyle
         container.mount(surfaceView)
         if surfaceView.window != nil, surfaceView.surface == nil {
             surfaceView.createSurface()

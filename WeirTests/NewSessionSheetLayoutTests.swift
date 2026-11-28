@@ -63,7 +63,7 @@ struct NewSessionSheetLayoutTests {
         let reserved = Self.twoLineHeight(language: language)
         for outcome in outcomes {
             let runs = NewSessionModel.resultRuns(outcome, locale: locale)
-            let line = NewSessionStatusLine(runs: runs, color: .primary, lineLimit: nil)
+            let line = NewSessionStatusLine(runs: runs, color: SupervisionTokens.muted.color, lineLimit: nil)
             let height = Self.height(of: line, width: column, language: language)
             #expect(height <= reserved, "\(language) \(outcome): \(height) in \(reserved)")
         }
@@ -83,7 +83,7 @@ struct NewSessionSheetLayoutTests {
         let text = try #require(NewSessionProblemText.text(problem, model: model, locale: locale))
         #expect(!text.contains(Self.longBranch), "the name is cut before the line is laid out")
         let column = Self.controlColumnWidth(language: language)
-        let line = NewSessionStatusLine(runs: [.plain(text)], color: .primary, lineLimit: nil)
+        let line = NewSessionStatusLine(runs: [.plain(text)], color: SupervisionTokens.muted.color, lineLimit: nil)
         #expect(Self.height(of: line, width: column, language: language) <= Self.twoLineHeight(language: language), "\(text)")
     }
 
@@ -179,7 +179,11 @@ struct NewSessionSheetLayoutTests {
             .existingBranch("release/2026-10")
         ]
         for outcome in outcomes {
-            let line = NewSessionStatusLine(runs: NewSessionModel.resultRuns(outcome, locale: locale), color: .primary, lineLimit: nil)
+            let line = NewSessionStatusLine(
+                runs: NewSessionModel.resultRuns(outcome, locale: locale),
+                color: SupervisionTokens.muted.color,
+                lineLimit: nil
+            )
             let height = Self.height(of: line, width: column, language: language)
             #expect(abs(height - oneLine) <= 1, "\(language) \(outcome): \(height), one line \(oneLine)")
         }
@@ -205,7 +209,7 @@ struct NewSessionSheetLayoutTests {
             }
             let line = NewSessionStatusLine(
                 runs: NewSessionModel.resultRuns(outcome, locale: Locale(identifier: language)),
-                color: .primary,
+                color: SupervisionTokens.muted.color,
                 lineLimit: nil
             )
             let wraps = Self.height(of: line, width: Self.controlColumnWidth(language: language), language: language) > oneLine + 1

@@ -16,10 +16,10 @@ import SwiftUI
 /// beside it stop counting as framed the moment they start going out too,
 /// and a line that went back to its own edge as it faded would stand beside
 /// theirs for that moment.
-struct PaneFrameStroke: View {
+struct PaneFrameStroke<Style: ShapeStyle & Equatable>: View {
     let paneID: UUID
     /// The frame's color, `nil` while it does not show.
-    let color: Color?
+    let color: Style?
     let lineWidth: CGFloat
     /// Whether this kind of frame surrounds a pane, asked of the panes across
     /// a seam. The frame that decides whether it shows on this pane passes
@@ -36,7 +36,7 @@ struct PaneFrameStroke: View {
     @State private var lastShown: Drawn?
 
     private struct Drawn: Equatable {
-        var color: Color
+        var color: Style
         var fit: SurfaceFrameFit
         var reach: PaneFrameReach
     }

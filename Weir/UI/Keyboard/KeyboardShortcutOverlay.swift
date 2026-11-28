@@ -32,9 +32,11 @@ struct KeyboardShortcutOverlay: View {
                 }
             )
             .environment(state.settingsStore)
+            .environment(state.terminalThemeStore)
             .environment(\.locale, state.settingsStore.appLocale)
-            .weirAccentPropagated(
-                WeirColor.accent(for: state.settingsStore.settings.appearance.accentColor)
+            .weirAppearancePropagated(
+                accent: WeirColor.accent(for: state.settingsStore.settings.appearance.accentColor),
+                windowColors: state.terminalThemeStore.windowColors
             )
             .frame(width: proxy.size.width, height: proxy.size.height)
         }

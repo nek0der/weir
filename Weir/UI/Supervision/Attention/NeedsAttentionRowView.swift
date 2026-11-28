@@ -94,7 +94,7 @@ struct NeedsAttentionRowView: View {
                             .foregroundStyle(ink.muted)
                             .accessibilityHidden(true)
                     }
-                    Text(detail)
+                    detail
                         .font(.supervision(.meta))
                         .lineLimit(1)
                         // The place leads; a command or a file at the end stays
@@ -147,11 +147,11 @@ struct NeedsAttentionRowView: View {
     /// the row is selected and nothing otherwise, since the pointer selects
     /// the row rather than tinting it; on the ground's, its selection and
     /// hover fills.
-    private var fill: Color {
+    private var fill: AnyShapeStyle {
         if highlight.pointerSelects {
-            return isSelected ? (highlight.selection ?? .clear) : .clear
+            return AnyShapeStyle(isSelected ? (highlight.selection ?? .clear) : .clear)
         }
-        return isSelected ? ground.selection.color : isHovering ? ground.hover.color : .clear
+        return isSelected ? ground.selection.color : isHovering ? ground.hover.color : AnyShapeStyle(Color.clear)
     }
 
     /// The system menu's rows are drawn in its rhythm; Weir's
@@ -170,12 +170,10 @@ struct NeedsAttentionRowView: View {
     /// amber for what waits on the person and red for a stop, as on the
     /// sidebar's rows, so the two lists read alike. On the system menu's
     /// glass the fact is the system's label (`PopoverInk`).
-    private var detail: AttributedString {
-        var lead = AttributedString(row.placeLead)
-        lead.foregroundColor = ink.muted
-        var fact = AttributedString(row.fact)
-        fact.foregroundColor = factColor
-        return lead + fact
+    private var detail: Text {
+        let lead = Text(verbatim: row.placeLead).foregroundStyle(ink.muted)
+        let fact = Text(verbatim: row.fact).foregroundStyle(factColor)
+        return Text("\(lead)\(fact)")
     }
 
     private var waitLabel: String {
@@ -204,7 +202,7 @@ struct NeedsAttentionRowView: View {
         }
     }
 
-    private var factColor: Color {
+    private var factColor: AnyShapeStyle {
         switch row.state {
         case .approval, .question, .response, .signIn: ink.warningText
         case .stopped: ink.stoppedText

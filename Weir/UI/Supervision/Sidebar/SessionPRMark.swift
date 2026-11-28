@@ -72,7 +72,7 @@ private struct ChecksBadge: View {
 /// it stands off the mark it hangs from, and a cross in the mark that the
 /// stopped glyph puts on the same red.
 private struct ChecksFailedBadge: View {
-    let color: Color
+    let color: ThemedStyle
 
     var body: some View {
         let size = WeirLayout.Supervision.checksBadgeSize
@@ -101,7 +101,7 @@ private struct ChecksFailedBadge: View {
 /// A running check: a gray disc with no glyph inside. We reserve amber
 /// for work that needs the person's response, rather than checks in progress.
 private struct ChecksRunningBadge: View {
-    let color: Color
+    let color: ThemedStyle
 
     var body: some View {
         let size = WeirLayout.Supervision.checksBadgeSize
@@ -121,7 +121,7 @@ private struct ChecksRunningBadge: View {
 /// disc, so that the failing and running checks still stand out on a
 /// sidebar where most requests pass.
 private struct ChecksPassedBadge: View {
-    let color: Color
+    let color: ThemedStyle
 
     var body: some View {
         let size = WeirLayout.Supervision.checksPassedSize

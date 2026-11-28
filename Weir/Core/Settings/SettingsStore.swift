@@ -279,33 +279,8 @@ final class SettingsStore {
         self.hasNoFileYet = read.isAbsent || result.hasMovedFile
         // The launch's move to the current schema is a save too.
         self.hasFailedToSave = result.hasFailedToWrite
-        // The hero screenshot pipeline runs under `WEIR_DEMO=1`.
-        // Force the toolbar opaque there so the captured PNG doesn't
-        // depend on whatever wallpaper / other windows happen to sit
-        // behind Weir on the contributor's Mac — the README image
-        // stays bit-for-bit reproducible regardless of host setup.
-        // Pin the accent to `.blue` for the same reason: `.default`
-        // now follows `Color.accentColor` (the OS System Accent), so
-        // without this every contributor would render the hero in
-        // their own picked accent.
         if DemoFixture.isDemoActive {
-            loaded.appearance.transparency = .off
-            loaded.appearance.backgroundOpacity = 1.0
-            loaded.appearance.accentColor = .blue
-            // Same reason as the accent: `.system` would render the
-            // hero in whichever appearance the contributor's Mac
-            // happens to be in, so the README image would flip between
-            // light and dark depending on who regenerated it.
-            loaded.appearance.colorScheme = DemoFixture.colorScheme
-            // The default family at 12 points: the hero's 1440-point window
-            // fits the sidebar, a 100-column terminal, and the changes
-            // panel side by side only at that size, and a contributor's
-            // own font would move every column.
-            loaded.font = FontSettings()
-            loaded.font.size = 12
-            // A Ghostty config file would set its own `font-family` over
-            // the default one, so the demo reads none.
-            loaded.advanced.ghosttyConfig = .off
+            Self.pinForDemo(&loaded)
         }
         self.settings = loaded
         localeObserver = NotificationCenter.default.addObserver(
@@ -323,6 +298,35 @@ final class SettingsStore {
         if let localeObserver {
             NotificationCenter.default.removeObserver(localeObserver)
         }
+    }
+
+    /// Pins what the hero screenshot pipeline (`WEIR_DEMO=1`) depends on,
+    /// so the README image stays reproducible on any contributor's Mac.
+    /// The toolbar is opaque, so the captured PNG does not depend on the
+    /// wallpaper or the windows behind Weir. The accent is `.blue`, since
+    /// `.default` follows the OS System Accent (`Color.accentColor`) and
+    /// would render the hero in each contributor's own accent.
+    static func pinForDemo(_ settings: inout WeirSettings) {
+        settings.appearance.transparency = .off
+        settings.appearance.backgroundOpacity = 1.0
+        settings.appearance.accentColor = .blue
+        // Same reason as the accent: `.system` would render the
+        // hero in whichever appearance the contributor's Mac
+        // happens to be in, so the README image would flip between
+        // light and dark depending on who regenerated it.
+        settings.appearance.colorScheme = DemoFixture.colorScheme
+        // The default family at 12 points: the hero's 1440-point window
+        // fits the sidebar, a 100-column terminal, and the changes
+        // panel side by side only at that size, and a contributor's
+        // own font would move every column.
+        settings.font = FontSettings()
+        settings.font.size = 12
+        // A Ghostty config file would set its own `font-family` over
+        // the default one, so the demo reads none.
+        settings.advanced.ghosttyConfig = .off
+        // A chosen terminal theme would paint the panes in the
+        // contributor's own colors; the demo shows the bundled pair.
+        settings.appearance.terminalTheme = TerminalThemeSelection()
     }
 
     // MARK: - Persistence

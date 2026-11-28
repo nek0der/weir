@@ -175,6 +175,7 @@ private struct RailUpdateButton: View {
     @Environment(UpdateStateModel.self) private var model
     @Environment(SettingsStore.self) private var settings
     @Environment(\.weirAccent) private var accent
+    @Environment(\.weirWindowColors) private var windowColors
     @Environment(\.locale) private var locale
     @Environment(\.controlActiveState) private var controlActiveState
     @State private var isHovering = false
@@ -185,7 +186,7 @@ private struct RailUpdateButton: View {
         } label: {
             UpdateStatusGlyph(
                 state: model.state,
-                color: SupervisionTokens.accentIcon(settings.settings.appearance.accentColor)
+                color: SupervisionTokens.accentIcon(settings.settings.appearance.accentColor, windowColors: windowColors)
             )
             .iconControlFrame(isLit: isLit, isHovering: isHovering)
         }
@@ -208,7 +209,9 @@ private struct RailUpdateButton: View {
                 isOpen = false
             }
             .environment(\.locale, locale)
-            .weirAccentPropagated(accent)
+            // The system's popover material: its marks keep the tokens they
+            // were checked against there, as Weir's own panels do on theirs.
+            .weirAppearancePropagated(accent: accent, windowColors: .tokens)
         }
     }
 }

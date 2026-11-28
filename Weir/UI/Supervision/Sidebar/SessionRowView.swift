@@ -104,7 +104,7 @@ struct SessionRowView: View {
                             // opening it does not move where its name is cut;
                             // the fill says which row is open.
                             font: .supervision(.label, weight: .medium),
-                            foregroundColor: isDropTarget ? accent : SupervisionTokens.text.color,
+                            foregroundColor: isDropTarget ? AnyShapeStyle(accent) : AnyShapeStyle(SupervisionTokens.text.color),
                             onRename: onRename,
                             // The repository's mark follows the name rather
                             // than the column, so the name keeps only its own
@@ -369,7 +369,7 @@ struct SessionRowView: View {
         return attributed
     }
 
-    private var factColor: Color {
+    private var factColor: ThemedStyle {
         switch row.tone {
         case .waiting: SupervisionTokens.waitingText.color
         case .stopped: SupervisionTokens.stoppedText.color
@@ -430,10 +430,10 @@ struct SessionRowFace: ViewModifier {
 /// pointer. The surface's tokens rather than a tint of the text color, so
 /// the fills match the rest of the window's selected and hovered rows.
 enum SessionRowFill {
-    static func color(isActive: Bool, isHovering: Bool) -> Color {
+    static func color(isActive: Bool, isHovering: Bool) -> AnyShapeStyle {
         if isActive {
-            return SupervisionTokens.selection.color
+            return AnyShapeStyle(SupervisionTokens.selection.color)
         }
-        return isHovering ? SupervisionTokens.hover.color : .clear
+        return isHovering ? AnyShapeStyle(SupervisionTokens.hover.color) : AnyShapeStyle(Color.clear)
     }
 }

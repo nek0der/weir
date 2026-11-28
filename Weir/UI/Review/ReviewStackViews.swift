@@ -129,10 +129,10 @@ struct ReviewStackFileHeader: View {
             .gesture(TapGesture().onEnded(onToggleFold), including: header.isViewed ? .all : .subviews)
             .background(SupervisionTokens.sidebar.color.opacity(surfaceOpacity))
             .overlay(alignment: .top) {
-                SupervisionTokens.line.color.frame(height: 1)
+                Rectangle().fill(SupervisionTokens.line.color).frame(height: 1)
             }
             .overlay(alignment: .bottom) {
-                SupervisionTokens.line.color.frame(height: 1)
+                Rectangle().fill(SupervisionTokens.line.color).frame(height: 1)
             }
         }
     }

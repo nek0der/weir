@@ -266,9 +266,10 @@ struct SupervisionMenuBarContent: View {
         // The primary button and the focus ring take the person's accent
         // from the settings: the extra's window is not under the main
         // windows' environment that carries them. Not
-        // `weirAccentPropagated`'s tint: the menu keeps the system's
+        // `weirAppearancePropagated`'s tint: the menu keeps the system's
         // controls and its own accent highlight.
         .environment(state.settingsStore)
+        .environment(state.terminalThemeStore)
         // SwiftUI resolves every color here, the tokens' dynamic `NSColor`s
         // included, against its own color scheme, which the extra's hosting
         // view takes from the app's pinned appearance rather than from the

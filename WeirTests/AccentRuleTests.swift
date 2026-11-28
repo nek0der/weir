@@ -58,7 +58,7 @@ struct AccentRuleTests {
             }
             // What the window draws is the same rule.
             let appearance = try #require(NSAppearance(named: resolved.appearance))
-            let drawn = try #require(SRGB(NSColor(Tokens.accentIcon(accent)), in: appearance))
+            let drawn = try #require(SRGB(NSColor(Tokens.accentIcon(accent, windowColors: .tokens)), in: appearance))
             #expect(abs(drawn.red - icon.red) < 0.002, "\(accent) in \(name)")
             #expect(abs(drawn.green - icon.green) < 0.002, "\(accent) in \(name)")
             #expect(abs(drawn.blue - icon.blue) < 0.002, "\(accent) in \(name)")

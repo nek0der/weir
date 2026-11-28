@@ -141,7 +141,11 @@ struct ReviewCardLayoutTests {
     /// A file whose long lines are scrolled past: the card is moved back to
     /// what the reader sees rather than going off to the left with the code.
     @Test func horizontalScroll_keepsTheCardInView() async throws {
-        let (window, host) = hostedInWindow(makeTable(rows: Self.rows(lines: 1, commentsAfter: [0])), width: 600, height: 400)
+        let (window, host) = hostedInWindow(
+            makeTable(rows: Self.rows(lines: 1, commentsAfter: [0])).environment(TerminalThemeStore()),
+            width: 600,
+            height: 400
+        )
         defer { window.close() }
         let settled = await settledValue(in: host) { (try? scrollView(in: host)).flatMap { try? cardFrame(in: $0) } }
         let before = try #require(settled)
@@ -169,7 +173,7 @@ struct ReviewCardLayoutTests {
     @Test func horizontalScroll_movesTheCardsOnPreparedRowsToo() async throws {
         let parent = makeTable(rows: Self.rows(lines: 80, commentsAfter: [1, 20, 30]))
         let rows = parent.rows
-        let (window, host) = hostedInWindow(parent, width: 600, height: 300)
+        let (window, host) = hostedInWindow(parent.environment(TerminalThemeStore()), width: 600, height: 300)
         defer { window.close() }
         await settle(host) { (try? scrollView(in: host)).flatMap { try? cardFrame(in: $0) } != nil }
         let scroll = try scrollView(in: host)

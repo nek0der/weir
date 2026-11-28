@@ -540,6 +540,9 @@ struct ReviewDiffTable: NSViewRepresentable {
     /// Handed to the painter the same way, for the signs it draws where the
     /// fill alone told added from removed (`ReviewRowPainter.kindGlyph`).
     @Environment(\.accessibilityDifferentiateWithoutColor) private var differentiatesWithoutColor
+    /// Handed to the painter the same way, for the syntax colors a terminal
+    /// theme lends the code (`ReviewSyntaxColors`).
+    @Environment(TerminalThemeStore.self) private var terminalTheme
 
     /// The stack's rows, which the table draws.
     var rows: [ReviewRow] {
@@ -732,12 +735,18 @@ struct ReviewDiffTable: NSViewRepresentable {
         // current. Rows that take their tint when they are built are pooled,
         // so this is a reload rather than a redraw.
         ReviewRowPainter.setDifferentiatesWithoutColor(differentiatesWithoutColor)
-        // Folded into the accent's reload: the signs are drawn by the same
-        // pooled rows and the same floating gutter.
+        ReviewRowPainter.setSyntaxColors(from: terminalTheme)
+        // Folded into the accent's reload: the signs and the syntax colors
+        // are drawn by the same pooled rows, which keep the text they were
+        // built with.
         let hasNewLook = coordinator.appliedAccent != accent
             || coordinator.appliedDifferentiatesWithoutColor != differentiatesWithoutColor
+            || coordinator.appliedSyntaxColors != ReviewRowPainter.syntaxColors
+            || coordinator.appliedWindowColors != ReviewRowPainter.windowColors
         coordinator.appliedAccent = accent
+        coordinator.appliedWindowColors = ReviewRowPainter.windowColors
         coordinator.appliedDifferentiatesWithoutColor = differentiatesWithoutColor
+        coordinator.appliedSyntaxColors = ReviewRowPainter.syntaxColors
         if hasNewLook {
             coordinator.invalidateGutter()
         }

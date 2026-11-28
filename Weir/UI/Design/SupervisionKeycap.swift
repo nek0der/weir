@@ -95,8 +95,8 @@ struct SupervisionKeycap: View {
         scalesWithText ? scaledHeight : WeirLayout.Supervision.keycapHeight
     }
 
-    private var edgeColor: Color {
+    private var edgeColor: AnyShapeStyle {
         let line = SupervisionTokens.line.color
-        return style == .quiet ? line.opacity(Self.quietEdgeOpacity) : line
+        return style == .quiet ? AnyShapeStyle(line.opacity(Self.quietEdgeOpacity)) : AnyShapeStyle(line)
     }
 }

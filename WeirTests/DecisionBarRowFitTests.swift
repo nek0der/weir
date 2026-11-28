@@ -212,7 +212,10 @@ extension SupervisionFootBarTests {
                     settings: settings
                 )
                 #expect(unclipped.width > width, "\(language): \(model.text)")
-                let view = SupervisionFootBar(fill: DecisionBarRow.fill(model.tone), rule: DecisionBarRow.rule(model.tone)) {
+                let view = SupervisionFootBar(
+                    fill: AnyShapeStyle(DecisionBarRow.fill(model.tone)),
+                    rule: AnyShapeStyle(DecisionBarRow.rule(model.tone))
+                ) {
                     row
                 }
                 .frame(width: width)

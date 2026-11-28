@@ -259,7 +259,7 @@ struct EmptyHintRow: View {
     /// The name in the secondary color, a hint rather than a menu item;
     /// `faint` only while it cannot run. Increase Contrast takes it
     /// to the text color.
-    private var titleColor: Color {
+    private var titleColor: ThemedStyle {
         keyColor.color
     }
 

@@ -111,7 +111,7 @@ struct ChangesPanelView: View {
     }
 
     private var rule: some View {
-        SupervisionTokens.line.color
+        Rectangle().fill(SupervisionTokens.line.color)
             .frame(height: Layout.changesPanelRuleWidth)
             .accessibilityHidden(true)
     }
@@ -721,7 +721,7 @@ struct ChangesFoldLine: View {
             .padding(.vertical, Layout.spaceXS)
             .background(
                 RoundedRectangle(cornerRadius: Layout.smallControlCornerRadius)
-                    .fill(isHovering ? SupervisionTokens.hover.color : .clear)
+                    .fill(isHovering ? AnyShapeStyle(SupervisionTokens.hover.color) : AnyShapeStyle(Color.clear))
             )
             .contentShape(Rectangle())
         }
@@ -766,7 +766,7 @@ struct ViewedLineHead: View {
     }
 
     private var rule: some View {
-        SupervisionTokens.line.color
+        Rectangle().fill(SupervisionTokens.line.color)
             .frame(height: 1)
             .frame(minWidth: WeirLayout.Supervision.viewedLineRuleMinWidth, maxWidth: .infinity)
             .accessibilityHidden(true)

@@ -113,7 +113,7 @@ struct SupervisionSecondaryButtonStyle: ButtonStyle {
                 .onHover { isHovering = $0 }
         }
 
-        private var title: Color {
+        private var title: AnyShapeStyle {
             switch tone {
             case .standard, .onStateFill: ink.text
             case .refusal, .destructive: ink.stoppedText
@@ -121,12 +121,12 @@ struct SupervisionSecondaryButtonStyle: ButtonStyle {
             }
         }
 
-        private var edge: Color {
+        private var edge: AnyShapeStyle {
             switch tone {
-            case .ghost: .clear
-            case .onStateFill: SupervisionTokens.stateFillButtonEdge.color
+            case .ghost: AnyShapeStyle(Color.clear)
+            case .onStateFill: AnyShapeStyle(SupervisionTokens.stateFillButtonEdge.color)
             case .standard, .refusal, .destructive:
-                (isHovering && isEnabled ? ground.buttonHoverEdge?.color : nil) ?? ink.line
+                (isHovering && isEnabled ? ground.buttonHoverEdge.map { AnyShapeStyle($0.color) } : nil) ?? ink.line
             }
         }
 
@@ -136,9 +136,9 @@ struct SupervisionSecondaryButtonStyle: ButtonStyle {
         /// takes its popover ground's fill (`PopoverGround`): on a panel's
         /// material the opaque hover and press all but vanish, and the
         /// opaque face at rest stands out of the glass.
-        private var fill: Color {
+        private var fill: AnyShapeStyle {
             if tone == .onStateFill {
-                return stateFillFace.color
+                return AnyShapeStyle(stateFillFace.color)
             }
             let token: RowFill? = if configuration.isPressed {
                 ground.selection
@@ -147,7 +147,7 @@ struct SupervisionSecondaryButtonStyle: ButtonStyle {
             } else {
                 tone == .ghost ? nil : ground.buttonFace
             }
-            return token.map { $0.color.opacity(surfaceOpacity) } ?? .clear
+            return token.map { AnyShapeStyle($0.color.opacity(surfaceOpacity)) } ?? AnyShapeStyle(Color.clear)
         }
 
         private var stateFillFace: ThemedColor {

@@ -123,14 +123,16 @@ struct LiveLocaleAppKitTests {
     // MARK: - Hosted views updated by SwiftUI
 
     @Test func reviewTable_reloadsItsRowsWhenTheLocaleChanges() async throws {
-        let (window, host) = hostedInWindow(makeTable(locale: ja), width: 900, height: 500)
+        // The rows read the terminal theme, as the window gives it them.
+        let theme = TerminalThemeStore()
+        let (window, host) = hostedInWindow(makeTable(locale: ja).environment(theme), width: 900, height: 500)
         defer { window.close() }
         await settle(host) { !commentButtonTitles(in: host).isEmpty }
         let table = try #require(descendants(of: host).compactMap { $0 as? ReviewTableView }.first)
         #expect(table.menuLocale == ja)
         #expect(commentButtonTitles(in: host) == ["解決済みにする", "編集", "削除"])
 
-        host.rootView = makeTable(locale: en)
+        host.rootView = makeTable(locale: en).environment(theme)
         await settle(host) { table.menuLocale == en && commentButtonTitles(in: host).first == "Resolve" }
         #expect(table.menuLocale == en)
         #expect(commentButtonTitles(in: host) == ["Resolve", "Edit", "Delete"])

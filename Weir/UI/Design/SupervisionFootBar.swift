@@ -18,9 +18,9 @@ import SwiftUI
 struct SupervisionFootBar<Content: View>: View {
     /// The row's ground: the soft fill of what the decision bar is on, or
     /// clear where the row stands on its surface's own fill.
-    var fill: Color = .clear
+    var fill = AnyShapeStyle(Color.clear)
     /// The rule's color: `line`, or the color of what waits.
-    var rule: Color = SupervisionTokens.line.color
+    var rule = AnyShapeStyle(SupervisionTokens.line.color)
     var leadingInset: CGFloat = WeirLayout.Supervision.footBarLeadingInset
     var trailingInset: CGFloat = WeirLayout.Supervision.footBarTrailingInset
     @ViewBuilder var content: () -> Content
@@ -42,7 +42,8 @@ struct SupervisionFootBar<Content: View>: View {
             .contentShape(Rectangle())
             .background(fill)
             .overlay(alignment: .top) {
-                rule
+                Rectangle()
+                    .fill(rule)
                     .frame(height: WeirLayout.Supervision.footBarRuleWidth)
                     .accessibilityHidden(true)
             }

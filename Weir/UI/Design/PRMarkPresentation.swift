@@ -41,7 +41,7 @@ struct PRMarkPresentation {
     }
 
     let kind: Kind
-    let tint: Color
+    let tint: ThemedStyle
     /// Corner badge for the request's checks, or nil when it has none.
     let badge: Badge?
     /// Localized text handed to `.accessibilityLabel(Text(_:))`.
@@ -61,7 +61,7 @@ struct PRMarkPresentation {
 
     struct Badge {
         let kind: BadgeKind
-        let color: Color
+        let color: ThemedStyle
         /// Spoken after the state, because the badge carries meaning
         /// the state label does not.
         let accessibilityKey: LocalizedStringResource

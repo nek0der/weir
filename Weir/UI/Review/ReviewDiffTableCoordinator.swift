@@ -109,6 +109,10 @@ extension ReviewDiffTable {
         /// Whether this table last drew for a reader who differentiates
         /// without color. See `updateNSView`.
         var appliedDifferentiatesWithoutColor: Bool?
+        /// The syntax colors this table last drew with. See `updateNSView`.
+        var appliedSyntaxColors: ReviewSyntaxColors?
+        /// The window's colors the rows were last built in (`ReviewRowPainter.windowColors`).
+        var appliedWindowColors: WindowColors?
         /// The locale this table's rows were last built in. See `updateNSView`.
         var appliedLocale: Locale?
         private var lastWidth: CGFloat = 0

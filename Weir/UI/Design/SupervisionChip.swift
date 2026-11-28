@@ -26,7 +26,7 @@ struct SupervisionChip: View {
         /// Something gone past saving (an expired prompt cache).
         case stopped
 
-        var text: Color {
+        var text: ThemedStyle {
             switch self {
             case .plain: SupervisionTokens.muted.color
             case .waiting: SupervisionTokens.waitingText.color
@@ -36,7 +36,7 @@ struct SupervisionChip: View {
             }
         }
 
-        var edge: Color {
+        var edge: ThemedStyle {
             switch self {
             case .plain: SupervisionTokens.line.color
             case .waiting: SupervisionTokens.waiting.color

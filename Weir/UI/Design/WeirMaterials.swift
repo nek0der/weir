@@ -36,8 +36,17 @@ private struct FloatingPanelSurface<SurfaceShape: Shape>: ViewModifier {
         // The shadow belongs to the backing shape alone. Applied to the
         // whole view, SwiftUI would also cast it from every piece of text
         // and every row fill inside the panel, which reads as a haze.
+        let ground = PopoverGround(resolver: reduceTransparencyResolver)
         content
-            .environment(\.popoverSurface, .weir(PopoverGround(resolver: reduceTransparencyResolver)))
+            .environment(\.popoverSurface, .weir(ground))
+            // On the material, the words and marks keep the tokens they
+            // were checked against there; the opaque panel is one of the
+            // surfaces a theme's colors are checked on.
+            .transformEnvironment(\.weirWindowColors) { colors in
+                if ground == .material {
+                    colors = .tokens
+                }
+            }
             // The panel's ground is the material or the opaque `popover`,
             // never the background opacity, so a box inside it is filled
             // whole, whatever surface the panel was opened over.

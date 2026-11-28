@@ -2,6 +2,7 @@
 // Weir — the frame around a pane whose agent waits on the person or stopped.
 
 import SwiftUI
+import WeirDomain
 
 /// A thin inner frame (`paneAttentionFrameWidth`) around the whole pane,
 /// header and decision bar included: amber while the pane's agent waits
@@ -16,6 +17,12 @@ struct PaneAttentionFrame: View {
     let paneID: UUID
     @Environment(AttentionQueueStore.self) private var attentionQueue
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(TerminalThemeStore.self) private var terminalTheme
+    @Environment(SettingsStore.self) private var settingsStore
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.supervisionSurfaceOpacity) private var surfaceOpacity
+    @Environment(\.weirAccent) private var accent
+    @Environment(\.weirWindowColors) private var windowColors
     @State private var isDimmed = false
     @State private var blink: Task<Void, Never>?
 
@@ -23,7 +30,7 @@ struct PaneAttentionFrame: View {
         let attention = attention(of: paneID)
         PaneFrameStroke(
             paneID: paneID,
-            color: attention.map { $0.isWaiting ? SupervisionTokens.waiting.color : SupervisionTokens.stopped.color },
+            color: attention.map(color(for:)),
             lineWidth: WeirLayout.Supervision.paneAttentionFrameWidth,
             isFramed: { self.attention(of: $0) != nil }
         )
@@ -46,6 +53,27 @@ struct PaneAttentionFrame: View {
             }
         }
         .onDisappear { blink?.cancel() }
+    }
+
+    /// The token, or, on a terminal ground Weir paints, the token moved
+    /// until it stands out against that ground (`TerminalGround`). The
+    /// frame runs over the header too, which keeps its own ground; the
+    /// terminal area is most of the frame's length.
+    private func color(for attention: PaneAttention) -> Color {
+        let ground = terminalTheme.ground(
+            colorScheme: colorScheme,
+            accent: accent,
+            surfaceOpacity: surfaceOpacity,
+            unfocusedPaneOpacity: settingsStore.settings.appearance.unfocusedPaneOpacity,
+            windowColors: windowColors
+        )
+        // Resolved here rather than handed down as a style: the frame
+        // compares its color to tell whether it moved, and this body runs
+        // again on an appearance switch, as it reads the color scheme.
+        let isDark = colorScheme == .dark
+        let token = attention.isWaiting ? SupervisionTokens.waiting : SupervisionTokens.stopped
+        let corrected = attention.isWaiting ? ground.waiting : ground.stopped
+        return corrected?.color ?? Color(nsColor: token.value(isDark: isDark, in: windowColors).nsColor)
     }
 
     /// What frames a pane, this one or one past a divider: one rule for both,

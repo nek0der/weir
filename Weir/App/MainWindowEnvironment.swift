@@ -8,7 +8,7 @@ extension View {
     /// controller builds its root with this (`presentSupervisionWindows`),
     /// so a value added here reaches every main window.
     func weirMainWindowEnvironment(_ state: AppState, updaterStack: UpdaterStack) -> some View {
-        LiveLocaleAndAccent(settingsStore: state.settingsStore) {
+        LiveLocaleAndAccent(settingsStore: state.settingsStore, terminalTheme: state.terminalThemeStore) {
             weirMainWindowServices(state, updaterStack: updaterStack)
         }
     }
@@ -39,6 +39,7 @@ extension View {
         .environment(state.primaryKeyHint)
         .environment(state.worktreeMoveSuggester)
         .environment(state.settingsStore)
+        .environment(state.terminalThemeStore)
         .environment(state.reduceTransparencyResolver)
         .environment(state.prStatusStore)
         .environment(state.gitFacts)
@@ -67,6 +68,7 @@ extension View {
 /// Read in this `body`, a change reaches every view below that reads them.
 struct LiveLocaleAndAccent<Content: View>: View {
     let settingsStore: SettingsStore
+    let terminalTheme: TerminalThemeStore
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -75,10 +77,12 @@ struct LiveLocaleAndAccent<Content: View>: View {
             // The accent as both `\.weirAccent` (Weir's own marks) and
             // SwiftUI's `\.tint` (its Toggle, Slider, and the like). Sheets
             // and popovers apply it again at their call site
-            // (`View.weirAccentPropagated(_:)`): macOS presents them
-            // apart from the window, so these don't reach inside.
-            .weirAccentPropagated(
-                WeirColor.accent(for: settingsStore.settings.appearance.accentColor)
+            // (`View.weirAppearancePropagated(accent:windowColors:)`): macOS
+            // presents them apart from the window, so these don't reach
+            // inside. The window's colors from the terminal theme go with it.
+            .weirAppearancePropagated(
+                accent: WeirColor.accent(for: settingsStore.settings.appearance.accentColor),
+                windowColors: terminalTheme.windowColors
             )
     }
 }

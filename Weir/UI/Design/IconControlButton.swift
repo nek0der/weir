@@ -11,7 +11,7 @@ struct IconControlButton: View {
     let systemImage: String
     let name: LocalizedStringResource
     /// A semantic icon color, or nil for the normal hover and selection ink.
-    var symbolColor: Color?
+    var symbolColor: ThemedStyle?
     /// The key that does the same, shown in the chip; `nil` when none is bound.
     let shortcut: String?
     /// Whether what it opens is open, as VoiceOver hears it.
@@ -58,7 +58,7 @@ struct IconControlButton: View {
 struct IconControlFace: View {
     let systemImage: String
     /// A semantic icon color, or nil when the control's state sets its ink.
-    var symbolColor: Color?
+    var symbolColor: ThemedStyle?
     let isLit: Bool
     let isHovering: Bool
     var badge: IconBadge?
@@ -93,7 +93,10 @@ extension View {
             .frame(width: WeirLayout.Supervision.railButtonSize, height: WeirLayout.Supervision.railButtonSize)
             .background(SurfaceGround {
                 RoundedRectangle(cornerRadius: WeirLayout.Supervision.iconControlCornerRadius, style: .continuous)
-                    .fill(isLit ? SupervisionTokens.railSelection.color : isHovering ? SupervisionTokens.hover.color : .clear)
+                    .fill(
+                        isLit ? AnyShapeStyle(SupervisionTokens.railSelection.color)
+                            : isHovering ? AnyShapeStyle(SupervisionTokens.hover.color) : AnyShapeStyle(Color.clear)
+                    )
             })
             .contentShape(Rectangle())
     }

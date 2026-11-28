@@ -35,7 +35,7 @@ struct LiveLocaleAndAccentTests {
             store.appLanguage = .english
             store.settings.appearance.accentColor = .blue
             let seen = Seen()
-            let host = NSHostingView(rootView: LiveLocaleAndAccent(settingsStore: store) {
+            let host = NSHostingView(rootView: LiveLocaleAndAccent(settingsStore: store, terminalTheme: TerminalThemeStore()) {
                 Probe(seen: seen)
             })
             host.frame = NSRect(x: 0, y: 0, width: 10, height: 10)

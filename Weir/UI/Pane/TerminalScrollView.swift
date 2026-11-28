@@ -23,6 +23,16 @@ final class TerminalScrollView: NSView {
     /// short of it, so a frame that ends a point off still ends the hold.
     private var settleCheck: DispatchWorkItem?
 
+    /// The scroller knob's style: AppKit's own over the bundled theme, and
+    /// one that stands out against the ground Weir paints for any other
+    /// (`TerminalGround.knobStyle(on:)`).
+    var knobStyle: NSScroller.KnobStyle = .default {
+        didSet {
+            guard knobStyle != oldValue else { return }
+            scrollView.scrollerKnobStyle = knobStyle
+        }
+    }
+
     /// SwiftUI can retain an old host after reparenting its persistent surface.
     /// We use the actual view hierarchy as the authority for geometry and input.
     private var isSurfaceMounted: Bool {

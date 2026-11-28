@@ -239,7 +239,7 @@ struct ReviewPromptPreview: View {
 
     private func promptEntryActions(
         _ message: Text,
-        tint: Color,
+        tint: some ShapeStyle,
         @ViewBuilder buttons: () -> some View
     ) -> some View {
         HStack(spacing: WeirLayout.Supervision.spaceSnug) {

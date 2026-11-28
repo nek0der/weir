@@ -564,6 +564,32 @@ as they were read and never changed, so going back finds them. Both sections
 carry keys they do not know (`unknownFields`), so the build before keeps the
 new keys through a round trip, and this build keeps the old ones.
 
+The terminal theme for each appearance is `appearance.terminalTheme`, still
+at schema 2 (`TerminalThemeSelection` and `TerminalThemeRef` in
+`Weir/Core/Settings/TerminalThemeSelection.swift`):
+
+- The value is `{"light": {"name": …, "origin": …}, "dark": {…}}`. `name`
+  is a file name, not a path, and `origin` is `"bundled"`, `"user"`, or
+  `"ghostty"`, the folder it is read from. A side left out uses the bundled
+  default. A file that chose neither side has `"terminalTheme": {}`.
+- A side whose `origin` this build does not know, or that is not a
+  `{name, origin}` object, reads as no choice. Its raw value is kept and
+  written back unchanged until the person picks a theme for that side, the
+  default included. A key of `terminalTheme` this build does not know, such
+  as one a newer build adds, is kept the same way. A `terminalTheme` that is
+  not an object reads as no choice for either side, and the rest of
+  `appearance` is still read.
+- A chosen theme whose file is gone, unreadable, larger than 64 KiB, or
+  without a `background` Weir can read uses the bundled default for that
+  side and stays in the file, so it applies again once the file is usable.
+- `scope` says how far the theme colors the window: `"window"` when the
+  window's own colors follow it, left out otherwise. Any other value, and a
+  value that is not a string, reads as left out; a string is kept and
+  written back as it was read.
+
+0.1.19 and earlier keep `terminalTheme` as an unknown key of `appearance`
+(`AppearanceSettings.unknownFields`) and write it back as it was read.
+
 0.1.9 reads a schema 2 file and keeps its values. It carries
 the following as unknown fields: the sections it does not know (`review`,
 `general`, `newSession`), the new keys in `advanced` (`turnRetention`,

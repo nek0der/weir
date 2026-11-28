@@ -184,11 +184,11 @@ struct SupervisionHistoryRow: View {
         Button("Delete Notification", role: .destructive, action: onDelete)
     }
 
-    private var fill: Color {
+    private var fill: AnyShapeStyle {
         if isSelected {
             return ground.selection.color
         }
-        return isHovering && !isClosed ? ground.hover.color : Color.clear
+        return isHovering && !isClosed ? ground.hover.color : AnyShapeStyle(Color.clear)
     }
 
     private var firstLine: some View {
@@ -243,7 +243,7 @@ struct SupervisionHistoryRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             if !lines.facts.isEmpty {
                 // Whole, in the time's column: the reply gives way first.
-                Text(ReceiptRunRenderer.attributed(lines.facts, size: .meta, style: .mutedFacts))
+                ReceiptRunRenderer.text(lines.facts, size: .meta, style: .mutedFacts)
                     .monospacedDigit()
                     .lineLimit(1)
                     .fixedSize()
@@ -253,7 +253,7 @@ struct SupervisionHistoryRow: View {
 
     /// The headline's color under what the row names: the glyph's tone
     /// while the agent is still in that state, quiet once it has left it.
-    private var tone: Color {
+    private var tone: ThemedStyle {
         switch mark {
         case .approval, .question, .response, .signIn: SupervisionTokens.waitingText.color
         case .stopped: SupervisionTokens.stoppedText.color
@@ -310,7 +310,7 @@ struct NotificationSourceGroupSegment: ViewModifier {
             }
             .overlay(alignment: .top) {
                 if !isFirst {
-                    ground.groupRule.color
+                    Rectangle().fill(ground.groupRule.color)
                         .frame(height: 1)
                         .padding(.leading, WeirLayout.Supervision.notificationGroupRuleLeading)
                         .padding(.trailing, inset + WeirLayout.Supervision.notificationRowInsets.trailing)
@@ -413,7 +413,7 @@ struct SupervisionHistoryFold: View {
             .padding(WeirLayout.Supervision.notificationRowInsets)
             .frame(maxWidth: .infinity, minHeight: WeirLayout.Supervision.notificationFoldHeight, alignment: .leading)
             // No edge, as on a row (`SupervisionHistoryRow`).
-            .background(shape.fill(isSelected ? ground.selection.color : isHovering ? ground.hover.color : .clear))
+            .background(shape.fill(isSelected ? ground.selection.color : isHovering ? ground.hover.color : AnyShapeStyle(Color.clear)))
             .contentShape(shape)
         }
         .buttonStyle(.plain)
