@@ -237,7 +237,7 @@ struct SurfaceHeadingLineTests {
             name: name,
             isEditing: .constant(false),
             font: font,
-            foregroundColor: .primary,
+            foregroundColor: AnyShapeStyle(Color.primary),
             fillsWidth: false
         )
         let text = Text(verbatim: name).font(font).lineLimit(1)

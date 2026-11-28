@@ -23,7 +23,7 @@ struct DecisionBarFootBar: View {
     let onShow: (AttentionItemID) -> Void
 
     var body: some View {
-        SupervisionFootBar(fill: DecisionBarRow.fill(model.tone), rule: DecisionBarRow.rule(model.tone)) {
+        SupervisionFootBar(fill: AnyShapeStyle(DecisionBarRow.fill(model.tone)), rule: AnyShapeStyle(DecisionBarRow.rule(model.tone))) {
             DecisionBarRow(
                 model: model,
                 paneID: paneID,
@@ -496,7 +496,7 @@ struct DecisionBarRow: View {
 
     /// The bar's ground: the soft fill of what waits on the person, and
     /// the sidebar's color at rest and after something was done.
-    static func fill(_ tone: DecisionBarModel.Tone) -> Color {
+    static func fill(_ tone: DecisionBarModel.Tone) -> ThemedStyle {
         switch tone {
         case .waiting: SupervisionTokens.waitingFill.color
         case .stopped: SupervisionTokens.stoppedFill.color
@@ -506,7 +506,7 @@ struct DecisionBarRow: View {
     }
 
     /// The rule along the bar's top, in the color of what waits.
-    static func rule(_ tone: DecisionBarModel.Tone) -> Color {
+    static func rule(_ tone: DecisionBarModel.Tone) -> ThemedStyle {
         switch tone {
         case .waiting: SupervisionTokens.waiting.color
         case .stopped: SupervisionTokens.stopped.color

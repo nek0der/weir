@@ -35,7 +35,8 @@ extension ReviewDiffTable.Coordinator {
         ReviewHostedEnvironment(
             locale: parent.locale,
             surfaceOpacity: parent.surfaceOpacity,
-            accent: appliedAccent ?? WeirColor.defaultAccent
+            accent: appliedAccent ?? WeirColor.defaultAccent,
+            windowColors: appliedWindowColors ?? .tokens
         )
     }
 

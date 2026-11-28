@@ -83,7 +83,7 @@ struct NewSessionCheckbox<Detail: View>: View {
 /// whole sentence is the tooltip.
 struct NewSessionStatusLine: View {
     let runs: [NewSessionModel.LineRun]
-    let color: Color
+    let color: ThemedStyle
     /// At most `lineCount`; `nil`, for a test, lets it take every line it
     /// needs, to tell whether the two hold it.
     var lineLimit: Int? = Self.lineCount

@@ -481,7 +481,7 @@ struct PRHoverCardContent: View {
         }
     }
 
-    private func checksColor(_ checks: PRChecks) -> Color {
+    private func checksColor(_ checks: PRChecks) -> ThemedStyle {
         switch checks.conclusion {
         // A check's result, not a state, so a pass may be green; a
         // failure is the stopped red, since both are failures.

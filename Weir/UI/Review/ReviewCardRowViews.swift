@@ -230,18 +230,18 @@ final class ReviewCommentRowView: NSView {
             systemSymbolName: "text.bubble",
             accessibilityDescription: nil
         )
-        icon.contentTintColor = SupervisionTokens.muted.nsColor
+        icon.contentTintColor = ReviewRowPainter.themed(SupervisionTokens.muted)
         card.addSubview(icon)
         for label in [title, position, body, state] {
             label.translatesAutoresizingMaskIntoConstraints = false
             card.addSubview(label)
         }
         state.font = ReviewRowMetrics.labelFont
-        state.textColor = SupervisionTokens.muted.nsColor
+        state.textColor = ReviewRowPainter.themed(SupervisionTokens.muted)
         title.font = ReviewRowMetrics.cardTitleFont
-        title.textColor = SupervisionTokens.muted.nsColor
+        title.textColor = ReviewRowPainter.themed(SupervisionTokens.muted)
         position.font = ReviewRowMetrics.cardDetailFont
-        position.textColor = SupervisionTokens.muted.nsColor
+        position.textColor = ReviewRowPainter.themed(SupervisionTokens.muted)
         position.alignment = .right
         position.lineBreakMode = .byTruncatingTail
         body.font = ReviewRowMetrics.commentFont
@@ -251,8 +251,8 @@ final class ReviewCommentRowView: NSView {
         configure(button: resolveButton, action: #selector(resolve))
         configure(button: editButton, action: #selector(edit))
         configure(button: deleteButton, action: #selector(remove))
-        editButton.contentTintColor = SupervisionTokens.muted.nsColor
-        deleteButton.contentTintColor = SupervisionTokens.muted.nsColor
+        editButton.contentTintColor = ReviewRowPainter.themed(SupervisionTokens.muted)
+        deleteButton.contentTintColor = ReviewRowPainter.themed(SupervisionTokens.muted)
         installConstraints()
     }
 
@@ -444,12 +444,12 @@ final class ReviewComposerRowView: NSView {
         }
         title.font = ReviewRowMetrics.cardTitleFont
         position.font = ReviewRowMetrics.cardDetailFont
-        position.textColor = SupervisionTokens.muted.nsColor
+        position.textColor = ReviewRowPainter.themed(SupervisionTokens.muted)
         position.alignment = .right
         position.lineBreakMode = .byTruncatingTail
         placeholder.font = ReviewRowMetrics.commentFont
         placeholder.lineBreakMode = .byTruncatingTail
-        placeholder.textColor = SupervisionTokens.muted.nsColor
+        placeholder.textColor = ReviewRowPainter.themed(SupervisionTokens.muted)
         textView.font = ReviewRowMetrics.commentFont
         textView.isRichText = false
         textView.allowsUndo = true
@@ -471,7 +471,7 @@ final class ReviewComposerRowView: NSView {
         style(cancelButton, action: #selector(cancel))
         cancelButton.bezelStyle = .inline
         cancelButton.isBordered = false
-        cancelButton.contentTintColor = SupervisionTokens.muted.nsColor
+        cancelButton.contentTintColor = ReviewRowPainter.themed(SupervisionTokens.muted)
         style(addButton, action: #selector(commit))
         addButton.bezelStyle = .rounded
         installConstraints()

@@ -272,6 +272,15 @@ as they are fixed or confirmed.
   Answering it ends the wait while an earlier one still waits, and Claude
   Code's permission prompt during a question is taken for the question.
 
+## Terminal colors
+
+- **A program's own background color does not change the pane's.** A
+  program that sets the terminal's background (OSC 11) still shows the
+  chosen theme's background under its text.
+- **A theme from outside Weir uses only the color lines Weir can check.**
+  A 3-digit color, a color name, or a setting other than a color has no
+  effect, even where Ghostty itself would accept it.
+
 ## Pane headers
 
 - **A permission mode changed at the agent's prompt shows with its next

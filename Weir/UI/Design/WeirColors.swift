@@ -180,8 +180,15 @@ extension View {
     /// don't reach the content automatically — every callsite has to
     /// thread the value through manually for Toggle / Button / etc.
     /// inside the sheet to track the user's picker.
-    func weirAccentPropagated(_ accent: Color) -> some View {
-        environment(\.weirAccent, accent).tint(accent)
+    ///
+    /// The window's colors from the terminal theme travel with it for the
+    /// same reason (`WindowColors`), so a sheet drawn in the tokens while
+    /// its window follows a theme is a missing argument here rather than a
+    /// look nobody notices.
+    func weirAppearancePropagated(accent: Color, windowColors: WindowColors) -> some View {
+        environment(\.weirAccent, accent)
+            .environment(\.weirWindowColors, windowColors)
+            .tint(accent)
     }
 }
 

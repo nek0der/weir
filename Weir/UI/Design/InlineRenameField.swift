@@ -112,7 +112,7 @@ struct InlineRenameField: View {
     /// shortcut by setting this and reads it to hold off its own taps.
     @Binding var isEditing: Bool
     var font: Font
-    var foregroundColor: Color
+    var foregroundColor: AnyShapeStyle
     /// Receives the submitted name, trimmed and never empty unless
     /// `submitsEmptyName` says otherwise, and only when it differs from the
     /// name the edit started from (`submission`). Nil for a label that cannot be

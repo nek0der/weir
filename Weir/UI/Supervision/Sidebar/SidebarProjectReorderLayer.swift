@@ -16,7 +16,7 @@ struct SidebarProjectReorderLayer: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            SupervisionTokens.window.color
+            Rectangle().fill(SupervisionTokens.window.color)
                 .opacity(drag.hidesList ? Self.scrimOpacity : 0)
                 .animation(reduceMotion ? nil : WeirMotion.dropIndicator, value: drag.hidesList)
             if drag.phase != nil {

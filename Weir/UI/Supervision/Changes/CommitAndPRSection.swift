@@ -28,7 +28,7 @@ struct CommitAndPRSection: View {
         // The sidebar's ground, so the foot reads as apart from the turns
         // above it. At the panel's opacity, so with transparency on it is
         // not an opaque patch (laid over the panel, a little denser).
-        let ground = SupervisionTokens.sidebar.color.opacity(surfaceOpacity)
+        let ground = AnyShapeStyle(SupervisionTokens.sidebar.color.opacity(surfaceOpacity))
         VStack(spacing: 0) {
             // Where the branch stands and the moves the foot bar does not
             // hold; then the words about the bar's own move, right above
@@ -235,7 +235,7 @@ struct CommitAndPRSection: View {
 /// the line, when a move does.
 struct CommitAndPRFootBar: View {
     let action: CommitAndPRModel.FootAction?
-    var fill: Color = .clear
+    var fill = AnyShapeStyle(Color.clear)
     let perform: (CommitAndPRModel.FootAction) -> Void
 
     var body: some View {

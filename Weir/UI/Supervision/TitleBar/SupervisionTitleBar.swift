@@ -232,7 +232,7 @@ struct TitleBarMenuLabel<Leading: View, Trailing: View>: View {
         // the control whose menu is open is not an opaque box.
         .background(SurfaceGround {
             RoundedRectangle(cornerRadius: WeirLayout.Supervision.iconControlCornerRadius, style: .continuous)
-                .fill(isHighlighted ? SupervisionTokens.hover.color : .clear)
+                .fill(isHighlighted ? AnyShapeStyle(SupervisionTokens.hover.color) : AnyShapeStyle(Color.clear))
         })
         .contentShape(Rectangle())
     }
@@ -294,7 +294,7 @@ struct DropdownItem: View {
                 // The dropdown's ground decides the fill, as for its rows:
                 // the opaque gray all but vanishes on the material.
                 RoundedRectangle(cornerRadius: WeirLayout.Supervision.dropdownFootItemCornerRadius, style: .continuous)
-                    .fill(isHovering && isEnabled ? ground.hover.color : .clear)
+                    .fill(isHovering && isEnabled ? ground.hover.color : AnyShapeStyle(Color.clear))
             )
             .opacity(isEnabled ? 1 : SupervisionTokens.disabledOpacity)
             .contentShape(Rectangle())

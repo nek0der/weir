@@ -23,6 +23,7 @@ struct OpenTabsMenu: View {
     @Environment(TmuxPanePresence.self) private var tmuxPresence
     @Environment(ProjectWindowState.self) private var window
     @Environment(SettingsStore.self) private var settings
+    @Environment(\.weirWindowColors) private var windowColors
     @Environment(\.surfaceRegistry) private var registry
     @Environment(\.agentProjection) private var agentProjection
     /// The identity colors the rows carry, as the strip's tabs do.
@@ -145,7 +146,7 @@ struct OpenTabsMenu: View {
         OpenTabsRow(
             row: row,
             isSelected: row.id == selectedID,
-            checkColor: SupervisionTokens.accentIcon(settings.settings.appearance.accentColor),
+            checkColor: SupervisionTokens.accentIcon(settings.settings.appearance.accentColor, windowColors: windowColors),
             onActivate: { activate(row) },
             onClose: { close(row) }
         )
@@ -305,7 +306,7 @@ private struct OpenTabsRow: View {
             .accessibilityHidden(!isShown)
     }
 
-    private var detailColor: Color {
+    private var detailColor: ThemedStyle {
         (row.item?.stateGlyph).textColor
     }
 }

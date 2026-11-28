@@ -321,7 +321,7 @@ private struct PlanUsageRowView: View {
     /// The waiting and stopped colors as a window nears and reaches its
     /// limit. The share is written beside the bar, so the color is never
     /// the only sign.
-    private var barColor: Color {
+    private var barColor: ThemedStyle {
         switch row.level {
         case .normal: SupervisionTokens.running.color
         case .nearLimit: SupervisionTokens.waiting.color
@@ -332,7 +332,7 @@ private struct PlanUsageRowView: View {
 
 private struct PlanUsageBar: View {
     let fraction: Double
-    let color: Color
+    let color: ThemedStyle
 
     var body: some View {
         GeometryReader { geometry in

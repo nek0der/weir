@@ -38,11 +38,11 @@ struct IconBadgeMark: View {
     }
 
     /// Returns the count color shared by corner badges and inline attention marks.
-    static func countColor(for tone: IconBadge.CountTone) -> Color {
+    static func countColor(for tone: IconBadge.CountTone) -> ThemedStyle {
         (tone == .blocking ? SupervisionTokens.waitingCount : SupervisionTokens.unreadCount).color
     }
 
-    private func dot(color: Color, size: CGFloat) -> some View {
+    private func dot(color: some ShapeStyle, size: CGFloat) -> some View {
         let ring = WeirLayout.Supervision.iconBadgeRingWidth
         // How far the ringed dot's corner sits inside a ringed count's.
         let inset = (WeirLayout.Supervision.iconBadgeSize - size) / 2 - ring

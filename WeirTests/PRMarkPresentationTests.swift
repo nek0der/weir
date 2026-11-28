@@ -100,13 +100,8 @@ struct PRMarkPresentationTests {
         let style = try #require(PRMarkPresentation.supervisionStyle(
             for: PRInfoFixture.make(state: state, isDraft: isDraft)
         ))
-        // Each token's color is made afresh, so the two are compared as
-        // they are drawn, in both appearances.
-        for name in [NSAppearance.Name.aqua, .darkAqua] {
-            let appearance = try #require(NSAppearance(named: name))
-            let tint = try #require(SRGB(NSColor(style.tint), in: appearance))
-            #expect(Self.isSame(tint, SupervisionTokens.muted.value(isDark: name == .darkAqua)))
-        }
+        // A style is a value, so it is compared with the token's own.
+        #expect(style.tint == SupervisionTokens.muted.color)
     }
 
     /// Only the checks are colored: a failure in the stopped glyph's red,
@@ -124,11 +119,7 @@ struct PRMarkPresentationTests {
     func supervisionStyle_checks_takeTheirColor(conclusion: PRChecksConclusion, token: ThemedColor) throws {
         let style = try #require(PRMarkPresentation.supervisionStyle(for: PRInfoFixture.make(checks: conclusion)))
         let badge = try #require(style.badge)
-        for name in [NSAppearance.Name.aqua, .darkAqua] {
-            let appearance = try #require(NSAppearance(named: name))
-            let badgeColor = try #require(SRGB(NSColor(badge.color), in: appearance))
-            #expect(Self.isSame(badgeColor, token.value(isDark: name == .darkAqua)))
-        }
+        #expect(badge.color == token.color)
     }
 
     /// One outcome of the checks, the badge it draws, and what it speaks.
@@ -140,10 +131,5 @@ struct PRMarkPresentationTests {
         var testDescription: String {
             key
         }
-    }
-
-    /// The same color, within what a round trip through AppKit may move it.
-    private static func isSame(_ lhs: SRGB, _ rhs: SRGB) -> Bool {
-        abs(lhs.red - rhs.red) < 0.002 && abs(lhs.green - rhs.green) < 0.002 && abs(lhs.blue - rhs.blue) < 0.002
     }
 }

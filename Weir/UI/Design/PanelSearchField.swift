@@ -51,10 +51,10 @@ struct SearchFieldFace {
         case insets(EdgeInsets)
     }
 
-    let fill: Color
+    let fill: AnyShapeStyle
     /// This is a one-point edge inside the shape, for a field whose fill
     /// alone would not stand off what it is on.
-    var edge: Color?
+    var edge: AnyShapeStyle?
     let cornerRadius: CGFloat
     var cornerStyle: RoundedCornerStyle = .continuous
     let size: Size
@@ -67,17 +67,17 @@ struct SearchFieldFace {
     /// insets around the line, so a field beside a title and one on a line of
     /// its own stand alike.
     static let panel = SearchFieldFace(
-        fill: SupervisionTokens.hover.color,
-        edge: SupervisionTokens.line.color,
+        fill: AnyShapeStyle(SupervisionTokens.hover.color),
+        edge: AnyShapeStyle(SupervisionTokens.line.color),
         cornerRadius: Layout.panelSearchFieldCornerRadius,
         size: .height(Layout.panelSearchFieldHeight, horizontalInset: Layout.panelSearchFieldHorizontalInset)
     )
 
     /// This is a dropdown's search (the project menu), sunk into the
     /// dropdown's `well` so it reads as a field on the popover's own surface.
-    static func dropdown(well: Color) -> Self {
+    static func dropdown(well: some ShapeStyle) -> Self {
         SearchFieldFace(
-            fill: well,
+            fill: AnyShapeStyle(well),
             cornerRadius: Layout.dropdownSearchCornerRadius,
             size: .insets(Layout.dropdownSearchInsets)
         )
@@ -86,7 +86,7 @@ struct SearchFieldFace {
     /// This is the review rail's file filter: a short field in the rail's
     /// row hover, small enough to sit over the file list.
     static let rail = SearchFieldFace(
-        fill: WeirColor.rowHoverFill,
+        fill: AnyShapeStyle(WeirColor.rowHoverFill),
         cornerRadius: Layout.smallControlCornerRadius,
         cornerStyle: .circular,
         size: .height(Layout.railSearchFieldHeight, horizontalInset: Layout.spaceS)

@@ -24,6 +24,7 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+import WeirDomain
 
 /// Drop zone the cursor is hovering over (or `nil` while no pane drag
 /// is in flight). `center` swaps; the four edges insert a new split.
@@ -46,8 +47,13 @@ struct PaneSwapDropOverlay: View {
     /// the highlight follows the user's chosen accent instead of the
     /// macOS system one.
     @Environment(\.weirAccent) private var accent
+    @Environment(\.weirWindowColors) private var windowColors
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(PanePlacementStore.self) private var placements
+    @Environment(TerminalThemeStore.self) private var terminalTheme
+    @Environment(SettingsStore.self) private var settingsStore
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.supervisionSurfaceOpacity) private var surfaceOpacity
 
     /// Edge zones take 25% of the matching axis. Matches the standard
     /// pane-rearrangement UX seen across tiling terminals / editors.
@@ -206,7 +212,11 @@ struct PaneSwapDropOverlay: View {
         let shape = UnevenRoundedRectangle(cornerRadii: ring.radii, style: .continuous)
         ZStack {
             if active {
+                // The ring runs over the terminal's ground, which can be a
+                // theme's own color; the accent moves until it stands out
+                // there. The symbol keeps the accent: it sits on its own disc.
                 SupervisionDropMark(shape: shape)
+                    .environment(\.weirAccent, ringAccent)
             } else {
                 shape.strokeBorder(
                     SupervisionTokens.faint.color,
@@ -215,12 +225,23 @@ struct PaneSwapDropOverlay: View {
             }
             Image(systemName: Self.symbolName(for: zone))
                 .font(.supervision(.symbolLarge, weight: .semibold))
-                .foregroundStyle(active ? accent : SupervisionTokens.muted.color)
+                .foregroundStyle(active ? AnyShapeStyle(accent) : AnyShapeStyle(SupervisionTokens.muted.color))
                 .padding(layout.spaceM)
                 .background(Circle().fill(SupervisionTokens.popover.color))
                 .overlay(Circle().strokeBorder(SupervisionTokens.line.color, lineWidth: 1))
         }
         .padding(ring.insets)
+    }
+
+    /// The accent of the ring, corrected against a painted terminal ground.
+    private var ringAccent: Color {
+        terminalTheme.ground(
+            colorScheme: colorScheme,
+            accent: accent,
+            surfaceOpacity: surfaceOpacity,
+            unfocusedPaneOpacity: settingsStore.settings.appearance.unfocusedPaneOpacity,
+            windowColors: windowColors
+        ).accent?.color ?? accent
     }
 
     /// SF Symbol hinting at the action the drop will perform.

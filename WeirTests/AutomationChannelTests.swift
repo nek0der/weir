@@ -489,6 +489,17 @@
             #expect(try AutomationSettings.value(at: "appearance.colorScheme", in: changed) == .string("dark"))
         }
 
+        @Test func aTerminalThemeSide_isReadAndChanged() throws {
+            let settings = WeirSettings()
+            #expect(try AutomationSettings.value(at: "appearance.terminalTheme.dark", in: settings) == .null)
+
+            let night = WeirJSONValue.object(["name": .string("Night"), "origin": .string("user")])
+            let changed = try AutomationSettings.setting(night, at: "appearance.terminalTheme.dark", in: settings)
+
+            #expect(changed.appearance.terminalTheme.dark == TerminalThemeRef(name: "Night", origin: .user))
+            #expect(try AutomationSettings.value(at: "appearance.terminalTheme.dark", in: changed) == night)
+        }
+
         @Test func anOptionalSettingLeftUnset_readsAsNullAndCanBeSet() throws {
             let settings = WeirSettings()
             #expect(try AutomationSettings.value(at: "font.family", in: settings) == .null)

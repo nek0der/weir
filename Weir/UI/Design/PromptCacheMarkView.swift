@@ -19,7 +19,7 @@ private extension PromptCacheMark {
     /// The clock's tint: amber while the cache is about to expire, the
     /// stopped red once it has. The chip shows the same pair through its
     /// tone.
-    var tint: Color {
+    var tint: ThemedStyle {
         status == .expired ? SupervisionTokens.stopped.color : SupervisionTokens.waiting.color
     }
 

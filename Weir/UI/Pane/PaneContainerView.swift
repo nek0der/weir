@@ -9,6 +9,7 @@
 import AppKit
 import OSLog
 import SwiftUI
+import WeirDomain
 
 private let log = Logger.weir("pane.container")
 
@@ -23,6 +24,9 @@ struct PaneContainerView: View {
     @Environment(SettingsStore.self) private var settingsStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(PanePlacementStore.self) private var placements
+    @Environment(TerminalThemeStore.self) private var terminalTheme
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.supervisionSurfaceOpacity) private var surfaceOpacity
 
     /// `1.0` when this leaf is focused, sits in a single-pane tab, or
     /// is the zoomed leaf; otherwise the user-picked
@@ -124,6 +128,16 @@ struct PaneContainerView: View {
                         .allowsHitTesting(false)
                 )
                 .animation(WeirMotion.bellFlash, value: bellRinging)
+                // The theme's background, which the cells leave transparent
+                // (`background-opacity = 0`), at the surface's opacity so
+                // the window stays translucent; under the dimming, so a pane
+                // without focus fades with its ground. The bundled default
+                // theme paints nothing here.
+                .background {
+                    if let ground = terminalTheme.paintedGround(for: TerminalThemeBrightness(colorScheme)) {
+                        ground.color.opacity(surfaceOpacity)
+                    }
+                }
                 .opacity(opacity)
                 .animation(WeirMotion.paneDim, value: opacity)
 
@@ -179,6 +193,10 @@ struct PaneContainerView: View {
                     )
                     .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
                 )
+                // In the tokens whatever the terminal theme, its fill
+                // included: over the material, the glyph and the words were
+                // checked against the tokens only.
+                .environment(\.weirWindowColors, .tokens)
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 .pointerStyle(.default)
                 .modalTransition(.floatingPanel, reduceMotion: reduceMotion)

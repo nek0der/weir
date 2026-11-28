@@ -65,6 +65,7 @@ final class QuickTerminalController {
         reduceTransparencyResolver: ReduceTransparencyResolver,
         clipboard: ClipboardConfirmationCoordinator,
         secureInputManager: SecureInputManager,
+        terminalThemeStore: TerminalThemeStore = TerminalThemeStore(),
         surfaceFactory: @escaping @MainActor () -> SurfaceView?
     ) {
         self.settingsStore = settingsStore
@@ -74,7 +75,8 @@ final class QuickTerminalController {
         let content = QuickTerminalContentModel(
             settingsStore: settingsStore,
             reduceTransparencyResolver: reduceTransparencyResolver,
-            clipboard: clipboard
+            clipboard: clipboard,
+            terminalThemeStore: terminalThemeStore
         )
         content.panel = panel
         let hostingView = NSHostingView(rootView: QuickTerminalContent(model: content))

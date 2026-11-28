@@ -57,6 +57,7 @@ struct SupervisionFocusRing: ViewModifier {
     /// store would otherwise fall back to an accent silently, where a
     /// missing store stops it at once.
     @Environment(SettingsStore.self) private var settings
+    @Environment(\.weirWindowColors) private var windowColors
     @Environment(\.isModalSurfaceInTransition) private var isSurfaceInTransition
     @State private var hold = Hold()
 
@@ -65,7 +66,7 @@ struct SupervisionFocusRing: ViewModifier {
         content.overlay {
             if hold.isDrawn(isFocused: isFocused, isSurfaceInTransition: isSurfaceInTransition) {
                 RoundedRectangle(cornerRadius: geometry.cornerRadius, style: .continuous)
-                    .strokeBorder(Self.color(in: settings), lineWidth: WeirLayout.Supervision.keyboardRingWidth)
+                    .strokeBorder(Self.color(in: settings, windowColors: windowColors), lineWidth: WeirLayout.Supervision.keyboardRingWidth)
                     .padding(-geometry.outset)
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
@@ -80,9 +81,9 @@ struct SupervisionFocusRing: ViewModifier {
     }
 
     /// The ring's color: the accent chosen in `settings`, readable at 3:1
-    /// on every surface it stands on.
-    static func color(in settings: SettingsStore) -> Color {
-        SupervisionTokens.accentIcon(settings.settings.appearance.accentColor)
+    /// on every surface it stands on, in `windowColors`.
+    static func color(in settings: SettingsStore, windowColors: WindowColors = .tokens) -> Color {
+        SupervisionTokens.accentIcon(settings.settings.appearance.accentColor, windowColors: windowColors)
     }
 
     /// How far the ring stands outside the edge, and its corners, which

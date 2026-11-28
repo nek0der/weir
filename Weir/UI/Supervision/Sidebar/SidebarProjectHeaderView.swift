@@ -126,7 +126,7 @@ struct SidebarProjectHeaderView: View {
                 .supervisionTruncation(.name)
                 .layoutPriority(1)
             Rectangle()
-                .fill(isCarriedOverProject ? accent : SupervisionTokens.line.color)
+                .fill(isCarriedOverProject ? AnyShapeStyle(accent) : AnyShapeStyle(SupervisionTokens.line.color))
                 .frame(height: 1)
                 .frame(minWidth: 0)
                 .accessibilityHidden(true)
@@ -231,11 +231,11 @@ struct SidebarProjectHeaderView: View {
 
     /// The name's color: the accent while a dragged tab or pane is over the
     /// project, else muted while it is folded.
-    private var nameColor: Color {
+    private var nameColor: AnyShapeStyle {
         if isCarriedOverProject {
-            return accent
+            return AnyShapeStyle(accent)
         }
-        return header.isCollapsed ? SupervisionTokens.muted.color : SupervisionTokens.text.color
+        return AnyShapeStyle(header.isCollapsed ? SupervisionTokens.muted.color : SupervisionTokens.text.color)
     }
 
     /// The count, a trouble icon, or a button for another window.

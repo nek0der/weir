@@ -147,7 +147,7 @@ struct SupervisionSegmentedPicker<Value: Hashable>: View {
     /// words' line: in the text color and the unread blue on the track,
     /// and both in the pill's label color under the pill, where the blue
     /// would stand on the accent.
-    private func label(of option: Option, weight: Font.Weight, color: Color, dotColor: Color) -> some View {
+    private func label(of option: Option, weight: Font.Weight, color: some ShapeStyle, dotColor: some ShapeStyle) -> some View {
         HStack(spacing: WeirLayout.Supervision.segmentedDotSpacing) {
             option.title
                 .font(.supervision(fontSize, weight: weight))
@@ -176,8 +176,8 @@ struct SupervisionSegmentedPicker<Value: Hashable>: View {
                 .frame(height: metrics.segmentedHeight - metrics.segmentedInset * 2)
                 .background(
                     pillShape.fill(
-                        !isSelected && hoveredIndex == index && isEnabled && option.isEnabled ? SupervisionTokens.segmentHover
-                            .color : .clear
+                        !isSelected && hoveredIndex == index && isEnabled && option.isEnabled
+                            ? AnyShapeStyle(SupervisionTokens.segmentHover.color) : AnyShapeStyle(Color.clear)
                     )
                 )
                 .contentShape(pillShape)

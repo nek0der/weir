@@ -4,14 +4,16 @@
 import SwiftUI
 
 /// What a SwiftUI view hosted in one of the review table's AppKit rows
-/// takes from the window: the language, the surface's opacity, and the
-/// accent. SwiftUI's environment stops at the table, so the table hands
-/// these over as it configures a row (`ReviewHosted`).
+/// takes from the window: the language, the surface's opacity, the
+/// accent, and the window's colors from the terminal theme. SwiftUI's
+/// environment stops at the table, so the table hands these over as it
+/// configures a row (`ReviewHosted`).
 struct ReviewHostedEnvironment: Equatable {
     var locale: Locale = .current
     /// How opaque the surface is filled (`supervisionSurfaceOpacity`).
     var surfaceOpacity: Double = 1
     var accent: Color = WeirColor.defaultAccent
+    var windowColors = WindowColors.tokens
 }
 
 /// A view a review row hosts, in the window's environment again: the one
@@ -26,6 +28,6 @@ struct ReviewHosted<Content: View>: View {
         content
             .environment(\.locale, environment.locale)
             .environment(\.supervisionSurfaceOpacity, environment.surfaceOpacity)
-            .weirAccentPropagated(environment.accent)
+            .weirAppearancePropagated(accent: environment.accent, windowColors: environment.windowColors)
     }
 }

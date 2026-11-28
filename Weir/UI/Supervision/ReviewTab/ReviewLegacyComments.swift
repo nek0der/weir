@@ -59,7 +59,7 @@ struct ReviewLegacyComments: View {
             .padding(.vertical, WeirLayout.Supervision.spaceSnug)
             .background(WeirColor.reviewAsideBackground)
             .overlay(alignment: .bottom) {
-                SupervisionTokens.line.color.frame(height: 0.5)
+                Rectangle().fill(SupervisionTokens.line.color).frame(height: 0.5)
             }
             .keptInReviewTab($isExpanded, as: \.areEarlierCommentsExpanded)
         }

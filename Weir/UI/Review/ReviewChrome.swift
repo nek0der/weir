@@ -83,7 +83,7 @@ struct ReviewBanner: View {
         /// Neither: news about the review (the worktree has changed).
         case notice
 
-        var icon: Color {
+        var icon: ThemedStyle {
             switch self {
             case .error: SupervisionTokens.stoppedText.color
             case .warning: SupervisionTokens.waiting.color
@@ -91,11 +91,11 @@ struct ReviewBanner: View {
             }
         }
 
-        var fill: Color {
+        var fill: AnyShapeStyle {
             switch self {
-            case .error: SupervisionTokens.stoppedFill.color
-            case .warning: SupervisionTokens.waitingFill.color
-            case .notice: WeirColor.rowActiveFill.opacity(0.5)
+            case .error: AnyShapeStyle(SupervisionTokens.stoppedFill.color)
+            case .warning: AnyShapeStyle(SupervisionTokens.waitingFill.color)
+            case .notice: AnyShapeStyle(WeirColor.rowActiveFill.opacity(0.5))
             }
         }
 

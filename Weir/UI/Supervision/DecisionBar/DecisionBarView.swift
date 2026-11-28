@@ -247,7 +247,7 @@ struct DecisionBarTag: View {
             .foregroundStyle(style.label.color)
             .padding(.horizontal, WeirLayout.Supervision.decisionBarTagHorizontalPadding)
             .frame(height: WeirLayout.Supervision.decisionBarTagHeight)
-            .background(shape.fill(style.fill?.color ?? .clear))
+            .background(shape.fill(style.fill.map { AnyShapeStyle($0.color) } ?? AnyShapeStyle(Color.clear)))
             .overlay(shape.strokeBorder(style.edge.color, lineWidth: 1))
             .fixedSize()
     }

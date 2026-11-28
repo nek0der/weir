@@ -357,6 +357,18 @@ encoding.
   by state, since the sidebar keeps your order. **Notification History**
   (⇧⌘N) keeps the notifications Weir sent. The menu bar icon shows the
   attention state.
+- **Terminal colors.** **Settings → Appearance → Terminal Colors** picks a
+  theme for light and one for dark appearance, from Weir's own themes,
+  `~/.config/ghostty/themes`, and an installed Ghostty app. The terminal area
+  takes the theme's background; the rest of the window keeps its colors
+  unless **Color the window with the theme** is on. With it on, the window's
+  surfaces, lines, and text take the theme's background and foreground, in
+  the appearance whose theme it is, wherever that keeps every text and mark
+  as readable as Weir's own colors do; a theme too dark, too light, or too
+  low in contrast for that leaves the window as it was.
+  Code in review takes its colors from the theme too, adjusted to read on
+  review's background, unless they are too close to each other to tell
+  apart. From a theme outside Weir, only its color settings are used.
 - **Shell command.** **Settings → Integrations → Shell Command** adds a `weir`
   command to the terminal: `weir .` opens the current folder as a project.
 - **Updates and languages.** Weir checks for updates once a day through Sparkle

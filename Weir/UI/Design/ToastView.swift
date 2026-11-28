@@ -36,6 +36,10 @@ struct ToastHost: View {
             }
         }
         .allowsHitTesting(toastCenter.current(in: windowID) != nil)
+        // In the tokens whatever the terminal theme: the box inverts the
+        // appearance, and the other side's colors may come from another
+        // theme, or none (`TokenContrastRequirements.toast`).
+        .environment(\.weirWindowColors, .tokens)
         .animation(
             ModalMotion.transientBanner.animation(reduceMotion: reduceMotion),
             value: toastCenter.current(in: windowID)?.id
@@ -123,7 +127,7 @@ private struct ToastCapsule: View {
         }
     }
 
-    private func content(font: Font, linkFont: Font, text: Color, link: Color, spacing: CGFloat) -> some View {
+    private func content(font: Font, linkFont: Font, text: some ShapeStyle, link: some ShapeStyle, spacing: CGFloat) -> some View {
         HStack(spacing: spacing) {
             Text(display: item.message)
                 .font(font)

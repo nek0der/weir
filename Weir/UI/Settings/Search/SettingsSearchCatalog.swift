@@ -74,17 +74,41 @@ enum SettingsSearchCatalog {
             makeEntry("general.check-for-updates", .general, "Software Update", "Check Now…", keywords: ["Check for updates"], order: 9),
             makeEntry("general.version", .general, "About", "Weir version", keywords: ["Version"], order: 10),
 
-            makeEntry("appearance.theme", .appearance, "Color", "Theme", keywords: ["Color scheme"], order: 0),
+            makeEntry("appearance.theme", .appearance, "Color", "Appearance", keywords: ["Color scheme", "Theme"], order: 0),
             makeEntry("appearance.accent", .appearance, "Color", "Accent", keywords: ["Accent color"], order: 1),
-            makeEntry("appearance.transparency", .appearance, "Transparency", "Translucent window", keywords: ["Transparency"], order: 2),
-            makeEntry("appearance.background-opacity", .appearance, "Transparency", "Background opacity", keywords: ["Opacity"], order: 3),
+            makeEntry(
+                "appearance.terminal-theme-light",
+                .appearance,
+                "Terminal Colors",
+                "Light theme",
+                keywords: ["Terminal theme", "Color theme"],
+                order: 2
+            ),
+            makeEntry(
+                "appearance.terminal-theme-dark",
+                .appearance,
+                "Terminal Colors",
+                "Dark theme",
+                keywords: ["Terminal theme", "Color theme"],
+                order: 3
+            ),
+            makeEntry(
+                "appearance.terminal-theme-window",
+                .appearance,
+                "Terminal Colors",
+                "Color the window with the theme",
+                keywords: ["Window theme", "Color theme"],
+                order: 4
+            ),
+            makeEntry("appearance.transparency", .appearance, "Transparency", "Translucent window", keywords: ["Transparency"], order: 5),
+            makeEntry("appearance.background-opacity", .appearance, "Transparency", "Background opacity", keywords: ["Opacity"], order: 6),
             makeEntry(
                 "appearance.unfocused-pane-opacity",
                 .appearance,
                 "Panes",
                 "Unfocused pane opacity",
                 keywords: ["Inactive pane opacity"],
-                order: 4
+                order: 7
             ),
 
             makeEntry("font.family", .font, "Typeface", "Family", keywords: ["Font family"], order: 0),
@@ -317,6 +341,18 @@ enum SettingsSearchCatalog {
 
     static var accentColor: SettingsSearchEntry {
         requiredEntry("appearance.accent")
+    }
+
+    static var terminalThemeLight: SettingsSearchEntry {
+        requiredEntry("appearance.terminal-theme-light")
+    }
+
+    static var terminalThemeDark: SettingsSearchEntry {
+        requiredEntry("appearance.terminal-theme-dark")
+    }
+
+    static var terminalThemeWindow: SettingsSearchEntry {
+        requiredEntry("appearance.terminal-theme-window")
     }
 
     static var transparency: SettingsSearchEntry {

@@ -329,7 +329,7 @@ extension ReviewWorkspaceView {
             }
         }
         .overlay(alignment: .bottom) {
-            SupervisionTokens.line.color
+            Rectangle().fill(SupervisionTokens.line.color)
                 .frame(height: 1)
                 .accessibilityHidden(true)
         }

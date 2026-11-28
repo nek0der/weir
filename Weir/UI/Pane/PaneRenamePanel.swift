@@ -76,7 +76,7 @@ private struct PaneRenamePanel: View {
                 name: request.name,
                 isEditing: isEditing,
                 font: .supervision(WeirLayout.paneRenameFieldFontSize),
-                foregroundColor: .primary,
+                foregroundColor: AnyShapeStyle(Color.primary),
                 onRename: onRename,
                 submitsEmptyName: true,
                 fieldName: "Pane name",

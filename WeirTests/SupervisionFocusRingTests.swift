@@ -16,8 +16,8 @@ struct SupervisionFocusRingTests {
             let settings = SettingsStore(directory: directory)
             settings.settings.appearance.accentColor = .purple
             let ring = NSColor(SupervisionFocusRing.color(in: settings))
-            let purple = NSColor(SupervisionTokens.accentIcon(.purple))
-            let orange = NSColor(SupervisionTokens.accentIcon(.orange))
+            let purple = NSColor(SupervisionTokens.accentIcon(.purple, windowColors: .tokens))
+            let orange = NSColor(SupervisionTokens.accentIcon(.orange, windowColors: .tokens))
             for name in [NSAppearance.Name.aqua, .darkAqua] {
                 let appearance = try #require(NSAppearance(named: name))
                 let resolved = try #require(SRGB(ring, in: appearance))

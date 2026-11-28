@@ -63,8 +63,9 @@ private struct DropdownRowBackground: ViewModifier {
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: cornerStyle)
+        let fill = DropdownRowFill.fill(isSelected: isSelected, isHovering: isHovering, on: ground)
         content
-            .background(shape.fill(DropdownRowFill.fill(isSelected: isSelected, isHovering: isHovering, on: ground)?.color ?? .clear))
+            .background(shape.fill(fill?.color ?? AnyShapeStyle(Color.clear)))
             .popoverSelectionEdge(isSelected: isSelected, in: shape)
     }
 }

@@ -303,7 +303,7 @@ struct PaneHeaderView: View {
                     name: label.name,
                     isEditing: $isEditing,
                     font: .supervision(WeirLayout.paneHeaderNameFontSize, weight: isFocused ? .semibold : .regular),
-                    foregroundColor: isFocused ? .primary : .secondary,
+                    foregroundColor: AnyShapeStyle(isFocused ? Color.primary : Color.secondary),
                     onRename: { submitted in
                         session.commitPaneRename(
                             paneID,

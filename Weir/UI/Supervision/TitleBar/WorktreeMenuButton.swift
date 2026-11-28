@@ -71,6 +71,7 @@ struct WorktreeDropdown: View {
     @Environment(PRStatusStore.self) private var prStatusStore
     @Environment(GitFactsStore.self) private var gitFacts
     @Environment(SettingsStore.self) private var settings
+    @Environment(\.weirWindowColors) private var windowColors
     @Environment(\.locale) private var locale
     @State private var selection = ListKeyboardSelection<ContainerID>(ids: [])
     /// These are the dropdown's measured height and its list's
@@ -123,7 +124,10 @@ struct WorktreeDropdown: View {
                                     pullRequestMark: PRMarkPresentation.supervisionStyle(for: prStatusStore.info(for: entry.container)),
                                     isCurrent: entry.container == window.selection.activeContainerID,
                                     isSelected: entry.container == selection.id,
-                                    checkColor: SupervisionTokens.accentIcon(settings.settings.appearance.accentColor),
+                                    checkColor: SupervisionTokens.accentIcon(
+                                        settings.settings.appearance.accentColor,
+                                        windowColors: windowColors
+                                    ),
                                     // The pointer selects, so one row is lit:
                                     // the one Return opens.
                                     onHover: { selection.select(entry.container) },

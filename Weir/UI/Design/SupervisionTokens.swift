@@ -70,33 +70,45 @@ enum ContrastRatio {
 struct ThemedColor: Equatable, Sendable {
     let light: SRGB
     let dark: SRGB
+    /// The role a terminal theme can give this token a value for
+    /// (`WindowColors`); `nil` for a token that keeps its value under any
+    /// theme.
+    let role: WindowColorRole?
     /// One dynamic color per token, made once with it; AppKit resolves it
     /// per appearance as it draws. Made once rather than each time it is
     /// asked for: two dynamic colors made apart compare unequal, so a view
     /// handed a fresh one read as changed on every pass and was drawn
-    /// again, every row of a scrolling list included.
+    /// again, every row of a scrolling list included. Always the token's
+    /// own values: AppKit views that draw a themed role take the theme's
+    /// colors from their own owner (`ReviewRowPainter`).
     let nsColor: NSColor
-    /// `nsColor` as SwiftUI draws it, the same value each time.
-    let color: Color
+    /// The token as SwiftUI draws it, the theme's color for its role where
+    /// the environment has one (`ThemedStyle`). A value, so it compares
+    /// equal to itself.
+    let color: ThemedStyle
 
-    init(light: UInt32, dark: UInt32) {
+    init(light: UInt32, dark: UInt32, role: WindowColorRole? = nil) {
         let light = SRGB(light)
         let dark = SRGB(dark)
         self.light = light
         self.dark = dark
+        self.role = role
         nsColor = NSColor(name: nil) { appearance in
             (appearance.isDark ? dark : light).nsColor
         }
-        color = Color(nsColor: nsColor)
+        color = ThemedStyle(light: light, dark: dark, role: role)
     }
 
     func value(isDark: Bool) -> SRGB {
         isDark ? dark : light
     }
 
-    /// The two values are the token; the colors are made from them.
+    /// The two values and the role are the token; the colors are made from
+    /// them. The role counts: two tokens of one value, such as
+    /// `stoppedText` and `removed`, can take different colors under a
+    /// terminal theme.
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.light == rhs.light && lhs.dark == rhs.dark
+        lhs.light == rhs.light && lhs.dark == rhs.dark && lhs.role == rhs.role
     }
 }
 
@@ -155,10 +167,10 @@ enum RowFill: Equatable, Sendable {
     case overlay(ThemedOverlay)
 
     /// Follows the appearance it is drawn in.
-    var color: Color {
+    var color: AnyShapeStyle {
         switch self {
-        case let .solid(token): token.color
-        case let .overlay(token): token.color
+        case let .solid(token): AnyShapeStyle(token.color)
+        case let .overlay(token): AnyShapeStyle(token.color)
         }
     }
 
@@ -340,36 +352,36 @@ enum PopoverInk: Equatable, Sendable {
     case vibrant
 
     /// Words that carry the row: a title, a command.
-    var text: Color {
+    var text: AnyShapeStyle {
         switch self {
-        case .tokens: SupervisionTokens.text.color
-        case .vibrant: .primary
+        case .tokens: AnyShapeStyle(SupervisionTokens.text.color)
+        case .vibrant: AnyShapeStyle(.primary)
         }
     }
 
     /// Quiet words: a heading, a place, a time, a note.
-    var muted: Color {
+    var muted: AnyShapeStyle {
         switch self {
-        case .tokens: SupervisionTokens.muted.color
-        case .vibrant: .secondary
+        case .tokens: AnyShapeStyle(SupervisionTokens.muted.color)
+        case .vibrant: AnyShapeStyle(.secondary)
         }
     }
 
     /// A control's edge.
-    var line: Color {
+    var line: AnyShapeStyle {
         switch self {
-        case .tokens: SupervisionTokens.line.color
-        case .vibrant: .primary.opacity(0.25)
+        case .tokens: AnyShapeStyle(SupervisionTokens.line.color)
+        case .vibrant: AnyShapeStyle(.primary.opacity(0.25))
         }
     }
 
     /// A warning's words. Amber words read on Weir's own panels, but on
     /// the menu's glass only the system's labels do, so there the warning's
     /// amber icon carries the state alone.
-    var warningText: Color {
+    var warningText: AnyShapeStyle {
         switch self {
-        case .tokens: SupervisionTokens.waitingText.color
-        case .vibrant: .primary
+        case .tokens: AnyShapeStyle(SupervisionTokens.waitingText.color)
+        case .vibrant: AnyShapeStyle(.primary)
         }
     }
 
@@ -378,10 +390,10 @@ enum PopoverInk: Equatable, Sendable {
     /// (`stoppedText` is held to 4.5:1 on them), but on the menu's glass
     /// only the system's labels do, so there the state glyph's red disc and
     /// the words themselves say it.
-    var stoppedText: Color {
+    var stoppedText: AnyShapeStyle {
         switch self {
-        case .tokens: SupervisionTokens.stoppedText.color
-        case .vibrant: .primary
+        case .tokens: AnyShapeStyle(SupervisionTokens.stoppedText.color)
+        case .vibrant: AnyShapeStyle(.primary)
         }
     }
 
@@ -449,27 +461,27 @@ enum SupervisionTokens {
 
     // MARK: Surfaces
 
-    static let page = ThemedColor(light: 0xE8EAEE, dark: 0x111215)
+    static let page = ThemedColor(light: 0xE8EAEE, dark: 0x111215, role: .page)
     /// The window's ground: the gaps between the surfaces, the title bar,
     /// the rail, and the status band. A step darker than `window` in both
     /// appearances, so each surface stands apart from it.
-    static let well = ThemedColor(light: 0xE3E6EB, dark: 0x0D0E10)
-    static let window = ThemedColor(light: 0xFFFFFF, dark: 0x1B1C20)
-    static let sidebar = ThemedColor(light: 0xF3F4F6, dark: 0x222328)
-    static let column = ThemedColor(light: 0xFAFAFB, dark: 0x1F2024)
-    static let selection = ThemedColor(light: 0xE2E6ED, dark: 0x30333A)
+    static let well = ThemedColor(light: 0xE3E6EB, dark: 0x0D0E10, role: .well)
+    static let window = ThemedColor(light: 0xFFFFFF, dark: 0x1B1C20, role: .window)
+    static let sidebar = ThemedColor(light: 0xF3F4F6, dark: 0x222328, role: .sidebar)
+    static let column = ThemedColor(light: 0xFAFAFB, dark: 0x1F2024, role: .column)
+    static let selection = ThemedColor(light: 0xE2E6ED, dark: 0x30333A, role: .selection)
     /// A rail button that is pressed, or whose panel is open. The rails
     /// stand on `well`, which `selection` all but matches in light, so
     /// there the button takes the surfaces' white; in dark `selection`
     /// already stands off the well.
-    static let railSelection = ThemedColor(light: 0xFFFFFF, dark: 0x30333A)
-    static let hover = ThemedColor(light: 0xECEEF2, dark: 0x292B30)
+    static let railSelection = ThemedColor(light: 0xFFFFFF, dark: 0x30333A, role: .railSelection)
+    static let hover = ThemedColor(light: 0xECEEF2, dark: 0x292B30, role: .hover)
     /// A hovered segment on a segmented control's track, which is `hover`:
     /// `selection` all but matches that track (1.08:1 in light), so this
     /// stands about 1.3:1 off it in both appearances, darker in light and
     /// lighter in dark.
-    static let segmentHover = ThemedColor(light: 0xCCD1DA, dark: 0x3D4047)
-    static let line = ThemedColor(light: 0xE1E4E9, dark: 0x313339)
+    static let segmentHover = ThemedColor(light: 0xCCD1DA, dark: 0x3D4047, role: .segmentHover)
+    static let line = ThemedColor(light: 0xE1E4E9, dark: 0x313339, role: .line)
     /// The popovers' and menus' one surface while transparency is off
     /// or reduced: white in light, a step above the window in dark, so a
     /// panel over the terminal still stands off it. Its dark value is the
@@ -479,7 +491,7 @@ enum SupervisionTokens {
     /// sidebar in dark the popover is told apart by its edge and shadows,
     /// as white over the white window is in light.
     /// On this ground the rows keep `selection` and `hover`.
-    static let popover = ThemedColor(light: 0xFFFFFF, dark: 0x222328)
+    static let popover = ThemedColor(light: 0xFFFFFF, dark: 0x222328, role: .popover)
     /// The selected and hovered rows on a popover's other ground: the
     /// material it keeps while transparency is on, as every surface
     /// follows the appearance settings (`PopoverGround`). The material takes
@@ -528,10 +540,10 @@ enum SupervisionTokens {
 
     // MARK: Text
 
-    static let text = ThemedColor(light: 0x1C1E22, dark: 0xE7E8EB)
-    static let muted = ThemedColor(light: 0x5F656E, dark: 0x9A9FA8)
+    static let text = ThemedColor(light: 0x1C1E22, dark: 0xE7E8EB, role: .text)
+    static let muted = ThemedColor(light: 0x5F656E, dark: 0x9A9FA8, role: .muted)
     /// Rules and disabled controls only, never text.
-    static let faint = ThemedColor(light: 0x9A9FA7, dark: 0x80858E)
+    static let faint = ThemedColor(light: 0x9A9FA7, dark: 0x80858E, role: .faint)
 
     // MARK: States
 
@@ -540,18 +552,18 @@ enum SupervisionTokens {
     /// the accent so unread never takes the waiting or stopped color.
     /// `StateGlyphTests` holds it to 3:1 on every `AccentIconRule` ground
     /// in both appearances.
-    static let unread = ThemedColor(light: 0x2C6EE0, dark: 0x5B93F0)
+    static let unread = ThemedColor(light: 0x2C6EE0, dark: 0x5B93F0, role: .unread)
     /// Text in that blue (an unread count): a step darker in light and
     /// lighter in dark, so it reads at 4.5:1 on the window, a hovered fill,
     /// and a selected one, where the ring's blue reaches only an icon's 3:1.
-    static let unreadText = ThemedColor(light: 0x1F5FC9, dark: 0x6E9FF3)
+    static let unreadText = ThemedColor(light: 0x1F5FC9, dark: 0x6E9FF3, role: .unreadText)
     /// A count filled in that blue (the rail's unread and unviewed counts):
     /// the deeper blue in both appearances, since the dark one would not
     /// hold its white figures at 4.5:1.
     static let unreadCount = ThemedColor(light: 0x2C6EE0, dark: 0x2C6EE0)
     /// The decision bar's ground over unread turns: the blue's soft fill,
     /// as amber and red have theirs.
-    static let unreadFill = ThemedColor(light: 0xE4ECFB, dark: 0x223150)
+    static let unreadFill = ThemedColor(light: 0xE4ECFB, dark: 0x223150, role: .unreadFill)
     /// The accent's soft tone under a drop target's ring
     /// (`SupervisionDropMark`): the accent at this much over the window, a
     /// tint that marks the target without competing with its ring. Taken
@@ -573,29 +585,29 @@ enum SupervisionTokens {
     static let onUnreadCount = ThemedColor(light: 0xFFFFFF, dark: 0xFFFFFF)
     /// The running glyph's moving arc; its track is `line`, neutral like
     /// the state (blue is for unread and unviewed only).
-    static let running = ThemedColor(light: 0x686E78, dark: 0x9A9FA8)
+    static let running = ThemedColor(light: 0x686E78, dark: 0x9A9FA8, role: .running)
     /// The one amber of a wait, in each appearance: the frame,
     /// the dots, and the icons drawn in it. It reaches an icon's 3:1 on
     /// every surface it sits on, the light well and selection included.
-    static let waiting = ThemedColor(light: 0xC06A06, dark: 0xF0A040)
+    static let waiting = ThemedColor(light: 0xC06A06, dark: 0xF0A040, role: .waiting)
     /// Words in amber. A step darker than `waiting` in light, so they read
     /// at 4.5:1 where the amber reaches only an icon's 3:1; in dark the
     /// amber itself reads as text.
-    static let waitingText = ThemedColor(light: 0x965300, dark: 0xF0A040)
+    static let waitingText = ThemedColor(light: 0x965300, dark: 0xF0A040, role: .waitingText)
     /// The soft amber ground of a wait's chips and of warnings: the
     /// decision bar's tag draws `waitingText` on it with a 1pt edge in
     /// `waiting` (`DecisionBarTagStyle`).
     /// Nothing with words on it is filled in `waiting` itself: the strong
     /// amber under dark letters reads as a dark block.
-    static let waitingFill = ThemedColor(light: 0xFDF0DF, dark: 0x3A2B18)
+    static let waitingFill = ThemedColor(light: 0xFDF0DF, dark: 0x3A2B18, role: .waitingFill)
     /// A button standing inside a state's soft fill, at rest, hovered, and
     /// pressed, with its edge: opaque neutrals, so the button keeps its own
     /// color whatever the fill's hue. Each step moves further from the rest
     /// face, and `text` keeps 4.5:1 on the strongest.
-    static let stateFillButton = ThemedColor(light: 0xFFFFFF, dark: 0x30333A)
-    static let stateFillButtonHover = ThemedColor(light: 0xECEEF2, dark: 0x3D4047)
-    static let stateFillButtonPressed = ThemedColor(light: 0xE2E6ED, dark: 0x4A4D55)
-    static let stateFillButtonEdge = ThemedColor(light: 0xCCD1DA, dark: 0x4A4D55)
+    static let stateFillButton = ThemedColor(light: 0xFFFFFF, dark: 0x30333A, role: .stateFillButton)
+    static let stateFillButtonHover = ThemedColor(light: 0xECEEF2, dark: 0x3D4047, role: .stateFillButtonHover)
+    static let stateFillButtonPressed = ThemedColor(light: 0xE2E6ED, dark: 0x4A4D55, role: .stateFillButtonPressed)
+    static let stateFillButtonEdge = ThemedColor(light: 0xCCD1DA, dark: 0x4A4D55, role: .stateFillButtonEdge)
     /// The needs-input glyph's disc ("?"), wherever it is drawn: the
     /// sidebar, the tabs, Needs Attention, the history, and the cards. The
     /// lightest amber on which a white mark still reaches 3:1 for
@@ -616,17 +628,17 @@ enum SupervisionTokens {
     /// Claude badge's edge does; in dark the fill stands 4.2:1 off
     /// everything, so the edge is the fill and draws nothing.
     /// `SelectionEdgeRule.color(waitingGlyph, on: selection)`, written out.
-    static let waitingGlyphEdge = ThemedColor(light: 0xC06F0F, dark: 0xDA7E11)
-    static let stopped = ThemedColor(light: 0xD4433A, dark: 0xEE6A61)
+    static let waitingGlyphEdge = ThemedColor(light: 0xC06F0F, dark: 0xDA7E11, role: .waitingGlyphEdge)
+    static let stopped = ThemedColor(light: 0xD4433A, dark: 0xEE6A61, role: .stopped)
     /// Lighter than the red disc in dark, so a stop's reason reads on a
     /// selected sidebar row (4.80:1).
-    static let stoppedText = ThemedColor(light: 0xB3261E, dark: 0xF27D75)
-    static let stoppedFill = ThemedColor(light: 0xFBE7E5, dark: 0x3C2221)
+    static let stoppedText = ThemedColor(light: 0xB3261E, dark: 0xF27D75, role: .stoppedText)
+    static let stoppedFill = ThemedColor(light: 0xFBE7E5, dark: 0x3C2221, role: .stoppedFill)
     /// The stopped glyph's "!", and the ✕ of a failing check on the same
     /// red: white in both appearances, as the waiting disc's "?" is. A
     /// sign rather than words, so it is held to 3:1 for marks, which
     /// white reaches on the dark red too (3.06:1).
-    static let onStopped = ThemedColor(light: 0xFFFFFF, dark: 0xFFFFFF)
+    static let onStopped = ThemedColor(light: 0xFFFFFF, dark: 0xFFFFFF, role: .onStopped)
 
     // MARK: Diffs
 
@@ -638,8 +650,8 @@ enum SupervisionTokens {
     /// Both reach 4.5:1 on every ground a count sits on. The green also
     /// draws passing checks, in the hover card and on the corner of a pull
     /// request's mark, since a check's result is not a state.
-    static let added = ThemedColor(light: 0x1D7436, dark: 0x4CBF6C)
-    static let removed = ThemedColor(light: 0xB3261E, dark: 0xF27D75)
+    static let added = ThemedColor(light: 0x1D7436, dark: 0x4CBF6C, role: .added)
+    static let removed = ThemedColor(light: 0xB3261E, dark: 0xF27D75, role: .removed)
 
     /// What stands in, in the split diff, for a line the other column does
     /// not have: a quiet ground, and diagonal lines over it. The lines stand
@@ -675,6 +687,12 @@ enum SupervisionTokens {
     /// appearances. White letters reach 4.05:1, over the 3:1 a mark is held
     /// to (`badgeForeground`), and it stands at least 3.12:1 off every surface.
     static let antigravity = ThemedColor(light: 0x2B7BEF, dark: 0x2B7BEF)
+    /// The edge the Antigravity badge takes under a terminal theme whose
+    /// surfaces its blue stands too close to. The blue itself as a token,
+    /// which is what its contrast is held to, and never drawn as one: the
+    /// badge draws an edge only where the theme moved this color
+    /// (`ThemedEdgeStyle`), so under the tokens it has none.
+    static let antigravityEdge = ThemedColor(light: 0x2B7BEF, dark: 0x2B7BEF, role: .antigravityEdge)
     /// The logo's three colors along the top of that badge
     /// (`SessionAgentBadge.antigravityFill`). White on them falls as low as
     /// 2.36:1, on the orange, so they stay above the letters and fade into the
@@ -709,10 +727,10 @@ enum SupervisionTokens {
     /// dark edge clears the same floor with a lighter, fixed color.
     /// Antigravity's badge has none: its blue already stands 3:1 off, and
     /// a blue edge would ring the colors on its top.
-    static let claudeEdge = ThemedColor(light: 0xC36B4E, dark: 0xD97757)
-    static let codexEdge = ThemedColor(light: 0x7F7F7F, dark: 0xFFFFFF)
-    static let opencodeEdge = ThemedColor(light: 0x211E1E, dark: 0x8E8989)
-    static let kiroEdge = ThemedColor(light: 0x9046FF, dark: 0x9955FF)
+    static let claudeEdge = ThemedColor(light: 0xC36B4E, dark: 0xD97757, role: .claudeEdge)
+    static let codexEdge = ThemedColor(light: 0x7F7F7F, dark: 0xFFFFFF, role: .codexEdge)
+    static let opencodeEdge = ThemedColor(light: 0x211E1E, dark: 0x8E8989, role: .opencodeEdge)
+    static let kiroEdge = ThemedColor(light: 0x9046FF, dark: 0x9955FF, role: .kiroEdge)
     /// The letters on an agent badge but Codex's: white, in both
     /// appearances, so the fill reads as the brand's color rather than one
     /// muddied by dark letters. On Claude's orange it is 3.12:1: the two
@@ -766,7 +784,7 @@ enum SupervisionTokens {
     /// What a terminal's lines sit on outside the terminal itself (the last
     /// lines on an all projects card): the window's white in light, a step
     /// darker than the window in dark.
-    static let terminal = ThemedColor(light: 0xFFFFFF, dark: 0x17181B)
+    static let terminal = ThemedColor(light: 0xFFFFFF, dark: 0x17181B, role: .terminal)
 
     /// What dims the window under a sheet laid over it. Translucent, so it
     /// is a `Color` rather than a `ThemedColor`: nothing is read on it.
@@ -813,14 +831,16 @@ enum AccentIconRule {
     /// The surfaces an accent mark is drawn on in one appearance: each
     /// surface token, the popovers' material, and a selected and a hovered
     /// row on it.
-    static func grounds(isDark: Bool) -> [SRGB] {
+    /// The surfaces are taken in `colors`, the window's colors from the
+    /// terminal theme; the material is the system's whatever the theme.
+    static func grounds(isDark: Bool, in colors: WindowColors = .tokens) -> [SRGB] {
         typealias Tokens = SupervisionTokens
         let surfaces = [
             Tokens.page, Tokens.well, Tokens.window, Tokens.sidebar, Tokens.column, Tokens.selection,
             Tokens.railSelection, Tokens.hover, Tokens.popover, Tokens.terminal, Tokens.popoverMaterial
         ]
         let material = Tokens.popoverMaterial.value(isDark: isDark)
-        return surfaces.map { $0.value(isDark: isDark) } + [
+        return surfaces.map { $0.value(isDark: isDark, in: colors) } + [
             Tokens.popoverSelection.value(over: material, isDark: isDark),
             Tokens.popoverHover.value(over: material, isDark: isDark)
         ]
@@ -914,17 +934,17 @@ extension SupervisionTokens {
     /// The segmented picker's pill edge for an accent already resolved in
     /// one appearance: the pill is the primary button's fill, on the
     /// `hover` track (`SelectionEdgeRule`).
-    static func segmentedPillEdge(onAccent accent: SRGB, isDark: Bool) -> SRGB {
-        SelectionEdgeRule.color(PrimaryButtonRule.style(onAccent: accent).fill, on: hover.value(isDark: isDark))
+    static func segmentedPillEdge(onAccent accent: SRGB, isDark: Bool, in colors: WindowColors = .tokens) -> SRGB {
+        SelectionEdgeRule.color(PrimaryButtonRule.style(onAccent: accent).fill, on: hover.value(isDark: isDark, in: colors))
     }
 
-    /// `segmentedPillEdge(onAccent:isDark:)` for `accent`, in whatever
-    /// appearance it is drawn in.
-    static func segmentedPillEdge(_ accent: AccentColor) -> Color {
+    /// `segmentedPillEdge(onAccent:isDark:in:)` for `accent`, in whatever
+    /// appearance it is drawn in, on the track in `windowColors`.
+    static func segmentedPillEdge(_ accent: AccentColor, windowColors: WindowColors) -> Color {
         let accentColor = NSColor(WeirColor.accent(for: accent))
         return Color(nsColor: NSColor(name: nil) { appearance in
             guard let resolved = SRGB(accentColor, in: appearance) else { return accentColor }
-            return segmentedPillEdge(onAccent: resolved, isDark: appearance.isDark).nsColor
+            return segmentedPillEdge(onAccent: resolved, isDark: appearance.isDark, in: windowColors).nsColor
         })
     }
 
@@ -956,17 +976,19 @@ extension SupervisionTokens {
     /// The accent for an icon or ring, readable at 3:1 on every surface it
     /// is drawn on (`AccentIconRule`), in whatever appearance it is drawn
     /// in.
-    static func accentIcon(_ accent: AccentColor) -> Color {
-        accentIcon(color: WeirColor.accent(for: accent))
+    /// The surfaces are taken in `windowColors`, so a window that follows
+    /// a terminal theme moves the accent against the surfaces it draws.
+    static func accentIcon(_ accent: AccentColor, windowColors: WindowColors) -> Color {
+        accentIcon(color: WeirColor.accent(for: accent), windowColors: windowColors)
     }
 
     /// `accentIcon(_:)` for an accent already resolved to a color, as
     /// `\.weirAccent` carries it.
-    static func accentIcon(color accent: Color) -> Color {
+    static func accentIcon(color accent: Color, windowColors: WindowColors = .tokens) -> Color {
         let accentColor = NSColor(accent)
         return Color(nsColor: NSColor(name: nil) { appearance in
             guard let resolved = SRGB(accentColor, in: appearance) else { return accentColor }
-            return AccentIconRule.color(resolved, on: AccentIconRule.grounds(isDark: appearance.isDark)).nsColor
+            return AccentIconRule.color(resolved, on: AccentIconRule.grounds(isDark: appearance.isDark, in: windowColors)).nsColor
         })
     }
 }

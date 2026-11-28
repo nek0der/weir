@@ -57,7 +57,7 @@ struct PaneStripTab: View {
                 name: item.title,
                 isEditing: $isEditing,
                 font: .supervision(.label, weight: .medium),
-                foregroundColor: item.isActive || isHovering ? SupervisionTokens.text.color : SupervisionTokens.muted.color,
+                foregroundColor: AnyShapeStyle(item.isActive || isHovering ? SupervisionTokens.text.color : SupervisionTokens.muted.color),
                 onRename: onRename,
                 // A tab is as wide as what it holds, not the strip's width.
                 fillsWidth: false,

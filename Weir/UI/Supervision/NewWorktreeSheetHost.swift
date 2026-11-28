@@ -25,6 +25,7 @@ private struct NewWorktreeSheetHost: ViewModifier {
     @Environment(ProjectWindowState.self) private var window
     @Environment(SessionLaunchStore.self) private var launches
     @Environment(\.weirAccent) private var weirAccent
+    @Environment(\.weirWindowColors) private var windowColors
     @Environment(\.locale) private var locale
 
     private var session: WorkspaceSession {
@@ -54,7 +55,7 @@ private struct NewWorktreeSheetHost: ViewModifier {
                 .environment(state.installedAgents)
                 .environment(state.attention)
                 .environment(\.locale, locale)
-                .weirAccentPropagated(weirAccent)
+                .weirAppearancePropagated(accent: weirAccent, windowColors: windowColors)
                 .onAppear { sheetAppeared(request) }
             }
             // A request still waiting as the window's other sheets end lost

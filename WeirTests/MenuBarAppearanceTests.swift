@@ -34,13 +34,13 @@ struct MenuBarAppearanceTests {
 
     /// The menu's words are the system's labels, which mix with what shows
     /// through its glass; Weir's own panels keep the tokens.
-    @Test func theMenusInk_isTheSystemsLabels_andThePanelsIsTheTokens() {
+    @Test func theMenusInk_isTheSystemsLabels_andThePanelsIsTheTokens() throws {
         #expect(EnvironmentValues().popoverSurface.ink == .tokens)
-        #expect(PopoverInk.vibrant.text == .primary)
-        #expect(PopoverInk.vibrant.muted == .secondary)
-        #expect(PopoverInk.tokens.text == SupervisionTokens.text.color)
-        #expect(PopoverInk.tokens.muted == SupervisionTokens.muted.color)
-        #expect(PopoverInk.tokens.line == SupervisionTokens.line.color)
+        #expect(try Self.drawsAlike(PopoverInk.vibrant.text, HierarchicalShapeStyle.primary))
+        #expect(try Self.drawsAlike(PopoverInk.vibrant.muted, HierarchicalShapeStyle.secondary))
+        #expect(try Self.drawsAlike(PopoverInk.tokens.text, SupervisionTokens.text.color))
+        #expect(try Self.drawsAlike(PopoverInk.tokens.muted, SupervisionTokens.muted.color))
+        #expect(try Self.drawsAlike(PopoverInk.tokens.line, SupervisionTokens.line.color))
     }
 
     /// One fact, the surface, decides the ground, the rows' lighting, and
@@ -63,16 +63,16 @@ struct MenuBarAppearanceTests {
     /// The capacity warning's words read on the menu's glass, as the rest
     /// of the menu's do; the amber stays on its icon, and in Weir's own
     /// panels on the words too.
-    @Test func theCapacityWarning_takesTheSurfacesInk() {
-        #expect(PopoverInk.vibrant.warningText == .primary)
-        #expect(PopoverInk.tokens.warningText == SupervisionTokens.waitingText.color)
+    @Test func theCapacityWarning_takesTheSurfacesInk() throws {
+        #expect(try Self.drawsAlike(PopoverInk.vibrant.warningText, HierarchicalShapeStyle.primary))
+        #expect(try Self.drawsAlike(PopoverInk.tokens.warningText, SupervisionTokens.waitingText.color))
     }
 
     /// Stop words take the system's label on menu glass, while Weir's own
     /// panels keep red. Unread glyphs use fixed blue on either surface.
-    @Test func aStopsWords_takeTheSurfacesInk() {
-        #expect(PopoverInk.vibrant.stoppedText == .primary)
-        #expect(PopoverInk.tokens.stoppedText == SupervisionTokens.stoppedText.color)
+    @Test func aStopsWords_takeTheSurfacesInk() throws {
+        #expect(try Self.drawsAlike(PopoverInk.vibrant.stoppedText, HierarchicalShapeStyle.primary))
+        #expect(try Self.drawsAlike(PopoverInk.tokens.stoppedText, SupervisionTokens.stoppedText.color))
     }
 
     /// The menu's content draws in the system's scheme, the one its window
@@ -96,7 +96,9 @@ struct MenuBarAppearanceTests {
         for token in [SupervisionTokens.muted, SupervisionTokens.text, SupervisionTokens.faint] {
             var resolved: NSColor?
             dark.performAsCurrentDrawingAppearance {
-                resolved = NSColor(token.color).usingColorSpace(.sRGB)
+                // The AppKit form: `color` resolves from SwiftUI's color
+                // scheme, not from the drawing appearance.
+                resolved = token.nsColor.usingColorSpace(.sRGB)
             }
             let color = try #require(resolved)
             let expected = token.value(isDark: true)
@@ -104,5 +106,21 @@ struct MenuBarAppearanceTests {
             #expect(abs(color.greenComponent - expected.green) < 0.01)
             #expect(abs(color.blueComponent - expected.blue) < 0.01)
         }
+    }
+
+    /// Whether two styles draw the same pixel in both appearances. A style
+    /// erased to `AnyShapeStyle` can be neither compared nor resolved, so
+    /// each is drawn.
+    private static func drawsAlike(_ lhs: AnyShapeStyle, _ rhs: some ShapeStyle) throws -> Bool {
+        for scheme in [ColorScheme.light, .dark] {
+            let pixels = try [lhs, AnyShapeStyle(rhs)].map { style in
+                let swatch = Rectangle().fill(style).frame(width: 1, height: 1).environment(\.colorScheme, scheme)
+                let image = try #require(ImageRenderer(content: swatch).cgImage)
+                let color = try #require(NSBitmapImageRep(cgImage: image).colorAt(x: 0, y: 0)?.usingColorSpace(.sRGB))
+                return [color.redComponent, color.greenComponent, color.blueComponent, color.alphaComponent]
+            }
+            guard pixels[0] == pixels[1] else { return false }
+        }
+        return true
     }
 }

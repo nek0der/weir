@@ -76,7 +76,7 @@ final class ReviewCodeRowView: NSView {
             match: match,
             attributes: ReviewRowPainter.attributes(
                 font: ReviewRowMetrics.font,
-                color: .labelColor,
+                color: ReviewRowPainter.plainInk,
                 alignment: .left,
                 truncates: true
             ),
@@ -89,7 +89,7 @@ final class ReviewCodeRowView: NSView {
         } else {
             code.stringValue = line.text
         }
-        code.textColor = .labelColor
+        code.textColor = ReviewRowPainter.plainInk
         appearanceInput = (line.kind, isSelected)
         needsDisplay = true
         // Where the line sits, for the reader who cannot see the gutter,

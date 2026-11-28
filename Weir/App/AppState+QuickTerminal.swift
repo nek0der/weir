@@ -13,18 +13,20 @@ extension AppState {
     /// libghostty's own shell integration still runs.
     static let quickTerminalEnvironment = ["WEIR_QUICK_TERMINAL": "1"]
 
-    static func makeQuickTerminal(
+    static func makeQuickTerminal( // swiftlint:disable:this function_parameter_count
         ghosttyApp: GhosttyApp?,
         settingsStore: SettingsStore,
         reduceTransparencyResolver: ReduceTransparencyResolver,
         clipboard: ClipboardConfirmationCoordinator,
-        secureInputManager: SecureInputManager
+        secureInputManager: SecureInputManager,
+        terminalThemeStore: TerminalThemeStore
     ) -> QuickTerminalController {
         QuickTerminalController(
             settingsStore: settingsStore,
             reduceTransparencyResolver: reduceTransparencyResolver,
             clipboard: clipboard,
             secureInputManager: secureInputManager,
+            terminalThemeStore: terminalThemeStore,
             surfaceFactory: { [weak ghosttyApp] in
                 guard let ghosttyApp else { return nil }
                 let view = PaneHostRepresentable.makeSurfaceView(

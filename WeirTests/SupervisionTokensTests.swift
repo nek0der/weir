@@ -9,224 +9,21 @@ import Testing
 struct SupervisionTokensTests {
     private typealias Tokens = SupervisionTokens
 
-    /// A foreground token on a background token, named for the failure
-    /// message.
-    struct Pair {
-        let name: String
-        let foreground: ThemedColor
-        let background: ThemedColor
-
-        init(_ name: String, _ foreground: ThemedColor, _ background: ThemedColor) {
-            self.name = name
-            self.foreground = foreground
-            self.background = background
-        }
-
-        func ratio(isDark: Bool) -> Double {
-            ContrastRatio.between(foreground.value(isDark: isDark), background.value(isDark: isDark))
-        }
-    }
-
-    /// Text and the backgrounds it sits on: 4.5:1.
-    private static let textPairs: [Pair] = [
-        Pair("text on window", Tokens.text, Tokens.window),
-        Pair("muted on well", Tokens.muted, Tokens.well),
-        Pair("unread count on window", Tokens.unreadText, Tokens.window),
-        Pair("unread count on hover", Tokens.unreadText, Tokens.hover),
-        Pair("unread count on selection", Tokens.unreadText, Tokens.selection),
-        Pair("text on sidebar", Tokens.text, Tokens.sidebar),
-        Pair("text on selection", Tokens.text, Tokens.selection),
-        Pair("muted on window", Tokens.muted, Tokens.window),
-        Pair("muted on sidebar, and on a file header", Tokens.muted, Tokens.sidebar),
-        Pair("muted on selection", Tokens.muted, Tokens.selection),
-        Pair("amber text on window", Tokens.waitingText, Tokens.window),
-        Pair("amber text on sidebar", Tokens.waitingText, Tokens.sidebar),
-        // The decision bar's Approval tag and the title bar's attention
-        // count are soft chips of their family, on their own fill (the
-        // bar's ground for a tag), as the pane strip's exit mark is.
-        Pair("amber text on amber fill: Approval tag, attention count", Tokens.waitingText, Tokens.waitingFill),
-        Pair("amber text on selection", Tokens.waitingText, Tokens.selection),
-        Pair("red text on window", Tokens.stoppedText, Tokens.window),
-        Pair("red text on sidebar", Tokens.stoppedText, Tokens.sidebar),
-        Pair("red text on selection", Tokens.stoppedText, Tokens.selection),
-        Pair("red text on red fill: Stopped tag, exit mark", Tokens.stoppedText, Tokens.stoppedFill),
-        // A toast is an inverted surface, drawn in the text color.
-        Pair("toast link on a toast", Tokens.toastLink, Tokens.text),
-        // Codex's black letters on its white reach the text ratio as well;
-        // Claude's are held to the marks' (below).
-        Pair("Codex badge letters", Tokens.codexBadgeForeground, Tokens.codex),
-        Pair("muted on a terminal's lines", Tokens.muted, Tokens.terminal),
-        Pair("muted on hover, and on a discarded hunk header", Tokens.muted, Tokens.hover),
-        // The review tab's stacked diff: a file's header and a hunk's, and
-        // a discarded hunk's, each with muted words and counts on it.
-        Pair("muted on a hunk header", Tokens.muted, Tokens.column),
-        Pair("text on a hunk header", Tokens.text, Tokens.column),
-        Pair("red text on a hunk header", Tokens.stoppedText, Tokens.column),
-        // The "Running · n" chip's words, on the chip's own window fill.
-        Pair("running on window", Tokens.running, Tokens.window),
-        // The decision bar over unread turns: its words, the receipt's
-        // additions and removals, and a failed check.
-        Pair("text on unread fill", Tokens.text, Tokens.unreadFill),
-        Pair("muted on unread fill", Tokens.muted, Tokens.unreadFill),
-        Pair("red text on unread fill", Tokens.stoppedText, Tokens.unreadFill),
-        // A receipt's counts, wherever the bar shows one: over unread
-        // turns and at rest.
-        Pair("additions on unread fill", Tokens.added, Tokens.unreadFill),
-        Pair("removals on unread fill", Tokens.removed, Tokens.unreadFill),
-        Pair("additions on sidebar, and on a file header", Tokens.added, Tokens.sidebar),
-        Pair("removals on sidebar, and on a file header", Tokens.removed, Tokens.sidebar),
-        Pair("additions on window", Tokens.added, Tokens.window),
-        Pair("additions on selection", Tokens.added, Tokens.selection),
-        Pair("removals on window", Tokens.removed, Tokens.window),
-        // The bar's words over a wait and a stop.
-        Pair("text on amber fill", Tokens.text, Tokens.waitingFill),
-        Pair("text on red fill", Tokens.text, Tokens.stoppedFill),
-        Pair("muted on amber fill", Tokens.muted, Tokens.waitingFill),
-        Pair("muted on red fill", Tokens.muted, Tokens.stoppedFill),
-        Pair("unread text on unread fill: Unread tag, unread-only count", Tokens.unreadText, Tokens.unreadFill),
-        // A toast's words on its inverted box.
-        Pair("toast words on a toast", Tokens.window, Tokens.text),
-        // The popovers' opaque surface, with transparency off or reduced:
-        // the palette, the history, the lists, and the approval card.
-        Pair("waiting badge count on its amber fill", Tokens.onWaiting, Tokens.waitingCount),
-        Pair("unread rail count on its blue fill", Tokens.onUnreadCount, Tokens.unreadCount),
-        Pair("text on popover", Tokens.text, Tokens.popover),
-        Pair("muted on popover", Tokens.muted, Tokens.popover),
-        Pair("red text on popover", Tokens.stoppedText, Tokens.popover),
-        Pair("amber text on popover", Tokens.waitingText, Tokens.popover)
-        // The review's quiet words (a fold's hidden lines, the file list's
-        // headings and counts) are "muted on window" and, on a selected
-        // file, "muted on selection"; its banners' words on the amber and
-        // red grounds are the decision bar's "text on amber fill" and "text
-        // on red fill". A comment card's (its title, place, and state) and
-        // those on the row fills (the find bar, the preview's chips) are
-        // below.
-    ]
-
-    /// Words on a ground laid over a surface (`ThemedOverlay`), named for
-    /// the failure message.
-    struct OverlayPair {
-        let name: String
-        let foreground: ThemedColor
-        let overlay: ThemedOverlay
-        let surface: ThemedColor
-
-        init(_ name: String, _ foreground: ThemedColor, on overlay: ThemedOverlay, over surface: ThemedColor) {
-            self.name = name
-            self.foreground = foreground
-            self.overlay = overlay
-            self.surface = surface
-        }
-
-        func ratio(isDark: Bool) -> Double {
-            let ground = overlay.value(over: surface.value(isDark: isDark), isDark: isDark)
-            return ContrastRatio.between(foreground.value(isDark: isDark), ground)
-        }
-    }
-
-    /// A comment card's words in the diff, and the stale note in the
-    /// comments' preview, whose card is a lighter coat than this one.
-    private static let overlayTextPairs: [OverlayPair] = [
-        OverlayPair("muted on a comment card", Tokens.muted, on: Tokens.reviewCard, over: Tokens.window),
-        OverlayPair("text on a comment card", Tokens.text, on: Tokens.reviewCard, over: Tokens.window),
-        OverlayPair("amber text on a comment card", Tokens.waitingText, on: Tokens.reviewCard, over: Tokens.window),
-        OverlayPair("amber text on a comment card on popover", Tokens.waitingText, on: Tokens.reviewCard, over: Tokens.popover),
-        OverlayPair("muted on a comment card on popover", Tokens.muted, on: Tokens.reviewCard, over: Tokens.popover)
-    ]
-
-    /// Icons and the backgrounds they sit on: 3:1.
-    private static let iconPairs: [Pair] = [
-        // The "?" is a mark, held to 3:1 on its disc; the disc's edge
-        // carries it off every surface it sits on.
-        Pair("needs-input mark on its disc", Tokens.onWaiting, Tokens.waitingGlyph),
-        // The stopped disc's white "!" is a mark too, as the "?" is.
-        Pair("stopped mark on its disc", Tokens.onStopped, Tokens.stopped),
-        Pair("needs-input disc's edge on window", Tokens.waitingGlyphEdge, Tokens.window),
-        Pair("needs-input disc's edge on sidebar", Tokens.waitingGlyphEdge, Tokens.sidebar),
-        Pair("needs-input disc's edge on hover", Tokens.waitingGlyphEdge, Tokens.hover),
-        Pair("needs-input disc's edge on the terminal", Tokens.waitingGlyphEdge, Tokens.terminal),
-        // The decision bar's tag edges and the attention count's ring, on
-        // their own fill, which is also the bar's ground: the edge is what
-        // makes them chips. The count's button turns to `hover` while it
-        // is hovered or open. The review's banners carry their amber and
-        // red in the icon, on the matching fill (`ReviewBanner.Tone`), and
-        // the decision bar's top rule over unread turns is the unread ring.
-        Pair("amber on amber fill: tag edge, count ring, warning icon", Tokens.waiting, Tokens.waitingFill),
-        Pair("red on red fill: tag edge, error icon", Tokens.stopped, Tokens.stoppedFill),
-        Pair("unread on unread fill: tag edge, count ring, rule", Tokens.unread, Tokens.unreadFill),
-        Pair("unread-only count's ring on hover", Tokens.unread, Tokens.hover),
-        Pair("stopped disc on window", Tokens.stopped, Tokens.window),
-        Pair("stopped disc on sidebar", Tokens.stopped, Tokens.sidebar),
-        // The fixed unread blue where it marks without words (a count's
-        // ring, the decision bar's rule, a history row's dot, and the unread
-        // state glyph). Every icon ground is covered in `StateGlyphTests`.
-        Pair("unread blue mark on window", Tokens.unread, Tokens.window),
-        Pair("unread blue mark on sidebar", Tokens.unread, Tokens.sidebar),
-        Pair("unread blue mark on selection", Tokens.unread, Tokens.selection),
-        // `muted` marks need no rows of their own: `textPairs` holds it to
-        // the stricter ratio on each of their grounds. They are the idle ring
-        // under Increase Contrast (`StateGlyphGeometry.idleInk`), on window,
-        // sidebar, selection, hover, and popover; a tab's unread dot, on the
-        // terminal; and the review tab's file list marks, on window.
-        Pair("running arc on window", Tokens.running, Tokens.window),
-        Pair("running arc on sidebar", Tokens.running, Tokens.sidebar),
-        Pair("amber on window, and the attention count's ring there", Tokens.waiting, Tokens.window),
-        Pair("amber on sidebar", Tokens.waiting, Tokens.sidebar),
-        // A selected row's glyph, a tab's dot on a selected tab, and the
-        // pane's frame on the terminal.
-        Pair("needs-input disc's edge on selection", Tokens.waitingGlyphEdge, Tokens.selection),
-        Pair("amber on selection", Tokens.waiting, Tokens.selection),
-        Pair("amber on hover, and the attention count's ring there", Tokens.waiting, Tokens.hover),
-        Pair("amber on well", Tokens.waiting, Tokens.well),
-        Pair("amber on the terminal", Tokens.waiting, Tokens.terminal),
-        // The two letters on Claude's orange are a mark, not words to read
-        // (`SupervisionTokens.badgeForeground`).
-        Pair("Claude badge letters", Tokens.badgeForeground, Tokens.claude),
-        Pair("Kiro badge letters", Tokens.badgeForeground, Tokens.kiro),
-        // A badge is told apart by its shape as much as its letters: where
-        // a brand fill stands too close to a surface, its edge carries it.
-        Pair("Claude badge's edge on window", Tokens.claudeEdge, Tokens.window),
-        Pair("Codex badge's edge on window", Tokens.codexEdge, Tokens.window),
-        Pair("Antigravity badge's blue on window", Tokens.antigravity, Tokens.window),
-        Pair("OpenCode badge's edge on window", Tokens.opencodeEdge, Tokens.window),
-        Pair("Kiro badge's edge on window", Tokens.kiroEdge, Tokens.window),
-        Pair("Claude badge's edge on sidebar", Tokens.claudeEdge, Tokens.sidebar),
-        Pair("Codex badge's edge on sidebar", Tokens.codexEdge, Tokens.sidebar),
-        Pair("Antigravity badge's blue on sidebar", Tokens.antigravity, Tokens.sidebar),
-        Pair("OpenCode badge's edge on sidebar", Tokens.opencodeEdge, Tokens.sidebar),
-        Pair("Kiro badge's edge on sidebar", Tokens.kiroEdge, Tokens.sidebar),
-        Pair("Claude badge's edge on selection", Tokens.claudeEdge, Tokens.selection),
-        Pair("Codex badge's edge on selection", Tokens.codexEdge, Tokens.selection),
-        Pair("Antigravity badge's blue on selection", Tokens.antigravity, Tokens.selection),
-        Pair("OpenCode badge's edge on selection", Tokens.opencodeEdge, Tokens.selection),
-        Pair("Kiro badge's edge on selection", Tokens.kiroEdge, Tokens.selection),
-        Pair("Claude badge's edge on hover", Tokens.claudeEdge, Tokens.hover),
-        Pair("Codex badge's edge on hover", Tokens.codexEdge, Tokens.hover),
-        Pair("Antigravity badge's blue on hover", Tokens.antigravity, Tokens.hover),
-        Pair("OpenCode badge's edge on hover", Tokens.opencodeEdge, Tokens.hover),
-        Pair("Kiro badge's edge on hover", Tokens.kiroEdge, Tokens.hover),
-        Pair("Claude badge's edge on popover", Tokens.claudeEdge, Tokens.popover),
-        Pair("Codex badge's edge on popover", Tokens.codexEdge, Tokens.popover),
-        Pair("Antigravity badge's blue on popover", Tokens.antigravity, Tokens.popover),
-        Pair("OpenCode badge's edge on popover", Tokens.opencodeEdge, Tokens.popover),
-        Pair("Kiro badge's edge on popover", Tokens.kiroEdge, Tokens.popover),
-        Pair("unread blue mark on popover", Tokens.unread, Tokens.popover),
-        Pair("stopped disc on popover", Tokens.stopped, Tokens.popover),
-        Pair("needs-input disc's edge on popover", Tokens.waitingGlyphEdge, Tokens.popover)
-    ]
+    // The pairs are `TokenContrastRequirements`, which the window's colors
+    // under a terminal theme are held to as well (`WindowColorResolver`).
 
     @Test(arguments: [false, true])
     func text_reachesFourAndAHalfToOne(isDark: Bool) {
-        for pair in Self.textPairs {
-            let ratio = pair.ratio(isDark: isDark)
+        for pair in TokenContrastRequirements.text + TokenContrastRequirements.toast {
+            let ratio = pair.contrast(isDark: isDark)
             #expect(ratio >= 4.5, "\(pair.name) in \(isDark ? "dark" : "light"): \(ratio)")
         }
     }
 
     @Test(arguments: [false, true])
     func textOnALaidOverGround_reachesFourAndAHalfToOne(isDark: Bool) {
-        for pair in Self.overlayTextPairs {
-            let ratio = pair.ratio(isDark: isDark)
+        for pair in TokenContrastRequirements.overlayText {
+            let ratio = pair.contrast(isDark: isDark)
             #expect(ratio >= 4.5, "\(pair.name) in \(isDark ? "dark" : "light"): \(ratio)")
         }
     }
@@ -305,8 +102,8 @@ struct SupervisionTokensTests {
 
     @Test(arguments: [false, true])
     func icons_reachThreeToOne(isDark: Bool) {
-        for pair in Self.iconPairs {
-            let ratio = pair.ratio(isDark: isDark)
+        for pair in TokenContrastRequirements.icons {
+            let ratio = pair.contrast(isDark: isDark)
             #expect(ratio >= 3.0, "\(pair.name) in \(isDark ? "dark" : "light"): \(ratio)")
         }
     }

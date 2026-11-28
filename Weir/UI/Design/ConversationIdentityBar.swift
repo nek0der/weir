@@ -29,7 +29,7 @@ struct ConversationIdentityBar: View {
     /// The palette's color at `identity`, clamped rather than trapping, so
     /// an index from a caller that did not take it from this palette still
     /// draws.
-    static func color(_ identity: Int) -> Color {
+    static func color(_ identity: Int) -> ThemedStyle {
         let palette = SupervisionTokens.conversationIdentity
         let index = min(max(identity, 0), palette.count - 1)
         return palette[index].color
@@ -53,7 +53,7 @@ struct ConversationIdentitySegments: View {
         } else {
             VStack(spacing: 0) {
                 ForEach(Array(identities.prefix(Layout.conversationIdentityBarSegmentLimit).enumerated()), id: \.offset) { _, identity in
-                    ConversationIdentityBar.color(identity)
+                    Rectangle().fill(ConversationIdentityBar.color(identity))
                 }
             }
             .frame(width: Layout.conversationIdentityBarWidth, height: height)

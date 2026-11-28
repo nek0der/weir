@@ -495,7 +495,7 @@ extension NewSessionSheet {
         }
     }
 
-    private func statusText(_ runs: [NewSessionModel.LineRun], color: Color) -> some View {
+    private func statusText(_ runs: [NewSessionModel.LineRun], color: ThemedStyle) -> some View {
         NewSessionStatusLine(runs: runs, color: color)
     }
 

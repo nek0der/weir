@@ -105,7 +105,7 @@ struct StateGlyphFace: View {
     let size: CGFloat
     let isTurning: Bool
     let isContrastIncreased: Bool
-    let unreadInk: Color
+    let unreadInk: ThemedStyle
 
     private var geometry: StateGlyphGeometry {
         StateGlyphGeometry(size: size, isContrastIncreased: isContrastIncreased)

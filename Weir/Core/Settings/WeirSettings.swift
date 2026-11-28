@@ -257,54 +257,12 @@ struct AppearanceSettings: Codable, Equatable {
     /// which Weir doesn't use.
     var unfocusedPaneOpacity: Double = 0.7
 
+    /// The terminal theme for each appearance. Both sides `nil` by default:
+    /// the bundled `Apple System Colors` pair.
+    var terminalTheme = TerminalThemeSelection()
+
     /// See `WeirSettings.unknownFields`.
     var unknownFields: [String: WeirJSONValue] = [:]
-
-    /// We ship a defensive `init(from:)` (matching `Terminal` /
-    /// `Keyboard` / `Confirmations`) so older `settings.json` files
-    /// decode cleanly when a new field is added or an old one renamed,
-    /// instead of throwing and falling back to a fresh defaults
-    /// document that would also wipe the user's `accentColor`,
-    /// `backgroundOpacity`, and `transparency`. Every field here is a
-    /// visible Settings choice — losing them mid-upgrade is the kind
-    /// of regression a user notices immediately.
-    init() {}
-
-    init(from decoder: any Decoder) throws {
-        // Every field defaults if absent (forward compatibility). There is no
-        // back-compat migration — the schema starts fresh at v1.
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.accentColor = try c.decodeIfPresent(AccentColor.self, forKey: .accentColor) ?? .default
-        self.backgroundOpacity = try c.decodeIfPresent(Double.self, forKey: .backgroundOpacity) ?? 0.92
-        self.transparency = try c.decodeIfPresent(TransparencyMode.self, forKey: .transparency) ?? .on
-        self.colorScheme = try c.decodeIfPresent(ColorSchemePreference.self, forKey: .colorScheme) ?? .system
-        let rawUnfocused = try c.decodeIfPresent(Double.self, forKey: .unfocusedPaneOpacity) ?? 0.7
-        self.unfocusedPaneOpacity = min(1.0, max(0.15, rawUnfocused))
-        self.unknownFields = try CodableSidecar.decodeUnknownFields(
-            from: decoder,
-            knownKeys: Self.knownKeyStrings
-        )
-    }
-
-    func encode(to encoder: any Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(accentColor, forKey: .accentColor)
-        try c.encode(backgroundOpacity, forKey: .backgroundOpacity)
-        try c.encode(transparency, forKey: .transparency)
-        try c.encode(colorScheme, forKey: .colorScheme)
-        try c.encode(unfocusedPaneOpacity, forKey: .unfocusedPaneOpacity)
-        try CodableSidecar.encodeUnknownFields(unknownFields, to: encoder)
-    }
-
-    private enum CodingKeys: String, CodingKey, CaseIterable {
-        case accentColor
-        case backgroundOpacity
-        case transparency
-        case colorScheme
-        case unfocusedPaneOpacity
-    }
-
-    private static let knownKeyStrings: Set<String> = Set(CodingKeys.allCases.map(\.stringValue))
 }
 
 /// User Appearance preference, mirrored after macOS 26 System

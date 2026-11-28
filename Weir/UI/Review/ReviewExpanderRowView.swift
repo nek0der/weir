@@ -33,7 +33,7 @@ final class ReviewExpanderRowView: NSView {
         wantsLayer = true
         count.translatesAutoresizingMaskIntoConstraints = false
         count.font = MonospacedSystemFont.font(ofSize: WeirFont.Supervision.Size.micro.rawValue, weight: .regular)
-        count.textColor = SupervisionTokens.muted.nsColor
+        count.textColor = ReviewRowPainter.themed(SupervisionTokens.muted)
         count.lineBreakMode = .byTruncatingTail
         addSubview(count)
         // Labels are set in `configure`, not here: these rows are pooled, so

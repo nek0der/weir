@@ -33,6 +33,8 @@ follow.
 | [0005 Agent verification surface](adr/0005-agent-verification-surface.md) | Accepted |
 | [0006 Keys posted to a background run](adr/0006-keys-posted-to-a-background-run.md) | Accepted |
 | [0007 Unreachable service and temporary locations](adr/0007-unreachable-service-and-temporary-locations.md) | Accepted |
+| [0008 Terminal ground from the theme](adr/0008-terminal-ground-from-the-theme.md) | Accepted |
+| [0009 Window colors from the theme](adr/0009-window-colors-from-the-theme.md) | Accepted |
 
 ## Keeping them true
 

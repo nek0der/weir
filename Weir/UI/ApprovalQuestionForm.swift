@@ -244,7 +244,7 @@ private struct ApprovalQuestionTabs: View {
 
     /// Draws a tab's words and its answered check in `color`: the text color
     /// on the track, or the pill's label color under the pill.
-    private func tabLabel(_ tabIndex: Int, _ question: ApprovalQuestion, color: Color) -> some View {
+    private func tabLabel(_ tabIndex: Int, _ question: ApprovalQuestion, color: some ShapeStyle) -> some View {
         // The check leads, like the option indicators below and the
         // provider's own question tabs, and is smaller than the label so it
         // marks progress without competing with the header.

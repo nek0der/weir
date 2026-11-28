@@ -41,14 +41,4 @@ struct ReceiptRunRendererTests {
         #expect(!added.isSemibold)
         #expect(failed.color == SupervisionTokens.stoppedText.color)
     }
-
-    @Test func attributed_joinsRunsInOrder() {
-        let runs = [
-            ReceiptRun(text: "T7", role: .plain),
-            ReceiptRun(text: " · ", role: .quiet),
-            ReceiptRun(text: "+3", role: .added(isEmphasized: false))
-        ]
-        let line = ReceiptRunRenderer.attributed(runs, size: .body, style: .mutedFacts)
-        #expect(String(line.characters) == "T7 · +3")
-    }
 }

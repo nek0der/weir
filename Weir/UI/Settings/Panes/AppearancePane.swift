@@ -20,7 +20,7 @@ struct AppearancePane: View {
         SettingsForm(title: "Appearance", section: .appearance) {
             Section {
                 Picker(
-                    "Theme",
+                    "Appearance",
                     selection: $store.settings.appearance.colorScheme
                 ) {
                     SettingsDefaultMark.title(Text("Follow System"), value: ColorSchemePreference.system, of: \.appearance.colorScheme)
@@ -54,6 +54,8 @@ struct AppearancePane: View {
             } footer: {
                 SettingsFootnote("Used for focus rings, drop targets, and other highlights.")
             }
+
+            TerminalColorsSection()
 
             Section {
                 SettingsToggle(

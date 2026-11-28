@@ -202,8 +202,9 @@ struct WindowChromeHost: ViewModifier {
                     onDeny: { state.clipboardConfirmation.deny() }
                 )
                 .environment(\.locale, state.settingsStore.appLocale)
-                .weirAccentPropagated(
-                    WeirColor.accent(for: state.settingsStore.settings.appearance.accentColor)
+                .weirAppearancePropagated(
+                    accent: WeirColor.accent(for: state.settingsStore.settings.appearance.accentColor),
+                    windowColors: state.terminalThemeStore.windowColors
                 )
             }
             // The traffic lights center on the title bar.

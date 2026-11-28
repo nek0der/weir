@@ -18,6 +18,7 @@ struct TitleBarMenuHost: View {
     @Environment(\.surfaceRegistry) private var registry
     @Environment(\.locale) private var locale
     @Environment(\.weirAccent) private var weirAccent
+    @Environment(\.weirWindowColors) private var windowColors
     /// Set from the project dropdown; the sheet is presented here, so
     /// closing the dropdown does not take the sheet with it.
     @State private var settingsTarget: SettingsTarget?
@@ -179,7 +180,7 @@ struct TitleBarMenuHost: View {
             // detached window, and its text must follow the language
             // the window shows.
             .environment(\.locale, locale)
-            .weirAccentPropagated(weirAccent)
+            .weirAppearancePropagated(accent: weirAccent, windowColors: windowColors)
         }
         .returnsKeyboardOnDismiss(
             isPresented: settingsTarget != nil,

@@ -44,6 +44,8 @@ struct PaneHostView: View {
     /// The window this pane is drawn in, which its right-click actions act
     /// in. Panes are drawn only inside `PaneContainerView`, in a main window.
     @Environment(ProjectWindowState.self) private var window
+    @Environment(TerminalThemeStore.self) private var terminalTheme
+    @Environment(\.colorScheme) private var colorScheme
 
     private var isBeingDragged: Bool {
         dragState.current == .pane && dragState.currentSourceID == paneID.uuidString
@@ -64,7 +66,10 @@ struct PaneHostView: View {
                     renamePresentation: renamePresentation,
                     primaryActionHandler: primaryActionHandler,
                     window: window.id,
-                    size: geo.size
+                    size: geo.size,
+                    knobStyle: TerminalGround.knobStyle(
+                        on: terminalTheme.paintedGround(for: TerminalThemeBrightness(colorScheme))
+                    ).scrollerKnobStyle
                 )
                 if surfaceView.creation.hasFailed {
                     PaneCreationFailureCard(surfaceView: surfaceView)
@@ -138,6 +143,10 @@ struct PaneCreationFailureCard: View {
 final class PaneContainerNSView: NSView {
     private(set) var surfaceView: SurfaceView?
     private var scrollHost: TerminalScrollView?
+    /// Kept here because `mount` makes a new scroll host, which takes it.
+    var knobStyle: NSScroller.KnobStyle = .default {
+        didSet { scrollHost?.knobStyle = knobStyle }
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -156,6 +165,7 @@ final class PaneContainerNSView: NSView {
         scrollHost?.removeFromSuperview()
         surfaceView = view
         let scrollHost = TerminalScrollView(surfaceView: view)
+        scrollHost.knobStyle = knobStyle
         self.scrollHost = scrollHost
         scrollHost.frame = bounds
         scrollHost.autoresizingMask = [.width, .height]
@@ -188,6 +198,8 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
     /// the actions never land in another window that shows the same tab.
     let window: WindowID
     let size: CGSize
+    /// The terminal scroller's knob, for the ground under it.
+    let knobStyle: NSScroller.KnobStyle
 
     /// SwiftUI honors `Equatable` on representables and skips
     /// `updateNSView` when equal. `PaneHostView`'s body re-runs on
@@ -197,7 +209,7 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
     /// on `SurfaceView` per call — hundreds of pointless heap blocks
     /// per second of typing on a ten-pane workspace. The cheap-to-
     /// compare props (paneID, the surface AppKit reference, the
-    /// requested size) fully determine whether `updateNSView` would
+    /// requested size, the knob style) fully determine whether `updateNSView` would
     /// have any work to do. The app-wide environment references are
     /// AppState-lifetime singletons, so their identity never changes; the
     /// per-window one (`renamePresentation`) changes only with the window,
@@ -214,10 +226,12 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
             && lhs.size == rhs.size
             && lhs.primaryActionHandler == rhs.primaryActionHandler
             && lhs.window == rhs.window
+            && lhs.knobStyle == rhs.knobStyle
     }
 
     func makeNSView(context: Context) -> PaneContainerNSView {
         let container = PaneContainerNSView(frame: NSRect(origin: .zero, size: size))
+        container.knobStyle = knobStyle
         wireCallbacks(on: surfaceView)
         container.mount(surfaceView)
         container.applyExpectedSize(size)
@@ -235,6 +249,7 @@ struct PaneHostRepresentable: NSViewRepresentable, Equatable {
     }
 
     func updateNSView(_ container: PaneContainerNSView, context: Context) {
+        container.knobStyle = knobStyle
         wireCallbacks(on: surfaceView)
         // Re-mount whenever SwiftUI hands us back the container — if the
         // surface was just reparented from another container on a fast

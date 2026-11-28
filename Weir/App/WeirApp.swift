@@ -164,6 +164,12 @@ final class AppState {
     /// an Undo button, in place of a blocking confirmation (hiding a
     /// worktree, a restore, a discarded hunk).
     let toastCenter: ToastCenter
+    /// The terminal palettes libghostty resolved for light and dark,
+    /// refreshed at launch and after each successful config reload.
+    let terminalThemeStore: TerminalThemeStore
+    /// The chosen themes the last fallback notice was about, so a reload
+    /// that finds the same files still missing does not repeat it.
+    @ObservationIgnored var lastReportedThemeFallbacks: [TerminalThemeBrightness: TerminalThemeRef] = [:]
     /// Reduces every provider's on-disk records into what the panes show and
     /// what has to happen to the files, for every provider the Rust registry
     /// declares.
@@ -371,12 +377,15 @@ final class AppState {
             log.fault("GhosttyApp init failed: \(String(describing: error), privacy: .private)")
             self.ghosttyApp = nil
         }
+        let terminalThemeStore = Self.makeTerminalThemeStore(isTerminalAvailable: ghosttyApp != nil, settings: settingsStore.settings)
+        self.terminalThemeStore = terminalThemeStore
         let quickTerminal = Self.makeQuickTerminal(
             ghosttyApp: ghosttyApp,
             settingsStore: settingsStore,
             reduceTransparencyResolver: resolver,
             clipboard: clipboardConfirmation,
-            secureInputManager: registry.secureInputManager
+            secureInputManager: registry.secureInputManager,
+            terminalThemeStore: terminalThemeStore
         )
         self.quickTerminal = quickTerminal
         self.quickTerminalHotKeyCenter = Self.makeQuickTerminalHotKeyCenter(
@@ -907,6 +916,7 @@ struct WeirApp: App {
         Window("Settings", id: Self.settingsWindowID) {
             SettingsScene()
                 .environment(state.settingsStore)
+                .environment(state.terminalThemeStore)
                 .environment(state.quickTerminalHotKeyCenter)
                 .environment(state.reduceTransparencyResolver)
                 .environment(\.updaterStack, updaterStack)
@@ -915,9 +925,13 @@ struct WeirApp: App {
                 .environment(\.settingsAppActions, state.settingsAppActions)
                 // Settings is where the accent picker lives — inject
                 // the same accent so the swatch row previews the live
-                // value while the user clicks through hues.
-                .weirAccentPropagated(
-                    WeirColor.accent(for: state.settingsStore.settings.appearance.accentColor)
+                // value while the user clicks through hues. The window
+                // colors stay the tokens: the form is drawn on the
+                // system's ground, which no theme-derived ink is checked
+                // against (ADR 0009).
+                .weirAppearancePropagated(
+                    accent: WeirColor.accent(for: state.settingsStore.settings.appearance.accentColor),
+                    windowColors: .tokens
                 )
         }
         // `.hiddenTitleBar` pulls the traffic-light triad down

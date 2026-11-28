@@ -321,7 +321,7 @@ struct SessionLaunchBarLayout<Actions: View>: View {
                 // The bar's own top edge, over what it stacks above its
                 // line.
                 .overlay(alignment: .top) {
-                    SupervisionTokens.line.color
+                    Rectangle().fill(SupervisionTokens.line.color)
                         .frame(height: WeirLayout.Supervision.footBarRuleWidth)
                         .accessibilityHidden(true)
                 }
@@ -338,7 +338,7 @@ struct SessionLaunchBarLayout<Actions: View>: View {
                 opacity = 1
             }
         }
-        .background(isFailed ? SupervisionTokens.stoppedFill.color : Color.clear)
+        .background(isFailed ? AnyShapeStyle(SupervisionTokens.stoppedFill.color) : AnyShapeStyle(Color.clear))
         // One region, so the order below holds within it and nothing else
         // in the window is read among its parts.
         .accessibilityElement(children: .contain)

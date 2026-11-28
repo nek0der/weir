@@ -2,6 +2,7 @@
 // Weir — the drawing shared by the review rows and the frozen gutter.
 
 import AppKit
+import WeirDomain
 
 /// Converts between the pointer and AppKit's UTF-16 selection positions using
 /// the same font the row painter uses. TextKit owns glyph boundaries here;
@@ -238,8 +239,12 @@ enum ReviewRowPainter {
     /// show through the numbers. In the unified layout that was the code
     /// scrolling sideways underneath them; in the split layout it made the
     /// number column read as part of the code rather than as its margin.
+    ///
+    /// The first coat is the system's window color, or the window's color
+    /// from the terminal theme on a side that has one, so the strip stays
+    /// the margin of the themed surface rather than a band of gray.
     static func fillNumberStrip(_ rect: NSRect) {
-        NSColor.windowBackgroundColor.setFill()
+        numberStripBase.setFill()
         rect.fill()
         NSColor(WeirColor.terminalColumnBackground).setFill()
         rect.fill()
@@ -349,7 +354,7 @@ enum ReviewRowPainter {
         NSGraphicsContext.saveGraphicsState()
         defer { NSGraphicsContext.restoreGraphicsState() }
         NSBezierPath(rect: cell).setClip()
-        let attributes = attributes(font: font, color: .labelColor, alignment: .left, truncates: offset <= 0)
+        let attributes = attributes(font: font, color: plainInk, alignment: .left, truncates: offset <= 0)
         let height = ((text.isEmpty ? carriageReturnGlyph : text) as NSString).size(withAttributes: attributes).height
         let box = NSRect(
             x: cell.minX - offset,
@@ -440,16 +445,87 @@ enum ReviewRowPainter {
         return result
     }
 
-    /// System colors, which follow the appearance on their own. Comments are
-    /// gray rather than the green an editor would use: a comment on an added
-    /// line would otherwise be green text on a green ground.
-    private static func color(for kind: ReviewSyntax.Kind) -> NSColor {
-        switch kind {
-        case .keyword: .systemPink
-        case .string: .systemRed
-        case .number: .systemOrange
-        case .comment: .secondaryLabelColor
+    /// The window's colors from the terminal theme, which the rows' tokens
+    /// are drawn in (`themed(_:)`). Set with the syntax colors; each table
+    /// compares it with what it last drew.
+    static var windowColors: WindowColors {
+        AppKitWindowColors.colors
+    }
+
+    /// `token` as AppKit draws it in the window's colors, read as it draws
+    /// (`AppKitWindowColors`).
+    static func themed(_ token: ThemedColor) -> NSColor {
+        AppKitWindowColors.color(token)
+    }
+
+    /// The number strip's first coat (`fillNumberStrip(_:)`): the system's
+    /// window color, or the theme's `window` on a side that has one.
+    private static let numberStripBase = AppKitWindowColors.color(.window, otherwise: .windowBackgroundColor)
+
+    /// The plain code's ink: the system's label, or the theme's text on a
+    /// side that has one, so the code reads on the theme's surface as the
+    /// window's own words do. Every row that draws code takes it from here
+    /// (`ReviewCodeRowView`, `drawCode`).
+    static let plainInk = AppKitWindowColors.color(.text, otherwise: .labelColor)
+
+    /// The syntax colors the rows draw, from the terminal theme where it
+    /// has its own (`ReviewSyntaxColors`). Held here for the same reason as
+    /// `accent`; each table compares it with what it last drew.
+    private(set) static var syntaxColors = ReviewSyntaxColors.system
+
+    /// `syntaxColors` as the rows draw them, made once per change: dynamic
+    /// colors made apart compare unequal, and a row draws on every scroll.
+    private static var syntaxNSColors: [SyntaxRole: NSColor] = [:]
+
+    /// What `syntaxColors` was made from: which store, at which revision,
+    /// and the selected line's fill on each side as it is drawn. The fill is
+    /// one of the grounds the colors are checked against, and the system
+    /// accent changes it without any setting changing, so it is compared as
+    /// drawn rather than as the picker's choice.
+    private struct SyntaxSource: Equatable {
+        var store: ObjectIdentifier
+        var revision: Int
+        var selectionFills: [RGB8]
+        /// The window's colors, whose surface the syntax colors are checked
+        /// on; a scope switch changes them at the same revision.
+        var windowColors: WindowColors
+    }
+
+    private static var syntaxSource: SyntaxSource?
+
+    /// Adopt the syntax colors of the terminal theme in `store`. Call after
+    /// `setAccent(_:)`. Each table decides for itself whether that is a
+    /// change it has yet to draw, so this only records.
+    static func setSyntaxColors(from store: TerminalThemeStore) {
+        let source = SyntaxSource(
+            store: ObjectIdentifier(store),
+            revision: store.revision,
+            selectionFills: [TerminalThemeBrightness.light, .dark].map {
+                TerminalThemeStore.reviewSelectionFill(on: $0, windowColors: store.windowColors)
+            },
+            windowColors: store.windowColors
+        )
+        guard source != syntaxSource else { return }
+        syntaxSource = source
+        AppKitWindowColors.set(store.windowColors)
+        let colors = store.reviewSyntaxColors()
+        guard colors != syntaxColors else { return }
+        syntaxColors = colors
+        var made: [SyntaxRole: NSColor] = [:]
+        for role in SyntaxRole.allCases {
+            made[role] = colors.nsColor(for: role)
         }
+        syntaxNSColors = made
+    }
+
+    private static func color(for kind: ReviewSyntax.Kind) -> NSColor {
+        let role: SyntaxRole = switch kind {
+        case .keyword: .keyword
+        case .string: .string
+        case .number: .number
+        case .comment: .comment
+        }
+        return syntaxNSColors[role] ?? ReviewSyntaxColors.systemColor(for: role)
     }
 
     private static func intralineColor(for kind: ReviewLine.Kind) -> NSColor? {

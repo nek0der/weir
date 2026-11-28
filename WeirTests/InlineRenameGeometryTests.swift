@@ -320,7 +320,7 @@ struct InlineRenameGeometryTests {
                 name: name,
                 isEditing: $model.isEditing,
                 font: font,
-                foregroundColor: .black,
+                foregroundColor: AnyShapeStyle(Color.black),
                 onRename: { _ in },
                 fillsWidth: false,
                 editingWidthLimit: editingWidthLimit
@@ -383,7 +383,7 @@ struct InlineRenameGeometryTests {
             name: name,
             isEditing: .constant(isEditing),
             font: Self.font,
-            foregroundColor: .black,
+            foregroundColor: AnyShapeStyle(Color.black),
             onRename: { _ in },
             fillsWidth: false,
             editingWidthLimit: editingWidthLimit
@@ -487,7 +487,7 @@ struct InlineRenameGeometryTests {
                 name: name,
                 isEditing: .constant(caret != nil),
                 font: font,
-                foregroundColor: .black,
+                foregroundColor: AnyShapeStyle(Color.black),
                 onRename: { _ in },
                 fillsWidth: fillsWidth
             )

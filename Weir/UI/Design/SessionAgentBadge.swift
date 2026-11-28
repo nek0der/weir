@@ -60,7 +60,7 @@ struct SessionAgentBadge: View {
                     shape
                         .fill(isFaint ? AnyShapeStyle(SupervisionTokens.closedMark.color) : Self.fill(kind))
                         .overlay(shape.strokeBorder(
-                            isFaint ? Color.clear : Self.edge(kind),
+                            isFaint ? AnyShapeStyle(Color.clear) : Self.edge(kind),
                             lineWidth: WeirLayout.Supervision.agentBadgeEdgeWidth
                         ))
                 }
@@ -74,7 +74,7 @@ struct SessionAgentBadge: View {
     /// The letters, in the color the brand's mark has on its fill. A closed
     /// badge's are white on `closedMark` whatever the agent, so every gone
     /// source looks alike and only the letters still name it.
-    private static func foreground(_ kind: AgentKind) -> Color {
+    private static func foreground(_ kind: AgentKind) -> ThemedStyle {
         AgentBrand.of(kind).foreground.color
     }
 
@@ -91,7 +91,9 @@ struct SessionAgentBadge: View {
     /// the colors at its corners. One mesh rather than overlaid radial
     /// gradients, as nothing finer than this shows at the size.
     private static let antigravityFill: MeshGradient = {
-        let blue = SupervisionTokens.antigravity.color
+        // A mesh takes `Color`, so each token keeps its own value here.
+        let color = { (token: ThemedColor) in Color(nsColor: token.nsColor) }
+        let blue = color(SupervisionTokens.antigravity)
         return MeshGradient(
             width: 3,
             height: 3,
@@ -101,9 +103,9 @@ struct SessionAgentBadge: View {
                 [0, 1], [0.5, 1], [1, 1]
             ],
             colors: [
-                SupervisionTokens.antigravityGreen.color,
-                SupervisionTokens.antigravityOrange.color,
-                SupervisionTokens.antigravityRed.color,
+                color(SupervisionTokens.antigravityGreen),
+                color(SupervisionTokens.antigravityOrange),
+                color(SupervisionTokens.antigravityRed),
                 blue, blue, blue,
                 blue, blue, blue
             ]
@@ -112,8 +114,11 @@ struct SessionAgentBadge: View {
 
     /// The fill's edge, which keeps the badge clear of a surface its fill
     /// stands too close to (`SupervisionTokens.claudeEdge`).
-    private static func edge(_ kind: AgentKind) -> Color {
-        AgentBrand.of(kind).edge?.color ?? .clear
+    private static func edge(_ kind: AgentKind) -> AnyShapeStyle {
+        if kind == .antigravity {
+            return AnyShapeStyle(ThemedEdgeStyle(role: .antigravityEdge))
+        }
+        return AgentBrand.of(kind).edge.map { AnyShapeStyle($0.color) } ?? AnyShapeStyle(Color.clear)
     }
 }
 

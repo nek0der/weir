@@ -27,7 +27,7 @@ struct RestoreStripView: View {
     var body: some View {
         // In the decision bar's foot bar, on the sidebar's ground under the
         // `line` rule, as the bar at rest.
-        SupervisionFootBar(fill: SupervisionTokens.sidebar.color) {
+        SupervisionFootBar(fill: AnyShapeStyle(SupervisionTokens.sidebar.color)) {
             row
         }
         // An opaque ground, as the decision bar's: its buttons fill opaquely.
